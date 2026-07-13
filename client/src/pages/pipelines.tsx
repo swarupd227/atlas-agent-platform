@@ -74,6 +74,7 @@ import {
   ChevronRight,
   GitCompare,
   ShieldOff,
+  MinusCircle,
 } from "lucide-react";
 
 interface PipelineStage {
@@ -242,6 +243,7 @@ function DAGExecutionView({ dagRunId }: { dagRunId: string }) {
                   {node.status === "running" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
                   {node.status === "completed" && <CheckCircle className="w-2.5 h-2.5" />}
                   {node.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
+                  {node.status === "skipped" && <MinusCircle className="w-2.5 h-2.5" />}
                   <span className="font-mono">{node.nodeId.substring(0, 8)}</span>
                   {node.durationMs > 0 && <span className="opacity-60">{node.durationMs}ms</span>}
                   {node.promptTokens > 0 && (

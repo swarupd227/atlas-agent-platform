@@ -1190,6 +1190,7 @@ export type DagStateSchema = typeof dagStateSchemas.$inferSelect;
 
 export const dagExecutionRuns = pgTable("dag_execution_runs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  teamAgentId: varchar("team_agent_id"),
   pipelineRunId: varchar("pipeline_run_id"),
   pipelineStageId: varchar("pipeline_stage_id"),
   executionPlanId: varchar("execution_plan_id"),
@@ -1227,11 +1228,46 @@ export const teamBlueprintEdges = pgTable("team_blueprint_edges", {
   condition: text("condition"),
   config: jsonb("config"),
   createdAt: timestamp("created_at").defaultNow(),
+  // "ai" (default): `condition` is free text, evaluated by an LLM at runtime
+  // (evaluateCondition in agent-runtime.ts) -- fine for judgment calls, wrong
+  // for anything that must be reliable/auditable (a dollar threshold, a
+  // compliance check). "deterministic": `rule` (below) is evaluated as plain
+  // comparison logic instead, with the resolved inputs + result logged to
+  // the run's step timeline every time, including when it evaluates true
+  // (the AI path previously logged nothing at all in the true case).
+  evaluationMode: text("evaluation_mode").notNull().default("ai"),
+  rule: jsonb("rule"),
 });
 
 export const insertTeamBlueprintEdgeSchema = createInsertSchema(teamBlueprintEdges).omit({ id: true, createdAt: true });
 export type InsertTeamBlueprintEdge = z.infer<typeof insertTeamBlueprintEdgeSchema>;
 export type TeamBlueprintEdge = typeof teamBlueprintEdges.$inferSelect;
+
+// A single field/operator/value comparison, or a nested AND/OR group of them
+// -- lets the rule builder UI express compound logic like
+// "(amount > 10000 AND NOT vendorApproved) OR duplicateInvoice == true"
+// without arbitrary code execution (see server/rule-evaluator.ts).
+export const ruleOperatorSchema = z.enum([">", "<", ">=", "<=", "==", "!=", "contains", "not_contains"]);
+export type RuleOperator = z.infer<typeof ruleOperatorSchema>;
+
+export const ruleLeafSchema = z.object({
+  field: z.string().min(1),
+  operator: ruleOperatorSchema,
+  value: z.union([z.string(), z.number(), z.boolean()]),
+});
+export type RuleLeaf = z.infer<typeof ruleLeafSchema>;
+
+export type RuleGroup = {
+  combinator: "AND" | "OR";
+  conditions: Array<RuleLeaf | RuleGroup>;
+};
+export const ruleGroupSchema: z.ZodType<RuleGroup> = z.lazy(() =>
+  z.object({
+    combinator: z.enum(["AND", "OR"]),
+    conditions: z.array(z.union([ruleLeafSchema, ruleGroupSchema])).min(1),
+  }),
+);
+export type EdgeRule = RuleGroup;
 
 export const traceSpans = pgTable("trace_spans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -2172,6 +2208,10 @@ export const agentRuntimeRuns = pgTable("agent_runtime_runs", {
   inputConfig: jsonb("input_config"),
   errorMessage: text("error_message"),
   latencyMs: integer("latency_ms").default(0),
+  // Links to the traces row created alongside this run (when one is), so the
+  // UI can deep-link "Recent Executions" straight into the full step-by-step
+  // monitoring view (trace-detail.tsx) instead of just showing resultSummary.
+  traceId: varchar("trace_id"),
   startedAt: timestamp("started_at").defaultNow(),
   completedAt: timestamp("completed_at"),
 });
@@ -2317,7 +2357,13 @@ export const agentKnowledgeBases = pgTable("agent_knowledge_bases", {
   agentId: varchar("agent_id").notNull(),
   knowledgeBaseId: varchar("knowledge_base_id").notNull(),
   priority: integer("priority").notNull().default(1),
-  retrievalConfig: jsonb("retrieval_config").notNull().default(sql`'{"topK": 5, "scoreThreshold": 0.7}'::jsonb`),
+  // 0.3 matches the threshold the KB's own "Search & Query" tab uses
+  // successfully (kb-routes.ts's direct-query endpoint) -- 0.7 was too
+  // strict for this embedding model's typical cosine-similarity scores and
+  // silently returned zero chunks for genuinely relevant matches, so an
+  // agent with a linked KB would still answer from the LLM's general
+  // knowledge with no indication retrieval had failed.
+  retrievalConfig: jsonb("retrieval_config").notNull().default(sql`'{"topK": 5, "scoreThreshold": 0.3}'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

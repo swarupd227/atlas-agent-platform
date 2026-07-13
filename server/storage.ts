@@ -827,6 +827,7 @@ export interface IStorage {
 
   getDagExecutionRun(id: string): Promise<DagExecutionRun | undefined>;
   listDagExecutionRuns(pipelineRunId?: string): Promise<DagExecutionRun[]>;
+  listDagExecutionRunsByTeamAgent(teamAgentId: string, limit?: number): Promise<DagExecutionRun[]>;
   createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun>;
   updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined>;
 
@@ -3991,6 +3992,15 @@ export class DatabaseStorage implements IStorage {
         .orderBy(desc(dagExecutionRuns.createdAt));
     }
     return db.select().from(dagExecutionRuns).orderBy(desc(dagExecutionRuns.createdAt)).limit(100);
+  }
+
+  async listDagExecutionRunsByTeamAgent(teamAgentId: string, limit: number = 20): Promise<DagExecutionRun[]> {
+    return db
+      .select()
+      .from(dagExecutionRuns)
+      .where(eq(dagExecutionRuns.teamAgentId, teamAgentId))
+      .orderBy(desc(dagExecutionRuns.createdAt))
+      .limit(limit);
   }
 
   async createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun> {

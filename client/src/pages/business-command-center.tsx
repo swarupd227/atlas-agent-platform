@@ -408,7 +408,7 @@ export default function BusinessCommandCenter() {
         <MetricTile
           label="Value generated this month"
           value={valueThisMonth > 0 ? `$${(valueThisMonth / 1000).toFixed(0)}K` : "—"}
-          sub={valueThisMonth > 0 ? "from your initiatives" : "tracking"}
+          sub={valueThisMonth > 0 ? "from your initiatives" : "no revenue recorded yet"}
           icon={DollarSign}
           colorCls="text-emerald-600 dark:text-emerald-400"
           bgCls="bg-emerald-500/10"

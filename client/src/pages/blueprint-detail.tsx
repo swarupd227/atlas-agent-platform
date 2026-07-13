@@ -223,6 +223,12 @@ export default function BlueprintDetail() {
     return agents.find(a => a.id === blueprint.agentId);
   }, [blueprint, agents]);
 
+  // A team agent's blueprint has nothing to show on the single-agent canvas --
+  // land directly on the Team Graph tab instead of an empty node palette.
+  useEffect(() => {
+    if (linkedAgent?.agentType === "team") setEditorView("team");
+  }, [linkedAgent?.agentType]);
+
   const invalidNodeIds = useMemo(() => {
     const ids = new Set<string>();
     const vr = localValidation;

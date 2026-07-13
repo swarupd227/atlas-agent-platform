@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useCallback } from "react";
-import { useRoute, useLocation } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import {
   Rocket,
   ArrowLeft,
@@ -953,10 +953,16 @@ function RuntimeStatusCard({ deploymentId, agentId }: { deploymentId: string; ag
             <span className="text-xs font-medium text-muted-foreground mb-1">Recent Executions</span>
             {runs.slice(0, 10).map((run: any) => {
               const summary = run.resultSummary || {};
-              const severity = summary.severity || "unknown";
+              const isTeamPipeline = summary.teamExecution || summary.workersExecuted !== undefined || summary.pattern !== undefined;
+              // resultSummary's shape depends entirely on what the underlying
+              // agent does (weather demo fields vs. team-pipeline fields
+              // vs. nothing at all) -- this used to hardcode the weather
+              // demo's city/temperature/windSpeed fields and silently show
+              // "Weather Check" for every other agent type.
+              const severity = summary.severity;
               const sevColor = severity === "critical" ? "text-red-600 dark:text-red-400" : severity === "high" ? "text-amber-600 dark:text-amber-400" : severity === "medium" ? "text-yellow-600 dark:text-yellow-400" : "text-emerald-600 dark:text-emerald-400";
-              return (
-                <div key={run.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30" data-testid={`runtime-run-${run.id}`}>
+              const rowContent = (
+                <div className={`flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 ${run.traceId ? "hover-elevate cursor-pointer" : ""}`} data-testid={`runtime-run-${run.id}`}>
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     {run.status === "completed" ? (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -967,16 +973,30 @@ function RuntimeStatusCard({ deploymentId, agentId }: { deploymentId: string; ag
                     )}
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] font-medium">
-                          {summary.city || "Weather Check"}
-                        </span>
-                        {summary.temperature !== undefined && (
-                          <span className="text-[10px] text-muted-foreground">{summary.temperature}°C</span>
+                        {summary.city !== undefined ? (
+                          <>
+                            <span className="text-[11px] font-medium">{summary.city || "Weather Check"}</span>
+                            {summary.temperature !== undefined && (
+                              <span className="text-[10px] text-muted-foreground">{summary.temperature}°C</span>
+                            )}
+                            {summary.windSpeed !== undefined && (
+                              <span className="text-[10px] text-muted-foreground">Wind {summary.windSpeed} km/h</span>
+                            )}
+                          </>
+                        ) : isTeamPipeline ? (
+                          <>
+                            <span className="text-[11px] font-medium">{summary.workersExecuted ?? 0} worker{summary.workersExecuted === 1 ? "" : "s"}</span>
+                            {summary.pattern && <Badge variant="outline" className="text-[9px] px-1 py-0">{summary.pattern}</Badge>}
+                            <span className="text-[10px] text-muted-foreground">{summary.passedSteps ?? 0}/{summary.totalSteps ?? 0} steps</span>
+                          </>
+                        ) : (
+                          <span className="text-[11px] font-medium">
+                            {summary.passedSteps !== undefined ? `${summary.passedSteps}/${summary.totalSteps ?? 0} steps` : "Execution"}
+                          </span>
                         )}
-                        {summary.windSpeed !== undefined && (
-                          <span className="text-[10px] text-muted-foreground">Wind {summary.windSpeed} km/h</span>
+                        {severity && (
+                          <span className={`text-[10px] font-medium ${sevColor}`}>{severity}</span>
                         )}
-                        <span className={`text-[10px] font-medium ${sevColor}`}>{severity}</span>
                         {summary.alertTriggered && (
                           <Badge variant="outline" className="text-[9px] text-red-600 dark:text-red-400 bg-red-500/10 px-1 py-0">Alert</Badge>
                         )}
@@ -994,10 +1014,20 @@ function RuntimeStatusCard({ deploymentId, agentId }: { deploymentId: string; ag
                         <Badge variant="outline" className="text-[9px] px-1 py-0">
                           {run.triggerType === "manual" ? "Manual" : "Scheduled"}
                         </Badge>
+                        {run.traceId && (
+                          <span className="text-[10px] text-primary">View trace &rarr;</span>
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
+              );
+              return run.traceId ? (
+                <Link key={run.id} href={`/traces/${run.traceId}`} data-testid={`link-runtime-run-${run.id}`}>
+                  {rowContent}
+                </Link>
+              ) : (
+                <div key={run.id}>{rowContent}</div>
               );
             })}
           </div>

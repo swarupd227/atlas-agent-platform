@@ -4,6 +4,7 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRole } from "@/components/role-provider";
+import { isTestFixtureName } from "@/lib/test-data-filter";
 import {
   Bot,
   Zap,
@@ -50,13 +51,17 @@ function lastActivityLabel(agent: Agent): string {
     if (days === 1) return "Incident yesterday";
     return `Incident ${days} days ago`;
   }
-  return "Idle — no runs yet";
+  // Deployed workers with zero runs are ready, not idle — "Idle" reads as a
+  // contradiction next to a "Running" status pill (UX audit F-2).
+  const isDeployed = agent.status === "deployed" || agent.status === "active";
+  return isDeployed ? "Ready — hasn't run yet" : "Idle — no runs yet";
 }
 
 export default function MyWorkers() {
   const { isBusinessMode } = useRole();
   const [, navigate] = useLocation();
   const [filter, setFilter] = useState<StatusFilter>("all");
+  const [hideTestData, setHideTestData] = useState(true);
 
   const { data: allAgents, isLoading: agentsLoading } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
@@ -82,9 +87,13 @@ export default function MyWorkers() {
     return acc;
   }, {});
 
-  const workerAgents = (allAgents || []).filter(
+  const allWorkerAgents = (allAgents || []).filter(
     (a) => !!a.outcomeId && !!outcomesById[a.outcomeId] && a.status !== "draft"
   );
+  const testDataCount = allWorkerAgents.filter((a) => isTestFixtureName(a.name)).length;
+  const workerAgents = hideTestData
+    ? allWorkerAgents.filter((a) => !isTestFixtureName(a.name))
+    : allWorkerAgents;
 
   const filteredAgents = workerAgents.filter((a) => {
     if (filter === "running") {
@@ -158,6 +167,17 @@ export default function MyWorkers() {
             <AlertTriangle className="w-3 h-3 mr-1.5" />
             Alert
             <span className="ml-1.5 text-[10px] font-bold opacity-70">{alertCount}</span>
+          </Button>
+        )}
+        {testDataCount > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs ml-auto"
+            onClick={() => setHideTestData(v => !v)}
+            data-testid="button-toggle-test-data"
+          >
+            {hideTestData ? `Show ${testDataCount} test item${testDataCount === 1 ? "" : "s"}` : "Hide test data"}
           </Button>
         )}
       </div>

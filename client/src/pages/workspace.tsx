@@ -30,6 +30,8 @@ type TimelineItem =
   | { kind: "tool_start"; tool: string; server: string; args: Record<string, unknown> }
   | { kind: "tool_result"; tool: string; outcome: string; ok: boolean; preview: string }
   | { kind: "denied"; tool: string }
+  | { kind: "team_progress"; wave: number; totalWaves: number; nodeLabel: string; status: "running" | "completed" | "failed" }
+  | { kind: "team_awaiting_approval"; wave: number; totalWaves: number; nodeLabel: string; approvalId: string }
   | { kind: "answer"; text: string; costUsd: number; traceId: string | null };
 
 interface Pending { approvalId: string | null; tool: string; summary: string; args: Record<string, unknown> }
@@ -93,7 +95,18 @@ export default function Workspace() {
       case "tool_start": setTimeline(t => [...t, { kind: "tool_start", tool: evt.tool, server: evt.server, args: evt.args }]); break;
       case "tool_result": setTimeline(t => [...t, { kind: "tool_result", tool: evt.tool, outcome: evt.outcome, ok: evt.ok, preview: evt.preview }]); break;
       case "denied": setTimeline(t => [...t, { kind: "denied", tool: evt.tool }]); break;
+      case "team_progress":
+        setTimeline(t => {
+          const item: TimelineItem = { kind: "team_progress", wave: evt.wave, totalWaves: evt.totalWaves, nodeLabel: evt.nodeLabel, status: evt.status };
+          const idx = t.findIndex(i => i.kind === "team_progress" && i.wave === evt.wave && i.nodeLabel === evt.nodeLabel);
+          if (idx >= 0) { const next = [...t]; next[idx] = item; return next; }
+          return [...t, item];
+        });
+        break;
       case "awaiting_approval": setPending({ approvalId: evt.approvalId, tool: evt.tool, summary: evt.summary, args: evt.args }); break;
+      case "team_awaiting_approval":
+        setTimeline(t => [...t, { kind: "team_awaiting_approval", wave: evt.wave, totalWaves: evt.totalWaves, nodeLabel: evt.nodeLabel, approvalId: evt.approvalId }]);
+        break;
       case "completed": setTimeline(t => [...t, { kind: "answer", text: evt.output, costUsd: evt.costUsd, traceId: evt.traceId }]); break;
       case "error": setTimeline(t => [...t, { kind: "answer", text: `Something went wrong: ${evt.message}`, costUsd: 0, traceId: null }]); break;
     }
@@ -333,6 +346,33 @@ function TimelineRow({ item }: { item: TimelineItem }) {
       <div className="flex items-center gap-2 text-[13px] pl-6">
         <Ban className="w-3.5 h-3.5 text-red-500 shrink-0" />
         <span className="text-muted-foreground">Denied <b>{item.tool}</b></span>
+      </div>
+    );
+  }
+  if (item.kind === "team_progress") {
+    return (
+      <div className="flex items-center gap-2 text-[13px]">
+        {item.status === "running" ? (
+          <Loader2 className="w-3.5 h-3.5 text-muted-foreground shrink-0 animate-spin" />
+        ) : item.status === "completed" ? (
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+        ) : (
+          <XCircle className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+        )}
+        <span className="text-muted-foreground">Step {item.wave}/{item.totalWaves}</span>
+        <span>{item.nodeLabel}</span>
+      </div>
+    );
+  }
+  if (item.kind === "team_awaiting_approval") {
+    return (
+      <div className="flex items-center gap-2 text-[13px] rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5" data-testid="workspace-team-awaiting-approval">
+        <ShieldQuestion className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+        <span className="text-muted-foreground">Step {item.wave}/{item.totalWaves}</span>
+        <span>{item.nodeLabel} is waiting on a human decision</span>
+        <Link href={`/approvals/${item.approvalId}`} className="flex items-center gap-1 text-primary ml-auto shrink-0">
+          Review <ArrowRight className="w-3 h-3" />
+        </Link>
       </div>
     );
   }

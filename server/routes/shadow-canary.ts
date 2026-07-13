@@ -590,19 +590,43 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       });
 
       const execRichPrompt = buildAgentSystemPrompt(agent);
-      const result = await executePromptWithMcp(
-        deployment.agentId,
-        deployment.id,
-        undefined,
-        mcpServerIds,
-        prompt,
-        deployment.industry || (agent as any).industry,
-        execRichPrompt,
-        { maxToolIterations: agent.maxToolIterations ?? 5 },
-        undefined,
-        undefined,
-        getRequestRole(req),
-      );
+      // Team agents must go through executeTeamPipeline (tiers, gates,
+      // conditional/deterministic-rule edge routing) -- calling
+      // executePromptWithMcp directly here silently ran them as a plain
+      // single-agent prompt with no orchestration at all, unlike the
+      // scheduled/webhook trigger paths which already branch correctly
+      // (see executeAgentCycle). Mirrors the same isTeamAgent detection and
+      // RuntimeAgent construction already used by POST /api/agents/:id/run-test.
+      const isTeamAgent = agent.agentType === "team" && Array.isArray(rtConfig.orchestration?.workerIds) && rtConfig.orchestration.workerIds.length > 0;
+      const result = isTeamAgent
+        ? await executeTeamPipeline({
+            deploymentId: deployment.id,
+            agentId: deployment.agentId,
+            agentName: agent.name,
+            blueprintId: rtConfig.orchestration?.blueprintId || undefined,
+            mcpServerIds,
+            intervalMs: 0,
+            industry: deployment.industry || (agent as any).industry,
+            prompt,
+            agentSystemPrompt: execRichPrompt,
+            outcomeId: (agent as any).outcomeId || undefined,
+            agentType: "team",
+            runtimeConfig: rtConfig,
+            ontologyTags: Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [],
+          } satisfies RuntimeAgent)
+        : await executePromptWithMcp(
+            deployment.agentId,
+            deployment.id,
+            undefined,
+            mcpServerIds,
+            prompt,
+            deployment.industry || (agent as any).industry,
+            execRichPrompt,
+            { maxToolIterations: agent.maxToolIterations ?? 5 },
+            undefined,
+            undefined,
+            getRequestRole(req),
+          );
 
       await storage.updateAgentRuntimeRun(runtimeRun.id, {
         status: result.success ? "completed" : "failed",
@@ -612,7 +636,42 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         completedAt: new Date(),
       });
 
-      res.json({ run: { ...runtimeRun, status: result.success ? "completed" : "failed", stepsJson: result.steps, resultSummary: result.summary }, result });
+      // Also record a trace so this manual run shows up in the same
+      // Traces/monitoring view as scheduled and webhook-triggered runs --
+      // mirrors POST /api/agents/:id/run-test, which is the only other path
+      // that previously did this.
+      const execAnalysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
+      const execOrchestrationSummary = result.steps.find((s: any) => s.type === "orchestration_summary")?.output?.finalOutput;
+      const execAnalysisText = execAnalysisStep?.output?.summary || execAnalysisStep?.output?.analysis || execOrchestrationSummary || result.summary?.analysis?.summary || result.summary?.analysis?.analysis || "";
+      const execToolCalls = result.steps
+        .filter((s: any) => s.type === "api_call" && s.mcpResolved)
+        .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, output: s.output, status: s.status, error: s.error }));
+
+      const trace = await storage.createTrace({
+        agentId: deployment.agentId,
+        environment: "prod",
+        status: result.success ? "completed" : "failed",
+        triggeredBy: "manual",
+        latencyMs: result.summary.latencyMs || 0,
+        inputSummary: isTeamAgent
+          ? `Execute Now: ${agent.name} (${rtConfig.orchestration?.workerIds?.length || 0} workers)`
+          : `Execute Now: ${prompt.length > 120 ? prompt.substring(0, 117) + "..." : prompt}`,
+        outputSummary: typeof execAnalysisText === "string" && execAnalysisText.length > 0 ? execAnalysisText : `${execToolCalls.length} tools called | ${result.summary?.passedSteps}/${result.summary?.totalSteps} steps`,
+        stepsJson: result.steps,
+        modelId: "gpt-4.1",
+        promptInputs: (result as any).promptInputs || {
+          systemPrompt: execRichPrompt || prompt,
+          userMessage: prompt,
+          contextVariables: {
+            industry: deployment.industry || (agent as any).industry || "general",
+            ...(isTeamAgent ? { teamExecution: true, workerCount: rtConfig.orchestration?.workerIds?.length || 0, pattern: rtConfig.orchestration?.pattern || "supervisor" } : {}),
+          },
+        },
+        toolCalls: execToolCalls.length > 0 ? execToolCalls : null,
+      });
+      await storage.updateAgentRuntimeRun(runtimeRun.id, { traceId: trace.id });
+
+      res.json({ run: { ...runtimeRun, status: result.success ? "completed" : "failed", stepsJson: result.steps, resultSummary: result.summary, traceId: trace.id }, result, traceId: trace.id });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

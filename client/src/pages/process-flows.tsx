@@ -17,6 +17,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeToGraph, stepsToGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
 import FlowGraphCanvas from "@/components/flow-graph-canvas";
+import { TeamProposalDialog } from "@/components/team-proposal-flow";
 
 
 export default function ProcessFlows() {
@@ -124,13 +125,23 @@ export default function ProcessFlows() {
   const totalMins = graph.nodes.reduce((s, n) => s + (n.estimatedMins || 0), 0);
   const nodeCount = graph.nodes.length;
 
+  const [showTeamProposal, setShowTeamProposal] = useState(false);
+  const proposalDescription = useMemo(() => {
+    const steps = graph.nodes.map(n => n.label).filter(Boolean).join(" → ");
+    return flowName ? `${flowName}: ${steps}` : steps;
+  }, [graph.nodes, flowName]);
+  const proposalSteps = useMemo(
+    () => graph.nodes.map(n => ({ type: n.type, label: n.label, description: n.description, actor: n.actor })),
+    [graph.nodes],
+  );
+
   return (
     <div className="flex flex-col h-full" data-testid="page-process-flows">
       <div className="flex items-center gap-3 p-4 border-b shrink-0">
         <Workflow className="w-5 h-5 text-primary" />
         <div>
           <h1 className="text-base font-semibold">Process Flow Studio</h1>
-          <p className="text-xs text-muted-foreground">Design how your automation works in plain language</p>
+          <p className="text-xs text-muted-foreground">Describe the steps of a process, no KPI commitment required — for a goal you're accountable for, use Outcomes instead</p>
         </div>
         <div className="flex-1" />
         <Button
@@ -175,6 +186,12 @@ export default function ProcessFlows() {
           >
             {compileMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5 mr-1.5" />}
             Validate &amp; Preview
+          </Button>
+        )}
+        {nodeCount > 0 && (
+          <Button size="sm" onClick={() => setShowTeamProposal(true)} data-testid="button-turn-into-automation">
+            <Zap className="w-3.5 h-3.5 mr-1.5" />
+            Turn into a live automation
           </Button>
         )}
       </div>
@@ -310,6 +327,13 @@ export default function ProcessFlows() {
           ))}
         </DialogContent>
       </Dialog>
+
+      <TeamProposalDialog
+        open={showTeamProposal}
+        onOpenChange={setShowTeamProposal}
+        initialDescription={proposalDescription}
+        processFlowSteps={proposalSteps}
+      />
     </div>
   );
 }

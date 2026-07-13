@@ -45,10 +45,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatCard } from "@/components/stat-card";
 import { ErrorState } from "@/components/error-state";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIndustry } from "@/components/industry-provider";
+import { TeamProposalDialog } from "@/components/team-proposal-flow";
 import type { Agent, AgentTeam } from "@shared/schema";
 
 const ROLE_CONFIG: Record<string, { label: string; icon: typeof Crown }> = {
@@ -60,6 +61,7 @@ const ROLE_CONFIG: Record<string, { label: string; icon: typeof Crown }> = {
 export default function AgentTeams() {
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [showAiFlow, setShowAiFlow] = useState(false);
   const [showManage, setShowManage] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
   const [formDescription, setFormDescription] = useState("");
@@ -68,6 +70,7 @@ export default function AgentTeams() {
 
   const { toast } = useToast();
   const { industry, isSelected } = useIndustry();
+  const [, navigate] = useLocation();
 
   const { data: agents, isLoading, error, refetch } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
@@ -88,21 +91,27 @@ export default function AgentTeams() {
 
   const createTeamMutation = useMutation({
     mutationFn: async (data: { name: string; description: string; riskTier?: string }) => {
-      return apiRequest("POST", "/api/agents", {
+      // blueprintJson: {} triggers the server's existing auto-create-blueprint
+      // behavior (server/routes/agents.ts) so this team lands with a real,
+      // empty Blueprint wired up -- not just a bare agent row with nothing to open.
+      const res = await apiRequest("POST", "/api/agents", {
         name: data.name,
         description: data.description,
         agentType: "team",
         status: "active",
         riskTier: data.riskTier || "MEDIUM",
         autonomyMode: "assisted",
+        blueprintJson: {},
       });
+      return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Team created", description: "The agent team has been added to the registry." });
+    onSuccess: (agent: Agent) => {
+      toast({ title: "Team created", description: "Opening the blank canvas so you can wire it up." });
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
       setShowCreate(false);
       setFormName("");
       setFormDescription("");
+      if (agent.blueprintId) navigate(`/blueprints/${agent.blueprintId}`);
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create team", description: err.message, variant: "destructive" });
@@ -162,7 +171,7 @@ export default function AgentTeams() {
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">Agent Registry</h1>
           <p className="text-sm text-muted-foreground">
-            Agent teams for multi-agent orchestration
+            Agent teams for multi-agent orchestration — know the steps of a process and want a team fast? Start here, no KPI commitment required.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -171,7 +180,14 @@ export default function AgentTeams() {
               <Layers className="w-4 h-4 mr-1.5" /> Create from Template
             </Button>
           </Link>
-          <Button onClick={() => setShowCreate(true)} data-testid="button-create-team">
+          <Button variant="ghost" size="sm" onClick={() => setShowCreate(true)} data-testid="button-create-team-blank">
+            Start from a blank canvas
+          </Button>
+          <Button
+            onClick={() => setShowAiFlow(true)}
+            data-testid="button-create-team"
+            title="For a process you can describe in a few steps. For a single agent, use Design New Agent — for a KPI-governed team, use Outcomes."
+          >
             <Plus className="w-4 h-4 mr-1.5" /> Create Team
           </Button>
         </div>
@@ -275,7 +291,7 @@ export default function AgentTeams() {
             <div className="flex flex-col items-center justify-center py-12 gap-3">
               <Users className="w-10 h-10 text-muted-foreground/50" />
               <p className="text-sm text-muted-foreground">No teams created yet</p>
-              <Button variant="outline" size="sm" onClick={() => setShowCreate(true)} data-testid="button-create-team-empty">
+              <Button variant="outline" size="sm" onClick={() => setShowAiFlow(true)} data-testid="button-create-team-empty">
                 <Plus className="w-3.5 h-3.5 mr-1" /> Create your first team
               </Button>
             </div>
@@ -286,9 +302,10 @@ export default function AgentTeams() {
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle data-testid="dialog-title-create-team">Create Agent Team</DialogTitle>
+            <DialogTitle data-testid="dialog-title-create-team">Start from a blank canvas</DialogTitle>
             <DialogDescription>
-              Create a team agent that orchestrates multiple member agents for multi-agent workflows.
+              Creates an empty team you wire up manually in the graph editor — for describing your automation in
+              plain English instead, use "Create Team".
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-4 py-2">
@@ -427,6 +444,8 @@ export default function AgentTeams() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TeamProposalDialog open={showAiFlow} onOpenChange={setShowAiFlow} />
     </div>
   );
 }

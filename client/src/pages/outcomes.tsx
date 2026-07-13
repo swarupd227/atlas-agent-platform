@@ -55,6 +55,7 @@ import { useIndustry } from "@/components/industry-provider";
 
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { isTestFixtureName } from "@/lib/test-data-filter";
 import type { OutcomeContract, KpiDefinition, Invoice, Agent } from "@shared/schema";
 
 function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
@@ -201,6 +202,7 @@ export default function Outcomes() {
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [hideTestData, setHideTestData] = useState(true);
 
   const { data: outcomes, isLoading, isError, error, refetch } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
@@ -342,8 +344,11 @@ export default function Outcomes() {
   });
   const measuredKpiStats = allKpiStats.filter((k) => k.measured);
   const awaitingDataKpis = allKpiStats.filter((k) => !k.measured);
+  // Clamp each KPI's contribution to the page-level average at 100% so a single
+  // outlier (a count metric far exceeding its target) can't drag the headline
+  // number into the thousands of percent — matches the per-card clamp below.
   const overallAttainment = measuredKpiStats.length > 0
-    ? measuredKpiStats.reduce((s, k) => s + k.attainment, 0) / measuredKpiStats.length
+    ? measuredKpiStats.reduce((s, k) => s + Math.min(100, k.attainment), 0) / measuredKpiStats.length
     : null;
   const atRiskKpis = measuredKpiStats.filter((k) => k.attainment < 80);
   const onTrackKpis = measuredKpiStats.filter((k) => k.attainment >= 80 && k.attainment < 100);
@@ -391,17 +396,23 @@ export default function Outcomes() {
   }
 
   if (isBusinessMode) {
-    const businessSorted = [...(outcomes || [])].sort((a, b) => {
+    const allBusinessSorted = [...(outcomes || [])].sort((a, b) => {
       const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return dateB - dateA;
     });
+    const testDataCount = allBusinessSorted.filter((o) => isTestFixtureName(o.name)).length;
+    const businessSorted = hideTestData
+      ? allBusinessSorted.filter((o) => !isTestFixtureName(o.name))
+      : allBusinessSorted;
 
-    function getBusinessStatus(outcomeId: string): "on-track" | "at-risk" | "paused" {
+    function getBusinessStatus(outcomeId: string): "on-track" | "at-risk" | "paused" | "awaiting-data" {
       const outcomeKpis = kpis?.filter((k) => k.outcomeId === outcomeId) || [];
       const outcomeObj = outcomes?.find((o) => o.id === outcomeId);
       if (outcomeObj?.status === "paused") return "paused";
-      if (outcomeKpis.length === 0) return "on-track";
+      // No KPIs recorded yet — show as awaiting data rather than an optimistic
+      // "on-track" that would contradict the 0% shown next to it (UX audit F-1).
+      if (outcomeKpis.length === 0) return "awaiting-data";
       const avgPct = outcomeKpis.reduce((s, k) => s + (k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 100), 0) / outcomeKpis.length;
       return avgPct >= 75 ? "on-track" : "at-risk";
     }
@@ -410,6 +421,7 @@ export default function Outcomes() {
       "on-track": { label: "On Track", pillCls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20", barCls: "bg-emerald-500" },
       "at-risk": { label: "At Risk", pillCls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20", barCls: "bg-amber-500" },
       "paused": { label: "Paused", pillCls: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20", barCls: "bg-slate-400" },
+      "awaiting-data": { label: "Awaiting data", pillCls: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20", barCls: "bg-slate-300" },
     };
 
     const activeCount = businessSorted.filter((o) => o.status === "active" || o.status === "agents_assigned").length;
@@ -427,10 +439,22 @@ export default function Outcomes() {
               )}
             </p>
           </div>
-          <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-start-outcome">
-            <Plus className="w-4 h-4 mr-1.5" />
-            Start a new outcome
-          </Button>
+          <div className="flex items-center gap-2">
+            {testDataCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setHideTestData(v => !v)}
+                data-testid="button-toggle-test-data"
+              >
+                {hideTestData ? `Show ${testDataCount} test item${testDataCount === 1 ? "" : "s"}` : "Hide test data"}
+              </Button>
+            )}
+            <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-start-outcome">
+              <Plus className="w-4 h-4 mr-1.5" />
+              Start a new outcome
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 xl:grid-cols-3 gap-3" data-testid="section-business-summary">
@@ -522,10 +546,10 @@ export default function Outcomes() {
                           )}
                         </div>
                         <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
-                          <span className={`text-lg font-bold ${status === "at-risk" ? "text-amber-600 dark:text-amber-400" : status === "paused" ? "text-muted-foreground" : "text-emerald-600 dark:text-emerald-400"}`}>
-                            {avgPct}%
+                          <span className={`text-lg font-bold ${status === "at-risk" ? "text-amber-600 dark:text-amber-400" : status === "paused" || status === "awaiting-data" ? "text-muted-foreground" : "text-emerald-600 dark:text-emerald-400"}`}>
+                            {status === "awaiting-data" ? "—" : `${avgPct}%`}
                           </span>
-                          <span className="text-[10px] text-muted-foreground">to target</span>
+                          <span className="text-[10px] text-muted-foreground">{status === "awaiting-data" ? "awaiting data" : "to target"}</span>
                           {valueGenerated > 0 && (
                             <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">${Math.round(valueGenerated).toLocaleString()} generated</span>
                           )}

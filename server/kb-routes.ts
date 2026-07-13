@@ -1720,7 +1720,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         changes.push({ parameter: "retrievalTopK", before: 5, after: retrievalTopK });
         const agentLinks = await storage.getKnowledgeBaseAgents(req.params.id as string);
         for (const link of agentLinks) {
-          const currentConfig = (link.retrievalConfig as any) || { topK: 5, scoreThreshold: 0.7 };
+          const currentConfig = (link.retrievalConfig as any) || { topK: 5, scoreThreshold: 0.3 };
           await db.update(agentKnowledgeBases)
             .set({ retrievalConfig: { ...currentConfig, topK: retrievalTopK } })
             .where(eq(agentKnowledgeBases.id, link.id));

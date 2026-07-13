@@ -372,7 +372,10 @@ export default function Agents() {
           </Button>
         ) : (
           <Link href="/agents/wizard">
-            <Button data-testid="button-create-agent">
+            <Button
+              data-testid="button-create-agent"
+              title="For a single agent with one clear job. For a multi-step process, use Process Flows — for a KPI-driven team, use Outcomes."
+            >
               <Plus className="w-4 h-4 mr-1.5" /> Design New Agent
               {blueprintPerm.permission.access === "conditional" && blueprintPerm.permission.annotation && (
                 <Badge variant="secondary" className="text-[10px] ml-1">{blueprintPerm.permission.annotation}</Badge>

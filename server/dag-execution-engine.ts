@@ -1,6 +1,7 @@
 import { storage } from "./storage";
-import { executeWorkerAgent } from "./agent-runtime";
-import type { DagExecutionPlan, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
+import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineState } from "./agent-runtime";
+import { evaluateRule } from "./rule-evaluator";
+import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 
 export interface WaveNode {
   wave_number: number;
@@ -8,10 +9,28 @@ export interface WaveNode {
   dependencies: string[];
 }
 
+// One incoming edge into a node, as seen from the target's side. isGating
+// is false for a plain structural edge (no condition, no rule) -- it exists
+// only to order execution, and always counts as a satisfied path once its
+// source has actually run (see filterGatedNodes). isGating is true for an
+// edge carrying a condition or deterministic rule, which must itself
+// evaluate true to count as satisfied.
+export interface IncomingEdgeInfo {
+  sourceNodeId: string;
+  isGating: boolean;
+  evaluationMode: string;
+  condition: string | null;
+  rule: RuleGroup | null;
+}
+
 export interface ComputedWavePlan {
   waves: WaveNode[];
   edgeMap: Record<string, string[]>;
   nodeConfig: Record<string, NodePlanConfig>;
+  // Every node with at least one incoming edge appears as a key here (both
+  // gating and plain edges). Absence means "no incoming edges -- always
+  // runs" (a root node in the graph).
+  incomingEdges: Record<string, IncomingEdgeInfo[]>;
   totalNodes: number;
   totalWaves: number;
   maxParallelism: number;
@@ -28,6 +47,7 @@ export interface NodePlanConfig {
   refTeamAgentId: string | null;
   refSkillId: string | null;
   label: string;
+  gateType: string | null;
 }
 
 export interface StateFieldDef {
@@ -46,10 +66,14 @@ export interface DAGExecutionConfig {
   stateSchema: Record<string, StateFieldDef>;
   initialState: Record<string, any>;
   errorStrategy: "fail_fast" | "best_effort";
+  teamAgentId: string;
   teamAgentRuntimeConfig?: Record<string, any>;
   onNodeStart?: (nodeId: string, wave: number) => void;
   onNodeComplete?: (nodeId: string, wave: number, result: NodeExecutionResult) => void;
   onWaveComplete?: (wave: number, state: Record<string, any>) => Promise<void>;
+  // Fired the moment a gate node creates its approval record -- before the
+  // (potentially long) wait for a human decision begins.
+  onApprovalPending?: (nodeId: string, approvalId: string) => void;
 }
 
 export interface NodeExecutionResult {
@@ -155,6 +179,7 @@ export function computeWaves(
       refTeamAgentId: node.refTeamAgentId || null,
       refSkillId: (node as any).refSkillId || null,
       label: node.label,
+      gateType: node.gateType || null,
     };
   }
 
@@ -163,10 +188,32 @@ export function computeWaves(
     edgeMap[k] = v;
   }
 
+  // Every edge is recorded here, gating or not -- a node with a mix of both
+  // (e.g. a direct "skip if small" edge alongside an unconditional edge from
+  // an approval gate) must still run when the unconditional path is
+  // satisfied, even if its other, unrelated gating edge fails. Excluding
+  // plain edges entirely (as an earlier version of this did) broke exactly
+  // that convergence: a node fed by both a failing conditional short-circuit
+  // and an approved gate needs the gate's unconditional edge to count.
+  const incomingEdges: Record<string, IncomingEdgeInfo[]> = {};
+  for (const edge of edges) {
+    const hasRule = edge.evaluationMode === "deterministic" && !!edge.rule;
+    const isGating = !!edge.condition || hasRule;
+    if (!incomingEdges[edge.targetNodeId]) incomingEdges[edge.targetNodeId] = [];
+    incomingEdges[edge.targetNodeId].push({
+      sourceNodeId: edge.sourceNodeId,
+      isGating,
+      evaluationMode: edge.evaluationMode || "ai",
+      condition: edge.condition ?? null,
+      rule: (edge.rule as RuleGroup | null) ?? null,
+    });
+  }
+
   return {
     waves,
     edgeMap,
     nodeConfig,
+    incomingEdges,
     totalNodes: nodes.length,
     totalWaves: waves.length,
     maxParallelism: waves.length > 0 ? Math.max(...waves.map((w) => w.nodes.length)) : 0,
@@ -278,10 +325,31 @@ export class DAGExecutionEngine {
     let totalCompletionTokens = 0;
     let success = true;
 
+    // Accumulates every completed node's raw output text across the whole
+    // run (not just the current wave) so a later wave's gating edges can
+    // reference any earlier node's output, not only the immediately
+    // preceding one -- computeWaves builds arbitrary DAGs, not fixed tiers.
+    const nodeOutputText = new Map<string, string>();
+    const nodeLabelById = new Map<string, string>(
+      Object.entries(config.executionPlan.nodeConfig).map(([id, nc]) => [id, nc.label]),
+    );
+    // A node fed only by a skipped node's unconditional edge has no real
+    // trigger and should itself be skipped -- see filterGatedNodes.
+    const skippedNodeIds = new Set<string>();
+
     for (const wave of config.executionPlan.waves) {
       const waveStart = Date.now();
 
-      const nodePromises = wave.nodes.map((nodeId) => {
+      const { eligibleNodeIds, skippedResults } = await this.filterGatedNodes(
+        wave.nodes,
+        config.executionPlan.incomingEdges,
+        currentState,
+        nodeOutputText,
+        nodeLabelById,
+        skippedNodeIds,
+      );
+
+      const nodePromises = eligibleNodeIds.map((nodeId) => {
         config.onNodeStart?.(nodeId, wave.wave_number);
         return this.executeNode(nodeId, currentState, config);
       });
@@ -289,7 +357,7 @@ export class DAGExecutionEngine {
       let nodeResults: NodeExecutionResult[];
 
       if (config.errorStrategy === "fail_fast") {
-        nodeResults = await Promise.all(nodePromises);
+        nodeResults = [...skippedResults, ...(await Promise.all(nodePromises))];
         const failed = nodeResults.find((r) => r.status === "failed");
         if (failed) {
           const waveResult: WaveExecutionResult = {
@@ -307,11 +375,11 @@ export class DAGExecutionEngine {
         }
       } else {
         const settled = await Promise.allSettled(nodePromises);
-        nodeResults = settled.map((s, i) => {
+        const executedResults = settled.map((s, i) => {
           if (s.status === "fulfilled") return s.value;
-          const nc = config.executionPlan.nodeConfig[wave.nodes[i]];
+          const nc = config.executionPlan.nodeConfig[eligibleNodeIds[i]];
           return {
-            nodeId: wave.nodes[i],
+            nodeId: eligibleNodeIds[i],
             agentId: nc?.agentId || "",
             status: "failed" as const,
             output: nc?.fallbackOutput ? { [nc.stateKey]: nc.fallbackOutput } : {},
@@ -322,13 +390,26 @@ export class DAGExecutionEngine {
             traceId: "",
           };
         });
+        nodeResults = [...skippedResults, ...executedResults];
         if (nodeResults.some((r) => r.status === "failed")) success = false;
       }
+
+      // Skipped and executed results were assembled as two separate lists --
+      // restore wave.nodes' original order so the wave display doesn't jumble
+      // gated nodes to the front.
+      const resultByNodeId = new Map(nodeResults.map((r) => [r.nodeId, r]));
+      nodeResults = wave.nodes.map((id) => resultByNodeId.get(id)!);
 
       for (const nr of nodeResults) {
         config.onNodeComplete?.(nr.nodeId, wave.wave_number, nr);
         totalPromptTokens += nr.promptTokens;
         totalCompletionTokens += nr.completionTokens;
+        if (nr.status === "skipped") skippedNodeIds.add(nr.nodeId);
+        const nc = config.executionPlan.nodeConfig[nr.nodeId];
+        if (nc && nr.status === "completed") {
+          const value = nr.output[nc.stateKey];
+          if (value != null) nodeOutputText.set(nr.nodeId, typeof value === "string" ? value : JSON.stringify(value));
+        }
       }
 
       currentState = mergeWaveOutputs(currentState, nodeResults, config.stateSchema);
@@ -345,9 +426,97 @@ export class DAGExecutionEngine {
       if (config.onWaveComplete) {
         await config.onWaveComplete(wave.wave_number, currentState);
       }
+
+      // A rejected/timed-out approval gate always halts the pipeline, even
+      // under errorStrategy "best_effort" -- unlike an ordinary failed node,
+      // there is no sensible "continue anyway" for a decision nobody made.
+      // (fail_fast already halts on any failure via the throw above.)
+      const rejectedGate = nodeResults.find(
+        (nr) => nr.status === "failed" && config.executionPlan.nodeConfig[nr.nodeId]?.gateType,
+      );
+      if (rejectedGate) {
+        success = false;
+        break;
+      }
     }
 
     return { finalState: currentState, waveResults, totalPromptTokens, totalCompletionTokens, success };
+  }
+
+  /**
+   * Splits a wave's node ids into those actually eligible to run and those
+   * gated out, synthesizing a "skipped" result for the latter so they still
+   * show up in the wave's timeline. A node with no incoming edges always
+   * runs (root). A node with incoming edges runs if ANY of them is
+   * satisfied (OR across all incoming edges, gating or not):
+   *   - a plain (non-gating) edge is satisfied as long as its source
+   *     actually ran (wasn't itself skipped) -- it exists only to order
+   *     execution and must not block the node it points to just because
+   *     ANOTHER, unrelated gating edge into the same node failed. This is
+   *     what makes a "direct skip if small" edge and an "unconditional edge
+   *     from an approval gate" converge correctly on one downstream node.
+   *   - a gating edge is satisfied only if its condition/rule evaluates true.
+   * Mirrors executeTeamPipeline's conditional-edge-filtering semantics
+   * (agent-runtime.ts) for the gating half; the plain-edge half is this
+   * engine's own addition since computeWaves supports arbitrary DAGs, not
+   * just executeTeamPipeline's fixed linear tiers.
+   */
+  private async filterGatedNodes(
+    nodeIds: string[],
+    incomingEdges: Record<string, IncomingEdgeInfo[]>,
+    currentState: Record<string, any>,
+    nodeOutputText: Map<string, string>,
+    nodeLabelById: Map<string, string>,
+    skippedNodeIds: Set<string>,
+  ): Promise<{ eligibleNodeIds: string[]; skippedResults: NodeExecutionResult[] }> {
+    if (nodeIds.every((id) => (incomingEdges[id]?.length ?? 0) === 0)) {
+      return { eligibleNodeIds: nodeIds, skippedResults: [] };
+    }
+
+    // Built once per wave, not per node -- shared across every gating check.
+    const pipelineState = buildPipelineState(nodeOutputText, nodeLabelById);
+
+    const eligibleNodeIds: string[] = [];
+    const skippedResults: NodeExecutionResult[] = [];
+
+    for (const nodeId of nodeIds) {
+      const incoming = incomingEdges[nodeId];
+      if (!incoming || incoming.length === 0) {
+        eligibleNodeIds.push(nodeId);
+        continue;
+      }
+
+      const outcomes = await Promise.all(incoming.map(async (edge) => {
+        if (!edge.isGating) return !skippedNodeIds.has(edge.sourceNodeId);
+        if (edge.evaluationMode === "deterministic" && edge.rule) {
+          return evaluateRule(edge.rule, pipelineState).result;
+        }
+        // An edge with an unresolved (skipped) source has no output to
+        // judge a condition against -- treat it as not satisfied rather
+        // than defaulting open, so a skip doesn't silently cascade approval.
+        const sourceOutput = nodeOutputText.get(edge.sourceNodeId);
+        if (sourceOutput == null) return false;
+        return evaluateCondition(edge.condition || "", sourceOutput);
+      }));
+
+      if (outcomes.some(Boolean)) {
+        eligibleNodeIds.push(nodeId);
+      } else {
+        skippedResults.push({
+          nodeId,
+          agentId: "",
+          status: "skipped",
+          output: {},
+          error: "No incoming edge condition was satisfied",
+          durationMs: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          traceId: "",
+        });
+      }
+    }
+
+    return { eligibleNodeIds, skippedResults };
   }
 
   /**
@@ -380,6 +549,10 @@ export class DAGExecutionEngine {
 
     if (nc.nodeType === "skill" && nc.refSkillId) {
       return this.executeSkillNode(nodeId, nc, start);
+    }
+
+    if (nc.nodeType === "edge_gate" || nc.gateType) {
+      return this.executeGateNode(nodeId, nc, currentState, config, start);
     }
 
     if (nc.refTeamAgentId) {
@@ -493,6 +666,56 @@ export class DAGExecutionEngine {
   }
 
   /**
+   * Real human-in-the-loop gate. Creates a genuine row in the existing
+   * `approvals` table (same one the Approvals page already reads/writes) and
+   * blocks this wave until a person approves or rejects it -- reusing
+   * waitForApproval(), the exact mechanism the older executeTeamPipeline
+   * engine already relies on, rather than a role-played "Manager Approval"
+   * LLM call pretending to be a human decision.
+   */
+  private async executeGateNode(
+    nodeId: string,
+    nc: NodePlanConfig,
+    currentState: Record<string, any>,
+    config: DAGExecutionConfig,
+    start: number,
+  ): Promise<NodeExecutionResult> {
+    // Human decision time, not LLM-call time -- the generic 30s node default
+    // (meant for LLM timeouts) would expire a gate almost immediately, so a
+    // gate always gets at least the same 30-minute floor the old engine used.
+    const timeoutMs = Math.max(nc.timeoutMs, 30 * 60 * 1000);
+    const context = Object.entries(currentState)
+      .filter(([k]) => k !== "request")
+      .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+      .join("\n") || (currentState.request as string) || "";
+
+    let approvalId = "";
+    const result = await waitForApproval(
+      config.teamAgentId,
+      nc.label || "Approval Gate",
+      nc.gateType || "approval",
+      context,
+      timeoutMs,
+      (id) => {
+        approvalId = id;
+        config.onApprovalPending?.(nodeId, id);
+      },
+    );
+
+    return {
+      nodeId,
+      agentId: "",
+      status: result.approved ? "completed" : "failed",
+      output: result.approved ? { [nc.stateKey]: { approved: true, decidedBy: result.decidedBy } } : {},
+      error: result.approved ? undefined : (result.reason || "Approval gate rejected or timed out"),
+      durationMs: Date.now() - start,
+      promptTokens: 0,
+      completionTokens: 0,
+      traceId: approvalId,
+    };
+  }
+
+  /**
    * Recursive execution for team_reference nodes.
    * The child team's blueprint is loaded, waves are computed, and the DAG engine
    * calls itself recursively with the current shared state as the child's initialState.
@@ -552,7 +775,9 @@ export class DAGExecutionEngine {
       stateSchema: childSchema,
       initialState: { ...currentState },
       errorStrategy: config.errorStrategy,
+      teamAgentId,
       onWaveComplete: config.onWaveComplete,
+      onApprovalPending: config.onApprovalPending,
     });
 
     const durationMs = Date.now() - start;
@@ -606,7 +831,7 @@ export class DAGExecutionEngine {
       return {
         success: (result as any).success,
         output: (result as any).output || "",
-        error: (result as any).success ? undefined : `Agent execution failed`,
+        error: (result as any).success ? undefined : ((result as any).step?.error || `Agent execution failed`),
         promptTokens: 0,
         completionTokens: 0,
         traceId: (result as any).step?.id || "",
@@ -615,4 +840,180 @@ export class DAGExecutionEngine {
       return { success: false, output: "", error: err.message };
     }
   }
+}
+
+export interface RunTeamAgentDagOptions {
+  errorStrategy?: "fail_fast" | "best_effort";
+  onNodeStart?: (nodeId: string, wave: number, label: string, totalWaves: number) => void;
+  onNodeComplete?: (nodeId: string, wave: number, label: string, result: NodeExecutionResult, totalWaves: number) => void;
+  onApprovalPending?: (nodeId: string, wave: number, label: string, totalWaves: number, approvalId: string) => void;
+}
+
+interface DagRunSetup {
+  dagRun: DagExecutionRun;
+  wavePlan: ComputedWavePlan;
+  stateSchema: Record<string, StateFieldDef>;
+  initialState: Record<string, any>;
+  nodeWave: Record<string, number>;
+}
+
+// Looks up a team agent's blueprint nodes/edges, computes the wave plan, and
+// persists the "pending run" row up front -- split out from execution so a
+// caller can hand the dagRunId to a client to watch BEFORE the (potentially
+// 30-minute, if a gate is hit) execution finishes. Throws "Blueprint has no
+// nodes to run" before anything is persisted if the blueprint is empty.
+async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, request: string): Promise<DagRunSetup> {
+  const [nodes, edges] = await Promise.all([
+    storage.getTeamBlueprintNodes(blueprintId),
+    storage.getTeamBlueprintEdges(blueprintId),
+  ]);
+  if (nodes.length === 0) throw new Error("Blueprint has no nodes to run");
+
+  const wavePlan = computeWaves(nodes, edges);
+  const nodeWave: Record<string, number> = {};
+  for (const wave of wavePlan.waves) {
+    for (const nodeId of wave.nodes) nodeWave[nodeId] = wave.wave_number;
+  }
+
+  const existingSchema = await storage.getDagStateSchemaByTeamAgent(teamAgentId);
+  const stateSchema: Record<string, StateFieldDef> = existingSchema
+    ? (existingSchema.fields as Record<string, StateFieldDef>)
+    : {};
+
+  const initialState: Record<string, any> = { request };
+
+  const dagRun = await storage.createDagExecutionRun({
+    teamAgentId,
+    pipelineRunId: null,
+    pipelineStageId: null,
+    executionPlanId: null,
+    stateSchemaId: existingSchema?.id || null,
+    initialState,
+    currentState: initialState,
+    finalState: null,
+    status: "running",
+    currentWave: 0,
+    totalWaves: wavePlan.totalWaves,
+    startedAt: new Date(),
+    waveResults: [],
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+  });
+
+  return { dagRun, wavePlan, stateSchema, initialState, nodeWave };
+}
+
+// Drives DAGExecutionEngine against an already-persisted run row, keeping
+// currentWave/currentState (and, mid-wave, a "waiting_approval" status) live
+// in the DB as it goes, then writes the final status/state. Shared by both
+// the awaited (runTeamAgentDag) and fire-and-forget (startTeamAgentDagRun)
+// entry points so the two never drift on what "finished" writes to the row.
+async function executeTeamAgentDagRun(
+  setup: DagRunSetup,
+  teamAgentId: string,
+  opts?: RunTeamAgentDagOptions,
+): Promise<DAGExecutionResult> {
+  const { dagRun, wavePlan, stateSchema, initialState, nodeWave } = setup;
+  const engine = new DAGExecutionEngine();
+  try {
+    const result = await engine.execute({
+      executionPlan: wavePlan,
+      stateSchema,
+      initialState,
+      errorStrategy: opts?.errorStrategy || "best_effort",
+      teamAgentId,
+      onNodeStart: (nodeId, wave) => opts?.onNodeStart?.(nodeId, wave, wavePlan.nodeConfig[nodeId]?.label || nodeId, wavePlan.totalWaves),
+      onNodeComplete: (nodeId, wave, r) => opts?.onNodeComplete?.(nodeId, wave, wavePlan.nodeConfig[nodeId]?.label || nodeId, r, wavePlan.totalWaves),
+      onApprovalPending: (nodeId, approvalId) => {
+        // Marks the row so a polling monitoring view can distinguish "stuck
+        // waiting on a person" from an ordinary in-flight wave -- cleared
+        // back to "running" below as soon as the wave (gate included)
+        // finishes, since by then the decision has already been made.
+        storage.updateDagExecutionRun(dagRun.id, { status: "waiting_approval" }).catch(() => {});
+        opts?.onApprovalPending?.(nodeId, nodeWave[nodeId] ?? 0, wavePlan.nodeConfig[nodeId]?.label || nodeId, wavePlan.totalWaves, approvalId);
+      },
+      onWaveComplete: async (waveNum, state) => {
+        await storage.updateDagExecutionRun(dagRun.id, { status: "running", currentWave: waveNum, currentState: state });
+      },
+    });
+
+    await storage.updateDagExecutionRun(dagRun.id, {
+      status: result.success ? "completed" : "failed",
+      finalState: result.finalState,
+      currentState: result.finalState,
+      waveResults: result.waveResults as any,
+      totalPromptTokens: result.totalPromptTokens,
+      totalCompletionTokens: result.totalCompletionTokens,
+      completedAt: new Date(),
+    });
+
+    return result;
+  } catch (execErr: any) {
+    const isDagError = execErr instanceof DAGExecutionError;
+    await storage.updateDagExecutionRun(dagRun.id, {
+      status: "failed",
+      error: execErr.message,
+      waveResults: isDagError ? (execErr.context.waveResults as any) : [],
+      completedAt: new Date(),
+    });
+    // Callers (the run-dag route) still want to point the user at the failed
+    // run record even though the promise rejected -- attach it rather than
+    // making every caller thread a separate try/catch around each awaited step.
+    execErr.dagRunId = dagRun.id;
+    throw execErr;
+  }
+}
+
+// Shared bootstrap for "run this team agent's real graph right now" --
+// looks up its blueprint's nodes/edges, computes the wave plan, and drives
+// DAGExecutionEngine, awaiting the full run before returning. The Workspace
+// team-run path (workspace-run.ts) uses this variant because it needs the
+// final answer to build one chat response.
+export async function runTeamAgentDag(
+  teamAgentId: string,
+  blueprintId: string,
+  request: string,
+  opts?: RunTeamAgentDagOptions,
+): Promise<{ dagRunId: string; result: DAGExecutionResult; wavePlan: ComputedWavePlan }> {
+  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request);
+  const result = await executeTeamAgentDagRun(setup, teamAgentId, opts);
+  return { dagRunId: setup.dagRun.id, result, wavePlan: setup.wavePlan };
+}
+
+// Same underlying run, but returns as soon as the run row exists instead of
+// waiting for the (possibly 30-minute, if a gate is hit) execution to finish
+// -- so a caller like POST /api/team-agents/:id/run-dag can hand the
+// dagRunId straight to the UI and let it watch the run live via
+// GET /api/dag-execution-runs/:id/waves, rather than the request hanging
+// for the full duration. Execution errors are swallowed here (already
+// persisted onto the run row by executeTeamAgentDagRun) since there is no
+// caller left awaiting this promise to report them to.
+export async function startTeamAgentDagRun(
+  teamAgentId: string,
+  blueprintId: string,
+  request: string,
+  opts?: RunTeamAgentDagOptions,
+): Promise<{ dagRunId: string; wavePlan: ComputedWavePlan }> {
+  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request);
+  executeTeamAgentDagRun(setup, teamAgentId, opts).catch((err) => {
+    console.error(`[dag-run] ${setup.dagRun.id} failed:`, err.message);
+  });
+  return { dagRunId: setup.dagRun.id, wavePlan: setup.wavePlan };
+}
+
+// Reads the last wave's node output(s) out of a finished run's finalState --
+// the natural "answer" for a caller (like Workspace chat) that wants one
+// piece of text summarizing the whole pipeline rather than the full
+// per-node wave trace.
+export function extractFinalOutputText(result: DAGExecutionResult, wavePlan: ComputedWavePlan): string {
+  const lastWave = wavePlan.waves[wavePlan.waves.length - 1];
+  if (!lastWave) return result.success ? "Team pipeline completed with no output." : "Team pipeline failed.";
+  const parts = lastWave.nodes.map((nodeId) => {
+    const nc = wavePlan.nodeConfig[nodeId];
+    const value = nc ? result.finalState[nc.stateKey] : undefined;
+    if (value == null) return null;
+    return typeof value === "string" ? value : JSON.stringify(value);
+  }).filter((v): v is string => !!v);
+  if (parts.length === 0) return result.success ? "Team pipeline completed with no text output." : "Team pipeline failed.";
+  return parts.join("\n\n---\n\n");
 }

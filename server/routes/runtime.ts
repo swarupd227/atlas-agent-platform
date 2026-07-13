@@ -4,7 +4,7 @@ import { storage } from "../storage";
 import { db } from "../db";
 import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
 import { llmInvokeRateLimiter } from "../rate-limits";
-import { computeWaves, DAGExecutionEngine, DAGExecutionError } from "../dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
 import { mergeIntoWorkflowState, sanitizeForCheckpoint, writeStageCompleteCheckpoint } from "../workflow-state-helpers";
 import { desc, eq, and, sql } from "drizzle-orm";
@@ -15992,6 +15992,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
             stateSchema,
             initialState,
             errorStrategy: currentStage.config?.errorStrategy || "best_effort",
+            teamAgentId,
             onWaveComplete: async (waveNum: number, state: Record<string, any>) => {
               await storage.updateDagExecutionRun(dagRun.id, {
                 currentWave: waveNum,
@@ -17889,6 +17890,12 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   // was no way to run one directly. This mirrors that same wave-by-wave
   // DAGExecutionEngine flow without a pipeline wrapper, persisting a
   // dagExecutionRuns row (pipelineRunId left null) so the run is still auditable.
+  //
+  // Responds as soon as the run row is created rather than awaiting the full
+  // execution -- a run can legitimately take 30+ minutes if it hits a human-
+  // approval gate, and the caller (the graph editor's "Run" action) wants the
+  // dagRunId immediately so it can send the user to the live monitoring view
+  // (GET /api/dag-execution-runs/:id/waves) instead of holding the request open.
   router.post("/api/team-agents/:teamAgentId/run-dag", checkPermission("manage_agents"), async (req, res) => {
     try {
       const teamAgentId = req.params.teamAgentId as string;
@@ -17897,80 +17904,41 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const blueprintId: string | undefined = (teamAgent as any).blueprintId;
       if (!blueprintId) return res.status(400).json({ error: "Agent has no blueprintId" });
 
-      const [nodes, edges] = await Promise.all([
-        storage.getTeamBlueprintNodes(blueprintId),
-        storage.getTeamBlueprintEdges(blueprintId),
-      ]);
-      if (nodes.length === 0) return res.status(400).json({ error: "Blueprint has no nodes to run" });
-
-      const wavePlan = computeWaves(nodes, edges);
-
-      const existingSchema = await storage.getDagStateSchemaByTeamAgent(teamAgentId);
-      const stateSchema: Record<string, StateFieldDef> = existingSchema
-        ? (existingSchema.fields as Record<string, StateFieldDef>)
-        : {};
-
-      const initialState: Record<string, any> = { request: req.body?.request || "" };
-
-      const dagRun = await storage.createDagExecutionRun({
-        pipelineRunId: null,
-        pipelineStageId: null,
-        executionPlanId: null,
-        stateSchemaId: existingSchema?.id || null,
-        initialState,
-        currentState: initialState,
-        finalState: null,
-        status: "running",
-        currentWave: 0,
-        totalWaves: wavePlan.totalWaves,
-        startedAt: new Date(),
-        waveResults: [],
-        totalPromptTokens: 0,
-        totalCompletionTokens: 0,
-      });
-
-      const engine = new DAGExecutionEngine();
       try {
-        const dagResult = await engine.execute({
-          executionPlan: wavePlan,
-          stateSchema,
-          initialState,
-          errorStrategy: (req.body?.errorStrategy as "fail_fast" | "best_effort") || "best_effort",
-          onWaveComplete: async (waveNum: number, state: Record<string, any>) => {
-            await storage.updateDagExecutionRun(dagRun.id, { currentWave: waveNum, currentState: state });
-          },
-        });
+        const { dagRunId, wavePlan } = await startTeamAgentDagRun(
+          teamAgentId,
+          blueprintId,
+          req.body?.request || "",
+          { errorStrategy: (req.body?.errorStrategy as "fail_fast" | "best_effort") || "best_effort" },
+        );
 
-        await storage.updateDagExecutionRun(dagRun.id, {
-          status: dagResult.success ? "completed" : "failed",
-          finalState: dagResult.finalState,
-          currentState: dagResult.finalState,
-          waveResults: dagResult.waveResults as any,
-          totalPromptTokens: dagResult.totalPromptTokens,
-          totalCompletionTokens: dagResult.totalCompletionTokens,
-          completedAt: new Date(),
-        });
-
-        res.json({
-          dagRunId: dagRun.id,
-          success: dagResult.success,
-          finalState: dagResult.finalState,
-          waveResults: dagResult.waveResults,
-          totalPromptTokens: dagResult.totalPromptTokens,
-          totalCompletionTokens: dagResult.totalCompletionTokens,
+        res.status(202).json({
+          dagRunId,
+          status: "running",
+          totalWaves: wavePlan.totalWaves,
+          totalNodes: wavePlan.totalNodes,
         });
       } catch (execErr: any) {
-        const isDagError = execErr instanceof DAGExecutionError;
-        await storage.updateDagExecutionRun(dagRun.id, {
-          status: "failed",
-          error: execErr.message,
-          waveResults: isDagError ? (execErr.context.waveResults as any) : [],
-          completedAt: new Date(),
-        });
-        res.status(500).json({ error: execErr.message, dagRunId: dagRun.id });
+        if (execErr.message === "Blueprint has no nodes to run") {
+          return res.status(400).json({ error: execErr.message });
+        }
+        res.status(500).json({ error: execErr.message, dagRunId: execErr.dagRunId });
       }
     } catch (e: any) {
       console.error("[run-dag] error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── List recent standalone DAG runs for a team agent (monitoring view) ───
+  router.get("/api/team-agents/:teamAgentId/dag-runs", async (req, res) => {
+    try {
+      const teamAgentId = req.params.teamAgentId as string;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      const runs = await storage.listDagExecutionRunsByTeamAgent(teamAgentId, limit);
+      res.json(runs);
+    } catch (e: any) {
+      console.error("[dag-runs] list error:", e);
       res.status(500).json({ error: e.message });
     }
   });

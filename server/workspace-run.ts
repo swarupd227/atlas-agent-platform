@@ -27,6 +27,7 @@ import { resolvePolicyBundle, buildAgentSystemPrompt } from "./routes/helpers";
 import { getProvider, completeWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage } from "./llm-provider";
 import { RunSpanCollector } from "./run-spans";
 import { canonicalJsonStringify } from "./agent-runtime";
+import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
 
@@ -41,7 +42,9 @@ export type WorkspaceEvent =
   | { type: "awaiting_approval"; approvalId: string | null; tool: string; summary: string; args: Record<string, any> }
   | { type: "completed"; output: string; costUsd: number; traceId: string | null }
   | { type: "denied"; tool: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "team_progress"; wave: number; totalWaves: number; nodeLabel: string; status: "running" | "completed" | "failed" }
+  | { type: "team_awaiting_approval"; wave: number; totalWaves: number; nodeLabel: string; approvalId: string };
 export type OnWorkspaceEvent = (e: WorkspaceEvent) => void;
 const NOOP: OnWorkspaceEvent = () => {};
 
@@ -189,6 +192,12 @@ export async function startWorkspaceRun(params: {
   const agent = await storage.getAgent(agentId, orgId);
   if (!agent) throw new Error("Agent not found");
 
+  const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+  const isTeamAgent = agent.agentType === "team" && Array.isArray(rtConfig.orchestration?.workerIds) && rtConfig.orchestration.workerIds.length > 0;
+  if (isTeamAgent) {
+    return runTeamWorkspaceRun(agent, rtConfig, input, orgId, actorId, onEvent);
+  }
+
   const mcpLinks = await storage.getAgentMcpServers(agentId);
   const mcpServerIds = mcpLinks.map((l: any) => l.serverId);
   const skillAllowlist = await resolveSkillAllowlist(agent);
@@ -232,6 +241,160 @@ export async function startWorkspaceRun(params: {
 
   onEvent({ type: "run_started", runId: run.id, agentId, agentName: agent.name });
   return advance(run.id, agentId, orgId, undefined, onEvent);
+}
+
+/**
+ * Team-agent path for the Workspace. The main advance()/resumeWorkspaceRun()
+ * loop above is a single-agent, checkpoint-based tool-calling machine --
+ * fundamentally different from DAGExecutionEngine's wave-by-wave graph
+ * execution (parallel tiers, deterministic/AI conditional edges, worker
+ * fan-out). Rather than force those two execution models into one, this
+ * calls the SAME runTeamAgentDag() helper POST /api/team-agents/:id/run-dag
+ * uses -- so a team agent behaves identically whether it's run from
+ * Workspace, the graph editor, or (eventually) a schedule/webhook -- and
+ * adapts its result into a WorkspaceRunView so the Workspace UI renders it
+ * exactly like any other run -- same answer card, same cost line, same
+ * signed-trace record, plus live per-node progress events as each wave runs.
+ *
+ * Gate nodes create a real row in the `approvals` table and block their wave
+ * until a person decides (see DAGExecutionEngine.executeGateNode /
+ * waitForApproval) -- unlike the single-agent loop's tool-approval gates,
+ * this blocks in-process rather than suspending the workspaceRuns row itself,
+ * since runTeamAgentDag() already awaits the whole pipeline synchronously.
+ * The onApprovalPending callback below surfaces that wait as a
+ * "team_awaiting_approval" event so the live SSE stream doesn't go dark for
+ * the (up to 30-minute) duration of the wait.
+ */
+async function runTeamWorkspaceRun(
+  agent: NonNullable<Awaited<ReturnType<typeof storage.getAgent>>>,
+  rtConfig: Record<string, any>,
+  input: string,
+  orgId: string | undefined,
+  actorId: string | undefined,
+  onEvent: OnWorkspaceEvent,
+): Promise<WorkspaceRunView> {
+  const agentId = agent.id;
+  const mcpLinks = await storage.getAgentMcpServers(agentId);
+  const mcpServerIds = mcpLinks.map((l: any) => l.serverId);
+  const startMs = Date.now();
+  const blueprintId: string | undefined = (agent as any).blueprintId || rtConfig.orchestration?.blueprintId || undefined;
+
+  const [run] = await db.insert(workspaceRuns).values({
+    organizationId: orgId ?? undefined,
+    agentId,
+    status: "running",
+    requestText: input,
+    actorId: actorId ?? undefined,
+    checkpoint: {
+      messages: [], iterationsUsed: 0, steps: [], totalCostUsd: 0,
+      totalTokens: { prompt: 0, completion: 0, total: 0 },
+      mcpServerIds, modelName: agent.modelName || "gpt-4.1",
+      maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
+      skillAllowlist: null,
+    } as any,
+  }).returning();
+
+  onEvent({ type: "run_started", runId: run.id, agentId, agentName: agent.name });
+
+  if (!blueprintId) {
+    const message = "This team has no blueprint graph to run -- open it in the graph editor first.";
+    onEvent({ type: "error", message });
+    await db.update(workspaceRuns).set({ status: "failed", outputSummary: message, updatedAt: new Date() }).where(eq(workspaceRuns.id, run.id));
+    const [failedRun] = await db.select().from(workspaceRuns).where(eq(workspaceRuns.id, run.id)).limit(1);
+    return view(failedRun);
+  }
+
+  let dagRunId: string | undefined;
+  let output: string;
+  let status: "completed" | "failed";
+  let waveResultsForTrace: any[] = [];
+  let dagResultForProvenance: { totalNodes: number; totalWaves: number } = { totalNodes: 0, totalWaves: 0 };
+
+  try {
+    const { dagRunId: id, result, wavePlan } = await runTeamAgentDag(agentId, blueprintId, input, {
+      errorStrategy: "best_effort",
+      onNodeStart: (_nodeId, wave, label, totalWaves) => {
+        onEvent({ type: "team_progress", wave, totalWaves, nodeLabel: label, status: "running" });
+      },
+      onNodeComplete: (_nodeId, wave, label, r, totalWaves) => {
+        onEvent({ type: "team_progress", wave, totalWaves, nodeLabel: label, status: r.status === "completed" ? "completed" : "failed" });
+      },
+      onApprovalPending: (_nodeId, wave, label, totalWaves, approvalId) => {
+        onEvent({ type: "team_awaiting_approval", wave, totalWaves, nodeLabel: label, approvalId });
+      },
+    });
+    dagRunId = id;
+    output = extractFinalOutputText(result, wavePlan);
+    status = result.success ? "completed" : "failed";
+    waveResultsForTrace = result.waveResults;
+    dagResultForProvenance = { totalNodes: wavePlan.totalNodes, totalWaves: wavePlan.totalWaves };
+  } catch (execErr: any) {
+    output = `Team pipeline failed: ${execErr.message}`;
+    status = "failed";
+    dagRunId = execErr.dagRunId;
+  }
+
+  // DAGExecutionEngine doesn't currently aggregate a total cost across worker
+  // agents (each worker's own cost is tracked on its own trace, not rolled
+  // up here) -- known gap, not blocking.
+  const costUsd = 0;
+
+  let traceId: string | null = null;
+  try {
+    const provenanceSnapshot = {
+      engine: "workspace-run-team-dag",
+      priceTableVersion: PRICE_TABLE_VERSION,
+      dagRunId,
+      totalNodes: dagResultForProvenance.totalNodes,
+      totalWaves: dagResultForProvenance.totalWaves,
+      capturedAt: new Date().toISOString(),
+    };
+    const provenanceHash = createHash("sha256").update(canonicalJsonStringify(provenanceSnapshot)).digest("hex");
+    const trace = await storage.createTrace({
+      agentId,
+      environment: "workspace",
+      status,
+      inputSummary: input.slice(0, 500),
+      outputSummary: output.slice(0, 500),
+      costUsd,
+      latencyMs: Date.now() - startMs,
+      modelId: agent.modelName || "gpt-4.1",
+      stepsJson: waveResultsForTrace as any,
+      provenanceSnapshot: provenanceSnapshot as any,
+      provenanceHash,
+      triggeredBy: "workspace",
+      organizationId: orgId ?? undefined,
+    } as any);
+    traceId = trace.id;
+    const auditEvent = await storage.createAuditEvent({
+      actorType: "system",
+      actorId: "provenance_engine",
+      action: "provenance.captured",
+      objectType: "run_trace",
+      objectId: trace.id,
+      organizationId: orgId ?? undefined,
+      details: JSON.stringify({ provenanceHash, agentId, engine: "workspace-run-team-dag" }),
+    });
+    if (auditEvent && auditEvent.id) await storage.updateTrace(trace.id, { auditEventId: auditEvent.id });
+  } catch (e: any) {
+    console.error("[workspace-run] team trace write failed (non-fatal):", e.message);
+  }
+
+  await db.update(workspaceRuns).set({
+    status, outputSummary: output.slice(0, 4000), costUsd, traceId: traceId ?? undefined,
+    checkpoint: {
+      messages: [], iterationsUsed: 0, steps: waveResultsForTrace, totalCostUsd: costUsd,
+      totalTokens: { prompt: 0, completion: 0, total: 0 },
+      mcpServerIds, modelName: agent.modelName || "gpt-4.1",
+      maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
+      skillAllowlist: null,
+    } as any,
+    updatedAt: new Date(),
+  }).where(eq(workspaceRuns.id, run.id));
+
+  onEvent({ type: "completed", output, costUsd, traceId });
+  const [fresh] = await db.select().from(workspaceRuns).where(eq(workspaceRuns.id, run.id)).limit(1);
+  return view(fresh);
 }
 
 /** Resume a suspended run after a human decision.
@@ -322,12 +485,27 @@ const WORKSPACE_RUNNABLE_STATUSES = new Set(["active", "deployed"]);
  *  - full-access roles (admin) see every runnable agent;
  *  - others see agents whose workspaceAudience is empty (public) OR includes
  *    their role.
+ *  - internal workers that belong to a team blueprint (e.g. "Manager Approval
+ *    Agent" inside an expense-approval team) are excluded — a business user
+ *    should address the team's orchestrator, not its implementation-detail
+ *    sub-agents (UX audit F-4).
  */
 export async function getWorkspaceAgents(orgId: string | undefined, role: string): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string }>> {
   const all = await storage.getAgents(orgId);
   const isFullAccess = role === "admin";
+
+  const teamAgents = all.filter(a => a.agentType === "team" && !!(a as any).blueprintId);
+  const subWorkerIds = new Set<string>();
+  for (const teamAgent of teamAgents) {
+    const nodes = await storage.getTeamBlueprintNodes((teamAgent as any).blueprintId);
+    for (const node of nodes) {
+      if (node.refAgentId && node.refAgentId !== teamAgent.id) subWorkerIds.add(node.refAgentId);
+    }
+  }
+
   return all
     .filter(a => WORKSPACE_RUNNABLE_STATUSES.has(a.status))
+    .filter(a => !subWorkerIds.has(a.id))
     .filter(a => {
       if (isFullAccess) return true;
       const audience = ((a as any).workspaceAudience as string[] | null) ?? [];

@@ -30,6 +30,9 @@ import {
   ArrowRight,
   Wrench,
   AppWindow,
+  ChevronDown,
+  ChevronUp,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,7 +57,7 @@ import {
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/status-badge";
 import { DiffViewer } from "@/components/diff-viewer";
-import { PermissionGate, usePermission } from "@/components/role-provider";
+import { PermissionGate, usePermission, useRole } from "@/components/role-provider";
 import type { Approval, Agent, EvalSuite, Policy, AuditEvent, McpApp } from "@shared/schema";
 import McpAppRenderer from "@/components/mcp-app-renderer";
 
@@ -76,6 +79,8 @@ export default function ApprovalDetail() {
   const approvalId = params?.id;
   const { toast } = useToast();
   const approvalPerm = usePermission("approve_changes");
+  const { isBusinessMode } = useRole();
+  const [showTechnical, setShowTechnical] = useState(false);
 
   const [constraintsOpen, setConstraintsOpen] = useState(false);
   const [labelingOpen, setLabelingOpen] = useState(false);
@@ -214,6 +219,7 @@ export default function ApprovalDetail() {
   })();
 
   const riskColor = riskScore > 7 ? "text-red-600 dark:text-red-400" : riskScore > 4 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400";
+  const riskBucket = riskScore > 7 ? "High" : riskScore > 4 ? "Medium" : "Low";
 
   const dueDate = approval.dueDate ? new Date(approval.dueDate) : null;
   const isOverdue = dueDate && dueDate < new Date();
@@ -255,6 +261,19 @@ export default function ApprovalDetail() {
           <p className="text-sm text-muted-foreground" data-testid="text-description">
             {approval.description}
           </p>
+        )}
+
+        {isBusinessMode && (
+          <Card className="border-primary/20 bg-primary/5" data-testid="panel-business-summary">
+            <CardContent className="p-4 flex items-start gap-3">
+              <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+              <p className="text-sm" data-testid="text-business-summary">
+                This approves <span className="font-medium">{approval.objectName || "the proposed change"}</span>.
+                {" "}AI recommendation: <span className="font-medium">{computedRecommendation}</span>.
+                {" "}Estimated risk: <span className="font-medium">{riskBucket}</span>.
+              </p>
+            </CardContent>
+          </Card>
         )}
 
         <PermissionGate action="approve_changes">
@@ -672,6 +691,22 @@ export default function ApprovalDetail() {
           </CardContent>
         </Card>
 
+        {isBusinessMode && (
+          <div className="md:col-span-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowTechnical(v => !v)}
+              data-testid="button-toggle-technical-details"
+            >
+              {showTechnical ? <ChevronUp className="w-3.5 h-3.5 mr-1.5" /> : <ChevronDown className="w-3.5 h-3.5 mr-1.5" />}
+              {showTechnical ? "Hide technical details" : "View technical details"}
+            </Button>
+          </div>
+        )}
+
+        {(!isBusinessMode || showTechnical) && (
+        <>
         {/* Diff Viewer Panel */}
         <Card data-testid="panel-diff-viewer">
           <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
@@ -1063,6 +1098,8 @@ export default function ApprovalDetail() {
             </div>
           </CardContent>
         </Card>
+        </>
+        )}
 
         {/* Recommended Action Panel */}
         <Card data-testid="panel-recommended-action">

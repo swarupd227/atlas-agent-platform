@@ -45,6 +45,7 @@ const Billing = lazy(() => import("@/pages/billing"));
 const OutcomeDetail = lazy(() => import("@/pages/outcome-detail"));
 const ReleaseDetail = lazy(() => import("@/pages/release-detail"));
 const TraceDetail = lazy(() => import("@/pages/trace-detail"));
+const DagRunMonitor = lazy(() => import("@/pages/dag-run-monitor"));
 const AgentWizard = lazy(() => import("@/pages/agent-wizard"));
 const EvalDetail = lazy(() => import("@/pages/eval-detail"));
 const Evals = lazy(() => import("@/pages/evals"));
@@ -338,6 +339,7 @@ function DashboardRouter() {
       <Route path="/deployments" component={Deployments} />
       <Route path="/deployments/:id" component={ReleaseDetail} />
       <Route path="/traces/:id" component={TraceDetail} />
+      <Route path="/dag-runs/:runId" component={DagRunMonitor} />
       <Route path="/runtime/runs/:id" component={RunDetail} />
       <Route path="/agents/:agentId/runs/:id" component={RunDetail} />
       <Route path="/monitor" component={Monitor} />

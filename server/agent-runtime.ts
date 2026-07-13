@@ -11,6 +11,8 @@ import { outputContractEnforcer, StructuredOutputValidationError } from "./servi
 import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { RunSpanCollector } from "./run-spans";
+import { evaluateRule } from "./rule-evaluator";
+import type { RuleGroup } from "@shared/schema";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -1072,10 +1074,14 @@ export async function executePromptWithMcp(
     console.warn(`[skill-gate] skill enforcement skipped (non-fatal): ${sgErr.message}`);
   }
 
-  if (availableTools.length === 0 && !hasKnowledgeBases) {
-    const errorMsg = mcpServerIds.length === 0
-      ? "No MCP Server integrations or Knowledge Bases linked to this agent. Link an MCP Server or Knowledge Base to enable test runs."
-      : "No tools found in linked MCP Servers and no Knowledge Bases linked. Ensure MCP Servers have registered tools or link a Knowledge Base.";
+  // Only hard-fail when MCP servers WERE assigned but produced zero usable tools --
+  // that's a real misconfiguration (dead server, all tools policy-blocked, etc).
+  // An agent deliberately given no MCP servers and no KB at all (a reasoning-only
+  // step, or a human-approval/notification role -- e.g. "Manager Approval Agent"
+  // proposed by propose-agents) is valid and proceeds as a pure-LLM step instead
+  // of being treated as broken.
+  if (availableTools.length === 0 && !hasKnowledgeBases && mcpServerIds.length > 0) {
+    const errorMsg = "No tools found in linked MCP Servers and no Knowledge Bases linked. Ensure MCP Servers have registered tools or link a Knowledge Base.";
     steps[0].status = "failed";
     steps[0].error = errorMsg;
     steps[0].completedAt = new Date().toISOString();
@@ -1094,7 +1100,7 @@ export async function executePromptWithMcp(
     toolCount: availableTools.length,
     tools: availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription })),
     knowledgeBases: linkedKbs.length,
-    mode: availableTools.length > 0 ? "tools+kb" : "kb-only",
+    mode: availableTools.length > 0 ? "tools+kb" : (hasKnowledgeBases ? "kb-only" : "reasoning-only"),
   };
 
   emitProgress("discovery", {
@@ -2293,12 +2299,13 @@ interface ExecutionTier {
 }
 
 // ── HITL gate: create approval record in DB and poll until resolved or timeout ─
-async function waitForApproval(
+export async function waitForApproval(
   agentId: string,
   gateName: string,
   gateType: string,
   context: string,
   timeoutMs: number = 30 * 60 * 1000,
+  onCreated?: (approvalId: string) => void,
 ): Promise<{ approved: boolean; decidedBy?: string; reason?: string }> {
   const approval = await storage.createApproval({
     type: "hitl_gate",
@@ -2311,6 +2318,7 @@ async function waitForApproval(
     description: `Pipeline HITL checkpoint: ${gateName}\n\nContext:\n${context.slice(0, 2000)}`,
     riskScore: gateType === "approval" ? 0.7 : 0.4,
   });
+  onCreated?.(approval.id);
 
   console.log(`[agent-runtime] HITL gate "${gateName}" waiting for approval (id=${approval.id}, timeout=${Math.round(timeoutMs / 60000)}min)`);
 
@@ -2335,7 +2343,7 @@ async function waitForApproval(
 }
 
 // ── Conditional edge: use LLM to evaluate condition string against worker output
-async function evaluateCondition(condition: string, workerOutput: string): Promise<boolean> {
+export async function evaluateCondition(condition: string, workerOutput: string): Promise<boolean> {
   if (!condition || condition.trim().length === 0) return true;
   try {
     const result = await completeWithFallback([{
@@ -2346,6 +2354,49 @@ async function evaluateCondition(condition: string, workerOutput: string): Promi
   } catch {
     return true; // default open: don't silently block on LLM errors
   }
+}
+
+// Best-effort structured-data extraction from an agent's free-text output,
+// used to feed deterministic rule evaluation (evaluateRule). Handles a bare
+// JSON object, one wrapped in a ```json fence, or one embedded in prose --
+// agents asked to "extract these fields as JSON" commonly produce any of
+// the three depending on the model. Returns null (not a throw) if nothing
+// parseable is found, so callers can fall back to treating the output as
+// opaque text.
+function extractStructuredOutput(text: string): Record<string, any> | null {
+  if (!text) return null;
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates = [fenceMatch ? fenceMatch[1] : text];
+  const braceMatch = text.match(/\{[\s\S]*\}/);
+  if (braceMatch) candidates.push(braceMatch[0]);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate.trim());
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch { /* try next candidate */ }
+  }
+  return null;
+}
+
+// Merges every upstream node's output (parsed where possible) into one flat
+// object for deterministic rule fields to resolve against -- e.g. a rule
+// field "invoiceAmount" resolves directly without needing to know which
+// node produced it, as long as some upstream node returned it as JSON.
+// Each node's output is also kept under its own label for disambiguation
+// when two nodes emit the same field name.
+export function buildPipelineState(tierNodeOutputs: Map<string, string>, nodeLabelById: Map<string, string>): Record<string, any> {
+  const state: Record<string, any> = {};
+  for (const [nodeId, text] of Array.from(tierNodeOutputs.entries())) {
+    const label = nodeLabelById.get(nodeId) || nodeId;
+    const parsed = extractStructuredOutput(text);
+    if (parsed) {
+      Object.assign(state, parsed);
+      state[label] = parsed;
+    } else {
+      state[label] = text;
+    }
+  }
+  return state;
 }
 
 function computeExecutionTiers(
@@ -2394,9 +2445,14 @@ function computeExecutionTiers(
       tierMap.set(level, { agents: [], gates: [] });
     }
     const tier = tierMap.get(level)!;
-    if (node.nodeType === "agent" && node.refAgentId) {
+    // "internal_agent"/"edge_gate" are the actual node type strings the graph
+    // editor creates (client/src/pages/team-graph-editor.tsx TEAM_NODE_TYPES)
+    // -- this previously checked "agent"/"approval_gate", which never
+    // matched anything real, so every graph-based team silently fell back
+    // to the flat workerIds tier below instead of using its own edges/gates.
+    if (node.nodeType === "internal_agent" && node.refAgentId) {
       tier.agents.push({ agentId: node.refAgentId, nodeId: node.id });
-    } else if (node.nodeType === "approval_gate" || node.gateType) {
+    } else if (node.nodeType === "edge_gate" || node.gateType) {
       tier.gates.push({ nodeId: node.id, label: node.label, gateType: node.gateType || undefined });
     }
   }
@@ -2531,6 +2587,14 @@ export async function executeWorkerAgent(
       enrichedOutput = `${outputText}\n\n## STRUCTURED RECORDS FROM ${workerAgent.name} (${structuredOutput.length} records)\nThese are the exact record IDs and details processed by this agent. Downstream agents MUST reference these same record IDs for traceability.\n\`\`\`json\n${JSON.stringify({ processedRecords: structuredOutput }, null, 2)}\n\`\`\``;
     }
 
+    // On failure, executePromptWithMcp already recorded a real reason on the
+    // failing step (e.g. "No MCP Server integrations... linked") -- surface it
+    // here instead of leaving callers (dag-execution-engine, the run-dag API,
+    // the UI) with only a bare "failed" status and no way to diagnose why.
+    const failedStep = !result.success
+      ? [...result.steps].reverse().find((s: any) => s.error)
+      : undefined;
+
     return {
       agentId: workerId,
       agentName: workerAgent.name,
@@ -2543,6 +2607,7 @@ export async function executeWorkerAgent(
         completedAt: new Date(endTime).toISOString(),
         timingMs: endTime - startTime,
         parallel: false,
+        ...(failedStep ? { error: failedStep.error } : {}),
         output: {
           stepsCount: result.steps.length,
           passedSteps: result.summary.passedSteps,
@@ -2609,13 +2674,18 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
 
   let executionTiers: ExecutionTier[] = [];
   // Full edge list with conditions — built from blueprint and used for routing
-  let conditionalEdgeMap = new Map<string, Array<{ targetNodeId: string; condition: string | null; label: string | null; failureMode: string | null }>>();
+  let conditionalEdgeMap = new Map<string, Array<{
+    targetNodeId: string; condition: string | null; label: string | null; failureMode: string | null;
+    evaluationMode: string; rule: RuleGroup | null;
+  }>>();
+  const nodeLabelById = new Map<string, string>();
 
   if (blueprintId) {
     try {
       const nodes = await storage.getTeamBlueprintNodes(blueprintId);
       const edges = await storage.getTeamBlueprintEdges(blueprintId);
       if (nodes.length > 0) {
+        for (const n of nodes) nodeLabelById.set(n.id, n.label);
         executionTiers = computeExecutionTiers(
           nodes.map(n => ({
             id: n.id,
@@ -2639,6 +2709,8 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
             condition: edge.condition ?? null,
             label: edge.label ?? null,
             failureMode: edge.failureMode ?? null,
+            evaluationMode: edge.evaluationMode || "ai",
+            rule: (edge.rule as RuleGroup | null) ?? null,
           });
         }
       }
@@ -2779,50 +2851,69 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
     if (shouldHalt) break;
 
     // ── Conditional edge filtering: resolve which agents in this tier should run
-    // based on conditions on edges from the PREVIOUS tier's nodes
+    // based on conditions on edges from the PREVIOUS tier's nodes. Each edge is
+    // either "ai" mode (free-text condition, LLM-judged true/false) or
+    // "deterministic" mode (a structured rule, evaluated as plain comparison
+    // logic against pipelineState -- see rule-evaluator.ts). A step is logged
+    // for every gating edge checked, pass or fail, so the run's step timeline
+    // always explains *why* a branch was or wasn't taken -- previously the AI
+    // path logged nothing at all when a condition evaluated true.
     let activeAgents = tier.agents;
     if (tierLoopIdx > 0 && conditionalEdgeMap.size > 0 && tierNodeOutputs.size > 0) {
+      const pipelineState = buildPipelineState(tierNodeOutputs, nodeLabelById);
       const filtered: typeof tier.agents = [];
       for (const agent of tier.agents) {
         if (!agent.nodeId) { filtered.push(agent); continue; }
         // Find all edges from previous-tier nodes pointing to this agent's node
-        const incomingConditional: Array<{ condition: string; output: string }> = [];
+        type IncomingEdge = { evaluationMode: string; condition: string | null; rule: RuleGroup | null; output: string };
+        const incoming: IncomingEdge[] = [];
         for (const prevAgent of executionTiers[tierLoopIdx - 1].agents) {
           if (!prevAgent.nodeId) continue;
           const outEdges = conditionalEdgeMap.get(prevAgent.nodeId) || [];
           for (const edge of outEdges) {
-            if (edge.targetNodeId === agent.nodeId && edge.condition) {
-              incomingConditional.push({
-                condition: edge.condition,
-                output: tierNodeOutputs.get(prevAgent.nodeId) || previousContext,
-              });
-            }
+            if (edge.targetNodeId !== agent.nodeId) continue;
+            const hasRule = edge.evaluationMode === "deterministic" && !!edge.rule;
+            if (!edge.condition && !hasRule) continue; // unconditional edge -- doesn't gate anything
+            incoming.push({
+              evaluationMode: edge.evaluationMode,
+              condition: edge.condition,
+              rule: edge.rule,
+              output: tierNodeOutputs.get(prevAgent.nodeId) || previousContext,
+            });
           }
         }
-        // If no conditional edges point here, always include
-        if (incomingConditional.length === 0) { filtered.push(agent); continue; }
-        // Evaluate each condition — include agent if ANY condition passes
-        const evaluations = await Promise.all(
-          incomingConditional.map(ec => evaluateCondition(ec.condition, ec.output))
-        );
-        const passes = evaluations.some(Boolean);
-        if (passes) {
-          filtered.push(agent);
-        } else {
+        // If no gating edges point here, always include
+        if (incoming.length === 0) { filtered.push(agent); continue; }
+
+        const agentLabel = agent.agentName || agent.agentId;
+        const results = await Promise.all(incoming.map(async (ec) => {
+          if (ec.evaluationMode === "deterministic" && ec.rule) {
+            const trace = evaluateRule(ec.rule, pipelineState);
+            allSteps.push({
+              id: `team_rule_eval_${agent.nodeId}_${allSteps.length}`,
+              name: `Rule ${trace.result ? "passed" : "blocked"} routing to "${agentLabel}"`,
+              type: "rule_evaluated",
+              status: "completed",
+              startedAt: new Date().toISOString(),
+              completedAt: new Date().toISOString(),
+              output: { agentId: agent.agentId, rule: ec.rule, inputs: trace.inputs, reason: trace.reason, result: trace.result },
+            });
+            return trace.result;
+          }
+          const result = await evaluateCondition(ec.condition || "", ec.output);
           allSteps.push({
-            id: `team_condition_skip_${agent.nodeId}`,
-            name: `Condition: skipped "${agent.agentName || agent.agentId}"`,
-            type: "condition_skip",
+            id: `team_condition_eval_${agent.nodeId}_${allSteps.length}`,
+            name: `Condition ${result ? "passed" : "blocked"} routing to "${agentLabel}"`,
+            type: result ? "condition_passed" : "condition_skip",
             status: "completed",
             startedAt: new Date().toISOString(),
             completedAt: new Date().toISOString(),
-            output: {
-              agentId: agent.agentId,
-              reason: `Conditional edges evaluated false — agent skipped`,
-              conditionsChecked: incomingConditional.map(ec => ec.condition),
-            },
+            output: { agentId: agent.agentId, condition: ec.condition, result, reason: result ? "AI judged condition true" : "AI judged condition false" },
           });
-        }
+          return result;
+        }));
+
+        if (results.some(Boolean)) filtered.push(agent);
       }
       activeAgents = filtered;
     }
@@ -3244,6 +3335,10 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
         ? { softPolicyViolations: (result as any).softPolicyViolations }
         : {}),
     });
+
+    if (trace && trace.id) {
+      try { await storage.updateAgentRuntimeRun(runtimeRun.id, { traceId: trace.id }); } catch {}
+    }
 
     try {
       if (trace && trace.id) {

@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema, Skill } from "@shared/schema";
+import { useLocation } from "wouter";
+import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema, Skill, RuleLeaf, RuleGroup, RuleOperator, DagExecutionRun } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,10 +12,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
+import { StatusBadge } from "@/components/status-badge";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
-  Save, Sparkles, Play, Loader2, CheckCircle2, XCircle,
+  Save, Sparkles, Play, Loader2, CheckCircle2, XCircle, History,
 } from "lucide-react";
 
 interface McpServerTool {
@@ -33,6 +35,30 @@ interface TeamGraphEditorProps {
   blueprintId: string;
   teamAgentId?: string;
 }
+
+const RULE_OPERATORS: Array<{ value: RuleOperator; label: string }> = [
+  { value: ">", label: "> greater than" },
+  { value: "<", label: "< less than" },
+  { value: ">=", label: ">= at least" },
+  { value: "<=", label: "<= at most" },
+  { value: "==", label: "== equals" },
+  { value: "!=", label: "!= not equals" },
+  { value: "contains", label: "contains" },
+  { value: "not_contains", label: "doesn't contain" },
+];
+
+// Sentence-form phrasing of the same operators, for the business-friendly
+// "Simple" rule view -- same RuleOperator values, no symbols.
+const RULE_OPERATOR_PHRASES: Record<RuleOperator, string> = {
+  ">": "is more than",
+  "<": "is less than",
+  ">=": "is at least",
+  "<=": "is at most",
+  "==": "is",
+  "!=": "is not",
+  contains: "contains",
+  not_contains: "doesn't contain",
+};
 
 const TEAM_NODE_TYPES = [
   { type: "internal_agent", label: "Internal Agent", icon: Brain, color: "bg-blue-500" },
@@ -286,6 +312,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
             </Button>
           )}
         </div>
+        {teamAgentId && <RecentExecutions teamAgentId={teamAgentId} />}
       </div>
 
       {teamAgentId && runDialogOpen && (
@@ -485,7 +512,8 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
 interface ComputedWavePlan {
   totalWaves: number;
   maxParallelism: number;
-  waves: Array<{ waveIndex: number; nodes: Array<{ nodeId: string; label: string }> }>;
+  waves: Array<{ wave_number: number; nodes: string[] }>;
+  nodeConfig: Record<string, { label: string }>;
 }
 
 function WavePlanDialog({ teamAgentId, open, onClose }: { teamAgentId: string; open: boolean; onClose: () => void }) {
@@ -514,11 +542,11 @@ function WavePlanDialog({ teamAgentId, open, onClose }: { teamAgentId: string; o
             </div>
             <div className="flex flex-col gap-2">
               {wavePlan.waves.map(wave => (
-                <div key={wave.waveIndex} className="flex flex-col gap-1.5 p-2.5 rounded-md border bg-muted/30" data-testid={`wave-row-${wave.waveIndex}`}>
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase">Wave {wave.waveIndex + 1}</span>
+                <div key={wave.wave_number} className="flex flex-col gap-1.5 p-2.5 rounded-md border bg-muted/30" data-testid={`wave-row-${wave.wave_number}`}>
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase">Wave {wave.wave_number}</span>
                   <div className="flex flex-wrap gap-1">
-                    {wave.nodes.map(n => (
-                      <Badge key={n.nodeId} variant="outline" className="text-[10px]">{n.label}</Badge>
+                    {wave.nodes.map(nodeId => (
+                      <Badge key={nodeId} variant="outline" className="text-[10px]">{wavePlan.nodeConfig[nodeId]?.label || nodeId}</Badge>
                     ))}
                   </div>
                 </div>
@@ -533,34 +561,74 @@ function WavePlanDialog({ teamAgentId, open, onClose }: { teamAgentId: string; o
   );
 }
 
-interface DagRunResult {
+interface StartDagRunResponse {
   dagRunId: string;
-  success: boolean;
-  finalState: Record<string, any>;
-  waveResults: Array<{
-    waveNumber: number;
-    durationMs: number;
-    nodes: Array<{ nodeId: string; status: string; error?: string; durationMs: number; output: Record<string, any> }>;
-  }>;
-  totalPromptTokens: number;
-  totalCompletionTokens: number;
+  status: string;
+  totalWaves: number;
+  totalNodes: number;
+}
+
+function RecentExecutions({ teamAgentId }: { teamAgentId: string }) {
+  const [, navigate] = useLocation();
+  const { data: runs } = useQuery<DagExecutionRun[]>({
+    queryKey: ["/api/team-agents", teamAgentId, "dag-runs"],
+    refetchInterval: (query) => {
+      const d = query.state.data as DagExecutionRun[] | undefined;
+      const anyLive = d?.some(r => r.status === "running" || r.status === "waiting_approval");
+      return anyLive ? 3000 : false;
+    },
+  });
+
+  if (!runs || runs.length === 0) return null;
+
+  return (
+    <div className="border-t p-3 flex flex-col gap-2 min-h-0">
+      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+        <History className="w-3 h-3" /> Recent Executions
+      </span>
+      <ScrollArea className="max-h-[220px]">
+        <div className="flex flex-col gap-1 pr-2">
+          {runs.slice(0, 8).map(run => (
+            <button
+              key={run.id}
+              type="button"
+              onClick={() => navigate(`/dag-runs/${run.id}`)}
+              className="flex items-center gap-1.5 p-1.5 rounded-md hover-elevate text-left"
+              data-testid={`link-recent-execution-${run.id}`}
+            >
+              <div className="flex flex-col flex-1 min-w-0">
+                <span className="text-[10px] text-muted-foreground truncate">
+                  {run.startedAt ? new Date(run.startedAt).toLocaleString() : run.id.substring(0, 8)}
+                </span>
+                <span className="text-[10px] text-muted-foreground">Wave {run.currentWave ?? 0}/{run.totalWaves ?? 0}</span>
+              </div>
+              <StatusBadge status={run.status} className="text-[9px] px-1.5 py-0 shrink-0" />
+            </button>
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  );
 }
 
 function RunDagDialog({ teamAgentId, open, onClose }: { teamAgentId: string; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [request, setRequest] = useState("");
-  const [result, setResult] = useState<DagRunResult | null>(null);
 
   const runMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/team-agents/${teamAgentId}/run-dag`, { request });
-      return res.json() as Promise<DagRunResult>;
+      return res.json() as Promise<StartDagRunResponse>;
     },
     onSuccess: (data) => {
-      setResult(data);
-      toast({ title: data.success ? "Run completed" : "Run completed with failures" });
+      queryClient.invalidateQueries({ queryKey: ["/api/team-agents", teamAgentId, "dag-runs"] });
+      toast({ title: "Run started", description: `${data.totalWaves} wave${data.totalWaves !== 1 ? "s" : ""} to execute.` });
+      setRequest("");
+      onClose();
+      navigate(`/dag-runs/${data.dagRunId}`);
     },
-    onError: (err: Error) => toast({ title: "Run failed", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Run failed to start", description: err.message, variant: "destructive" }),
   });
 
   return (
@@ -571,70 +639,31 @@ function RunDagDialog({ teamAgentId, open, onClose }: { teamAgentId: string; ope
             <Play className="w-4 h-4 text-primary" /> Run Team Graph
           </DialogTitle>
         </DialogHeader>
-        {!result && !runMutation.isPending && (
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Request (optional)</label>
-              <Textarea
-                value={request}
-                onChange={e => setRequest(e.target.value)}
-                placeholder="What should this team work on? Available to nodes as state.request."
-                className="text-xs min-h-[70px]"
-                data-testid="textarea-run-request"
-              />
-            </div>
-            <Button onClick={() => runMutation.mutate()} data-testid="button-confirm-run-dag">
-              <Play className="w-3.5 h-3.5 mr-1.5" /> Run
-            </Button>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Request (optional)</label>
+            <Textarea
+              value={request}
+              onChange={e => setRequest(e.target.value)}
+              placeholder="What should this team work on? Available to nodes as state.request."
+              className="text-xs min-h-[70px]"
+              disabled={runMutation.isPending}
+              data-testid="textarea-run-request"
+            />
           </div>
-        )}
-        {runMutation.isPending && (
-          <div className="flex flex-col items-center justify-center gap-2 py-8">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">Executing waves...</span>
-          </div>
-        )}
-        {result && (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              {result.success ? (
-                <Badge variant="outline" className="bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 flex items-center gap-1" data-testid="badge-run-success">
-                  <CheckCircle2 className="w-3 h-3" /> Success
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300 flex items-center gap-1" data-testid="badge-run-failed">
-                  <XCircle className="w-3 h-3" /> Failed
-                </Badge>
-              )}
-              <span className="text-muted-foreground">{result.totalPromptTokens + result.totalCompletionTokens} tokens</span>
-            </div>
-            <ScrollArea className="max-h-[320px]">
-              <div className="flex flex-col gap-2 pr-3">
-                {result.waveResults.map(wave => (
-                  <div key={wave.waveNumber} className="flex flex-col gap-1.5 p-2.5 rounded-md border bg-muted/30" data-testid={`run-wave-${wave.waveNumber}`}>
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase">Wave {wave.waveNumber} · {wave.durationMs}ms</span>
-                    <div className="flex flex-col gap-1">
-                      {wave.nodes.map(n => (
-                        <div key={n.nodeId} className="flex items-center gap-1.5 text-xs">
-                          {n.status === "completed" ? (
-                            <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-                          ) : (
-                            <XCircle className="w-3 h-3 text-red-500 shrink-0" />
-                          )}
-                          <span className="truncate">{n.nodeId}</span>
-                          {n.error && <span className="text-[10px] text-red-500 truncate">— {n.error}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-            <Button variant="outline" size="sm" onClick={() => { setResult(null); setRequest(""); }} data-testid="button-run-again">
-              Run Again
-            </Button>
-          </div>
-        )}
+          <Button onClick={() => runMutation.mutate()} disabled={runMutation.isPending} data-testid="button-confirm-run-dag">
+            {runMutation.isPending ? (
+              <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Starting...</>
+            ) : (
+              <><Play className="w-3.5 h-3.5 mr-1.5" /> Run</>
+            )}
+          </Button>
+          {runMutation.isPending && (
+            <span className="text-[11px] text-muted-foreground text-center">
+              You'll be taken to the live monitoring view as soon as the run starts.
+            </span>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -1074,6 +1103,101 @@ function NodeConfigPanel({
   );
 }
 
+// Renders a RuleGroup's flat leaves as plain-English sentences ("If invoiceAmount
+// is more than 10000") instead of the raw field/operator/value grid -- same
+// RuleLeaf[] state as the Advanced view, so switching tabs never loses data.
+function SimpleRuleView({
+  ruleLeaves,
+  combinator,
+  sourceNode,
+  onUpdateLeaf,
+  onRemoveLeaf,
+  onAddLeaf,
+  onSetCombinator,
+}: {
+  ruleLeaves: RuleLeaf[];
+  combinator: "AND" | "OR";
+  sourceNode: TeamBlueprintNode | undefined;
+  onUpdateLeaf: (index: number, patch: Partial<RuleLeaf>) => void;
+  onRemoveLeaf: (index: number) => void;
+  onAddLeaf: () => void;
+  onSetCombinator: (c: "AND" | "OR") => void;
+}) {
+  const knownFields: string[] = Array.isArray((sourceNode?.outputSchema as any)?.fields)
+    ? (sourceNode!.outputSchema as any).fields.map((f: any) => f?.name).filter(Boolean)
+    : [];
+  const fieldListId = `edge-field-suggestions-${sourceNode?.id || "none"}`;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {knownFields.length === 0 && (
+        <p className="text-[10px] text-muted-foreground">
+          {sourceNode ? `"${sourceNode.label}" hasn't declared its output fields, so you'll need to type the field name.` : "Connect this edge to a source step to get field suggestions."}
+        </p>
+      )}
+      {ruleLeaves.map((leaf, i) => (
+        <div key={i} className="flex flex-col gap-1">
+          {i > 0 && (
+            <button
+              type="button"
+              className="self-start text-[11px] font-medium text-primary hover:underline"
+              onClick={() => onSetCombinator(combinator === "AND" ? "OR" : "AND")}
+              data-testid={`button-toggle-combinator-${i}`}
+            >
+              {combinator === "AND" ? "and if…" : "or if…"}
+            </button>
+          )}
+          <div className="flex items-center gap-1.5 flex-wrap rounded-md border p-2" data-testid={`simple-rule-row-${i}`}>
+            <span className="text-xs text-muted-foreground shrink-0">{i === 0 ? "If" : ""}</span>
+            <Input
+              className="h-7 text-xs flex-1 min-w-[100px]"
+              value={leaf.field}
+              onChange={e => onUpdateLeaf(i, { field: e.target.value })}
+              placeholder="field, e.g. invoiceAmount"
+              list={fieldListId}
+              data-testid={`input-simple-rule-field-${i}`}
+            />
+            <select
+              className="h-7 rounded-md border bg-background px-1.5 text-xs shrink-0"
+              value={leaf.operator}
+              onChange={e => onUpdateLeaf(i, { operator: e.target.value as RuleOperator })}
+              data-testid={`select-simple-rule-operator-${i}`}
+            >
+              {RULE_OPERATORS.map(op => <option key={op.value} value={op.value}>{RULE_OPERATOR_PHRASES[op.value]}</option>)}
+            </select>
+            <Input
+              className="h-7 text-xs flex-1 min-w-[80px]"
+              value={String(leaf.value)}
+              onChange={e => onUpdateLeaf(i, { value: e.target.value })}
+              placeholder="value"
+              data-testid={`input-simple-rule-value-${i}`}
+            />
+            <button
+              type="button"
+              className="shrink-0 text-muted-foreground hover:text-destructive"
+              onClick={() => onRemoveLeaf(i)}
+              data-testid={`button-remove-simple-rule-${i}`}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
+      {knownFields.length > 0 && (
+        <datalist id={fieldListId}>
+          {knownFields.map(f => <option key={f} value={f} />)}
+        </datalist>
+      )}
+      <Button variant="outline" size="sm" onClick={onAddLeaf} data-testid="button-add-simple-rule-condition">
+        <Plus className="w-3.5 h-3.5 mr-1" /> Add Condition
+      </Button>
+      {ruleLeaves.length === 0 && (
+        <p className="text-[10px] text-muted-foreground">No conditions yet — this edge always routes (equivalent to no gate).</p>
+      )}
+    </div>
+  );
+}
+
 function EdgeConfigPanel({
   edge,
   nodes,
@@ -1094,6 +1218,10 @@ function EdgeConfigPanel({
   const [localRetryPolicy, setLocalRetryPolicy] = useState(JSON.stringify(edge.retryPolicy || { maxRetries: 3, backoffMs: 1000 }, null, 2));
   const [localCondition, setLocalCondition] = useState(edge.condition || "");
   const [localSla, setLocalSla] = useState(edge.slaTimeoutMs != null ? String(edge.slaTimeoutMs) : "");
+  const [localRule, setLocalRule] = useState<RuleGroup>((edge.rule as RuleGroup) || { combinator: "AND", conditions: [] });
+  // Every edge opens in Simple (sentence) view by default -- Advanced (raw
+  // field/operator/value grid) is an opt-in for anyone who wants direct control.
+  const [ruleView, setRuleView] = useState<"simple" | "advanced">("simple");
 
   const [trackedEdgeId, setTrackedEdgeId] = useState(edge.id);
   if (trackedEdgeId !== edge.id) {
@@ -1103,6 +1231,31 @@ function EdgeConfigPanel({
     setLocalRetryPolicy(JSON.stringify(edge.retryPolicy || { maxRetries: 3, backoffMs: 1000 }, null, 2));
     setLocalCondition(edge.condition || "");
     setLocalSla(edge.slaTimeoutMs != null ? String(edge.slaTimeoutMs) : "");
+    setLocalRule((edge.rule as RuleGroup) || { combinator: "AND", conditions: [] });
+  }
+
+  const evaluationMode = edge.evaluationMode || "ai";
+  // Flat rule builder: the data model (shared/schema.ts RuleGroup) and the
+  // deterministic evaluator (server/rule-evaluator.ts) both support nested
+  // AND/OR groups, but this UI only ever constructs one flat group of leaf
+  // conditions -- covers realistic business rules ("amount > 10000 AND
+  // vendorApproved == false") without the added complexity of a nested
+  // group-builder UI.
+  const ruleLeaves = localRule.conditions.filter((c): c is RuleLeaf => "field" in c);
+
+  function commitRule(next: RuleGroup) {
+    setLocalRule(next);
+    onUpdate({ rule: next as any });
+  }
+  function updateLeaf(index: number, patch: Partial<RuleLeaf>) {
+    const next = { ...localRule, conditions: ruleLeaves.map((c, i) => (i === index ? { ...c, ...patch } : c)) };
+    commitRule(next);
+  }
+  function addLeaf() {
+    commitRule({ ...localRule, conditions: [...ruleLeaves, { field: "", operator: ">" as RuleOperator, value: "" }] });
+  }
+  function removeLeaf(index: number) {
+    commitRule({ ...localRule, conditions: ruleLeaves.filter((_, i) => i !== index) });
   }
 
   const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
@@ -1226,15 +1379,138 @@ function EdgeConfigPanel({
       )}
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Condition</label>
-        <Input
-          value={localCondition}
-          onChange={e => setLocalCondition(e.target.value)}
-          onBlur={() => { if (localCondition !== (edge.condition || "")) onUpdate({ condition: localCondition || null }); }}
-          placeholder='e.g. output.confidence > 0.8'
-          data-testid="input-edge-condition"
-        />
+        <label className="text-xs font-medium text-muted-foreground">Routing Evaluation</label>
+        <div className="flex rounded-md border overflow-hidden" data-testid="toggle-evaluation-mode">
+          <button
+            type="button"
+            className={`flex-1 px-2 py-1.5 text-xs ${evaluationMode === "ai" ? "bg-primary text-primary-foreground" : "hover-elevate"}`}
+            onClick={() => onUpdate({ evaluationMode: "ai" })}
+            data-testid="button-mode-ai"
+          >
+            AI Judgment
+          </button>
+          <button
+            type="button"
+            className={`flex-1 px-2 py-1.5 text-xs ${evaluationMode === "deterministic" ? "bg-primary text-primary-foreground" : "hover-elevate"}`}
+            onClick={() => onUpdate({ evaluationMode: "deterministic" })}
+            data-testid="button-mode-deterministic"
+          >
+            Deterministic Rule
+          </button>
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          {evaluationMode === "ai"
+            ? "An LLM reads the free-text condition against the upstream output and judges true/false — right for subjective calls, not for anything that must be 100% reliable."
+            : "Plain comparison logic against the upstream output's data — no model call, always reliable and auditable. Right for thresholds, compliance checks, and other business rules."}
+        </p>
       </div>
+
+      {evaluationMode === "ai" ? (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Condition</label>
+          <Input
+            value={localCondition}
+            onChange={e => setLocalCondition(e.target.value)}
+            onBlur={() => { if (localCondition !== (edge.condition || "")) onUpdate({ condition: localCondition || null }); }}
+            placeholder='e.g. output.confidence > 0.8'
+            data-testid="input-edge-condition"
+          />
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2" data-testid="rule-builder">
+          <div className="flex rounded-md border overflow-hidden self-start" data-testid="toggle-rule-view">
+            <button
+              type="button"
+              className={`px-2 py-1 text-[11px] ${ruleView === "simple" ? "bg-primary text-primary-foreground" : "hover-elevate"}`}
+              onClick={() => setRuleView("simple")}
+              data-testid="button-rule-view-simple"
+            >
+              Simple
+            </button>
+            <button
+              type="button"
+              className={`px-2 py-1 text-[11px] ${ruleView === "advanced" ? "bg-primary text-primary-foreground" : "hover-elevate"}`}
+              onClick={() => setRuleView("advanced")}
+              data-testid="button-rule-view-advanced"
+            >
+              Advanced
+            </button>
+          </div>
+
+          {ruleView === "simple" ? (
+            <SimpleRuleView
+              ruleLeaves={ruleLeaves}
+              combinator={localRule.combinator}
+              sourceNode={sourceNode}
+              onUpdateLeaf={updateLeaf}
+              onRemoveLeaf={removeLeaf}
+              onAddLeaf={addLeaf}
+              onSetCombinator={c => commitRule({ ...localRule, combinator: c })}
+            />
+          ) : (
+            <>
+              {ruleLeaves.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">Match</span>
+                  <select
+                    className="h-7 rounded-md border bg-background px-2 text-xs"
+                    value={localRule.combinator}
+                    onChange={e => commitRule({ ...localRule, combinator: e.target.value as "AND" | "OR" })}
+                    data-testid="select-rule-combinator"
+                  >
+                    <option value="AND">ALL conditions (AND)</option>
+                    <option value="OR">ANY condition (OR)</option>
+                  </select>
+                </div>
+              )}
+              {ruleLeaves.map((leaf, i) => (
+                <div key={i} className="flex flex-col gap-1 rounded-md border p-2" data-testid={`rule-row-${i}`}>
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      className="h-7 text-xs flex-1"
+                      value={leaf.field}
+                      onChange={e => updateLeaf(i, { field: e.target.value })}
+                      placeholder="field, e.g. invoiceAmount"
+                      data-testid={`input-rule-field-${i}`}
+                    />
+                    <button
+                      type="button"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeLeaf(i)}
+                      data-testid={`button-remove-rule-${i}`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      className="h-7 rounded-md border bg-background px-1.5 text-xs flex-1"
+                      value={leaf.operator}
+                      onChange={e => updateLeaf(i, { operator: e.target.value as RuleOperator })}
+                      data-testid={`select-rule-operator-${i}`}
+                    >
+                      {RULE_OPERATORS.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
+                    </select>
+                    <Input
+                      className="h-7 text-xs flex-1"
+                      value={String(leaf.value)}
+                      onChange={e => updateLeaf(i, { value: e.target.value })}
+                      placeholder="value"
+                      data-testid={`input-rule-value-${i}`}
+                    />
+                  </div>
+                </div>
+              ))}
+              <Button variant="outline" size="sm" onClick={addLeaf} data-testid="button-add-rule-condition">
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add Condition
+              </Button>
+              {ruleLeaves.length === 0 && (
+                <p className="text-[10px] text-muted-foreground">No conditions yet — this edge always routes (equivalent to no gate).</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="pt-2 border-t">
         <Button

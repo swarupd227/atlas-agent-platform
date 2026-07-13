@@ -6198,6 +6198,9 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
               <p className="text-sm text-muted-foreground leading-relaxed">
                 AI will analyze your outcome contract and {kpis.length} KPI{kpis.length !== 1 ? "s" : ""} to design a complete multi-agent system — orchestrator, specialized workers, tool bindings, and deployment pipeline.
               </p>
+              <p className="text-xs text-muted-foreground/80">
+                This is for a goal you're accountable for, with KPIs and SLAs the resulting team is governed against. Just describing a process? Use Process Flows instead.
+              </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap justify-center" data-testid="feature-chips">
               {featureChips.map((chip) => (

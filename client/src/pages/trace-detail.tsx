@@ -105,7 +105,10 @@ type TimelineStep =
   | { type: "orchestration_summary"; data: PipelineStepData }
   | { type: "parallel_group"; data: PipelineStepData[] }
   | { type: "parallel_fork"; data: PipelineStepData }
-  | { type: "parallel_join"; data: PipelineStepData };
+  | { type: "parallel_join"; data: PipelineStepData }
+  | { type: "rule_evaluated"; data: PipelineStepData }
+  | { type: "condition_passed"; data: PipelineStepData }
+  | { type: "condition_skip"; data: PipelineStepData };
 
 const DECISION_COLORS: Record<string, string> = {
   approve: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
@@ -528,7 +531,8 @@ function buildTimelineSteps(
     const relevantSteps = stepsJson.filter(s =>
       s.type === "orchestration" || s.type === "worker_execution" ||
       s.type === "orchestration_summary" || s.type === "approval_gate" ||
-      s.type === "parallel_fork" || s.type === "parallel_join"
+      s.type === "parallel_fork" || s.type === "parallel_join" ||
+      s.type === "rule_evaluated" || s.type === "condition_passed" || s.type === "condition_skip"
     );
 
     let i = 0;
@@ -569,6 +573,15 @@ function buildTimelineSteps(
         i++;
       } else if (s.type === "parallel_join") {
         steps.push({ type: "parallel_join", data: s });
+        i++;
+      } else if (s.type === "rule_evaluated") {
+        steps.push({ type: "rule_evaluated", data: s });
+        i++;
+      } else if (s.type === "condition_passed") {
+        steps.push({ type: "condition_passed", data: s });
+        i++;
+      } else if (s.type === "condition_skip") {
+        steps.push({ type: "condition_skip", data: s });
         i++;
       } else {
         i++;
@@ -616,6 +629,12 @@ function getStepDotColor(type: TimelineStep["type"]) {
     case "parallel_fork":
     case "parallel_join":
       return "bg-violet-400";
+    case "rule_evaluated":
+      return "bg-teal-500";
+    case "condition_passed":
+      return "bg-emerald-500";
+    case "condition_skip":
+      return "bg-amber-500";
   }
 }
 
@@ -640,6 +659,12 @@ function getStepLineColor(type: TimelineStep["type"]) {
     case "parallel_fork":
     case "parallel_join":
       return "border-violet-400/30";
+    case "rule_evaluated":
+      return "border-teal-500/30";
+    case "condition_passed":
+      return "border-emerald-500/30";
+    case "condition_skip":
+      return "border-amber-500/30";
   }
 }
 
@@ -722,6 +747,27 @@ function getStepTypeBadge(type: TimelineStep["type"]) {
           Join
         </Badge>
       );
+    case "rule_evaluated":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20">
+          <GitBranch className="w-3 h-3 mr-0.5" />
+          Deterministic Rule
+        </Badge>
+      );
+    case "condition_passed":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+          <GitBranch className="w-3 h-3 mr-0.5" />
+          AI Condition &middot; Passed
+        </Badge>
+      );
+    case "condition_skip":
+      return (
+        <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+          <GitBranch className="w-3 h-3 mr-0.5" />
+          AI Condition &middot; Blocked
+        </Badge>
+      );
   }
 }
 
@@ -740,6 +786,9 @@ function getStepTitle(step: TimelineStep): string {
     case "orchestration":
     case "worker_execution":
     case "orchestration_summary":
+    case "rule_evaluated":
+    case "condition_passed":
+    case "condition_skip":
       return step.data.name;
     case "parallel_group":
       return `${step.data.length} agents running in parallel`;
@@ -777,6 +826,12 @@ function getStepStatus(step: TimelineStep): "success" | "fail" | "neutral" {
     case "parallel_fork":
     case "parallel_join":
       return step.data.status === "completed" ? "success" : "neutral";
+    case "rule_evaluated":
+      return step.data.output?.result ? "success" : "fail";
+    case "condition_passed":
+      return "success";
+    case "condition_skip":
+      return "fail";
   }
 }
 
@@ -1124,6 +1179,72 @@ function TimelineStepContent({ step }: { step: TimelineStep }) {
             {isFork ? "Forking execution to" : "Joining results from"}{" "}
             <span className="font-medium text-foreground">{Array.isArray(agents) ? agents.join(", ") : `${forkData.output?.agentCount || "multiple"} agents`}</span>
           </span>
+        </div>
+      );
+    }
+    case "rule_evaluated": {
+      const out = step.data.output || {};
+      const rule = out.rule as { combinator: "AND" | "OR"; conditions: Array<{ field: string; operator: string; value: unknown }> } | undefined;
+      const inputs = (out.inputs || {}) as Record<string, unknown>;
+      return (
+        <div className="flex flex-col gap-3" data-testid="rule-evaluated-content">
+          <Badge variant="outline" className={`w-fit text-[10px] ${out.result ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20"}`}>
+            {out.result ? <CheckCircle className="w-3 h-3 mr-0.5" /> : <XCircle className="w-3 h-3 mr-0.5" />}
+            {out.result ? "Rule matched" : "Rule did not match"}
+          </Badge>
+          {rule && rule.conditions.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Rule Definition</span>
+              <div className="flex flex-col gap-1">
+                {rule.conditions.map((c, idx) => (
+                  <div key={idx} className="flex items-center gap-2 flex-wrap">
+                    {idx > 0 && <Badge variant="outline" className="text-[9px]">{rule.combinator}</Badge>}
+                    <span className="px-2 py-1 rounded-md bg-muted/40 text-[11px] font-mono">
+                      {(c as any).field} <span className="text-teal-600 dark:text-teal-400">{(c as any).operator}</span> {JSON.stringify((c as any).value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {Object.keys(inputs).length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Resolved Values</span>
+              <div className="flex flex-col gap-1">
+                {Object.entries(inputs).map(([key, val]) => (
+                  <div key={key} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30">
+                    <span className="text-[11px] font-mono text-muted-foreground">{key}</span>
+                    <span className="text-xs font-medium truncate max-w-[60%] text-right">{val === undefined ? "(not found)" : String(val)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {out.reason && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Evaluation Trail</span>
+              <div className="p-2 rounded-md bg-background/50 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap break-all">{out.reason}</div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "condition_passed":
+    case "condition_skip": {
+      const out = step.data.output || {};
+      return (
+        <div className="flex flex-col gap-3" data-testid="ai-condition-content">
+          <Badge variant="outline" className={`w-fit text-[10px] ${step.type === "condition_passed" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
+            {step.type === "condition_passed" ? <CheckCircle className="w-3 h-3 mr-0.5" /> : <XCircle className="w-3 h-3 mr-0.5" />}
+            {step.type === "condition_passed" ? "Condition matched" : "Condition did not match"}
+          </Badge>
+          {out.condition && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Free-text Condition</span>
+              <div className="p-2 rounded-md bg-muted/40 text-[11px] font-mono">{out.condition}</div>
+            </div>
+          )}
+          <p className="text-[11px] text-muted-foreground leading-relaxed">{out.reason}</p>
         </div>
       );
     }

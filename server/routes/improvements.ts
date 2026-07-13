@@ -16,6 +16,9 @@ import {
   insertEvalTestCaseSchema,
   insertEvalRunSchema,
   insertJobSchema,
+  ruleLeafSchema,
+  ruleGroupSchema,
+  type RuleGroup,
 } from "@shared/schema";
 import {
   checkPermission,
@@ -1266,6 +1269,7 @@ Respond with a JSON object matching this schema exactly:
       "suggestedKnowledgeBases": [{"id": "string - KB id", "name": "string"}],
       "complianceTags": ["string - regulatory framework tags"],
       "systemPrompt": "string - 1-2 sentence role instruction",
+      "isHumanCheckpoint": "boolean - true ONLY if this step is a MANUAL decision made by a real person (e.g. 'manager approval', 'compliance sign-off', 'underwriter review') that the outcome/description explicitly calls out as requiring a human, not an automated LLM judgment call. false for every other agent, including AI-judged decision/routing/scoring steps.",
       "outputSchema": {
         "type": "record_list | summary",
         "description": "string - what each record represents, e.g. 'scored lead with qualification decision'",
@@ -1288,7 +1292,7 @@ Respond with a JSON object matching this schema exactly:
     "pattern": "sequential | parallel | fan_out_fan_in | supervisor",
     "patternReasoning": "string - explain WHY this pattern was chosen: (1) dependency relationships from the matrix, (2) ordering signals detected in the outcome, (3) why the pattern matches, (4) if parallel, why agents have no data dependencies",
     "description": "string",
-    "edges": [{"from": "string", "to": "string", "label": "string", "type": "sequential | parallel | conditional"}],
+    "edges": [{"from": "string", "to": "string", "label": "string", "type": "sequential | parallel | conditional", "branchCondition": "string | null - ONLY for type=conditional: the plain-English condition, e.g. 'invoice amount is more than $10,000'", "branchRule": {"field": "string - exact field name from the source agent's outputSchema.fields above", "operator": "> | < | >= | <= | == | != | contains | not_contains", "value": "string | number | boolean"} | null}],
     "parallelGroups": [["string - agent roles that execute concurrently"], ["string - next group after previous completes"]],
     "executionGraph": [{"stage": 0, "agents": ["string - agent roles in this tier"], "waitForAll": true}],
     "errorHandling": "string",
@@ -1296,6 +1300,18 @@ Respond with a JSON object matching this schema exactly:
   }
 }
 \`\`\`
+
+═══════════════════════════════════════════
+CONDITIONAL EDGES (branchCondition / branchRule)
+═══════════════════════════════════════════
+Mark an edge "type": "conditional" whenever the handoff only happens under some condition (an approval threshold, a pass/fail check, a category split, etc). For every conditional edge, set "branchCondition" to a short plain-English sentence a business user would recognize.
+Also try to set "branchRule" — a single deterministic comparison — whenever the condition is a numeric, boolean, or string comparison against a field the SOURCE agent's outputSchema.fields actually declares (e.g. {"field": "invoiceAmount", "operator": ">", "value": 10000}). This makes the branch auditable and reliable instead of re-evaluated by an LLM on every run.
+Leave "branchRule" as null (branchCondition only) when the condition genuinely requires judgment the source agent's structured output can't answer directly (sentiment, open-ended quality, "looks suspicious", etc) — never invent a field name that isn't in that agent's outputSchema.
+
+═══════════════════════════════════════════
+HUMAN CHECKPOINTS (isHumanCheckpoint)
+═══════════════════════════════════════════
+When the outcome/description explicitly requires a real person to make a decision — "manager approval", "requires sign-off", "must be a human approval step, not an automated one", "underwriter must review" — propose a dedicated agent for that step and set its "isHumanCheckpoint" to true. This is different from an agent that automates a judgment call (e.g. a fraud-scoring or risk-tiering agent): those are false. A true human checkpoint agent should still get a minimal outputSchema (e.g. {approved: boolean}) describing what the human's decision produces, since downstream conditional edges route on that field, but its systemPrompt/workflowSteps should describe presenting the case for a human decision, not making the decision itself.
 
 ═══════════════════════════════════════════
 SYSTEM EXTRACTION & MCP GAP ANALYSIS (MANDATORY — DO THIS FIRST)
@@ -1778,6 +1794,50 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
     }
   });
 
+  // A proposed edge's branchRule may arrive as a single leaf ({field,operator,value})
+  // or an already-compound group ({combinator,conditions}) -- normalize to RuleGroup
+  // so downstream storage always sees the same shape EdgeConfigPanel edits.
+  const pipelineBranchRuleSchema = z.union([ruleLeafSchema, ruleGroupSchema]).nullable().optional();
+  function normalizeBranchRule(rule: unknown): RuleGroup | null {
+    if (!rule || typeof rule !== "object") return null;
+    const leaf = ruleLeafSchema.safeParse(rule);
+    if (leaf.success) return { combinator: "AND", conditions: [leaf.data] };
+    const group = ruleGroupSchema.safeParse(rule);
+    if (group.success) return group.data;
+    return null; // hallucinated/malformed shape -- silently drop, edge falls back to AI-judged text
+  }
+  const pipelineEdgeSchema = z.object({
+    from: z.string().optional(),
+    to: z.string().optional(),
+    label: z.string().optional(),
+    type: z.string().optional(),
+    branchCondition: z.string().nullable().optional(),
+    branchRule: pipelineBranchRuleSchema,
+  }).passthrough();
+  // Resolves a single proposed edge spec into the fields
+  // storage.createTeamBlueprintEdge expects. Shared by resolveEdgeRule
+  // (which looks the spec up by target name -- fine when a target has only
+  // one incoming edge) and the direct pipeline.edges construction path
+  // (which already has the exact spec in hand, so no lookup/ambiguity risk).
+  function resolveEdgeRuleFromSpec(spec: any): { condition?: string; evaluationMode?: string; rule?: RuleGroup } {
+    if (!spec) return {};
+    const rule = normalizeBranchRule(spec.branchRule);
+    if (rule) return { condition: spec.branchCondition || undefined, evaluationMode: "deterministic", rule };
+    if (spec.type === "conditional" && spec.branchCondition) return { condition: spec.branchCondition, evaluationMode: "ai" };
+    return {};
+  }
+  // Finds the proposed edge (if any) whose "to" matches this handoff's target agent/role
+  // name. Only safe when that target has a single incoming edge in the spec --
+  // see the direct pipeline.edges construction path (below, in the route handler)
+  // for targets that can be reached via more than one edge (e.g. a branch
+  // that skips an intermediate node), where matching by target name alone
+  // would silently pick the wrong edge's rule.
+  function resolveEdgeRule(pipelineEdges: unknown, toName: string): { condition?: string; evaluationMode?: string; rule?: RuleGroup } {
+    const edges = Array.isArray(pipelineEdges) ? pipelineEdges : [];
+    const spec = edges.find((e: any) => e?.to === toName);
+    return resolveEdgeRuleFromSpec(spec);
+  }
+
   router.post("/api/ai/create-team-from-proposals", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const agentProposalSchema = z.object({
@@ -1807,9 +1867,19 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           description: z.string(),
           fields: z.array(z.object({ name: z.string(), type: z.string(), description: z.string() })),
         }).nullable().optional(),
+        // True when this worker represents a manual human decision (manager
+        // approval, compliance sign-off, manual review) rather than an
+        // automated LLM/system step -- lets create-team-from-proposals build
+        // a real pause-and-wait edge_gate blueprint node (dag-execution-engine.ts's
+        // executeGateNode) instead of an internal_agent that merely
+        // role-plays the human's decision via an LLM call.
+        isHumanCheckpoint: z.boolean().optional(),
       });
       const bodySchema = z.object({
-        outcomeId: z.string(),
+        // Optional: business-user flows (Create Team, Process Flows) call this without
+        // a pre-existing Outcome Contract. When absent, outcome-scoped policy inheritance
+        // and status updates are skipped -- everything else works standalone.
+        outcomeId: z.string().optional(),
         industry: z.string().optional(),
         orchestrator: agentProposalSchema,
         workers: z.array(agentProposalSchema).min(1),
@@ -1817,7 +1887,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           pattern: z.string().optional(),
           patternReasoning: z.string().optional(),
           description: z.string().optional(),
-          edges: z.array(z.any()).optional(),
+          edges: z.array(pipelineEdgeSchema).optional(),
           parallelGroups: z.array(z.array(z.string())).optional(),
           executionGraph: z.array(z.object({
             stage: z.number(),
@@ -1843,8 +1913,8 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
       const { outcomeId, industry: reqIndustry, orchestrator, workers, pipeline, processFlowSteps } = bodySchema.parse(req.body);
 
-      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
-      if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+      const outcome = outcomeId ? await storage.getOutcome(outcomeId, getOrgId(req)) : null;
+      if (outcomeId && !outcome) return res.status(404).json({ error: "Outcome not found" });
 
       const allMcpServers = await storage.getMcpServers();
 
@@ -1912,10 +1982,10 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         lines.push(`You are ${agent.name}, an AI agent operating within the ${industry} industry.`);
         lines.push(`Your role: ${agent.role || agent.description}`);
         if (isOrchestrator) {
-          lines.push(`You are the orchestrator agent responsible for coordinating worker agents to deliver the outcome "${outcome!.name}".`);
+          lines.push(`You are the orchestrator agent responsible for coordinating worker agents to deliver "${outcome?.name || orchestrator.description}".`);
           lines.push(`Orchestration pattern: ${pipeline?.pattern || "supervisor"}.`);
         } else {
-          lines.push(`You are a worker agent contributing to the outcome "${outcome!.name}".`);
+          lines.push(`You are a worker agent contributing to "${outcome?.name || orchestrator.description}".`);
         }
         if (agent.kpiBindings?.length) {
           lines.push(`You are responsible for optimizing these KPIs: ${agent.kpiBindings.join(", ")}.`);
@@ -2012,6 +2082,16 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           }
         }
       }
+
+      // workers[] and createdWorkers[] are parallel arrays (same loop, same
+      // order) -- so this maps each created agent back to whether its
+      // proposal was flagged as a real human decision, letting the node
+      // creation below build a pause-and-wait edge_gate node instead of an
+      // internal_agent that would otherwise role-play the human's decision
+      // via an LLM call.
+      const humanCheckpointWorkerIds = new Set<string>(
+        createdWorkers.filter((_, i) => workers[i]?.isHumanCheckpoint).map(w => w.id),
+      );
 
       if (orchestrator.suggestedKnowledgeBases?.length) {
         for (const kb of orchestrator.suggestedKnowledgeBases) {
@@ -2111,10 +2191,27 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       }
 
       const hasParallelInfo = tiers.length > 0;
+      // When the LLM gave us its own edge topology, build edges directly
+      // from it (below, after nodes exist) instead of re-deriving a coarser
+      // graph from tier/stage adjacency. Tier adjacency only ever connects
+      // consecutive tiers, so it silently drops any edge that skips a tier
+      // (e.g. a decision branching straight to a terminal step, bypassing
+      // an intermediate approval node reached by the *other* branch) --
+      // exactly the shape a decision-with-two-alternatives produces.
+      const hasExplicitEdgeSpec = !!(pipeline?.edges && pipeline.edges.length > 0);
 
       if (hasParallelInfo && tiers.length > 0) {
         let yOffset = 150;
         const tierNodes: Array<any[]> = [];
+
+        // Exact-name lookup, built once, so a stage's agent-name string maps
+        // unambiguously to its worker even when several agents share a
+        // common first word or substring (e.g. "Claim Details Extraction
+        // Agent" and "Claim Routing Decision Agent" both start with
+        // "Claim") -- a first-word-only fuzzy match would bind every such
+        // stage to whichever of those workers happens to be first in
+        // createdWorkers, silently wiring the wrong agent into the node.
+        const workerByExactName = new Map(createdWorkers.map(w => [w.name.toLowerCase(), w]));
 
         for (let tierIdx = 0; tierIdx < tiers.length; tierIdx++) {
           const tier = tiers[tierIdx];
@@ -2124,20 +2221,37 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
           for (let j = 0; j < tier.agents.length; j++) {
             const agentRole = tier.agents[j];
-            const workerIdx = createdWorkers.findIndex(w =>
-              w.name.toLowerCase().includes(agentRole.toLowerCase()) ||
-              agentRole.toLowerCase().includes(w.name.toLowerCase().split(" ")[0].toLowerCase())
-            );
-            const worker = workerIdx >= 0 ? createdWorkers[workerIdx] : createdWorkers[j + tierNodes.flat().length];
+            let worker = workerByExactName.get(agentRole.toLowerCase());
+            let workerIdx = worker ? createdWorkers.indexOf(worker) : -1;
+            if (!worker) {
+              // No exact match -- fall back to substring matching, preferring
+              // the most specific (longest) worker name found within
+              // agentRole so a short shared prefix ("Claim") can't outrank a
+              // fuller, more specific match ("Claim Routing Decision Agent").
+              let bestLen = 0;
+              for (let k = 0; k < createdWorkers.length; k++) {
+                const w = createdWorkers[k];
+                const wName = w.name.toLowerCase();
+                const matches = agentRole.toLowerCase().includes(wName) || wName.includes(agentRole.toLowerCase());
+                if (matches && wName.length > bestLen) {
+                  worker = w;
+                  workerIdx = k;
+                  bestLen = wName.length;
+                }
+              }
+            }
+            if (!worker) worker = createdWorkers[j + tierNodes.flat().length];
             if (!worker) continue;
 
+            const isGate = humanCheckpointWorkerIds.has(worker.id);
             const node = await storage.createTeamBlueprintNode({
               blueprintId: blueprint.id,
-              nodeType: "internal_agent",
+              nodeType: isGate ? "edge_gate" : "internal_agent",
               label: worker.name,
               positionX: startX + j * 260,
               positionY: yOffset,
-              refAgentId: worker.id,
+              refAgentId: isGate ? null : worker.id,
+              gateType: isGate ? "approval" : undefined,
               config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1 },
             });
             tierAgentNodes.push(node);
@@ -2147,44 +2261,58 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           yOffset += 140;
         }
 
-        if (tierNodes[0]?.length > 0) {
-          for (const node of tierNodes[0]) {
-            await storage.createTeamBlueprintEdge({
-              blueprintId: blueprint.id,
-              sourceNodeId: orchestratorNode.id,
-              targetNodeId: node.id,
-              label: tierNodes[0].length > 1 ? "fork" : "dispatch",
-              failureMode: "escalate",
-            });
-          }
-        }
-
-        for (let t = 0; t < tierNodes.length - 1; t++) {
-          const currentTier = tierNodes[t];
-          const nextTier = tierNodes[t + 1];
-          for (const src of currentTier) {
-            for (const tgt of nextTier) {
+        if (!hasExplicitEdgeSpec) {
+          if (tierNodes[0]?.length > 0) {
+            for (const node of tierNodes[0]) {
               await storage.createTeamBlueprintEdge({
                 blueprintId: blueprint.id,
-                sourceNodeId: src.id,
-                targetNodeId: tgt.id,
-                label: currentTier.length > 1 ? "join → fork" : "handoff",
-                failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
+                sourceNodeId: orchestratorNode.id,
+                targetNodeId: node.id,
+                label: tierNodes[0].length > 1 ? "fork" : "dispatch",
+                failureMode: "escalate",
+                ...resolveEdgeRule(pipeline?.edges, node.label),
               });
             }
           }
-        }
 
-        if (pipeline?.pattern === "fan_out_fan_in" && tierNodes.length > 0) {
-          const lastTier = tierNodes[tierNodes.length - 1];
-          for (const node of lastTier) {
-            await storage.createTeamBlueprintEdge({
-              blueprintId: blueprint.id,
-              sourceNodeId: node.id,
-              targetNodeId: orchestratorNode.id,
-              label: "return results",
-              failureMode: "escalate",
-            });
+          for (let t = 0; t < tierNodes.length - 1; t++) {
+            const currentTier = tierNodes[t];
+            const nextTier = tierNodes[t + 1];
+            for (const src of currentTier) {
+              for (const tgt of nextTier) {
+                await storage.createTeamBlueprintEdge({
+                  blueprintId: blueprint.id,
+                  sourceNodeId: src.id,
+                  targetNodeId: tgt.id,
+                  label: currentTier.length > 1 ? "join → fork" : "handoff",
+                  failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
+                  ...resolveEdgeRule(pipeline?.edges, tgt.label),
+                });
+              }
+            }
+          }
+
+          // "Return results to orchestrator" only makes sense for a true
+          // single-stage fan-out/fan-in (the orchestrator dispatches one wave
+          // of parallel workers and collects their results directly). For a
+          // multi-tier pipeline, the orchestrator node is already the root
+          // (tierNodes[0] is wired FROM it above), so wiring the LAST tier
+          // back to it would create a literal cycle -- computeWaves() rejects
+          // any such graph outright, making the blueprint unrunnable. A
+          // multi-tier pipeline's last tier is its natural terminus and needs
+          // no edge back to the start.
+          if (pipeline?.pattern === "fan_out_fan_in" && tierNodes.length === 1) {
+            const lastTier = tierNodes[tierNodes.length - 1];
+            for (const node of lastTier) {
+              await storage.createTeamBlueprintEdge({
+                blueprintId: blueprint.id,
+                sourceNodeId: node.id,
+                targetNodeId: orchestratorNode.id,
+                label: "return results",
+                failureMode: "escalate",
+                ...resolveEdgeRule(pipeline?.edges, orchestratorNode.label),
+              });
+            }
           }
         }
       } else {
@@ -2192,60 +2320,119 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         for (let i = 0; i < createdWorkers.length; i++) {
           const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
           const posY = isSequential ? 150 + i * 120 : 220;
+          const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
           const node = await storage.createTeamBlueprintNode({
             blueprintId: blueprint.id,
-            nodeType: "internal_agent",
+            nodeType: isGate ? "edge_gate" : "internal_agent",
             label: createdWorkers[i].name,
             positionX: posX,
             positionY: posY,
-            refAgentId: createdWorkers[i].id,
+            refAgentId: isGate ? null : createdWorkers[i].id,
+            gateType: isGate ? "approval" : undefined,
             config: { role: "worker", workerIndex: i },
           });
           workerNodes.push(node);
         }
 
-        if (isSequential) {
-          const firstEdgeLabel = pipeline?.edges?.find((e: any) => e.from === "orchestrator" || e.from === orchestrator.name)?.label;
-          await storage.createTeamBlueprintEdge({
-            blueprintId: blueprint.id,
-            sourceNodeId: orchestratorNode.id,
-            targetNodeId: workerNodes[0].id,
-            label: firstEdgeLabel || "dispatch",
-            failureMode: "escalate",
-          });
-          for (let i = 0; i < workerNodes.length - 1; i++) {
-            const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i + 1].name)?.label;
-            await storage.createTeamBlueprintEdge({
-              blueprintId: blueprint.id,
-              sourceNodeId: workerNodes[i].id,
-              targetNodeId: workerNodes[i + 1].id,
-              label: edgeLabel || "handoff",
-              failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
-            });
-          }
-        } else {
-          for (let i = 0; i < workerNodes.length; i++) {
-            const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i].name)?.label;
+        if (!hasExplicitEdgeSpec) {
+          if (isSequential) {
+            const firstEdgeLabel = pipeline?.edges?.find((e: any) => e.from === "orchestrator" || e.from === orchestrator.name)?.label;
             await storage.createTeamBlueprintEdge({
               blueprintId: blueprint.id,
               sourceNodeId: orchestratorNode.id,
-              targetNodeId: workerNodes[i].id,
-              label: edgeLabel || "delegate",
+              targetNodeId: workerNodes[0].id,
+              label: firstEdgeLabel || "dispatch",
               failureMode: "escalate",
+              ...resolveEdgeRule(pipeline?.edges, workerNodes[0].label),
             });
-          }
-
-          if (pipeline?.pattern === "fan_out_fan_in") {
-            for (let i = 0; i < workerNodes.length; i++) {
+            for (let i = 0; i < workerNodes.length - 1; i++) {
+              const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i + 1].name)?.label;
               await storage.createTeamBlueprintEdge({
                 blueprintId: blueprint.id,
                 sourceNodeId: workerNodes[i].id,
-                targetNodeId: orchestratorNode.id,
-                label: "return results",
-                failureMode: "escalate",
+                targetNodeId: workerNodes[i + 1].id,
+                label: edgeLabel || "handoff",
+                failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
+                ...resolveEdgeRule(pipeline?.edges, workerNodes[i + 1].label),
               });
             }
+          } else {
+            for (let i = 0; i < workerNodes.length; i++) {
+              const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i].name)?.label;
+              await storage.createTeamBlueprintEdge({
+                blueprintId: blueprint.id,
+                sourceNodeId: orchestratorNode.id,
+                targetNodeId: workerNodes[i].id,
+                label: edgeLabel || "delegate",
+                failureMode: "escalate",
+                ...resolveEdgeRule(pipeline?.edges, workerNodes[i].label),
+              });
+            }
+
+            if (pipeline?.pattern === "fan_out_fan_in") {
+              for (let i = 0; i < workerNodes.length; i++) {
+                await storage.createTeamBlueprintEdge({
+                  blueprintId: blueprint.id,
+                  sourceNodeId: workerNodes[i].id,
+                  targetNodeId: orchestratorNode.id,
+                  label: "return results",
+                  failureMode: "escalate",
+                  ...resolveEdgeRule(pipeline?.edges, orchestratorNode.label),
+                });
+              }
+            }
           }
+        }
+      }
+
+      // Build edges directly from the LLM's own pipeline.edges topology when
+      // it gave us one, instead of the tier/stage-adjacency construction
+      // above (which is skipped via hasExplicitEdgeSpec in that case). This
+      // is what lets a decision branch straight to a later node while
+      // skipping an intermediate one -- e.g. "Route Decision" -> "Process
+      // Outcome" bypassing "Adjuster Review" for the auto-approve path --
+      // which tier-adjacency can never represent since it only ever
+      // connects consecutive tiers. Matching each edge's rule/condition
+      // directly from its own spec (not by a target-name lookup that can't
+      // tell two edges into the same target apart) also fixes a case tier
+      // adjacency got wrong even when it DID build the right edge: a target
+      // reachable by two different incoming edges (e.g. both the skip-branch
+      // and the "review then continue" handoff into "Process Outcome") was
+      // always getting whichever edge's rule happened to be found first,
+      // regardless of which edge that rule actually belonged to.
+      if (hasExplicitEdgeSpec) {
+        const nodeByName = new Map<string, any>();
+        nodeByName.set("orchestrator", orchestratorNode);
+        nodeByName.set(orchestrator.name.toLowerCase(), orchestratorNode);
+        for (const node of workerNodes) nodeByName.set(node.label.toLowerCase(), node);
+
+        const resolveNode = (name: string | undefined) => {
+          if (!name) return undefined;
+          const lower = name.toLowerCase();
+          const exact = nodeByName.get(lower);
+          if (exact) return exact;
+          // No exact match -- fall back to the most specific (longest)
+          // substring match, same rationale as the worker-matching fix above.
+          let best: any; let bestLen = 0;
+          for (const [key, node] of Array.from(nodeByName.entries())) {
+            const matches = lower.includes(key) || key.includes(lower);
+            if (matches && key.length > bestLen) { best = node; bestLen = key.length; }
+          }
+          return best;
+        };
+
+        for (const edgeSpec of pipeline!.edges!) {
+          const source = resolveNode(edgeSpec.from);
+          const target = resolveNode(edgeSpec.to);
+          if (!source || !target || source.id === target.id) continue;
+          await storage.createTeamBlueprintEdge({
+            blueprintId: blueprint.id,
+            sourceNodeId: source.id,
+            targetNodeId: target.id,
+            label: edgeSpec.label || (edgeSpec.type === "conditional" ? "branch" : "handoff"),
+            failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
+            ...resolveEdgeRuleFromSpec(edgeSpec),
+          });
         }
       }
 
@@ -2308,9 +2495,9 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         },
       });
 
-      if (outcome.status === "awaiting_agent_plan" || outcome.status === "active" || outcome.status === "draft") {
+      if (outcome && (outcome.status === "awaiting_agent_plan" || outcome.status === "active" || outcome.status === "draft")) {
         try {
-          await storage.updateOutcome(outcomeId, { status: "agents_assigned" });
+          await storage.updateOutcome(outcomeId!, { status: "agents_assigned" });
         } catch {}
       }
 

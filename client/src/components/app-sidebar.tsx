@@ -48,6 +48,7 @@ import {
   ClipboardList,
   Store,
   Sparkles,
+  Users,
 } from "lucide-react";
 import {
   Sidebar,
@@ -116,6 +117,7 @@ function FullAppSidebar() {
     { title: "Workspace", url: "/workspace", icon: Sparkles },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "Agents", url: "/agents", icon: Bot },
+    { title: "Teams", url: "/agents/teams", icon: Users },
     { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
     { title: "Deployments", url: "/deployments", icon: Rocket },
     { title: "Monitor", url: "/monitor", icon: Activity },
@@ -130,6 +132,7 @@ function FullAppSidebar() {
       icon: Hammer,
       items: [
         { title: "Pipelines", url: "/pipelines", icon: Workflow },
+        { title: "Process Flows", url: "/process-flows", icon: Workflow },
         { title: "Blueprints", url: "/blueprints", icon: PenTool },
         { title: "Templates", url: "/templates", icon: Library },
         { title: "Skills", url: "/skills", icon: Layers },
@@ -192,7 +195,8 @@ function FullAppSidebar() {
   const isActive = (url: string) => {
     if (url === "/dashboard") return location === "/dashboard";
     if (url === "/outcomes") return location === "/outcomes" || location.startsWith("/outcomes/");
-    if (url === "/agents") return location === "/agents" || location.startsWith("/agents/");
+    if (url === "/agents/teams") return location === "/agents/teams" || location.startsWith("/agents/teams/");
+    if (url === "/agents") return (location === "/agents" || location.startsWith("/agents/")) && !location.startsWith("/agents/teams");
     if (url === "/governance") return location === "/governance" || location.startsWith("/governance/");
     if (url === "/skills") return location === "/skills" || location.startsWith("/skills/");
     if (url === "/approvals") return location === "/approvals" || location.startsWith("/approvals/");
