@@ -1302,6 +1302,26 @@ export async function runStartupMigrations() {
         AND (industry_id IS NULL OR industry_id = '')
     `);
 
+    // Self-heal loopback MCP server URLs. Mock/demo MCP servers are registered
+    // with an absolute http://localhost:<port> URL, so rows synced from another
+    // environment (e.g. local dev on :5000 -> Azure on :8080) point at a port
+    // nothing listens on and every tool call fails with "fetch failed". A
+    // loopback URL is only ever valid pointing at the current process, so
+    // rewriting to this process's port is always correct; non-loopback
+    // (real external connector) URLs are untouched.
+    const selfPort = process.env.PORT || "5000";
+    const healed = await client.query(
+      `UPDATE mcp_servers
+       SET url = regexp_replace(url, '^https?://(localhost|127\\.0\\.0\\.1):[0-9]+', 'http://localhost:' || $1::text)
+       WHERE url ~ '^https?://(localhost|127\\.0\\.0\\.1):[0-9]+'
+         AND url !~ ('^http://localhost:' || $1::text || '/')
+         AND url != ('http://localhost:' || $1::text)`,
+      [selfPort]
+    );
+    if ((healed.rowCount ?? 0) > 0) {
+      console.log(`[db] Self-healed ${healed.rowCount} loopback MCP server URL(s) to port ${selfPort}`);
+    }
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

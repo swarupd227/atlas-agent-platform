@@ -146,9 +146,15 @@ const RETRYABLE_ERROR_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "
 
 function isRetryable(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  const e = err as Error & { status?: number; code?: string; constructor: { name: string } };
+  const e = err as Error & { status?: number; code?: string; cause?: { code?: string }; constructor: { name: string } };
   if (e.status !== undefined && RETRYABLE_STATUS_CODES.has(e.status)) return true;
   if (e.code !== undefined && RETRYABLE_ERROR_CODES.has(e.code)) return true;
+  // Node's native fetch (undici) throws `TypeError: fetch failed` with the
+  // real network error code buried in err.cause -- unwrap it, else transient
+  // connection drops look fatal and never retry.
+  const causeCode = e.cause?.code;
+  if (causeCode !== undefined && (RETRYABLE_ERROR_CODES.has(causeCode) || causeCode.startsWith("UND_ERR"))) return true;
+  if (e.message === "fetch failed" && e.constructor.name === "TypeError") return true;
   if (e.constructor.name === "RateLimitError") return true;
   if (e.constructor.name === "APIConnectionError") return true;
   if (e.constructor.name === "APIConnectionTimeoutError") return true;
