@@ -131,8 +131,26 @@ const AUTH_EXEMPT_PATHS = [
   "/auth/mode",
 ];
 
+// Loopback per the actual TCP source address -- unlike req.ip this ignores
+// X-Forwarded-For and therefore cannot be spoofed by an external caller.
+function isLoopbackSocket(req: Request): boolean {
+  const addr = req.socket?.remoteAddress;
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   if (getSecurityMode() === "demo") {
+    return next();
+  }
+
+  // Mock tool backends (/api/mock/*) are called server-to-server by the agent
+  // runtime itself (a worker agent invoking its own mock connector endpoints
+  // via http://localhost:<port>). Those self-calls carry no browser session,
+  // so in production mode they would 401 and every tool call on a mock
+  // connector would fail. A genuine loopback TCP origin is the gate: external
+  // requests always arrive through the front proxy with a non-loopback
+  // source, so these endpoints stay unreachable without auth from outside.
+  if (req.path.startsWith("/mock/") && isLoopbackSocket(req)) {
     return next();
   }
 
