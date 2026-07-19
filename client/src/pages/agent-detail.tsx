@@ -1896,6 +1896,13 @@ function AgentDetailInner() {
         );
       })()}
 
+      {/* Run history one click from the team, not buried in the flow editor --
+          the lifecycle bar starts runs, so the results of those runs belong
+          right beneath it. */}
+      {agent.agentType === "team" && agent.blueprintId && (
+        <TeamFlowRecentRuns agentId={agent.id} />
+      )}
+
       <Dialog open={runFlowOpen} onOpenChange={setRunFlowOpen}>
         <DialogContent className="max-w-md" data-testid="dialog-run-flow">
           <DialogHeader>
@@ -9804,5 +9811,47 @@ function AgentChannels({ agent }: { agent: any }) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function TeamFlowRecentRuns({ agentId }: { agentId: string }) {
+  const [, navigate] = useLocation();
+  const { data: runs } = useQuery<Array<{ id: string; status: string; currentWave: number | null; totalWaves: number | null; startedAt: string | null }>>({
+    queryKey: ["/api/team-agents", agentId, "dag-runs"],
+    refetchInterval: (query) => {
+      const d = query.state.data as Array<{ status: string }> | undefined;
+      return d?.some(r => r.status === "running" || r.status === "waiting_approval") ? 3000 : false;
+    },
+  });
+
+  if (!runs || runs.length === 0) return null;
+
+  return (
+    <Card data-testid="card-team-recent-runs">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-1.5">
+          <History className="w-4 h-4 text-muted-foreground" /> Recent Runs
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-1 pt-0">
+        {runs.slice(0, 5).map(run => (
+          <button
+            key={run.id}
+            type="button"
+            onClick={() => navigate(`/dag-runs/${run.id}`)}
+            className="flex items-center gap-2 p-2 rounded-md hover-elevate text-left"
+            data-testid={`link-team-run-${run.id}`}
+          >
+            <div className="flex flex-col flex-1 min-w-0">
+              <span className="text-xs truncate">
+                {run.startedAt ? new Date(run.startedAt).toLocaleString() : run.id.substring(0, 8)}
+              </span>
+              <span className="text-[11px] text-muted-foreground">Wave {run.currentWave ?? 0}/{run.totalWaves ?? 0}</span>
+            </div>
+            <StatusBadge status={run.status} className="text-[10px] px-1.5 py-0 shrink-0" />
+          </button>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
