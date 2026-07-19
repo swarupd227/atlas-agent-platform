@@ -2938,6 +2938,35 @@ const router = Router();
             deploymentId: promoted.id,
           },
         });
+      } else {
+        // Non-prod hop (e.g. staging -> pilot): the promoted deployment is
+        // created "pending" and only goes live when an approval attached to
+        // it is approved (the approvals PATCH handler activates pending
+        // deployments). Without this approval object the deployment waits
+        // forever on a review that doesn't exist, while the team page shows
+        // "Awaiting deployment approval — review in Governance".
+        const promotedAgent = await storage.getAgent(source.agentId, getOrgId(req));
+        const promotedRiskTier = promotedAgent?.riskTier || "MEDIUM";
+        await storage.createApproval({
+          type: "deployment_review",
+          objectType: "deployment",
+          objectId: promoted.id,
+          objectName: `${source.agentName || "Agent"} v${source.version || "?"} → ${nextEnv}`,
+          status: "pending",
+          requestedBy: "System (Promotion)",
+          agentId: source.agentId,
+          environment: nextEnv,
+          description: `Deployment review required to complete promotion from ${source.environment} to ${nextEnv}. Risk: ${promotedRiskTier}.`,
+          riskScore: promotedRiskTier === "CRITICAL" ? 10 : promotedRiskTier === "HIGH" ? 8 : promotedRiskTier === "MEDIUM" ? 5 : 3,
+          evidenceJson: {
+            agentName: source.agentName,
+            version: source.version,
+            riskTier: promotedRiskTier,
+            environment: nextEnv,
+            promotedFrom: source.environment,
+            deploymentId: promoted.id,
+          },
+        });
       }
 
       const responseBody: any = { ...promoted };
