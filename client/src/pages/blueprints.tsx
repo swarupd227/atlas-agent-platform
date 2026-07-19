@@ -208,6 +208,24 @@ export default function Blueprints() {
     },
   });
 
+  // Sharing was previously only a toggle inside blueprint-detail.tsx --
+  // "Choose Blueprint" in the agent wizard only lists isShared/signed/compiled
+  // blueprints, but there was no discoverable way to get one into that state
+  // from the library grid itself (a blueprint author had to know to open the
+  // detail page and find the button there). Same PATCH the detail page uses.
+  const shareMutation = useMutation({
+    mutationFn: async ({ id, isShared }: { id: string; isShared: boolean }) => {
+      await apiRequest("PATCH", `/api/blueprints/${id}`, { isShared });
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
+      toast({ title: variables.isShared ? "Blueprint shared to org" : "Blueprint unshared" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update sharing", description: err.message, variant: "destructive" });
+    },
+  });
+
   function resetDialog() {
     setDialogOpen(false);
     setNewName("");
@@ -378,10 +396,14 @@ export default function Blueprints() {
             const patternLabel = PATTERN_TYPES.find(pt => pt.value === bp.patternType)?.label;
 
             return (
-              <Card key={bp.id} className="group hover:border-primary/30 transition-colors" data-testid={`card-blueprint-${bp.id}`}>
+              <Card key={bp.id} className="group hover:border-primary/30 transition-colors overflow-hidden" data-testid={`card-blueprint-${bp.id}`}>
                 <CardContent className="p-4 flex flex-col gap-3">
                   <div className="flex items-start justify-between gap-2">
-                    <Link href={`/blueprints/${bp.id}`}>
+                    {/* min-w-0 has to live on the actual flex child (this Link,
+                        which renders as the <a>) -- it was on a nested div
+                        instead, so long titles never got a shrink basis and
+                        pushed the shrink-0 badges on the right into overlap. */}
+                    <Link href={`/blueprints/${bp.id}`} className="min-w-0 flex-1">
                       <div className="flex items-center gap-2.5 cursor-pointer min-w-0" data-testid={`link-blueprint-${bp.id}`}>
                         <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
                           <GitBranch className="w-4 h-4 text-primary" />
@@ -462,6 +484,23 @@ export default function Blueprints() {
                   </div>
 
                   <div className="flex items-center justify-end gap-1.5 pt-1 border-t">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={(e) => { e.stopPropagation(); shareMutation.mutate({ id: bp.id, isShared: !bp.isShared }); }}
+                          disabled={shareMutation.isPending}
+                          data-testid={`button-toggle-share-${bp.id}`}
+                        >
+                          <Crown className="w-3 h-3 mr-1" /> {bp.isShared ? "Shared" : "Share"}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs">
+                        {bp.isShared ? "Shared to org -- selectable when creating agents. Click to unshare." : "Not shared yet -- won't appear in the agent Choose Blueprint picker until shared."}
+                      </TooltipContent>
+                    </Tooltip>
                     <Button
                       variant="ghost"
                       size="sm"

@@ -68,6 +68,28 @@ export function computeEventHash(previousHash: string, canonicalPayload: string)
   return createHash("sha256").update(previousHash + canonicalPayload).digest("hex");
 }
 
+/**
+ * Merkle root over an ordered list of hex-encoded leaf hashes (the chain's
+ * own eventHash values). An odd node at any level is paired with itself
+ * (standard padding), so the root is well-defined for any non-empty input.
+ * Used for periodic checkpoints: recomputing the root for just one batch's
+ * leaves is enough to verify that batch, without replaying the whole chain.
+ */
+export function computeMerkleRoot(leafHashes: string[]): string {
+  if (leafHashes.length === 0) return createHash("sha256").update("").digest("hex");
+  let level = leafHashes.map(h => Buffer.from(h, "hex"));
+  while (level.length > 1) {
+    const next: Buffer[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = i + 1 < level.length ? level[i + 1] : level[i];
+      next.push(createHash("sha256").update(Buffer.concat([left, right])).digest());
+    }
+    level = next;
+  }
+  return level[0].toString("hex");
+}
+
 interface SigningKey {
   keyId: string;
   privateKey: KeyObject;

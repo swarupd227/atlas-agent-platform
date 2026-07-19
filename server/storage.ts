@@ -1,11 +1,13 @@
-import { eq, desc, inArray, and, like, or, sql, isNull, lte, asc, lt } from "drizzle-orm";
+import { eq, desc, inArray, and, like, or, sql, isNull, lte, gte, asc, lt } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
-import { buildCanonicalAuditPayload, computeEventHash, signAuditPayload, verifyAuditSignature } from "./audit-signing";
+import { buildCanonicalAuditPayload, computeEventHash, computeMerkleRoot, signAuditPayload, verifyAuditSignature } from "./audit-signing";
 import {
   integrationConnections,
   type IntegrationConnection, type InsertIntegrationConnection,
+  agentIntegrationCredentials,
+  type AgentIntegrationCredential, type InsertAgentIntegrationCredential,
   users, agents, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
@@ -167,6 +169,7 @@ import {
   agentTriggers, type AgentTrigger, type InsertAgentTrigger,
   organizations, type Organization, type InsertOrganization,
   auditChainHealthChecks, type AuditChainHealthCheck, type InsertAuditChainHealthCheck,
+  auditChainCheckpoints, type AuditChainCheckpoint, type InsertAuditChainCheckpoint,
   aarConfigs, type AarConfig, type InsertAarConfig,
   aarActionDecisions, type AarActionDecision, type InsertAarActionDecision,
   aarAgentStateReports, type AarAgentStateReport, type InsertAarAgentStateReport,
@@ -237,6 +240,8 @@ export interface IStorage {
   getTraces(orgId?: string): Promise<RunTrace[]>;
   getTrace(id: string, orgId?: string): Promise<RunTrace | undefined>;
   getTracesByAgent(agentId: string, orgId?: string): Promise<RunTrace[]>;
+  getAgentCostSince(agentId: string, since: Date): Promise<number>;
+  getOrgCostSince(orgId: string, since: Date): Promise<number>;
   getRecentCompletedTracesByAgent(agentId: string, limit?: number): Promise<RunTrace[]>;
   getTracesByParentIds(parentIds: string[]): Promise<RunTrace[]>;
   createTrace(trace: InsertRunTrace): Promise<RunTrace>;
@@ -343,6 +348,16 @@ export interface IStorage {
 
   createAuditChainHealthCheck(record: InsertAuditChainHealthCheck): Promise<AuditChainHealthCheck>;
   getAuditChainHealthChecks(limit: number): Promise<AuditChainHealthCheck[]>;
+
+  createAuditChainCheckpointForOrg(orgId: string | null): Promise<AuditChainCheckpoint | null>;
+  createAuditChainCheckpointsForAllOrgs(): Promise<AuditChainCheckpoint[]>;
+  getLatestAuditChainCheckpoint(orgId?: string): Promise<AuditChainCheckpoint | undefined>;
+  getAuditChainCheckpoints(limit: number, orgId?: string): Promise<AuditChainCheckpoint[]>;
+  getAuditChainCheckpointById(id: string): Promise<AuditChainCheckpoint | undefined>;
+  verifyAuditChainCheckpoint(checkpointId: string): Promise<{
+    valid: boolean; checkpoint?: AuditChainCheckpoint; recomputedRoot?: string;
+    rootMatches?: boolean; signatureValid?: boolean; eventsVerified?: number; error?: string;
+  }>;
   getPendingAuditChainJob(): Promise<Job | null>;
   getPendingOtcSmokeTestJob(): Promise<Job | null>;
   hasPendingJobOfType(type: string): Promise<boolean>;
@@ -828,8 +843,14 @@ export interface IStorage {
   getDagExecutionRun(id: string): Promise<DagExecutionRun | undefined>;
   listDagExecutionRuns(pipelineRunId?: string): Promise<DagExecutionRun[]>;
   listDagExecutionRunsByTeamAgent(teamAgentId: string, limit?: number): Promise<DagExecutionRun[]>;
+  listDagExecutionRunsByStatus(status: string): Promise<DagExecutionRun[]>;
   createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun>;
   updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined>;
+  // Atomically flips a run from "waiting_approval" to "running" -- returns
+  // false (no-op) if it wasn't in that status, so two racing resume attempts
+  // (a live in-process poller and the recovery scan both waking up around
+  // the same moment) can't both start executing the same paused wave.
+  claimDagExecutionRunForResume(id: string): Promise<boolean>;
 
   getWorkflowStateSchema(id: string): Promise<WorkflowStateSchema | undefined>;
   getWorkflowStateSchemaByPipeline(pipelineId: string): Promise<WorkflowStateSchema | undefined>;
@@ -1195,6 +1216,22 @@ export class DatabaseStorage implements IStorage {
     const conditions: ReturnType<typeof eq>[] = [eq(runTraces.agentId, agentId)];
     if (orgId) conditions.push(eq(runTraces.organizationId, orgId));
     return db.select().from(runTraces).where(and(...conditions)).orderBy(desc(runTraces.startedAt));
+  }
+
+  /** Sum of runTraces.costUsd for one agent since a timestamp -- backs the daily-per-agent budget tier. */
+  async getAgentCostSince(agentId: string, since: Date): Promise<number> {
+    const [row] = await db.select({ total: sql<number>`COALESCE(SUM(${runTraces.costUsd}), 0)` })
+      .from(runTraces)
+      .where(and(eq(runTraces.agentId, agentId), gte(runTraces.startedAt, since)));
+    return Number(row?.total ?? 0);
+  }
+
+  /** Sum of runTraces.costUsd across an org since a timestamp -- backs the org-wide monthly budget tier. */
+  async getOrgCostSince(orgId: string, since: Date): Promise<number> {
+    const [row] = await db.select({ total: sql<number>`COALESCE(SUM(${runTraces.costUsd}), 0)` })
+      .from(runTraces)
+      .where(and(eq(runTraces.organizationId, orgId), gte(runTraces.startedAt, since)));
+    return Number(row?.total ?? 0);
   }
 
   async getRecentCompletedTracesByAgent(agentId: string, limitCount = 5) {
@@ -1830,6 +1867,106 @@ export class DatabaseStorage implements IStorage {
 
   async getAuditChainHealthChecks(limit: number) {
     return db.select().from(auditChainHealthChecks).orderBy(desc(auditChainHealthChecks.checkedAt)).limit(limit);
+  }
+
+  /**
+   * Create a Merkle-root checkpoint over every audit event newer than this
+   * org's last checkpoint (or from genesis if it has none yet). Returns null
+   * if there's nothing new to checkpoint. See auditChainCheckpoints for why:
+   * this lets a later verify-batch call check just this range against one
+   * signed root, instead of replaying the whole chain from sequence 1.
+   */
+  async createAuditChainCheckpointForOrg(orgId: string | null): Promise<AuditChainCheckpoint | null> {
+    const events = orgId
+      ? await db.select().from(auditEvents).where(eq(auditEvents.organizationId, orgId))
+      : await db.select().from(auditEvents).where(isNull(auditEvents.organizationId));
+    const withSeq = events.filter(e => e.sequenceNum !== null && e.eventHash);
+    if (withSeq.length === 0) return null;
+    withSeq.sort((a, b) => ((a.sequenceNum || 0) - (b.sequenceNum || 0)) || a.id.localeCompare(b.id));
+
+    const last = await this.getLatestAuditChainCheckpoint(orgId ?? undefined);
+    const sinceSeq = last?.rangeEndSeq ?? 0;
+    const batch = withSeq.filter(e => (e.sequenceNum || 0) > sinceSeq);
+    if (batch.length === 0) return null;
+
+    const merkleRoot = computeMerkleRoot(batch.map(e => e.eventHash!));
+    const { signature, signerKeyId } = await signAuditPayload(merkleRoot);
+
+    const [created] = await db.insert(auditChainCheckpoints).values({
+      organizationId: orgId,
+      rangeStartSeq: batch[0].sequenceNum!,
+      rangeEndSeq: batch[batch.length - 1].sequenceNum!,
+      eventCount: batch.length,
+      merkleRoot,
+      signature,
+      signerKeyId,
+    }).returning();
+    return created;
+  }
+
+  /** Checkpoints every org (and the org-less bucket) that has new events since its last checkpoint. */
+  async createAuditChainCheckpointsForAllOrgs(): Promise<AuditChainCheckpoint[]> {
+    const rows = await db.selectDistinct({ organizationId: auditEvents.organizationId }).from(auditEvents);
+    const results: AuditChainCheckpoint[] = [];
+    for (const row of rows) {
+      const checkpoint = await this.createAuditChainCheckpointForOrg(row.organizationId ?? null);
+      if (checkpoint) results.push(checkpoint);
+    }
+    return results;
+  }
+
+  async getLatestAuditChainCheckpoint(orgId?: string): Promise<AuditChainCheckpoint | undefined> {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const rows = scopedOrgId
+      ? await db.select().from(auditChainCheckpoints).where(eq(auditChainCheckpoints.organizationId, scopedOrgId)).orderBy(desc(auditChainCheckpoints.rangeEndSeq)).limit(1)
+      : await db.select().from(auditChainCheckpoints).orderBy(desc(auditChainCheckpoints.rangeEndSeq)).limit(1);
+    return rows[0];
+  }
+
+  async getAuditChainCheckpoints(limit: number, orgId?: string): Promise<AuditChainCheckpoint[]> {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    return scopedOrgId
+      ? db.select().from(auditChainCheckpoints).where(eq(auditChainCheckpoints.organizationId, scopedOrgId)).orderBy(desc(auditChainCheckpoints.rangeEndSeq)).limit(limit)
+      : db.select().from(auditChainCheckpoints).orderBy(desc(auditChainCheckpoints.rangeEndSeq)).limit(limit);
+  }
+
+  async getAuditChainCheckpointById(id: string): Promise<AuditChainCheckpoint | undefined> {
+    const [row] = await db.select().from(auditChainCheckpoints).where(eq(auditChainCheckpoints.id, id)).limit(1);
+    return row;
+  }
+
+  /**
+   * Selective verification: recompute the Merkle root for just this
+   * checkpoint's event range and check it (and its signature) against what
+   * was stored — O(batch size), not O(full chain since genesis).
+   */
+  async verifyAuditChainCheckpoint(checkpointId: string) {
+    const checkpoint = await this.getAuditChainCheckpointById(checkpointId);
+    if (!checkpoint) return { valid: false, error: "Checkpoint not found" };
+
+    const events = checkpoint.organizationId
+      ? await db.select().from(auditEvents).where(eq(auditEvents.organizationId, checkpoint.organizationId))
+      : await db.select().from(auditEvents).where(isNull(auditEvents.organizationId));
+    const batch = events
+      .filter(e => e.sequenceNum !== null && (e.sequenceNum as number) >= checkpoint.rangeStartSeq && (e.sequenceNum as number) <= checkpoint.rangeEndSeq)
+      .sort((a, b) => ((a.sequenceNum || 0) - (b.sequenceNum || 0)) || a.id.localeCompare(b.id));
+
+    if (batch.length !== checkpoint.eventCount) {
+      return { valid: false, checkpoint, error: `Expected ${checkpoint.eventCount} events in range [${checkpoint.rangeStartSeq}, ${checkpoint.rangeEndSeq}], found ${batch.length}` };
+    }
+
+    const recomputedRoot = computeMerkleRoot(batch.map(e => e.eventHash!));
+    const rootMatches = recomputedRoot === checkpoint.merkleRoot;
+    const signatureValid = await verifyAuditSignature(checkpoint.merkleRoot, checkpoint.signature, checkpoint.signerKeyId);
+
+    return {
+      valid: rootMatches && signatureValid,
+      checkpoint,
+      recomputedRoot,
+      rootMatches,
+      signatureValid,
+      eventsVerified: batch.length,
+    };
   }
 
   async hasPendingJobOfType(type: string): Promise<boolean> {
@@ -4003,6 +4140,10 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
   }
 
+  async listDagExecutionRunsByStatus(status: string): Promise<DagExecutionRun[]> {
+    return db.select().from(dagExecutionRuns).where(eq(dagExecutionRuns.status, status));
+  }
+
   async createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun> {
     const [row] = await db.insert(dagExecutionRuns).values(run).returning();
     return row;
@@ -4011,6 +4152,15 @@ export class DatabaseStorage implements IStorage {
   async updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined> {
     const [row] = await db.update(dagExecutionRuns).set(data).where(eq(dagExecutionRuns.id, id)).returning();
     return row;
+  }
+
+  async claimDagExecutionRunForResume(id: string): Promise<boolean> {
+    const [row] = await db
+      .update(dagExecutionRuns)
+      .set({ status: "running" })
+      .where(and(eq(dagExecutionRuns.id, id), eq(dagExecutionRuns.status, "waiting_approval")))
+      .returning();
+    return !!row;
   }
 
   async getWorkflowStateSchema(id: string): Promise<WorkflowStateSchema | undefined> {
@@ -5056,6 +5206,52 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(integrationConnections.organizationId, orgId),
         eq(integrationConnections.integrationId, integrationId),
+      ));
+  }
+
+  // ── Per-agent outbound identity ──────────────────────────────────────────────
+  // Mirrors integrationConnections above, but scoped to one agent instead of
+  // the whole org -- lets a single agent use its own connector credential
+  // instead of the org-wide one every other agent shares.
+  async getAgentIntegrationCredential(agentId: string, integrationId: string): Promise<AgentIntegrationCredential | null> {
+    const [row] = await db.select().from(agentIntegrationCredentials)
+      .where(and(
+        eq(agentIntegrationCredentials.agentId, agentId),
+        eq(agentIntegrationCredentials.integrationId, integrationId),
+      ));
+    return row ?? null;
+  }
+
+  async listAgentIntegrationCredentials(agentId: string): Promise<AgentIntegrationCredential[]> {
+    return db.select().from(agentIntegrationCredentials)
+      .where(eq(agentIntegrationCredentials.agentId, agentId))
+      .orderBy(desc(agentIntegrationCredentials.createdAt));
+  }
+
+  async upsertAgentIntegrationCredential(data: InsertAgentIntegrationCredential): Promise<AgentIntegrationCredential> {
+    const existing = await this.getAgentIntegrationCredential(data.agentId, data.integrationId);
+    if (existing) {
+      const [row] = await db.update(agentIntegrationCredentials)
+        .set({
+          credentialBlob: data.credentialBlob,
+          status: data.status,
+          lastTestResult: data.lastTestResult,
+          lastError: data.lastError,
+          updatedAt: new Date(),
+        })
+        .where(eq(agentIntegrationCredentials.id, existing.id))
+        .returning();
+      return row;
+    }
+    const [row] = await db.insert(agentIntegrationCredentials).values(data).returning();
+    return row;
+  }
+
+  async deleteAgentIntegrationCredential(agentId: string, integrationId: string): Promise<void> {
+    await db.delete(agentIntegrationCredentials)
+      .where(and(
+        eq(agentIntegrationCredentials.agentId, agentId),
+        eq(agentIntegrationCredentials.integrationId, integrationId),
       ));
   }
 

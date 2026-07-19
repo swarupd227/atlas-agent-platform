@@ -746,12 +746,24 @@ const router = Router();
   });
 
   router.post("/api/ai/propose-agents", async (req, res) => {
+    // This call routinely takes 90-240s for larger teams (see openAITimeoutMs
+    // below). Stream real progress over SSE -- matching the pattern already
+    // used in playground.ts -- instead of leaving the client's "Drafting..."
+    // spinner static the whole time with no signal the request is even alive.
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    });
+    const sendEvent = (data: any) => res.write(`data: ${JSON.stringify(data)}\n\n`);
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-        return res.status(503).json({ error: "AI assistant is not configured" });
+        sendEvent({ type: "error", error: "AI assistant is not configured" });
+        return res.end();
       }
       const { outcomeContract, kpis, feedback, previousPlan, industryContext, templateId, processFlowSteps } = req.body;
 
+      sendEvent({ type: "progress", status: "gathering_context", message: "Gathering templates, skills, policies, and connected systems..." });
       const orgId = getOrgId(req);
       const [templates, allSkills, allMcpServers, allPolicies, allAgents, ragPipelines, allKnowledgeBases] = await Promise.all([
         storage.getAgentTemplates(),
@@ -762,6 +774,7 @@ const router = Router();
         storage.getRagPipelines(),
         storage.getKnowledgeBases(orgId),
       ]);
+      sendEvent({ type: "progress", status: "context_gathered", message: "Context gathered. Scoring relevance and building the plan..." });
 
       const preSelectedTemplate = templateId
         ? (templates as any[]).find((t) => t.id === templateId) ?? null
@@ -1459,29 +1472,72 @@ MANDATORY: You MUST create EXACTLY ${stagedPipelines[0].count} worker agents —
 After assigning one agent to each stage, bind the following ${kpiDetails.length} KPIs to the most relevant existing stage agent (do NOT create extra agents for KPIs): ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`
         : `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`;
 
-      const openAIAbort = new AbortController();
-      const openAITimeout = setTimeout(() => openAIAbort.abort(), 120_000);
+      // Scale the request budget to the apparent size of the ask: a fixed
+      // 120s / 7000-token ceiling works for small teams but silently times
+      // out or truncates larger ones (confirmed empirically: ~13 agents
+      // succeeds under the old fixed budget, ~22+ does not, every time).
+      const estimatedAgentCount = (() => {
+        if (stagedPipelines.length > 0) return stagedPipelines[0].count;
+        if (Array.isArray(processFlowSteps) && processFlowSteps.length > 0) return processFlowSteps.length;
+        const desc = String(outcomeContract?.description || "");
+        const agentMentions = (desc.match(/\bAgent\b/g) || []).length;
+        return Math.max(agentMentions, 4);
+      })();
+      const openAITimeoutMs = Math.min(240_000, Math.max(90_000, 90_000 + estimatedAgentCount * 5_000));
+      const openAIMaxTokens = Math.min(16_000, Math.max(7_000, 2_000 + estimatedAgentCount * 500));
+
+      async function callProposeAgentsOnce() {
+        const abort = new AbortController();
+        const timeout = setTimeout(() => abort.abort(), openAITimeoutMs);
+        try {
+          return await openai.chat.completions.create({
+            model: "gpt-4.1-mini",
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userMsg },
+            ],
+            max_tokens: openAIMaxTokens,
+          }, { signal: abort.signal });
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+
+      sendEvent({ type: "progress", status: "calling_ai", message: `Drafting your team with AI (up to ~${Math.round(openAITimeoutMs / 1000)}s for a plan this size)...`, estimatedAgentCount });
+
       let openAIResp: Awaited<ReturnType<typeof openai.chat.completions.create>>;
       try {
-        openAIResp = await openai.chat.completions.create({
-          model: "gpt-4.1-mini",
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userMsg },
-          ],
-          max_tokens: 7000,
-        }, { signal: openAIAbort.signal });
-      } catch (aiErr: any) {
-        clearTimeout(openAITimeout);
-        if (aiErr?.name === "AbortError" || aiErr?.code === "ERR_CANCELED") {
-          res.status(504).json({ error: "Agent plan generation timed out. Please try again." });
-          return;
+        openAIResp = await callProposeAgentsOnce();
+      } catch (firstErr: any) {
+        const isTransient = firstErr?.name === "AbortError" || firstErr?.code === "ERR_CANCELED" || (typeof firstErr?.status === "number" && firstErr.status >= 500);
+        if (!isTransient) throw firstErr;
+        // One automatic retry before surfacing a failure to the user — absorbs
+        // a single slow/busy moment on the model provider's side instead of
+        // making the user retype their description and try again themselves.
+        console.warn(`[propose-agents] First attempt failed (${firstErr?.name || firstErr?.status}), retrying once (timeout=${openAITimeoutMs}ms, maxTokens=${openAIMaxTokens}, estimatedAgents=${estimatedAgentCount})...`);
+        sendEvent({ type: "progress", status: "retrying", message: "First attempt was slow to respond — retrying once..." });
+        try {
+          openAIResp = await callProposeAgentsOnce();
+        } catch (secondErr: any) {
+          if (secondErr?.name === "AbortError" || secondErr?.code === "ERR_CANCELED") {
+            sendEvent({
+              type: "error",
+              error: `This team description looks too large to draft in one request (roughly ${estimatedAgentCount} agents). Try describing a smaller team, or split it into stages and combine them afterward.`,
+              timeout: true,
+            });
+            return res.end();
+          }
+          throw secondErr;
         }
-        throw aiErr;
       }
-      clearTimeout(openAITimeout);
+      sendEvent({ type: "progress", status: "ai_responded", message: "AI response received. Validating and enriching the plan..." });
       const content = openAIResp.choices[0]?.message?.content ?? "";
+      // finish_reason "length" is OpenAI's own signal that generation was cut
+      // off by max_tokens (as opposed to a genuine formatting mistake) -- the
+      // authoritative way to tell "this was too big to draft in one shot"
+      // apart from any other JSON-parsing failure.
+      const wasTruncatedByTokenLimit = openAIResp.choices[0]?.finish_reason === "length";
       let jsonStr = content;
       const fencedMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (fencedMatch) {
@@ -1536,8 +1592,16 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           }        // close Phase 1 catch
         }          // close if (braceStart >= 0)
         if (!parsed) {
-          res.json({ agents: [], orchestrator: null, pipeline: null, raw: content });
-          return;
+          // Honest, actionable failure instead of a bare empty plan: tell the
+          // caller (and ultimately the user) whether this looks like a
+          // too-large request, since that's the single most common real
+          // cause and the old generic message told users to add MORE detail
+          // -- the opposite of what usually helps.
+          const hint = wasTruncatedByTokenLimit
+            ? `This looks like it was too large to draft in one request (roughly ${estimatedAgentCount} agents estimated). Try describing a smaller team, or split it into stages and combine them afterward.`
+            : "The AI response couldn't be parsed as a valid team plan. Try rephrasing the description, or try again.";
+          sendEvent({ type: "done", result: { agents: [], orchestrator: null, pipeline: null, raw: content, error: hint, likelyTooLarge: wasTruncatedByTokenLimit } });
+          return res.end();
         }
       }
 
@@ -1553,8 +1617,8 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       if (!agentPlanValidation.success) {
         console.error("[propose-agents] LLM response failed schema validation:", agentPlanValidation.error.message);
         console.error("[propose-agents] Raw LLM response (first 2000 chars):", content.slice(0, 2000));
-        res.status(422).json({ error: "Agent plan generation failed: invalid response structure", details: agentPlanValidation.error.message });
-        return;
+        sendEvent({ type: "error", error: "Agent plan generation failed: invalid response structure", details: agentPlanValidation.error.message });
+        return res.end();
       }
 
       const normalizeAgent = function(a: any): any {
@@ -1757,6 +1821,8 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         console.error("[propose-agents] Blueprint suggestion failed:", bpErr);
       }
 
+      sendEvent({ type: "progress", status: "finalizing", message: "Finalizing plan and saving proposal..." });
+
       if (outcomeContract?.id && (result.agents?.length > 0 || result.orchestrator)) {
         try {
           const existing = await storage.getAgentProposalByOutcome(outcomeContract.id);
@@ -1787,10 +1853,12 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         }
       }
 
-      res.json(result);
+      sendEvent({ type: "done", result });
+      res.end();
     } catch (error) {
       console.error("Agent proposal error:", error);
-      res.status(500).json({ error: "Failed to generate agent proposals" });
+      sendEvent({ type: "error", error: "Failed to generate agent proposals" });
+      res.end();
     }
   });
 
@@ -1969,6 +2037,19 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           }
           lines.push(`Process EVERY record from the data — do not summarize or skip any.`);
           lines.push(`The platform will render this as an interactive data table for review.`);
+        } else if (agent.outputSchema && agent.outputSchema.type === "summary" && agent.outputSchema.fields?.length) {
+          // Downstream deterministic edges (buildPipelineState/extractStructuredOutput in
+          // agent-runtime.ts) read fields directly off the first fenced JSON block in this
+          // agent's output -- with no instruction to emit one, decision/verification agents
+          // silently produce prose-only output and every conditional edge past them (including
+          // human-approval gates) gets skipped as "no incoming edge condition satisfied".
+          lines.push(`\n═══ STRUCTURED OUTPUT REQUIREMENTS ═══`);
+          lines.push(`After your narrative analysis (${agent.outputSchema.description || "your findings"}), you MUST end your response with a JSON block wrapped in \`\`\`json ... \`\`\` markers.`);
+          lines.push(`The JSON object must contain exactly these top-level fields:`);
+          for (const field of agent.outputSchema.fields) {
+            lines.push(`  - ${field.name} (${field.type}): ${field.description}`);
+          }
+          lines.push(`This is not optional — downstream automation reads these exact field names from your JSON block to decide what happens next (e.g. whether to route for approval). Omitting the JSON block will cause the pipeline to stall.`);
         }
         return lines.join("\n");
       }
@@ -2595,38 +2676,87 @@ Revenue:
       const validTypes = ["trigger", "get_info", "ai_reasoning", "make_decision", "expert_approval", "take_action", "send_notification", "end"];
       const contextLine = outcomeContext ? `\nOutcome context: ${JSON.stringify(outcomeContext)}` : "";
 
-      const prompt = `You are a business process design assistant. Convert the following workflow description into a structured sequence of steps using only these step types: ${validTypes.join(", ")}.${contextLine}
+      // Ask for a real graph (nodes + edges), not a flat step list. A flat
+      // list can never represent "if X then A else B" -- every generated
+      // flow came out as a straight chain regardless of what the user
+      // described, even when they explicitly described a branch, because
+      // there was nowhere in the response shape to put one.
+      const prompt = `You are a business process design assistant. Convert the following workflow description into a process flow GRAPH using only these step types: ${validTypes.join(", ")}.${contextLine}
 
 Workflow description: "${description}"
 
 Return a JSON object with:
 - "name": a short name for this process (max 5 words)
-- "steps": an array of steps, each with: type (one of the valid types), label (plain English name max 5 words), description (1 sentence), actor (who does this: "System", "AI", "Customer", "Manager", or a relevant role)
+- "nodes": an array of steps, each with: "id" (short unique string like "n1", "n2"), "type" (one of the valid types), "label" (plain English name max 5 words), "description" (1 sentence), "actor" (who does this: "System", "AI", "Customer", "Manager", or a relevant role)
+- "edges": an array of connections between nodes, each with: "from" (a node id), "to" (a node id), and for branches only: "label" (short branch name, e.g. "High priority") and "condition" (plain-English guard, e.g. "urgency is high")
 
 Rules:
-- Always start with a "trigger" step
-- Always end with an "end" step
-- Include 5-10 steps total
-- Use "expert_approval" for any human sign-off steps
-- Use "ai_reasoning" for AI analysis steps
-- Use "make_decision" for branching points
+- Always start with exactly one "trigger" node (no incoming edges) and end with at least one "end" node (no outgoing edges)
+- Every node must be reachable by following edges from the trigger
+- Include 5-10 nodes total
+- Use "expert_approval" for any human sign-off steps, "ai_reasoning" for AI analysis, "make_decision" for branching points
+- If the description mentions a condition, threshold, or "if X then... otherwise..." -- model it literally: a "make_decision" node with TWO OR MORE outgoing edges, each with its own "label" and "condition" describing when that branch is taken. Do not collapse a branch into a single linear path.
+- Every non-branching node has exactly one outgoing edge to the next step
 - Keep labels under 5 words and in plain business language
 
 Respond ONLY with valid JSON, no markdown fences.`;
 
-      const rawFlow = await callClaude({ model: "claude-haiku-4-5", system: "", user: prompt, maxTokens: 1500, jsonMode: true });
+      const rawFlow = await callClaude({ model: "claude-haiku-4-5", system: "", user: prompt, maxTokens: 2000, jsonMode: true });
       const content = stripJsonFences(rawFlow);
       let parsed: any = {};
       try { parsed = JSON.parse(content); } catch {}
 
-      const steps = (parsed.steps || []).map((s: any) => ({
-        type: validTypes.includes(s.type) ? s.type : "take_action",
-        label: s.label || "Step",
-        description: s.description || "",
-        actor: s.actor || "System",
-      }));
+      // Validate defensively -- drop anything malformed rather than trusting
+      // the LLM's structure outright, since a bad node/edge id reference
+      // would silently produce a broken graph (this is exactly the failure
+      // mode that made every previously-generated flow render with edges
+      // that didn't visually connect).
+      const rawNodes: any[] = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+      const seenIds = new Set<string>();
+      const nodes = rawNodes.map((n, i) => {
+        let id = typeof n?.id === "string" && n.id.trim() ? n.id.trim() : `n${i}`;
+        if (seenIds.has(id)) id = `${id}_${i}`;
+        seenIds.add(id);
+        return {
+          id,
+          type: validTypes.includes(n?.type) ? n.type : "take_action",
+          label: typeof n?.label === "string" && n.label ? n.label : `Step ${i + 1}`,
+          description: typeof n?.description === "string" ? n.description : "",
+          actor: typeof n?.actor === "string" && n.actor ? n.actor : "System",
+        };
+      });
+      const nodeIds = new Set(nodes.map(n => n.id));
+      const rawEdges: any[] = Array.isArray(parsed.edges) ? parsed.edges : [];
+      let edges = rawEdges
+        .filter(e => nodeIds.has(e?.from) && nodeIds.has(e?.to) && e.from !== e.to)
+        .map((e, i) => ({
+          id: `e${i}`,
+          from: e.from as string,
+          to: e.to as string,
+          label: typeof e.label === "string" && e.label ? e.label : undefined,
+          condition: typeof e.condition === "string" && e.condition ? e.condition : undefined,
+        }));
 
-      res.json({ name: parsed.name || "Generated Flow", steps });
+      // Fallback: if the model produced nodes but no usable edges (or edges
+      // that don't actually connect the graph), chain nodes in array order
+      // rather than shipping a set of disconnected boxes.
+      const reachable = new Set<string>();
+      if (nodes.length > 0) {
+        const adj = new Map<string, string[]>();
+        for (const e of edges) adj.set(e.from, [...(adj.get(e.from) || []), e.to]);
+        const stack = [nodes[0].id];
+        while (stack.length) {
+          const id = stack.pop()!;
+          if (reachable.has(id)) continue;
+          reachable.add(id);
+          for (const next of adj.get(id) || []) stack.push(next);
+        }
+      }
+      if (nodes.length > 1 && (edges.length === 0 || reachable.size < nodes.length)) {
+        edges = nodes.slice(0, -1).map((n, i) => ({ id: `e${i}`, from: n.id, to: nodes[i + 1].id }));
+      }
+
+      res.json({ name: parsed.name || "Generated Flow", nodes, edges });
     } catch (e: any) {
       res.status(500).json({ error: "Failed to generate process flow" });
     }
@@ -3350,6 +3480,24 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
     }
   });
 
+  // Word-overlap (Jaccard) similarity between two response texts, used by
+  // shadow replay to decide whether a replayed response "matches" the
+  // original. Deliberately not exact/substring matching -- two LLM calls
+  // for the same prompt routinely differ in phrasing/structure while saying
+  // the same thing, and shadow replay's job is to catch behavioral drift,
+  // not wording drift.
+  function textSimilarity(a: string, b: string): number {
+    const tokenize = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]+/g) || []);
+    const setA = tokenize(a);
+    const setB = tokenize(b);
+    if (setA.size === 0 && setB.size === 0) return 1;
+    if (setA.size === 0 || setB.size === 0) return 0;
+    let intersection = 0;
+    setA.forEach((tok) => { if (setB.has(tok)) intersection++; });
+    const union = setA.size + setB.size - intersection;
+    return union === 0 ? 1 : intersection / union;
+  }
+
   router.post("/api/agents/:id/shadow-replay", async (req, res) => {
     try {
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
@@ -3441,10 +3589,16 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
 
           const replayOutput = replayResult.summary?.analysis?.summary || extractResponseText(replayResult);
 
-          const outputMatch = originalOutput && replayOutput &&
-            (originalOutput === replayOutput ||
-             (originalOutput.length > 20 && replayOutput.length > 20 &&
-              originalOutput.substring(0, 50).toLowerCase() === replayOutput.substring(0, 50).toLowerCase()));
+          // Exact-string / identical-first-50-chars matching treated any
+          // reworded-but-equivalent response as a full mismatch -- an LLM
+          // asked the same question twice will very rarely phrase its
+          // opening sentence identically even when the content is the same,
+          // so this consistently drove Pass Rate to 0% regardless of actual
+          // behavioral drift. Fall back to word-overlap similarity, which
+          // tolerates rephrasing while still catching genuinely different
+          // answers.
+          const outputMatch = !!originalOutput && !!replayOutput &&
+            (originalOutput === replayOutput || textSimilarity(originalOutput, replayOutput) >= 0.5);
 
           const latencyDivergence = origLatency > 0 && Math.abs(replayLatency - origLatency) / origLatency > 0.5;
 

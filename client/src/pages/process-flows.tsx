@@ -15,7 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeToGraph, stepsToGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
+import { normalizeToGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
 import FlowGraphCanvas from "@/components/flow-graph-canvas";
 import { TeamProposalDialog } from "@/components/team-proposal-flow";
 
@@ -61,8 +61,11 @@ export default function ProcessFlows() {
       return res.json();
     },
     onSuccess: (data) => {
-      if (data.steps && Array.isArray(data.steps)) {
-        const g = stepsToGraph(data.name || "Generated Flow", data.steps);
+      // Server now returns a real graph (nodes + edges, branches included)
+      // rather than a flat step list -- normalizeToGraph handles both shapes,
+      // so this also stays compatible if an older cached response ever shows up.
+      const g = normalizeToGraph(data, data.name || "Generated Flow");
+      if (g && g.nodes.length > 0) {
         replaceGraph({ nodes: g.nodes, edges: g.edges });
         setFlowName(data.name || "Generated Flow");
         toast({ title: "Process flow generated" });
@@ -127,9 +130,18 @@ export default function ProcessFlows() {
 
   const [showTeamProposal, setShowTeamProposal] = useState(false);
   const proposalDescription = useMemo(() => {
+    const labelById = new Map(graph.nodes.map(n => [n.id, n.label] as const));
     const steps = graph.nodes.map(n => n.label).filter(Boolean).join(" → ");
-    return flowName ? `${flowName}: ${steps}` : steps;
-  }, [graph.nodes, flowName]);
+    // Branch conditions live on edges, not nodes -- flattening to a plain
+    // "A → B → C" chain (as this used to do) silently drops them, so the
+    // team-drafting step downstream had nothing but prose to re-infer
+    // branching from. Spell out each conditional edge explicitly.
+    const branches = graph.edges
+      .filter(e => e.condition)
+      .map(e => `If ${e.condition}: ${labelById.get(e.from) || e.from} → ${labelById.get(e.to) || e.to}${e.label ? ` (${e.label})` : ""}`);
+    const branchLines = branches.length > 0 ? `\n\nBranch conditions:\n${branches.join("\n")}` : "";
+    return (flowName ? `${flowName}: ${steps}` : steps) + branchLines;
+  }, [graph.nodes, graph.edges, flowName]);
   const proposalSteps = useMemo(
     () => graph.nodes.map(n => ({ type: n.type, label: n.label, description: n.description, actor: n.actor })),
     [graph.nodes],

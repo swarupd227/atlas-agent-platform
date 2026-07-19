@@ -1,8 +1,10 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useMemo, useRef, useEffect } from "react";
+import { Link } from "wouter";
 import {
   Shield,
   Search,
+  ArrowLeft,
   FileCode,
   AlertTriangle,
   CheckCircle,
@@ -518,6 +520,12 @@ export default function PolicyEngine() {
     return (
       <div className="p-6 space-y-4" data-testid="page-policy-engine-empty">
         <div>
+          <Link href="/governance">
+            <Button variant="ghost" size="sm" className="-ml-2 mb-1 text-muted-foreground" data-testid="button-back-to-governance">
+              <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
+              Back to Governance
+            </Button>
+          </Link>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Gavel className="w-6 h-6" />
             Regulatory Policy-as-Code Engine
@@ -561,6 +569,12 @@ export default function PolicyEngine() {
     <div className="p-6 space-y-4" data-testid="page-policy-engine">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
+          <Link href="/governance">
+            <Button variant="ghost" size="sm" className="-ml-2 mb-1 text-muted-foreground" data-testid="button-back-to-governance">
+              <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
+              Back to Governance
+            </Button>
+          </Link>
           <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-page-title">
             <Gavel className="w-6 h-6" />
             Regulatory Policy-as-Code Engine

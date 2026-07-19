@@ -100,6 +100,42 @@ router.get("/api/v1/runs/:id", requireApiKey, async (req: Request, res: Response
   }
 });
 
+// ── Inbound: exported agents → Astra Agents knowledge bases ────────────────
+// Lets a code-exported agent (running entirely outside this platform, e.g. a
+// downloaded "Generic ReAct Loop" package) call back into its linked
+// knowledge base(s) for real retrieval, instead of shipping with a
+// permanently-empty stub. Uses the same searchKnowledgeBaseChunks() the
+// in-platform Search & Query tab and Workspace runs use — same pgvector
+// query, same role-based sensitivity filtering. No caller role is available
+// for an API-key-only external caller, so this always resolves to the
+// fail-safe default (internal-and-below, never restricted) — the same
+// behavior as an unattended scheduled run inside the platform.
+router.post("/api/v1/knowledge-bases/:id/search", requireApiKey, async (req: Request, res: Response) => {
+  try {
+    const { query, topK, scoreThreshold } = req.body ?? {};
+    if (!query || typeof query !== "string") {
+      return res.status(400).json({ error: "query (string) is required" });
+    }
+    const kbId = String(req.params.id);
+    const kb = await storage.getKnowledgeBase(kbId);
+    if (!kb) return res.status(404).json({ error: "Knowledge base not found" });
+
+    const { searchKnowledgeBaseChunks } = await import("../embeddings");
+    const results = await searchKnowledgeBaseChunks(
+      kbId,
+      query,
+      Number.isFinite(Number(topK)) ? Number(topK) : 5,
+      Number.isFinite(Number(scoreThreshold)) ? Number(scoreThreshold) : 0.3,
+      undefined, // no interactive role for an API-key caller — safe default applies
+    );
+    res.json({
+      results: results.map(r => ({ content: r.content, score: r.similarity, metadata: r.metadata })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to search knowledge base" });
+  }
+});
+
 // ── Outbound: Astra Agents → n8n ────────────────────────────────────────────
 // Invoke an n8n workflow by its webhook URL and return its response.
 router.post("/api/v1/integrations/n8n/call", requireApiKey, async (req: Request, res: Response) => {

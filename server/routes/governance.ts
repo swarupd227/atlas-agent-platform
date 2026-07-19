@@ -2,6 +2,7 @@ import { Router } from "express";
 import * as nodeCrypto from "node:crypto";
 import { storage } from "../storage";
 import { db } from "../db";
+import { resumeTeamAgentDagRun } from "../dag-execution-engine";
 import { desc, eq, sql } from "drizzle-orm";
 import { z, ZodError } from "zod";
 import {
@@ -1214,6 +1215,20 @@ Ontology: ${ontologyName || "industry standard"}`,
       }
     }
 
+    // Fast path for a DAG approval-gate decision: resume the paused run right
+    // away instead of waiting for either the in-process waitForApproval poll
+    // (up to 10s) or the recovery scan's next tick (up to 60s). Finds the run
+    // by pendingApprovalId rather than trusting any id threaded through the
+    // request, since the client only ever sees the approval id, not the run's.
+    if (approval.objectType === "pipeline_gate" && (status === "approved" || status === "rejected")) {
+      storage.listDagExecutionRunsByStatus("waiting_approval")
+        .then(runs => {
+          const match = runs.find(r => r.pendingApprovalId === approval.id);
+          if (match) resumeTeamAgentDagRun(match.id).catch(err => console.error(`[dag-resume] fast-path resume of ${match.id} failed:`, err.message));
+        })
+        .catch(() => {});
+    }
+
     if (status === "approved" && approval.objectType === "patch" && approval.objectId) {
       const allPatches = await storage.getPatches();
       const patch = allPatches.find(p => p.id === approval.objectId);
@@ -1355,6 +1370,46 @@ Ontology: ${ontologyName || "industry standard"}`,
           objectId: deployment.id,
           details: `Deployment ${deployment.agentName || "agent"} activated after approval. Status: ${deployUpdate.status}, canary: ${deployUpdate.canaryPercent || 0}%, shadow: ${deployUpdate.shadowEnabled || false}`,
         });
+      }
+    }
+
+    // initiate-retirement / complete-retirement (improvements.ts) create a
+    // "retirement_review"/"handover_review" approval when requireApproval is
+    // set, but only their *non*-approval branches actually change the
+    // agent's status -- approving the request here previously did nothing,
+    // so a retiring agent could sit in "Retiring" forever with no further
+    // action to take (Complete Archival re-enters the same broken loop for
+    // high-risk agents). Mirror what those endpoints' own non-approval
+    // branches do.
+    if (status === "approved" && approval.objectType === "agent" && approval.objectId) {
+      if (approval.type === "retirement_review") {
+        const agent = await storage.getAgent(approval.objectId, getOrgId(req));
+        if (agent && agent.status !== "retiring" && agent.status !== "retired") {
+          await storage.updateAgent(approval.objectId, { status: "retiring" });
+          await storage.createAuditEvent({
+            organizationId: getOrgId(req) ?? undefined,
+            actorType: "system",
+            actorId: "system",
+            action: "agent_retirement_initiated",
+            objectType: "agent",
+            objectId: approval.objectId,
+            details: JSON.stringify({ previousStatus: agent.status, approvedBy: decidedBy || "Expert Validator" }),
+          });
+        }
+      } else if (approval.type === "handover_review") {
+        const agent = await storage.getAgent(approval.objectId, getOrgId(req));
+        if (agent && agent.status !== "retired") {
+          await storage.updateAgent(approval.objectId, { status: "retired" });
+          await storage.createAuditEvent({
+            organizationId: getOrgId(req) ?? undefined,
+            actorType: "system",
+            actorId: "system",
+            action: "agent_retired",
+            objectType: "agent",
+            objectId: approval.objectId,
+            details: JSON.stringify({ previousStatus: agent.status, archivedAt: new Date().toISOString(), approvedBy: decidedBy || "Expert Validator" }),
+          });
+        }
       }
     }
 
@@ -1701,6 +1756,40 @@ Ontology: ${ontologyName || "industry standard"}`,
       const history = await storage.getAuditChainHealthChecks(20);
       const latest = history[0] ?? null;
       res.json({ latest, history });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Merkle-root checkpoints over the linear chain -- list, manually trigger,
+  // and selectively verify one batch without replaying the whole chain.
+  router.get("/api/audit-events/checkpoints", checkPermission("export_audit_bundle"), async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
+      const checkpoints = await storage.getAuditChainCheckpoints(limit, getOrgId(req));
+      res.json({ checkpoints });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post("/api/audit-chain/checkpoint", checkPermission("export_audit_bundle"), async (req, res) => {
+    try {
+      const checkpoint = await storage.createAuditChainCheckpointForOrg(getOrgId(req) ?? null);
+      if (!checkpoint) {
+        return res.json({ created: false, message: "No new audit events since the last checkpoint" });
+      }
+      res.status(201).json({ created: true, checkpoint });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/api/audit-events/verify-batch/:checkpointId", checkPermission("export_audit_bundle"), async (req, res) => {
+    try {
+      const checkpointId = Array.isArray(req.params.checkpointId) ? req.params.checkpointId[0] : req.params.checkpointId;
+      const result = await storage.verifyAuditChainCheckpoint(checkpointId);
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -3669,7 +3758,7 @@ Eval Suites: ${evalSuites.length} configured`,
       const days = Math.min(Math.max(parseInt(String(req.query.days || "30"), 10) || 30, 1), 365);
       const agentId = req.query.agentId ? String(req.query.agentId) : null;
 
-      const validMetrics = ["successRate", "latencyMs", "costUsd"];
+      const validMetrics = ["successRate", "latencyMs", "costUsd", "policyViolations"];
       if (!validMetrics.includes(metric)) {
         return res.status(400).json({ error: `metric must be one of: ${validMetrics.join(", ")}` });
       }
@@ -3705,11 +3794,26 @@ Eval Suites: ${evalSuites.length} configured`,
           GROUP BY DATE(started_at)
           ORDER BY DATE(started_at) ASC
         `)) as { rows: SeriesRow[] };
-      } else {
+      } else if (metric === "costUsd") {
         result = (await db.execute(sql`
           SELECT
             TO_CHAR(DATE(started_at), 'Mon DD') AS date,
             ROUND(AVG(cost_usd)::numeric, 4) AS value
+          FROM run_traces
+          WHERE started_at >= NOW() - (${days} || ' days')::interval
+            ${agentFilter}
+          GROUP BY DATE(started_at)
+          ORDER BY DATE(started_at) ASC
+        `)) as { rows: SeriesRow[] };
+      } else {
+        // "blocked" matches the same status value the Monitor page's own
+        // client-side policyViolationCount already filters on for its
+        // current-value number -- this makes the chart agree with it
+        // instead of introducing a second, differently-defined count.
+        result = (await db.execute(sql`
+          SELECT
+            TO_CHAR(DATE(started_at), 'Mon DD') AS date,
+            COUNT(CASE WHEN status = 'blocked' THEN 1 END) AS value
           FROM run_traces
           WHERE started_at >= NOW() - (${days} || ' days')::interval
             ${agentFilter}

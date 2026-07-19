@@ -562,11 +562,17 @@ function PolicyViolationsInline({ violations, isLoading }: { violations: PolicyV
 }
 
 function AgentsAtRiskInline({ agents }: { agents: AgentAtRisk[] }) {
+  // The section badge shows agents.length (itself already capped to the top
+  // 10 server-side); this preview only renders the first 4 of those. QA
+  // read that gap as "the dashboard count and the list don't match" -- they
+  // do, this just never said so out loud.
+  const shown = 4;
+  const remaining = agents.length - shown;
   return (
     <div data-testid="card-agents-at-risk">
       {agents.length > 0 ? (
         <div className="flex flex-col gap-1">
-          {agents.slice(0, 4).map((agent) => (
+          {agents.slice(0, shown).map((agent) => (
             <Link key={agent.id} href={`/agents/${agent.id}`}>
               <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer" data-testid={`link-agent-${agent.id}`}>
                 <StatusBadge status={agent.riskTier} />
@@ -582,6 +588,11 @@ function AgentsAtRiskInline({ agents }: { agents: AgentAtRisk[] }) {
               </div>
             </Link>
           ))}
+          {remaining > 0 && (
+            <span className="text-xs text-muted-foreground px-2 py-1" data-testid="text-agents-at-risk-more">
+              +{remaining} more at-risk agent{remaining !== 1 ? "s" : ""}
+            </span>
+          )}
         </div>
       ) : (
         <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">
@@ -594,11 +605,18 @@ function AgentsAtRiskInline({ agents }: { agents: AgentAtRisk[] }) {
 }
 
 function ApprovalQueueInline({ approvalQueue }: { approvalQueue: OverviewData["approvalQueue"] }) {
+  // Same shape of gap as AgentsAtRiskInline: approvalQueue.items is already
+  // the server's top-5-by-due-date slice of totalPending (the badge number),
+  // and this preview only shows the first 3 of *those* -- three layers of
+  // "here's a preview" that used to look like three disagreeing counts.
+  const shown = 3;
+  const remaining = Math.min(approvalQueue.items.length, 5) - shown;
+  const beyondPreviewCap = approvalQueue.totalPending - approvalQueue.items.length;
   return (
     <div className="flex flex-col gap-1" data-testid="card-approval-queue">
       {approvalQueue.items.length > 0 ? (
         <>
-          {approvalQueue.items.slice(0, 3).map((a) => (
+          {approvalQueue.items.slice(0, shown).map((a) => (
             <Link key={a.id} href={`/approvals/${a.id}`}>
               <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate cursor-pointer" data-testid={`approval-preview-${a.id}`}>
                 <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
@@ -611,6 +629,11 @@ function ApprovalQueueInline({ approvalQueue }: { approvalQueue: OverviewData["a
               </div>
             </Link>
           ))}
+          {(remaining > 0 || beyondPreviewCap > 0) && (
+            <span className="text-xs text-muted-foreground px-2 py-1" data-testid="text-approval-queue-more">
+              +{remaining + beyondPreviewCap} more pending approval{remaining + beyondPreviewCap !== 1 ? "s" : ""}
+            </span>
+          )}
         </>
       ) : (
         <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-500/5">

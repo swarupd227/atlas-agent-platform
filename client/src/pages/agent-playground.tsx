@@ -116,10 +116,12 @@ interface CitationAnnotation {
 }
 
 interface ParsedSegment {
-  type: "text" | "risk_assessment" | "decision" | "approval_required";
+  type: "text" | "risk_assessment" | "decision" | "approval_required" | "pending_block";
   content: string;
   data?: RiskAssessment | Decision | ApprovalRequired;
   citations?: Citation[];
+  /** Set on type "pending_block": which card is still streaming in. */
+  blockType?: string;
 }
 
 type ProgressEventType = "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "error";
@@ -170,7 +172,25 @@ function parseStructuredBlocks(text: string): ParsedSegment[] {
 
   if (lastIndex < text.length) {
     const remaining = text.slice(lastIndex).trim();
-    if (remaining) segments.push({ type: "text", content: remaining });
+    if (remaining) {
+      // A structured block still streaming in (opening fence seen, closing
+      // ``` hasn't arrived yet) used to render here as raw, ugly
+      // "```decision\n{ \"title\": ..." text for a second or two -- swap it
+      // for a lightweight "preparing..." placeholder instead so a real user
+      // never sees the wire format.
+      const openFenceMatch = remaining.match(/```(risk_assessment|decision|approval_required)\s*\n?([\s\S]*)$/);
+      if (openFenceMatch) {
+        const before = remaining.slice(0, openFenceMatch.index).trim();
+        if (before) segments.push({ type: "text", content: before });
+        // Keep the raw text in `content` too -- if this turns out to be a
+        // genuinely malformed fence in a FINISHED message (not still
+        // streaming in), the caller falls back to rendering it as plain
+        // text instead of showing "Preparing..." forever.
+        segments.push({ type: "pending_block", content: remaining.slice(openFenceMatch.index), blockType: openFenceMatch[1] });
+      } else {
+        segments.push({ type: "text", content: remaining });
+      }
+    }
   }
 
   return segments.length > 0 ? segments : [{ type: "text", content: text }];
@@ -203,6 +223,12 @@ export default function AgentPlayground() {
   const [currentProgressLabel, setCurrentProgressLabel] = useState<string>("");
   const [executionTraces, setExecutionTraces] = useState<Map<number, ExecutionTraceData>>(new Map());
   const [nextTraceId, setNextTraceId] = useState(0);
+  // Keyed by `${messageKey}-${segmentIndex}` -- once a specific approval card
+  // has been acted on, its Approve/Reject buttons stay disabled and show the
+  // recorded decision instead of remaining clickable forever (they used to
+  // only gate on !isStreaming, so any earlier approval card in the
+  // conversation was re-clickable after the next message finished streaming).
+  const [approvalDecisions, setApprovalDecisions] = useState<Record<string, boolean>>({});
   const prevSessionRef = useRef<number | null>(null);
   if (prevSessionRef.current !== activeSessionId) {
     prevSessionRef.current = activeSessionId;
@@ -489,6 +515,8 @@ export default function AgentPlayground() {
                     label = payload.success ? `${payload.tool} completed` : `${payload.tool} failed`;
                   } else if (payload.type === "discovery" && payload.toolCount) {
                     label = `Found ${payload.toolCount} tools`;
+                  } else if (payload.type === "discovery" && payload.knowledgeBases) {
+                    label = `Searching ${payload.knowledgeBases} knowledge base${payload.knowledgeBases === 1 ? "" : "s"}...`;
                   } else if (payload.type === "planning") {
                     label = "Planning execution...";
                   } else if (payload.type === "llm_thinking") {
@@ -577,6 +605,10 @@ export default function AgentPlayground() {
       queryClient.invalidateQueries({
         queryKey: [`/api/agents/${agentId}/playground/sessions/${activeSessionId}/messages`],
       });
+      // A brand-new session gets auto-retitled from its first message
+      // (server side) -- refresh the sidebar list so that title shows up
+      // without requiring the user to navigate away and back.
+      queryClient.invalidateQueries({ queryKey: [`/api/agents/${agentId}/playground/sessions`] });
 
       if (hasWebSearch && hasComplianceContext && contextualizedResult) {
         const citations = extractCitationsFromText(contextualizedResult);
@@ -618,7 +650,8 @@ export default function AgentPlayground() {
     }
   };
 
-  const handleApprovalAction = (action: string, approved: boolean) => {
+  const handleApprovalAction = (key: string, action: string, approved: boolean) => {
+    setApprovalDecisions(prev => ({ ...prev, [key]: approved }));
     const response = approved
       ? `APPROVED: I approve the action "${action}". Please proceed.`
       : `REJECTED: I reject the action "${action}". Do not proceed.`;
@@ -690,15 +723,17 @@ export default function AgentPlayground() {
           canInteract={!isStreaming}
           annotations={annotatedCitations}
           transformText={applyOntologyLabels}
+          messageKey={String(msg.id || `generic-${idx}`)}
+          approvalDecisions={approvalDecisions}
         />
       ))}
 
       {pendingUserMsg && (
-        <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
+        <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} messageKey="pending" approvalDecisions={approvalDecisions} />
       )}
 
       {streaming && streamContent && (
-        <MessageBubble role="assistant" content={streamContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
+        <MessageBubble role="assistant" content={streamContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} messageKey="streaming" approvalDecisions={approvalDecisions} />
       )}
 
       {streaming && !streamContent && (
@@ -766,10 +801,12 @@ export default function AgentPlayground() {
                   data-testid={`session-item-${s.id}`}
                 >
                   <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate flex-1 text-foreground">
-                    {new Date(s.createdAt).toLocaleString(undefined, {
-                      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-                    })}
+                  <span className="truncate flex-1 text-foreground" title={s.title}>
+                    {s.title && s.title !== `${agent.name} - Playground`
+                      ? s.title
+                      : new Date(s.createdAt).toLocaleString(undefined, {
+                          month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+                        })}
                   </span>
                   <Button
                     variant="ghost"
@@ -945,6 +982,8 @@ export default function AgentPlayground() {
                           canInteract={!isStreaming}
                           annotations={annotatedCitations}
                           transformText={applyOntologyLabels}
+                          messageKey={String(msg.id || `generic-${idx}`)}
+                          approvalDecisions={approvalDecisions}
                         />
                         {trace && <ExecutionTracePanel trace={trace} />}
                       </div>
@@ -952,11 +991,11 @@ export default function AgentPlayground() {
                   })}
 
                   {pendingUserMsg && (
-                    <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
+                    <MessageBubble role="user" content={pendingUserMsg} agentName={agent.name} onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} messageKey="pending" approvalDecisions={approvalDecisions} />
                   )}
 
                   {isStreaming && streamingContent && (
-                    <MessageBubble role="assistant" content={streamingContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} />
+                    <MessageBubble role="assistant" content={streamingContent} agentName={agent.name} isStreaming onApproval={handleApprovalAction} canInteract={false} annotations={[]} transformText={applyOntologyLabels} messageKey="streaming" approvalDecisions={approvalDecisions} />
                   )}
 
                   {isStreaming && !streamingContent && (
@@ -1173,8 +1212,10 @@ function StreamingProgressIndicator({
               const isLatest = i === progressEvents.length - 1;
               let detail = "";
               if (event.type === "discovery") {
-                detail = `Found ${event.toolCount || 0} tools`;
-                if (Array.isArray(event.tools)) {
+                const toolCount = (event.toolCount as number) || 0;
+                const kbCount = (event.knowledgeBases as number) || 0;
+                detail = toolCount > 0 ? `Found ${toolCount} tools` : kbCount > 0 ? `Searching ${kbCount} knowledge base${kbCount === 1 ? "" : "s"}` : "Found 0 tools";
+                if (Array.isArray(event.tools) && toolCount > 0) {
                   detail += `: ${(event.tools as Array<{ tool: string }>).map(t => t.tool).join(", ")}`;
                 }
               } else if (event.type === "tool_call_start") {
@@ -1218,14 +1259,33 @@ function StreamingProgressIndicator({
   );
 }
 
+// Pretty-prints a tool call's args/result for the expandable I/O detail --
+// mirrors run-detail.tsx's step input/output rendering so a business user
+// testing an agent pre-deployment gets the same level of inspectability an
+// already-deployed run's trace view gives them.
+function StepIoBlock({ label, value }: { label: string; value: unknown }) {
+  if (value === undefined || value === null) return null;
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return (
+    <div className="mt-1">
+      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
+      <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-muted/50 p-1.5 text-[10px] font-mono whitespace-pre-wrap break-words" data-testid={`step-io-${label.toLowerCase()}`}>
+        {text}
+      </pre>
+    </div>
+  );
+}
+
 function ExecutionTracePanel({ trace }: { trace: ExecutionTraceData }) {
   const [expanded, setExpanded] = useState(false);
+  const [expandedToolIdx, setExpandedToolIdx] = useState<number | null>(null);
 
   const toolCalls = trace.events.filter(e => e.type === "tool_call_start" || e.type === "tool_call_result");
   const discoveryEvent = trace.events.find(e => e.type === "discovery");
   const complianceEvent = trace.events.find(e => e.type === "compliance_check");
   const errors = trace.events.filter(e => e.type === "error");
   const iterations = trace.events.filter(e => e.type === "iteration_complete");
+  const planningEvents = trace.events.filter(e => e.type === "planning" || e.type === "llm_thinking");
 
   let durationMs = 0;
   if (trace.startedAt && trace.completedAt) {
@@ -1259,9 +1319,13 @@ function ExecutionTracePanel({ trace }: { trace: ExecutionTraceData }) {
             <div className="flex items-center gap-2 text-xs" data-testid="trace-discovery">
               <Search className="h-3 w-3 text-primary shrink-0" />
               <span className="text-foreground">
-                Discovered {String(discoveryEvent.toolCount || 0)} tools
+                {(discoveryEvent.toolCount as number) > 0
+                  ? `Discovered ${String(discoveryEvent.toolCount)} tools`
+                  : (discoveryEvent.knowledgeBases as number) > 0
+                    ? `Searched ${String(discoveryEvent.knowledgeBases)} knowledge base${discoveryEvent.knowledgeBases === 1 ? "" : "s"}`
+                    : "Discovered 0 tools"}
               </span>
-              {Array.isArray(discoveryEvent.tools) && (
+              {Array.isArray(discoveryEvent.tools) && (discoveryEvent.toolCount as number) > 0 && (
                 <span className="text-muted-foreground truncate">
                   ({(discoveryEvent.tools as Array<{ tool: string }>).map(t => t.tool).join(", ")})
                 </span>
@@ -1273,29 +1337,55 @@ function ExecutionTracePanel({ trace }: { trace: ExecutionTraceData }) {
             const result = toolCallResults.find(
               (r) => r.tool === event.tool && r.iteration === event.iteration
             ) || toolCallResults[i];
+            const isIoExpanded = expandedToolIdx === i;
             return (
-              <div key={i} className="flex items-start gap-2 text-xs" data-testid={`trace-tool-${i}`}>
-                {result ? (
-                  result.success ? (
-                    <CheckCircle className="h-3 w-3 text-green-500 shrink-0 mt-0.5" />
+              <div key={i} data-testid={`trace-tool-${i}`}>
+                <button
+                  type="button"
+                  onClick={() => setExpandedToolIdx(isIoExpanded ? null : i)}
+                  className="flex items-start gap-2 text-xs w-full text-left hover-elevate rounded px-0.5 -mx-0.5"
+                  data-testid={`button-toggle-tool-io-${i}`}
+                >
+                  {result ? (
+                    result.success ? (
+                      <CheckCircle className="h-3 w-3 text-green-500 shrink-0 mt-0.5" />
+                    ) : (
+                      <XCircle className="h-3 w-3 text-red-500 shrink-0 mt-0.5" />
+                    )
                   ) : (
-                    <XCircle className="h-3 w-3 text-red-500 shrink-0 mt-0.5" />
-                  )
-                ) : (
-                  <Wrench className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
+                    <Wrench className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <span className="font-medium text-foreground">{String(event.tool)}</span>
+                    {event.server ? (
+                      <span className="text-muted-foreground ml-1">({String(event.server)})</span>
+                    ) : null}
+                    {result && !result.success && result.error ? (
+                      <span className="text-red-500 dark:text-red-400 ml-1">{String(result.error)}</span>
+                    ) : null}
+                  </div>
+                  {isIoExpanded ? <ChevronUp className="h-3 w-3 text-muted-foreground shrink-0" /> : <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />}
+                </button>
+                {isIoExpanded && (
+                  <div className="ml-5 border-l border-muted pl-2">
+                    <StepIoBlock label="Arguments" value={event.args} />
+                    <StepIoBlock label="Result" value={result?.result} />
+                  </div>
                 )}
-                <div className="min-w-0">
-                  <span className="font-medium text-foreground">{String(event.tool)}</span>
-                  {event.server ? (
-                    <span className="text-muted-foreground ml-1">({String(event.server)})</span>
-                  ) : null}
-                  {result && !result.success && result.error ? (
-                    <span className="text-red-500 dark:text-red-400 ml-1">{String(result.error)}</span>
-                  ) : null}
-                </div>
               </div>
             );
           })}
+
+          {planningEvents.length > 0 && planningEvents.some(e => e.reasoning) && (
+            <div className="space-y-1" data-testid="trace-reasoning">
+              {planningEvents.filter(e => e.reasoning).map((event, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs">
+                  <Brain className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
+                  <span className="text-muted-foreground italic">{String(event.reasoning)}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {iterations.length > 1 && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="trace-iterations">
@@ -1507,10 +1597,13 @@ function ApprovalGateCard({
   data,
   onApproval,
   canInteract,
+  decision,
 }: {
   data: ApprovalRequired;
   onApproval: (action: string, approved: boolean) => void;
   canInteract: boolean;
+  /** undefined = not yet responded; true = approved; false = rejected. */
+  decision?: boolean;
 }) {
   const normalizedRiskLevel = (data.risk_level || "medium").toLowerCase();
   const levelBg: Record<string, string> = {
@@ -1539,29 +1632,45 @@ function ApprovalGateCard({
         {data.details && (
           <div className="text-xs bg-muted/50 rounded-md p-2">{data.details}</div>
         )}
-        <div className="flex gap-2 pt-1">
-          <Button
-            size="sm"
-            onClick={() => onApproval(data.action, true)}
-            disabled={!canInteract}
-            className="gap-1"
-            data-testid="button-approve"
-          >
-            <ThumbsUp className="h-3 w-3" />
-            Approve
-          </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() => onApproval(data.action, false)}
-            disabled={!canInteract}
-            className="gap-1"
-            data-testid="button-reject"
-          >
-            <ThumbsDown className="h-3 w-3" />
-            Reject
-          </Button>
-        </div>
+        {decision === undefined ? (
+          <div className="flex gap-2 pt-1">
+            <Button
+              size="sm"
+              onClick={() => onApproval(data.action, true)}
+              disabled={!canInteract}
+              className="gap-1"
+              data-testid="button-approve"
+            >
+              <ThumbsUp className="h-3 w-3" />
+              Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => onApproval(data.action, false)}
+              disabled={!canInteract}
+              className="gap-1"
+              data-testid="button-reject"
+            >
+              <ThumbsDown className="h-3 w-3" />
+              Reject
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 pt-1 text-xs font-medium" data-testid="text-approval-decision">
+            {decision ? (
+              <>
+                <ThumbsUp className="h-3 w-3 text-green-600 dark:text-green-400" />
+                <span className="text-green-600 dark:text-green-400">You approved this</span>
+              </>
+            ) : (
+              <>
+                <ThumbsDown className="h-3 w-3 text-red-600 dark:text-red-400" />
+                <span className="text-red-600 dark:text-red-400">You rejected this</span>
+              </>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1576,15 +1685,19 @@ function MessageBubble({
   canInteract,
   annotations,
   transformText,
+  messageKey,
+  approvalDecisions,
 }: {
   role: string;
   content: string;
   agentName: string;
   isStreaming?: boolean;
-  onApproval: (action: string, approved: boolean) => void;
+  onApproval: (key: string, action: string, approved: boolean) => void;
   canInteract: boolean;
   annotations: CitationAnnotation[];
   transformText?: (text: string) => string;
+  messageKey: string;
+  approvalDecisions: Record<string, boolean>;
 }) {
   const isUser = role === "user";
   const applyTransform = (t: string) => (!isUser && transformText ? transformText(t) : t);
@@ -1608,7 +1721,39 @@ function MessageBubble({
             return <DecisionCard key={i} data={seg.data as Decision} />;
           }
           if (seg.type === "approval_required" && seg.data) {
-            return <ApprovalGateCard key={i} data={seg.data as ApprovalRequired} onApproval={onApproval} canInteract={canInteract} />;
+            const approvalKey = `${messageKey}-${i}`;
+            return (
+              <ApprovalGateCard
+                key={i}
+                data={seg.data as ApprovalRequired}
+                onApproval={(action, approved) => onApproval(approvalKey, action, approved)}
+                canInteract={canInteract}
+                decision={approvalDecisions[approvalKey]}
+              />
+            );
+          }
+          if (seg.type === "pending_block" && isStreaming) {
+            const label = seg.blockType === "risk_assessment" ? "risk assessment"
+              : seg.blockType === "approval_required" ? "approval request"
+              : "decision";
+            return (
+              <div key={i} className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground" data-testid="pending-block">
+                <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+                <span>Preparing {label} card...</span>
+              </div>
+            );
+          }
+          if (seg.type === "pending_block") {
+            // Not streaming anymore and the fence never closed -- a genuine
+            // formatting slip, not a mid-stream snapshot. Fall back to the
+            // raw text rather than showing a spinner that will never resolve.
+            return (
+              <div key={i} className="rounded-lg px-3 py-2 text-sm leading-relaxed bg-muted">
+                <div className="whitespace-pre-wrap break-words">
+                  <RenderTextWithLinks text={applyTransform(seg.content)} isUser={false} annotations={annotations} />
+                </div>
+              </div>
+            );
           }
           return (
             <div

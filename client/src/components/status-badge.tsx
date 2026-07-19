@@ -12,6 +12,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   healthy: { label: "Healthy", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   deployed: { label: "Deployed", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   completed: { label: "Completed", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  completed_with_skips: { label: "Completed — Steps Skipped", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   approved: { label: "Approved", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   paid: { label: "Paid", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   pending: { label: "Pending", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },

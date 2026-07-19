@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { startWorker, enqueueAuditChainCheck, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan } from "./worker";
+import { startWorker, enqueueAuditChainCheck, enqueueAuditChainCheckpoint, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan, enqueueScheduleTriggerScan, enqueueDagResumeScan } from "./worker";
 import { runStartupMigrations } from "./db";
 import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
@@ -409,6 +409,9 @@ export async function registerRoutes(
   // Enqueue initial audit chain integrity check (idempotent, errors logged internally).
   await enqueueAuditChainCheck();
 
+  // Enqueue initial audit chain Merkle checkpoint (runs every 30 min, idempotent).
+  await enqueueAuditChainCheckpoint();
+
   // Enqueue initial OTC Fulfillment smoke test (runs weekly, idempotent).
   await enqueueOtcSmokeTest();
 
@@ -417,6 +420,12 @@ export async function registerRoutes(
 
   // Enqueue connector resource-change poll scan (mcp_resource_change triggers, idempotent).
   await enqueueMcpResourceChangeScan();
+
+  // Enqueue schedule (cron) trigger scan (runs every minute, idempotent).
+  await enqueueScheduleTriggerScan();
+
+  // Enqueue DAG approval-gate resume scan (runs every minute, idempotent).
+  await enqueueDagResumeScan();
 
   // Ensure Hearst NBA agents + MCP servers are registered
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));

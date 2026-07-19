@@ -15,6 +15,8 @@ import nodemailer from "nodemailer";
 import { runMeetingTranscription } from "./meeting-transcription";
 import { readFile, unlink } from "fs/promises";
 import { pollDueResourceChangeTriggers } from "./connector-poller";
+import { pollDueScheduleTriggers } from "./schedule-trigger-poller";
+import { pollWaitingApprovalDagRuns } from "./dag-resume-poller";
 
 // ── Meeting transcription (async long-meeting path) ─────────────────────────────
 async function processMeetingTranscription(job: Job): Promise<Record<string, unknown>> {
@@ -663,6 +665,62 @@ async function processAuditChainIntegrityCheck(job: Job): Promise<Record<string,
   return { ...checkResult, durationMs: Date.now() - startedAt, healthCheckId };
 }
 
+// ── Audit Chain Merkle Checkpoint ──────────────────────────────────────────────
+// Periodically batches new audit_events since each org's last checkpoint into
+// a signed Merkle root, enabling selective/partial verification of a batch
+// without replaying the whole hash chain from genesis. Complements (does not
+// replace) the linear-chain integrity check above.
+
+const AUDIT_CHAIN_CHECKPOINT_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
+async function processAuditChainCheckpoint(job: Job): Promise<Record<string, unknown>> {
+  const startedAt = Date.now();
+  let created: Awaited<ReturnType<typeof storage.createAuditChainCheckpointsForAllOrgs>> = [];
+  let jobError: Error | undefined;
+
+  try {
+    created = await storage.createAuditChainCheckpointsForAllOrgs();
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] Audit chain checkpoint failed:", err.message);
+  } finally {
+    const nextRunAt = new Date(Date.now() + AUDIT_CHAIN_CHECKPOINT_INTERVAL_MS);
+    try {
+      await storage.createJob({
+        type: "audit_chain_checkpoint",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: nextRunAt,
+      });
+      console.log(`[worker] Audit chain checkpoint done: ${created.length} org(s) checkpointed, next at ${nextRunAt.toISOString()}`);
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue audit chain checkpoint:", enqueueErr.message);
+    }
+  }
+
+  if (jobError) throw jobError;
+  return { checkpointsCreated: created.length, durationMs: Date.now() - startedAt };
+}
+
+export async function enqueueAuditChainCheckpoint() {
+  try {
+    const hasPending = await storage.hasPendingJobOfType("audit_chain_checkpoint");
+    if (hasPending) {
+      console.log("[startup] Audit chain checkpoint already queued, skipping initial enqueue");
+      return;
+    }
+    await storage.createJob({
+      type: "audit_chain_checkpoint",
+      status: "queued",
+      payload: { triggeredBy: "scheduled" },
+      scheduledFor: new Date(Date.now() + 60_000), // first run 1 min after startup
+    });
+    console.log("[startup] Enqueued initial audit chain checkpoint");
+  } catch (err: any) {
+    console.error("[startup] Failed to enqueue audit chain checkpoint:", err.message);
+  }
+}
+
 // ── Report Schedule Worker ────────────────────────────────────────────────────
 
 const REPORT_SCHEDULE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -855,6 +913,112 @@ export async function enqueueMcpResourceChangeScan() {
     console.log("[startup] Enqueued initial connector resource-change scan");
   } catch (err: any) {
     console.error("[startup] Failed to enqueue connector resource-change scan:", err.message);
+  }
+}
+
+// ─── Schedule (cron) Trigger Firing ───────────────────────────────────────────
+
+const SCHEDULE_TRIGGER_SCAN_INTERVAL_MS = 60 * 1000; // check every minute, matching cron's minute resolution
+
+async function processScheduleTriggerScan(job: Job): Promise<Record<string, unknown>> {
+  let scanResult: { checked: number; fired: number; errors: number } | undefined;
+  let jobError: Error | undefined;
+
+  try {
+    scanResult = await pollDueScheduleTriggers();
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] Schedule trigger scan failed:", err.message);
+  } finally {
+    // Always re-enqueue so schedule checking continues even after a transient failure.
+    const nextRunAt = new Date(Date.now() + SCHEDULE_TRIGGER_SCAN_INTERVAL_MS);
+    try {
+      await storage.createJob({
+        type: "schedule_trigger_scan",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: nextRunAt,
+      });
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue schedule trigger scan:", enqueueErr.message);
+    }
+  }
+
+  if (jobError) throw jobError;
+  return { ...scanResult, completedAt: new Date().toISOString() };
+}
+
+export async function enqueueScheduleTriggerScan() {
+  try {
+    const hasPending = await storage.hasPendingJobOfType("schedule_trigger_scan");
+    if (hasPending) {
+      console.log("[startup] Schedule trigger scan already queued, skipping initial enqueue");
+      return;
+    }
+    await storage.createJob({
+      type: "schedule_trigger_scan",
+      status: "queued",
+      payload: { triggeredBy: "scheduled" },
+      scheduledFor: new Date(),
+    });
+    console.log("[startup] Enqueued initial schedule trigger scan");
+  } catch (err: any) {
+    console.error("[startup] Failed to enqueue schedule trigger scan:", err.message);
+  }
+}
+
+// ─── DAG Approval-Gate Resume Scan ────────────────────────────────────────────
+// Recovery scan for runs orphaned at "waiting_approval" by a server restart
+// (see dag-resume-poller.ts's module doc comment). This is what makes the
+// pause durable -- not the in-process waitForApproval poll, which dies with
+// the process, but this: an independent, persisted job that keeps re-firing
+// on a schedule regardless of which server process is alive when it runs.
+
+const DAG_RESUME_SCAN_INTERVAL_MS = 60 * 1000;
+
+async function processDagResumeScan(job: Job): Promise<Record<string, unknown>> {
+  let scanResult: { checked: number; resumed: number; errors: number } | undefined;
+  let jobError: Error | undefined;
+
+  try {
+    scanResult = await pollWaitingApprovalDagRuns();
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] DAG resume scan failed:", err.message);
+  } finally {
+    const nextRunAt = new Date(Date.now() + DAG_RESUME_SCAN_INTERVAL_MS);
+    try {
+      await storage.createJob({
+        type: "dag_resume_scan",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: nextRunAt,
+      });
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue DAG resume scan:", enqueueErr.message);
+    }
+  }
+
+  if (jobError) throw jobError;
+  return { ...scanResult, completedAt: new Date().toISOString() };
+}
+
+export async function enqueueDagResumeScan() {
+  try {
+    const hasPending = await storage.hasPendingJobOfType("dag_resume_scan");
+    if (hasPending) {
+      console.log("[startup] DAG resume scan already queued, skipping initial enqueue");
+      return;
+    }
+    await storage.createJob({
+      type: "dag_resume_scan",
+      status: "queued",
+      payload: { triggeredBy: "scheduled" },
+      scheduledFor: new Date(),
+    });
+    console.log("[startup] Enqueued initial DAG resume scan");
+  } catch (err: any) {
+    console.error("[startup] Failed to enqueue DAG resume scan:", err.message);
   }
 }
 
@@ -1604,6 +1768,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processAgentRun(job);
           } else if (job.type === "audit_chain_integrity_check") {
             result = await processAuditChainIntegrityCheck(job);
+          } else if (job.type === "audit_chain_checkpoint") {
+            result = await processAuditChainCheckpoint(job);
           } else if (job.type === "otc_smoke_test") {
             result = await processOtcSmokeTest(job);
           } else if (job.type === "synthesizer_run") {
@@ -1616,6 +1782,10 @@ export function startWorker(intervalMs = 2000) {
             result = await processMeetingTranscription(job);
           } else if (job.type === "mcp_resource_change_scan") {
             result = await processMcpResourceChangeScan(job);
+          } else if (job.type === "schedule_trigger_scan") {
+            result = await processScheduleTriggerScan(job);
+          } else if (job.type === "dag_resume_scan") {
+            result = await processDagResumeScan(job);
           } else {
             result = { message: `Unknown job type: ${job.type}` };
           }

@@ -46,7 +46,21 @@ export abstract class RealMcpBase {
 
   // ── Credential retrieval ──────────────────────────────────────────────────
 
-  async getCredentials(orgId: string): Promise<Record<string, string> | null> {
+  // When agentId is given, a per-agent credential (agent_integration_credentials)
+  // takes priority over the org-wide connection -- lets one agent authenticate
+  // as itself instead of sharing every other agent's org-level identity. Falls
+  // back to the org-level connection when the agent has no credential of its own.
+  async getCredentials(orgId: string, agentId?: string): Promise<Record<string, string> | null> {
+    if (agentId) {
+      const agentConn = await storage.getAgentIntegrationCredential(agentId, this.integrationId);
+      if (agentConn && agentConn.credentialBlob && agentConn.status !== "disconnected") {
+        try {
+          return decryptCredentialMap(agentConn.credentialBlob);
+        } catch {
+          // Fall through to the org-level connection on a decrypt failure.
+        }
+      }
+    }
     const conn = await storage.getIntegrationConnection(orgId, this.integrationId);
     if (!conn || !conn.credentialBlob || conn.status === "disconnected") return null;
     try {
@@ -112,9 +126,10 @@ export abstract class RealMcpBase {
   async callTool(
     toolName: string,
     args: Record<string, unknown>,
-    orgId: string
+    orgId: string,
+    agentId?: string
   ): Promise<McpToolResult> {
-    const credentials = await this.getCredentials(orgId);
+    const credentials = await this.getCredentials(orgId, agentId);
     if (!credentials) {
       return this.err(`Integration '${this.integrationId}' is not connected for this organization.`);
     }

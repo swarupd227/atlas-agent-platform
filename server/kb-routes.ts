@@ -735,7 +735,20 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.patch("/api/knowledge-bases/:id", async (req, res) => {
     const kb = await storage.updateKnowledgeBase(req.params.id as string, req.body, getOrgId(req));
-    if (!kb) return res.status(404).json({ message: "Not found" });
+    if (!kb) {
+      // updateKnowledgeBase scopes its WHERE clause by organizationId
+      // (correct tenant-isolation behavior) -- a KB whose stored org
+      // doesn't match the caller's current org context matches zero rows
+      // here even though GET on the same id just returned it fine, which
+      // read to a tester as "the edit silently didn't save" since a bare
+      // 404 gives no hint that org scope, not existence, was the problem.
+      const existsAtAll = await storage.getKnowledgeBase(req.params.id as string);
+      return res.status(404).json({
+        message: existsAtAll
+          ? "This Knowledge Base belongs to a different organization than your current session and can't be edited from here."
+          : "Not found",
+      });
+    }
     res.json(kb);
   });
 

@@ -173,7 +173,6 @@ export default function BlueprintDetail() {
   const [mcpDependencies, setMcpDependencies] = useState<McpDependency[]>([]);
   const [contextPlan, setContextPlan] = useState<ContextPlanEntry[]>([]);
   const [depsOpen, setDepsOpen] = useState(false);
-  const [editorView, setEditorView] = useState<"single" | "team">("single");
   const [savedSnapshot, setSavedSnapshot] = useState<BpNode[]>([]);
   const [kgBindings, setKgBindings] = useState<string[]>([]);
   const [kgBindingsOpen, setKgBindingsOpen] = useState(false);
@@ -193,7 +192,7 @@ export default function BlueprintDetail() {
   const getNodeDisplayLabel = (node: BpNode) => {
     if (!businessView) return node.label;
     const bj = blueprint?.blueprintJson as any;
-    const processSteps: Array<{ label: string }> | undefined = bj?.metadata?.processFlowSteps;
+    const processSteps: Array<{ label: string }> | undefined = bj?.processFlowSteps;
     if (processSteps && processSteps.length > 0) {
       const idx = (blueprint?.blueprintJson as any)?.nodes?.findIndex((n: any) => n.id === node.id);
       if (idx != null && idx >= 0 && processSteps[idx]) return processSteps[idx].label;
@@ -222,12 +221,6 @@ export default function BlueprintDetail() {
     if (!blueprint?.agentId || !agents) return null;
     return agents.find(a => a.id === blueprint.agentId);
   }, [blueprint, agents]);
-
-  // A team agent's blueprint has nothing to show on the single-agent canvas --
-  // land directly on the Team Graph tab instead of an empty node palette.
-  useEffect(() => {
-    if (linkedAgent?.agentType === "team") setEditorView("team");
-  }, [linkedAgent?.agentType]);
 
   const invalidNodeIds = useMemo(() => {
     const ids = new Set<string>();
@@ -286,8 +279,12 @@ export default function BlueprintDetail() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      // Merge over the existing blueprintJson instead of replacing it -- it
+      // carries keys this editor doesn't own (e.g. processFlowSteps written by
+      // the Process Flow handoff, used for Business View labels) that a plain
+      // replace would silently destroy.
       await apiRequest("PATCH", `/api/blueprints/${id}`, {
-        blueprintJson: { nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings, mcpDependencies, contextPlan, kgBindings },
+        blueprintJson: { ...((blueprint?.blueprintJson as Record<string, unknown>) || {}), nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings, mcpDependencies, contextPlan, kgBindings },
         name: blueprintName,
       });
     },
@@ -299,6 +296,18 @@ export default function BlueprintDetail() {
       toast({ title: "Blueprint saved" });
     },
     onError: (err: Error) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
+  });
+
+  const submitForReviewMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/blueprints/${id}/submit-for-review`, { submittedBy: "business_user" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      toast({ title: "Submitted for IT review", description: "IT will validate, compile, and sign this blueprint before it can go live." });
+    },
+    onError: (err: Error) => toast({ title: "Failed to submit for review", description: err.message, variant: "destructive" }),
   });
 
   const shareMutation = useMutation({
@@ -475,9 +484,15 @@ export default function BlueprintDetail() {
         </div>
         {!businessView && (
           <>
+            {/* Team blueprints save every graph edit immediately (per-node/edge
+                API calls in TeamGraphEditor) -- this Save only writes the
+                legacy single-agent canvas, so showing it for a team blueprint
+                invites a no-op that historically clobbered blueprintJson. */}
+            {linkedAgent?.agentType !== "team" && (
             <Button variant="outline" size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save">
               <Save className="w-3.5 h-3.5 mr-1.5" /> {saveMutation.isPending ? "Saving..." : "Save"}
             </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => compileMutation.mutate()} disabled={compileMutation.isPending} data-testid="button-compile">
               <Play className="w-3.5 h-3.5 mr-1.5" /> {compileMutation.isPending ? "Compiling..." : "Compile"}
             </Button>
@@ -487,8 +502,14 @@ export default function BlueprintDetail() {
           </>
         )}
         {businessView && (
-          <Button size="sm" variant="outline" data-testid="button-submit-it-review">
-            <SendHorizontal className="w-3.5 h-3.5 mr-1.5" /> Submit for IT Review
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => submitForReviewMutation.mutate()}
+            disabled={submitForReviewMutation.isPending}
+            data-testid="button-submit-it-review"
+          >
+            <SendHorizontal className="w-3.5 h-3.5 mr-1.5" /> {submitForReviewMutation.isPending ? "Submitting..." : "Submit for IT Review"}
           </Button>
         )}
       </div>
@@ -499,30 +520,36 @@ export default function BlueprintDetail() {
         </div>
       )}
 
+      {/* A team blueprint's flow lives in team_blueprint_nodes/edges -- the
+          legacy single-agent canvas has nothing to show for it, and its Save
+          historically clobbered blueprintJson keys the team flow depends on.
+          So for team blueprints the Team Flow editor is the ONLY editor: no
+          tab to wander into an empty palette. While the linked agent is still
+          loading we show a placeholder rather than flashing the legacy canvas. */}
       {linkedAgent?.agentType === "team" && (
-        <div className="flex border-b shrink-0 bg-muted/30">
-          <button
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium ${editorView === "single" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
-            onClick={() => setEditorView("single")}
-            data-testid="tab-single-blueprint"
-          >
-            <GitBranch className="w-3.5 h-3.5" /> Single-Agent Blueprint
-          </button>
-          <button
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium ${editorView === "team" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
-            onClick={() => setEditorView("team")}
-            data-testid="tab-team-blueprint"
-          >
-            <Network className="w-3.5 h-3.5" /> Team Graph
-          </button>
+        <div className="flex items-center gap-2 border-b shrink-0 bg-muted/30 px-4 py-2" data-testid="team-flow-header">
+          <Network className="w-3.5 h-3.5 text-primary" />
+          <span className="text-xs font-medium">Team Flow</span>
+          <span className="text-[11px] text-muted-foreground">— the steps below run as a live automation; edit here, then run or promote from the team's page</span>
         </div>
       )}
 
-      {editorView === "team" && linkedAgent?.agentType === "team" && (
-        <TeamGraphEditor blueprintId={id!} teamAgentId={linkedAgent?.id} />
+      {linkedAgent?.agentType === "team" && (
+        <TeamGraphEditor
+          blueprintId={id!}
+          teamAgentId={linkedAgent?.id}
+          businessView={businessView}
+          processFlowSteps={(blueprint?.blueprintJson as any)?.processFlowSteps}
+        />
       )}
 
-      {!(editorView === "team" && linkedAgent?.agentType === "team") && (
+      {blueprint?.agentId && !agents && (
+        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground" data-testid="loading-linked-agent">
+          Loading flow…
+        </div>
+      )}
+
+      {linkedAgent?.agentType !== "team" && !(blueprint?.agentId && !agents) && (
       <div className="flex flex-1 min-h-0">
         {!businessView && (
         <div className="w-[220px] border-r shrink-0 flex flex-col">

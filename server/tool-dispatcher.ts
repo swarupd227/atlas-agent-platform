@@ -11,6 +11,7 @@
  *   1. skill allowlist        → gate_blocked_skill
  *   2. policy bundle          → gate_blocked_policy (strict/block), monitor-mode logs and proceeds
  *   3. AAR constraint list    → gate_blocked_aar | gate_requires_approval
+ *   3.5. declared scope       → gate_blocked_scope_drift (opt-in; intent-based authorization)
  *   4. rate limit             → rate_limited
  *   5. shadow environment     → shadow_skipped (no execution)
  *   6. idempotency            → deduplicated (cached result, no re-execution)
@@ -95,6 +96,7 @@ export type DispatchOutcome =
   | "gate_blocked_skill"
   | "gate_blocked_policy"
   | "gate_blocked_aar"
+  | "gate_blocked_scope_drift"
   | "gate_requires_approval"
   | "rate_limited"
   | "shadow_skipped"
@@ -108,6 +110,14 @@ export interface DispatchRequest {
   policyBundle?: PolicyBundle | null;
   /** Lowercased tool names granted by active skills; null/undefined = no skill gate. */
   skillAllowlist?: Set<string> | null;
+  /**
+   * Intent-based authorization: lowercased tool names the run declared
+   * upfront (typically derived from the agent's own initial planning call).
+   * When set and non-empty, a call to any tool outside this set is blocked
+   * as scope drift, even if AAR/policy would otherwise allow it. Opt-in —
+   * null/undefined/empty disables this gate entirely.
+   */
+  declaredScope?: Set<string> | null;
   environment?: string;
   shadow?: boolean;
   traceId?: string;
@@ -320,7 +330,19 @@ async function evaluateActionPolicy(
 }
 
 // ── Execution ────────────────────────────────────────────────────────────────
-async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null): Promise<any> {
+// Real MCP servers and enterprise connectors (both built on RealMcpBase) return
+// { content: [{type: "text", text}], isError?: boolean } — a tool can fail
+// (bad credentials, unconnected integration, upstream 4xx) without ever
+// throwing. Returns the error text when the result is that shape and
+// isError is true, else null (including for the plain-HTTP tool path below,
+// whose responses aren't MCP-shaped and shouldn't be reinterpreted here).
+function resultErrorMessage(result: any): string | null {
+  if (!result || typeof result !== "object" || result.isError !== true) return null;
+  const text = Array.isArray(result.content) ? result.content.find((c: any) => typeof c?.text === "string")?.text : undefined;
+  return typeof text === "string" && text.length > 0 ? text : "Tool returned an error";
+}
+
+async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
   if (tool.isRealMcp) {
     const server = await storage.getMcpServer(tool.serverId);
     if (server) {
@@ -343,7 +365,9 @@ async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId
       if (!effectiveOrgId) {
         throw new Error(`No organization context to invoke '${tool.toolName}' on integration '${tool.enterpriseIntegration}'`);
       }
-      return connector.callTool(tool.toolName, args, effectiveOrgId);
+      // agentId lets a per-agent credential (agent_integration_credentials)
+      // take priority over the org-wide connection -- see RealMcpBase.getCredentials.
+      return connector.callTool(tool.toolName, args, effectiveOrgId, agentId);
     }
   }
 
@@ -514,6 +538,23 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
     }
   }
 
+  // 3.5. Declared-scope gate (intent-based authorization). When the run
+  // declared an upfront tool scope, a call outside it is blocked as drift —
+  // even though skill/policy/AAR already allowed it — because the agent
+  // itself never planned to make this call.
+  if (req.declaredScope && req.declaredScope.size > 0 && !req.declaredScope.has(toolNameLower)) {
+    const reason = `Tool "${tool.toolName}" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)`;
+    storage.createAuditEvent({
+      actorType: "system",
+      actorId: "scope-gate",
+      action: "tool_blocked_scope_drift",
+      objectType: "agent",
+      objectId: agentId,
+      details: JSON.stringify({ toolName: tool.toolName, serverName: tool.serverName, declaredScope: Array.from(req.declaredScope), reason, iteration: req.iteration, traceId: req.traceId }),
+    }).catch(() => {});
+    return finish({ outcome: "gate_blocked_scope_drift", ok: false, result: null, error: reason, reason, monitorFlagged });
+  }
+
   // 4. Rate limit.
   const rate = checkRateLimit(agentId, tool.toolName);
   if (!rate.allowed) {
@@ -579,11 +620,24 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   const execStartMs = Date.now();
   const wireKind = tool.enterpriseIntegration ? "connector" : tool.isRealMcp ? "mcp" : "http";
   try {
-    const result = await executeTool(tool, req.args, req.orgId);
+    const result = await executeTool(tool, req.args, req.orgId, agentId);
     const executionMs = Date.now() - execStartMs;
     if (idemKey) {
       pruneIdempotencyCache();
       idempotencyCache.set(idemKey, { at: Date.now(), result });
+    }
+    // A tool can return without throwing yet still report failure in its own
+    // payload (MCP's {content, isError: true} shape — e.g. "integration not
+    // connected"). Treating that as outcome "success" is what let the
+    // playground's Execution Trace claim "1/1 successful" for a call whose
+    // result was plainly an error. Surface it as tool_error instead, same as
+    // a thrown exception, so every downstream consumer (trace UI, audit
+    // events, idempotency semantics) sees one honest signal.
+    const resultError = resultErrorMessage(result);
+    if (resultError) {
+      console.log(JSON.stringify({ span: "tool_dispatch", agentId, tool: tool.toolName, server: tool.serverName, outcome: "tool_error", traceId: req.traceId, durationMs: Date.now() - startMs, executionMs, error: resultError.slice(0, 200) }));
+      recordSpans(req, tool, startMs, Date.now() - startMs, execStartMs, executionMs, "error", wireKind, resultError);
+      return finish({ outcome: "tool_error", ok: false, result, error: resultError, reason: resultError, monitorFlagged, executionMs });
     }
     // Structured span line — greppable/ingestable regardless of collector.
     console.log(JSON.stringify({ span: "tool_dispatch", agentId, tool: tool.toolName, server: tool.serverName, outcome: "success", traceId: req.traceId, durationMs: Date.now() - startMs, executionMs }));

@@ -259,9 +259,20 @@ export default function AgentExport() {
     items.push({ id: "env-keys", label: "Configure API keys", detail: `Set ${exportLlmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} in .env` });
     items.push({ id: "install-deps", label: "Install dependencies", detail: exportFormat === "typescript" ? "Run npm install" : "Run pip install -r requirements.txt" });
 
-    const stubCount = Object.values(toolAdapterOverrides).filter(v => v === "stub").length;
+    // Prefer the real post-generation count reported by the server (it knows
+    // exactly which tools' AI-generated adapter calls failed and silently fell
+    // back to a stub template) over the pre-generation guess from the user's
+    // connector selections, which can't see AI failures that happen per-tool.
+    const realStubNames: string[] | undefined = exportPreview?.metadata?.stubToolNames;
+    const stubCount = Array.isArray(realStubNames) ? realStubNames.length : Object.values(toolAdapterOverrides).filter(v => v === "stub").length;
     if (stubCount > 0) {
-      items.push({ id: "impl-stubs", label: `Implement ${stubCount} tool stub${stubCount > 1 ? "s" : ""}`, detail: "Replace stub tool adapters with real implementations" });
+      items.push({
+        id: "impl-stubs",
+        label: `Implement ${stubCount} tool stub${stubCount > 1 ? "s" : ""}`,
+        detail: Array.isArray(realStubNames) && realStubNames.length > 0
+          ? `${realStubNames.join(", ")} — see WHAT_YOU_NEED_TO_IMPLEMENT.md for details`
+          : "Replace stub tool adapters with real implementations",
+      });
     }
 
     if (otelEnabled) {
@@ -275,8 +286,8 @@ export default function AgentExport() {
     if (exportFramework === "bedrock") {
       items.push({ id: "aws-creds", label: "Configure AWS credentials", detail: "Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION" });
     }
-    if (exportFramework === "vertex") {
-      items.push({ id: "gcp-creds", label: "Configure GCP credentials", detail: "Set GOOGLE_APPLICATION_CREDENTIALS path" });
+    if (exportFramework === "adk") {
+      items.push({ id: "adk-creds", label: "Configure Google ADK credentials", detail: "Set GOOGLE_API_KEY (simplest) or switch to the Vertex-backed GOOGLE_CLOUD_PROJECT + GOOGLE_APPLICATION_CREDENTIALS path in .env" });
     }
     if (exportFramework === "databricks") {
       items.push({ id: "dbx-creds", label: "Configure Databricks credentials", detail: "Set DATABRICKS_HOST and DATABRICKS_TOKEN" });
@@ -292,10 +303,17 @@ export default function AgentExport() {
     }
     if (exportFramework === "openai-assistants") {
       items.push({ id: "oai-assistants-creds", label: "Configure OpenAI Assistants credentials", detail: "Set OPENAI_API_KEY; after first run save the generated OPENAI_ASSISTANT_ID to .env to avoid re-creation" });
+      items.push({ id: "oai-assistants-sunset", label: "Note: Assistants API is being retired", detail: "OpenAI is removing the Assistants API on August 26, 2026 — prefer 'OpenAI Agents SDK' below for new work" });
+    }
+    if (exportFramework === "openai-agents") {
+      items.push({ id: "oai-agents-creds", label: "Configure OpenAI Agents SDK credentials", detail: "Set OPENAI_API_KEY; optionally set OPENAI_AGENT_MODEL to override the default model" });
+    }
+    if (exportFramework === "ms-agent-framework") {
+      items.push({ id: "ms-agent-framework-creds", label: "Configure Microsoft Agent Framework credentials", detail: "Set OPENAI_API_KEY (OpenAI) or ANTHROPIC_API_KEY (Anthropic) in .env; unifies and supersedes AutoGen + Semantic Kernel, both now in maintenance mode" });
     }
 
     return items;
-  }, [exportFormat, exportLlmProvider, exportFramework, otelEnabled, toolAdapterOverrides]);
+  }, [exportFormat, exportLlmProvider, exportFramework, otelEnabled, toolAdapterOverrides, exportPreview]);
 
   async function streamExport(url: string, body: object, preferredFile?: (files: string[]) => string | undefined) {
     setIsGenerating(true);
@@ -370,6 +388,15 @@ export default function AgentExport() {
               setShowDiffView(false);
               if (data.metadata && !data.metadata.aiGenerated && !data.metadata.bundled) {
                 toast({ title: "Template-based generation", description: "AI was unavailable — tool adapters contain stubs.", variant: "default" });
+              } else if (Array.isArray(data.metadata?.stubToolNames) && data.metadata.stubToolNames.length > 0) {
+                // AI generation ran, but failed for these specific tools and silently
+                // fell back to a stub template — surface that instead of staying quiet.
+                const names = data.metadata.stubToolNames as string[];
+                toast({
+                  title: `${names.length} tool adapter${names.length > 1 ? "s" : ""} need${names.length > 1 ? "" : "s"} implementation`,
+                  description: `AI generation failed for: ${names.join(", ")}. See WHAT_YOU_NEED_TO_IMPLEMENT.md.`,
+                  variant: "default",
+                });
               }
             } else if (eventName === "error") {
               addLog({ event: "error", phase: "error", message: data.message || "Unknown error" });
@@ -1321,7 +1348,7 @@ function ConfigureStep({
       }
       if (fw === "bedrock") deps["@aws-sdk/client-bedrock-agent-runtime"] = pinVersions ? "3.712.0" : "^3.0.0";
       if (fw === "n8n") deps["n8n-workflow"] = pinVersions ? "1.69.2" : "^1.0.0";
-      if (fw === "vertex") deps["@google-cloud/aiplatform"] = pinVersions ? "3.34.0" : "^3.0.0";
+      if (fw === "adk") deps["@google/adk"] = pinVersions ? "0.1.0" : "^0.1.0";
       return { fileName: "package.json", deps };
     } else {
       const reqs: Array<{ name: string; pinned: string; range: string }> = [
@@ -1337,7 +1364,7 @@ function ConfigureStep({
       }
       if (fw === "crewai") reqs.push({ name: "crewai", pinned: "0.80.0", range: ">=0.80.0" });
       if (fw === "bedrock") reqs.push({ name: "boto3", pinned: "1.34.162", range: ">=1.34.0" });
-      if (fw === "vertex") reqs.push({ name: "google-cloud-aiplatform", pinned: "1.60.0", range: ">=1.60.0" });
+      if (fw === "adk") reqs.push({ name: "google-adk", pinned: "0.1.0", range: ">=0.1.0" });
       if (fw === "databricks") {
         reqs.push({ name: "mlflow", pinned: "2.18.0", range: ">=2.18.0" });
         reqs.push({ name: "databricks-sdk", pinned: "0.36.0", range: ">=0.36.0" });
@@ -1358,7 +1385,7 @@ function ConfigureStep({
     envVars.push({ key: "AWS_SECRET_ACCESS_KEY", description: "AWS secret key", required: true });
     envVars.push({ key: "AWS_REGION", description: "AWS region", required: true });
   }
-  if (exportFramework === "vertex") envVars.push({ key: "GOOGLE_APPLICATION_CREDENTIALS", description: "GCP credentials path", required: true });
+  if (exportFramework === "adk") envVars.push({ key: "GOOGLE_API_KEY", description: "Gemini Developer API key (or switch to Vertex-backed GOOGLE_CLOUD_PROJECT + GOOGLE_APPLICATION_CREDENTIALS)", required: true });
   if (exportFramework === "databricks") {
     envVars.push({ key: "DATABRICKS_HOST", description: "Databricks workspace URL", required: true });
     envVars.push({ key: "DATABRICKS_TOKEN", description: "Databricks access token", required: true });
@@ -1442,12 +1469,14 @@ function ConfigureStep({
                   <SelectItem value="claude-code">Claude Code SDK (Anthropic)</SelectItem>
                   <SelectItem value="langgraph">LangGraph</SelectItem>
                   <SelectItem value="crewai">CrewAI</SelectItem>
-                  <SelectItem value="autogen">AutoGen (Microsoft)</SelectItem>
-                  <SelectItem value="semantic-kernel">Semantic Kernel</SelectItem>
-                  <SelectItem value="openai-assistants">OpenAI Assistants API</SelectItem>
+                  <SelectItem value="autogen">AutoGen (Microsoft, maintenance mode)</SelectItem>
+                  <SelectItem value="semantic-kernel">Semantic Kernel (maintenance mode)</SelectItem>
+                  <SelectItem value="ms-agent-framework">Microsoft Agent Framework</SelectItem>
+                  <SelectItem value="openai-assistants">OpenAI Assistants API (sunsetting Aug 2026)</SelectItem>
+                  <SelectItem value="openai-agents">OpenAI Agents SDK</SelectItem>
                   <SelectItem value="foundry">Azure AI Foundry</SelectItem>
                   <SelectItem value="bedrock">AWS Bedrock Agents</SelectItem>
-                  <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
+                  <SelectItem value="adk">Google Agent Development Kit (ADK)</SelectItem>
                   <SelectItem value="n8n">n8n Workflow</SelectItem>
                   <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
                 </SelectContent>
@@ -1497,12 +1526,14 @@ function ConfigureStep({
                 <SelectItem value="claude-code">Claude Code SDK (Anthropic)</SelectItem>
                 <SelectItem value="langgraph">LangGraph</SelectItem>
                 <SelectItem value="crewai">CrewAI</SelectItem>
-                <SelectItem value="autogen">AutoGen (Microsoft)</SelectItem>
-                <SelectItem value="semantic-kernel">Semantic Kernel (Microsoft)</SelectItem>
-                <SelectItem value="openai-assistants">OpenAI Assistants API</SelectItem>
+                <SelectItem value="autogen">AutoGen (Microsoft, maintenance mode)</SelectItem>
+                <SelectItem value="semantic-kernel">Semantic Kernel (Microsoft, maintenance mode)</SelectItem>
+                <SelectItem value="ms-agent-framework">Microsoft Agent Framework</SelectItem>
+                <SelectItem value="openai-assistants">OpenAI Assistants API (sunsetting Aug 2026)</SelectItem>
+                <SelectItem value="openai-agents">OpenAI Agents SDK</SelectItem>
                 <SelectItem value="foundry">Azure AI Foundry</SelectItem>
                 <SelectItem value="bedrock">AWS Bedrock Agents</SelectItem>
-                <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
+                <SelectItem value="adk">Google Agent Development Kit (ADK)</SelectItem>
                 <SelectItem value="n8n">n8n Workflow</SelectItem>
                 <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
               </SelectContent>
@@ -1709,12 +1740,13 @@ function ConfigureStep({
                     <Button
                       size="sm"
                       variant={compileStatus === "passed" ? "outline" : "default"}
-                      disabled={compileStatus === "running"}
+                      disabled={compileStatus === "running" || !exportPreview?.files}
+                      title={!exportPreview?.files ? "Generate code first" : undefined}
                       onClick={async () => {
                         setCompileStatus("running");
                         setCompileOutput("");
                         try {
-                          const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, { type: "compile", format: exportFormat, framework: exportFramework, llmProvider: exportLlmProvider });
+                          const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, { type: "compile", format: exportFormat, framework: exportFramework, llmProvider: exportLlmProvider, files: exportPreview?.files || {} });
                           const data = await res.json();
                           setCompileStatus(data.passed ? "passed" : "failed");
                           setCompileOutput(data.output || (data.passed ? "All checks passed." : "Errors detected."));
@@ -1727,12 +1759,13 @@ function ConfigureStep({
                     <Button
                       size="sm"
                       variant={evalStatus === "passed" ? "outline" : "default"}
-                      disabled={evalStatus === "running"}
+                      disabled={evalStatus === "running" || !exportPreview?.files}
+                      title={!exportPreview?.files ? "Generate code first" : undefined}
                       onClick={async () => {
                         setEvalStatus("running");
                         setEvalOutput("");
                         try {
-                          const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, { type: "eval", format: exportFormat, framework: exportFramework, llmProvider: exportLlmProvider });
+                          const res = await apiRequest("POST", `/api/agents/${agentId}/export-validate`, { type: "eval", format: exportFormat, framework: exportFramework, llmProvider: exportLlmProvider, files: exportPreview?.files || {} });
                           const data = await res.json();
                           setEvalStatus(data.passed ? "passed" : "failed");
                           setEvalOutput(data.output || (data.passed ? "All evals passed." : "Some evals failed."));
@@ -1743,6 +1776,9 @@ function ConfigureStep({
                       {evalStatus === "running" ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Evaluating...</> : evalStatus === "passed" ? <><CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />Eval Passed</> : evalStatus === "failed" ? <><XOctagon className="w-3.5 h-3.5 mr-1.5" />Re-run Eval</> : <><FlaskConical className="w-3.5 h-3.5 mr-1.5" />Run Eval</>}
                     </Button>
                   </div>
+                  {!exportPreview?.files && (
+                    <span className="text-[11px] text-muted-foreground">Generate the code package above before running these checks.</span>
+                  )}
                   {compileOutput && (
                     <div className={`rounded-md p-2 text-xs font-mono whitespace-pre-wrap ${compileStatus === "passed" ? "bg-emerald-500/5 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-red-500/5 border border-red-500/20 text-red-700 dark:text-red-400"}`} data-testid="output-compile">{compileOutput}</div>
                   )}

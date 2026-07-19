@@ -4,12 +4,15 @@ import { storage } from "../storage";
 import { db } from "../db";
 import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
 import { llmInvokeRateLimiter } from "../rate-limits";
-import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun } from "../dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun, deriveRunStatus, inferOrchestrationPattern } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
+import { getDagRunEventBuffer, subscribeDagRunEvents } from "../dag-run-events";
+import { startMagenticTeamAgent } from "../magentic-engine";
 import { mergeIntoWorkflowState, sanitizeForCheckpoint, writeStageCompleteCheckpoint } from "../workflow-state-helpers";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { conversations, messages as chatMessages, traceSpans, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
+import { parseAIJsonResponse, AIResponseParseError } from "../claude";
 import {
   insertLoggingIntegrationSchema,
   insertAgentSchema,
@@ -1867,6 +1870,129 @@ function hashCode(str: string): number {
     }
   });
 
+  // ── A2A (Agent2Agent) protocol adapter ────────────────────────────────────
+  // Best-effort A2A-shaped surface over the existing gateway pipeline, so an
+  // external A2A-speaking caller (or another Atlas org) can discover and
+  // invoke one of our deployed agents. Field/wire conventions here mirror
+  // this platform's own `remoteAgents` schema (agentCardUrl, providerInfo,
+  // defaultInputModes/OutputModes) -- they have NOT been independently
+  // verified against a live third-party A2A implementation, so treat this
+  // as a reasonable default to reconcile with the official spec before
+  // depending on it for real interop, not a certified-compliant server.
+  router.get("/api/a2a/v1/agents/:agentId/card", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.agentId, getOrgId(req));
+      if (!agent) return res.status(404).json({ error: "not_found", message: "Agent not found" });
+      if (agent.status !== "deployed") {
+        return res.status(404).json({ error: "not_found", message: "Agent card is only published once the agent is deployed" });
+      }
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      res.json({
+        name: agent.name,
+        description: agent.description || "",
+        url: `${baseUrl}/api/a2a/v1/agents/${agent.id}/message`,
+        provider: { organization: getOrgId(req) || "atlas" },
+        capabilities: { streaming: false },
+        defaultInputModes: ["text/plain"],
+        defaultOutputModes: ["text/plain"],
+        version: agent.currentVersion || "1.0.0",
+      });
+    } catch (e) {
+      console.error("[a2a] card error:", e);
+      res.status(500).json({ error: "internal_error", message: "Failed to build agent card" });
+    }
+  });
+
+  router.post("/api/a2a/v1/agents/:agentId/message", async (req, res) => {
+    const startTime = Date.now();
+    try {
+      const authHeader = req.headers["authorization"] || req.headers["x-api-key"];
+      if (!authHeader) {
+        return res.status(401).json({ error: "unauthorized", message: "Missing API key. Provide via Authorization: Bearer <key> or X-API-Key header." });
+      }
+      const rawKey = typeof authHeader === "string" && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader as string;
+      const keyHash = hashApiKey(rawKey);
+      const apiKey = await storage.getAgentApiKeyByHash(keyHash);
+      if (!apiKey || apiKey.agentId !== req.params.agentId) {
+        return res.status(401).json({ error: "unauthorized", message: "Invalid API key" });
+      }
+      if (apiKey.expiresAt && new Date(apiKey.expiresAt) < new Date()) {
+        return res.status(401).json({ error: "expired", message: "API key has expired" });
+      }
+      storage.updateAgentApiKey(apiKey.id, { lastUsedAt: new Date() });
+
+      const agent = await storage.getAgent(req.params.agentId, getOrgId(req));
+      if (!agent) return res.status(404).json({ error: "not_found", message: "Agent not found" });
+      if (agent.status !== "deployed") {
+        return res.status(422).json({ error: "agent_not_deployed", message: `Agent is in '${agent.status}' status.` });
+      }
+
+      const messageSchema = z.object({
+        message: z.object({
+          role: z.string().optional(),
+          parts: z.array(z.object({ type: z.string().optional(), text: z.string() })).min(1),
+        }),
+      });
+      const { message } = messageSchema.parse(req.body);
+      const inputText = message.parts.map(p => p.text).join("\n");
+
+      const mcpLinks = await storage.getAgentMcpServers(agent.id);
+      const mcpServerIds = mcpLinks.map(l => l.serverId);
+      const blueprints = await storage.getBlueprints();
+      const agentBlueprint = blueprints.find(b => b.agentId === agent.id);
+      const richAgentPrompt = buildAgentSystemPrompt(agent);
+
+      const trace = await storage.createTrace({
+        agentId: agent.id,
+        versionId: agent.currentVersion,
+        environment: "production",
+        status: "running",
+        inputSummary: inputText.slice(0, 500),
+        modelId: agent.modelName || "gpt-4.1",
+        organizationId: getOrgId(req) ?? undefined,
+      });
+
+      const mcpResult = await executePromptWithMcp(
+        agent.id,
+        "a2a",
+        agentBlueprint?.id,
+        mcpServerIds,
+        inputText,
+        (agent as any).industry,
+        richAgentPrompt,
+        { maxToolIterations: agent.maxToolIterations ?? 5 },
+        undefined,
+        getOrgId(req) ?? undefined,
+        undefined,
+      );
+
+      const summary = mcpResult.summary || {};
+      let outputText = summary.summary || summary.analysis
+        || mcpResult.steps?.find((s: any) => s.type === "ai_analysis")?.output?.analysis?.summary
+        || (mcpResult.success ? "Execution completed" : "Execution failed");
+      if (typeof outputText === "object") outputText = JSON.stringify(outputText);
+
+      const latencyMs = Date.now() - startTime;
+      await storage.updateTrace(trace.id, {
+        status: mcpResult.success === false ? "failed" : "completed",
+        outputSummary: String(outputText).slice(0, 500),
+        latencyMs,
+        stepsJson: { source: "a2a_message", mcpEnabled: mcpServerIds.length > 0 },
+        endedAt: new Date(),
+      } as any);
+
+      res.json({
+        taskId: trace.id,
+        message: { role: "agent", parts: [{ type: "text", text: outputText }] },
+        status: mcpResult.success === false ? "failed" : "completed",
+      });
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: "validation_error", message: "Invalid A2A message body", details: e.errors });
+      console.error("[a2a] message error:", e);
+      res.status(500).json({ error: "internal_error", message: "Agent invocation failed" });
+    }
+  });
+
   // --- Export Code Package helpers ---
 
   interface AgentYamlExtras {
@@ -3111,10 +3237,1805 @@ ${executeEntrypoint}`;
     return `${exports}\n\n${imports}\n\nexport function loadTools(): Record<string, (args: Record<string, unknown>) => Promise<unknown> | unknown> {\n  return {\n${mapEntries}\n  };\n}\n`;
   }
 
+  // Root fix: every caller of load_tools() everywhere in this file invokes
+  // the returned function as fn(parsed_dict) -- one positional dict
+  // argument straight from json.loads() on the LLM's tool-call arguments.
+  // But each tool module's top-level "<tool_name>" function (generated by
+  // generatePyToolAdapter) is typed def <tool_name>(args: <ToolName>Args) ->
+  // dict, expecting a constructed dataclass instance, not a raw dict --
+  // passing a dict through silently "works" at the call boundary (Python
+  // doesn't enforce type hints) but breaks the moment the real
+  // implementation does dataclass attribute access on it. Every tool module
+  // also already exports execute(**kwargs), built specifically for
+  // keyword-argument calling (it constructs the dataclass itself). Import
+  // that instead and wrap it in a one-dict-argument shim, so every existing
+  // call site's fn(dict) convention keeps working without needing to change
+  // any of them individually.
   function generatePyToolsInit(tools: Array<{ name: string }>): string {
-    const imports = tools.map(t => `from .${t.name} import ${t.name}`).join("\n");
-    const mapEntries = tools.map(t => `    "${t.name}": ${t.name}`).join(",\n");
-    return `${imports}\n\n\ndef load_tools() -> dict:\n    return {\n${mapEntries}\n    }\n`;
+    const imports = tools.map(t => `from .${t.name} import execute as _${t.name}_execute`).join("\n");
+    const wrappers = tools.map(t => `def _${t.name}_call(args: dict):\n    return _${t.name}_execute(**(args or {}))\n`).join("\n");
+    const mapEntries = tools.map(t => `    "${t.name}": _${t.name}_call`).join(",\n");
+    return `${imports}\n\n${wrappers}\ndef load_tools() -> dict:\n    return {\n${mapEntries}\n    }\n`;
+  }
+
+  // Converts one tool's stored JSON-Schema `parameters` into a real Zod type
+  // expression, so the generated Claude Code SDK tool() call actually
+  // validates input per the agent's own declared schema instead of a fake
+  // z.any() stub. Recurses into nested "object"/"array" schemas.
+  function zodExprForJsonSchema(schema: Record<string, unknown> | undefined): string {
+    if (!schema || typeof schema !== "object") return "z.any()";
+    const type = schema.type as string | undefined;
+    let expr: string;
+    if (type === "string") {
+      expr = Array.isArray(schema.enum) && (schema.enum as unknown[]).length > 0
+        ? `z.enum([${(schema.enum as unknown[]).map(e => JSON.stringify(String(e))).join(", ")}])`
+        : "z.string()";
+    } else if (type === "number" || type === "integer") {
+      expr = "z.number()";
+    } else if (type === "boolean") {
+      expr = "z.boolean()";
+    } else if (type === "array") {
+      expr = `z.array(${zodExprForJsonSchema(schema.items as Record<string, unknown> | undefined)})`;
+    } else if (type === "object") {
+      expr = `z.object(${zodRawShapeLiteral(schema)})`;
+    } else {
+      expr = "z.any()";
+    }
+    if (schema.description) expr += `.describe(${JSON.stringify(String(schema.description))})`;
+    return expr;
+  }
+
+  // The raw-shape object literal tool() expects as its 3rd argument -- a
+  // plain `{ key: z.type(), ... }` record, NOT wrapped in z.object().
+  function zodRawShapeLiteral(schema: Record<string, unknown> | undefined): string {
+    const properties = (schema?.properties && typeof schema.properties === "object") ? schema.properties as Record<string, unknown> : {};
+    const required = new Set(Array.isArray(schema?.required) ? schema!.required as string[] : []);
+    const propNames = Object.keys(properties);
+    if (propNames.length === 0) return "{}";
+    const entries = propNames.map(name => {
+      let expr = zodExprForJsonSchema(properties[name] as Record<string, unknown>);
+      if (!required.has(name)) expr += ".optional()";
+      return `      ${JSON.stringify(name)}: ${expr}`;
+    });
+    return `{\n${entries.join(",\n")},\n    }`;
+  }
+
+  // Builds a working Claude Code SDK (@anthropic-ai/claude-agent-sdk) entrypoint.
+  // Two things the old template got wrong: (1) it defined tools via a bare
+  // "customTools" array/option that the real SDK has no such shape for --
+  // custom tools are tool()-defined and grouped into an SDK MCP server passed
+  // through options.mcpServers; (2) any MCP servers configured on the agent
+  // were silently dropped instead of being wired in alongside the local tools.
+  function generateClaudeCodeAgentFile(
+    agentName: string,
+    agentSlug: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; tools?: Array<{ name: string; description: string }> }>,
+    maxIterations: number,
+  ): string {
+    const localServerKey = `${agentSlug.replace(/[^a-zA-Z0-9_]/g, "_")}_tools` || "local_tools";
+
+    const localToolDefs = tools.map(t => `  tool(\n    "${t.name}",\n    "${(t.description || t.name).replace(/"/g, "'")}",\n    ${zodRawShapeLiteral(t.parameters)},\n    async (args) => {\n      const fn = toolRegistry["${t.name}"];\n      if (!fn) throw new Error("Tool not found: ${t.name}");\n      const result = JSON.stringify((await Promise.resolve(fn(args))) ?? {});\n      return { content: [{ type: "text" as const, text: result }] };\n    },\n  )`).join(",\n");
+
+    const externalServerEntries: string[] = [];
+    const externalAllowedTools: string[] = [];
+    const skippedServerNotes: string[] = [];
+    for (const srv of mcpServerDetails) {
+      const key = (srv.name.replace(/[^a-zA-Z0-9_]/g, "_") || "mcp_server").toLowerCase();
+      const sdkType = srv.transportType === "sse" ? "sse" : (srv.transportType === "http" || srv.transportType === "streamable-http") ? "http" : null;
+      if (sdkType && srv.url) {
+        externalServerEntries.push(`  "${key}": { type: "${sdkType}" as const, url: "${srv.url}" }`);
+        for (const t of srv.tools || []) externalAllowedTools.push(`mcp__${key}__${t.name}`);
+      } else {
+        skippedServerNotes.push(`// NOTE: MCP server "${srv.name}" uses transport "${srv.transportType}" -- the SDK's declarative mcpServers config needs a plain http/sse URL, which this transport doesn't have here. Wire it manually (e.g. a stdio command) if you need it.`);
+      }
+    }
+
+    const localAllowedTools = tools.map(t => `mcp__${localServerKey}__${t.name}`);
+    const allowedTools = [...localAllowedTools, ...externalAllowedTools];
+
+    const mcpServersEntries = [
+      tools.length > 0 ? `  "${localServerKey}": localServer` : null,
+      ...externalServerEntries,
+    ].filter(Boolean).join(",\n");
+
+    return `// Claude Code SDK Agent
+// Generated for ${agentName}
+// Requires: Claude Pro/Max/Team subscription
+// Install: npm install @anthropic-ai/claude-agent-sdk zod
+import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+import { loadTools } from "../tools";
+${skippedServerNotes.length > 0 ? "\n" + skippedServerNotes.join("\n") + "\n" : ""}
+const SYSTEM_PROMPT = \`${systemPrompt.substring(0, 400).replace(/`/g, "'")}\`;
+const toolRegistry = loadTools();
+${tools.length > 0 ? `
+const localServer = createSdkMcpServer({
+  name: "${localServerKey}",
+  version: "1.0.0",
+  tools: [
+${localToolDefs}
+  ],
+});
+` : ""}
+const mcpServers = {
+${mcpServersEntries || "  /* no tools or MCP servers configured */"}
+};
+
+const allowedTools = [${allowedTools.length > 0 ? `\n  ${allowedTools.map(n => JSON.stringify(n)).join(",\n  ")},\n` : ""}];
+
+export async function run(task: string): Promise<void> {
+  let turnCount = 0;
+  let totalTokens = 0;
+
+  for await (const message of query({
+    prompt: task,
+    options: {
+      maxTurns: ${maxIterations},
+      systemPrompt: SYSTEM_PROMPT,
+      mcpServers,
+      allowedTools,
+      cwd: process.cwd(),
+    },
+  })) {
+    turnCount++;
+    if (message.type === "assistant") {
+      for (const block of message.message.content) {
+        if (block.type === "text") console.log("[Turn " + turnCount + "] " + block.text);
+        else if (block.type === "tool_use") console.log("[Tool] " + block.name + "(" + JSON.stringify(block.input) + ")");
+      }
+      const usage = (message.message as Record<string, unknown>).usage as Record<string, number> | undefined;
+      if (usage) totalTokens += ((usage["input_tokens"] as number) ?? 0) + ((usage["output_tokens"] as number) ?? 0);
+    } else if (message.type === "result") {
+      console.log("Result: " + (message as Record<string, unknown>)["result"]);
+      console.log("Turns: " + turnCount + " | Tokens: " + totalTokens);
+    }
+  }
+}
+
+if (require.main === module) {
+  const task = process.argv[2] ?? "Hello, what can you help me with?";
+  run(task).catch(console.error);
+}
+`;
+  }
+
+  // Builds a working LangGraph entrypoint whose agent/tool nodes actually call
+  // the LLM and dispatch real tools. The old fallback template's node bodies
+  // were no-ops -- agentNode just incremented a counter, toolNode returned
+  // state unchanged -- despite loading the real tools via loadTools() and
+  // never invoking them, and never even referencing the agent's system
+  // prompt. That produced a graph.ts/graph.py that type-checked and "looked"
+  // like a working LangGraph agent but did nothing when run, with no
+  // indication to the user that this was a stub rather than a working agent.
+  function generateLangGraphAgentFile(
+    agentName: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    completionPromise: string,
+    llmProvider: "openai" | "anthropic",
+    format: "typescript" | "python",
+  ): string {
+    const promptEscTs = systemPrompt.substring(0, 2000).replace(/`/g, "'").replace(/\\/g, "\\\\");
+    const promptEscPy = systemPrompt.substring(0, 2000).replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+
+    if (format === "typescript" && llmProvider === "openai") {
+      const toolDefs = tools.map(t => `  { type: "function" as const, function: { name: "${t.name}", description: "${(t.description || t.name).replace(/"/g, "'")}", parameters: ${JSON.stringify(t.parameters || { type: "object", properties: {} })} } }`).join(",\n");
+      return `// LangGraph State Graph Definition
+// Generated for ${agentName}
+import { StateGraph, END } from "@langchain/langgraph";
+import OpenAI from "openai";
+import { loadTools } from "./tools";
+
+type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
+interface AgentState {
+  messages: ChatMessage[];
+  iterations: number;
+}
+
+const SYSTEM_PROMPT = \`${promptEscTs}\`;
+const MAX_ITERATIONS = ${maxIterations};
+const COMPLETION_PROMISE = ${JSON.stringify(completionPromise)};
+
+const client = new OpenAI();
+const toolRegistry = loadTools();
+
+const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+${toolDefs || "  /* no tools configured */"}
+];
+
+const agentNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+  const response = await client.chat.completions.create({
+    model: process.env.OPENAI_MODEL || "gpt-4o",
+    messages: state.messages,
+    tools: TOOL_DEFINITIONS.length > 0 ? TOOL_DEFINITIONS : undefined,
+    tool_choice: TOOL_DEFINITIONS.length > 0 ? "auto" : undefined,
+  });
+  const msg = response.choices[0].message;
+  if (msg.content && msg.content.includes(COMPLETION_PROMISE)) console.log("[completed] Agent returned completion promise.");
+  return { messages: [...state.messages, msg], iterations: state.iterations + 1 };
+};
+
+const toolNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+  const last = state.messages[state.messages.length - 1] as OpenAI.Chat.Completions.ChatCompletionMessage;
+  const results: ChatMessage[] = [];
+  for (const tc of last.tool_calls || []) {
+    const fn = toolRegistry[tc.function.name];
+    let result: unknown;
+    if (!fn) {
+      result = { error: \`Tool not found: \${tc.function.name}\` };
+    } else {
+      let args: Record<string, unknown> = {};
+      try { args = JSON.parse(tc.function.arguments); } catch { /* leave empty */ }
+      try { result = await Promise.resolve(fn(args)); } catch (err) { result = { error: err instanceof Error ? err.message : String(err) }; }
+    }
+    console.log(\`  [tool] \${tc.function.name}(\${tc.function.arguments})\`);
+    results.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result ?? {}) });
+  }
+  return { messages: [...state.messages, ...results] };
+};
+
+const shouldContinue = (state: AgentState): "tools" | "end" => {
+  if (state.iterations >= MAX_ITERATIONS) return "end";
+  const last = state.messages[state.messages.length - 1] as OpenAI.Chat.Completions.ChatCompletionMessage;
+  return (last.tool_calls && last.tool_calls.length > 0) ? "tools" : "end";
+};
+
+const graph = new StateGraph<AgentState>({
+  channels: { messages: { value: [] }, iterations: { value: 0 } },
+})
+  .addNode("agent", agentNode)
+  .addNode("tools", toolNode)
+  .addEdge("__start__", "agent")
+  .addConditionalEdges("agent", shouldContinue, { tools: "tools", end: END })
+  .addEdge("tools", "agent");
+
+export const app = graph.compile();
+
+if (require.main === module) {
+  const task = process.argv[2] ?? "Hello, what can you help me with?";
+  app.invoke({
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: task },
+    ],
+    iterations: 0,
+  } as AgentState).then((result: AgentState) => {
+    const last = result.messages[result.messages.length - 1];
+    console.log(typeof last.content === "string" ? last.content : JSON.stringify(last.content));
+  }).catch(console.error);
+}
+`;
+    }
+
+    if (format === "typescript" && llmProvider === "anthropic") {
+      const toolDefs = tools.map(t => `  { name: "${t.name}", description: "${(t.description || t.name).replace(/"/g, "'")}", input_schema: ${JSON.stringify(t.parameters || { type: "object", properties: {} })} }`).join(",\n");
+      return `// LangGraph State Graph Definition
+// Generated for ${agentName}
+import { StateGraph, END } from "@langchain/langgraph";
+import Anthropic from "@anthropic-ai/sdk";
+import { loadTools } from "./tools";
+
+interface AgentState {
+  messages: Anthropic.MessageParam[];
+  iterations: number;
+}
+
+const SYSTEM_PROMPT = \`${promptEscTs}\`;
+const MAX_ITERATIONS = ${maxIterations};
+const COMPLETION_PROMISE = ${JSON.stringify(completionPromise)};
+
+const client = new Anthropic();
+const toolRegistry = loadTools();
+
+const TOOL_DEFINITIONS: Anthropic.Tool[] = [
+${toolDefs || "  /* no tools configured */"}
+];
+
+const agentNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+  const response = await client.messages.create({
+    model: process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022",
+    max_tokens: 4096,
+    system: SYSTEM_PROMPT,
+    messages: state.messages,
+    tools: TOOL_DEFINITIONS.length > 0 ? TOOL_DEFINITIONS : undefined,
+  });
+  const textContent = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map(b => b.text).join("\\n");
+  if (textContent.includes(COMPLETION_PROMISE)) console.log("[completed] Agent returned completion promise.");
+  return { messages: [...state.messages, { role: "assistant", content: response.content }], iterations: state.iterations + 1 };
+};
+
+const toolNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+  const last = state.messages[state.messages.length - 1];
+  const blocks = Array.isArray(last.content) ? last.content : [];
+  const toolResults: Anthropic.ToolResultBlockParam[] = [];
+  for (const b of blocks) {
+    if ((b as any).type !== "tool_use") continue;
+    const tu = b as any as Anthropic.ToolUseBlock;
+    const fn = toolRegistry[tu.name];
+    let result: unknown;
+    if (!fn) {
+      result = { error: \`Tool not found: \${tu.name}\` };
+    } else {
+      try { result = await Promise.resolve(fn(tu.input as Record<string, unknown>)); } catch (err) { result = { error: err instanceof Error ? err.message : String(err) }; }
+    }
+    console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
+    toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result ?? {}) });
+  }
+  return { messages: [...state.messages, { role: "user", content: toolResults }] };
+};
+
+const shouldContinue = (state: AgentState): "tools" | "end" => {
+  if (state.iterations >= MAX_ITERATIONS) return "end";
+  const last = state.messages[state.messages.length - 1];
+  const blocks = Array.isArray(last.content) ? last.content : [];
+  const hasToolUse = blocks.some((b: any) => b.type === "tool_use");
+  return hasToolUse ? "tools" : "end";
+};
+
+const graph = new StateGraph<AgentState>({
+  channels: { messages: { value: [] }, iterations: { value: 0 } },
+})
+  .addNode("agent", agentNode)
+  .addNode("tools", toolNode)
+  .addEdge("__start__", "agent")
+  .addConditionalEdges("agent", shouldContinue, { tools: "tools", end: END })
+  .addEdge("tools", "agent");
+
+export const app = graph.compile();
+
+if (require.main === module) {
+  const task = process.argv[2] ?? "Hello, what can you help me with?";
+  app.invoke({
+    messages: [{ role: "user", content: task }],
+    iterations: 0,
+  } as AgentState).then((result: AgentState) => {
+    const last = result.messages[result.messages.length - 1];
+    console.log(typeof last.content === "string" ? last.content : JSON.stringify(last.content));
+  }).catch(console.error);
+}
+`;
+    }
+
+    if (llmProvider === "openai") {
+      const toolDefsPy = tools.map(t => `    {"type": "function", "function": {"name": "${t.name}", "description": "${(t.description || t.name).replace(/"/g, "'")}", "parameters": ${JSON.stringify(t.parameters || { type: "object", properties: {} })}}}`).join(",\n");
+      return `# LangGraph State Graph Definition
+# Generated for ${agentName}
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, List, Dict, Any
+import json
+from openai import OpenAI
+from tools import load_tools
+
+class AgentState(TypedDict):
+    messages: List[Dict[str, Any]]
+    iterations: int
+
+SYSTEM_PROMPT = """${promptEscPy}"""
+MAX_ITERATIONS = ${maxIterations}
+COMPLETION_PROMISE = ${JSON.stringify(completionPromise)}
+
+client = OpenAI()
+tool_registry = load_tools()
+
+TOOL_DEFINITIONS = [
+${toolDefsPy || "    # no tools configured"}
+]
+
+
+def agent_node(state: AgentState) -> AgentState:
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=state["messages"],
+        tools=TOOL_DEFINITIONS if TOOL_DEFINITIONS else None,
+        tool_choice="auto" if TOOL_DEFINITIONS else None,
+    )
+    msg = response.choices[0].message
+    if msg.content and COMPLETION_PROMISE in msg.content:
+        print("[completed] Agent returned completion promise.")
+    msg_dict = msg.model_dump()
+    return {"messages": state["messages"] + [msg_dict], "iterations": state["iterations"] + 1}
+
+
+def tool_node(state: AgentState) -> AgentState:
+    last = state["messages"][-1]
+    results = []
+    for tc in last.get("tool_calls") or []:
+        fn_name = tc["function"]["name"]
+        fn = tool_registry.get(fn_name)
+        if not fn:
+            result = {"error": f"Tool not found: {fn_name}"}
+        else:
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            try:
+                result = fn(args)
+            except Exception as e:
+                result = {"error": str(e)}
+        print(f"  [tool] {fn_name}({tc['function']['arguments']})")
+        results.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
+    return {"messages": state["messages"] + results}
+
+
+def should_continue(state: AgentState) -> str:
+    if state["iterations"] >= MAX_ITERATIONS:
+        return "end"
+    last = state["messages"][-1]
+    return "tools" if last.get("tool_calls") else "end"
+
+
+graph = StateGraph(AgentState)
+graph.add_node("agent", agent_node)
+graph.add_node("tools", tool_node)
+graph.set_entry_point("agent")
+graph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})
+graph.add_edge("tools", "agent")
+
+app = graph.compile()
+
+if __name__ == "__main__":
+    import sys
+    task = sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?"
+    result = app.invoke({
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": task},
+        ],
+        "iterations": 0,
+    })
+    last = result["messages"][-1]
+    print(last.get("content") or json.dumps(last))
+`;
+    }
+
+    const toolDefsPyAnthropic = tools.map(t => `    {"name": "${t.name}", "description": "${(t.description || t.name).replace(/"/g, "'")}", "input_schema": ${JSON.stringify(t.parameters || { type: "object", properties: {} })}}`).join(",\n");
+    return `# LangGraph State Graph Definition
+# Generated for ${agentName}
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, List, Dict, Any
+import json
+from anthropic import Anthropic
+from tools import load_tools
+
+class AgentState(TypedDict):
+    messages: List[Dict[str, Any]]
+    iterations: int
+
+SYSTEM_PROMPT = """${promptEscPy}"""
+MAX_ITERATIONS = ${maxIterations}
+COMPLETION_PROMISE = ${JSON.stringify(completionPromise)}
+
+client = Anthropic()
+tool_registry = load_tools()
+
+TOOL_DEFINITIONS = [
+${toolDefsPyAnthropic || "    # no tools configured"}
+]
+
+
+def agent_node(state: AgentState) -> AgentState:
+    response = client.messages.create(
+        model="claude-3-5-sonnet-20241022",
+        max_tokens=4096,
+        system=SYSTEM_PROMPT,
+        messages=state["messages"],
+        tools=TOOL_DEFINITIONS if TOOL_DEFINITIONS else None,
+    )
+    text_content = "\\n".join(b.text for b in response.content if b.type == "text")
+    if COMPLETION_PROMISE in text_content:
+        print("[completed] Agent returned completion promise.")
+    content_blocks = [b.model_dump() for b in response.content]
+    return {"messages": state["messages"] + [{"role": "assistant", "content": content_blocks}], "iterations": state["iterations"] + 1}
+
+
+def tool_node(state: AgentState) -> AgentState:
+    last = state["messages"][-1]
+    blocks = last["content"] if isinstance(last["content"], list) else []
+    tool_results = []
+    for b in blocks:
+        if b.get("type") != "tool_use":
+            continue
+        fn = tool_registry.get(b["name"])
+        if not fn:
+            result = {"error": f"Tool not found: {b['name']}"}
+        else:
+            try:
+                result = fn(b["input"])
+            except Exception as e:
+                result = {"error": str(e)}
+        print(f"  [tool] {b['name']}({json.dumps(b['input'])})")
+        tool_results.append({"type": "tool_result", "tool_use_id": b["id"], "content": json.dumps(result)})
+    return {"messages": state["messages"] + [{"role": "user", "content": tool_results}]}
+
+
+def should_continue(state: AgentState) -> str:
+    if state["iterations"] >= MAX_ITERATIONS:
+        return "end"
+    last = state["messages"][-1]
+    blocks = last["content"] if isinstance(last["content"], list) else []
+    return "tools" if any(b.get("type") == "tool_use" for b in blocks) else "end"
+
+
+graph = StateGraph(AgentState)
+graph.add_node("agent", agent_node)
+graph.add_node("tools", tool_node)
+graph.set_entry_point("agent")
+graph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})
+graph.add_edge("tools", "agent")
+
+app = graph.compile()
+
+if __name__ == "__main__":
+    import sys
+    task = sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?"
+    result = app.invoke({
+        "messages": [{"role": "user", "content": task}],
+        "iterations": 0,
+    })
+    last = result["messages"][-1]
+    print(last["content"] if isinstance(last["content"], str) else json.dumps(last["content"]))
+`;
+  }
+
+  function pyTypeForJsonSchema(schema: Record<string, unknown> | undefined): string {
+    if (!schema || typeof schema !== "object") return "Any";
+    const type = schema.type as string | undefined;
+    if (type === "string") return "str";
+    if (type === "integer") return "int";
+    if (type === "number") return "float";
+    if (type === "boolean") return "bool";
+    if (type === "array") return `List[${pyTypeForJsonSchema(schema.items as Record<string, unknown> | undefined)}]`;
+    if (type === "object") return "dict";
+    return "Any";
+  }
+
+  function crewAiToolClassName(toolName: string): string {
+    const pascal = (toolName || "tool").replace(/(?:^|_)([a-zA-Z])/g, (_m, c) => c.toUpperCase());
+    return pascal || "Tool";
+  }
+
+  // A real pydantic BaseModel per tool, derived from that tool's stored
+  // JSON-Schema parameters -- not a fake catch-all dict -- so CrewAI's
+  // BaseTool validates input the way the agent's own schema describes.
+  function pydanticInputModelForTool(tool: { name: string; parameters?: Record<string, unknown> }): { className: string; source: string } {
+    const className = `${crewAiToolClassName(tool.name)}Input`;
+    const schema = tool.parameters || {};
+    const properties = (schema.properties && typeof schema.properties === "object") ? schema.properties as Record<string, unknown> : {};
+    const required = new Set(Array.isArray(schema.required) ? schema.required as string[] : []);
+    const propNames = Object.keys(properties);
+    const fieldLines = propNames.length > 0
+      ? propNames.map(name => {
+          const propSchema = (properties[name] || {}) as Record<string, unknown>;
+          const pyType = pyTypeForJsonSchema(propSchema);
+          const desc = JSON.stringify(String(propSchema.description || ""));
+          return required.has(name)
+            ? `    ${name}: ${pyType} = Field(..., description=${desc})`
+            : `    ${name}: Optional[${pyType}] = Field(None, description=${desc})`;
+        }).join("\n")
+      : "    pass";
+    return { className, source: `class ${className}(BaseModel):\n${fieldLines}\n` };
+  }
+
+  // Builds a working CrewAI crew.py. The old fallback template never
+  // imported or called the real crewai package at all -- it read YAML files
+  // it wrote itself and just logged task names, with a literal
+  // "# TODO: Wire up LLM calls with agent config" left in the output despite
+  // requirements.txt declaring the real crewai dependency. CrewAI has no
+  // official JS/TS package, so this is Python-only.
+  function generateCrewAiAgentFile(
+    agentName: string,
+    agentDescription: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    completionPromise: string,
+    llmProvider: "openai" | "anthropic",
+  ): string {
+    const promptEscPy = systemPrompt.substring(0, 2000).replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+    const goalEsc = (agentDescription || "Complete assigned tasks").replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+    const llmModel = llmProvider === "openai" ? "gpt-4o" : "anthropic/claude-3-5-sonnet-20241022";
+
+    const models = tools.map(t => pydanticInputModelForTool(t));
+    const modelsSource = models.map(m => m.source).join("\n");
+
+    const toolClasses = tools.map((t, i) => {
+      const className = `${crewAiToolClassName(t.name)}Tool`;
+      const inputClassName = models[i].className;
+      const desc = (t.description || t.name).replace(/"/g, "'");
+      return `class ${className}(BaseTool):
+    name: str = "${t.name}"
+    description: str = "${desc}"
+    args_schema: Type[BaseModel] = ${inputClassName}
+
+    def _run(self, **kwargs) -> str:
+        fn = tool_registry.get("${t.name}")
+        if not fn:
+            return json.dumps({"error": "Tool not found: ${t.name}"})
+        try:
+            result = fn(kwargs)
+        except Exception as e:
+            result = {"error": str(e)}
+        return json.dumps(result)
+`;
+    }).join("\n");
+
+    const toolInstances = tools.map(t => `${crewAiToolClassName(t.name)}Tool()`).join(", ");
+
+    return `# CrewAI Crew Definition
+# Generated for ${agentName}
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import BaseTool
+from pydantic import BaseModel, Field
+from typing import Optional, List, Any, Type
+import json
+from tools import load_tools
+
+tool_registry = load_tools()
+
+SYSTEM_PROMPT = """${promptEscPy}"""
+MAX_ITERATIONS = ${maxIterations}
+COMPLETION_PROMISE = ${JSON.stringify(completionPromise)}
+
+${modelsSource}
+${toolClasses}
+CREW_TOOLS = [${toolInstances}]
+
+agent = Agent(
+    role="${agentName.replace(/"/g, "'")}",
+    goal="""${goalEsc}""",
+    backstory=SYSTEM_PROMPT,
+    tools=CREW_TOOLS,
+    llm="${llmModel}",
+    max_iter=MAX_ITERATIONS,
+    verbose=True,
+)
+
+
+def run(task_text: str) -> str:
+    task = Task(
+        description=task_text,
+        agent=agent,
+        expected_output=COMPLETION_PROMISE,
+    )
+    crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=True)
+    result = crew.kickoff()
+    return str(result)
+
+
+if __name__ == "__main__":
+    import sys
+    task_arg = sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?"
+    print(run(task_arg))
+`;
+  }
+
+  // A typed Python parameter list + matching call-site kwargs, derived from
+  // one tool's JSON-Schema parameters. Required fields come first (Python
+  // requires non-default params before defaulted ones).
+  function pyFunctionSignatureFromJsonSchema(schema: Record<string, unknown> | undefined): { params: string; callArgs: string } {
+    const properties = (schema?.properties && typeof schema.properties === "object") ? schema.properties as Record<string, unknown> : {};
+    const required = new Set(Array.isArray(schema?.required) ? schema!.required as string[] : []);
+    const propNames = Object.keys(properties);
+    if (propNames.length === 0) return { params: "", callArgs: "" };
+    const sortedNames = [...propNames].sort((a, b) => {
+      const aReq = required.has(a), bReq = required.has(b);
+      return aReq === bReq ? 0 : aReq ? -1 : 1;
+    });
+    const params = sortedNames.map(name => {
+      const propSchema = (properties[name] || {}) as Record<string, unknown>;
+      const pyType = pyTypeForJsonSchema(propSchema);
+      return required.has(name) ? `${name}: ${pyType}` : `${name}: Optional[${pyType}] = None`;
+    }).join(", ");
+    const callArgs = propNames.map(name => `${name}=${name}`).join(", ");
+    return { params, callArgs };
+  }
+
+  // Builds a working AutoGen (pyautogen) entrypoint. The AssistantAgent /
+  // UserProxyAgent / register_function / initiate_chat scaffolding was
+  // already real in the old template -- but it registered each tool as a
+  // function whose only parameter is a single custom @dataclass ("args:
+  // SearchArgs"), which AutoGen's schema-introspection-based function
+  // calling isn't reliably built to expand into individual fields for the
+  // LLM. This instead registers a wrapper per tool with individually-typed
+  // keyword parameters (derived straight from that tool's JSON Schema, same
+  // approach as the Claude Code SDK/CrewAI fixes), which calls straight
+  // into that tool's own execute(**kwargs) entrypoint -- the one function
+  // every generated tool file already exposes specifically for
+  // keyword-argument calling (see generatePyToolAdapter) -- rather than the
+  // dataclass-typed function the rest of this file's tool_registry maps to.
+  function generateAutoGenAgentFile(
+    agentName: string,
+    agentSlug: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    completionPromise: string,
+  ): string {
+    const promptEscPy = systemPrompt.substring(0, 2000).replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+
+    const toolImports = tools.map(t => `from tools.${t.name} import execute as _${t.name}_execute`).join("\n");
+
+    const toolFunctions = tools.map(t => {
+      const { params, callArgs } = pyFunctionSignatureFromJsonSchema(t.parameters);
+      const desc = (t.description || t.name).replace(/"/g, "'").replace(/\n/g, " ");
+      return `def ${t.name}(${params}) -> str:
+    """${desc}"""
+    try:
+        result = _${t.name}_execute(${callArgs})
+    except Exception as e:
+        result = {"error": str(e)}
+    return json.dumps(result)
+`;
+    }).join("\n");
+
+    const registerCalls = tools.map(t => `autogen.register_function(
+    ${t.name},
+    caller=assistant,
+    executor=user_proxy,
+    name="${t.name}",
+    description=${JSON.stringify(t.description || t.name)},
+)`).join("\n\n");
+
+    return `# AutoGen Multi-Agent Orchestration
+# Generated for ${agentName}
+import os
+import sys
+import json
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import autogen
+from typing import Optional, List, Any
+${toolImports}
+
+SYSTEM_PROMPT = """${promptEscPy}"""
+MAX_ITERATIONS = ${maxIterations}
+COMPLETION_PROMISE = ${JSON.stringify(completionPromise)}
+
+config_list = autogen.config_list_from_json("OAI_CONFIG_LIST")
+
+assistant = autogen.AssistantAgent(
+    name="${agentSlug}_assistant",
+    system_message=SYSTEM_PROMPT,
+    llm_config={"config_list": config_list, "max_tokens": 4096},
+)
+
+user_proxy = autogen.UserProxyAgent(
+    name="user_proxy",
+    is_termination_msg=lambda msg: COMPLETION_PROMISE in (msg.get("content") or ""),
+    human_input_mode="NEVER",
+    max_consecutive_auto_reply=MAX_ITERATIONS,
+    code_execution_config=False,
+)
+
+
+${toolFunctions}
+${registerCalls}
+
+
+def run(task: str) -> str:
+    user_proxy.initiate_chat(assistant, message=task)
+    last = user_proxy.last_message(assistant)
+    return (last or {}).get("content", "")
+
+
+if __name__ == "__main__":
+    run(sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?")
+`;
+  }
+
+  // Individually Annotated[type, description]-typed parameters per tool
+  // (mirrors pyFunctionSignatureFromJsonSchema, but wrapped for Semantic
+  // Kernel's Annotated-based @kernel_function schema introspection) plus
+  // matching call-site kwargs forwarded to that tool's execute(**kwargs).
+  function pyAnnotatedParamsFromJsonSchema(schema: Record<string, unknown> | undefined): { paramList: string[]; callArgs: string } {
+    const properties = (schema?.properties && typeof schema.properties === "object") ? schema.properties as Record<string, unknown> : {};
+    const required = new Set(Array.isArray(schema?.required) ? schema!.required as string[] : []);
+    const propNames = Object.keys(properties);
+    const sortedNames = [...propNames].sort((a, b) => {
+      const aReq = required.has(a), bReq = required.has(b);
+      return aReq === bReq ? 0 : aReq ? -1 : 1;
+    });
+    const paramList = sortedNames.map(name => {
+      const propSchema = (properties[name] || {}) as Record<string, unknown>;
+      const pyType = pyTypeForJsonSchema(propSchema);
+      const desc = JSON.stringify(String(propSchema.description || name));
+      return required.has(name)
+        ? `${name}: Annotated[${pyType}, ${desc}]`
+        : `${name}: Annotated[Optional[${pyType}], ${desc}] = None`;
+    });
+    const callArgs = propNames.map(name => `${name}=${name}`).join(", ");
+    return { paramList, callArgs };
+  }
+
+  // Builds a working Semantic Kernel entrypoint. The Kernel/service setup
+  // and FunctionChoiceBehavior.Auto()-driven agent loop in the old template
+  // were already real -- but each tool was exposed as
+  // "async def tool(self, **kwargs)", which SK's @kernel_function schema
+  // introspection cannot turn into a parameter schema at all (no names or
+  // types to read), so the LLM would never know what arguments to pass.
+  // This instead gives each tool individually Annotated-typed parameters
+  // (derived from its JSON Schema) and calls straight into that tool's own
+  // execute(**kwargs) entrypoint, same approach as the AutoGen fix.
+  function generateSemanticKernelAgentFile(
+    agentName: string,
+    agentSlug: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    llmProvider: "openai" | "anthropic",
+  ): string {
+    const promptEscPy = systemPrompt.substring(0, 2000).replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+    const toolImports = tools.map(t => `from tools.${t.name} import execute as _${t.name}_execute`).join("\n");
+
+    const pluginMethods = tools.map(t => {
+      const { paramList, callArgs } = pyAnnotatedParamsFromJsonSchema(t.parameters);
+      const desc = (t.description || t.name).replace(/"/g, "'");
+      const allParams = ["self", ...paramList].join(",\n        ");
+      return `    @kernel_function(name="${t.name}", description="${desc}")
+    async def ${t.name}(
+        ${allParams}
+    ) -> Annotated[str, "JSON-encoded tool result"]:
+        try:
+            result = _${t.name}_execute(${callArgs})
+        except Exception as e:
+            result = {"error": str(e)}
+        return json.dumps(result)`;
+    }).join("\n\n");
+
+    const skServiceSetup = llmProvider === "openai"
+      ? `from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion\n\nSERVICE_ID = os.environ.get("SK_SERVICE_ID", "${agentSlug}")\nkernel = Kernel()\nkernel.add_service(OpenAIChatCompletion(service_id=SERVICE_ID, ai_model_id="gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))`
+      : `from semantic_kernel.connectors.ai.anthropic import AnthropicChatCompletion\n\nSERVICE_ID = os.environ.get("SK_SERVICE_ID", "${agentSlug}")\nkernel = Kernel()\n# Requires: pip install semantic-kernel[anthropic]\nkernel.add_service(AnthropicChatCompletion(service_id=SERVICE_ID, ai_model_id="claude-3-5-sonnet-20241022", api_key=os.environ["ANTHROPIC_API_KEY"]))`;
+
+    return `# Semantic Kernel Agent
+# Generated for ${agentName}
+import asyncio
+import os
+import sys
+import json
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from typing import Annotated, Optional, List, Any
+from semantic_kernel import Kernel
+from semantic_kernel.functions import kernel_function
+${toolImports}
+
+${skServiceSetup}
+
+SYSTEM_PROMPT = """${promptEscPy}"""
+MAX_ITERATIONS = ${maxIterations}
+
+
+class AgentPlugin:
+${pluginMethods || "    pass"}
+
+
+kernel.add_plugin(AgentPlugin(), plugin_name="${agentSlug}_tools")
+
+
+async def run(task: str) -> str:
+    from semantic_kernel.connectors.ai import PromptExecutionSettings
+    from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+    settings = PromptExecutionSettings(extension_data={"max_tokens": 4096})
+    settings.function_choice_behavior = FunctionChoiceBehavior.Auto(max_auto_invoke_attempts=MAX_ITERATIONS)
+    prompt = f"{SYSTEM_PROMPT}\\n\\n{task}"
+    result = await kernel.invoke_prompt(prompt, service_id=SERVICE_ID, settings=settings)
+    return str(result)
+
+
+if __name__ == "__main__":
+    asyncio.run(run(sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?"))
+`;
+  }
+
+  // Real OpenAI Assistants API v2 usage (assistants.create, threads,
+  // runs.create/retrieve polling, requires_action -> submitToolOutputs).
+  // Shared by the single-agent and team-bundle export paths so they can't
+  // drift the way langgraph/crewai/autogen/semantic-kernel did before their
+  // team-bundle branches were added.
+  function generateOpenAiAssistantsAgentFile(
+    agentName: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    format: "typescript" | "python",
+  ): string {
+    if (format === "typescript") {
+      const toolDefsTs = tools.map(t => `{ type: "function" as const, function: { name: "${t.name}", description: "${(t.description || t.name).replace(/"/g, "'")}", parameters: ${JSON.stringify(t.parameters || { type: "object", properties: {} })} } }`).join(", ");
+      return `// OpenAI Assistants API Agent\n// Generated for ${agentName}\nimport OpenAI from "openai";\nimport { loadTools } from "../tools";\n\nconst client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });\nconst tools = loadTools();\n\nasync function getOrCreateAssistant(): Promise<string> {\n  if (process.env.OPENAI_ASSISTANT_ID) return process.env.OPENAI_ASSISTANT_ID;\n  const assistant = await client.beta.assistants.create({\n    name: "${agentName}",\n    instructions: \`${systemPrompt.substring(0, 400).replace(/`/g, "'")}\`,\n    model: "gpt-4o",\n    tools: [${toolDefsTs}],\n  });\n  console.log(\`# Save this to your .env:\\nOPENAI_ASSISTANT_ID=\${assistant.id}\`);\n  return assistant.id;\n}\n\nasync function run(userMessage: string): Promise<string> {\n  const assistantId = await getOrCreateAssistant();\n  const thread = await client.beta.threads.create();\n  await client.beta.threads.messages.create(thread.id, { role: "user", content: userMessage });\n\n  let runObj = await client.beta.threads.runs.create(thread.id, { assistant_id: assistantId });\n\n  let attempts = 0;\n  while (attempts < ${maxIterations}) {\n    attempts++;\n    await new Promise(r => setTimeout(r, 1000));\n    runObj = await client.beta.threads.runs.retrieve(thread.id, runObj.id);\n\n    if (runObj.status === "completed") break;\n    if (runObj.status === "requires_action") {\n      const toolCalls = runObj.required_action?.submit_tool_outputs?.tool_calls || [];\n      const outputs = await Promise.all(toolCalls.map(async tc => {\n        const toolFn = tools[tc.function.name];\n        const result = toolFn ? await Promise.resolve(toolFn(JSON.parse(tc.function.arguments) as Record<string, unknown>)) : {};\n        return { tool_call_id: tc.id, output: JSON.stringify(result ?? {}) };\n      }));\n      await client.beta.threads.runs.submitToolOutputs(thread.id, runObj.id, { tool_outputs: outputs });\n    }\n    if (["failed", "cancelled", "expired"].includes(runObj.status)) break;\n  }\n\n  const messages = await client.beta.threads.messages.list(thread.id);\n  const last = messages.data.find(m => m.role === "assistant");\n  const firstContent = last?.content?.[0];\n  return (firstContent && "text" in firstContent) ? firstContent.text.value : "";\n}\n\nrun("Hello, what can you help me with?").then(console.log).catch(console.error);\n`;
+    }
+    const toolDefsPy = tools.map(t => `{"type": "function", "function": {"name": "${t.name}", "description": "${(t.description || t.name).replace(/"/g, "'")}", "parameters": ${JSON.stringify(t.parameters || { type: "object", properties: {} })}}}`).join(", ");
+    return `# OpenAI Assistants API Agent\n# Generated for ${agentName}\nimport os\nimport sys\nimport time\nimport json\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\nfrom openai import OpenAI\nfrom tools import load_tools\n\nclient = OpenAI(api_key=os.environ["OPENAI_API_KEY"])\ntools = load_tools()\n\nTOOL_DEFS = [${toolDefsPy}]\n\n\ndef get_or_create_assistant() -> str:\n    aid = os.environ.get("OPENAI_ASSISTANT_ID", "")\n    if aid:\n        return aid\n    assistant = client.beta.assistants.create(\n        name="${agentName}",\n        instructions="""${systemPrompt.substring(0, 400).replace(/"/g, "'").replace(/\\/g, "\\\\")}""",\n        model="gpt-4o",\n        tools=TOOL_DEFS,\n    )\n    print(f"# Save this to your .env:\\nOPENAI_ASSISTANT_ID={assistant.id}")\n    return assistant.id\n\n\ndef run(user_message: str) -> str:\n    assistant_id = get_or_create_assistant()\n    thread = client.beta.threads.create()\n    client.beta.threads.messages.create(thread_id=thread.id, role="user", content=user_message)\n    run_obj = client.beta.threads.runs.create(thread_id=thread.id, assistant_id=assistant_id)\n\n    for _ in range(${maxIterations}):\n        time.sleep(1)\n        run_obj = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run_obj.id)\n        if run_obj.status == "completed":\n            break\n        if run_obj.status == "requires_action":\n            tool_calls = run_obj.required_action.submit_tool_outputs.tool_calls\n            outputs = []\n            for tc in tool_calls:\n                fn = tools.get(tc.function.name)\n                result = fn(json.loads(tc.function.arguments)) if fn else {}\n                outputs.append({"tool_call_id": tc.id, "output": json.dumps(result)})\n            client.beta.threads.runs.submit_tool_outputs(thread_id=thread.id, run_id=run_obj.id, tool_outputs=outputs)\n        if run_obj.status in ("failed", "cancelled", "expired"):\n            break\n\n    msgs = client.beta.threads.messages.list(thread_id=thread.id)\n    last = next((m for m in msgs.data if m.role == "assistant"), None)\n    return last.content[0].text.value if last else ""\n\n\nif __name__ == "__main__":\n    print(run("Hello, what can you help me with?"))\n`;
+  }
+
+  // Root fix (same shim as generatePyToolsInit): skills/__init__.py had the
+  // identical dict-vs-dataclass mismatch under a different name -- it also
+  // mapped to the raw dataclass-typed "<tool_name>" function instead of the
+  // execute(**kwargs) entrypoint every tool module already exports.
+  function generatePySkillsInit(tools: Array<{ name: string }>): string {
+    const imports = tools.map(t => `from tools.${t.name} import execute as _${t.name}_execute`).join("\n");
+    const wrappers = tools.map(t => `def _${t.name}_call(args: dict):\n    return _${t.name}_execute(**(args or {}))\n`).join("\n");
+    const mapEntries = tools.map(t => `    "${t.name}": _${t.name}_call`).join(",\n");
+    return `# Skill implementations\n${imports}\n\n${wrappers}\ndef load_skills() -> dict:\n    return {\n${mapEntries}\n    }\n`;
+  }
+
+  // Builds a working Azure AI Foundry Agent Service entrypoint. The old
+  // fallback template never imported azure-ai-projects or called any LLM at
+  // all -- its loop body was a single `break` with the real logic left as a
+  // commented-out TODO, so it printed two lines and exited. This instead
+  // uses the real Agent Service pattern (mirroring the OpenAI Assistants fix
+  // structurally, since Foundry's Agent Service was modeled after it):
+  // create agent -> thread -> message -> run -> poll -> requires_action ->
+  // submit_tool_outputs. NOTE: azure-ai-projects' exact class/method surface
+  // has changed across SDK releases -- verify against current docs before
+  // deploying, this is not a live API check.
+  function generateFoundryAgentFile(
+    agentName: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    completionPromise: string,
+  ): string {
+    const promptEscPy = systemPrompt.substring(0, 2000).replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+    const toolDefsPy = tools.map(t => `{"type": "function", "function": {"name": "${t.name}", "description": "${(t.description || t.name).replace(/"/g, "'")}", "parameters": ${JSON.stringify(t.parameters || { type: "object", properties: {} })}}}`).join(", ");
+
+    return `# Azure AI Foundry Agent Entry Point
+# Generated for ${agentName}
+# NOTE: azure-ai-projects' exact class/method names have changed across SDK
+# releases -- verify this against the current azure-ai-projects docs before
+# deploying. This reflects the Agent Service pattern (create agent -> thread
+# -> run -> poll -> handle tool calls, modeled after the OpenAI Assistants
+# API) as generated, not a live API check.
+import os
+import sys
+import time
+import json
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+from skills import load_skills
+
+SYSTEM_PROMPT = """${promptEscPy}"""
+MAX_ITERATIONS = ${maxIterations}
+COMPLETION_PROMISE = ${JSON.stringify(completionPromise)}
+
+skills = load_skills()
+
+TOOL_DEFS = [${toolDefsPy}]
+
+project_client = AIProjectClient.from_connection_string(
+    credential=DefaultAzureCredential(),
+    conn_str=os.environ["AZURE_AI_PROJECT_CONNECTION_STRING"],
+)
+
+
+def get_or_create_agent() -> str:
+    aid = os.environ.get("AZURE_AI_AGENT_ID", "")
+    if aid:
+        return aid
+    agent = project_client.agents.create_agent(
+        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT", "gpt-4o"),
+        name="${agentName.replace(/"/g, "'")}",
+        instructions=SYSTEM_PROMPT,
+        tools=TOOL_DEFS,
+    )
+    print(f"# Save this to your .env:\\nAZURE_AI_AGENT_ID={agent.id}")
+    return agent.id
+
+
+def run(user_message: str) -> str:
+    agent_id = get_or_create_agent()
+    thread = project_client.agents.create_thread()
+    project_client.agents.create_message(thread_id=thread.id, role="user", content=user_message)
+    run_obj = project_client.agents.create_run(thread_id=thread.id, agent_id=agent_id)
+
+    for _ in range(MAX_ITERATIONS):
+        time.sleep(1)
+        run_obj = project_client.agents.get_run(thread_id=thread.id, run_id=run_obj.id)
+        if run_obj.status == "completed":
+            break
+        if run_obj.status == "requires_action":
+            tool_calls = run_obj.required_action.submit_tool_outputs.tool_calls
+            outputs = []
+            for tc in tool_calls:
+                fn = skills.get(tc.function.name)
+                try:
+                    args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                result = fn(args) if fn else {"error": f"Unknown tool: {tc.function.name}"}
+                outputs.append({"tool_call_id": tc.id, "output": json.dumps(result)})
+            project_client.agents.submit_tool_outputs_to_run(thread_id=thread.id, run_id=run_obj.id, tool_outputs=outputs)
+        if run_obj.status in ("failed", "cancelled", "expired"):
+            break
+
+    messages = project_client.agents.list_messages(thread_id=thread.id)
+    last = next((m for m in messages.data if m.role == "assistant"), None)
+    if not last:
+        return ""
+    text_parts = [c.text.value for c in last.content if hasattr(c, "text")]
+    return "\\n".join(text_parts)
+
+
+if __name__ == "__main__":
+    print(run(sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?"))
+`;
+  }
+
+  // The Lambda action-group handler for Bedrock was already real (correct
+  // event/response shape) -- but nothing actually created the Bedrock Agent
+  // resource in AWS or wired it to that Lambda. This script does that: it
+  // uses the bedrock-agent control-plane API (not bedrock-agent-runtime,
+  // which is for *invoking* an already-provisioned agent) to create/reuse
+  // the agent, upload the OpenAPI schema to S3, register the action group
+  // against the deployed Lambda, grant Bedrock permission to invoke it, and
+  // prepare + alias the agent. NOTE: exact bedrock-agent method signatures
+  // here reflect general familiarity with the API, not an independently
+  // verified doc check -- confirm against current boto3 docs before relying
+  // on this in production.
+  function generateBedrockDeployScript(agentSlug: string, foundationModel: string): string {
+    return `# Provisions this agent's Bedrock Agent resource and wires it to the
+# action-group Lambda deployed via \`sam deploy\` (see template.yaml).
+#
+# NOTE: bedrock-agent (the control-plane API, distinct from
+# bedrock-agent-runtime which is for *invoking* an already-provisioned
+# agent) is reflected here from general familiarity with the API, not an
+# independently verified doc check -- confirm current method signatures
+# against the boto3 bedrock-agent docs before relying on this in production.
+#
+# Prerequisites:
+#   - \`sam deploy --guided\` has already created the action-group Lambda
+#   - An IAM role for the agent exists (BEDROCK_AGENT_ROLE_ARN) with a trust
+#     policy allowing bedrock.amazonaws.com and permission to invoke the
+#     action-group Lambda
+#   - An S3 bucket you control, to hold the uploaded OpenAPI schema
+import os
+import time
+import boto3
+
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+AGENT_NAME = "${agentSlug}"
+FOUNDATION_MODEL = os.environ.get("BEDROCK_FOUNDATION_MODEL", "${foundationModel}")
+ROLE_ARN = os.environ["BEDROCK_AGENT_ROLE_ARN"]
+LAMBDA_ARN = os.environ["BEDROCK_ACTION_LAMBDA_ARN"]
+S3_BUCKET = os.environ["BEDROCK_SCHEMA_S3_BUCKET"]
+S3_KEY = os.environ.get("BEDROCK_SCHEMA_S3_KEY", "openapi.yaml")
+
+bedrock = boto3.client("bedrock-agent", region_name=REGION)
+s3 = boto3.client("s3", region_name=REGION)
+lambda_client = boto3.client("lambda", region_name=REGION)
+
+with open("src/agent/prompts/system.txt") as f:
+    SYSTEM_PROMPT = f.read()
+
+
+def upload_schema():
+    with open("action-groups/openapi.yaml", "rb") as f:
+        s3.put_object(Bucket=S3_BUCKET, Key=S3_KEY, Body=f.read())
+    print(f"Uploaded action-groups/openapi.yaml to s3://{S3_BUCKET}/{S3_KEY}")
+
+
+def wait_for_status(agent_id, target_statuses, timeout_s=120):
+    start = time.time()
+    while time.time() - start < timeout_s:
+        resp = bedrock.get_agent(agentId=agent_id)
+        status = resp["agent"]["agentStatus"]
+        if status in target_statuses:
+            return status
+        time.sleep(3)
+    raise TimeoutError(f"Agent did not reach {target_statuses} within {timeout_s}s (last status: {status})")
+
+
+def get_or_create_agent():
+    existing = bedrock.list_agents().get("agentSummaries", [])
+    match = next((a for a in existing if a["agentName"] == AGENT_NAME), None)
+    if match:
+        print(f"Reusing existing agent: {match['agentId']}")
+        return match["agentId"]
+
+    resp = bedrock.create_agent(
+        agentName=AGENT_NAME,
+        foundationModel=FOUNDATION_MODEL,
+        instruction=SYSTEM_PROMPT,
+        agentResourceRoleArn=ROLE_ARN,
+        idleSessionTTLInSeconds=600,
+    )
+    agent_id = resp["agent"]["agentId"]
+    wait_for_status(agent_id, {"NOT_PREPARED"})
+    print(f"Created agent: {agent_id}")
+    return agent_id
+
+
+def grant_lambda_invoke_permission(agent_id):
+    account_id = LAMBDA_ARN.split(":")[4]
+    try:
+        lambda_client.add_permission(
+            FunctionName=LAMBDA_ARN,
+            StatementId=f"bedrock-agent-{agent_id}",
+            Action="lambda:InvokeFunction",
+            Principal="bedrock.amazonaws.com",
+            SourceArn=f"arn:aws:bedrock:{REGION}:{account_id}:agent/{agent_id}",
+        )
+    except lambda_client.exceptions.ResourceConflictException:
+        pass  # permission already granted
+
+
+def create_or_update_action_group(agent_id):
+    upload_schema()
+    existing_groups = bedrock.list_agent_action_groups(agentId=agent_id, agentVersion="DRAFT").get("actionGroupSummaries", [])
+    if any(g["actionGroupName"] == "tools" for g in existing_groups):
+        print("Action group 'tools' already exists, skipping creation")
+        return
+    bedrock.create_agent_action_group(
+        agentId=agent_id,
+        agentVersion="DRAFT",
+        actionGroupName="tools",
+        actionGroupExecutor={"lambda": LAMBDA_ARN},
+        apiSchema={"s3": {"s3BucketName": S3_BUCKET, "s3ObjectKey": S3_KEY}},
+    )
+    print("Created action group 'tools'")
+
+
+def prepare_and_alias(agent_id):
+    bedrock.prepare_agent(agentId=agent_id)
+    wait_for_status(agent_id, {"PREPARED"})
+    alias = bedrock.create_agent_alias(agentId=agent_id, agentAliasName="live")
+    print(f"Agent alias ready: {alias['agentAlias']['agentAliasId']}")
+
+
+def main():
+    agent_id = get_or_create_agent()
+    grant_lambda_invoke_permission(agent_id)
+    create_or_update_action_group(agent_id)
+    prepare_and_alias(agent_id)
+    print(f"Bedrock Agent ready. agentId={agent_id}")
+
+
+if __name__ == "__main__":
+    main()
+`;
+  }
+
+  function n8nCamelCase(name: string): string {
+    const words = (name || "agent").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    if (words.length === 0) return "agent";
+    return words[0] + words.slice(1).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+  }
+
+  // Real n8n custom-node credential type. The old export wrote a bare JSON
+  // file, which n8n's credential system can't load at all -- credentials
+  // must be an ICredentialType class (a *.credentials.ts file).
+  function generateN8nCredentialsFile(agentName: string, credentialTypeName: string, llmProvider: "openai" | "anthropic"): string {
+    const className = credentialTypeName.charAt(0).toUpperCase() + credentialTypeName.slice(1);
+    const label = llmProvider === "openai" ? "OpenAI API Key" : "Anthropic API Key";
+    return `import type { ICredentialType, INodeProperties } from "n8n-workflow";
+
+export class ${className} implements ICredentialType {
+  name = "${credentialTypeName}";
+  displayName = "${agentName.replace(/"/g, "'")} Credentials";
+  properties: INodeProperties[] = [
+    {
+      displayName: "${label}",
+      name: "apiKey",
+      type: "string",
+      typeOptions: { password: true },
+      default: "",
+    },
+  ];
+}
+`;
+  }
+
+  // Real n8n custom node. The old export declared "System Prompt"/"Max
+  // Iterations" as configurable UI properties but never read them via
+  // getNodeParameter(), and execute() was a "TODO: Implement agent logic"
+  // stub that returned its input unchanged. This wires a real LLM
+  // tool-calling loop (same OpenAI/Anthropic tool-calling shape used
+  // elsewhere in this file), reading the node's actual configured
+  // parameters and credentials at runtime, dispatching real tool calls via
+  // loadTools().
+  function generateN8nAgentNodeFile(
+    agentName: string,
+    agentSlug: string,
+    credentialTypeName: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    completionPromise: string,
+    llmProvider: "openai" | "anthropic",
+  ): string {
+    const promptEsc = systemPrompt.substring(0, 2000).replace(/`/g, "'").replace(/\\/g, "\\\\");
+    const nodeTypeName = n8nCamelCase(agentSlug);
+
+    if (llmProvider === "openai") {
+      const toolDefs = tools.map(t => `      { type: "function" as const, function: { name: "${t.name}", description: "${(t.description || t.name).replace(/"/g, "'")}", parameters: ${JSON.stringify(t.parameters || { type: "object", properties: {} })} } }`).join(",\n");
+      return `// N8N Custom Agent Node
+// Generated for ${agentName}
+import type { IExecuteFunctions, INodeExecutionData, INodeType, INodeTypeDescription } from "n8n-workflow";
+import OpenAI from "openai";
+import { loadTools } from "../tools";
+
+const DEFAULT_SYSTEM_PROMPT = \`${promptEsc}\`;
+const COMPLETION_PROMISE = ${JSON.stringify(completionPromise)};
+
+const TOOL_DEFINITIONS = [
+${toolDefs || "      /* no tools configured */"}
+];
+
+export class AgentNode implements INodeType {
+  description: INodeTypeDescription = {
+    displayName: "${agentName.replace(/"/g, "'")}",
+    name: "${nodeTypeName}",
+    group: ["transform"],
+    version: 1,
+    description: "${(agentName || "Custom agent node").replace(/"/g, "'")}",
+    defaults: { name: "${agentName.replace(/"/g, "'")}" },
+    inputs: ["main"],
+    outputs: ["main"],
+    credentials: [{ name: "${credentialTypeName}", required: true }],
+    properties: [
+      { displayName: "Task", name: "task", type: "string", default: "", description: "The message/task to send to the agent. Leave blank to use the \\"task\\" field from the input item." },
+      { displayName: "System Prompt", name: "systemPrompt", type: "string", typeOptions: { rows: 4 }, default: DEFAULT_SYSTEM_PROMPT },
+      { displayName: "Max Iterations", name: "maxIterations", type: "number", default: ${maxIterations} },
+    ],
+  };
+
+  async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    const items = this.getInputData();
+    const credentials = await this.getCredentials("${credentialTypeName}");
+    const toolRegistry = loadTools();
+    const client = new OpenAI({ apiKey: credentials.apiKey as string });
+
+    const returnData: INodeExecutionData[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const task = (this.getNodeParameter("task", i) as string) || String((items[i].json as Record<string, unknown>).task ?? "");
+      const systemPrompt = this.getNodeParameter("systemPrompt", i) as string;
+      const maxIterations = this.getNodeParameter("maxIterations", i) as number;
+
+      let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: task },
+      ];
+      let finalText = "";
+
+      for (let iter = 0; iter < maxIterations; iter++) {
+        const response = await client.chat.completions.create({
+          model: "gpt-4o",
+          messages,
+          tools: TOOL_DEFINITIONS.length > 0 ? TOOL_DEFINITIONS : undefined,
+        });
+        const msg = response.choices[0].message;
+        messages.push(msg);
+
+        if (!msg.tool_calls || msg.tool_calls.length === 0) {
+          finalText = msg.content || "";
+          break;
+        }
+
+        for (const tc of msg.tool_calls) {
+          const fn = toolRegistry[tc.function.name];
+          let result: unknown;
+          if (fn) {
+            try { result = await Promise.resolve(fn(JSON.parse(tc.function.arguments))); } catch (err) { result = { error: err instanceof Error ? err.message : String(err) }; }
+          } else {
+            result = { error: \`Unknown tool: \${tc.function.name}\` };
+          }
+          messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result ?? {}) });
+        }
+      }
+
+      returnData.push({ json: { ...(items[i].json as object), response: finalText } });
+    }
+
+    return [returnData];
+  }
+}
+`;
+    }
+
+    const toolDefsAnthropic = tools.map(t => `      { name: "${t.name}", description: "${(t.description || t.name).replace(/"/g, "'")}", input_schema: ${JSON.stringify(t.parameters || { type: "object", properties: {} })} }`).join(",\n");
+    return `// N8N Custom Agent Node
+// Generated for ${agentName}
+import type { IExecuteFunctions, INodeExecutionData, INodeType, INodeTypeDescription } from "n8n-workflow";
+import Anthropic from "@anthropic-ai/sdk";
+import { loadTools } from "../tools";
+
+const DEFAULT_SYSTEM_PROMPT = \`${promptEsc}\`;
+const COMPLETION_PROMISE = ${JSON.stringify(completionPromise)};
+
+const TOOL_DEFINITIONS: Anthropic.Tool[] = [
+${toolDefsAnthropic || "      /* no tools configured */"}
+];
+
+export class AgentNode implements INodeType {
+  description: INodeTypeDescription = {
+    displayName: "${agentName.replace(/"/g, "'")}",
+    name: "${nodeTypeName}",
+    group: ["transform"],
+    version: 1,
+    description: "${(agentName || "Custom agent node").replace(/"/g, "'")}",
+    defaults: { name: "${agentName.replace(/"/g, "'")}" },
+    inputs: ["main"],
+    outputs: ["main"],
+    credentials: [{ name: "${credentialTypeName}", required: true }],
+    properties: [
+      { displayName: "Task", name: "task", type: "string", default: "", description: "The message/task to send to the agent. Leave blank to use the \\"task\\" field from the input item." },
+      { displayName: "System Prompt", name: "systemPrompt", type: "string", typeOptions: { rows: 4 }, default: DEFAULT_SYSTEM_PROMPT },
+      { displayName: "Max Iterations", name: "maxIterations", type: "number", default: ${maxIterations} },
+    ],
+  };
+
+  async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    const items = this.getInputData();
+    const credentials = await this.getCredentials("${credentialTypeName}");
+    const toolRegistry = loadTools();
+    const client = new Anthropic({ apiKey: credentials.apiKey as string });
+
+    const returnData: INodeExecutionData[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const task = (this.getNodeParameter("task", i) as string) || String((items[i].json as Record<string, unknown>).task ?? "");
+      const systemPrompt = this.getNodeParameter("systemPrompt", i) as string;
+      const maxIterations = this.getNodeParameter("maxIterations", i) as number;
+
+      let messages: Anthropic.MessageParam[] = [{ role: "user", content: task }];
+      let finalText = "";
+
+      for (let iter = 0; iter < maxIterations; iter++) {
+        const response = await client.messages.create({
+          model: "claude-3-5-sonnet-20241022",
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages,
+          tools: TOOL_DEFINITIONS.length > 0 ? TOOL_DEFINITIONS : undefined,
+        });
+        const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+        const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
+
+        if (toolUseBlocks.length === 0) {
+          finalText = textBlocks.map(b => b.text).join("\\n");
+          break;
+        }
+
+        messages.push({ role: "assistant", content: response.content });
+        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        for (const tu of toolUseBlocks) {
+          const fn = toolRegistry[tu.name];
+          let result: unknown;
+          if (fn) {
+            try { result = await Promise.resolve(fn(tu.input as Record<string, unknown>)); } catch (err) { result = { error: err instanceof Error ? err.message : String(err) }; }
+          } else {
+            result = { error: \`Unknown tool: \${tu.name}\` };
+          }
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result ?? {}) });
+        }
+        messages.push({ role: "user", content: toolResults });
+      }
+
+      returnData.push({ json: { ...(items[i].json as object), response: finalText } });
+    }
+
+    return [returnData];
+  }
+}
+`;
+  }
+
+  // Real n8n tool-dispatch node -- the old export never called loadTools()'s
+  // returned functions at all despite loading them.
+  function generateN8nToolNodeFile(agentSlug: string, tools: Array<{ name: string }>): string {
+    const nodeTypeName = n8nCamelCase(agentSlug) + "Tools";
+    return `// N8N Custom Tool Node
+// Generated for ${agentSlug} tools
+import type { IExecuteFunctions, INodeExecutionData, INodeType, INodeTypeDescription } from "n8n-workflow";
+import { loadTools } from "../tools";
+
+export class ToolNode implements INodeType {
+  description: INodeTypeDescription = {
+    displayName: "Agent Tools",
+    name: "${nodeTypeName}",
+    group: ["transform"],
+    version: 1,
+    description: "Tool execution node",
+    defaults: { name: "Agent Tools" },
+    inputs: ["main"],
+    outputs: ["main"],
+    properties: [
+      { displayName: "Tool Name", name: "toolName", type: "options",
+        options: [${tools.map(t => `{ name: "${t.name}", value: "${t.name}" }`).join(", ")}],
+        default: "${tools[0]?.name || ""}" },
+      { displayName: "Parameters (JSON)", name: "toolParams", type: "json", default: "{}" },
+    ],
+  };
+
+  async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+    const items = this.getInputData();
+    const tools = loadTools();
+    const returnData: INodeExecutionData[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const toolName = this.getNodeParameter("toolName", i) as string;
+      const rawParams = this.getNodeParameter("toolParams", i) as string;
+      let params: Record<string, unknown> = {};
+      try { params = JSON.parse(rawParams || "{}"); } catch { /* leave empty */ }
+
+      const fn = tools[toolName];
+      let result: unknown;
+      if (fn) {
+        try { result = await Promise.resolve(fn(params)); } catch (err) { result = { error: err instanceof Error ? err.message : String(err) }; }
+      } else {
+        result = { error: \`Unknown tool: \${toolName}\` };
+      }
+      returnData.push({ json: { ...(items[i].json as object), result } });
+    }
+
+    return [returnData];
+  }
+}
+`;
+  }
+
+  // Builds a working OpenAI Agents SDK entrypoint. Real API verified against
+  // the official docs/README (Python "openai-agents" pip package, TS
+  // "@openai/agents" npm package) as of this generator's writing --
+  // Agent/Runner/function_tool (Python) and Agent/run/tool (TS), both
+  // natively supporting either language (unlike claude-code/crewai/n8n,
+  // this framework isn't forced to one). Tool wiring reuses the same
+  // patterns already established elsewhere in this file: individually-typed
+  // Python kwargs calling each tool's real execute(**kwargs) entrypoint
+  // (pyFunctionSignatureFromJsonSchema, same as the AutoGen fix), and real
+  // Zod parameter schemas for TS (zodRawShapeLiteral, same as the Claude
+  // Code SDK fix).
+  function generateOpenAiAgentsSdkFile(
+    agentName: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    completionPromise: string,
+    format: "typescript" | "python",
+  ): string {
+    const promptEscTs = systemPrompt.substring(0, 2000).replace(/`/g, "'").replace(/\\/g, "\\\\");
+    const promptEscPy = systemPrompt.substring(0, 2000).replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+
+    if (format === "typescript") {
+      const toolDefs = tools.map(t => `  tool({\n    name: "${t.name}",\n    description: "${(t.description || t.name).replace(/"/g, "'")}",\n    parameters: z.object(${zodRawShapeLiteral(t.parameters)}),\n    execute: async (args: Record<string, unknown>): Promise<string> => {\n      const fn = toolRegistry["${t.name}"];\n      if (!fn) return JSON.stringify({ error: "Tool not found: ${t.name}" });\n      try {\n        const result = await Promise.resolve(fn(args));\n        return JSON.stringify(result ?? {});\n      } catch (err) {\n        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });\n      }\n    },\n  })`).join(",\n");
+      return `// OpenAI Agents SDK Agent
+// Generated for ${agentName}
+import { Agent, run as runAgent, tool } from "@openai/agents";
+import { z } from "zod";
+import { loadTools } from "./tools";
+
+const toolRegistry = loadTools();
+
+const SYSTEM_PROMPT = \`${promptEscTs}\`;
+const MAX_ITERATIONS = ${maxIterations};
+const COMPLETION_PROMISE = ${JSON.stringify(completionPromise)};
+
+const TOOLS = [
+${toolDefs || "  /* no tools configured */"}
+];
+
+const agent = new Agent({
+  name: "${agentName.replace(/"/g, "'")}",
+  instructions: SYSTEM_PROMPT,
+  tools: TOOLS,
+  model: process.env.OPENAI_AGENT_MODEL || "gpt-4o",
+});
+
+export async function run(task: string): Promise<string> {
+  const result = await runAgent(agent, task, { maxTurns: MAX_ITERATIONS });
+  const text = result.finalOutput ?? "";
+  if (text.includes(COMPLETION_PROMISE)) console.log("[completed] Agent returned completion promise.");
+  return text;
+}
+
+if (require.main === module) {
+  const task = process.argv[2] ?? "Hello, what can you help me with?";
+  run(task).then(console.log).catch(console.error);
+}
+`;
+    }
+
+    const toolImports = tools.map(t => `from tools.${t.name} import execute as _${t.name}_execute`).join("\n");
+    const toolFunctions = tools.map(t => {
+      const { params, callArgs } = pyFunctionSignatureFromJsonSchema(t.parameters);
+      const desc = (t.description || t.name).replace(/"""/g, "'''").replace(/\n/g, " ");
+      return `@function_tool
+def ${t.name}(${params}) -> str:
+    """${desc}"""
+    try:
+        result = _${t.name}_execute(${callArgs})
+    except Exception as e:
+        result = {"error": str(e)}
+    return json.dumps(result)
+`;
+    }).join("\n");
+
+    return `# OpenAI Agents SDK Agent
+# Generated for ${agentName}
+import asyncio
+import os
+import sys
+import json
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from typing import Optional, List, Any
+from agents import Agent, Runner, function_tool
+${toolImports}
+
+SYSTEM_PROMPT = """${promptEscPy}"""
+MAX_ITERATIONS = ${maxIterations}
+COMPLETION_PROMISE = ${JSON.stringify(completionPromise)}
+
+${toolFunctions}
+
+agent = Agent(
+    name="${agentName.replace(/"/g, "'")}",
+    instructions=SYSTEM_PROMPT,
+    tools=[${tools.map(t => t.name).join(", ")}],
+    model=os.environ.get("OPENAI_AGENT_MODEL", "gpt-4o"),
+)
+
+
+async def run(task: str) -> str:
+    try:
+        result = await Runner.run(agent, task, max_turns=MAX_ITERATIONS)
+    except Exception as e:
+        # Runner raises when the loop doesn't terminate within max_turns --
+        # surface that instead of crashing.
+        return f"[error] Agent run failed: {e}"
+    text = result.final_output or ""
+    if COMPLETION_PROMISE in text:
+        print("[completed] Agent returned completion promise.")
+    return text
+
+
+if __name__ == "__main__":
+    print(asyncio.run(run(sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?")))
+`;
+  }
+
+  // Builds a working Microsoft Agent Framework entrypoint. Real API
+  // verified against learn.microsoft.com as of this generator's writing:
+  // Agent/tool from "agent_framework", OpenAIChatClient from
+  // "agent_framework.openai", @tool(name=,description=,approval_mode=)
+  // decorator with Annotated[type, "description"] params, Agent(client=,
+  // name=, instructions=, tools=[...]), await agent.run(task) ->
+  // response.text. Python-only -- microsoft/agent-framework (the
+  // AutoGen+Semantic-Kernel unification) has no verified JS/TS SDK; don't
+  // confuse it with the separate "Microsoft 365 Agents SDK" product, which
+  // is a different thing despite the similar name.
+  function generateMsAgentFrameworkFile(
+    agentName: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    completionPromise: string,
+    llmProvider: "openai" | "anthropic",
+  ): string {
+    const promptEscPy = systemPrompt.substring(0, 2000).replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+    const toolImports = tools.map(t => `from tools.${t.name} import execute as _${t.name}_execute`).join("\n");
+
+    const toolFunctions = tools.map(t => {
+      const { paramList, callArgs } = pyAnnotatedParamsFromJsonSchema(t.parameters);
+      const desc = (t.description || t.name).replace(/"/g, "'");
+      const params = paramList.length > 0 ? paramList.join(",\n    ") + ",\n" : "";
+      return `@tool(name="${t.name}", description="${desc}", approval_mode="never_require")
+def ${t.name}(
+    ${params}) -> str:
+    try:
+        result = _${t.name}_execute(${callArgs})
+    except Exception as e:
+        result = {"error": str(e)}
+    return json.dumps(result)
+`;
+    }).join("\n");
+
+    const clientSetup = llmProvider === "openai"
+      ? `from agent_framework.openai import OpenAIChatClient\n\nclient = OpenAIChatClient(model_id=os.environ.get("MAF_MODEL", "gpt-4o"))`
+      : `# NOTE: Anthropic integration ships as a separate "agent-framework-anthropic"\n# package. The exact chat-client class name was ambiguous across the docs\n# reviewed while generating this (seen as both AnthropicClient and\n# AnthropicChatClient) -- verify the current name before deploying.\nfrom agent_framework.anthropic import AnthropicClient\n\nclient = AnthropicClient(model_id=os.environ.get("MAF_MODEL", "claude-3-5-sonnet-20241022"))`;
+
+    return `# Microsoft Agent Framework Agent
+# Generated for ${agentName}
+import asyncio
+import os
+import sys
+import json
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from typing import Annotated, Optional, List, Any
+from agent_framework import Agent, tool
+${clientSetup}
+${toolImports}
+
+SYSTEM_PROMPT = """${promptEscPy}"""
+# NOTE: agent.run() didn't expose a verified max-turns/max-iterations
+# parameter in the docs reviewed while generating this -- MAX_ITERATIONS is
+# kept here for parity/documentation with the other export targets, but
+# isn't independently enforced as a hard loop bound the way it is elsewhere.
+MAX_ITERATIONS = ${maxIterations}
+COMPLETION_PROMISE = ${JSON.stringify(completionPromise)}
+
+${toolFunctions}
+
+agent = Agent(
+    client=client,
+    name="${agentName.replace(/"/g, "'")}",
+    instructions=SYSTEM_PROMPT,
+    tools=[${tools.map(t => t.name).join(", ")}],
+)
+
+
+async def run(task: str) -> str:
+    response = await agent.run(task)
+    text = response.text or ""
+    if COMPLETION_PROMISE in text:
+        print("[completed] Agent returned completion promise.")
+    return text
+
+
+if __name__ == "__main__":
+    print(asyncio.run(run(sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?")))
+`;
+  }
+
+  // Builds a working Google Agent Development Kit (ADK) entrypoint. Real API
+  // verified against github.com/google/adk-js's own README plus
+  // docs.arcade.dev's ADK TypeScript integration guide (both agree on
+  // LlmAgent/FunctionTool/Runner/InMemorySessionService from "@google/adk"
+  // and the runner.runAsync() event-stream shape), and against
+  // google.github.io/adk-docs (Python: google.adk.agents.Agent,
+  // google.adk.runners.Runner, google.adk.sessions.InMemorySessionService,
+  // google.genai.types.Content, event.is_final_response()). Replaces the
+  // old raw Vertex AI (@google-cloud/vertexai) target -- ADK is Google's
+  // current recommended code-first path and supersedes it.
+  function generateAdkAgentFile(
+    agentName: string,
+    systemPrompt: string,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
+    maxIterations: number,
+    completionPromise: string,
+    format: "typescript" | "python",
+  ): string {
+    const promptEscTs = systemPrompt.substring(0, 2000).replace(/`/g, "'").replace(/\\/g, "\\\\");
+    const promptEscPy = systemPrompt.substring(0, 2000).replace(/"""/g, "'''").replace(/\\/g, "\\\\");
+    const safeName = agentName.replace(/"/g, "'");
+
+    if (format === "typescript") {
+      const toolDefs = tools.map(t => `  new FunctionTool({\n    name: "${t.name}",\n    description: "${(t.description || t.name).replace(/"/g, "'")}",\n    parameters: z.object(${zodRawShapeLiteral(t.parameters)}),\n    execute: async (args: Record<string, unknown>) => {\n      const fn = toolRegistry["${t.name}"];\n      if (!fn) return { error: "Tool not found: ${t.name}" };\n      try {\n        return await Promise.resolve(fn(args));\n      } catch (err) {\n        return { error: err instanceof Error ? err.message : String(err) };\n      }\n    },\n  })`).join(",\n");
+      return `// Google Agent Development Kit (ADK) Agent Entry Point
+// Generated for ${agentName}
+import { LlmAgent, FunctionTool, Runner, InMemorySessionService } from "@google/adk";
+import { z } from "zod";
+import { loadTools } from "./tools";
+
+const toolRegistry = loadTools();
+
+const APP_NAME = "${safeName}";
+const SYSTEM_PROMPT = \`${promptEscTs}\`;
+const MAX_ITERATIONS = ${maxIterations};
+const COMPLETION_PROMISE = ${JSON.stringify(completionPromise)};
+
+const TOOLS = [
+${toolDefs || "  /* no tools configured */"}
+];
+
+// Model alias per adk.dev's own quickstart -- verify against the current
+// ADK docs before deploying in case a newer alias/model is recommended.
+const agent = new LlmAgent({
+  name: APP_NAME,
+  description: ${JSON.stringify((systemPrompt || agentName).slice(0, 200))},
+  model: process.env.ADK_MODEL || "gemini-flash-latest",
+  instruction: SYSTEM_PROMPT,
+  tools: TOOLS,
+});
+
+const sessionService = new InMemorySessionService();
+const runner = new Runner({ appName: APP_NAME, agent, sessionService });
+
+export async function run(task: string): Promise<string> {
+  const session = await sessionService.createSession({ appName: APP_NAME, userId: "atlas-export-user" });
+  const events = runner.runAsync({
+    userId: "atlas-export-user",
+    sessionId: session.id,
+    newMessage: { role: "user", parts: [{ text: task }] },
+  });
+
+  // ADK streams one event per turn of the agent's internal loop; the last
+  // event carrying text is its final response. MAX_ITERATIONS caps how many
+  // streamed events we'll wait through as a safety bound -- ADK doesn't
+  // expose a separate max-turns parameter to enforce this natively.
+  let finalText = "";
+  let seen = 0;
+  for await (const event of events) {
+    seen++;
+    if (event.content?.parts?.[0]?.text) finalText = event.content.parts[0].text;
+    if (seen >= MAX_ITERATIONS) break;
+  }
+  if (finalText.includes(COMPLETION_PROMISE)) console.log("[completed] Agent returned completion promise.");
+  return finalText;
+}
+
+if (require.main === module) {
+  const task = process.argv[2] ?? "Hello, what can you help me with?";
+  run(task).then(console.log).catch(console.error);
+}
+`;
+    }
+
+    const toolImports = tools.map(t => `from tools.${t.name} import execute as _${t.name}_execute`).join("\n");
+    const toolFunctions = tools.map(t => {
+      const { params, callArgs } = pyFunctionSignatureFromJsonSchema(t.parameters);
+      const desc = (t.description || t.name).replace(/"""/g, "'''").replace(/\n/g, " ");
+      return `def _${t.name}(${params}) -> dict:
+    """${desc}
+
+    Returns:
+        dict: JSON-serializable result of the underlying tool call.
+    """
+    try:
+        return _${t.name}_execute(${callArgs})
+    except Exception as e:
+        return {"error": str(e)}
+`;
+    }).join("\n");
+    const toolWrappers = tools.map(t => `FunctionTool(func=_${t.name})`).join(", ");
+
+    return `# Google Agent Development Kit (ADK) Agent Entry Point
+# Generated for ${agentName}
+import asyncio
+import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.adk.tools import FunctionTool
+from google.genai import types
+${toolImports}
+
+APP_NAME = "${safeName}"
+SYSTEM_PROMPT = """${promptEscPy}"""
+# NOTE: MAX_ITERATIONS is kept for parity/documentation with the other
+# export targets -- ADK's Runner doesn't expose a native max-turns
+# parameter, so this isn't independently enforced as a hard loop bound.
+MAX_ITERATIONS = ${maxIterations}
+COMPLETION_PROMISE = ${JSON.stringify(completionPromise)}
+
+${toolFunctions}
+
+# Model alias per Google's own ADK examples -- verify against the current
+# ADK docs before deploying in case a newer alias/model is recommended.
+root_agent = Agent(
+    name=APP_NAME,
+    model=os.environ.get("ADK_MODEL", "gemini-flash-latest"),
+    instruction=SYSTEM_PROMPT,
+    tools=[${toolWrappers}],
+)
+
+_session_service = InMemorySessionService()
+_runner = Runner(agent=root_agent, app_name=APP_NAME, session_service=_session_service)
+
+
+async def run(task: str) -> str:
+    session = await _session_service.create_session(app_name=APP_NAME, user_id="atlas-export-user")
+    final_text = ""
+    async for event in _runner.run_async(
+        user_id="atlas-export-user",
+        session_id=session.id,
+        new_message=types.Content(role="user", parts=[types.Part(text=task)]),
+    ):
+        if event.is_final_response() and event.content and event.content.parts:
+            final_text = event.content.parts[0].text or ""
+    if COMPLETION_PROMISE in final_text:
+        print("[completed] Agent returned completion promise.")
+    return final_text
+
+
+if __name__ == "__main__":
+    print(asyncio.run(run(sys.argv[1] if len(sys.argv) > 1 else "Hello, what can you help me with?")))
+`;
   }
 
   function generateVitestConfig(): string {
@@ -3572,45 +5493,78 @@ ${nodeSetup}
 5. Use blueprint JSON to derive node names and execution order
 6. TypedDict/interface for graph state; export compiled graph as "app"
 7. Max iteration guard in the should_continue conditional`,
-        crewai: `Generate the entrypoint file (${ctx.format === "typescript" ? "crew.ts" : "crew.py"}):
-1. Define agent roles from blueprint and system prompt
-2. Map tools to agent roles based on descriptions
-3. Define CrewAI tasks reflecting actual objectives
-4. Wire crew orchestration with delegation and task assignment
-5. Include verbose logging`,
+        crewai: `Generate the entrypoint file (crew.py) — CrewAI (Python only, package "crewai"; there is no official JS/TS package, so always emit Python regardless of the requested format):
+1. Import from crewai import Agent, Task, Crew, Process — these are the real orchestration classes; do NOT hand-roll a custom "crew-style" loop or read your own YAML config files instead of using them
+2. Define each of this agent's own tools as a crewai.tools.BaseTool subclass with a pydantic args_schema (a BaseModel with one typed field per parameter, using Field(..., description=...) for required and Optional[T] = Field(None, ...) for optional) derived from that tool's parameters JSON Schema
+3. Each tool's _run(self, **kwargs) method must call the corresponding adapter from load_tools() and return json.dumps(result) — never a hardcoded/fake result
+4. Build one Agent(role=..., goal=..., backstory=SYSTEM_PROMPT, tools=[...], llm=..., max_iter=N, verbose=True) — llm is a plain model string: "gpt-4o" for OpenAI, "anthropic/claude-3-5-sonnet-20241022" for Anthropic
+5. Build a Task(description=task_text, agent=agent, expected_output=COMPLETION_PROMISE) per invocation and run it via Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=True).kickoff()
+6. Accept task text from sys.argv[1]; export a run(task_text) -> str function that returns str(crew.kickoff())
+7. Add an if __name__ == "__main__" guard at the bottom that prints the result`,
         bedrock: `Generate the entrypoint file (${ctx.format === "typescript" ? "lambda/handler.ts" : "lambda/handler.py"}):
 1. AWS Lambda handler compatible with Bedrock Agent action groups
 2. Route apiPath to the correct tool adapter
 3. Parse parameters from Bedrock event format
 4. Return Bedrock-formatted responseBody
 5. Error handling for unknown tools`,
-        foundry: `Generate the entrypoint file (src/agent_flow.py) — Azure AI Foundry / Promptflow (Python):
-1. Use azure-ai-projects AgentClient with AZURE_AI_PROJECT env var
-2. Define each tool as Azure FunctionTool with JSON Schema params
-3. Create agent via create_agent() with system prompt and tool list
-4. Run loop: create_thread → create_run → poll → dispatch tool_calls → submit outputs
+        adk: `Generate the entrypoint file (${ctx.format === "typescript" ? "src/agent.ts" : "src/agent.py"}) — Google Agent Development Kit (ADK; package "@google/adk" / "google-adk"; always Gemini regardless of the requested LLM provider, since ADK doesn't host OpenAI/Anthropic natively; replaces the old raw Vertex AI SDK target as Google's current recommended code-first path):
+1. ${ctx.format === "typescript" ? "Import LlmAgent, FunctionTool, Runner, InMemorySessionService from \"@google/adk\" and { z } from \"zod\"" : "Import Agent from google.adk.agents, Runner from google.adk.runners, InMemorySessionService from google.adk.sessions, FunctionTool from google.adk.tools, and types from google.genai"}
+2. Define each tool ${ctx.format === "typescript" ? "with new FunctionTool({ name, description, parameters: z.object({...real zod shape derived from the JSON Schema...}), execute: async (args) => result })" : "as a plain typed function (individually-typed parameters derived from that tool's parameters JSON Schema, NOT a single dict parameter) with a docstring, wrapped as FunctionTool(func=...)"}
+3. Each tool's body must call that tool's real execute(**kwargs)/loaded-tool entrypoint and return the result — never a hardcoded/fake result
+4. Construct ${ctx.format === "typescript" ? "new LlmAgent({ name, description, model, instruction: SYSTEM_PROMPT, tools: [...] })" : "Agent(name=..., model=..., instruction=SYSTEM_PROMPT, tools=[...])"}, then wire up a Runner with an InMemorySessionService
+5. Run via ${ctx.format === "typescript" ? "runner.runAsync({ userId, sessionId, newMessage: { role: \"user\", parts: [{ text: task }] } })" : "runner.run_async(user_id=..., session_id=..., new_message=types.Content(role=\"user\", parts=[types.Part(text=task)]))"}, iterating the returned event stream to find the final response text (Python: check event.is_final_response())
+6. Accept task text from argv; export a run(task) function; log the completion phrase if it appears in the final output`,
+        n8n: `Generate the entrypoint file (nodes/AgentNode.node.ts) — n8n community node (TypeScript only, package "n8n-workflow"; n8n has no real Python custom-node mechanism, nodes run inside n8n's own Node.js process):
+1. Implement INodeType with a description object (displayName, name, group, version, inputs, outputs, credentials referencing the paired *.credentials.ts type, and properties for at least "Task", "System Prompt", "Max Iterations")
+2. In execute(this: IExecuteFunctions), actually read the node's own configured parameters via this.getNodeParameter(name, itemIndex) and its credentials via await this.getCredentials(credentialTypeName) — do NOT hardcode values from generation-time constants and ignore the declared properties
+3. Call the real OpenAI or Anthropic SDK directly (using the API key from getCredentials()) in a tool-calling loop, dispatching real tool calls via loadTools() from "../tools" — never a "TODO: Implement agent logic" stub that returns the input unchanged
+4. Loop per input item (this.getInputData()) and return [INodeExecutionData[]] — one array of output items
+5. The credentials file must be a real ICredentialType class (a *.credentials.ts file), never a bare JSON blob — n8n's credential system can't load JSON directly
+6. package.json must include an "n8n" field ({n8nNodesApiVersion, credentials: [...], nodes: [...]}) pointing at the compiled dist paths, or n8n's package loader won't discover the node/credential files at all`,
+        foundry: `Generate the entrypoint file (src/agent_flow.py) — Azure AI Foundry Agent Service (Python, package "azure-ai-projects"):
+1. Import AIProjectClient from azure.ai.projects and DefaultAzureCredential from azure.identity; connect via AZURE_AI_PROJECT_CONNECTION_STRING env var — do NOT skip the real client, no hardcoded "break"/TODO placeholder loop
+2. Define each tool as a plain JSON function-call descriptor (name/description/parameters, same shape as OpenAI function tools) passed in the agent's tools list
+3. Create the agent via project_client.agents.create_agent(model=..., name=..., instructions=SYSTEM_PROMPT, tools=...)
+4. Run loop: create_thread → create_message → create_run → poll get_run → on "requires_action" dispatch tool_calls (call the corresponding adapter from load_skills()) and submit_tool_outputs_to_run → stop on "completed"/"failed"/"cancelled"/"expired" or max iterations
 5. Include flow.dag.yaml as a framework file
-6. Log with Azure App Insights trace format`,
-        "semantic-kernel": `Generate the entrypoint file (src/kernel_agent.py) — Semantic Kernel (Python):
-1. AzureChatCompletion if AZURE_OPENAI_ENDPOINT set, else OpenAIChatCompletion
-2. Create Kernel, add AI service using SK_SERVICE_ID
-3. Define tools as @kernel_function methods in a Plugin class
-4. Register plugins with kernel.add_plugin()
-5. Agent loop with FunctionChoiceBehavior.Auto()
-6. Log each plugin invocation`,
-        autogen: `Generate the entrypoint file (src/autogen_agent.py) — AutoGen (Python):
-1. Build llm_config from OAI_CONFIG_LIST or env vars
-2. AssistantAgent with system prompt; UserProxyAgent with human_input_mode="NEVER"
-3. Register each tool with @register_for_llm and @register_for_execution
-4. initiate_chat with task from argv
-5. Log each function call`,
+6. IMPORTANT: azure-ai-projects' exact method names have changed across SDK releases — note this uncertainty in a code comment rather than presenting it as fully verified`,
+        "semantic-kernel": `Generate the entrypoint file (src/kernel_agent.py) — Semantic Kernel (Python, package "semantic-kernel"):
+1. Create Kernel, add OpenAIChatCompletion or AnthropicChatCompletion service using SK_SERVICE_ID
+2. Define each tool as an @kernel_function-decorated async method in a Plugin class, with individually Annotated[type, "description"]-typed parameters (str/int/float/bool/List[...]/Optional[...], derived from that tool's parameters JSON Schema) — NOT a bare **kwargs signature, since SK's schema introspection reads the method's own named/typed parameters and can't derive anything from **kwargs at all
+3. Each method's body must call that tool's real execute(**kwargs) entrypoint (imported directly from tools/<name>.py) with the matching keyword arguments and return json.dumps(result) — never a hardcoded/fake result
+4. Register the plugin with kernel.add_plugin()
+5. Embed the agent's real system prompt into the prompt sent to kernel.invoke_prompt() -- do not drop it
+6. Agent loop via FunctionChoiceBehavior.Auto(max_auto_invoke_attempts=N) passed in PromptExecutionSettings, then await kernel.invoke_prompt(prompt, service_id=SERVICE_ID, settings=settings)
+7. Log each plugin invocation`,
+        autogen: `Generate the entrypoint file (src/autogen_agent.py) — AutoGen (Python, package "autogen" / "pyautogen"):
+1. Build llm_config from autogen.config_list_from_json("OAI_CONFIG_LIST"); AssistantAgent with system prompt; UserProxyAgent with human_input_mode="NEVER"
+2. For each tool, define a wrapper function with individually-typed keyword parameters (str/int/float/bool/List[...]/Optional[...], derived from that tool's parameters JSON Schema) — NOT a single custom @dataclass/object parameter, since AutoGen's automatic function-calling schema is built by introspecting the wrapper's own parameter names and types, and a single opaque object parameter won't reliably expose the individual fields to the LLM
+3. Each wrapper's body must call that tool's real execute(**kwargs) entrypoint (imported directly from tools/<name>.py) with the matching keyword arguments and return json.dumps(result) — never a hardcoded/fake result
+4. Register each wrapper with autogen.register_function(wrapper, caller=assistant, executor=user_proxy, name=..., description=...)
+5. initiate_chat with task from argv; export run(task) -> str returning user_proxy.last_message(assistant)["content"]
+6. Log each function call`,
         "openai-assistants": `Generate the entrypoint file (${ctx.format === "typescript" ? "src/assistants_agent.ts" : "src/assistants_agent.py"}):
 1. Initialize OpenAI client with OPENAI_API_KEY
 2. TOOL_DEFINITIONS from TOOL_REGISTRY
 3. Check OPENAI_ASSISTANT_ID; create or load assistant
 4. Thread per task run; poll run status
 5. On requires_action: dispatch tool_calls, submit outputs
-6. Max iteration guard; log status transitions`,
+6. Max iteration guard; log status transitions
+NOTE: OpenAI deprecated the Assistants API (removal Aug 26, 2026) in favor of the Responses API / Agents SDK — prefer the "openai-agents" framework for new work.`,
+        "openai-agents": `Generate the entrypoint file (${ctx.format === "typescript" ? "src/agent.ts" : "src/agent.py"}) — OpenAI Agents SDK (package "openai-agents" / "@openai/agents"; OpenAI's current recommended path, successor to the deprecated Assistants API):
+1. ${ctx.format === "typescript" ? "Import { Agent, run, tool } from \"@openai/agents\" and { z } from \"zod\"" : "Import Agent, Runner, function_tool from \"agents\""}
+2. Define each tool ${ctx.format === "typescript" ? "with tool({ name, description, parameters: z.object({...real zod shape derived from the JSON Schema...}), execute: async (args) => JSON.stringify(result) })" : "as a @function_tool-decorated function with individually-typed parameters (str/int/float/bool/List[...]/Optional[...], derived from that tool's parameters JSON Schema) — NOT a single object/dict parameter"}
+3. Each tool's body must call that tool's real execute(**kwargs) entrypoint (or the loaded tool function for TS) and return the JSON-serialized result — never a hardcoded/fake result
+4. Construct ${ctx.format === "typescript" ? "new Agent({ name, instructions: SYSTEM_PROMPT, tools: [...], model })" : "Agent(name=..., instructions=SYSTEM_PROMPT, tools=[...], model=...)"}
+5. Run via ${ctx.format === "typescript" ? "await run(agent, task, { maxTurns: N }), reading result.finalOutput" : "await Runner.run(agent, task, max_turns=N), reading result.final_output"} — catch the max-turns-exceeded error and return a clear message instead of crashing
+6. Accept task text from argv; export a run(task) function; log the completion phrase if it appears in the final output`,
+        "ms-agent-framework": `Generate agent.py — Microsoft Agent Framework (package "agent-framework"; Python-only; unifies AutoGen + Semantic Kernel, both now in maintenance mode):
+1. Import Agent, tool from "agent_framework"; import the chat client from the provider-specific submodule — OpenAIChatClient from "agent_framework.openai" for OpenAI, or AnthropicClient from "agent_framework.anthropic" for Anthropic (verify the exact Anthropic client class name against installed package docs before deploying — flag it as unconfirmed rather than guessing)
+2. Define each tool as a @tool(name=..., description=..., approval_mode="never_require")-decorated function with Annotated[type, "description"]-typed parameters derived from that tool's parameters JSON Schema — NOT a single dict parameter
+3. Each tool's body must call that tool's real execute(**kwargs) entrypoint and return the JSON-serialized result — never a hardcoded/fake result
+4. Construct the chat client, then Agent(client=client, name=..., instructions=SYSTEM_PROMPT, tools=[...])
+5. Run via await agent.run(task), reading response.text — there is no confirmed max-turns/iteration-limit parameter on agent.run(); do not invent one, just log MAX_ITERATIONS as an informational value
+6. Accept task text from argv; export a run(task) function; log the completion phrase if it appears in the final output`,
         databricks: `Generate agent.py — Databricks Mosaic AI (mlflow.pyfunc.ResponsesAgent, MLflow 2.22.4).
 
 ═══════════════════════════════════════════════════════════════════════════
@@ -3861,15 +5815,17 @@ class <Agent>Model(mlflow.pyfunc.PythonModel):
 # Log via: mlflow.pyfunc.log_model(..., python_model=<Agent>Model(), code_paths=["src/serving_model.py"])
 # NEVER inline the model class in register_model.py — cloudpickle serializes by reference,
 # causing ModuleNotFoundError in the serving container.`,
-        "claude-code": `Generate the entrypoint file (src/claude_code_agent.ts) — Claude Code SDK (TypeScript only):
-1. Import { query } from "@anthropic-ai/claude-code" — this is the ONLY import needed for the LLM
-2. Define customTools array: each entry has name, description, input_schema (JSON Schema), and run: async (input) => string
-3. In each tool run(), call the corresponding adapter from loadTools() and return JSON.stringify(result)
-4. Call query({ prompt: task, options: { maxTurns: N, systemPrompt: SYSTEM_PROMPT, customTools, cwd: process.cwd() } })
-5. Iterate the async generator: message.type === "assistant" → log text/tool_use blocks; message.type === "result" → log final result
-6. Accept task from process.argv[2]; track and log turn count and total token usage
-7. Export run() as a named export; add if (require.main === module) guard at bottom
-8. IMPORTANT: TypeScript only — do not use Python or the standard Anthropic SDK; always use ANTHROPIC_API_KEY`,
+        "claude-code": `Generate the entrypoint file (src/claude_code_agent.ts) — Claude Code SDK (TypeScript only, package "@anthropic-ai/claude-agent-sdk"):
+1. Import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk" and { z } from "zod" — these are the ONLY imports needed for the LLM/tooling
+2. There is NO "customTools" option on query() — define each of this agent's own tools with tool(name, description, zodRawShape, handler), where zodRawShape is a plain object of real zod types (z.string(), z.number(), z.boolean(), z.array(...), z.object({...}), with .optional() for non-required fields) derived from that tool's parameters JSON Schema — never z.any() placeholders
+3. In each tool's handler, call the corresponding adapter from loadTools() and return { content: [{ type: "text", text: JSON.stringify(result) }] } — NOT a bare string
+4. Group this agent's own tools into one local server: createSdkMcpServer({ name, version: "1.0.0", tools: [...] })
+5. IGNORE the generic "@modelcontextprotocol/sdk Client" instruction above for any servers listed under "MCP Servers:" — instead add one entry per server directly into options.mcpServers as { type: "http" | "sse", url }, alongside the local tool server from step 4; skip stdio servers with a comment since no command is available here
+6. Call query({ prompt: task, options: { maxTurns: N, systemPrompt: SYSTEM_PROMPT, mcpServers: { ...local server, ...external servers }, allowedTools: [ "mcp__<serverKey>__<toolName>", ... one per local AND external tool ], cwd: process.cwd() } })
+7. Iterate the async generator: message.type === "assistant" → log text/tool_use blocks; message.type === "result" → log final result
+8. Accept task from process.argv[2]; track and log turn count and total token usage
+9. Export run() as a named export; add if (require.main === module) guard at bottom
+10. IMPORTANT: TypeScript only — do not use Python or the standard Anthropic SDK; always use ANTHROPIC_API_KEY`,
       };
 
       const fwInstr = frameworkInstructions[ctx.framework] || frameworkInstructions.generic;
@@ -3986,7 +5942,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
         maxIterations: z.number().int().positive().default(agentMaxIter),
         completionPromise: z.string().default("TASK_COMPLETE"),
-        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks", "claude-code"]).default("generic"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "openai-agents", "ms-agent-framework", "bedrock", "n8n", "adk", "databricks", "claude-code"]).default("generic"),
         toolAdapters: z.record(z.enum(["builtin", "customer", "stub"])).optional(),
         pinVersions: z.boolean().default(true),
         otelEnabled: z.boolean().default(false),
@@ -3995,11 +5951,15 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
 
       const { format: rawFormat, llmProvider, maxIterations, completionPromise, framework, toolAdapters, pinVersions, otelEnabled, spanGranularity } = exportSchema.parse(req.body || {});
 
-      const PYTHON_ONLY_FRAMEWORKS = ["foundry", "autogen", "semantic-kernel"];
-      const TS_ONLY_FRAMEWORKS = ["claude-code"];
+      // crewai has no official JS/TS package -- it's Python-only in reality.
+      const PYTHON_ONLY_FRAMEWORKS = ["foundry", "autogen", "semantic-kernel", "crewai", "ms-agent-framework"];
+      // n8n has no real Python custom-node mechanism -- nodes run inside
+      // n8n's own Node.js process and are always TypeScript/JavaScript.
+      const TS_ONLY_FRAMEWORKS = ["claude-code", "n8n"];
       const format = PYTHON_ONLY_FRAMEWORKS.includes(framework) ? "python" : TS_ONLY_FRAMEWORKS.includes(framework) ? "typescript" : rawFormat;
-      // claude-code always requires Anthropic regardless of client request
-      const resolvedProvider = TS_ONLY_FRAMEWORKS.includes(framework) ? "anthropic" as const : llmProvider;
+      // claude-code always requires Anthropic regardless of client request --
+      // n8n has no such restriction, it just can't be Python.
+      const resolvedProvider = framework === "claude-code" ? "anthropic" as const : llmProvider;
 
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
@@ -4042,10 +6002,10 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
       });
 
       const agentKbLinks = await storage.getAgentKnowledgeBases(agent.id);
-      const kbDetails: Array<{ name: string; embeddingModel: string | null; chunkSize: number | null; chunkOverlap: number | null }> = [];
+      const kbDetails: Array<{ id: string; name: string; embeddingModel: string | null; chunkSize: number | null; chunkOverlap: number | null }> = [];
       for (const link of agentKbLinks) {
         const kb = await storage.getKnowledgeBase(link.knowledgeBaseId);
-        if (kb) kbDetails.push({ name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap });
+        if (kb) kbDetails.push({ id: kb.id, name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap });
       }
 
       let outcomeData: AgentYamlExtras["outcomeContract"] = null;
@@ -4224,6 +6184,12 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
       };
 
       let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
+      // Populated by the WHAT_YOU_NEED_TO_IMPLEMENT.md generator below and echoed
+      // into the "done" event's metadata so the client can show the *real*
+      // post-generation stub count instead of its pre-generation guess.
+      let totalStubs = 0;
+      let aiToolCount = 0;
+      let stubToolNames: string[] = [];
 
       emit("progress", { phase: "ai", message: `Starting AI-assisted code generation (30–60s)...`, detail: `Framework: ${framework} · Language: ${format} · Provider: ${resolvedProvider}` });
       // Heartbeat: emit a visible progress event every 8s during AI generation.
@@ -4395,8 +6361,12 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
           envLines.push(`OTEL_SERVICE_NAME=${agentSlug}`);
         }
         if (kbDetails.length > 0) {
-          envLines.push("VECTOR_DB_URL=");
-          envLines.push("EMBEDDING_API_KEY=");
+          const inferredBaseUrl = `${req.protocol}://${req.get("host") || "<your-astra-agents-domain>"}`;
+          envLines.push(`# Retrieval calls back into this Astra Agents deployment's knowledge bases —`);
+          envLines.push(`# see src/agent/knowledge.${format === "typescript" ? "ts" : "py"}. Mint an API key from`);
+          envLines.push(`# the agent's API Gateway tab (or use an admin ASTRA_PUBLIC_API_KEY).`);
+          envLines.push(`ASTRA_API_BASE_URL=${inferredBaseUrl}`);
+          envLines.push("ASTRA_API_KEY=astra_your_api_key_here");
         }
         files[".env.example"] = envLines.join("\n") + "\n";
 
@@ -4635,8 +6605,8 @@ export function listPolicies(): Array<{ name: string; domain: string | null }> {
           files["src/agent/graph.ts"] = `// ATLAS-generated: Graph construction from blueprint configuration\n\nexport interface GraphNode {\n  id: string;\n  type: string;\n  label: string;\n}\n\nexport interface GraphEdge {\n  source: string;\n  target: string;\n  condition: string | null;\n}\n\nexport const agentName = ${JSON.stringify(agent.name)};\nexport const maxIterations = ${maxIterations};\nexport const completionPromise = ${JSON.stringify(completionPromise)};\n\nexport const nodes: GraphNode[] = [\n${nodesLiteral}\n];\n\nexport const edges: GraphEdge[] = [\n${edgesLiteral}\n];\n\nexport function getNode(id: string): GraphNode | undefined {\n  return nodes.find(n => n.id === id);\n}\n\nexport function getEntryNode(): GraphNode | undefined {\n  return nodes.find(n => n.type === "entry") || nodes[0];\n}\n\nexport function getOutgoingEdges(nodeId: string): GraphEdge[] {\n  return edges.filter(e => e.source === nodeId);\n}\n\nfunction resolvePath(obj: Record<string, unknown>, path: string): unknown {\n  return path.split(".").reduce<unknown>((acc, key) => {\n    if (acc && typeof acc === "object" && key in (acc as Record<string, unknown>)) {\n      return (acc as Record<string, unknown>)[key];\n    }\n    return undefined;\n  }, obj);\n}\n\nfunction evaluateCondition(condition: string, ctx: Record<string, unknown>): boolean {\n  if (!condition || !ctx) return false;\n  if (condition.startsWith("ctx.") || condition.startsWith("ctx[")) {\n    const parts = condition.split(/\\s*(===|!==|==|!=|>=|<=|>|<)\\s*/);\n    if (parts.length === 3) {\n      const [left, op, right] = parts;\n      const lval = resolvePath({ ctx }, left);\n      const rval = right.replace(/^["']|["']$/g, "");\n      switch (op) {\n        case "===": case "==": return String(lval) === rval;\n        case "!==": case "!=": return String(lval) !== rval;\n        case ">": return Number(lval) > Number(rval);\n        case "<": return Number(lval) < Number(rval);\n        case ">=": return Number(lval) >= Number(rval);\n        case "<=": return Number(lval) <= Number(rval);\n        default: return false;\n      }\n    }\n  }\n  return false;\n}\n\nexport function transition(currentNodeId: string, context?: Record<string, unknown>): string {\n  const outgoing = getOutgoingEdges(currentNodeId);\n  if (outgoing.length === 0) return currentNodeId;\n  for (const edge of outgoing) {\n    if (!edge.condition) return edge.target;\n    try {\n      if (evaluateCondition(edge.condition, context || {})) return edge.target;\n    } catch { continue; }\n  }\n  return outgoing[0].target;\n}\n`;
 
           if (kbDetails.length > 0) {
-            const kbConfigJson = JSON.stringify(kbDetails.map(kb => ({ name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap })), null, 2);
-            files["src/agent/knowledge.ts"] = `// ATLAS-generated: Knowledge Base retrieval configuration\nimport * as fs from "fs";\nimport * as path from "path";\n\nexport interface KnowledgeBaseConfig {\n  name: string;\n  embeddingModel: string | null;\n  chunkSize: number | null;\n  chunkOverlap: number | null;\n}\n\nexport const knowledgeBases: KnowledgeBaseConfig[] = ${kbConfigJson};\n\nexport interface RetrievalResult {\n  content: string;\n  source: string;\n  score: number;\n}\n\n/**\n * Retrieve relevant context from configured knowledge bases.\n * Replace this stub with your vector DB client (e.g., Pinecone, pgvector, Weaviate).\n */\nexport async function retrieve(query: string, topK: number = 5): Promise<RetrievalResult[]> {\n  // TODO: Connect to your vector database\n  // 1. Generate embedding for the query using the configured embedding model\n  // 2. Perform similarity search against stored knowledge base chunks\n  // 3. Return top-K results\n  console.log(\`[knowledge] Retrieving top \${topK} results for query: "\${query.substring(0, 50)}..."\`);\n  console.log(\`[knowledge] Knowledge bases: \${knowledgeBases.map(kb => kb.name).join(", ")}\`);\n  return [];\n}\n`;
+            const kbConfigJson = JSON.stringify(kbDetails.map(kb => ({ id: kb.id, name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap })), null, 2);
+            files["src/agent/knowledge.ts"] = `// ATLAS-generated: Knowledge Base retrieval — calls back into the Astra Agents\n// platform's own search API (the same pgvector query the in-platform Search &\n// Query tab uses) rather than requiring you to stand up a separate vector DB.\n// Requires ASTRA_API_BASE_URL and ASTRA_API_KEY in .env — see README.md.\n\nexport interface KnowledgeBaseConfig {\n  id: string;\n  name: string;\n  embeddingModel: string | null;\n  chunkSize: number | null;\n  chunkOverlap: number | null;\n}\n\nexport const knowledgeBases: KnowledgeBaseConfig[] = ${kbConfigJson};\n\nexport interface RetrievalResult {\n  content: string;\n  source: string;\n  score: number;\n}\n\n/**\n * Retrieve relevant context from all knowledge bases linked to this agent.\n * Calls POST {ASTRA_API_BASE_URL}/api/v1/knowledge-bases/{id}/search per KB\n * and merges results, sorted by score. Set ASTRA_KB_STANDALONE=true and\n * replace this function's body if you'd rather run retrieval fully offline\n * against your own vector store.\n */\nexport async function retrieve(query: string, topK: number = 5): Promise<RetrievalResult[]> {\n  const baseUrl = (process.env.ASTRA_API_BASE_URL || "").replace(/\\/$/, "");\n  const apiKey = process.env.ASTRA_API_KEY || "";\n  if (!baseUrl || !apiKey) {\n    throw new Error(\n      "[knowledge] ASTRA_API_BASE_URL and ASTRA_API_KEY must be set in .env to retrieve from linked knowledge bases " +\n      \`(\${knowledgeBases.map(kb => kb.name).join(", ")}).\`\n    );\n  }\n\n  const perKbResults = await Promise.all(knowledgeBases.map(async (kb) => {\n    try {\n      const res = await fetch(\`\${baseUrl}/api/v1/knowledge-bases/\${kb.id}/search\`, {\n        method: "POST",\n        headers: { "Content-Type": "application/json", "X-API-Key": apiKey },\n        body: JSON.stringify({ query, topK }),\n      });\n      if (!res.ok) {\n        console.error(\`[knowledge] Search failed for "\${kb.name}": \${res.status} \${await res.text().catch(() => "")}\`);\n        return [];\n      }\n      const data = await res.json() as { results?: Array<{ content: string; score: number }> };\n      return (data.results || []).map(r => ({ content: r.content, source: kb.name, score: r.score }));\n    } catch (err) {\n      console.error(\`[knowledge] Search request failed for "\${kb.name}":\`, err instanceof Error ? err.message : err);\n      return [];\n    }\n  }));\n\n  return perKbResults.flat().sort((a, b) => b.score - a.score).slice(0, topK);\n}\n`;
           }
 
           if (outcomeData) {
@@ -4829,8 +6799,8 @@ def list_policies():
           files["src/agent/graph.py"] = `# ATLAS-generated: Graph construction from blueprint configuration\nimport re\n\nAGENT_NAME = ${JSON.stringify(agent.name)}\nMAX_ITERATIONS = ${maxIterations}\nCOMPLETION_PROMISE = ${JSON.stringify(completionPromise)}\n\nNODES = [\n${pyNodesLiteral}\n]\n\nEDGES = [\n${pyEdgesLiteral}\n]\n\n\ndef get_node(node_id: str):\n    return next((n for n in NODES if n["id"] == node_id), None)\n\n\ndef get_entry_node():\n    entry = next((n for n in NODES if n["type"] == "entry"), None)\n    return entry or (NODES[0] if NODES else None)\n\n\ndef get_outgoing_edges(node_id: str):\n    return [e for e in EDGES if e["source"] == node_id]\n\n\ndef evaluate_condition(condition, ctx):\n    if not condition or not ctx:\n        return False\n    if condition.startswith("ctx.") or condition.startswith("ctx["):\n        match = re.split(r"\\s*(===|!==|==|!=|>=|<=|>|<)\\s*", condition)\n        if len(match) == 3:\n            left, op, right = match\n            parts = left.replace("ctx.", "").replace("ctx[", "").replace("]", "").split(".")\n            val = ctx\n            for p in parts:\n                if isinstance(val, dict):\n                    val = val.get(p)\n                else:\n                    return False\n            right = right.strip().strip("\\'\\"")\n            if op in ("===", "=="):\n                return str(val) == right\n            if op in ("!==", "!="):\n                return str(val) != right\n            try:\n                if op == ">":\n                    return float(val) > float(right)\n                if op == "<":\n                    return float(val) < float(right)\n                if op == ">=":\n                    return float(val) >= float(right)\n                if op == "<=":\n                    return float(val) <= float(right)\n            except (ValueError, TypeError):\n                return False\n    return False\n\n\ndef transition(current_node_id: str, context=None):\n    outgoing = get_outgoing_edges(current_node_id)\n    if not outgoing:\n        return current_node_id\n    for edge in outgoing:\n        if not edge["condition"]:\n            return edge["target"]\n        try:\n            if evaluate_condition(edge["condition"], context):\n                return edge["target"]\n        except Exception:\n            continue\n    return outgoing[0]["target"]\n`;
 
           if (kbDetails.length > 0) {
-            const kbConfigPy = kbDetails.map(kb => `    {"name": ${JSON.stringify(kb.name)}, "embedding_model": ${JSON.stringify(kb.embeddingModel)}, "chunk_size": ${kb.chunkSize || "None"}, "chunk_overlap": ${kb.chunkOverlap || "None"}}`).join(",\n");
-            files["src/agent/knowledge.py"] = `# ATLAS-generated: Knowledge Base retrieval configuration\n\nKNOWLEDGE_BASES = [\n${kbConfigPy}\n]\n\n\ndef retrieve(query: str, top_k: int = 5) -> list:\n    \"\"\"Retrieve relevant context from configured knowledge bases.\n    Replace this stub with your vector DB client (e.g., Pinecone, pgvector, Weaviate).\n    \"\"\"\n    # TODO: Connect to your vector database\n    # 1. Generate embedding for the query using the configured embedding model\n    # 2. Perform similarity search against stored knowledge base chunks\n    # 3. Return top-K results\n    print(f'[knowledge] Retrieving top {top_k} results for query: "{query[:50]}..."')\n    print(f'[knowledge] Knowledge bases: {", ".join(kb["name"] for kb in KNOWLEDGE_BASES)}')\n    return []\n`;
+            const kbConfigPy = kbDetails.map(kb => `    {"id": ${JSON.stringify(kb.id)}, "name": ${JSON.stringify(kb.name)}, "embedding_model": ${JSON.stringify(kb.embeddingModel)}, "chunk_size": ${kb.chunkSize || "None"}, "chunk_overlap": ${kb.chunkOverlap || "None"}}`).join(",\n");
+            files["src/agent/knowledge.py"] = `# ATLAS-generated: Knowledge Base retrieval — calls back into the Astra Agents\n# platform's own search API (the same pgvector query the in-platform Search &\n# Query tab uses) rather than requiring a separate vector DB. Uses only the\n# standard library (urllib) so no extra pip dependency is needed.\n# Requires ASTRA_API_BASE_URL and ASTRA_API_KEY in .env — see README.md.\n\nimport json\nimport os\nimport urllib.request\nimport urllib.error\n\nKNOWLEDGE_BASES = [\n${kbConfigPy}\n]\n\n\ndef _search_one(base_url: str, api_key: str, kb: dict, query: str, top_k: int) -> list:\n    url = f"{base_url}/api/v1/knowledge-bases/{kb['id']}/search"\n    body = json.dumps({"query": query, "topK": top_k}).encode("utf-8")\n    req = urllib.request.Request(\n        url, data=body, method="POST",\n        headers={"Content-Type": "application/json", "X-API-Key": api_key},\n    )\n    try:\n        with urllib.request.urlopen(req, timeout=15) as resp:\n            data = json.loads(resp.read().decode("utf-8"))\n            return [\n                {"content": r["content"], "source": kb["name"], "score": r["score"]}\n                for r in data.get("results", [])\n            ]\n    except urllib.error.HTTPError as e:\n        print(f'[knowledge] Search failed for "{kb["name"]}": {e.code} {e.read().decode("utf-8", "ignore")}')\n        return []\n    except Exception as e:\n        print(f'[knowledge] Search request failed for "{kb["name"]}": {e}')\n        return []\n\n\ndef retrieve(query: str, top_k: int = 5) -> list:\n    \"\"\"Retrieve relevant context from all knowledge bases linked to this agent.\n\n    Calls POST {ASTRA_API_BASE_URL}/api/v1/knowledge-bases/{id}/search per KB\n    and merges results, sorted by score. Replace this function's body if you'd\n    rather run retrieval fully offline against your own vector store.\n    \"\"\"\n    base_url = (os.environ.get("ASTRA_API_BASE_URL") or "").rstrip("/")\n    api_key = os.environ.get("ASTRA_API_KEY") or ""\n    if not base_url or not api_key:\n        names = ", ".join(kb["name"] for kb in KNOWLEDGE_BASES)\n        raise RuntimeError(\n            f"ASTRA_API_BASE_URL and ASTRA_API_KEY must be set in .env to retrieve from linked knowledge bases ({names})."\n        )\n\n    results = []\n    for kb in KNOWLEDGE_BASES:\n        results.extend(_search_one(base_url, api_key, kb, query, top_k))\n    results.sort(key=lambda r: r["score"], reverse=True)\n    return results[:top_k]\n`;
           }
 
           if (outcomeData) {
@@ -4871,66 +6841,52 @@ def list_policies():
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
       } else if (framework === "langgraph") {
-        const toolNames = tools.map(t => t.name).join(", ");
-        const lgTemplateTs = `// LangGraph State Graph Definition\n// Generated for ${agent.name}\nimport { StateGraph, END } from "@langchain/langgraph";\nimport { loadTools } from "./tools";\n\ninterface AgentState {\n  messages: any[];\n  toolResults: Record<string, any>;\n  iterations: number;\n}\n\nconst tools = loadTools();\n\nconst agentNode = async (state: AgentState) => {\n  // Agent reasoning node — calls LLM with tool descriptions\n  // Tools available: ${toolNames}\n  return { ...state, iterations: state.iterations + 1 };\n};\n\nconst toolNode = async (state: AgentState) => {\n  // Execute selected tool and return result\n  return state;\n};\n\nconst shouldContinue = (state: AgentState) => {\n  if (state.iterations >= ${maxIterations}) return "end";\n  return "tools";\n};\n\nconst graph = new StateGraph<AgentState>({\n  channels: { messages: { value: [] }, toolResults: { value: {} }, iterations: { value: 0 } },\n})\n  .addNode("agent", agentNode)\n  .addNode("tools", toolNode)\n  .addEdge("__start__", "agent")\n  .addConditionalEdges("agent", shouldContinue, { tools: "tools", end: END })\n  .addEdge("tools", "agent");\n\nexport const app = graph.compile();\n`;
         if (format === "typescript") {
-          files["graph.ts"] = aiResult?.entrypoint || lgTemplateTs;
-          files["nodes/index.ts"] = `// Graph node implementations\nexport { agentNode } from "../graph";\nexport { toolNode } from "../graph";\n`;
+          files["graph.ts"] = aiResult?.entrypoint || generateLangGraphAgentFile(agent.name, systemPrompt, tools, maxIterations, completionPromise, llmProvider, "typescript");
           files["tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.ts:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
           const deps: Record<string, string> = { ...baseDeps, "@langchain/langgraph": pin ? "0.2.36" : "^0.2.0", "@langchain/core": pin ? "0.3.26" : "^0.3.0" };
-          if (llmProvider === "openai") { deps["@langchain/openai"] = pin ? "0.3.16" : "^0.3.0"; deps["openai"] = pin ? "4.77.0" : "^4.0.0"; } else { deps["@langchain/anthropic"] = pin ? "0.3.12" : "^0.3.0"; deps["@anthropic-ai/sdk"] = pin ? "0.30.1" : "^0.30.0"; }
+          if (llmProvider === "openai") { deps["openai"] = pin ? "4.77.0" : "^4.0.0"; } else { deps["@anthropic-ai/sdk"] = pin ? "0.30.1" : "^0.30.0"; }
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node graph.ts", "langgraph:dev": "langgraph dev" }, dependencies: deps }, null, 2);
         } else {
-          const lgTemplatePy = `# LangGraph State Graph Definition\n# Generated for ${agent.name}\nfrom langgraph.graph import StateGraph, END\nfrom typing import TypedDict, Any\nfrom tools import load_tools\n\nclass AgentState(TypedDict):\n    messages: list\n    tool_results: dict\n    iterations: int\n\ntools = load_tools()\n\ndef agent_node(state: AgentState) -> AgentState:\n    \"\"\"Agent reasoning node — calls LLM with tool descriptions.\"\"\"\n    # Tools available: ${toolNames}\n    return {**state, "iterations": state["iterations"] + 1}\n\ndef tool_node(state: AgentState) -> AgentState:\n    \"\"\"Execute selected tool and return result.\"\"\"\n    return state\n\ndef should_continue(state: AgentState) -> str:\n    if state["iterations"] >= ${maxIterations}:\n        return "end"\n    return "tools"\n\ngraph = StateGraph(AgentState)\ngraph.add_node("agent", agent_node)\ngraph.add_node("tools", tool_node)\ngraph.set_entry_point("agent")\ngraph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})\ngraph.add_edge("tools", "agent")\n\napp = graph.compile()\n`;
-          files["graph.py"] = aiResult?.entrypoint || lgTemplatePy;
-          files["nodes/__init__.py"] = `# Graph node implementations\nfrom graph import agent_node, tool_node\n`;
+          files["graph.py"] = aiResult?.entrypoint || generateLangGraphAgentFile(agent.name, systemPrompt, tools, maxIterations, completionPromise, llmProvider, "python");
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.py:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
           const reqs = [...baseReqs, pin ? "langgraph==0.2.60" : "langgraph>=0.2.0", pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0", "pydantic>=2.0.0,<3.0.0"];
-          if (llmProvider === "openai") reqs.push(pin ? "langchain-openai==0.2.14" : "langchain-openai>=0.2.0", pin ? "openai==1.58.1" : "openai>=1.0"); else reqs.push(pin ? "langchain-anthropic==0.2.8" : "langchain-anthropic>=0.2.0", pin ? "anthropic==0.30.1" : "anthropic>=0.30");
+          if (llmProvider === "openai") reqs.push(pin ? "openai==1.58.1" : "openai>=1.0"); else reqs.push(pin ? "anthropic==0.30.1" : "anthropic>=0.30");
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
         files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
       } else if (framework === "crewai") {
-        const crewAgentsTemplate = `# CrewAI Agent Definitions\n# Generated for ${agent.name}\nagents:\n  - name: "${agent.name}"\n    role: "Primary Agent"\n    goal: "${agent.description || "Complete assigned tasks"}"\n    backstory: "${systemPrompt.substring(0, 200)}"\n    tools:\n${tools.map(t => `      - ${t.name}`).join("\n")}\n    max_iter: ${maxIterations}\n    verbose: true\n`;
-        const crewTasksTemplate = `# CrewAI Task Definitions\ntasks:\n  - name: "main_task"\n    description: "Execute the primary objective"\n    agent: "${agent.name}"\n    expected_output: "${completionPromise}"\n`;
-        files["config/agents.yaml"] = aiResult?.frameworkFiles?.["config/agents.yaml"] || crewAgentsTemplate;
-        files["config/tasks.yaml"] = aiResult?.frameworkFiles?.["config/tasks.yaml"] || crewTasksTemplate;
-        const crewTemplateTs = `// CrewAI-style Crew Orchestration\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadTools } from "./tools";\n\nconst agentsConfig = yaml.load(fs.readFileSync("config/agents.yaml", "utf-8")) as any;\nconst tasksConfig = yaml.load(fs.readFileSync("config/tasks.yaml", "utf-8")) as any;\nconst tools = loadTools();\n\nasync function runCrew() {\n  console.log("Starting crew with agents:", agentsConfig.agents.map((a: any) => a.name));\n  console.log("Tasks:", tasksConfig.tasks.map((t: any) => t.name));\n  // Implement crew orchestration logic using loaded configs and tools\n  for (const task of tasksConfig.tasks) {\n    console.log(\`Executing task: \${task.name}\`);\n    // TODO: Wire up LLM calls with agent config\n  }\n}\n\nrunCrew().catch(console.error);\n`;
-        const crewTemplatePy = `# CrewAI-style Crew Orchestration\n# Generated for ${agent.name}\nimport yaml\nfrom tools import load_tools\n\nwith open("config/agents.yaml") as f:\n    agents_config = yaml.safe_load(f)\nwith open("config/tasks.yaml") as f:\n    tasks_config = yaml.safe_load(f)\n\ntools = load_tools()\n\ndef run_crew():\n    print("Starting crew with agents:", [a["name"] for a in agents_config["agents"]])\n    print("Tasks:", [t["name"] for t in tasks_config["tasks"]])\n    for task in tasks_config["tasks"]:\n        print(f"Executing task: {task['name']}")\n        # TODO: Wire up LLM calls with agent config\n\nif __name__ == "__main__":\n    run_crew()\n`;
-        if (format === "typescript") {
-          files["crew.ts"] = aiResult?.entrypoint || crewTemplateTs;
-          files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
-          const deps = { ...baseDeps }; addLlmDep(deps, []);
-          files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node crew.ts" }, dependencies: deps }, null, 2);
-        } else {
-          files["crew.py"] = aiResult?.entrypoint || crewTemplatePy;
-          files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
-          const reqs = [...baseReqs, pin ? "crewai==0.80.0" : "crewai>=0.80.0"]; addLlmDep({}, reqs);
-          files["requirements.txt"] = reqs.join("\n") + "\n";
-        }
-        files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
+        // CrewAI is Python-only (no real JS/TS package) -- format is always "python" here.
+        files["crew.py"] = aiResult?.entrypoint || generateCrewAiAgentFile(agent.name, agent.description || "", systemPrompt, tools, maxIterations, completionPromise, llmProvider);
+        files["tools/__init__.py"] = generatePyToolsInit(tools);
+        for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
+        const reqs = [...baseReqs, pin ? "crewai==0.80.0" : "crewai>=0.80.0"]; addLlmDep({}, reqs);
+        files["requirements.txt"] = reqs.join("\n") + "\n";
+        files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy;
       } else if (framework === "foundry") {
+        // No verified real schema URL for this manifest shape -- omitting
+        // $schema rather than asserting one we can't confirm exists.
         files["foundry.manifest.json"] = JSON.stringify({
-          "$schema": "https://foundry.microsoft.com/schemas/agent-manifest.json",
           name: agent.name, description: agent.description || "",
           skills: tools.map(t => ({ name: t.name, description: t.description || "", type: "tool" })),
           configuration: { maxIterations, completionPromise, llmProvider },
         }, null, 2);
-        const foundryTemplatePy = `# Microsoft Foundry Agent Entry Point\n# Generated for ${agent.name}\nimport os\nimport sys\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\nimport yaml\nimport json\nfrom skills import load_skills\n\nwith open("foundry.manifest.json") as f:\n    manifest = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nskills = load_skills()\n\ndef main():\n    print(f"[Foundry Agent] {manifest['name']} starting...")\n    print(f"Skills loaded: {', '.join(skills.keys())}")\n    completion_token = config.get("agent", {}).get("completion_token", "${completionPromise}")\n    for iteration in range(1, ${maxIterations} + 1):\n        print(f"Iteration {iteration}")\n        # TODO: Call LLM with skills, capture response\n        # response = call_llm(query, skills)\n        # if completion_token in response:\n        #     break\n        break  # placeholder — remove once LLM call is wired up\n\nif __name__ == "__main__":\n    main()\n`;
         // Foundry is Python-only; format is always "python" here
-        files["src/agent_flow.py"] = aiResult?.entrypoint || foundryTemplatePy;
-        files["skills/__init__.py"] = `# Skill implementations\n${tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n")}\n\n\ndef load_skills():\n    return { ${tools.map(t => `"${t.name}": ${t.name}`).join(", ")} }\n`;
+        files["src/agent_flow.py"] = aiResult?.entrypoint || generateFoundryAgentFile(agent.name, systemPrompt, tools, maxIterations, completionPromise);
+        files["skills/__init__.py"] = generatePySkillsInit(tools);
         files["tools/__init__.py"] = generatePyToolsInit(tools);
         for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
-        const reqs = [...baseReqs]; addLlmDep({}, reqs);
+        // azure-ai-projects not pinned to an exact version even when
+        // pinVersions is set -- this SDK's surface has changed across
+        // releases and we don't have a verified-current version to lock to.
+        const reqs = [...baseReqs, "azure-ai-projects>=1.0.0b1", pin ? "azure-identity==1.19.0" : "azure-identity>=1.15.0"];
         files["requirements.txt"] = reqs.join("\n") + "\n";
         files["flow.dag.yaml"] = `# Azure AI Foundry / Promptflow DAG\n# Generated for ${agent.name}\n$schema: https://azuremlschemas.azureedge.net/promptflow/latest/Flow.schema.json\ndisplay_name: ${agent.name}\nname: ${agentSlug}\ndescription: "${(agent.description || "").replace(/"/g, "'").substring(0, 200)}"\ninputs:\n  query:\n    type: string\noutputs:\n  response:\n    type: string\n    reference: \${agent_flow.output}\nnodes:\n- name: agent_flow\n  type: python\n  source:\n    type: code\n    path: src/agent_flow.py\n  inputs:\n    query: \${inputs.query}\n  use_variants: false\nenvironment:\n  python_requirements_txt: requirements.txt\n`;
+        files[".env.example"] = "AZURE_AI_PROJECT_CONNECTION_STRING=your-project-connection-string\nAZURE_AI_MODEL_DEPLOYMENT=gpt-4o\n# Auth via azure.identity.DefaultAzureCredential -- run `az login` locally, or configure a managed identity/service principal in production\n";
         files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/agent_flow.py");
       } else if (framework === "bedrock") {
         const openApiPaths: Record<string, any> = {};
@@ -4942,41 +6898,58 @@ def list_policies():
           };
         }
         files["action-groups/openapi.yaml"] = `openapi: "3.0.0"\ninfo:\n  title: "${agent.name} Action Groups"\n  version: "1.0.0"\npaths:\n${tools.map(t => `  /${t.name}:\n    post:\n      summary: "${t.description || t.name}"\n      operationId: "${t.name}"\n      responses:\n        "200":\n          description: "Success"`).join("\n")}\n`;
+        // Bedrock doesn't host OpenAI models -- only providers onboarded to
+        // Bedrock (Anthropic, Meta, Amazon, Mistral, etc.) -- so an "openai"
+        // provider preference is mapped to a comparable open-weight model
+        // (Llama) instead of erroring or silently ignoring the choice.
+        const bedrockFoundationModel = llmProvider === "openai" ? "meta.llama3-1-70b-instruct-v1:0" : "anthropic.claude-3-5-sonnet-20241022-v2:0";
         files["agent-config.json"] = JSON.stringify({
           agentName: agent.name, description: agent.description || "",
-          foundationModel: llmProvider === "openai" ? "meta.llama3-1-70b-instruct-v1:0" : "anthropic.claude-3-5-sonnet-20241022-v2:0",
+          foundationModel: bedrockFoundationModel,
           instruction: systemPrompt.substring(0, 500),
           actionGroups: [{ name: "tools", description: "Agent tool actions", apiSchema: { s3: { s3BucketName: "your-bucket", s3ObjectKey: "openapi.yaml" } } }],
           idleSessionTTLInSeconds: 600,
         }, null, 2);
         const bedrockTemplateTs = `// AWS Lambda Handler for Bedrock Action Groups\n// Generated for ${agent.name}\nimport { loadTools } from "../tools";\n\nconst tools = loadTools();\n\nexport const handler = async (event: any) => {\n  const actionGroup = event.actionGroup;\n  const apiPath = event.apiPath;\n  const parameters = event.parameters || [];\n  const toolName = apiPath.replace("/", "");\n\n  console.log(\`[Bedrock] Action: \${actionGroup}, Path: \${apiPath}\`);\n\n  if (tools[toolName]) {\n    const params: Record<string, any> = {};\n    for (const p of parameters) { params[p.name] = p.value; }\n    const result = await tools[toolName](params);\n    return {\n      messageVersion: "1.0",\n      response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 200,\n        responseBody: { "application/json": { body: JSON.stringify(result) } } },\n    };\n  }\n\n  return { messageVersion: "1.0", response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 404,\n    responseBody: { "application/json": { body: JSON.stringify({ error: "Tool not found" }) } } } };\n};\n`;
         const bedrockTemplatePy = `# AWS Lambda Handler for Bedrock Action Groups\n# Generated for ${agent.name}\nfrom tools import load_tools\nimport json\n\ntools = load_tools()\n\ndef handler(event, context):\n    action_group = event.get("actionGroup", "")\n    api_path = event.get("apiPath", "")\n    parameters = event.get("parameters", [])\n    tool_name = api_path.lstrip("/")\n\n    print(f"[Bedrock] Action: {action_group}, Path: {api_path}")\n\n    if tool_name in tools:\n        params = {p["name"]: p["value"] for p in parameters}\n        result = tools[tool_name](params)\n        return {\n            "messageVersion": "1.0",\n            "response": {\n                "actionGroup": action_group, "apiPath": api_path,\n                "httpMethod": "POST", "httpStatusCode": 200,\n                "responseBody": {"application/json": {"body": json.dumps(result)}}\n            }\n        }\n\n    return {"messageVersion": "1.0", "response": {"actionGroup": action_group, "apiPath": api_path,\n        "httpMethod": "POST", "httpStatusCode": 404,\n        "responseBody": {"application/json": {"body": json.dumps({"error": "Tool not found"})}}}}\n`;
+        files["src/agent/prompts/system.txt"] = systemPrompt;
+        // deploy_agent.py actually provisions the Bedrock Agent resource and
+        // wires it to this Lambda -- the export previously stopped at the
+        // Lambda + static reference JSON/YAML with no automation connecting
+        // them in AWS.
+        files["deploy_agent.py"] = generateBedrockDeployScript(agentSlug, bedrockFoundationModel);
         if (format === "typescript") {
           files["lambda/handler.ts"] = aiResult?.entrypoint || bedrockTemplateTs;
           files["tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: nodejs20.x\n      Timeout: 30\n      MemorySize: 256\n`;
-          const deps = { ...baseDeps, "@aws-sdk/client-bedrock-agent-runtime": pin ? "3.712.0" : "^3.0.0" }; addLlmDep(deps, []);
+          const deps = { ...baseDeps, "@aws-sdk/client-bedrock-agent-runtime": pin ? "3.712.0" : "^3.0.0" };
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node lambda/handler.ts", "sam:build": "sam build", "sam:deploy": "sam deploy --guided" }, dependencies: deps }, null, 2);
         } else {
           files["lambda/handler.py"] = aiResult?.entrypoint || bedrockTemplatePy;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: python3.11\n      Timeout: 30\n      MemorySize: 256\n`;
-          const reqs = [...baseReqs, pin ? "boto3==1.34.162" : "boto3>=1.34.0"]; addLlmDep({}, reqs);
+          const reqs = [...baseReqs, pin ? "boto3==1.34.162" : "boto3>=1.34.0"];
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
-        files[".env.example"] = envExample + "AWS_REGION=us-east-1\nAWS_ACCESS_KEY_ID=\nAWS_SECRET_ACCESS_KEY=\n";
+        files[".env.example"] = "AWS_REGION=us-east-1\nAWS_ACCESS_KEY_ID=\nAWS_SECRET_ACCESS_KEY=\n# Needed by deploy_agent.py to provision the Bedrock Agent resource:\nBEDROCK_AGENT_ROLE_ARN=arn:aws:iam::<account-id>:role/<bedrock-agent-role>\nBEDROCK_ACTION_LAMBDA_ARN=arn:aws:lambda:us-east-1:<account-id>:function:<function-name>\nBEDROCK_SCHEMA_S3_BUCKET=your-bucket\n";
       } else if (framework === "n8n") {
+        // n8n is TypeScript-only (format is already forced by TS_ONLY_FRAMEWORKS) --
+        // nodes run inside n8n's own Node.js process, there's no real
+        // "Python custom node" mechanism.
+        const n8nPackageName = `n8n-nodes-${agentSlug}`;
+        const n8nNodeTypeName = n8nCamelCase(agentSlug);
+        const n8nCredentialTypeName = n8nCamelCase(agentSlug) + "Api";
         files["workflow.json"] = JSON.stringify({
           name: `${agent.name} Workflow`,
           nodes: [
             { id: "start", name: "Start", type: "n8n-nodes-base.manualTrigger", position: [250, 300], parameters: {} },
-            { id: "agent", name: agent.name, type: `n8n-nodes-custom.${agentSlug}`, position: [500, 300],
-              parameters: { systemPrompt: systemPrompt.substring(0, 300), maxIterations, llmProvider } },
+            { id: "agent", name: agent.name, type: `${n8nPackageName}.${n8nNodeTypeName}`, position: [500, 300],
+              parameters: { task: "", systemPrompt: systemPrompt.substring(0, 300), maxIterations } },
             ...tools.map((t, i) => ({
-              id: `tool_${t.name}`, name: t.name, type: `n8n-nodes-custom.${t.name}`,
-              position: [750, 150 + i * 150], parameters: {}
+              id: `tool_${t.name}`, name: t.name, type: `${n8nPackageName}.${n8nNodeTypeName}Tools`,
+              position: [750, 150 + i * 150], parameters: { toolName: t.name }
             })),
           ],
           connections: {
@@ -4984,55 +6957,68 @@ def list_policies():
             [agent.name]: { main: [tools.map(t => ({ node: t.name, type: "main", index: 0 }))] },
           },
         }, null, 2);
-        if (format === "typescript") {
-          files["nodes/AgentNode.ts"] = `// N8N Custom Agent Node\n// Generated for ${agent.name}\nimport { IExecuteFunctions, INodeType, INodeTypeDescription } from "n8n-workflow";\n\nexport class AgentNode implements INodeType {\n  description: INodeTypeDescription = {\n    displayName: "${agent.name}",\n    name: "${agentSlug}",\n    group: ["transform"],\n    version: 1,\n    description: "${agent.description || "Custom agent node"}",\n    defaults: { name: "${agent.name}" },\n    inputs: ["main"],\n    outputs: ["main"],\n    properties: [\n      { displayName: "System Prompt", name: "systemPrompt", type: "string", default: "" },\n      { displayName: "Max Iterations", name: "maxIterations", type: "number", default: ${maxIterations} },\n    ],\n  };\n\n  async execute(this: IExecuteFunctions) {\n    const items = this.getInputData();\n    // TODO: Implement agent logic with LLM calls\n    return [items];\n  }\n}\n`;
-          files["nodes/ToolNode.ts"] = `// N8N Custom Tool Node\n// Generated for ${agent.name} tools\nimport { IExecuteFunctions, INodeType, INodeTypeDescription } from "n8n-workflow";\nimport { loadTools } from "../tools";\n\nexport class ToolNode implements INodeType {\n  description: INodeTypeDescription = {\n    displayName: "Agent Tools",\n    name: "${agentSlug}-tools",\n    group: ["transform"],\n    version: 1,\n    description: "Tool execution node",\n    defaults: { name: "Agent Tools" },\n    inputs: ["main"],\n    outputs: ["main"],\n    properties: [\n      { displayName: "Tool Name", name: "toolName", type: "options",\n        options: [${tools.map(t => `{ name: "${t.name}", value: "${t.name}" }`).join(", ")}],\n        default: "${tools[0]?.name || ""}" },\n    ],\n  };\n\n  async execute(this: IExecuteFunctions) {\n    const items = this.getInputData();\n    const tools = loadTools();\n    // TODO: Execute selected tool\n    return [items];\n  }\n}\n`;
-          files["credentials/AgentCredentials.json"] = JSON.stringify({
-            name: `${agentSlug}Credentials`, displayName: `${agent.name} Credentials`,
-            properties: [{ displayName: llmProvider === "openai" ? "OpenAI API Key" : "Anthropic API Key",
-              name: "apiKey", type: "string", default: "" }],
-          }, null, 2);
-          files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
-          const deps = { ...baseDeps, "n8n-workflow": pin ? "1.69.2" : "^1.0.0" }; addLlmDep(deps, []);
-          files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node nodes/AgentNode.ts" }, dependencies: deps }, null, 2);
-        } else {
-          files["nodes/agent_node.py"] = `# N8N Custom Agent Node (Python)\n# Generated for ${agent.name}\nfrom tools import load_tools\n\nclass AgentNode:\n    \"\"\"${agent.name} - Custom agent node for N8N.\"\"\"\n    def __init__(self):\n        self.tools = load_tools()\n        self.max_iterations = ${maxIterations}\n        self.system_prompt = \"\"\"${systemPrompt.substring(0, 200)}\"\"\"\n\n    def execute(self, input_data):\n        # TODO: Implement agent logic with LLM calls\n        return input_data\n`;
-          files["nodes/tool_node.py"] = `# N8N Custom Tool Node (Python)\n# Generated for ${agent.name} tools\nfrom tools import load_tools\n\nclass ToolNode:\n    \"\"\"Tool execution node.\"\"\"\n    def __init__(self):\n        self.tools = load_tools()\n\n    def execute(self, tool_name: str, params: dict):\n        if tool_name in self.tools:\n            return self.tools[tool_name](params)\n        raise ValueError(f"Unknown tool: {tool_name}")\n`;
-          files["credentials/AgentCredentials.json"] = JSON.stringify({
-            name: `${agentSlug}Credentials`, displayName: `${agent.name} Credentials`,
-            properties: [{ displayName: llmProvider === "openai" ? "OpenAI API Key" : "Anthropic API Key",
-              name: "apiKey", type: "string", default: "" }],
-          }, null, 2);
-          files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
-          const reqs = [...baseReqs]; addLlmDep({}, reqs);
-          files["requirements.txt"] = reqs.join("\n") + "\n";
-        }
-      } else if (framework === "vertex") {
+        files["nodes/AgentNode.node.ts"] = aiResult?.entrypoint || generateN8nAgentNodeFile(agent.name, agentSlug, n8nCredentialTypeName, systemPrompt, tools, maxIterations, completionPromise, llmProvider);
+        files["nodes/ToolNode.node.ts"] = generateN8nToolNodeFile(agentSlug, tools);
+        files["credentials/AgentCredentials.credentials.ts"] = generateN8nCredentialsFile(agent.name, n8nCredentialTypeName, llmProvider);
+        files["tools/index.ts"] = generateTsToolsIndex(tools);
+        for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+        const n8nDeps: Record<string, string> = { ...baseDeps };
+        if (llmProvider === "openai") n8nDeps["openai"] = pin ? "4.77.0" : "^4.0.0"; else n8nDeps["@anthropic-ai/sdk"] = pin ? "0.30.1" : "^0.30.0";
+        files["package.json"] = JSON.stringify({
+          name: n8nPackageName,
+          version: "1.0.0",
+          private: true,
+          scripts: { build: "tsc", dev: "tsc --watch" },
+          dependencies: n8nDeps,
+          devDependencies: {
+            typescript: pin ? "5.6.3" : "^5.0.0",
+            "n8n-workflow": pin ? "1.69.2" : "^1.0.0",
+            "@types/node": pin ? "20.17.12" : "^20.0.0",
+          },
+          n8n: {
+            n8nNodesApiVersion: 1,
+            credentials: ["dist/credentials/AgentCredentials.credentials.js"],
+            nodes: ["dist/nodes/AgentNode.node.js", "dist/nodes/ToolNode.node.js"],
+          },
+        }, null, 2);
+        files["tsconfig.json"] = `{\n  "compilerOptions": {\n    "target": "ES2019",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "declaration": true,\n    "outDir": "dist"\n  },\n  "include": ["nodes/**/*.ts", "credentials/**/*.ts", "tools/**/*.ts"]\n}\n`;
+        files["README.md"] = `# ${agent.name} — n8n Community Node\n\n${agent.description || ""}\n\n## Install\n\n\`\`\`bash\nnpm install\nnpm run build\n\`\`\`\n\nThen install this package into your n8n instance as a community node (Settings → Community Nodes → install from local path, or publish to npm and install by package name).\n\n## Configure\n\nAdd credentials of type "${agent.name} Credentials" with your ${llmProvider === "openai" ? "OpenAI" : "Anthropic"} API key, then add the "${agent.name}" node to a workflow. \`workflow.json\` is an example workflow you can import directly.\n`;
+        // n8n nodes get credentials from n8n's own Credentials UI at
+        // runtime (getCredentials()), not from a .env file -- explaining
+        // that here instead of writing a misleading OPENAI_API_KEY=... file.
+        files[".env.example"] = `# ${agent.name} gets its API key from n8n's own Credentials UI, not from\n# environment variables -- see README.md > Configure.\n`;
+      } else if (framework === "adk") {
+        // Google Agent Development Kit (ADK) hosts Gemini -- not the user's
+        // OpenAI/Anthropic provider choice directly -- so the generative
+        // model is always Gemini regardless of llmProvider. Replaces the old
+        // raw Vertex AI SDK target; ADK is Google's current recommended
+        // code-first path (supports both a Vertex-backed and a simpler
+        // Gemini-API-key backend -- see .env.example below).
         files["agent-config.json"] = JSON.stringify({
           displayName: agent.name, description: agent.description || "",
-          generativeModel: "gemini-2.0-flash",
+          generativeModel: "gemini-flash-latest",
           instruction: systemPrompt.substring(0, 500),
           tools: tools.map(t => ({ name: t.name, description: t.description || "", parameters: t.parameters || {} })),
           maxIterations,
         }, null, 2);
         if (format === "typescript") {
-          files["entrypoint.ts"] = `// GCP Vertex AI Agent Entry Point\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadExtensions } from "./extensions";\n\nconst agentConfig = JSON.parse(fs.readFileSync("agent-config.json", "utf-8"));\nconst config = yaml.load(fs.readFileSync("agent.yaml", "utf-8")) as any;\nconst extensions = loadExtensions();\n\nasync function main() {\n  console.log(\`[Vertex AI Agent] \${agentConfig.displayName} starting...\`);\n  console.log(\`Extensions loaded: \${Object.keys(extensions).join(", ")}\`);\n  const completionToken: string = (config as any)?.agent?.completion_token ?? "${completionPromise}";\n  for (let iteration = 1; iteration <= ${maxIterations}; iteration++) {\n    console.log(\`Iteration \${iteration}\`);\n    // TODO: Call Vertex AI Gemini, invoke extensions, capture response\n    // const response = await callGemini(query, extensions);\n    // if (response.includes(completionToken)) break;\n    break; // placeholder — remove once Gemini call is wired up\n  }\n}\n\nmain().catch(console.error);\n`;
-          files["extensions/index.ts"] = `// Vertex AI Extension implementations\n${tools.map(t => `export { default as ${t.name} } from "../tools/${t.name}";`).join("\n")}\n\nexport function loadExtensions() {\n  return { ${tools.map(t => t.name).join(", ")} };\n}\n`;
+          files["src/agent.ts"] = aiResult?.entrypoint || generateAdkAgentFile(agent.name, systemPrompt, tools, maxIterations, completionPromise, "typescript");
           files["tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
-          const deps = { ...baseDeps, "@google-cloud/aiplatform": pin ? "3.34.0" : "^3.0.0" }; addLlmDep(deps, []);
-          files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node entrypoint.ts" }, dependencies: deps }, null, 2);
+          // Not pinned to an exact version even when pinVersions is set --
+          // this SDK is under active development and we don't have a
+          // verified-current exact version to lock to.
+          const deps = { ...baseDeps, "@google/adk": pin ? "0.1.0" : "^0.1.0" };
+          files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node src/agent.ts" }, dependencies: deps }, null, 2);
         } else {
-          files["entrypoint.py"] = `# GCP Vertex AI Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom extensions import load_extensions\n\nwith open("agent-config.json") as f:\n    agent_config = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nextensions = load_extensions()\n\ndef main():\n    print(f"[Vertex AI Agent] {agent_config['displayName']} starting...")\n    print(f"Extensions loaded: {', '.join(extensions.keys())}")\n    completion_token = config.get("agent", {}).get("completion_token", "${completionPromise}")\n    for iteration in range(1, ${maxIterations} + 1):\n        print(f"Iteration {iteration}")\n        # TODO: Call Vertex AI Gemini, invoke extensions, capture response\n        # response = call_gemini(query, extensions)\n        # if completion_token in response:\n        #     break\n        break  # placeholder — remove once Gemini call is wired up\n\nif __name__ == "__main__":\n    main()\n`;
-          files["extensions/__init__.py"] = `# Vertex AI Extension implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_extensions():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
+          files["src/agent.py"] = aiResult?.entrypoint || generateAdkAgentFile(agent.name, systemPrompt, tools, maxIterations, completionPromise, "python");
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
-          const reqs = [...baseReqs, pin ? "google-cloud-aiplatform==1.60.0" : "google-cloud-aiplatform>=1.60.0"]; addLlmDep({}, reqs);
+          const reqs = [...baseReqs, "google-adk>=0.1.0"];
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
-        files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
+        files[".env.example"] = "# Simplest path -- Gemini Developer API key (no GCP project needed):\nGOOGLE_GENAI_USE_VERTEXAI=FALSE\nGOOGLE_API_KEY=your-gemini-api-key\n\n# Alternative -- Vertex AI backend (uncomment and fill in instead):\n# GOOGLE_GENAI_USE_VERTEXAI=TRUE\n# GOOGLE_CLOUD_PROJECT=your-gcp-project-id\n# GOOGLE_CLOUD_LOCATION=us-central1\n# GOOGLE_APPLICATION_CREDENTIALS=\n\nADK_MODEL=gemini-flash-latest\n";
+        files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy.replace("entrypoint.py", "src/agent.py"));
       } else if (framework === "databricks") {
         // Databricks AgentBricks (Mosaic AI Agent Framework) — Python only
         const dbxEndpoint = llmProvider === "openai" ? "databricks-meta-llama-3-3-70b-instruct" : "databricks-claude-3-5-sonnet";
@@ -6136,8 +8122,7 @@ jobs:
         ].join("\n") + "\n";
       } else if (framework === "autogen") {
         // AutoGen (Microsoft) — Python only
-        const autoGenTemplate = `# AutoGen Multi-Agent Orchestration\n# Generated for ${agent.name}\nimport os\nimport sys\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\nimport autogen\nfrom tools import load_tools\n\nconfig_list = autogen.config_list_from_json("OAI_CONFIG_LIST")\n\nassistant = autogen.AssistantAgent(\n    name="${agentSlug}_assistant",\n    system_message="""${systemPrompt.substring(0, 400).replace(/`/g, "'").replace(/\\/g, "\\\\")}""",\n    llm_config={"config_list": config_list, "max_tokens": 4096},\n)\n\nuser_proxy = autogen.UserProxyAgent(\n    name="user_proxy",\n    is_termination_msg=lambda msg: "${completionPromise}" in (msg.get("content") or ""),\n    human_input_mode="NEVER",\n    max_consecutive_auto_reply=${maxIterations},\n    code_execution_config=False,\n)\n\n# Register tools\ntools = load_tools()\nfor tool_name, tool_fn in tools.items():\n    autogen.register_function(\n        tool_fn,\n        caller=assistant,\n        executor=user_proxy,\n        name=tool_name,\n        description=tool_fn.__doc__ or tool_name,\n    )\n\n\ndef run(task: str) -> str:\n    user_proxy.initiate_chat(assistant, message=task)\n    last = user_proxy.last_message(assistant)\n    return (last or {}).get("content", "")\n\n\nif __name__ == "__main__":\n    run("Hello, what can you help me with?")\n`;
-        files["src/autogen_agent.py"] = aiResult?.entrypoint || autoGenTemplate;
+        files["src/autogen_agent.py"] = aiResult?.entrypoint || generateAutoGenAgentFile(agent.name, agentSlug, systemPrompt, tools, maxIterations, completionPromise);
         files["tools/__init__.py"] = generatePyToolsInit(tools);
         for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
         // AutoGen uses OpenAI-compatible API format; for Anthropic users must proxy via LiteLLM or use azure_openai_api_type
@@ -6150,11 +8135,7 @@ jobs:
         files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/autogen_agent.py");
       } else if (framework === "semantic-kernel") {
         // Semantic Kernel (Microsoft) — Python only
-        const skServiceSetup = llmProvider === "openai"
-          ? `from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion\n\nSERVICE_ID = os.environ.get("SK_SERVICE_ID", "${agentSlug}")\nkernel = Kernel()\nkernel.add_service(OpenAIChatCompletion(service_id=SERVICE_ID, ai_model_id="gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))`
-          : `from semantic_kernel.connectors.ai.anthropic import AnthropicChatCompletion\n\nSERVICE_ID = os.environ.get("SK_SERVICE_ID", "${agentSlug}")\nkernel = Kernel()\n# Requires: pip install semantic-kernel[anthropic]\nkernel.add_service(AnthropicChatCompletion(service_id=SERVICE_ID, ai_model_id="claude-3-5-sonnet-20241022", api_key=os.environ["ANTHROPIC_API_KEY"]))`;
-        const skTemplate = `# Semantic Kernel Agent\n# Generated for ${agent.name}\nimport asyncio\nimport os\nimport sys\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\nfrom semantic_kernel import Kernel\nfrom semantic_kernel.functions import kernel_function\nfrom tools import load_tools\n\n${skServiceSetup}\n\n# Register tools as Semantic Kernel plugins\nclass AgentPlugin:\n${tools.length > 0 ? tools.map(t => `    @kernel_function(name="${t.name}", description="${(t.description || t.name).replace(/"/g, "'")}")\n    async def ${t.name}(self, **kwargs) -> str:\n        from tools.${t.name} import ${t.name} as _fn\n        return str(_fn(kwargs))`).join("\n\n") : "    pass"}\n\nkernel.add_plugin(AgentPlugin(), plugin_name="${agentSlug}_tools")\n\n\nasync def run(task: str) -> str:\n    from semantic_kernel.connectors.ai import PromptExecutionSettings\n    from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior\n    settings = PromptExecutionSettings(extension_data={"max_tokens": 4096})\n    settings.function_choice_behavior = FunctionChoiceBehavior.Auto(max_auto_invoke_attempts=${maxIterations})\n    result = await kernel.invoke_prompt(task, service_id=SERVICE_ID, settings=settings)\n    return str(result)\n\n\nif __name__ == "__main__":\n    asyncio.run(run("Hello, what can you help me with?"))\n`;
-        files["src/kernel_agent.py"] = aiResult?.entrypoint || skTemplate;
+        files["src/kernel_agent.py"] = aiResult?.entrypoint || generateSemanticKernelAgentFile(agent.name, agentSlug, systemPrompt, tools, maxIterations, llmProvider);
         files["tools/__init__.py"] = generatePyToolsInit(tools);
         for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
         const skReqs = [...baseReqs, pin ? "semantic-kernel==1.14.0" : "semantic-kernel>=1.14.0"]; addLlmDep({}, skReqs);
@@ -6162,19 +8143,15 @@ jobs:
         files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/kernel_agent.py");
       } else if (framework === "openai-assistants") {
         // OpenAI Assistants API — TypeScript or Python
-        const toolDefsTs = tools.map(t => `{ type: "function" as const, function: { name: "${t.name}", description: "${(t.description || t.name).replace(/"/g, "'")}", parameters: ${JSON.stringify(t.parameters || { type: "object", properties: {} })} } }`).join(", ");
-        const oaiAssistantsTemplateTs = `// OpenAI Assistants API Agent\n// Generated for ${agent.name}\nimport OpenAI from "openai";\nimport { loadTools } from "../tools";\n\nconst client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });\nconst tools = loadTools();\n\nasync function getOrCreateAssistant(): Promise<string> {\n  if (process.env.OPENAI_ASSISTANT_ID) return process.env.OPENAI_ASSISTANT_ID;\n  const assistant = await client.beta.assistants.create({\n    name: "${agent.name}",\n    instructions: \`${systemPrompt.substring(0, 400).replace(/`/g, "'")}\`,\n    model: "gpt-4o",\n    tools: [${toolDefsTs}],\n  });\n  console.log(\`# Save this to your .env:\\nOPENAI_ASSISTANT_ID=\${assistant.id}\`);\n  return assistant.id;\n}\n\nasync function run(userMessage: string): Promise<string> {\n  const assistantId = await getOrCreateAssistant();\n  const thread = await client.beta.threads.create();\n  await client.beta.threads.messages.create(thread.id, { role: "user", content: userMessage });\n\n  let runObj = await client.beta.threads.runs.create(thread.id, { assistant_id: assistantId });\n\n  let attempts = 0;\n  while (attempts < ${maxIterations}) {\n    attempts++;\n    await new Promise(r => setTimeout(r, 1000));\n    runObj = await client.beta.threads.runs.retrieve(thread.id, runObj.id);\n\n    if (runObj.status === "completed") break;\n    if (runObj.status === "requires_action") {\n      const toolCalls = runObj.required_action?.submit_tool_outputs?.tool_calls || [];\n      const outputs = await Promise.all(toolCalls.map(async tc => {\n        const toolFn = tools[tc.function.name];\n        const result = toolFn ? await Promise.resolve(toolFn(JSON.parse(tc.function.arguments) as Record<string, unknown>)) : {};\n        return { tool_call_id: tc.id, output: JSON.stringify(result ?? {}) };\n      }));\n      await client.beta.threads.runs.submitToolOutputs(thread.id, runObj.id, { tool_outputs: outputs });\n    }\n    if (["failed", "cancelled", "expired"].includes(runObj.status)) break;\n  }\n\n  const messages = await client.beta.threads.messages.list(thread.id);\n  const last = messages.data.find(m => m.role === "assistant");\n  const firstContent = last?.content?.[0];\n  return (firstContent && "text" in firstContent) ? firstContent.text.value : "";\n}\n\nrun("Hello, what can you help me with?").then(console.log).catch(console.error);\n`;
-        const toolDefsPy = tools.map(t => `{"type": "function", "function": {"name": "${t.name}", "description": "${(t.description || t.name).replace(/"/g, "'")}", "parameters": ${JSON.stringify(t.parameters || { type: "object", properties: {} })}}}`).join(", ");
-        const oaiAssistantsTemplatePy = `# OpenAI Assistants API Agent\n# Generated for ${agent.name}\nimport os\nimport sys\nimport time\nimport json\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\nfrom openai import OpenAI\nfrom tools import load_tools\n\nclient = OpenAI(api_key=os.environ["OPENAI_API_KEY"])\ntools = load_tools()\n\nTOOL_DEFS = [${toolDefsPy}]\n\n\ndef get_or_create_assistant() -> str:\n    aid = os.environ.get("OPENAI_ASSISTANT_ID", "")\n    if aid:\n        return aid\n    assistant = client.beta.assistants.create(\n        name="${agent.name}",\n        instructions="""${systemPrompt.substring(0, 400).replace(/"/g, "'").replace(/\\/g, "\\\\")}""",\n        model="gpt-4o",\n        tools=TOOL_DEFS,\n    )\n    print(f"# Save this to your .env:\\nOPENAI_ASSISTANT_ID={assistant.id}")\n    return assistant.id\n\n\ndef run(user_message: str) -> str:\n    assistant_id = get_or_create_assistant()\n    thread = client.beta.threads.create()\n    client.beta.threads.messages.create(thread_id=thread.id, role="user", content=user_message)\n    run_obj = client.beta.threads.runs.create(thread_id=thread.id, assistant_id=assistant_id)\n\n    for _ in range(${maxIterations}):\n        time.sleep(1)\n        run_obj = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run_obj.id)\n        if run_obj.status == "completed":\n            break\n        if run_obj.status == "requires_action":\n            tool_calls = run_obj.required_action.submit_tool_outputs.tool_calls\n            outputs = []\n            for tc in tool_calls:\n                fn = tools.get(tc.function.name)\n                result = fn(json.loads(tc.function.arguments)) if fn else {}\n                outputs.append({"tool_call_id": tc.id, "output": json.dumps(result)})\n            client.beta.threads.runs.submit_tool_outputs(thread_id=thread.id, run_id=run_obj.id, tool_outputs=outputs)\n        if run_obj.status in ("failed", "cancelled", "expired"):\n            break\n\n    msgs = client.beta.threads.messages.list(thread_id=thread.id)\n    last = next((m for m in msgs.data if m.role == "assistant"), None)\n    return last.content[0].text.value if last else ""\n\n\nif __name__ == "__main__":\n    print(run("Hello, what can you help me with?"))\n`;
         if (format === "typescript") {
-          files["src/assistants_agent.ts"] = aiResult?.entrypoint || oaiAssistantsTemplateTs;
+          files["src/assistants_agent.ts"] = aiResult?.entrypoint || generateOpenAiAssistantsAgentFile(agent.name, systemPrompt, tools, maxIterations, "typescript");
           files["tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
           const deps = { ...baseDeps, openai: pin ? "4.77.0" : "^4.0.0" };
           files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node src/assistants_agent.ts" }, dependencies: deps }, null, 2);
           files["Dockerfile"] = aiResult?.dockerfile || dockerfile;
         } else {
-          files["src/assistants_agent.py"] = aiResult?.entrypoint || oaiAssistantsTemplatePy;
+          files["src/assistants_agent.py"] = aiResult?.entrypoint || generateOpenAiAssistantsAgentFile(agent.name, systemPrompt, tools, maxIterations, "python");
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           const oaiReqs = [...baseReqs, pin ? "openai==1.58.1" : "openai>=1.0"];
@@ -6182,16 +8159,49 @@ jobs:
           files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/assistants_agent.py");
         }
         files[".env.example"] = envExample + "OPENAI_ASSISTANT_ID=asst_your-assistant-id\n";
+      } else if (framework === "openai-agents") {
+        // OpenAI Agents SDK — TypeScript or Python, OpenAI's current
+        // recommended path (Assistants API above is being sunset Aug 2026).
+        if (format === "typescript") {
+          files["src/agent.ts"] = aiResult?.entrypoint || generateOpenAiAgentsSdkFile(agent.name, systemPrompt, tools, maxIterations, completionPromise, "typescript");
+          files["tools/index.ts"] = generateTsToolsIndex(tools);
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          const deps = { ...baseDeps, "@openai/agents": pin ? "0.12.0" : "^0.1.0" };
+          files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node src/agent.ts" }, dependencies: deps }, null, 2);
+          files["Dockerfile"] = aiResult?.dockerfile || dockerfile;
+        } else {
+          files["src/agent.py"] = aiResult?.entrypoint || generateOpenAiAgentsSdkFile(agent.name, systemPrompt, tools, maxIterations, completionPromise, "python");
+          files["tools/__init__.py"] = generatePyToolsInit(tools);
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
+          // Not pinned to an exact version even when pinVersions is set --
+          // this SDK is under active development and we don't have a
+          // verified-current exact version to lock to.
+          const reqs = [...baseReqs, "openai-agents>=0.1.0"];
+          files["requirements.txt"] = reqs.join("\n") + "\n";
+          files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/agent.py");
+        }
+        files[".env.example"] = "OPENAI_API_KEY=sk-your-api-key-here\nOPENAI_AGENT_MODEL=gpt-4o\n";
+      } else if (framework === "ms-agent-framework") {
+        // Microsoft Agent Framework — Python only; unifies AutoGen + Semantic Kernel
+        files["src/agent.py"] = aiResult?.entrypoint || generateMsAgentFrameworkFile(agent.name, systemPrompt, tools, maxIterations, completionPromise, llmProvider);
+        files["tools/__init__.py"] = generatePyToolsInit(tools);
+        for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
+        // Not pinned to an exact version even when pinVersions is set -- this
+        // package is under active development post-GA (April 2026) and we
+        // don't have a verified-current exact version to lock to.
+        const mafReqs = [...baseReqs, "agent-framework>=0.1.0"]; addLlmDep({}, mafReqs);
+        files["requirements.txt"] = mafReqs.join("\n") + "\n";
+        files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/agent.py");
       } else if (framework === "claude-code") {
         // Claude Code SDK — TypeScript only, Anthropic only
-        const ccToolDefs = tools.length > 0
-          ? tools.map(t => `  {\n    name: "${t.name}",\n    description: "${(t.description || t.name).replace(/"/g, "'")}",\n    input_schema: ${JSON.stringify(t.parameters || { type: "object", properties: {} })},\n    run: async (input: Record<string, unknown>): Promise<string> => {\n      const fn = toolRegistry["${t.name}"];\n      if (!fn) throw new Error("Tool not found: ${t.name}");\n      return JSON.stringify((await Promise.resolve(fn(input))) ?? {});\n    },\n  }`).join(",\n")
-          : "  /* no tools configured */";
-        const claudeCodeTemplate = `// Claude Code SDK Agent\n// Generated for ${agent.name}\n// Requires: Claude Pro/Max/Team subscription\n// Install: npm install @anthropic-ai/claude-code\nimport { query } from "@anthropic-ai/claude-code";\nimport { loadTools } from "../tools";\n\nconst SYSTEM_PROMPT = \`${systemPrompt.substring(0, 400).replace(/`/g, "'")}\`;\nconst toolRegistry = loadTools();\n\nconst customTools = [\n${ccToolDefs}\n];\n\nexport async function run(task: string): Promise<void> {\n  let turnCount = 0;\n  let totalTokens = 0;\n\n  for await (const message of query({\n    prompt: task,\n    options: {\n      maxTurns: ${maxIterations},\n      systemPrompt: SYSTEM_PROMPT,\n      customTools,\n      cwd: process.cwd(),\n    },\n  })) {\n    turnCount++;\n    if (message.type === "assistant") {\n      for (const block of message.message.content) {\n        if (block.type === "text") console.log("[Turn " + turnCount + "] " + block.text);\n        else if (block.type === "tool_use") console.log("[Tool] " + block.name + "(" + JSON.stringify(block.input) + ")");\n      }\n      const usage = (message.message as Record<string, unknown>).usage as Record<string, number> | undefined;\n      if (usage) totalTokens += ((usage["input_tokens"] as number) ?? 0) + ((usage["output_tokens"] as number) ?? 0);\n    } else if (message.type === "result") {\n      console.log("Result: " + (message as Record<string, unknown>)["result"]);\n      console.log("Turns: " + turnCount + " | Tokens: " + totalTokens);\n    }\n  }\n}\n\nif (require.main === module) {\n  const task = process.argv[2] ?? "Hello, what can you help me with?";\n  run(task).catch(console.error);\n}\n`;
+        const claudeCodeTemplate = generateClaudeCodeAgentFile(agent.name, agentSlug, systemPrompt, tools, mcpServerDetails, maxIterations);
         files["src/claude_code_agent.ts"] = aiResult?.entrypoint || claudeCodeTemplate;
         files["tools/index.ts"] = generateTsToolsIndex(tools);
         for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
-        const ccDeps = { ...baseDeps, "@anthropic-ai/claude-code": pin ? "0.2.35" : "^0.2.0" };
+        // Not version-pinned even when pinVersions is set -- the SDK ships
+        // frequent breaking releases and we don't have a verified-current
+        // exact version to lock to; check npm for the latest before deploying.
+        const ccDeps = { ...baseDeps, "@anthropic-ai/claude-agent-sdk": "^0.1.0", zod: pin ? "3.24.1" : "^3.23.0" };
         files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node src/claude_code_agent.ts" }, dependencies: ccDeps }, null, 2);
         files["Dockerfile"] = aiResult?.dockerfile || dockerfile;
         files[".env.example"] = "ANTHROPIC_API_KEY=sk-ant-your-api-key-here\n# Claude Pro/Max/Team subscription required for Claude Code SDK\n";
@@ -6358,9 +8368,11 @@ spec:
           autogen:             { ts: "python src/autogen_agent.py", py: "python src/autogen_agent.py" },
           "semantic-kernel":   { ts: "python src/kernel_agent.py", py: "python src/kernel_agent.py" },
           "openai-assistants": { ts: "npx ts-node src/assistants_agent.ts", py: "python src/assistants_agent.py" },
+          "openai-agents":     { ts: "npx ts-node src/agent.ts", py: "python src/agent.py" },
+          "ms-agent-framework": { ts: "python src/agent.py", py: "python src/agent.py" },
           bedrock:             { ts: "npx ts-node lambda/handler.ts", py: "python lambda/handler.py" },
           n8n:                 { ts: "npx ts-node nodes/AgentNode.ts", py: "python nodes/agent_node.py" },
-          vertex:              { ts: "npx ts-node entrypoint.ts", py: "python entrypoint.py" },
+          adk:                 { ts: "npx ts-node src/agent.ts", py: "python src/agent.py" },
           databricks:          { ts: "python agent.py", py: "python agent.py" },
           "claude-code":       { ts: "npx ts-node src/claude_code_agent.ts", py: "npx ts-node src/claude_code_agent.ts" },
         };
@@ -6516,8 +8528,12 @@ clean:
         }
 
         const generatedAt = new Date().toISOString();
-        const totalStubs = toolsNeedingWork.length + (files[skillsFile] && /not_implemented/.test(files[skillsFile] || "") ? matchedSkills.length : 0);
-        const aiToolCount = aiAdapterNames.size;
+        // Assign to the route-scoped vars (declared near aiResult) rather than
+        // shadowing with const, so the "done" event's metadata below can report
+        // the real, post-generation stub count instead of a pre-generation guess.
+        totalStubs = toolsNeedingWork.length + (files[skillsFile] && /not_implemented/.test(files[skillsFile] || "") ? matchedSkills.length : 0);
+        aiToolCount = aiAdapterNames.size;
+        stubToolNames = toolsNeedingWork.map(t => t.name);
 
         const whatToImplementLines = [
           `# What You Need To Implement`,
@@ -6585,6 +8601,9 @@ clean:
           framework,
           pattern: "react_loop",
           toolAdapters: toolAdapters || {},
+          totalStubs,
+          aiToolCount,
+          stubToolNames,
           pinVersions,
           generatedAt: new Date().toISOString(),
           aiGenerated: !!aiResult,
@@ -6627,15 +8646,19 @@ clean:
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
         maxIterations: z.number().int().positive().default(10),
         completionPromise: z.string().default("TASK_COMPLETE"),
-        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks", "claude-code"]).default("generic"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "openai-agents", "ms-agent-framework", "bedrock", "n8n", "adk", "databricks", "claude-code"]).default("generic"),
         pinVersions: z.boolean().default(true),
       });
       const { format: rawFormat, llmProvider, maxIterations, completionPromise, framework, pinVersions } = bundleSchema.parse(req.body || {});
-      const BUNDLE_PYTHON_ONLY = ["foundry", "autogen", "semantic-kernel"];
-      const BUNDLE_TS_ONLY = ["claude-code"];
+      // crewai has no official JS/TS package -- it's Python-only in reality.
+      const BUNDLE_PYTHON_ONLY = ["foundry", "autogen", "semantic-kernel", "crewai", "ms-agent-framework"];
+      // n8n has no real Python custom-node mechanism -- nodes run inside
+      // n8n's own Node.js process and are always TypeScript/JavaScript.
+      const BUNDLE_TS_ONLY = ["claude-code", "n8n"];
       const format = BUNDLE_PYTHON_ONLY.includes(framework) ? "python" : BUNDLE_TS_ONLY.includes(framework) ? "typescript" : rawFormat;
-      // claude-code always requires Anthropic regardless of client request
-      const resolvedBundleProvider = BUNDLE_TS_ONLY.includes(framework) ? "anthropic" as const : llmProvider;
+      // claude-code always requires Anthropic regardless of client request --
+      // n8n has no such restriction, it just can't be Python.
+      const resolvedBundleProvider = framework === "claude-code" ? "anthropic" as const : llmProvider;
 
       emit("progress", { phase: "data", message: "Fetching team member agents..." });
       // Fetch all member agents
@@ -6747,10 +8770,8 @@ clean:
         if (framework === "claude-code") {
           // Claude Code SDK — TypeScript only, Anthropic only
           const agentIter = agentRec.maxToolIterations || maxIterations;
-          const ccToolDefs = tools.length > 0
-            ? tools.map(t => `  {\n    name: "${t.name}",\n    description: "${(t.description || t.name).replace(/"/g, "'")}",\n    input_schema: ${JSON.stringify(t.parameters || { type: "object", properties: {} })},\n    run: async (input: Record<string, unknown>): Promise<string> => {\n      const fn = toolRegistry["${t.name}"];\n      if (!fn) throw new Error("Tool not found: ${t.name}");\n      return JSON.stringify((await Promise.resolve(fn(input))) ?? {});\n    },\n  }`).join(",\n")
-            : "  /* no tools configured */";
-          const ccTemplate = `// Claude Code SDK Agent\n// Generated for ${agentRec.name}\n// Requires: Claude Pro/Max/Team subscription\n// Install: npm install @anthropic-ai/claude-code\nimport { query } from "@anthropic-ai/claude-code";\nimport { loadTools } from "../tools";\n\nconst SYSTEM_PROMPT = \`${systemPrompt.substring(0, 400).replace(/`/g, "'")}\`;\nconst toolRegistry = loadTools();\n\nconst customTools = [\n${ccToolDefs}\n];\n\nexport async function run(task: string): Promise<void> {\n  let turnCount = 0;\n  let totalTokens = 0;\n\n  for await (const message of query({\n    prompt: task,\n    options: {\n      maxTurns: ${agentIter},\n      systemPrompt: SYSTEM_PROMPT,\n      customTools,\n      cwd: process.cwd(),\n    },\n  })) {\n    turnCount++;\n    if (message.type === "assistant") {\n      for (const block of message.message.content) {\n        if (block.type === "text") console.log("[Turn " + turnCount + "] " + block.text);\n        else if (block.type === "tool_use") console.log("[Tool] " + block.name + "(" + JSON.stringify(block.input) + ")");\n      }\n      const usage = (message.message as Record<string, unknown>).usage as Record<string, number> | undefined;\n      if (usage) totalTokens += ((usage["input_tokens"] as number) ?? 0) + ((usage["output_tokens"] as number) ?? 0);\n    } else if (message.type === "result") {\n      console.log("Result: " + (message as Record<string, unknown>)["result"]);\n      console.log("Turns: " + turnCount + " | Tokens: " + totalTokens);\n    }\n  }\n}\n\nif (require.main === module) {\n  const task = process.argv[2] ?? "Hello, what can you help me with?";\n  run(task).catch(console.error);\n}\n`;
+          const agentSlugCc = agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
+          const ccTemplate = generateClaudeCodeAgentFile(agentRec.name, agentSlugCc, systemPrompt, tools, mcpServerDetails, agentIter);
           localFiles[`${dirPrefix}/src/claude_code_agent.ts`] = aiResult?.entrypoint || ccTemplate;
           localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
           localFiles[`${dirPrefix}/tools/index.ts`] = generateTsToolsIndex(tools);
@@ -6759,11 +8780,15 @@ clean:
           }
           const pin = pinVersions;
           localFiles[`${dirPrefix}/package.json`] = JSON.stringify({
-            name: agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
+            name: agentSlugCc,
             version: "1.0.0",
             scripts: { start: "ts-node src/claude_code_agent.ts", build: "tsc" },
             dependencies: {
-              "@anthropic-ai/claude-code": pin ? "0.2.35" : "^0.2.0",
+              // Not version-pinned even when pinVersions is set -- the SDK
+              // ships frequent breaking releases and we don't have a
+              // verified-current exact version to lock to.
+              "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+              zod: pin ? "3.24.1" : "^3.23.0",
               "js-yaml": pin ? "4.1.0" : "^4.1.0",
             },
             devDependencies: {
@@ -7453,6 +9478,313 @@ clean:
           }
 
           localFiles[`${dirPrefix}/.github/workflows/ci.yml`] = `name: CI — ${agentSlugDbx}\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  workflow_dispatch:\n    inputs:\n      wheel_version:\n        description: "Wheel version to deploy to production"\n        required: true\n\nenv:\n  PYTHON_VERSION: "3.11"\n\njobs:\n  test:\n    name: Test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Install dev dependencies\n        run: pip install -e .[dev]\n      - name: Run tests\n        run: python -m pytest tests/ -v\n\n  build:\n    name: Build wheel\n    needs: test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Build wheel\n        run: pip install --quiet build && python -m build\n      - name: Upload wheel artifact\n        uses: actions/upload-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n\n  deploy-staging:\n    name: Deploy to staging\n    needs: build\n    if: github.ref == 'refs/heads/main' && github.event_name == 'push'\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Download wheel artifact\n        uses: actions/download-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n      - uses: databricks/setup-databricks@v3\n        with:\n          databricks-host: \${{ secrets.DATABRICKS_HOST }}\n          databricks-token: \${{ secrets.DATABRICKS_TOKEN }}\n      - name: Deploy to staging\n        run: |\n          databricks bundle deploy --target staging\n          databricks bundle run deploy_agent --target staging\n\n  deploy-prod:\n    name: Deploy to production\n    needs: build\n    if: github.event_name == 'workflow_dispatch'\n    runs-on: ubuntu-latest\n    environment: production\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Download wheel artifact\n        uses: actions/download-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n      - uses: databricks/setup-databricks@v3\n        with:\n          databricks-host: \${{ secrets.DATABRICKS_HOST_PROD }}\n          databricks-token: \${{ secrets.DATABRICKS_TOKEN_PROD }}\n      - name: Deploy to production\n        run: |\n          databricks bundle deploy --target prod --var "wheel_version=\${{ github.event.inputs.wheel_version }}"\n          databricks bundle run deploy_agent --target prod\n`;
+        } else if (framework === "langgraph") {
+          // Previously this framework silently fell through to the generic
+          // "else" branch below and produced a plain ReAct-loop
+          // orchestrator.ts/py with no LangGraph artifacts at all, regardless
+          // of the framework the user actually selected. Give it its own
+          // real graph.ts/graph.py + langgraph.json + @langchain/langgraph
+          // dependency, same as the single-agent export path.
+          const agentIterLg = agentRec.maxToolIterations || maxIterations;
+          const pinLg = pinVersions;
+          if (format === "typescript") {
+            localFiles[`${dirPrefix}/graph.ts`] = aiResult?.entrypoint || generateLangGraphAgentFile(agentRec.name, systemPrompt, tools, agentIterLg, completionPromise, resolvedBundleProvider, "typescript");
+            localFiles[`${dirPrefix}/tools/index.ts`] = generateTsToolsIndex(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/langgraph.json`] = JSON.stringify({ graphs: { agent: "./graph.ts:app" }, env: resolvedBundleProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
+            const lgDeps: Record<string, string> = { "@langchain/langgraph": pinLg ? "0.2.36" : "^0.2.0", "@langchain/core": pinLg ? "0.3.26" : "^0.3.0", "js-yaml": pinLg ? "4.1.0" : "^4.1.0" };
+            if (resolvedBundleProvider === "openai") lgDeps["openai"] = pinLg ? "4.77.0" : "^4.0.0"; else lgDeps["@anthropic-ai/sdk"] = pinLg ? "0.30.1" : "^0.30.0";
+            localFiles[`${dirPrefix}/package.json`] = JSON.stringify({
+              name: agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
+              version: "1.0.0",
+              scripts: { start: "ts-node graph.ts", build: "tsc", "langgraph:dev": "langgraph dev" },
+              dependencies: lgDeps,
+              devDependencies: { typescript: pinLg ? "5.6.3" : "^5.0.0", "ts-node": pinLg ? "10.9.2" : "^10.9.0", "@types/node": pinLg ? "20.17.12" : "^20.0.0" },
+            }, null, 2) + "\n";
+            localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist"\n  },\n  "include": ["**/*.ts"]\n}\n`;
+          } else {
+            localFiles[`${dirPrefix}/graph.py`] = aiResult?.entrypoint || generateLangGraphAgentFile(agentRec.name, systemPrompt, tools, agentIterLg, completionPromise, resolvedBundleProvider, "python");
+            localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/langgraph.json`] = JSON.stringify({ graphs: { agent: "./graph.py:app" }, env: resolvedBundleProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
+            const lgReqs = [pinLg ? "langgraph==0.2.60" : "langgraph>=0.2.0", pinLg ? "langchain-core==0.3.28" : "langchain-core>=0.3.0", "pydantic>=2.0.0,<3.0.0", pinLg ? "pyyaml==6.0.2" : "pyyaml>=6.0"];
+            if (resolvedBundleProvider === "openai") lgReqs.push(pinLg ? "openai==1.58.1" : "openai>=1.0"); else lgReqs.push(pinLg ? "anthropic==0.30.1" : "anthropic>=0.30");
+            localFiles[`${dirPrefix}/requirements.txt`] = lgReqs.join("\n") + "\n";
+          }
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          const lgLlmKey = resolvedBundleProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
+          localFiles[`${dirPrefix}/.env.example`] = `${lgLlmKey}\nAGENT_NAME=${agentRec.name}\n`;
+        } else if (framework === "crewai") {
+          // Same gap as langgraph had -- this used to fall through to the
+          // generic ReAct-loop orchestrator with no CrewAI artifacts at all.
+          // CrewAI is Python-only (no real JS/TS package), so format here is
+          // already forced to "python" by BUNDLE_PYTHON_ONLY.
+          const agentIterCrew = agentRec.maxToolIterations || maxIterations;
+          const pinCrew = pinVersions;
+          localFiles[`${dirPrefix}/crew.py`] = aiResult?.entrypoint || generateCrewAiAgentFile(agentRec.name, agentRec.description || "", systemPrompt, tools, agentIterCrew, completionPromise, resolvedBundleProvider);
+          localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+          for (const tool of tools) {
+            localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+          }
+          const crewReqs = [pinCrew ? "crewai==0.80.0" : "crewai>=0.80.0", pinCrew ? "pyyaml==6.0.2" : "pyyaml>=6.0"];
+          localFiles[`${dirPrefix}/requirements.txt`] = crewReqs.join("\n") + "\n";
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          const crewLlmKey = resolvedBundleProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
+          localFiles[`${dirPrefix}/.env.example`] = `${crewLlmKey}\nAGENT_NAME=${agentRec.name}\n`;
+        } else if (framework === "autogen") {
+          // Same missing-branch gap as langgraph/crewai had -- this used to
+          // fall through to the generic ReAct-loop orchestrator with no
+          // AutoGen artifacts at all.
+          const agentSlugAutogen = agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
+          const pinAg = pinVersions;
+          localFiles[`${dirPrefix}/src/autogen_agent.py`] = aiResult?.entrypoint || generateAutoGenAgentFile(agentRec.name, agentSlugAutogen, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, completionPromise);
+          localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+          for (const tool of tools) {
+            localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+          }
+          const agModelEntry = resolvedBundleProvider === "openai"
+            ? { model: "gpt-4o", api_key: "${OPENAI_API_KEY}" }
+            : { model: "anthropic/claude-3-5-sonnet-20241022", api_key: "${ANTHROPIC_API_KEY}", api_type: "anthropic" };
+          localFiles[`${dirPrefix}/OAI_CONFIG_LIST`] = JSON.stringify([agModelEntry], null, 2) + "\n";
+          const agReqs = [pinAg ? "pyautogen==0.3.1" : "pyautogen>=0.3.0", pinAg ? "pyyaml==6.0.2" : "pyyaml>=6.0"];
+          localFiles[`${dirPrefix}/requirements.txt`] = agReqs.join("\n") + "\n";
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          const agLlmKey = resolvedBundleProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
+          localFiles[`${dirPrefix}/.env.example`] = `${agLlmKey}\nAGENT_NAME=${agentRec.name}\n`;
+        } else if (framework === "semantic-kernel") {
+          // Same missing-branch gap as langgraph/crewai/autogen had -- this
+          // used to fall through to the generic ReAct-loop orchestrator with
+          // no Semantic Kernel artifacts at all.
+          localFiles[`${dirPrefix}/src/kernel_agent.py`] = aiResult?.entrypoint || generateSemanticKernelAgentFile(agentRec.name, agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"), systemPrompt, tools, agentRec.maxToolIterations || maxIterations, resolvedBundleProvider);
+          localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+          for (const tool of tools) {
+            localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+          }
+          const pinSk = pinVersions;
+          const skReqsBundle = [pinSk ? "semantic-kernel==1.14.0" : "semantic-kernel>=1.14.0", pinSk ? "pyyaml==6.0.2" : "pyyaml>=6.0"];
+          localFiles[`${dirPrefix}/requirements.txt`] = skReqsBundle.join("\n") + "\n";
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          const skLlmKey = resolvedBundleProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
+          localFiles[`${dirPrefix}/.env.example`] = `${skLlmKey}\nAGENT_NAME=${agentRec.name}\n`;
+        } else if (framework === "openai-assistants") {
+          // Same missing-branch gap as the others had -- this used to fall
+          // through to the generic ReAct-loop orchestrator instead of real
+          // Assistants API (threads/runs/requires_action) code.
+          const pinOaa = pinVersions;
+          if (format === "typescript") {
+            localFiles[`${dirPrefix}/src/assistants_agent.ts`] = aiResult?.entrypoint || generateOpenAiAssistantsAgentFile(agentRec.name, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, "typescript");
+            localFiles[`${dirPrefix}/tools/index.ts`] = generateTsToolsIndex(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/package.json`] = JSON.stringify({
+              name: agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
+              version: "1.0.0",
+              scripts: { start: "ts-node src/assistants_agent.ts", build: "tsc" },
+              dependencies: { openai: pinOaa ? "4.77.0" : "^4.0.0" },
+              devDependencies: { typescript: pinOaa ? "5.6.3" : "^5.0.0", "ts-node": pinOaa ? "10.9.2" : "^10.9.0", "@types/node": pinOaa ? "20.17.12" : "^20.0.0" },
+            }, null, 2) + "\n";
+            localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist"\n  },\n  "include": ["**/*.ts"]\n}\n`;
+          } else {
+            localFiles[`${dirPrefix}/src/assistants_agent.py`] = aiResult?.entrypoint || generateOpenAiAssistantsAgentFile(agentRec.name, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, "python");
+            localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/requirements.txt`] = [pinOaa ? "openai==1.58.1" : "openai>=1.0"].join("\n") + "\n";
+          }
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          localFiles[`${dirPrefix}/.env.example`] = `OPENAI_API_KEY=sk-your-api-key-here\nOPENAI_ASSISTANT_ID=asst_your-assistant-id\nAGENT_NAME=${agentRec.name}\n`;
+        } else if (framework === "openai-agents") {
+          // OpenAI Agents SDK — TypeScript or Python, OpenAI's current
+          // recommended path (Assistants API above is being sunset Aug 2026).
+          const pinOas = pinVersions;
+          if (format === "typescript") {
+            localFiles[`${dirPrefix}/src/agent.ts`] = aiResult?.entrypoint || generateOpenAiAgentsSdkFile(agentRec.name, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, completionPromise, "typescript");
+            localFiles[`${dirPrefix}/tools/index.ts`] = generateTsToolsIndex(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/package.json`] = JSON.stringify({
+              name: agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
+              version: "1.0.0",
+              scripts: { start: "ts-node src/agent.ts", build: "tsc" },
+              dependencies: { "@openai/agents": pinOas ? "0.12.0" : "^0.1.0" },
+              devDependencies: { typescript: pinOas ? "5.6.3" : "^5.0.0", "ts-node": pinOas ? "10.9.2" : "^10.9.0", "@types/node": pinOas ? "20.17.12" : "^20.0.0" },
+            }, null, 2) + "\n";
+            localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist"\n  },\n  "include": ["**/*.ts"]\n}\n`;
+          } else {
+            localFiles[`${dirPrefix}/src/agent.py`] = aiResult?.entrypoint || generateOpenAiAgentsSdkFile(agentRec.name, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, completionPromise, "python");
+            localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+            }
+            // Not pinned to an exact version even when pinVersions is set --
+            // actively developed, no verified-current exact version to lock to.
+            localFiles[`${dirPrefix}/requirements.txt`] = "openai-agents>=0.1.0\n";
+          }
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          localFiles[`${dirPrefix}/.env.example`] = `OPENAI_API_KEY=sk-your-api-key-here\nOPENAI_AGENT_MODEL=gpt-4o\nAGENT_NAME=${agentRec.name}\n`;
+        } else if (framework === "ms-agent-framework") {
+          // Microsoft Agent Framework — Python only; unifies AutoGen + Semantic Kernel.
+          localFiles[`${dirPrefix}/src/agent.py`] = aiResult?.entrypoint || generateMsAgentFrameworkFile(agentRec.name, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, completionPromise, resolvedBundleProvider);
+          localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+          for (const tool of tools) {
+            localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+          }
+          const pinMaf = pinVersions;
+          const mafReqsBundle = ["agent-framework>=0.1.0", pinMaf ? "pyyaml==6.0.2" : "pyyaml>=6.0"];
+          if (resolvedBundleProvider === "openai") mafReqsBundle.push(pinMaf ? "openai==1.58.1" : "openai>=1.0");
+          else mafReqsBundle.push(pinMaf ? "anthropic==0.30.1" : "anthropic>=0.30");
+          localFiles[`${dirPrefix}/requirements.txt`] = mafReqsBundle.join("\n") + "\n";
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          const mafLlmKey = resolvedBundleProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
+          localFiles[`${dirPrefix}/.env.example`] = `${mafLlmKey}\nAGENT_NAME=${agentRec.name}\n`;
+        } else if (framework === "foundry") {
+          // Same missing-branch gap as the others had -- this used to fall
+          // through to the generic ReAct-loop orchestrator instead of real
+          // Azure AI Foundry Agent Service code. Python-only (BUNDLE_PYTHON_ONLY).
+          const pinFoundry = pinVersions;
+          localFiles[`${dirPrefix}/foundry.manifest.json`] = JSON.stringify({
+            name: agentRec.name, description: agentRec.description || "",
+            skills: tools.map(t => ({ name: t.name, description: t.description || "", type: "tool" })),
+            configuration: { maxIterations: agentRec.maxToolIterations || maxIterations, completionPromise },
+          }, null, 2);
+          localFiles[`${dirPrefix}/src/agent_flow.py`] = aiResult?.entrypoint || generateFoundryAgentFile(agentRec.name, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, completionPromise);
+          localFiles[`${dirPrefix}/skills/__init__.py`] = generatePySkillsInit(tools);
+          localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+          for (const tool of tools) {
+            localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+          }
+          localFiles[`${dirPrefix}/requirements.txt`] = ["azure-ai-projects>=1.0.0b1", pinFoundry ? "azure-identity==1.19.0" : "azure-identity>=1.15.0"].join("\n") + "\n";
+          localFiles[`${dirPrefix}/flow.dag.yaml`] = `# Azure AI Foundry / Promptflow DAG\n# Generated for ${agentRec.name}\n$schema: https://azuremlschemas.azureedge.net/promptflow/latest/Flow.schema.json\ndisplay_name: ${agentRec.name}\nname: ${agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}\ndescription: "${(agentRec.description || "").replace(/"/g, "'").substring(0, 200)}"\ninputs:\n  query:\n    type: string\noutputs:\n  response:\n    type: string\n    reference: \${agent_flow.output}\nnodes:\n- name: agent_flow\n  type: python\n  source:\n    type: code\n    path: src/agent_flow.py\n  inputs:\n    query: \${inputs.query}\n  use_variants: false\nenvironment:\n  python_requirements_txt: requirements.txt\n`;
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          localFiles[`${dirPrefix}/.env.example`] = "AZURE_AI_PROJECT_CONNECTION_STRING=your-project-connection-string\nAZURE_AI_MODEL_DEPLOYMENT=gpt-4o\n# Auth via azure.identity.DefaultAzureCredential -- run `az login` locally, or configure a managed identity/service principal in production\n";
+        } else if (framework === "bedrock") {
+          // Same missing-branch gap as the others had -- this used to fall
+          // through to the generic ReAct-loop orchestrator instead of the
+          // real Bedrock action-group Lambda + agent-provisioning script.
+          const pinBr = pinVersions;
+          const brModel = resolvedBundleProvider === "openai" ? "meta.llama3-1-70b-instruct-v1:0" : "anthropic.claude-3-5-sonnet-20241022-v2:0";
+          localFiles[`${dirPrefix}/action-groups/openapi.yaml`] = `openapi: "3.0.0"\ninfo:\n  title: "${agentRec.name} Action Groups"\n  version: "1.0.0"\npaths:\n${tools.map(t => `  /${t.name}:\n    post:\n      summary: "${(t.description || t.name).replace(/"/g, "'")}"\n      operationId: "${t.name}"\n      responses:\n        "200":\n          description: "Success"`).join("\n")}\n`;
+          localFiles[`${dirPrefix}/agent-config.json`] = JSON.stringify({
+            agentName: agentRec.name, description: agentRec.description || "",
+            foundationModel: brModel,
+            instruction: systemPrompt.substring(0, 500),
+            actionGroups: [{ name: "tools", description: "Agent tool actions", apiSchema: { s3: { s3BucketName: "your-bucket", s3ObjectKey: "openapi.yaml" } } }],
+            idleSessionTTLInSeconds: 600,
+          }, null, 2);
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          localFiles[`${dirPrefix}/deploy_agent.py`] = generateBedrockDeployScript(agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"), brModel);
+          if (format === "typescript") {
+            localFiles[`${dirPrefix}/lambda/handler.ts`] = aiResult?.entrypoint || `// AWS Lambda Handler for Bedrock Action Groups\n// Generated for ${agentRec.name}\nimport { loadTools } from "../tools";\n\nconst tools = loadTools();\n\nexport const handler = async (event: any) => {\n  const actionGroup = event.actionGroup;\n  const apiPath = event.apiPath;\n  const parameters = event.parameters || [];\n  const toolName = apiPath.replace("/", "");\n\n  console.log(\`[Bedrock] Action: \${actionGroup}, Path: \${apiPath}\`);\n\n  if (tools[toolName]) {\n    const params: Record<string, any> = {};\n    for (const p of parameters) { params[p.name] = p.value; }\n    const result = await tools[toolName](params);\n    return {\n      messageVersion: "1.0",\n      response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 200,\n        responseBody: { "application/json": { body: JSON.stringify(result) } } },\n    };\n  }\n\n  return { messageVersion: "1.0", response: { actionGroup, apiPath, httpMethod: "POST", httpStatusCode: 404,\n    responseBody: { "application/json": { body: JSON.stringify({ error: "Tool not found" }) } } } };\n};\n`;
+            localFiles[`${dirPrefix}/tools/index.ts`] = generateTsToolsIndex(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/template.yaml`] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agentRec.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: nodejs20.x\n      Timeout: 30\n      MemorySize: 256\n`;
+            localFiles[`${dirPrefix}/package.json`] = JSON.stringify({
+              name: agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
+              version: "1.0.0",
+              scripts: { start: "ts-node lambda/handler.ts", "sam:build": "sam build", "sam:deploy": "sam deploy --guided" },
+              dependencies: { "@aws-sdk/client-bedrock-agent-runtime": pinBr ? "3.712.0" : "^3.0.0" },
+              devDependencies: { typescript: pinBr ? "5.6.3" : "^5.0.0", "ts-node": pinBr ? "10.9.2" : "^10.9.0", "@types/node": pinBr ? "20.17.12" : "^20.0.0" },
+            }, null, 2);
+          } else {
+            localFiles[`${dirPrefix}/lambda/handler.py`] = aiResult?.entrypoint || `# AWS Lambda Handler for Bedrock Action Groups\n# Generated for ${agentRec.name}\nfrom tools import load_tools\nimport json\n\ntools = load_tools()\n\ndef handler(event, context):\n    action_group = event.get("actionGroup", "")\n    api_path = event.get("apiPath", "")\n    parameters = event.get("parameters", [])\n    tool_name = api_path.lstrip("/")\n\n    print(f"[Bedrock] Action: {action_group}, Path: {api_path}")\n\n    if tool_name in tools:\n        params = {p["name"]: p["value"] for p in parameters}\n        result = tools[tool_name](params)\n        return {\n            "messageVersion": "1.0",\n            "response": {\n                "actionGroup": action_group, "apiPath": api_path,\n                "httpMethod": "POST", "httpStatusCode": 200,\n                "responseBody": {"application/json": {"body": json.dumps(result)}}\n            }\n        }\n\n    return {"messageVersion": "1.0", "response": {"actionGroup": action_group, "apiPath": api_path,\n        "httpMethod": "POST", "httpStatusCode": 404,\n        "responseBody": {"application/json": {"body": json.dumps({"error": "Tool not found"})}}}}\n`;
+            localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/template.yaml`] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agentRec.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: python3.11\n      Timeout: 30\n      MemorySize: 256\n`;
+            localFiles[`${dirPrefix}/requirements.txt`] = [pinBr ? "boto3==1.34.162" : "boto3>=1.34.0"].join("\n") + "\n";
+          }
+          localFiles[`${dirPrefix}/.env.example`] = "AWS_REGION=us-east-1\nAWS_ACCESS_KEY_ID=\nAWS_SECRET_ACCESS_KEY=\n# Needed by deploy_agent.py to provision the Bedrock Agent resource:\nBEDROCK_AGENT_ROLE_ARN=arn:aws:iam::<account-id>:role/<bedrock-agent-role>\nBEDROCK_ACTION_LAMBDA_ARN=arn:aws:lambda:us-east-1:<account-id>:function:<function-name>\nBEDROCK_SCHEMA_S3_BUCKET=your-bucket\n";
+        } else if (framework === "adk") {
+          // Same missing-branch gap as the others had -- this used to fall
+          // through to the generic ReAct-loop orchestrator instead of real
+          // Google ADK code. Replaces the old raw Vertex AI SDK branch.
+          localFiles[`${dirPrefix}/agent-config.json`] = JSON.stringify({
+            displayName: agentRec.name, description: agentRec.description || "",
+            generativeModel: "gemini-flash-latest",
+            instruction: systemPrompt.substring(0, 500),
+            tools: tools.map(t => ({ name: t.name, description: t.description || "", parameters: t.parameters || {} })),
+            maxIterations: agentRec.maxToolIterations || maxIterations,
+          }, null, 2);
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          if (format === "typescript") {
+            localFiles[`${dirPrefix}/src/agent.ts`] = aiResult?.entrypoint || generateAdkAgentFile(agentRec.name, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, completionPromise, "typescript");
+            localFiles[`${dirPrefix}/tools/index.ts`] = generateTsToolsIndex(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/package.json`] = JSON.stringify({
+              name: agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
+              version: "1.0.0",
+              scripts: { start: "ts-node src/agent.ts", build: "tsc" },
+              dependencies: { "@google/adk": "^0.1.0" },
+              devDependencies: { typescript: "^5.0.0", "ts-node": "^10.9.0", "@types/node": "^20.0.0" },
+            }, null, 2);
+          } else {
+            localFiles[`${dirPrefix}/src/agent.py`] = aiResult?.entrypoint || generateAdkAgentFile(agentRec.name, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, completionPromise, "python");
+            localFiles[`${dirPrefix}/tools/__init__.py`] = generatePyToolsInit(tools);
+            for (const tool of tools) {
+              localFiles[`${dirPrefix}/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+            }
+            localFiles[`${dirPrefix}/requirements.txt`] = "google-adk>=0.1.0\n";
+          }
+          localFiles[`${dirPrefix}/.env.example`] = "# Simplest path -- Gemini Developer API key (no GCP project needed):\nGOOGLE_GENAI_USE_VERTEXAI=FALSE\nGOOGLE_API_KEY=your-gemini-api-key\n\n# Alternative -- Vertex AI backend (uncomment and fill in instead):\n# GOOGLE_GENAI_USE_VERTEXAI=TRUE\n# GOOGLE_CLOUD_PROJECT=your-gcp-project-id\n# GOOGLE_CLOUD_LOCATION=us-central1\n# GOOGLE_APPLICATION_CREDENTIALS=\n\nADK_MODEL=gemini-flash-latest\n";
+        } else if (framework === "n8n") {
+          // Same missing-branch gap as the others had -- this used to fall
+          // through to the generic ReAct-loop orchestrator instead of a
+          // real n8n community node package. TypeScript-only (BUNDLE_TS_ONLY).
+          const pinN8n = pinVersions;
+          const agentSlugN8n = agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
+          const n8nPackageNameB = `n8n-nodes-${agentSlugN8n}`;
+          const n8nNodeTypeNameB = n8nCamelCase(agentSlugN8n);
+          const n8nCredentialTypeNameB = n8nCamelCase(agentSlugN8n) + "Api";
+          localFiles[`${dirPrefix}/workflow.json`] = JSON.stringify({
+            name: `${agentRec.name} Workflow`,
+            nodes: [
+              { id: "start", name: "Start", type: "n8n-nodes-base.manualTrigger", position: [250, 300], parameters: {} },
+              { id: "agent", name: agentRec.name, type: `${n8nPackageNameB}.${n8nNodeTypeNameB}`, position: [500, 300],
+                parameters: { task: "", systemPrompt: systemPrompt.substring(0, 300), maxIterations: agentRec.maxToolIterations || maxIterations } },
+              ...tools.map((t, i) => ({
+                id: `tool_${t.name}`, name: t.name, type: `${n8nPackageNameB}.${n8nNodeTypeNameB}Tools`,
+                position: [750, 150 + i * 150], parameters: { toolName: t.name }
+              })),
+            ],
+            connections: {
+              Start: { main: [[{ node: agentRec.name, type: "main", index: 0 }]] },
+              [agentRec.name]: { main: [tools.map(t => ({ node: t.name, type: "main", index: 0 }))] },
+            },
+          }, null, 2);
+          localFiles[`${dirPrefix}/nodes/AgentNode.node.ts`] = aiResult?.entrypoint || generateN8nAgentNodeFile(agentRec.name, agentSlugN8n, n8nCredentialTypeNameB, systemPrompt, tools, agentRec.maxToolIterations || maxIterations, completionPromise, resolvedBundleProvider);
+          localFiles[`${dirPrefix}/nodes/ToolNode.node.ts`] = generateN8nToolNodeFile(agentSlugN8n, tools);
+          localFiles[`${dirPrefix}/credentials/AgentCredentials.credentials.ts`] = generateN8nCredentialsFile(agentRec.name, n8nCredentialTypeNameB, resolvedBundleProvider);
+          localFiles[`${dirPrefix}/tools/index.ts`] = generateTsToolsIndex(tools);
+          for (const tool of tools) {
+            localFiles[`${dirPrefix}/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
+          }
+          const n8nDepsB: Record<string, string> = {};
+          if (resolvedBundleProvider === "openai") n8nDepsB["openai"] = pinN8n ? "4.77.0" : "^4.0.0"; else n8nDepsB["@anthropic-ai/sdk"] = pinN8n ? "0.30.1" : "^0.30.0";
+          localFiles[`${dirPrefix}/package.json`] = JSON.stringify({
+            name: n8nPackageNameB,
+            version: "1.0.0",
+            private: true,
+            scripts: { build: "tsc", dev: "tsc --watch" },
+            dependencies: n8nDepsB,
+            devDependencies: { typescript: pinN8n ? "5.6.3" : "^5.0.0", "n8n-workflow": pinN8n ? "1.69.2" : "^1.0.0", "@types/node": pinN8n ? "20.17.12" : "^20.0.0" },
+            n8n: { n8nNodesApiVersion: 1, credentials: ["dist/credentials/AgentCredentials.credentials.js"], nodes: ["dist/nodes/AgentNode.node.js", "dist/nodes/ToolNode.node.js"] },
+          }, null, 2);
+          localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2019",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "declaration": true,\n    "outDir": "dist"\n  },\n  "include": ["nodes/**/*.ts", "credentials/**/*.ts", "tools/**/*.ts"]\n}\n`;
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          // n8n nodes get credentials from n8n's own Credentials UI, not env vars.
+          localFiles[`${dirPrefix}/.env.example`] = `# ${agentRec.name} gets its API key from n8n's own Credentials UI, not from\n# environment variables.\n`;
         } else {
           const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
           if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
@@ -7505,6 +9837,17 @@ clean:
         const runCmd = framework === "claude-code"
           ? "npm start"
           : framework === "databricks" ? "databricks bundle deploy"
+          : framework === "langgraph" ? (format === "typescript" ? "npm start" : "python graph.py")
+          : framework === "crewai" ? "python crew.py"
+          : framework === "autogen" ? "python src/autogen_agent.py"
+          : framework === "semantic-kernel" ? "python src/kernel_agent.py"
+          : framework === "openai-assistants" ? (format === "typescript" ? "npm start" : "python src/assistants_agent.py")
+          : framework === "openai-agents" ? (format === "typescript" ? "npm start" : "python src/agent.py")
+          : framework === "ms-agent-framework" ? "python src/agent.py"
+          : framework === "foundry" ? "python src/agent_flow.py"
+          : framework === "bedrock" ? "sam deploy --guided && python deploy_agent.py"
+          : framework === "adk" ? (format === "typescript" ? "npm start" : "python src/agent.py")
+          : framework === "n8n" ? "npm run build  # then install the built package into your n8n instance as a community node"
           : format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
         localFiles[`${dirPrefix}/README.md`] = `# ${agentRec.name}\n\n${agentRec.description || ""}\n\n## Setup\n\n\`\`\`bash\n${installCmd}\n\`\`\`\n\n## Run\n\n\`\`\`bash\n${runCmd}\n\`\`\`\n\n## Tools\n\n${allToolNames.length > 0 ? allToolNames.map(n => `- \`${n}\``).join("\n") : "_No tools configured._"}\n`;
 
@@ -7670,7 +10013,19 @@ clean:
       // Bundle-level README.md
       const memberRows = memberAgents.map(a => `| \`agents/${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}/\` | ${a.name} | ${teamMemberLinks.find(l => l.memberAgentId === a.id)?.role || "member"} |`).join("\n");
       const installCmd = framework === "databricks" ? "pip install -e .[dev]" : format === "typescript" ? "npm install" : "pip install -r requirements.txt";
-      const runCmd = framework === "databricks" ? "databricks bundle deploy" : format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
+      const runCmd = framework === "databricks" ? "databricks bundle deploy"
+        : framework === "langgraph" ? (format === "typescript" ? "npm start" : "python graph.py")
+        : framework === "crewai" ? "python crew.py"
+        : framework === "autogen" ? "python src/autogen_agent.py"
+        : framework === "semantic-kernel" ? "python src/kernel_agent.py"
+        : framework === "openai-assistants" ? (format === "typescript" ? "npm start" : "python src/assistants_agent.py")
+        : framework === "openai-agents" ? (format === "typescript" ? "npm start" : "python src/agent.py")
+        : framework === "ms-agent-framework" ? "python src/agent.py"
+        : framework === "foundry" ? "python src/agent_flow.py"
+        : framework === "bedrock" ? "sam deploy --guided && python deploy_agent.py"
+        : framework === "adk" ? (format === "typescript" ? "npm start" : "python src/agent.py")
+        : framework === "n8n" ? "npm run build  # then install the built package into your n8n instance as a community node"
+        : format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
       const configNote = framework === "databricks"
         ? "Set `DATABRICKS_HOST` and `DATABRICKS_TOKEN` in your environment before deploying. Each agent directory has its own `.env.example`."
         : `Each agent directory has its own \`.env.example\`. Copy it to \`.env\` and configure your ${resolvedBundleProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}.`;
@@ -7720,7 +10075,7 @@ clean:
       const key = llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
       let env = `${comment} Environment variables for ${agentName}\n${key}=your_api_key_here\nATLAS_AGENT_ID=\n`;
       if (framework === "bedrock") env += "AWS_ACCESS_KEY_ID=\nAWS_SECRET_ACCESS_KEY=\nAWS_REGION=us-east-1\n";
-      if (framework === "vertex") env += "GOOGLE_APPLICATION_CREDENTIALS=\n";
+      if (framework === "adk") env += "GOOGLE_GENAI_USE_VERTEXAI=FALSE\nGOOGLE_API_KEY=\n";
       if (framework === "databricks") env += "DATABRICKS_HOST=\nDATABRICKS_TOKEN=\n";
       return env;
     }
@@ -7756,7 +10111,7 @@ clean:
         filePath: z.string().min(1),
         format: z.enum(["typescript", "python"]).default("typescript"),
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
-        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "openai-agents", "ms-agent-framework", "bedrock", "n8n", "adk", "databricks"]).default("generic"),
       });
       const { filePath, format, llmProvider, framework } = regenSchema.parse(req.body || {});
 
@@ -8240,6 +10595,119 @@ clean:
     }
   });
 
+  // ── export-validate helpers ───────────────────────────────────────────────
+  // A structural (bracket-balance) fallback used only when a real parser isn't
+  // available. It's a real check (catches unclosed/mismatched brackets, which
+  // is the most common way AI- or template-generated code breaks), but it is
+  // NOT a syntax check — callers must label output accordingly rather than
+  // implying a full parse happened.
+  function findUnbalancedBrackets(content: string): string | null {
+    const closeToOpen: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+    const stack: string[] = [];
+    let inString: string | null = null;
+    let inLineComment = false;
+    let inBlockComment = false;
+    for (let i = 0; i < content.length; i++) {
+      const c = content[i];
+      const next = content[i + 1];
+      if (inLineComment) { if (c === "\n") inLineComment = false; continue; }
+      if (inBlockComment) { if (c === "*" && next === "/") { inBlockComment = false; i++; } continue; }
+      if (inString) {
+        if (c === "\\") { i++; continue; }
+        if (c === inString) inString = null;
+        continue;
+      }
+      if (c === "/" && next === "/") { inLineComment = true; i++; continue; }
+      if (c === "/" && next === "*") { inBlockComment = true; i++; continue; }
+      if (c === '"' || c === "'" || c === "`") { inString = c; continue; }
+      if (c === "(" || c === "[" || c === "{") stack.push(c);
+      else if (c === ")" || c === "]" || c === "}") {
+        if (stack.pop() !== closeToOpen[c]) return `mismatched or unexpected '${c}'`;
+      }
+    }
+    if (stack.length > 0) return `unclosed '${stack[stack.length - 1]}'`;
+    return null;
+  }
+
+  function structuralCheck(fileEntries: Array<[string, string]>, reason: string): { passed: boolean; output: string } {
+    const lines = [`[INFO] ${reason} Falling back to a structural check (bracket balance only — not a real syntax parse).`];
+    let passed = true;
+    for (const [path, content] of fileEntries) {
+      const issue = findUnbalancedBrackets(content);
+      if (issue) { passed = false; lines.push(`[FAIL] ${path} — ${issue}`); }
+      else lines.push(`[PASS] ${path} — brackets balanced (structural check only)`);
+    }
+    return { passed, output: lines.join("\n") };
+  }
+
+  async function checkTypeScriptSyntax(files: Record<string, string>): Promise<{ passed: boolean; output: string }> {
+    const tsFiles = Object.entries(files).filter(([path]) => /\.tsx?$/.test(path));
+    if (tsFiles.length === 0) return { passed: true, output: "[INFO] No TypeScript files in this export to check." };
+    try {
+      const ts = await import("typescript");
+      const lines: string[] = [
+        `Syntax-checked ${tsFiles.length} TypeScript file(s) with the TypeScript compiler (syntax only — this does not type-check across the project, since the exported package's own dependencies aren't installed on this server).`,
+      ];
+      let passed = true;
+      for (const [path, content] of tsFiles) {
+        const result = ts.transpileModule(content, {
+          fileName: path,
+          reportDiagnostics: true,
+          compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React, esModuleInterop: true },
+        });
+        const errors = (result.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+        if (errors.length === 0) {
+          lines.push(`[PASS] ${path} — valid syntax`);
+        } else {
+          passed = false;
+          for (const d of errors) {
+            const msg = ts.flattenDiagnosticMessageText(d.messageText, " ");
+            if (d.file && d.start !== undefined) {
+              const { line, character } = d.file.getLineAndCharacterOfPosition(d.start);
+              lines.push(`[FAIL] ${path}:${line + 1}:${character + 1} — ${msg}`);
+            } else {
+              lines.push(`[FAIL] ${path} — ${msg}`);
+            }
+          }
+        }
+      }
+      return { passed, output: lines.join("\n") };
+    } catch {
+      return structuralCheck(tsFiles, "TypeScript compiler unavailable on this server.");
+    }
+  }
+
+  async function checkPythonSyntax(files: Record<string, string>): Promise<{ passed: boolean; output: string }> {
+    const pyFiles = Object.entries(files).filter(([path]) => path.endsWith(".py"));
+    if (pyFiles.length === 0) return { passed: true, output: "[INFO] No Python files in this export to check." };
+
+    const { execFileSync } = await import("child_process");
+    let pythonBin: string | null = null;
+    for (const candidate of ["python3", "python"]) {
+      try {
+        execFileSync(candidate, ["--version"], { stdio: "ignore", timeout: 3000 });
+        pythonBin = candidate;
+        break;
+      } catch { /* try next candidate */ }
+    }
+    if (!pythonBin) return structuralCheck(pyFiles, "No Python interpreter available on this server.");
+
+    const lines: string[] = [`Syntax-checked ${pyFiles.length} Python file(s) with ${pythonBin} (ast.parse — a real syntax check).`];
+    let passed = true;
+    for (const [path, content] of pyFiles) {
+      try {
+        execFileSync(pythonBin, ["-c", "import ast, sys; ast.parse(sys.stdin.read())"], { input: content, timeout: 5000 });
+        lines.push(`[PASS] ${path} — valid syntax`);
+      } catch (err: any) {
+        passed = false;
+        const raw = (err?.stderr ? err.stderr.toString() : err?.message || "syntax error").trim();
+        const tail = raw.split("\n").slice(-2).join(" | ");
+        lines.push(`[FAIL] ${path} — ${tail}`);
+      }
+    }
+    return { passed, output: lines.join("\n") };
+  }
+
   // POST /api/agents/:id/export-validate
   router.post("/api/agents/:id/export-validate", async (req, res) => {
     try {
@@ -8251,34 +10719,46 @@ clean:
         format: z.enum(["typescript", "python"]).default("typescript"),
         framework: z.string().default("generic"),
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
+        files: z.record(z.string()).optional(),
       });
-      const { type, format, framework } = schema.parse(req.body);
+      const { type, format, files } = schema.parse(req.body);
+
+      if (!files || Object.keys(files).length === 0) {
+        return res.status(400).json({ message: "No generated files were supplied — generate the export first, then run this check." });
+      }
 
       if (type === "compile") {
-        const checks = [
-          `Entry point (${format === "typescript" ? "entrypoint.ts" : "entrypoint.py"}) — valid structure`,
-          `Tool adapter registry — ${format === "typescript" ? "TypeScript" : "Python"} types check passed`,
-          `Framework scaffold (${framework}) — no missing imports`,
-          `Dependency manifest — all required packages present`,
-        ];
-        res.json({
-          passed: true,
-          output: checks.map(c => `[PASS] ${c}`).join("\n"),
-        });
+        const result = format === "typescript" ? await checkTypeScriptSyntax(files) : await checkPythonSyntax(files);
+        res.json(result);
       } else {
-        const evalSuites = await storage.getEvalSuites();
-        const suiteCount = evalSuites?.length || 0;
-        const lines = [
-          `Eval suites found: ${suiteCount}`,
-          ...(suiteCount > 0
-            ? evalSuites!.slice(0, 3).map((s: any) => `[PASS] ${s.name || s.id} — all assertions passed`)
-            : ["[INFO] No eval suites linked — skipping eval gate"]),
-          `Export configuration validated against agent constraints`,
-        ];
-        res.json({
-          passed: true,
-          output: lines.join("\n"),
-        });
+        const testFilePath = format === "typescript" ? "tests/eval_smoke.test.ts" : "tests/eval_smoke_test.py";
+        const testFileContent = files[testFilePath];
+
+        const lines: string[] = [];
+        let passed = true;
+
+        if (!testFileContent) {
+          passed = false;
+          lines.push(`[FAIL] ${testFilePath} not found in the generated package.`);
+        } else {
+          const syntaxResult = format === "typescript"
+            ? await checkTypeScriptSyntax({ [testFilePath]: testFileContent })
+            : await checkPythonSyntax({ [testFilePath]: testFileContent });
+          if (!syntaxResult.passed) passed = false;
+          lines.push(...syntaxResult.output.split("\n"));
+        }
+
+        const allEvalSuites = await storage.getEvalSuites();
+        const agentEvalSuites = allEvalSuites.filter((s: any) => s.agentId === req.params.id);
+        lines.push("");
+        lines.push(`Eval suites linked to this agent: ${agentEvalSuites.length}`);
+        if (agentEvalSuites.length > 0) {
+          lines.push(...agentEvalSuites.slice(0, 5).map((s: any) => `  - ${s.name || s.id}`));
+        }
+        lines.push("");
+        lines.push("This is a readiness check, not a live test run: it confirms the generated test file parses and reports how many real eval cases were baked into it. It does not execute the tests — run `npm test` (TypeScript) or `pytest tests/` (Python) yourself, with your own API keys, to get real pass/fail results.");
+
+        res.json({ passed, output: lines.join("\n") });
       }
     } catch (e) {
       if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
@@ -11885,7 +14365,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
     res.json(nodes);
   });
 
-  router.post("/api/team-blueprint-nodes", async (req, res) => {
+  router.post("/api/team-blueprint-nodes", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertTeamBlueprintNodeSchema.parse(req.body);
       const created = await storage.createTeamBlueprintNode(data);
@@ -11896,10 +14376,10 @@ async function performMcpServerInitialize(serverId: string): Promise<
     }
   });
 
-  router.patch("/api/team-blueprint-nodes/:id", async (req, res) => {
+  router.patch("/api/team-blueprint-nodes/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertTeamBlueprintNodeSchema.partial().parse(req.body);
-      const updated = await storage.updateTeamBlueprintNode(req.params.id, data);
+      const updated = await storage.updateTeamBlueprintNode(String(req.params.id), data);
       if (!updated) return res.status(404).json({ error: "Node not found" });
       res.json(updated);
     } catch (e) {
@@ -11908,8 +14388,8 @@ async function performMcpServerInitialize(serverId: string): Promise<
     }
   });
 
-  router.delete("/api/team-blueprint-nodes/:id", async (req, res) => {
-    await storage.deleteTeamBlueprintNode(req.params.id);
+  router.delete("/api/team-blueprint-nodes/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    await storage.deleteTeamBlueprintNode(String(req.params.id));
     res.json({ success: true });
   });
 
@@ -11920,7 +14400,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
     res.json(edges);
   });
 
-  router.post("/api/team-blueprint-edges", async (req, res) => {
+  router.post("/api/team-blueprint-edges", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertTeamBlueprintEdgeSchema.parse(req.body);
       const created = await storage.createTeamBlueprintEdge(data);
@@ -11931,10 +14411,10 @@ async function performMcpServerInitialize(serverId: string): Promise<
     }
   });
 
-  router.patch("/api/team-blueprint-edges/:id", async (req, res) => {
+  router.patch("/api/team-blueprint-edges/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertTeamBlueprintEdgeSchema.partial().parse(req.body);
-      const updated = await storage.updateTeamBlueprintEdge(req.params.id, data);
+      const updated = await storage.updateTeamBlueprintEdge(String(req.params.id), data);
       if (!updated) return res.status(404).json({ error: "Edge not found" });
       res.json(updated);
     } catch (e) {
@@ -11943,8 +14423,8 @@ async function performMcpServerInitialize(serverId: string): Promise<
     }
   });
 
-  router.delete("/api/team-blueprint-edges/:id", async (req, res) => {
-    await storage.deleteTeamBlueprintEdge(req.params.id);
+  router.delete("/api/team-blueprint-edges/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    await storage.deleteTeamBlueprintEdge(String(req.params.id));
     res.json({ success: true });
   });
 
@@ -12976,7 +15456,7 @@ Return ONLY a valid JSON object with a "controls" array.`
 
       const response = await openai.chat.completions.create({
         model: "gpt-4.1",
-        max_completion_tokens: 4096,
+        max_completion_tokens: 6000,
         messages: [
           {
             role: "system",
@@ -13011,11 +15491,16 @@ Return ONLY a valid JSON object.`
 
       const content = response.choices[0]?.message?.content;
       if (!content) return res.status(500).json({ error: "No response from AI" });
-      const result = JSON.parse(content);
+      const wasTruncatedByTokenLimit = response.choices[0]?.finish_reason === "length";
+      const result = parseAIJsonResponse(content, { wasTruncatedByTokenLimit });
       res.json(result);
     } catch (e: any) {
       console.error("AI enhance regulatory policy error:", e);
-      res.status(500).json({ error: e.message || "Failed to enhance policy" });
+      // AIResponseParseError's message is already written for end users (see
+      // parseAIJsonResponse); anything else (rate limit, network, etc.)
+      // still shouldn't leak a raw provider/parser exception string.
+      const message = e instanceof AIResponseParseError ? e.message : "Failed to enhance policy. Please try again.";
+      res.status(500).json({ error: message });
     }
   });
 
@@ -16002,7 +18487,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           });
 
           await storage.updateDagExecutionRun(dagRun.id, {
-            status: dagResult.success ? "completed" : "failed",
+            status: deriveRunStatus(dagResult),
             finalState: dagResult.finalState,
             currentState: dagResult.finalState,
             waveResults: dagResult.waveResults as any,
@@ -17698,7 +20183,8 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         status: "active",
       });
 
-      res.status(201).json(plan);
+      const orchestrationPattern = inferOrchestrationPattern(wavePlan.totalNodes, wavePlan.totalWaves, wavePlan.maxParallelism);
+      res.status(201).json({ ...plan, orchestrationPattern });
     } catch (e: any) {
       console.error("[dag-plans] create error:", e);
       res.status(500).json({ error: e.message });
@@ -17709,7 +20195,8 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     try {
       const plan = await storage.getDagExecutionPlan(req.params.id);
       if (!plan) return res.status(404).json({ error: "Plan not found" });
-      res.json(plan);
+      const orchestrationPattern = inferOrchestrationPattern(plan.totalNodes, plan.totalWaves, plan.maxParallelism);
+      res.json({ ...plan, orchestrationPattern });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -17821,7 +20308,19 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     try {
       const run = await storage.getDagExecutionRun(req.params.id);
       if (!run) return res.status(404).json({ error: "Run not found" });
-      res.json(run);
+      let orchestrationPattern: string | undefined;
+      if (run.executionPlanId) {
+        const plan = await storage.getDagExecutionPlan(run.executionPlanId);
+        if (plan) orchestrationPattern = inferOrchestrationPattern(plan.totalNodes, plan.totalWaves, plan.maxParallelism);
+      } else if (run.teamAgentId) {
+        // Magentic runs have no static execution plan (no blueprint graph to
+        // compute one from) -- inferOrchestrationPattern doesn't apply, so
+        // read the mode directly off the team agent's own config instead.
+        const teamAgent = await storage.getAgent(run.teamAgentId);
+        const orchestration = (teamAgent?.runtimeConfig as Record<string, any>)?.orchestration;
+        if (orchestration?.pattern === "magentic") orchestrationPattern = "magentic";
+      }
+      res.json({ ...run, orchestrationPattern });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -17841,6 +20340,37 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  // Live step-by-step activity for a run (SSE): replays everything published
+  // so far, then streams new events until the run completes or the client
+  // disconnects. The run monitor uses this to show "step started / finished"
+  // lines with output previews in real time instead of a bare wave counter.
+  router.get("/api/dag-execution-runs/:id/events", async (req, res) => {
+    const run = await storage.getDagExecutionRun(req.params.id);
+    if (!run) return res.status(404).json({ error: "Run not found" });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+    const send = (e: unknown) => { try { res.write(`data: ${JSON.stringify(e)}\n\n`); } catch { /* client gone */ } };
+
+    for (const e of getDagRunEventBuffer(req.params.id)) send(e);
+    const terminal = ["completed", "completed_with_skips", "failed"].includes(run.status || "");
+    if (terminal) {
+      // Finished before we subscribed and the buffer may already be gone --
+      // synthesize the closing event so the client knows not to wait.
+      send({ type: "run_complete", runStatus: run.status, ts: new Date().toISOString() });
+      return res.end();
+    }
+
+    const unsubscribe = subscribeDagRunEvents(req.params.id, (e) => {
+      send(e);
+      if (e.type === "run_complete") { unsubscribe(); res.end(); }
+    });
+    const heartbeat = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* client gone */ } }, 15000);
+    req.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
+    res.on("close", () => clearInterval(heartbeat));
   });
 
   router.get("/api/dag-execution-runs/:id/waves", async (req, res) => {
@@ -17926,6 +20456,32 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       }
     } catch (e: any) {
       console.error("[run-dag] error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Trigger a Magentic-mode run: no blueprint, no static wave plan -- a
+  // manager agent dynamically picks which specialist (from the team's flat
+  // agentTeams membership) acts next, round by round. Same fire-and-forget
+  // shape as run-dag above: responds as soon as the run row exists.
+  router.post("/api/team-agents/:teamAgentId/run-magentic", checkPermission("manage_agents"), async (req, res) => {
+    try {
+      const teamAgentId = req.params.teamAgentId as string;
+      const teamAgent = await storage.getAgent(teamAgentId, getOrgId(req));
+      if (!teamAgent) return res.status(404).json({ error: "Team agent not found" });
+      const orchestration = (teamAgent.runtimeConfig as Record<string, any>)?.orchestration;
+      if (orchestration?.pattern !== "magentic") {
+        return res.status(400).json({ error: "Agent is not configured for Magentic mode" });
+      }
+
+      try {
+        const { dagRunId } = await startMagenticTeamAgent(teamAgentId, req.body?.request || "");
+        res.status(202).json({ dagRunId, status: "running" });
+      } catch (execErr: any) {
+        res.status(400).json({ error: execErr.message });
+      }
+    } catch (e: any) {
+      console.error("[run-magentic] error:", e);
       res.status(500).json({ error: e.message });
     }
   });

@@ -132,7 +132,9 @@ function getEvalCoverage(agent: Agent): number {
 }
 
 function getPipelineStatus(agent: Agent): "passed" | "partial" | "none" {
-  if (agent.environment === "prod") return "passed";
+  // Edit Agent writes "production" (agent-detail.tsx); "prod" here never
+  // matched any agent's real environment value.
+  if (agent.environment === "production") return "passed";
   if (agent.environment === "pilot" || agent.environment === "staging") return "partial";
   return "none";
 }
@@ -467,9 +469,14 @@ export default function Agents() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Envs</SelectItem>
+            {/* Must match the values Edit Agent's Environment dropdown writes
+                (agent-detail.tsx) -- this list previously used "prod" while
+                Edit Agent wrote "production" and had no "development" option
+                at all, so a newly-set environment could never match here. */}
+            <SelectItem value="development">Development</SelectItem>
             <SelectItem value="staging">Staging</SelectItem>
             <SelectItem value="pilot">Pilot</SelectItem>
-            <SelectItem value="prod">Production</SelectItem>
+            <SelectItem value="production">Production</SelectItem>
           </SelectContent>
         </Select>
 
@@ -494,6 +501,9 @@ export default function Agents() {
             <SelectItem value="all">All Modes</SelectItem>
             <SelectItem value="autonomous">Autonomous</SelectItem>
             <SelectItem value="supervised">Supervised</SelectItem>
+            {/* "assisted" is the schema default (shared/schema.ts) -- was
+                missing here even though agents in that mode always exist. */}
+            <SelectItem value="assisted">Assisted</SelectItem>
             <SelectItem value="manual">Manual</SelectItem>
             <SelectItem value="shadow">Shadow</SelectItem>
           </SelectContent>

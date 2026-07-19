@@ -1148,6 +1148,113 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_int_conn_org ON integration_connections(organization_id);
       CREATE INDEX IF NOT EXISTS idx_int_conn_org_integration ON integration_connections(organization_id, integration_id);
 
+      -- Periodic Merkle-root checkpoint over the linear audit_events hash chain --
+      -- selective/partial verification of a batch without replaying the whole chain.
+      CREATE TABLE IF NOT EXISTS audit_chain_checkpoints (
+        id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id   VARCHAR,
+        range_start_seq   INTEGER NOT NULL,
+        range_end_seq     INTEGER NOT NULL,
+        event_count       INTEGER NOT NULL,
+        merkle_root       TEXT NOT NULL,
+        signature         TEXT NOT NULL,
+        signer_key_id     TEXT NOT NULL,
+        created_at        TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_chain_checkpoints_org_range ON audit_chain_checkpoints(organization_id, range_end_seq);
+
+      -- Per-agent outbound identity: lets one agent use its own connector
+      -- credential instead of the org-wide integration_connections row every
+      -- other agent shares. Mirrors integration_connections above.
+      CREATE TABLE IF NOT EXISTS agent_integration_credentials (
+        id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id          VARCHAR NOT NULL,
+        integration_id    VARCHAR NOT NULL,
+        credential_blob   TEXT,
+        status            VARCHAR(20) DEFAULT 'disconnected',
+        last_tested_at    TIMESTAMP,
+        last_test_result  VARCHAR(10),
+        last_error        TEXT,
+        created_at        TIMESTAMP DEFAULT NOW(),
+        updated_at        TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_int_cred_agent_integration ON agent_integration_credentials(agent_id, integration_id);
+
+      -- Orchestrated team-pipeline DAG runs. Was never created here (only ever
+      -- provisioned via drizzle-kit push before the hand-migration convention
+      -- took hold) -- CREATE TABLE IF NOT EXISTS closes that gap for fresh DBs
+      -- without touching already-provisioned ones.
+      CREATE TABLE IF NOT EXISTS dag_execution_runs (
+        id                        VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        team_agent_id             VARCHAR,
+        pipeline_run_id           VARCHAR,
+        pipeline_stage_id         VARCHAR,
+        execution_plan_id         VARCHAR,
+        state_schema_id           VARCHAR,
+        initial_state             JSONB,
+        current_state             JSONB,
+        final_state               JSONB,
+        status                    VARCHAR NOT NULL DEFAULT 'pending',
+        current_wave              INTEGER DEFAULT 0,
+        total_waves               INTEGER NOT NULL DEFAULT 0,
+        started_at                TIMESTAMP,
+        completed_at              TIMESTAMP,
+        error                     TEXT,
+        wave_results              JSONB NOT NULL DEFAULT '[]'::jsonb,
+        total_prompt_tokens       INTEGER DEFAULT 0,
+        total_completion_tokens   INTEGER DEFAULT 0,
+        total_cost_usd            REAL DEFAULT 0,
+        total_tool_calls          INTEGER DEFAULT 0,
+        created_at                TIMESTAMP DEFAULT NOW()
+      );
+      ALTER TABLE dag_execution_runs ADD COLUMN IF NOT EXISTS total_cost_usd REAL DEFAULT 0;
+      ALTER TABLE dag_execution_runs ADD COLUMN IF NOT EXISTS total_tool_calls INTEGER DEFAULT 0;
+      ALTER TABLE dag_execution_runs ADD COLUMN IF NOT EXISTS pending_approval_id VARCHAR;
+      CREATE INDEX IF NOT EXISTS idx_dag_execution_runs_team_agent ON dag_execution_runs(team_agent_id);
+
+      -- Remote agent cards for outbound A2A delegation (Gap 5). Same
+      -- never-created-here gap as dag_execution_runs above.
+      CREATE TABLE IF NOT EXISTS remote_agents (
+        id                     VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id               VARCHAR,
+        agent_card_url         TEXT,
+        agent_card_data        JSONB,
+        trust_tier             TEXT DEFAULT 'basic',
+        connectivity_status    TEXT DEFAULT 'unknown',
+        allowed_skills         TEXT[] DEFAULT '{}',
+        security_requirements  JSONB,
+        default_input_modes    TEXT[] DEFAULT '{}',
+        default_output_modes   TEXT[] DEFAULT '{}',
+        provider_info          JSONB,
+        last_health_check_at   TIMESTAMP,
+        last_synced_at         TIMESTAMP,
+        trust_score            REAL DEFAULT 0.5,
+        invocation_count       INTEGER DEFAULT 0,
+        success_count          INTEGER DEFAULT 0,
+        last_invoked_at        TIMESTAMP,
+        last_failure_reason    TEXT,
+        created_at             TIMESTAMP DEFAULT NOW()
+      );
+      ALTER TABLE remote_agents ADD COLUMN IF NOT EXISTS trust_score REAL DEFAULT 0.5;
+      ALTER TABLE remote_agents ADD COLUMN IF NOT EXISTS invocation_count INTEGER DEFAULT 0;
+      ALTER TABLE remote_agents ADD COLUMN IF NOT EXISTS success_count INTEGER DEFAULT 0;
+      ALTER TABLE remote_agents ADD COLUMN IF NOT EXISTS last_invoked_at TIMESTAMP;
+      ALTER TABLE remote_agents ADD COLUMN IF NOT EXISTS last_failure_reason TEXT;
+      CREATE INDEX IF NOT EXISTS idx_remote_agents_agent_id ON remote_agents(agent_id);
+
+      -- Flat (non-graph) team membership -- used both by the legacy tier-based
+      -- executeTeamPipeline and, going forward, as the Magentic mode's open
+      -- specialist pool. Same never-created-here gap as the tables above.
+      CREATE TABLE IF NOT EXISTS agent_teams (
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        team_agent_id    VARCHAR NOT NULL,
+        member_agent_id  VARCHAR NOT NULL,
+        role             TEXT DEFAULT 'member',
+        added_at         TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_teams_team_agent ON agent_teams(team_agent_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_teams_member_agent ON agent_teams(member_agent_id);
+
       -- MCP server linkage for enterprise integrations (Task #55)
       ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS connection_id VARCHAR;
 

@@ -362,7 +362,22 @@ export default function AutonomyEngine() {
       setShowEnhancePreview(true);
       toast({ title: "AI enhancement analysis complete" });
     },
-    onError: (e: any) => toast({ title: "AI enhancement failed", description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      // apiRequest's thrown Error.message is "<status>: <raw JSON body>" --
+      // unwrap it so the server's friendly {error} message shows instead of
+      // the whole wrapper string (this endpoint now returns a translated
+      // message instead of a raw provider error, but that only helps if the
+      // client actually extracts it).
+      let description = e.message;
+      const jsonStart = e.message.indexOf("{");
+      if (jsonStart >= 0) {
+        try {
+          const parsed = JSON.parse(e.message.slice(jsonStart));
+          if (parsed?.error) description = parsed.error;
+        } catch {}
+      }
+      toast({ title: "AI enhancement failed", description, variant: "destructive" });
+    },
   });
 
   function handleAiGenerate() {

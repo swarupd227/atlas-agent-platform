@@ -63,10 +63,15 @@ export default function AgentTeams() {
   const [showCreate, setShowCreate] = useState(false);
   const [showAiFlow, setShowAiFlow] = useState(false);
   const [showManage, setShowManage] = useState<string | null>(null);
+  const [showRunMagentic, setShowRunMagentic] = useState<string | null>(null);
   const [formName, setFormName] = useState("");
   const [formDescription, setFormDescription] = useState("");
+  const [createMode, setCreateMode] = useState<"graph" | "magentic">("graph");
+  const [managerPrompt, setManagerPrompt] = useState("");
+  const [maxSteps, setMaxSteps] = useState(8);
   const [addMemberId, setAddMemberId] = useState("");
   const [addMemberRole, setAddMemberRole] = useState("member");
+  const [runRequest, setRunRequest] = useState("");
 
   const { toast } = useToast();
   const { industry, isSelected } = useIndustry();
@@ -90,7 +95,27 @@ export default function AgentTeams() {
   });
 
   const createTeamMutation = useMutation({
-    mutationFn: async (data: { name: string; description: string; riskTier?: string }) => {
+    mutationFn: async (data: { name: string; description: string; riskTier?: string; mode: "graph" | "magentic"; managerPrompt?: string; maxSteps?: number }) => {
+      if (data.mode === "magentic") {
+        // No blueprint -- a Magentic team has no graph to open. The mode
+        // toggle and manager config live in runtimeConfig.orchestration,
+        // the same free-form convention the legacy tier engine already uses.
+        const res = await apiRequest("POST", "/api/agents", {
+          name: data.name,
+          description: data.description,
+          agentType: "team",
+          status: "active",
+          riskTier: data.riskTier || "MEDIUM",
+          autonomyMode: "assisted",
+          runtimeConfig: {
+            orchestration: {
+              pattern: "magentic",
+              magentic: { managerPrompt: data.managerPrompt || "", maxSteps: data.maxSteps || 8 },
+            },
+          },
+        });
+        return res.json();
+      }
       // blueprintJson: {} triggers the server's existing auto-create-blueprint
       // behavior (server/routes/agents.ts) so this team lands with a real,
       // empty Blueprint wired up -- not just a bare agent row with nothing to open.
@@ -105,16 +130,37 @@ export default function AgentTeams() {
       });
       return res.json();
     },
-    onSuccess: (agent: Agent) => {
-      toast({ title: "Team created", description: "Opening the blank canvas so you can wire it up." });
+    onSuccess: (agent: Agent, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
       setShowCreate(false);
       setFormName("");
       setFormDescription("");
+      setManagerPrompt("");
+      setMaxSteps(8);
+      if (variables.mode === "magentic") {
+        toast({ title: "Magentic team created", description: "Add specialist members, then run it." });
+        navigate(`/agents/${agent.id}`);
+        return;
+      }
+      toast({ title: "Team created", description: "Opening the blank canvas so you can wire it up." });
       if (agent.blueprintId) navigate(`/blueprints/${agent.blueprintId}`);
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create team", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const runMagenticMutation = useMutation({
+    mutationFn: async (data: { teamAgentId: string; request: string }) => {
+      const res = await apiRequest("POST", `/api/team-agents/${data.teamAgentId}/run-magentic`, { request: data.request });
+      return res.json();
+    },
+    onSuccess: (data: { dagRunId: string }) => {
+      setShowRunMagentic(null);
+      navigate(`/dag-runs/${data.dagRunId}`);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to start run", description: err.message, variant: "destructive" });
     },
   });
 
@@ -272,9 +318,16 @@ export default function AgentTeams() {
                     <span className="text-xs text-muted-foreground">{team.riskTier}</span>
                   </TableCell>
                   <TableCell>
-                    <Button variant="outline" size="sm" onClick={() => setShowManage(team.id)} data-testid={`button-manage-team-${team.id}`}>
-                      <UserPlus className="w-3.5 h-3.5 mr-1" /> Members
-                    </Button>
+                    <div className="flex items-center gap-1.5">
+                      <Button variant="outline" size="sm" onClick={() => setShowManage(team.id)} data-testid={`button-manage-team-${team.id}`}>
+                        <UserPlus className="w-3.5 h-3.5 mr-1" /> Members
+                      </Button>
+                      {(team.runtimeConfig as Record<string, any> | null)?.orchestration?.pattern === "magentic" && (
+                        <Button variant="outline" size="sm" onClick={() => setShowRunMagentic(team.id)} data-testid={`button-run-magentic-${team.id}`}>
+                          Run
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Link href={`/agents/${team.id}`}>
@@ -302,13 +355,33 @@ export default function AgentTeams() {
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle data-testid="dialog-title-create-team">Start from a blank canvas</DialogTitle>
+            <DialogTitle data-testid="dialog-title-create-team">Start a new team</DialogTitle>
             <DialogDescription>
-              Creates an empty team you wire up manually in the graph editor — for describing your automation in
-              plain English instead, use "Create Team".
+              A graph canvas is a fixed sequence you wire up by hand. A dynamic manager picks which specialist acts
+              next at each step, on its own — for describing your automation in plain English instead, use "Create Team".
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-4 py-2">
+            <div className="flex items-center gap-1 p-1 rounded-md bg-muted w-fit">
+              <Button
+                type="button"
+                size="sm"
+                variant={createMode === "graph" ? "default" : "ghost"}
+                onClick={() => setCreateMode("graph")}
+                data-testid="button-create-mode-graph"
+              >
+                Graph canvas
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={createMode === "magentic" ? "default" : "ghost"}
+                onClick={() => setCreateMode("magentic")}
+                data-testid="button-create-mode-magentic"
+              >
+                Dynamic manager (Magentic)
+              </Button>
+            </div>
             <div className="flex flex-col gap-1.5">
               <Label>Team Name *</Label>
               <Input
@@ -328,6 +401,34 @@ export default function AgentTeams() {
                 data-testid="input-team-description"
               />
             </div>
+            {createMode === "magentic" && (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Manager instructions</Label>
+                  <Textarea
+                    value={managerPrompt}
+                    onChange={e => setManagerPrompt(e.target.value)}
+                    placeholder="e.g. Coordinate the specialists to research, draft, and review a response to the customer's request."
+                    className="resize-none"
+                    data-testid="input-manager-prompt"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Add specialist agents as team members after creating this team, then trigger a run.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5 max-w-[160px]">
+                  <Label>Max steps</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={maxSteps}
+                    onChange={e => setMaxSteps(parseInt(e.target.value, 10) || 8)}
+                    data-testid="input-max-steps"
+                  />
+                </div>
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)} data-testid="button-cancel-create-team">Cancel</Button>
@@ -337,7 +438,7 @@ export default function AgentTeams() {
                   toast({ title: "Name required", variant: "destructive" });
                   return;
                 }
-                createTeamMutation.mutate({ name: formName, description: formDescription });
+                createTeamMutation.mutate({ name: formName, description: formDescription, mode: createMode, managerPrompt, maxSteps });
               }}
               disabled={createTeamMutation.isPending}
               data-testid="button-confirm-create-team"
@@ -441,6 +542,40 @@ export default function AgentTeams() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowManage(null)} data-testid="button-close-manage">Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showRunMagentic !== null} onOpenChange={(open) => { if (!open) { setShowRunMagentic(null); setRunRequest(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle data-testid="dialog-title-run-magentic">Run this team</DialogTitle>
+            <DialogDescription>
+              The manager will dynamically pick specialists to work through this request, one step at a time.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-1.5 py-2">
+            <Label>What should this team accomplish?</Label>
+            <Textarea
+              value={runRequest}
+              onChange={e => setRunRequest(e.target.value)}
+              placeholder="Describe the task..."
+              className="resize-none min-h-24"
+              data-testid="input-run-magentic-request"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowRunMagentic(null); setRunRequest(""); }} data-testid="button-cancel-run-magentic">Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!showRunMagentic || !runRequest.trim()) return;
+                runMagenticMutation.mutate({ teamAgentId: showRunMagentic, request: runRequest });
+              }}
+              disabled={!runRequest.trim() || runMagenticMutation.isPending}
+              data-testid="button-confirm-run-magentic"
+            >
+              {runMagenticMutation.isPending ? "Starting..." : "Run"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

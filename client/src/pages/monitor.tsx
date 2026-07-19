@@ -564,6 +564,7 @@ export default function Monitor() {
   const successRateSeriesUrl = `/api/monitor/series?metric=successRate&days=30${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
   const latencySeriesUrl = `/api/monitor/series?metric=latencyMs&days=30${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
   const costSeriesUrl = `/api/monitor/series?metric=costUsd&days=30${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
+  const policyViolationsSeriesUrl = `/api/monitor/series?metric=policyViolations&days=30${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
 
   const { data: successRateSeries } = useQuery<Array<{ date: string; value: number }>>({
     queryKey: [successRateSeriesUrl],
@@ -573,6 +574,9 @@ export default function Monitor() {
   });
   const { data: costSeries } = useQuery<Array<{ date: string; value: number }>>({
     queryKey: [costSeriesUrl],
+  });
+  const { data: policyViolationsSeries } = useQuery<Array<{ date: string; value: number }>>({
+    queryKey: [policyViolationsSeriesUrl],
   });
 
   const { toast } = useToast();
@@ -877,9 +881,14 @@ export default function Monitor() {
     { id: "success-rate", title: "Success Rate", currentValue: `${successRate}%`, color: "#10b981", type: "area" as const, data: successRateSeries ?? [] },
     { id: "p95-latency", title: "Avg Latency", currentValue: avgLatency > 0 ? formatMs(avgLatency) : "—", color: "#3b82f6", type: "line" as const, data: latencySeries ?? [] },
     { id: "cost-per-run", title: "Cost per Run", currentValue: costSeries && costSeries.length > 0 ? `$${costSeries[costSeries.length - 1].value.toFixed(4)}` : "—", color: "#8b5cf6", type: "bar" as const, data: costSeries ?? [] },
-    { id: "policy-violations", title: "Policy Violations", currentValue: `${policyViolationCount}`, color: "#ef4444", type: "area" as const, data: [] },
-    { id: "drift-score", title: "Hallucination/Drift Score", currentValue: "92%", color: "#f59e0b", type: "line" as const, data: [] },
-    { id: "kpi-confidence", title: "KPI Confidence", currentValue: "87%", color: "#10b981", type: "area" as const, data: [] },
+    { id: "policy-violations", title: "Policy Violations", currentValue: `${policyViolationCount}`, color: "#ef4444", type: "area" as const, data: policyViolationsSeries ?? [] },
+    // These two used to show hardcoded "92%"/"87%" regardless of any real
+    // data -- there's no hallucination/drift scoring or KPI-confidence
+    // computation anywhere in the backend to back a number with, so a fixed
+    // value was always fabricated. Showing "no data" is honest; a fake
+    // number that never changes is not.
+    { id: "drift-score", title: "Hallucination/Drift Score", currentValue: "—", color: "#f59e0b", type: "line" as const, data: [] },
+    { id: "kpi-confidence", title: "KPI Confidence", currentValue: "—", color: "#10b981", type: "area" as const, data: [] },
   ];
 
   const changeSignals = (() => {
@@ -1090,6 +1099,11 @@ export default function Monitor() {
                       <span className="text-lg font-semibold">{chart.currentValue}</span>
                     </div>
                     <div className="h-[120px]">
+                      {chart.data.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-xs text-muted-foreground" data-testid={`chart-${chart.id}-no-data`}>
+                          No data available
+                        </div>
+                      ) : (
                       <ResponsiveContainer width="100%" height="100%">
                         {chart.type === "area" ? (
                           <AreaChart data={chart.data}>
@@ -1117,6 +1131,7 @@ export default function Monitor() {
                           </BarChart>
                         )}
                       </ResponsiveContainer>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -1926,7 +1941,15 @@ export default function Monitor() {
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P95 Latency</span>
                           <span className="text-sm font-semibold">{formatMs(agent.avgLatencyMs)}</span>
-                          <Progress value={Math.max(0, 100 - ((agent.avgLatencyMs || 0) / 200))} className="h-1" />
+                          {/* Normalized against this page's own SLA bands (good <=500ms,
+                              warn <=1500ms, bad above -- see latColor a few hundred lines
+                              down) rather than an arbitrary /200 divisor that put the
+                              "normal" range within a few percent of each other and, for
+                              null/no-data agents, rendered a misleading full bar via ||0. */}
+                          <Progress
+                            value={agent.avgLatencyMs == null ? 0 : Math.max(0, 100 - (agent.avgLatencyMs / 3000) * 100)}
+                            className="h-1"
+                          />
                         </div>
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Health</span>

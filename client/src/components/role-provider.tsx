@@ -37,7 +37,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AD",
     description: "Full platform access, user management, system configuration",
     icon: ShieldCheck,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/process-flows", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/healing-operations", "/runbook-automation", "/monitor", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/model-providers", "/developer"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/process-flows", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/healing-operations", "/runbook-automation", "/monitor", "/observability", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/billing", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/admin", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/model-providers", "/developer"],
   },
   {
     id: "outcome_owner",
@@ -55,7 +55,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "AE",
     description: "Designs blueprints, tools, memory, eval suites",
     icon: Bot,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/process-flows", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/monitor", "/optimization", "/improvements", "/improvement-loop", "/healing-operations", "/runbook-automation", "/integrations", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/autonomy-engine", "/oversight-console", "/model-providers", "/developer"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/templates", "/blueprints", "/pipelines", "/process-flows", "/evals", "/golden-datasets", "/deployments", "/shadow-replay", "/canary-deployment", "/monitor", "/observability", "/optimization", "/improvements", "/improvement-loop", "/healing-operations", "/runbook-automation", "/integrations", "/ontology", "/skills", "/context-studio", "/memory-architecture", "/rag-pipeline", "/knowledge-graph", "/autonomy-engine", "/oversight-console", "/model-providers", "/developer"],
   },
   {
     id: "ops_sre",
@@ -64,7 +64,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "SR",
     description: "Monitoring, incidents, reliability, rollback, cost controls",
     icon: Activity,
-    allowedRoutes: ["/dashboard", "/deployments", "/shadow-replay", "/canary-deployment", "/healing-operations", "/runbook-automation", "/monitor", "/agents", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/governance", "/autonomy-engine", "/oversight-console"],
+    allowedRoutes: ["/dashboard", "/deployments", "/shadow-replay", "/canary-deployment", "/healing-operations", "/runbook-automation", "/monitor", "/observability", "/agents", "/optimization", "/improvements", "/improvement-loop", "/integrations", "/governance", "/autonomy-engine", "/oversight-console"],
   },
   {
     id: "compliance_security",
@@ -73,7 +73,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "CS",
     description: "Policy authoring, audit exports, access controls",
     icon: Shield,
-    allowedRoutes: ["/dashboard", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/admin", "/agents", "/deployments", "/monitor", "/ontology"],
+    allowedRoutes: ["/dashboard", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail", "/approvals", "/admin", "/agents", "/deployments", "/monitor", "/observability", "/ontology"],
   },
   {
     id: "expert_validator",
@@ -82,7 +82,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "EV",
     description: "Approves high-risk changes, exceptions, major releases",
     icon: UserCheck,
-    allowedRoutes: ["/dashboard", "/approvals", "/agents", "/deployments", "/monitor", "/evals", "/golden-datasets", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail"],
+    allowedRoutes: ["/dashboard", "/approvals", "/agents", "/deployments", "/monitor", "/observability", "/evals", "/golden-datasets", "/governance", "/autonomy-engine", "/oversight-console", "/audit-trail"],
   },
   {
     id: "finance",

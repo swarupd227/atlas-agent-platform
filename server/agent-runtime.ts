@@ -12,6 +12,7 @@ import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { RunSpanCollector } from "./run-spans";
 import { evaluateRule } from "./rule-evaluator";
+import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES } from "./services/pii/pii-masking-engine";
 import type { RuleGroup } from "@shared/schema";
 
 export function canonicalJsonStringify(obj: any): string {
@@ -177,6 +178,86 @@ function truncateLinesToBudget(budgetTokens: number, lines: string[]): string[] 
     used += t;
   }
   return result;
+}
+
+// Default-on content-safety guardrail: masks PII (emails, phone numbers,
+// SSNs, credit cards, IPs, URLs) in free-text agent output before it's
+// returned to a caller. The regex masking engine already existed for
+// KB-ingestion masking (services/pii/pii-masking-engine.ts) but was never
+// applied as an output filter -- this reuses it rather than building a new
+// one. Opt out per run via runtimeConfig.piiMaskingEnabled === false; fails
+// open (returns the original text) on any error so masking can never break
+// a run.
+let _piiMaskingEngine: PIIMaskingEngine | null = null;
+function getPiiMaskingEngine(): PIIMaskingEngine {
+  if (!_piiMaskingEngine) {
+    _piiMaskingEngine = new PIIMaskingEngine({ engine: "regex", entityTypes: DEFAULT_ENTITY_TYPES, customPatterns: [], failOnError: false });
+  }
+  return _piiMaskingEngine;
+}
+
+function maskPiiText(text: string, runtimeConfig?: Record<string, unknown>): string {
+  if (runtimeConfig?.piiMaskingEnabled === false) return text;
+  if (!text) return text;
+  try {
+    return getPiiMaskingEngine().maskSingle(text, "agent_output").maskedText;
+  } catch {
+    return text;
+  }
+}
+
+// Masks the well-known free-text fields ("summary", "analysis") on an
+// agent-output object, leaving structured fields (severity, findings[],
+// recommendedActions[], processedRecords[], contract metadata, etc.)
+// untouched. Returns a shallow copy -- never mutates the input.
+function maskPiiInOutputFields(output: Record<string, unknown>, runtimeConfig?: Record<string, unknown>): Record<string, unknown> {
+  if (runtimeConfig?.piiMaskingEnabled === false) return output;
+  const masked = { ...output };
+  for (const field of ["summary", "analysis"] as const) {
+    const val = masked[field];
+    if (typeof val === "string" && val.length > 0) {
+      masked[field] = maskPiiText(val, runtimeConfig);
+    }
+  }
+  return masked;
+}
+
+// Resolves an LLM function-call name (e.g. "mcp_0_search_records") back to
+// the AvailableTool it names, using the same mcp_{index}_{sanitizedName}
+// convention the tool loop itself uses to build those names in the first
+// place. Returns null for an unresolvable/hallucinated name.
+function resolveAvailableTool(funcName: string, availableTools: AvailableTool[]): AvailableTool | null {
+  const idx = availableTools.findIndex((_, i) => {
+    const expectedName = `mcp_${i}_${availableTools[i].toolName.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+    return expectedName === funcName;
+  });
+  return idx >= 0 ? availableTools[idx] : null;
+}
+
+// Cap on the accumulated tool-calling conversation (system+user prompt plus
+// every iteration's assistant/tool messages), separate from the initial
+// prompt-assembly budgets above -- this is the array that grows unbounded
+// across MAX_TOOL_ITERATIONS if left uncompacted.
+const MAX_CONVERSATION_HISTORY_TOKENS = 12000;
+
+// Once the running conversation exceeds budgetTokens, replaces older
+// tool-result message contents with a short marker so long multi-iteration
+// tool-calling runs don't overflow the model's context window. Never
+// touches the system/user messages (index 0-1) or the messages just added
+// for the current iteration (protectFromIdx onward), so the model always
+// has full-fidelity results for its most recent tool calls.
+function compactConversationMessages(messages: LLMMessage[], protectFromIdx: number, budgetTokens: number): LLMMessage[] {
+  const HEAD_KEEP = 2;
+  const totalTokens = () => messages.reduce((sum, m) => sum + estimateTokenCount(m.content), 0);
+  if (protectFromIdx <= HEAD_KEEP || totalTokens() <= budgetTokens) return messages;
+
+  for (let i = HEAD_KEEP; i < protectFromIdx && totalTokens() > budgetTokens; i++) {
+    const m = messages[i];
+    if (m.role === "tool" && m.content.length > 200 && !m.content.startsWith("[compacted:")) {
+      messages[i] = { ...m, content: `[compacted: ${m.content.length} chars of prior tool output omitted to fit context budget]` };
+    }
+  }
+  return messages;
 }
 
 async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeContextResult> {
@@ -957,7 +1038,7 @@ export async function executePromptWithMcp(
   prompt: string,
   industry?: string,
   agentSystemPrompt?: string,
-  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number },
+  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number; dagToolAllowlist?: string[] },
   onProgress?: (event: RuntimeProgressEvent) => void,
   orgId?: string | null,
   callerRole?: RoleId | null,
@@ -1023,6 +1104,66 @@ export async function executePromptWithMcp(
     };
   }
 
+  // ── Tiered budget gate (kill-switch) ─────────────────────────────────────────
+  // Daily-per-agent and org-wide monthly cost caps, checked BEFORE this run
+  // spends anything (unlike the per-run cap further down, which only stops
+  // the tool loop after some spend has already happened this run). Opt-in —
+  // unset caps are not enforced. On breach the agent is marked "throttled" so
+  // later calls fail fast without re-querying cost every time.
+  {
+    const budgetRuntimeConfig = options?.runtimeConfig || {};
+    const dailyBudgetUsd = typeof budgetRuntimeConfig.dailyBudgetUsd === "number" ? budgetRuntimeConfig.dailyBudgetUsd : null;
+    const orgMonthlyBudgetUsd = typeof budgetRuntimeConfig.orgMonthlyBudgetUsd === "number" ? budgetRuntimeConfig.orgMonthlyBudgetUsd : null;
+    if (dailyBudgetUsd !== null || orgMonthlyBudgetUsd !== null) {
+      try {
+        let breach: string | null = null;
+        if (dailyBudgetUsd !== null) {
+          const startOfDay = new Date();
+          startOfDay.setHours(0, 0, 0, 0);
+          const spentToday = await storage.getAgentCostSince(agentId, startOfDay);
+          if (spentToday >= dailyBudgetUsd) {
+            breach = `Daily budget exceeded: $${spentToday.toFixed(4)} >= $${dailyBudgetUsd} for agent ${agentId}`;
+          }
+        }
+        if (!breach && orgMonthlyBudgetUsd !== null && orgId) {
+          const startOfMonth = new Date();
+          startOfMonth.setDate(1);
+          startOfMonth.setHours(0, 0, 0, 0);
+          const spentThisMonth = await storage.getOrgCostSince(orgId, startOfMonth);
+          if (spentThisMonth >= orgMonthlyBudgetUsd) {
+            breach = `Org-wide monthly budget exceeded: $${spentThisMonth.toFixed(4)} >= $${orgMonthlyBudgetUsd} for org ${orgId}`;
+          }
+        }
+        if (breach) {
+          const errMsg = `[BUDGET-GATE] ${breach} — run blocked (kill-switch)`;
+          console.warn(errMsg);
+          storage.updateAgent(agentId, { status: "throttled" }).catch(() => {});
+          storage.createAuditEvent({
+            actorType: "system",
+            actorId: "budget-gate",
+            action: "agent_throttled_budget_exceeded",
+            objectType: "agent",
+            objectId: agentId,
+            details: JSON.stringify({ reason: breach, dailyBudgetUsd, orgMonthlyBudgetUsd, deploymentId }),
+          }).catch(() => {});
+          steps[0].status = "failed";
+          steps[0].error = errMsg;
+          steps[0].completedAt = new Date().toISOString();
+          emitProgress("error", { message: errMsg, stage: "budget_gate" });
+          return {
+            steps,
+            success: false,
+            summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errMsg },
+            hardViolations: [],
+          };
+        }
+      } catch (budgetCheckErr: any) {
+        // A failed cost query must not itself become a false kill-switch trip.
+        console.warn(`[agent-runtime] Budget check query failed (non-fatal, proceeding): ${budgetCheckErr.message}`);
+      }
+    }
+  }
+
   // ── Skill gate ──────────────────────────────────────────────────────────────
   // Skills GRANT tool capabilities: when the agent has preloaded skills that
   // explicitly declare allowedTools, the union of those tools is enforced as an
@@ -1072,6 +1213,19 @@ export async function executePromptWithMcp(
     // Skills grant capability; failure to resolve them degrades to the policy-
     // gated tool set rather than aborting the run.
     console.warn(`[skill-gate] skill enforcement skipped (non-fatal): ${sgErr.message}`);
+  }
+
+  // ── Tool Set gate ────────────────────────────────────────────────────────────
+  // A Team Graph "Tool Set" node directly upstream of this node's internal_agent
+  // node (see dag-execution-engine.ts's executeNode) resolves its selected MCP
+  // tools to names and passes them here as an independent allowlist -- same
+  // filtering mechanism as the skill gate above, just sourced from the DAG
+  // graph instead of the agent's own preloaded skills.
+  if (options?.dagToolAllowlist && options.dagToolAllowlist.length > 0) {
+    const toolSetAllow = new Set(options.dagToolAllowlist.map(t => t.toLowerCase()));
+    const beforeToolSetGate = availableTools.length;
+    availableTools = availableTools.filter(t => toolSetAllow.has(t.toolName.toLowerCase()));
+    console.log(`[tool-set-gate] Agent ${agentId}: Tool Set node enforces allowedTools — ${beforeToolSetGate - availableTools.length} tool(s) filtered, ${availableTools.length} remain`);
   }
 
   // Only hard-fail when MCP servers WERE assigned but produced zero usable tools --
@@ -1335,6 +1489,21 @@ After receiving tool results, provide a structured analysis with key findings, s
     let currentToolCalls: CanonicalToolCall[] = planResult.toolCalls;
     let currentRawMessage = planResult.rawAssistantMessage;
 
+    // Intent-based authorization: when enabled, the tools the agent's OWN
+    // initial planning call names become the declared scope for the rest of
+    // this run -- any later iteration requesting a tool outside that set is
+    // blocked as scope drift (e.g. a tool result or prompt injection trying
+    // to steer the agent off-plan), even if AAR/policy would otherwise allow
+    // it. Opt-in (off by default): many legitimate agents reasonably
+    // discover new tools to call based on what earlier results contain.
+    const declaredScope: Set<string> | null = runtimeConfig?.enforceDeclaredScope === true
+      ? new Set(
+          currentToolCalls
+            .map(tc => resolveAvailableTool(tc.name, availableTools)?.toolName.toLowerCase())
+            .filter((n): n is string => !!n),
+        )
+      : null;
+
     steps[steps.length - 1].status = "completed";
     steps[steps.length - 1].completedAt = new Date().toISOString();
     steps[steps.length - 1].output = {
@@ -1425,14 +1594,15 @@ After receiving tool results, provide a structured analysis with key findings, s
         try { noToolsOutput = JSON.parse(currentContent); } catch { noToolsOutput = { analysis: currentContent }; }
       }
 
+      const maskedNoToolsOutput = maskPiiInOutputFields(noToolsOutput, runtimeConfig);
       noToolsStep.status = noToolsInterrupted ? "failed" : "completed";
       noToolsStep.completedAt = new Date().toISOString();
-      noToolsStep.output = noToolsOutput;
+      noToolsStep.output = maskedNoToolsOutput;
       if (noToolsInterrupted) {
         noToolsStep.error = `Output contract validation failed (strict_with_interrupt): ${(noToolsOutput.contractValidationErrors as string[] | undefined ?? []).slice(0, 3).join("; ")}`;
       }
       if (options?.conversational) {
-        conversationalResponseHoisted = currentContent;
+        conversationalResponseHoisted = typeof maskedNoToolsOutput.analysis === "string" ? maskedNoToolsOutput.analysis : maskPiiText(currentContent, runtimeConfig);
       }
     }
 
@@ -1557,6 +1727,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             args,
             policyBundle,
             skillAllowlist: dispatchSkillAllowlist,
+            declaredScope,
             deploymentId,
             iteration: iterationsUsed,
             idempotencyScope,
@@ -1582,6 +1753,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               dispatch.outcome === "gate_blocked_policy" ? `[POLICY-GATE] BLOCK: ${dispatch.reason}` :
               dispatch.outcome === "gate_blocked_skill" ? `[SKILL-GATE] BLOCK: ${dispatch.reason}` :
               dispatch.outcome === "gate_blocked_aar" ? `[AAR] BLOCK: ${dispatch.reason}` :
+              dispatch.outcome === "gate_blocked_scope_drift" ? `[SCOPE-GATE] BLOCK: ${dispatch.reason}` :
               dispatch.outcome === "gate_requires_approval" ? `[AAR] REQUIRE_APPROVAL: ${dispatch.reason} (approval_id: ${dispatch.approvalId ?? "n/a"})` :
               dispatch.outcome === "rate_limited" ? `[RATE-LIMIT] ${dispatch.reason}` :
               dispatch.error ?? "Tool dispatch failed";
@@ -1591,8 +1763,12 @@ After receiving tool results, provide a structured analysis with key findings, s
             lastStep.outcome = dispatch.outcome;
             lastStep.completedAt = new Date().toISOString();
             const resultError = dispatch.outcome === "gate_requires_approval" ? `[AAR] REQUIRE_APPROVAL: pending approval` : label;
-            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: resultError });
-            emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: label, approvalId: dispatch.approvalId, iteration: iterationsUsed });
+            // dispatch.result is non-null on outcome "tool_error" (the tool
+            // itself returned {isError: true, ...} rather than throwing) --
+            // keep it so the trace's Result panel still shows what the tool
+            // actually said, not just the derived error label.
+            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: dispatch.result ?? null, error: resultError });
+            emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: label, result: dispatch.result ?? undefined, approvalId: dispatch.approvalId, iteration: iterationsUsed });
 
             if (dispatch.outcome === "gate_blocked_policy") {
               // Collect violation for trace-level policyChecks.violations persistence.
@@ -1616,6 +1792,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         }
       }
 
+      const iterationMsgStartIdx = conversationMessages.length;
       conversationMessages.push(
         {
           role: "assistant" as const,
@@ -1632,6 +1809,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           };
         }),
       );
+      conversationMessages = compactConversationMessages(conversationMessages, iterationMsgStartIdx, MAX_CONVERSATION_HISTORY_TOKENS);
 
       if (iterationsUsed < MAX_TOOL_ITERATIONS) {
         try {
@@ -1896,7 +2074,9 @@ After receiving tool results, provide a structured analysis with key findings, s
         const lastStep = steps[steps.length - 1];
         lastStep.status = contractInterrupted ? "failed" : "completed";
         lastStep.completedAt = new Date().toISOString();
-        lastStep.output = analysis;
+        const maskedAnalysis = maskPiiInOutputFields(analysis, runtimeConfig);
+        const maskedRawContent = maskPiiText(rawContent, runtimeConfig);
+        lastStep.output = maskedAnalysis;
         if (contractInterrupted) {
           lastStep.error = `Output contract validation failed (strict_with_interrupt): ${(analysis.contractValidationErrors ?? []).slice(0, 3).join("; ")}`;
           emitProgress("contract_interrupt", {
@@ -1907,18 +2087,18 @@ After receiving tool results, provide a structured analysis with key findings, s
         }
 
         emitProgress("final_analysis", {
-          summary: analysis.summary || rawContent,
+          summary: maskedAnalysis.summary || maskedRawContent,
           severity: analysis.severity,
           iterationsUsed,
           isConversational,
           // Additive fields so callers can reliably reconstruct the full LLM
           // output even when `analysis.summary` is a short string.
-          rawContent,
-          analysis,
+          rawContent: maskedRawContent,
+          analysis: maskedAnalysis,
         });
-        
+
         if (isConversational) {
-          conversationalResponseHoisted = rawContent;
+          conversationalResponseHoisted = maskedRawContent;
         }
       } catch (err: unknown) {
         // Strict-mode contract violations must propagate — do not swallow
@@ -2306,18 +2486,35 @@ export async function waitForApproval(
   context: string,
   timeoutMs: number = 30 * 60 * 1000,
   onCreated?: (approvalId: string) => void,
+  existingApprovalId?: string,
 ): Promise<{ approved: boolean; decidedBy?: string; reason?: string }> {
-  const approval = await storage.createApproval({
-    type: "hitl_gate",
-    objectType: "pipeline_gate",
-    objectName: gateName,
-    status: "pending",
-    requestedBy: agentId,
-    requesterType: "agent",
-    agentId,
-    description: `Pipeline HITL checkpoint: ${gateName}\n\nContext:\n${context.slice(0, 2000)}`,
-    riskScore: gateType === "approval" ? 0.7 : 0.4,
-  });
+  // Resuming a DAG run re-runs the whole paused wave (see resumeTeamAgentDagRun
+  // in dag-execution-engine.ts), including the gate node itself -- without
+  // this check, every resume would create a brand-new "pending" approval and
+  // wait all over again, even though the original one was already decided.
+  // existingApprovalId (threaded through from the persisted dagExecutionRuns
+  // row) makes this call idempotent: reuse that exact approval instead of
+  // creating a new one, and if it's already been decided, return immediately.
+  let approval = existingApprovalId ? await storage.getApproval(existingApprovalId) : undefined;
+  if (approval && approval.status !== "pending") {
+    console.log(`[agent-runtime] HITL gate "${gateName}" already decided (id=${approval.id}, status=${approval.status}) -- resuming without re-waiting`);
+    if (approval.status === "approved") return { approved: true, decidedBy: approval.decidedBy || "human", reason: "Approved" };
+    if (approval.status === "rejected") return { approved: false, decidedBy: approval.decidedBy || "human", reason: approval.description || "Rejected" };
+    return { approved: false, reason: `Gate already ${approval.status}` };
+  }
+  if (!approval) {
+    approval = await storage.createApproval({
+      type: "hitl_gate",
+      objectType: "pipeline_gate",
+      objectName: gateName,
+      status: "pending",
+      requestedBy: agentId,
+      requesterType: "agent",
+      agentId,
+      description: `Pipeline HITL checkpoint: ${gateName}\n\nContext:\n${context.slice(0, 2000)}`,
+      riskScore: gateType === "approval" ? 0.7 : 0.4,
+    });
+  }
   onCreated?.(approval.id);
 
   console.log(`[agent-runtime] HITL gate "${gateName}" waiting for approval (id=${approval.id}, timeout=${Math.round(timeoutMs / 60000)}min)`);
@@ -2363,7 +2560,7 @@ export async function evaluateCondition(condition: string, workerOutput: string)
 // the three depending on the model. Returns null (not a throw) if nothing
 // parseable is found, so callers can fall back to treating the output as
 // opaque text.
-function extractStructuredOutput(text: string): Record<string, any> | null {
+export function extractStructuredOutput(text: string): Record<string, any> | null {
   if (!text) return null;
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidates = [fenceMatch ? fenceMatch[1] : text];
@@ -2497,6 +2694,7 @@ export async function executeWorkerAgent(
   teamAgent: RuntimeAgent,
   previousContext: string,
   workerIndex: number,
+  dagToolAllowlist?: string[],
 ): Promise<{
   agentId: string;
   agentName: string;
@@ -2505,6 +2703,10 @@ export async function executeWorkerAgent(
   success: boolean;
   startTime: number;
   endTime: number;
+  costUsd?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  toolCallCount?: number;
 }> {
   const startTime = Date.now();
   const workerAgent = await storage.getAgent(workerId);
@@ -2568,7 +2770,7 @@ export async function executeWorkerAgent(
       contextualPrompt,
       teamAgent.industry,
       workerContext || workerAgent.systemPrompt || undefined,
-      { runtimeConfig: workerRtConfig },
+      { runtimeConfig: workerRtConfig, dagToolAllowlist },
       undefined,
       workerRuntimeAgent.orgId ?? undefined,
     );
@@ -2623,6 +2825,10 @@ export async function executeWorkerAgent(
       success: result.success,
       startTime,
       endTime,
+      costUsd: result.summary.costUsd || 0,
+      promptTokens: result.summary.tokenUsage?.promptTokens || 0,
+      completionTokens: result.summary.tokenUsage?.completionTokens || 0,
+      toolCallCount: Array.isArray(result.summary.toolsUsed) ? result.summary.toolsUsed.length : 0,
     };
   } catch (err: any) {
     const endTime = Date.now();
@@ -3467,6 +3673,13 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
     });
 
     console.log(`[agent-runtime] ${agent.agentName}: ${result.summary.passedSteps}/${result.summary.totalSteps} steps passed, ${result.summary.latencyMs}ms`);
+    // Callers (runAgentOnce, used by the eval/regression-suite path in
+    // worker.ts) previously got nothing back from this function -- any
+    // per-step tool failure detail captured above (which tool, which
+    // server, why) was computed and persisted to the DB run record but
+    // never actually returned, so a failed regression test could only ever
+    // report a generic "Cycle failed".
+    return result;
   } catch (err: any) {
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
       status: "failed",
@@ -3795,8 +4008,25 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
   };
 
   try {
-    await executeAgentCycle(runtimeAgent, onProgress);
-    return { success: true, message: `${agent.name} cycle completed` };
+    const cycleResult = await executeAgentCycle(runtimeAgent, onProgress);
+    if (!cycleResult) {
+      return { success: false, message: `${agent.name}: Execution failed before completion` };
+    }
+    if (cycleResult.success) {
+      return { success: true, message: `${agent.name} cycle completed` };
+    }
+    // Surface exactly which tool/server failed and why, instead of the
+    // generic "Cycle failed" this used to collapse to -- this is what
+    // showed up as an undiagnosable failure in eval/regression-suite runs
+    // (worker.ts's processEvalTestRun consumes this message directly).
+    const failedSteps = (cycleResult.steps || []).filter((s: any) => s.status === "failed");
+    const detail = failedSteps.length > 0
+      ? failedSteps.map((s: any) => `${s.mcpTool || s.name}${s.mcpServer ? ` (${s.mcpServer})` : ""}: ${s.error || "failed"}`).join("; ")
+      : "Execution failed";
+    return {
+      success: false,
+      message: `${agent.name}: ${detail} [${cycleResult.summary?.passedSteps ?? 0}/${cycleResult.summary?.totalSteps ?? 0} steps passed]`,
+    };
   } catch (err: any) {
     return { success: false, message: err.message || "Cycle failed" };
   }

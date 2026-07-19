@@ -265,9 +265,16 @@ export default function McpServersPage() {
             const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
             return dateB - dateA;
           }).map((server) => (
-            <div key={server.id} className="relative group">
+            <div key={server.id} className="group">
               <Link href={`/integrations/mcp-servers/${server.id}`}>
-              <Card className="hover-elevate cursor-pointer" data-testid={`card-mcp-server-${server.id}`}>
+              {/* relative lives on the Card itself, not the outer wrapper --
+                  the Delete button below is positioned absolute against
+                  *this* box now, so it can't end up outside the Card's own
+                  rendered boundary the way it did when anchored to a
+                  sibling wrapper div whose box didn't line up with the
+                  Card's (hover-elevate already gives Card its own relative
+                  stacking context, which this makes explicit/relied-on). */}
+              <Card className="hover-elevate cursor-pointer relative" data-testid={`card-mcp-server-${server.id}`}>
                 <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
                   <div className="flex items-center gap-3">
                     <div className="flex items-center justify-center w-9 h-9 rounded-md bg-muted shrink-0">
@@ -325,18 +332,18 @@ export default function McpServersPage() {
                     </span>
                   </div>
                 </CardContent>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Delete server ${server.name}`}
+                  className="absolute top-2 right-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity z-10 text-destructive hover:text-destructive"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(server.id); }}
+                  data-testid={`button-delete-server-${server.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                </Button>
               </Card>
               </Link>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label={`Delete server ${server.name}`}
-                className="absolute top-2 right-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity z-10 text-destructive hover:text-destructive"
-                onClick={(e) => { e.preventDefault(); setDeleteConfirmId(server.id); }}
-                data-testid={`button-delete-server-${server.id}`}
-              >
-                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-              </Button>
             </div>
           ))}
         </div>

@@ -77,6 +77,15 @@ const router = Router();
       const [session] = await db.select().from(conversations).where(eq(conversations.id, sessionId));
       if (!session || session.agentId !== agentId) return res.status(404).json({ error: "Session not found for this agent" });
 
+      // Sessions are created with a generic "{agent} - Playground" title
+      // (identical for every session against the same agent, so the list is
+      // impossible to scan) -- retitle from the first real message so the
+      // sidebar shows what each session was actually about.
+      if (session.title === `${agent.name} - Playground`) {
+        const retitled = content.length > 60 ? `${content.slice(0, 57)}...` : content;
+        await db.update(conversations).set({ title: retitled }).where(eq(conversations.id, sessionId));
+      }
+
       await db.insert(chatMessages).values({
         conversationId: sessionId,
         role: "user",
@@ -97,6 +106,16 @@ const router = Router();
       const mcpLinks = await storage.getAgentMcpServers(agentId);
       const mcpServerIds = mcpLinks.map(l => l.serverId);
       const hasMcpServers = mcpServerIds.length > 0;
+      // An agent can be linked to a knowledge base (agentKnowledgeBases) with no
+      // MCP servers at all -- executePromptWithMcp already has a working
+      // "kb-only" mode (agent-runtime.ts, gated on hasKnowledgeBases, not on
+      // mcpServerIds.length) that does real pgvector retrieval. Before this,
+      // such an agent fell straight to the plain-Claude branch below with zero
+      // retrieval, so it would narrate "searching the knowledge base..." and
+      // then answer from the model's own guess -- not the agent's real,
+      // ingested content, and with no execution trace to catch it.
+      const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
+      const hasKnowledgeBases = linkedKbs.length > 0;
       // web_search_preview (OpenAI-only tool) is retained as an explicit exception
       // for agents configured with the "web_search" built-in tool. All other non-MCP
       // chat uses Claude (claude-opus-4-5). Audio transcription also stays on OpenAI.
@@ -107,7 +126,7 @@ const router = Router();
 
       let fullResponse = "";
 
-      if (hasMcpServers) {
+      if (hasMcpServers || hasKnowledgeBases) {
         res.write(`data: ${JSON.stringify({ content: "" })}\n\n`);
 
         const conversationHistory = existingMsgs.length > 1

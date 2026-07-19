@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { streamProposeAgents } from "@/lib/propose-agents-stream";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -40,6 +41,7 @@ type Step = "describe" | "review" | "creating";
 const EXAMPLE_PLACEHOLDER =
   "e.g. When a new supplier invoice arrives, check it against our purchase order, get manager approval for invoices over $10,000, then schedule payment and notify the supplier.";
 
+
 // Business-user entry point for creating a real, running multi-agent
 // automation: describe it in plain English, review the drafted steps and
 // branch conditions, confirm. Wraps the existing propose-agents /
@@ -61,6 +63,8 @@ export function TeamProposalDialog({
   const [description, setDescription] = useState(initialDescription);
   const [proposal, setProposal] = useState<ProposalResult | null>(null);
   const [editedConditions, setEditedConditions] = useState<Record<number, string>>({});
+  const [draftProgress, setDraftProgress] = useState<string | null>(null);
+  const [draftElapsedSec, setDraftElapsedSec] = useState(0);
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
@@ -68,6 +72,8 @@ export function TeamProposalDialog({
     setStep("describe");
     setProposal(null);
     setEditedConditions({});
+    setDraftProgress(null);
+    setDraftElapsedSec(0);
   }
 
   // The dialog stays mounted across opens (e.g. on the Process Flows page), so
@@ -83,29 +89,65 @@ export function TeamProposalDialog({
 
   const proposeMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/ai/propose-agents", {
-        outcomeContract: { name: description.slice(0, 60), description },
-        kpis: [],
-        processFlowSteps,
-      });
-      return (await res.json()) as ProposalResult;
+      setDraftProgress("Starting...");
+      return (await streamProposeAgents(
+        {
+          outcomeContract: { name: description.slice(0, 60), description },
+          kpis: [],
+          processFlowSteps,
+        },
+        setDraftProgress,
+      )) as ProposalResult;
     },
     onSuccess: (data) => {
+      setDraftProgress(null);
       if (!data.orchestrator && (!data.agents || data.agents.length === 0)) {
+        const likelyTooLarge = (data as any).likelyTooLarge as boolean | undefined;
         toast({
-          title: "Couldn't draft a team from that description",
-          description: "Try adding more detail about the steps involved.",
+          title: likelyTooLarge ? "This team is too large to draft in one go" : "Couldn't draft a team from that description",
+          description: (data as any).error || "Try adding more detail about the steps involved.",
           variant: "destructive",
         });
+        // Deliberately NOT calling reset() or clearing `description` here --
+        // the user's typed input stays in the box so they can retry (e.g.
+        // after splitting a too-large ask into stages) without retyping it.
         return;
       }
       setProposal(data);
       setStep("review");
     },
     onError: (err: Error) => {
-      toast({ title: "Failed to draft automation", description: err.message, variant: "destructive" });
+      setDraftProgress(null);
+      // Most failures now arrive as a plain message via the SSE error event
+      // (see streamProposeAgents above). A pre-stream failure (e.g. auth)
+      // can still surface as "<status>: <json-or-text-body>" from
+      // throwIfResNotOk in queryClient.ts -- unwrap the JSON body's `error`
+      // field when present so the user sees the specific, actionable
+      // message instead of a raw status code.
+      let description = err.message;
+      const jsonStart = err.message.indexOf("{");
+      if (jsonStart >= 0) {
+        try {
+          const parsed = JSON.parse(err.message.slice(jsonStart));
+          if (parsed?.error) description = parsed.error;
+        } catch {}
+      }
+      toast({ title: "Couldn't draft this team", description, variant: "destructive" });
+      // Deliberately NOT calling reset() or clearing `description` here --
+      // see the onSuccess branch above for why.
     },
   });
+
+  // Live elapsed-time tick while drafting, purely a UI signal ("still going,
+  // not stuck") -- independent of the real progress-stage text from the
+  // stream, which only updates at a handful of discrete checkpoints.
+  useEffect(() => {
+    if (!proposeMutation.isPending) return;
+    setDraftElapsedSec(0);
+    const id = setInterval(() => setDraftElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposeMutation.isPending]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -123,11 +165,41 @@ export function TeamProposalDialog({
         workers: proposal.agents,
         pipeline,
       });
-      return res.json();
+      const data = await res.json();
+
+      // Creating the team only registers it -- it has zero runs until
+      // something deploys it, yet the old toast said "is ready" and dropped
+      // the user on a dormant agent page with the actual run trigger buried
+      // in an overflow menu. Deploy & start it immediately (same call and
+      // loop outcome-detail.tsx's launchWorkersAutomatically already uses
+      // for this exact "AI drafted a team, now make it live" moment), so by
+      // the time the user lands on the agent page, "is ready" is literally
+      // true instead of aspirational.
+      const agentIds: string[] = [data.teamAgent?.id, ...((data.workers || []).map((w: any) => w.id))].filter(Boolean);
+      let deploySuccesses = 0;
+      for (const agentId of agentIds) {
+        try {
+          const deployRes = await apiRequest("POST", `/api/agents/${agentId}/deploy-and-run`, {});
+          if (deployRes.ok) deploySuccesses++;
+        } catch {}
+      }
+      return { ...data, deploySuccesses, deployTotal: agentIds.length };
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-      toast({ title: "Automation created", description: `"${data.teamAgent?.name}" is ready.` });
+      const deployedAll = data.deployTotal > 0 && data.deploySuccesses === data.deployTotal;
+      // deploy-and-run only actually executes immediately for continuous/
+      // scheduled triggers -- for the on-demand default it just registers
+      // the runtime (confirmed via its own response message: "Use 'Run Now'
+      // to trigger execution"), so "has started its first run" would be a
+      // second instance of the exact overclaim this fix exists to remove.
+      toast({
+        title: deployedAll ? "Automation created and deployed" : "Automation created",
+        description: deployedAll
+          ? `"${data.teamAgent?.name}" is live and ready. Use "Run Test" on its page to see it work.`
+          : `"${data.teamAgent?.name}" was created, but couldn't deploy automatically. Deploy it from its page to run it.`,
+        variant: deployedAll ? "default" : "destructive",
+      });
       onOpenChange(false);
       reset();
       if (data.teamAgent?.id) navigate(`/agents/${data.teamAgent.id}`);
@@ -167,6 +239,16 @@ export function TeamProposalDialog({
               className="min-h-[140px] resize-none"
               data-testid="textarea-automation-description"
             />
+            {proposeMutation.isPending && (
+              <div
+                className="flex items-center gap-2 text-xs text-muted-foreground -mt-1"
+                data-testid="text-draft-progress"
+              >
+                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                <span className="truncate">{draftProgress || "Working..."}</span>
+                <span className="ml-auto tabular-nums shrink-0">{draftElapsedSec}s</span>
+              </div>
+            )}
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-proposal">
                 Cancel

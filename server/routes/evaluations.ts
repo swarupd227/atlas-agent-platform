@@ -746,6 +746,103 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     const blueprint = await storage.getBlueprint(req.params.id);
     if (!blueprint) return res.status(404).json({ error: "Blueprint not found" });
 
+    // Team blueprints store their graph in team_blueprint_nodes/edges, not
+    // blueprintJson.nodes (that field only holds orchestration metadata for
+    // team blueprints -- see create-team-from-proposals). The legacy
+    // single-agent validator below always fails on an empty `nodes` array
+    // for these, so Compile can never succeed and Sign can never be
+    // reached. Validate against the real team graph instead.
+    const linkedAgentForCompile = blueprint.agentId ? await storage.getAgent(blueprint.agentId, getOrgId(req)) : undefined;
+    if (linkedAgentForCompile?.agentType === "team") {
+      const [teamNodes, teamEdges] = await Promise.all([
+        storage.getTeamBlueprintNodes(blueprint.id),
+        storage.getTeamBlueprintEdges(blueprint.id),
+      ]);
+      const teamErrors: Array<{ type: string; severity: string; message: string; nodeId?: string }> = [];
+      const teamWarnings: Array<{ type: string; severity: string; message: string; nodeId?: string }> = [];
+
+      if (teamNodes.length === 0) {
+        teamErrors.push({ type: "schema", severity: "error", message: "Team blueprint must contain at least one node" });
+      } else {
+        const validTeamNodeTypes = ["internal_agent", "tool_set", "edge_gate", "remote_agent", "skill"];
+        for (const node of teamNodes) {
+          if (!validTeamNodeTypes.includes(node.nodeType)) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Node '${node.label}' has invalid type '${node.nodeType}'`, nodeId: node.id });
+            continue;
+          }
+          if (node.nodeType === "internal_agent" && !node.refAgentId && !node.refTeamAgentId) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Internal Agent node '${node.label}' has no agent selected`, nodeId: node.id });
+          }
+          if (node.nodeType === "remote_agent" && !node.refRemoteAgentId) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Remote Agent node '${node.label}' has no remote agent selected`, nodeId: node.id });
+          }
+          if (node.nodeType === "skill" && !node.refSkillId) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Skill node '${node.label}' has no skill selected`, nodeId: node.id });
+          }
+          if (node.nodeType === "edge_gate" && !node.gateType) {
+            teamWarnings.push({ type: "schema", severity: "warning", message: `Edge Gate node '${node.label}' has no gate type selected`, nodeId: node.id });
+          }
+          if (node.nodeType === "tool_set" && (!node.refToolIds || node.refToolIds.length === 0)) {
+            teamWarnings.push({ type: "schema", severity: "warning", message: `Tool Set node '${node.label}' has no tools selected`, nodeId: node.id });
+          }
+        }
+
+        const nodeIds = teamNodes.map(n => n.id);
+        const duplicateIds = nodeIds.filter((id, index) => nodeIds.indexOf(id) !== index);
+        if (duplicateIds.length > 0) {
+          teamErrors.push({ type: "schema", severity: "error", message: `Duplicate node IDs: ${Array.from(new Set(duplicateIds)).join(", ")}` });
+        }
+
+        const nodeIdSet = new Set(nodeIds);
+        for (const edge of teamEdges) {
+          if (!nodeIdSet.has(edge.sourceNodeId)) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Edge references non-existent source node '${edge.sourceNodeId}'` });
+          }
+          if (!nodeIdSet.has(edge.targetNodeId)) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Edge references non-existent target node '${edge.targetNodeId}'` });
+          }
+        }
+
+        if (teamNodes.length > 1) {
+          const connectedNodes = new Set<string>();
+          for (const edge of teamEdges) {
+            connectedNodes.add(edge.sourceNodeId);
+            connectedNodes.add(edge.targetNodeId);
+          }
+          for (const node of teamNodes) {
+            if (!connectedNodes.has(node.id)) {
+              teamWarnings.push({ type: "schema", severity: "warning", message: `Node '${node.label}' is disconnected from the workflow`, nodeId: node.id });
+            }
+          }
+        }
+
+        if (linkedAgentForCompile.riskTier === "HIGH" || linkedAgentForCompile.riskTier === "CRITICAL") {
+          const hasApprovalGate = teamNodes.some(n => n.nodeType === "edge_gate" && n.gateType === "approval");
+          if (!hasApprovalGate) {
+            teamWarnings.push({ type: "policy", severity: "warning", message: "High/Critical risk team agents should include at least one Edge Gate node with gate type 'approval'" });
+          }
+        }
+      }
+
+      const teamValidationResults = {
+        compiledAt: new Date().toISOString(),
+        passed: teamErrors.length === 0,
+        errors: teamErrors,
+        warnings: teamWarnings,
+        summary: {
+          totalNodes: teamNodes.length,
+          totalEdges: teamEdges.length,
+          errorCount: teamErrors.length,
+          warningCount: teamWarnings.length,
+        },
+      };
+      const teamUpdated = await storage.updateBlueprint(req.params.id, {
+        validationResults: teamValidationResults,
+        status: teamErrors.length === 0 ? "compiled" : "draft",
+      });
+      return res.json({ ...teamUpdated, validationResults: teamValidationResults });
+    }
+
     const bpJson = blueprint.blueprintJson as any;
     const warnings: Array<{ type: string; severity: string; message: string; nodeId?: string }> = [];
     const errors: Array<{ type: string; severity: string; message: string; nodeId?: string }> = [];
@@ -867,7 +964,13 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
         const activeDataHandling = allPolicies.filter((p: any) => p.domain === "data_handling" && p.status === "active");
         const activeOutputControl = allPolicies.filter((p: any) => p.domain === "output_control" && p.status === "active");
 
-        const agentBindings = (agentForPolicy.policyBindings as any[]) || [];
+        // Some worker agents (created via the Outcome -> Team flow) got
+        // policyBindings written as an object ({policies: [...]}) instead
+        // of an array -- the `as any[]` cast above is compile-time only and
+        // does nothing at runtime, so a non-array value silently reached
+        // .map() and crashed the whole compile with a raw 500. Guard for
+        // real instead of trusting the cast.
+        const agentBindings = Array.isArray(agentForPolicy.policyBindings) ? agentForPolicy.policyBindings : [];
         const boundPolicyIds = new Set(agentBindings.map((b: any) => b.policyId || b.policyName || b.id || b).filter(Boolean));
 
         const hasDataHandlingPolicy = activeDataHandling.some((p: any) => boundPolicyIds.has(p.id) || boundPolicyIds.has(p.name));
@@ -1184,6 +1287,53 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     });
 
     res.json(updated);
+  });
+
+  router.post("/api/blueprints/:id/submit-for-review", async (req, res) => {
+    const blueprint = await storage.getBlueprint(req.params.id);
+    if (!blueprint) return res.status(404).json({ error: "Blueprint not found" });
+
+    const orgId = getOrgId(req);
+    const existingApprovals = await storage.getApprovals(orgId);
+    const existingPending = existingApprovals.find(
+      a => a.type === "blueprint_review" && a.objectType === "blueprint" && a.objectId === blueprint.id && a.status === "pending"
+    );
+    if (existingPending) {
+      return res.json(existingPending);
+    }
+
+    const { submittedBy } = req.body || {};
+    let riskScore = 0.5;
+    let agentName: string | undefined;
+    if (blueprint.agentId) {
+      const agent = await storage.getAgent(blueprint.agentId, orgId);
+      if (agent) {
+        agentName = agent.name;
+        riskScore = agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL" ? 0.85 : agent.riskTier === "MEDIUM" ? 0.55 : 0.25;
+      }
+    }
+
+    const approval = await storage.createApproval({
+      type: "blueprint_review",
+      objectType: "blueprint",
+      objectId: blueprint.id,
+      objectName: blueprint.name,
+      status: "pending",
+      requestedBy: submittedBy || "business_user",
+      riskScore,
+      description: `Submitted for IT/technical review from Business View${agentName ? ` — linked agent: ${agentName}` : ""}. IT should switch to Technical view to validate, Compile, and Sign this blueprint.`,
+    });
+
+    await storage.createAuditEvent({
+      actorType: "user",
+      actorId: submittedBy || "business_user",
+      action: "blueprint_submitted_for_review",
+      objectType: "blueprint",
+      objectId: blueprint.id,
+      details: JSON.stringify({ blueprintName: blueprint.name, agentId: blueprint.agentId }),
+    });
+
+    res.status(201).json(approval);
   });
 
   router.get("/api/blueprints/:id/ontology-readiness", async (req, res) => {

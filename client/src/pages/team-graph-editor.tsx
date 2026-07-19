@@ -34,6 +34,8 @@ interface McpServerTool {
 interface TeamGraphEditorProps {
   blueprintId: string;
   teamAgentId?: string;
+  businessView?: boolean;
+  processFlowSteps?: Array<{ label: string }>;
 }
 
 const RULE_OPERATORS: Array<{ value: RuleOperator; label: string }> = [
@@ -98,7 +100,7 @@ const TRUST_TIER_COLORS: Record<string, string> = {
   untrusted: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
 };
 
-export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphEditorProps) {
+export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView, processFlowSteps }: TeamGraphEditorProps) {
   const { toast } = useToast();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -120,6 +122,13 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
 
   const nodes = graphData?.nodes || [];
   const edges = graphData?.edges || [];
+
+  const getNodeDisplayLabel = useCallback((node: TeamBlueprintNode) => {
+    if (!businessView || !processFlowSteps?.length) return node.label;
+    const idx = nodes.findIndex(n => n.id === node.id);
+    if (idx >= 0 && processFlowSteps[idx]?.label) return processFlowSteps[idx].label;
+    return node.label;
+  }, [businessView, processFlowSteps, nodes]);
 
   const singleAgents = useMemo(() => (agents || []).filter(a => a.agentType === "single"), [agents]);
   const teamAgents = useMemo(() => (agents || []).filter(a => !!a.blueprintId), [agents]);
@@ -146,17 +155,36 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
   const createNodeMutation = useMutation({
     mutationFn: async (nodeType: string) => {
       const def = TEAM_NODE_TYPES.find(t => t.type === nodeType);
-      await apiRequest("POST", "/api/team-blueprint-nodes", {
+      const res = await apiRequest("POST", "/api/team-blueprint-nodes", {
         blueprintId,
         nodeType,
         label: def?.label || nodeType,
         positionX: 0,
         positionY: nodes.length * 120,
       });
+      return res.json() as Promise<TeamBlueprintNode>;
     },
-    onSuccess: () => {
+    onSuccess: (created) => {
       invalidateGraph();
-      toast({ title: "Node added" });
+      // On a long flow the new node lands at the bottom of the column, below
+      // the fold -- without selecting and scrolling to it, the click looks
+      // like it did nothing.
+      setSelectedNodeId(created.id);
+      setSelectedEdgeId(null);
+      // The card only exists after the invalidated graph query refetches and
+      // re-renders, which takes longer than one frame -- poll briefly for it
+      // rather than scrolling before it's in the DOM.
+      let scrollTries = 0;
+      const scrollToCard = () => {
+        const el = document.querySelector(`[data-testid="card-team-node-${created.id}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        } else if (scrollTries++ < 10) {
+          setTimeout(scrollToCard, 200);
+        }
+      };
+      setTimeout(scrollToCard, 200);
+      toast({ title: "Step added", description: `"${created.label}" was added at the end of the flow.` });
     },
     onError: (err: Error) => toast({ title: "Failed to add node", description: err.message, variant: "destructive" }),
   });
@@ -397,7 +425,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
                         <CardContent className="p-3 flex items-center gap-2.5 flex-wrap">
                           <div className={`w-1 h-6 rounded-full shrink-0 ${NODE_COLOR_MAP[node.nodeType] || "bg-gray-500"}`} />
                           <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
-                          <span className="text-sm font-medium flex-1 truncate" data-testid={`text-node-label-${node.id}`}>{node.label}</span>
+                          <span className="text-sm font-medium flex-1 truncate" data-testid={`text-node-label-${node.id}`}>{getNodeDisplayLabel(node)}</span>
                           <Badge variant="outline" className="text-[10px] shrink-0">{node.nodeType.replace("_", " ")}</Badge>
                           {node.nodeType === "internal_agent" && refAgent && !node.refTeamAgentId && (
                             <Badge variant="outline" className="text-[10px] shrink-0 bg-blue-500/10">{refAgent.name}</Badge>
@@ -1123,9 +1151,37 @@ function SimpleRuleView({
   onAddLeaf: () => void;
   onSetCombinator: (c: "AND" | "OR") => void;
 }) {
-  const knownFields: string[] = Array.isArray((sourceNode?.outputSchema as any)?.fields)
+  const declaredFields: string[] = Array.isArray((sourceNode?.outputSchema as any)?.fields)
     ? (sourceNode!.outputSchema as any).fields.map((f: any) => f?.name).filter(Boolean)
     : [];
+
+  // When the source is a Team Reference node, the fields a rule can actually
+  // check live one level down -- inside the referenced team's own nodes
+  // (see server/dag-execution-engine.ts mergeWaveOutputs/buildPipelineState:
+  // a nested team's node outputs flatten up into this team's gating state
+  // under each node's own stateKey). Reuse the same dag-waves endpoint the
+  // "View Waves" button already calls to list them, so the field box offers
+  // real, guessable names instead of the empty "you'll need to type it"
+  // fallback -- the exact gap that made the original briefApproved gate
+  // impossible to configure correctly without reading the engine's source.
+  const { data: childWavePlan } = useQuery<{ nodeConfig: Record<string, { stateKey: string; label: string; gateType?: string | null }> }>({
+    queryKey: ["/api/team-agents", sourceNode?.refTeamAgentId, "dag-waves"],
+    enabled: !!sourceNode?.refTeamAgentId,
+  });
+  const childFields: string[] = childWavePlan?.nodeConfig
+    ? Object.values(childWavePlan.nodeConfig).flatMap(nc => {
+        const key = nc.stateKey;
+        if (!key) return [];
+        // Human-approval gate nodes output { approved, decidedBy } under
+        // their own stateKey (server/dag-execution-engine.ts executeGateNode)
+        // -- surface the dotted paths a rule actually needs, not just the
+        // bare key, since "brief_approval_agent" alone resolves to an
+        // object, not the boolean a rule compares against.
+        if (nc.gateType) return [`${key}.approved`, `${key}.decidedBy`];
+        return [key];
+      })
+    : [];
+  const knownFields: string[] = Array.from(new Set([...declaredFields, ...childFields]));
   const fieldListId = `edge-field-suggestions-${sourceNode?.id || "none"}`;
 
   return (
@@ -1133,6 +1189,11 @@ function SimpleRuleView({
       {knownFields.length === 0 && (
         <p className="text-[10px] text-muted-foreground">
           {sourceNode ? `"${sourceNode.label}" hasn't declared its output fields, so you'll need to type the field name.` : "Connect this edge to a source step to get field suggestions."}
+        </p>
+      )}
+      {knownFields.length > 0 && sourceNode?.refTeamAgentId && (
+        <p className="text-[10px] text-muted-foreground">
+          Fields from inside "{sourceNode.label}" — pick one below, or type your own.
         </p>
       )}
       {ruleLeaves.map((leaf, i) => (
@@ -1165,6 +1226,28 @@ function SimpleRuleView({
             >
               {RULE_OPERATORS.map(op => <option key={op.value} value={op.value}>{RULE_OPERATOR_PHRASES[op.value]}</option>)}
             </select>
+            {(() => {
+              // Catch a broken gate at authoring time instead of letting it
+              // silently block every run: if we know the full set of fields
+              // this source can ever produce and the typed field (or its
+              // root, before a dot-path) isn't among them, say so right here
+              // -- this is exactly the class of mistake that made the
+              // original briefApproved gate impossible to notice was wrong
+              // until a live run was inspected node-by-node.
+              if (!leaf.field.trim() || knownFields.length === 0) return null;
+              const root = leaf.field.split(".")[0];
+              const matches = knownFields.some(f => f === leaf.field || f.split(".")[0] === root);
+              if (matches) return null;
+              return (
+                <span
+                  className="text-[10px] text-destructive basis-full"
+                  data-testid={`warning-unknown-field-${i}`}
+                  title="This field name doesn't match anything the source step is known to produce -- this condition will likely never be true."
+                >
+                  ⚠ "{root}" isn't a known field from this source — this condition may never match.
+                </span>
+              );
+            })()}
             <Input
               className="h-7 text-xs flex-1 min-w-[80px]"
               value={String(leaf.value)}
@@ -1397,10 +1480,20 @@ function EdgeConfigPanel({
           >
             Deterministic Rule
           </button>
+          <button
+            type="button"
+            className={`flex-1 px-2 py-1.5 text-xs ${evaluationMode === "handoff" ? "bg-primary text-primary-foreground" : "hover-elevate"}`}
+            onClick={() => onUpdate({ evaluationMode: "handoff" })}
+            data-testid="button-mode-handoff"
+          >
+            Handoff
+          </button>
         </div>
         <p className="text-[10px] text-muted-foreground">
           {evaluationMode === "ai"
             ? "An LLM reads the free-text condition against the upstream output and judges true/false — right for subjective calls, not for anything that must be 100% reliable."
+            : evaluationMode === "handoff"
+            ? "The upstream agent itself names which node to hand off to — no condition to configure here. Right for open-ended routing where the agent decides who should handle it next, like a triage agent picking a specialist."
             : "Plain comparison logic against the upstream output's data — no model call, always reliable and auditable. Right for thresholds, compliance checks, and other business rules."}
         </p>
       </div>
@@ -1415,6 +1508,16 @@ function EdgeConfigPanel({
             placeholder='e.g. output.confidence > 0.8'
             data-testid="input-edge-condition"
           />
+        </div>
+      ) : evaluationMode === "handoff" ? (
+        <div className="flex flex-col gap-1.5 rounded-md border p-2 bg-muted/30" data-testid="handoff-info">
+          <span className="text-xs font-medium">This node is a handoff target</span>
+          <p className="text-[11px] text-muted-foreground">
+            For this edge to fire, "{sourceNode?.label || "the upstream agent"}" must include a{" "}
+            <code className="text-[10px] bg-background px-1 rounded">handoff_to</code> field in its output naming{" "}
+            <code className="text-[10px] bg-background px-1 rounded">"{targetNode?.label || "this node"}"</code>{" "}
+            (matching is case/punctuation-insensitive, so close variants work too).
+          </p>
         </div>
       ) : (
         <div className="flex flex-col gap-2" data-testid="rule-builder">

@@ -167,7 +167,13 @@ export default function KnowledgeBases() {
 
   const filtered = knowledgeBases.filter((kb) => {
     const matchSearch = kb.name.toLowerCase().includes(search.toLowerCase()) || (kb.description || "").toLowerCase().includes(search.toLowerCase());
-    const matchIndustry = industryFilter === "all" || kb.industry === industryFilter;
+    // Cards display any unrecognized kb.industry (e.g. "cross_industry",
+    // seeded by several server-side flows) as "General" via a fallback --
+    // filtering by exact string equality didn't share that fallback, so
+    // selecting "General" found nothing for those KBs even though they
+    // visibly showed the General icon/label on screen.
+    const effectiveIndustry = INDUSTRY_CONFIG[kb.industry] ? kb.industry : "general";
+    const matchIndustry = industryFilter === "all" || effectiveIndustry === industryFilter;
     return matchSearch && matchIndustry;
   });
 

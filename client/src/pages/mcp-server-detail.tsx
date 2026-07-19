@@ -105,6 +105,11 @@ export default function McpServerDetail() {
     mutationFn: () => apiRequest("POST", `/api/mcp-servers/${id}/initialize`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id] });
+      // The list page (mcp-servers.tsx) reads the unscoped ["/api/mcp-servers"]
+      // query -- without invalidating it too, the freshly-Healthy status
+      // here kept showing as stale "Unknown" back on the list until a
+      // manual page reload forced a refetch.
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers"] });
       toast({ title: "Server initialized" });
     },
     onError: (err: Error) => {

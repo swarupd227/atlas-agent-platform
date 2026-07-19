@@ -111,7 +111,7 @@ import { useEvidenceDrawer } from "@/components/evidence-drawer";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase, McpServerTool, OntologyConcept, Skill } from "@shared/schema";
+import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase, McpServerTool, OntologyConcept, Skill, Regulation } from "@shared/schema";
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 
@@ -1052,6 +1052,9 @@ export default function Governance() {
   const [feedTypeFilter, setFeedTypeFilter] = useState<string>("all");
   const [feedAgentFilter, setFeedAgentFilter] = useState<string>("all");
   const [feedPolicyFilter, setFeedPolicyFilter] = useState<string>("all");
+  // The policy chip row only lists the first 6 distinct policy names --
+  // a workspace with more policies than that has no way to find the rest.
+  const [feedSearchQuery, setFeedSearchQuery] = useState("");
   const [expandedFeedId, setExpandedFeedId] = useState<string | null>(null);
   const [selectedCoverageAgentId, setSelectedCoverageAgentId] = useState<string | null>(null);
   const [controlPointComments, setControlPointComments] = useState<Record<string, string>>({});
@@ -1073,7 +1076,7 @@ export default function Governance() {
   const { data: agents } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
-  const { data: integrityCheck, refetch: refetchIntegrity } = useQuery<{
+  const { data: integrityCheck, refetch: refetchIntegrity, isFetching: integrityFetching } = useQuery<{
     valid: boolean;
     totalEvents: number;
     verifiedEvents: number;
@@ -1081,6 +1084,17 @@ export default function Governance() {
   }>({
     queryKey: ["/api/audit-events", "verify-integrity"],
   });
+  const [lastVerifiedAt, setLastVerifiedAt] = useState<Date | null>(null);
+  const [lastFeedRefreshAt, setLastFeedRefreshAt] = useState<Date | null>(null);
+  const [lastQueueRefreshAt, setLastQueueRefreshAt] = useState<Date | null>(null);
+  // Verify Now / Refresh were plain refetch() calls with zero visible
+  // feedback -- clicking looked identical to a no-op. Wrap each in a
+  // spinner (via isFetching) plus a "Last refreshed at HH:MM:SS" stamp so a
+  // click has an observable result even when the data itself didn't change.
+  async function refetchIntegrityWithFeedback() {
+    await refetchIntegrity();
+    setLastVerifiedAt(new Date());
+  }
   const { data: complianceReports } = useQuery<ComplianceReport[]>({
     queryKey: ["/api/compliance-reports"],
   });
@@ -1130,12 +1144,16 @@ export default function Governance() {
     createdAt: string | null;
   }
 
-  const { data: complianceFeed, isLoading: feedLoading, refetch: refetchFeed } = useQuery<ComplianceFeedItem[]>({
+  const { data: complianceFeed, isLoading: feedLoading, isFetching: feedFetching, refetch: refetchFeed } = useQuery<ComplianceFeedItem[]>({
     queryKey: ["/api/governance/compliance-feed"],
     enabled: activeGovTab === "live-feed",
     staleTime: 15000,
     refetchInterval: 30000,
   });
+  async function refetchFeedWithFeedback() {
+    await refetchFeed();
+    setLastFeedRefreshAt(new Date());
+  }
 
   interface PendingActionItem {
     kind: "approval" | "exception_review" | "exception_expiry" | "workflow_interrupt" | "deployment_block" | "policy_violation";
@@ -1152,11 +1170,15 @@ export default function Governance() {
     };
   }
 
-  const { data: pendingActions, isLoading: pendingLoading, refetch: refetchPending } = useQuery<PendingActionsData>({
+  const { data: pendingActions, isLoading: pendingLoading, isFetching: pendingFetching, refetch: refetchPending } = useQuery<PendingActionsData>({
     queryKey: ["/api/governance/pending-actions"],
     staleTime: 20000,
     refetchInterval: 30000,
   });
+  async function refetchPendingWithFeedback() {
+    await refetchPending();
+    setLastQueueRefreshAt(new Date());
+  }
 
   interface CompliancePostureFramework {
     name: string;
@@ -1500,6 +1522,32 @@ export default function Governance() {
     const uncoveredDomains = Array.from(allDomains).filter((d) => !coveredDomains.has(d));
     return { totalRegs: detectedRegulations.length, totalReqs, allDomains: Array.from(allDomains), coveredDomains: Array.from(coveredDomains), uncoveredDomains };
   }, [detectedRegulations, policies]);
+
+  // Governance Hub's "Regulations" card used to read regulationSummary.totalRegs
+  // -- a client-side catalog filtered by the workspace's activeFrameworks --
+  // while Policy Engine's "Total Regulations" reads the real seeded
+  // `regulations` table via this same query key. Two unrelated datasets, so
+  // they never agreed. Query the real table here too so both pages match.
+  const { data: allRegulations = [] } = useQuery<Regulation[]>({
+    queryKey: ["/api/regulations"],
+  });
+
+  // The top "Domain Coverage" card used to divide by regulationSummary's
+  // client-side domain catalog (0 when the workspace has no activeFrameworks
+  // configured, producing a stuck 0% regardless of actual coverage). The
+  // Policy Coverage Matrix below computes the real percentage from actual
+  // agent<->policy bindings -- reuse that instead of a second, disconnected
+  // calculation.
+  const coverageMatrixPct = useMemo(() => {
+    if (!coverageMatrix || coverageMatrix.rows.length === 0) return 0;
+    const totalCells = coverageMatrix.rows.length * coverageMatrix.domains.length;
+    if (totalCells === 0) return 0;
+    const coveredCells = coverageMatrix.rows.reduce(
+      (sum, r) => sum + Object.values(r.domainCoverage).filter((v) => v === "covered").length,
+      0,
+    );
+    return Math.round((coveredCells / totalCells) * 100);
+  }, [coverageMatrix]);
 
   const ontologyConceptMap = useMemo(() => {
     const map: Record<string, OntologyConcept> = {};
@@ -2163,9 +2211,9 @@ export default function Governance() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard title="Active Policies" value={activePolicies} icon={Shield} variant="default" testId="stat-active-policies" />
-        <StatCard title="Regulations" value={regulationSummary.totalRegs} icon={Scale} variant="default" testId="stat-regulations" />
+        <StatCard title="Regulations" value={allRegulations.length} icon={Scale} variant="default" testId="stat-regulations" />
         <StatCard title="Requirements" value={regulationSummary.totalReqs} icon={BookOpen} variant="default" testId="stat-requirements" />
-        <StatCard title="Domain Coverage" value={`${regulationSummary.allDomains.length > 0 ? Math.round((regulationSummary.coveredDomains.length / regulationSummary.allDomains.length) * 100) : 0}%`} icon={Target} variant={regulationSummary.uncoveredDomains.length > 0 ? "warning" : "success"} testId="stat-domain-coverage" />
+        <StatCard title="Domain Coverage" value={`${coverageMatrixPct}%`} icon={Target} variant={coverageMatrixPct < 100 ? "warning" : "success"} testId="stat-domain-coverage" />
         <StatCard title="Policy Violations" value={violationCount} icon={AlertTriangle} variant={violationCount > 0 ? "danger" : "default"} testId="stat-violations" />
         <StatCard title="Approval Compliance" value={`${approvalCompliance}%`} icon={CheckCircle} variant="success" testId="stat-compliance" />
       </div>
@@ -2460,9 +2508,26 @@ export default function Governance() {
               </Badge>
               {complianceFeed && <span className="text-[10px] text-muted-foreground">{complianceFeed.length} events</span>}
             </div>
-            <Button variant="outline" size="sm" onClick={() => refetchFeed()} data-testid="button-refresh-feed">
-              <Activity className="w-3.5 h-3.5 mr-1.5" /> Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              {lastFeedRefreshAt && (
+                <span className="text-[10px] text-muted-foreground">Last refreshed at {lastFeedRefreshAt.toLocaleTimeString()}</span>
+              )}
+              <Button variant="outline" size="sm" onClick={() => refetchFeedWithFeedback()} disabled={feedFetching} data-testid="button-refresh-feed">
+                {feedFetching ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Activity className="w-3.5 h-3.5 mr-1.5" />}
+                Refresh
+              </Button>
+            </div>
+          </div>
+
+          <div className="relative max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input
+              value={feedSearchQuery}
+              onChange={(e) => setFeedSearchQuery(e.target.value)}
+              placeholder="Search by policy name..."
+              className="pl-8 h-8 text-xs"
+              data-testid="input-feed-search"
+            />
           </div>
 
           {/* Filter chips */}
@@ -2552,11 +2617,13 @@ export default function Governance() {
               {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
             </div>
           ) : complianceFeed && complianceFeed.length > 0 ? (() => {
+            const searchQuery = feedSearchQuery.trim().toLowerCase();
             const filtered = complianceFeed.filter(item => {
               if (feedSeverityFilter !== "all" && item.severity !== feedSeverityFilter) return false;
               if (feedTypeFilter !== "all" && item.objectType !== feedTypeFilter) return false;
               if (feedAgentFilter !== "all" && item.agentName !== feedAgentFilter) return false;
               if (feedPolicyFilter !== "all" && item.policyName !== feedPolicyFilter) return false;
+              if (searchQuery && !(item.policyName || "").toLowerCase().includes(searchQuery)) return false;
               return true;
             });
             return filtered.length > 0 ? (
@@ -2684,9 +2751,15 @@ export default function Governance() {
               <Users className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium">Human Control Queue</span>
             </div>
-            <Button variant="outline" size="sm" onClick={() => refetchPending()} data-testid="button-refresh-queue">
-              <Activity className="w-3.5 h-3.5 mr-1.5" /> Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              {lastQueueRefreshAt && (
+                <span className="text-[10px] text-muted-foreground">Last refreshed at {lastQueueRefreshAt.toLocaleTimeString()}</span>
+              )}
+              <Button variant="outline" size="sm" onClick={() => refetchPendingWithFeedback()} disabled={pendingFetching} data-testid="button-refresh-queue">
+                {pendingFetching ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Activity className="w-3.5 h-3.5 mr-1.5" />}
+                Refresh
+              </Button>
+            </div>
           </div>
 
           {pendingLoading ? (
@@ -3451,14 +3524,21 @@ export default function Governance() {
                         )}
                       </div>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => refetchIntegrity()}
-                      data-testid="button-verify-now"
-                    >
-                      <RefreshCw className="w-4 h-4 mr-1.5" /> Verify Now
-                    </Button>
+                    <div className="flex flex-col items-end gap-1">
+                      {lastVerifiedAt && (
+                        <span className="text-[10px] text-muted-foreground">Last verified at {lastVerifiedAt.toLocaleTimeString()}</span>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => refetchIntegrityWithFeedback()}
+                        disabled={integrityFetching}
+                        data-testid="button-verify-now"
+                      >
+                        {integrityFetching ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}
+                        Verify Now
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

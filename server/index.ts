@@ -174,13 +174,21 @@ app.use((req, res, next) => {
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
 
     console.error("Internal Server Error:", err);
 
     if (res.headersSent) {
       return next(err);
     }
+
+    // Routes that intentionally set a status (400/403/404/...) craft
+    // err.message to be user-facing -- pass it through. A bare 500 here
+    // means something escaped every route's own try/catch (e.g. a raw
+    // "X is not iterable" TypeError from an unguarded iteration), so its
+    // message is an internal implementation detail, not something a user
+    // can act on -- surfacing it verbatim was observed leaking straight
+    // into a global toast (QA APP-001 / Monitor TC_002).
+    const message = status < 500 ? (err.message || "Request failed") : "Internal Server Error. Please try again.";
 
     return res.status(status).json({ message });
   });

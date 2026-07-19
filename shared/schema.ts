@@ -370,6 +370,30 @@ export const cryptoKeys = pgTable("crypto_keys", {
 });
 export type CryptoKey = typeof cryptoKeys.$inferSelect;
 
+// Periodic Merkle-root checkpoint over a batch of the (already Ed25519-signed,
+// hash-chained) audit_events table. The linear chain requires replaying every
+// event from genesis to verify a break; a checkpoint lets an auditor verify
+// just the events in [rangeStartSeq, rangeEndSeq] against one signed root,
+// without touching earlier history. Scoped per-org since the underlying
+// chain is written and verified per-org (see createAuditEvent).
+export const auditChainCheckpoints = pgTable("audit_chain_checkpoints", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  rangeStartSeq: integer("range_start_seq").notNull(),
+  rangeEndSeq: integer("range_end_seq").notNull(),
+  eventCount: integer("event_count").notNull(),
+  merkleRoot: text("merkle_root").notNull(),
+  signature: text("signature").notNull(),
+  signerKeyId: text("signer_key_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_audit_chain_checkpoints_org_range").on(table.organizationId, table.rangeEndSeq),
+]);
+
+export const insertAuditChainCheckpointSchema = createInsertSchema(auditChainCheckpoints).omit({ id: true, createdAt: true });
+export type InsertAuditChainCheckpoint = z.infer<typeof insertAuditChainCheckpointSchema>;
+export type AuditChainCheckpoint = typeof auditChainCheckpoints.$inferSelect;
+
 // Agent Workspace — a resumable, human-in-the-loop agent run. Unlike a fire-
 // and-forget trace, a workspace run can SUSPEND at an approval gate (status
 // = awaiting_approval), persist its full conversation state in `checkpoint`,
@@ -418,7 +442,12 @@ export const policyExceptions = pgTable("policy_exceptions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertPolicyExceptionSchema = createInsertSchema(policyExceptions).omit({ id: true, createdAt: true });
+// drizzle-zod infers a plain z.date() for the timestamp column, which
+// rejects the ISO string every client sends over JSON (Date instances don't
+// survive JSON.stringify) -- coerce so a valid date string is accepted.
+export const insertPolicyExceptionSchema = createInsertSchema(policyExceptions, {
+  expiresAt: z.coerce.date().optional(),
+}).omit({ id: true, createdAt: true });
 export type InsertPolicyException = z.infer<typeof insertPolicyExceptionSchema>;
 export type PolicyException = typeof policyExceptions.$inferSelect;
 
@@ -1072,6 +1101,11 @@ export const remoteAgents = pgTable("remote_agents", {
   providerInfo: jsonb("provider_info"),
   lastHealthCheckAt: timestamp("last_health_check_at"),
   lastSyncedAt: timestamp("last_synced_at"),
+  trustScore: real("trust_score").default(0.5),
+  invocationCount: integer("invocation_count").default(0),
+  successCount: integer("success_count").default(0),
+  lastInvokedAt: timestamp("last_invoked_at"),
+  lastFailureReason: text("last_failure_reason"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1207,7 +1241,14 @@ export const dagExecutionRuns = pgTable("dag_execution_runs", {
   waveResults: jsonb("wave_results").notNull().default(sql`'[]'::jsonb`),
   totalPromptTokens: integer("total_prompt_tokens").default(0),
   totalCompletionTokens: integer("total_completion_tokens").default(0),
+  totalCostUsd: real("total_cost_usd").default(0),
+  totalToolCalls: integer("total_tool_calls").default(0),
   createdAt: timestamp("created_at").defaultNow(),
+  // Set the moment a gate node creates its approval record (status flips to
+  // "waiting_approval" at the same time) and cleared once that wave finishes.
+  // Without this, a server restart during the wait has no way to find which
+  // approval a "waiting_approval" run is stuck on -- see dag-resume-poller.ts.
+  pendingApprovalId: varchar("pending_approval_id"),
 });
 
 export const insertDagExecutionRunSchema = createInsertSchema(dagExecutionRuns).omit({ id: true, createdAt: true });
@@ -3371,6 +3412,29 @@ export const integrationConnections = pgTable("integration_connections", {
 export const insertIntegrationConnectionSchema = createInsertSchema(integrationConnections).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertIntegrationConnection = z.infer<typeof insertIntegrationConnectionSchema>;
 export type IntegrationConnection = typeof integrationConnections.$inferSelect;
+
+// Per-agent outbound identity: lets one agent have its own connector
+// credential distinct from the org-wide integrationConnections row every
+// other agent in the org shares. Optional -- RealMcpBase.getCredentials()
+// checks this FIRST when an agentId is given, falling back to the
+// org-level connection when the agent has no override of its own.
+export const agentIntegrationCredentials = pgTable("agent_integration_credentials", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull(),
+  integrationId: varchar("integration_id").notNull(),
+  credentialBlob: text("credential_blob"),
+  status: varchar("status", { length: 20 }).default("disconnected"),
+  lastTestedAt: timestamp("last_tested_at"),
+  lastTestResult: varchar("last_test_result", { length: 10 }),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_agent_int_cred_agent_integration").on(table.agentId, table.integrationId),
+]);
+export const insertAgentIntegrationCredentialSchema = createInsertSchema(agentIntegrationCredentials).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAgentIntegrationCredential = z.infer<typeof insertAgentIntegrationCredentialSchema>;
+export type AgentIntegrationCredential = typeof agentIntegrationCredentials.$inferSelect;
 
 // ── Eval Personas (Marketplace install target) ────────────────────────────────
 export const evalPersonas = pgTable("eval_personas", {

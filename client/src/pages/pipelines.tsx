@@ -131,6 +131,7 @@ function getStatusColor(s: string) {
     case "active": case "running": return "bg-blue-500/15 text-blue-700 dark:text-blue-400";
     case "draft": case "pending": return "bg-gray-500/15 text-gray-700 dark:text-gray-400";
     case "completed": case "approved": return "bg-green-500/15 text-green-700 dark:text-green-400";
+    case "completed_with_skips": return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
     case "failed": case "rejected": return "bg-red-500/15 text-red-700 dark:text-red-400";
     case "awaiting_approval": return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
     default: return "";
@@ -183,7 +184,7 @@ function DAGExecutionView({ dagRunId }: { dagRunId: string }) {
     queryKey: ["/api/dag-execution-runs", dagRunId, "waves"],
     refetchInterval: (query) => {
       const d = query.state.data as DAGWaveData | undefined;
-      if (d?.status === "completed" || d?.status === "failed") return false;
+      if (d?.status === "completed" || d?.status === "completed_with_skips" || d?.status === "failed") return false;
       return 2000;
     },
   });
@@ -206,7 +207,7 @@ function DAGExecutionView({ dagRunId }: { dagRunId: string }) {
         </span>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className={`text-[10px] ${getStatusColor(data.status)}`} data-testid={`badge-dag-status-${dagRunId}`}>
-            {data.status}
+            {data.status === "completed_with_skips" ? "completed (steps skipped)" : data.status}
           </Badge>
           {data.totalWaves && (
             <span className="text-[10px] text-muted-foreground">

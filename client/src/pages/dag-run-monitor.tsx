@@ -6,10 +6,13 @@
  * person watching doesn't have to go hunt for it.
  */
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { useRoute, Link } from "wouter";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, Network, Clock, Coins, Layers, CheckCircle2, XCircle,
-  Loader2, ShieldQuestion, ArrowRight, MinusCircle,
+  Loader2, ShieldQuestion, ArrowRight, MinusCircle, AlertTriangle,
+  Play, Radio,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45,7 +48,40 @@ interface DagWaveResult {
   nodes: DagWaveNodeResult[];
 }
 
-const TERMINAL_STATUSES = new Set(["completed", "failed"]);
+const TERMINAL_STATUSES = new Set(["completed", "completed_with_skips", "failed"]);
+
+// Mirror of server/dag-run-events.ts DagRunEvent -- the live SSE feed shape.
+interface DagRunLiveEvent {
+  type: "node_start" | "node_complete" | "wave_complete" | "approval_pending" | "run_complete";
+  ts: string;
+  wave?: number;
+  totalWaves?: number;
+  nodeId?: string;
+  label?: string;
+  status?: string;
+  durationMs?: number;
+  outputPreview?: string;
+  error?: string;
+  runStatus?: string;
+}
+
+function humanizeKey(key: string): string {
+  return key.replace(/[_-]/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, c => c.toUpperCase());
+}
+
+// Names the wave shape this run's plan already executes -- a single wave of
+// >1 nodes is "Concurrent", a chain of one-node waves is "Sequential",
+// anything combining both is "Mixed". Purely a label; execution semantics
+// are unchanged (dag-execution-engine.ts always ran waves this way).
+const ORCHESTRATION_PATTERN_LABELS: Record<string, string> = {
+  sequential: "Sequential",
+  concurrent: "Concurrent",
+  mixed: "Mixed",
+  single: "Single Step",
+  magentic: "Magentic (dynamic manager)",
+};
+
+type DagExecutionRunWithPattern = DagExecutionRun & { orchestrationPattern?: string };
 
 function durationLabel(ms: number): string {
   if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`;
@@ -57,11 +93,11 @@ export default function DagRunMonitor() {
   const [, params] = useRoute("/dag-runs/:runId");
   const runId = params?.runId;
 
-  const { data: run, isLoading } = useQuery<DagExecutionRun>({
+  const { data: run, isLoading } = useQuery<DagExecutionRunWithPattern>({
     queryKey: ["/api/dag-execution-runs", runId],
     enabled: !!runId,
     refetchInterval: (query) => {
-      const d = query.state.data as DagExecutionRun | undefined;
+      const d = query.state.data as DagExecutionRunWithPattern | undefined;
       if (d && TERMINAL_STATUSES.has(d.status)) return false;
       return 2000;
     },
@@ -74,9 +110,14 @@ export default function DagRunMonitor() {
     enabled: !!teamAgentId,
   });
 
+  const isMagentic = run?.orchestrationPattern === "magentic";
+
+  // A Magentic run has no blueprint graph, so there's no static wave plan to
+  // fetch -- GET /api/team-agents/:id/dag-waves 400s for these teams. Node
+  // labels come from each step's own persisted output instead (see below).
   const { data: wavePlan } = useQuery<ComputedWavePlan>({
     queryKey: ["/api/team-agents", teamAgentId, "dag-waves"],
-    enabled: !!teamAgentId,
+    enabled: !!teamAgentId && !isMagentic,
   });
 
   const { data: approvals } = useQuery<Approval[]>({
@@ -90,9 +131,47 @@ export default function DagRunMonitor() {
     nodeLabels[nodeId] = nc.label;
   }
 
+  // Magentic steps have no blueprint node to look a label up against -- the
+  // manager's chosen specialist name is embedded directly in the step's own
+  // persisted output instead (see server/magentic-engine.ts).
+  function labelForNode(node: DagWaveNodeResult): string {
+    return nodeLabels[node.nodeId] || node.output?.selectedAgentName || node.nodeId;
+  }
+
   const pendingApproval = (approvals || [])
     .filter(a => a.status === "pending" && a.agentId === teamAgentId)
     .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0];
+
+  // Live step-by-step activity via SSE -- the poll above keeps the summary
+  // stats fresh, but only this stream can show "Copywriting agent started /
+  // finished in 4.2s" the moment it happens.
+  const [liveEvents, setLiveEvents] = useState<DagRunLiveEvent[]>([]);
+  const [streamOpen, setStreamOpen] = useState(false);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const runIsTerminal = run ? TERMINAL_STATUSES.has(run.status) : false;
+  useEffect(() => {
+    if (!runId) return;
+    const es = new EventSource(`/api/dag-execution-runs/${runId}/events`);
+    es.onopen = () => setStreamOpen(true);
+    es.onmessage = (msg) => {
+      try {
+        const e = JSON.parse(msg.data) as DagRunLiveEvent;
+        setLiveEvents(prev => (prev.length >= 400 ? [...prev.slice(-399), e] : [...prev, e]));
+        // Poll intervals pause while the tab is backgrounded (react-query
+        // default) -- drive the summary/timeline refresh off the stream too,
+        // so status, waves, and final outputs land the moment they happen.
+        if (e.type === "wave_complete" || e.type === "approval_pending" || e.type === "run_complete") {
+          queryClient.invalidateQueries({ queryKey: ["/api/dag-execution-runs", runId] });
+        }
+        if (e.type === "run_complete") { es.close(); setStreamOpen(false); }
+      } catch { /* ignore malformed frame */ }
+    };
+    es.onerror = () => setStreamOpen(false);
+    return () => es.close();
+  }, [runId]);
+  useEffect(() => {
+    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
+  }, [liveEvents.length]);
 
   if (isLoading) {
     return (
@@ -124,6 +203,7 @@ export default function DagRunMonitor() {
   const allNodes = waveResults.flatMap(w => w.nodes);
   const completedNodes = allNodes.filter(n => n.status === "completed").length;
   const errorNodes = allNodes.filter(n => n.status === "failed");
+  const skippedNodes = allNodes.filter(n => n.status === "skipped");
   const totalTokens = (run.totalPromptTokens ?? 0) + (run.totalCompletionTokens ?? 0);
   const startedMs = run.startedAt ? new Date(run.startedAt).getTime() : null;
   const elapsedMs = startedMs
@@ -151,6 +231,11 @@ export default function DagRunMonitor() {
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-muted-foreground font-mono" data-testid="text-run-id">{run.id.substring(0, 12)}...</span>
               <StatusBadge status={run.status} />
+              {run.orchestrationPattern && (
+                <Badge variant="outline" className="text-[11px]" data-testid="badge-orchestration-pattern">
+                  {ORCHESTRATION_PATTERN_LABELS[run.orchestrationPattern] || run.orchestrationPattern}
+                </Badge>
+              )}
             </div>
           </div>
         </div>
@@ -171,6 +256,24 @@ export default function DagRunMonitor() {
                 </Button>
               </Link>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {run.status === "completed_with_skips" && (
+        <Card className="border-amber-500/30 bg-amber-500/5" data-testid="card-run-skipped">
+          <CardContent className="p-4 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">This run finished, but not every step ran</span>
+              <span className="text-xs text-muted-foreground" data-testid="text-run-skip-summary">
+                {skippedNodes.length > 0
+                  ? `${skippedNodes.length} step${skippedNodes.length !== 1 ? "s" : ""} didn't run because no condition leading into ${skippedNodes.length !== 1 ? "them" : "it"} was met${
+                      skippedNodes.length <= 5 ? `: ${skippedNodes.map(n => labelForNode(n)).join(", ")}.` : "."
+                    } This can be expected branching, or a sign a condition never matches — check the wave breakdown below.`
+                  : "A step inside one of this run's nested teams was skipped. Open that team's own run to see which step and why."}
+              </span>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -203,10 +306,10 @@ export default function DagRunMonitor() {
           <CardContent className="p-4 flex flex-col gap-1">
             <div className="flex items-center gap-1.5 text-muted-foreground">
               <Layers className="w-3.5 h-3.5" />
-              <span className="text-[11px]">Wave</span>
+              <span className="text-[11px]">{isMagentic ? "Step" : "Wave"}</span>
             </div>
             <span className="text-lg font-semibold" data-testid="stat-wave">
-              {run.currentWave ?? 0}/{run.totalWaves ?? 0}
+              {run.currentWave ?? 0}{isMagentic ? ` / ${run.totalWaves ?? 0} max` : `/${run.totalWaves ?? 0}`}
             </span>
           </CardContent>
         </Card>
@@ -232,33 +335,110 @@ export default function DagRunMonitor() {
         </Card>
       </div>
 
+      {(liveEvents.length > 0 || (!runIsTerminal && streamOpen)) && (
+        <div className="flex flex-col gap-2" data-testid="section-live-activity">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Live Activity</span>
+            {streamOpen && !runIsTerminal && (
+              <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400" data-testid="badge-live-stream">
+                <Radio className="w-3 h-3 animate-pulse" /> LIVE
+              </span>
+            )}
+          </div>
+          <Card>
+            <CardContent className="p-0">
+              <div ref={feedRef} className="max-h-64 overflow-y-auto p-3 flex flex-col gap-1 font-mono text-[11.5px]" data-testid="feed-live-activity">
+                {liveEvents.length === 0 && (
+                  <span className="text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Waiting for the first step…</span>
+                )}
+                {liveEvents.map((e, i) => {
+                  const time = new Date(e.ts).toLocaleTimeString();
+                  if (e.type === "node_start") return (
+                    <div key={i} className="flex items-start gap-1.5" data-testid={`event-${i}`}>
+                      <Play className="w-3 h-3 mt-0.5 text-sky-500 shrink-0" />
+                      <span className="text-muted-foreground shrink-0">{time}</span>
+                      <span className="truncate"><span className="font-semibold">{e.label}</span> started <span className="text-muted-foreground">(wave {e.wave}/{e.totalWaves})</span></span>
+                    </div>
+                  );
+                  if (e.type === "node_complete") return (
+                    <div key={i} className="flex flex-col gap-0.5" data-testid={`event-${i}`}>
+                      <div className="flex items-start gap-1.5">
+                        {e.status === "completed"
+                          ? <CheckCircle2 className="w-3 h-3 mt-0.5 text-emerald-500 shrink-0" />
+                          : e.status === "skipped"
+                          ? <MinusCircle className="w-3 h-3 mt-0.5 text-muted-foreground shrink-0" />
+                          : <XCircle className="w-3 h-3 mt-0.5 text-red-500 shrink-0" />}
+                        <span className="text-muted-foreground shrink-0">{time}</span>
+                        <span className="truncate"><span className="font-semibold">{e.label}</span> {e.status === "completed" ? "finished" : e.status}{e.durationMs ? ` in ${durationLabel(e.durationMs)}` : ""}</span>
+                      </div>
+                      {e.outputPreview && (
+                        <div className="pl-[4.5rem] text-muted-foreground truncate" title={e.outputPreview}>→ {e.outputPreview}</div>
+                      )}
+                      {e.error && <div className="pl-[4.5rem] text-red-500 truncate">✗ {e.error}</div>}
+                    </div>
+                  );
+                  if (e.type === "approval_pending") return (
+                    <div key={i} className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400" data-testid={`event-${i}`}>
+                      <ShieldQuestion className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span className="shrink-0">{time}</span>
+                      <span className="truncate">Paused — <span className="font-semibold">{e.label}</span> is waiting for a human decision</span>
+                    </div>
+                  );
+                  if (e.type === "wave_complete") return (
+                    <div key={i} className="flex items-start gap-1.5 text-muted-foreground" data-testid={`event-${i}`}>
+                      <Layers className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span className="shrink-0">{time}</span>
+                      <span>Wave {e.wave}/{e.totalWaves} complete</span>
+                    </div>
+                  );
+                  return (
+                    <div key={i} className="flex items-start gap-1.5 font-semibold" data-testid={`event-${i}`}>
+                      {e.runStatus === "failed" ? <XCircle className="w-3 h-3 mt-0.5 text-red-500 shrink-0" /> : <CheckCircle2 className="w-3 h-3 mt-0.5 text-emerald-500 shrink-0" />}
+                      <span className="text-muted-foreground shrink-0 font-normal">{time}</span>
+                      <span>Run {String(e.runStatus || "").replace(/_/g, " ")}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       <div className="flex flex-col gap-3">
-        <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Wave-by-Wave Progress</span>
+        <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">
+          {isMagentic ? "Step-by-Step Progress" : "Wave-by-Wave Progress"}
+        </span>
         {waveResults.map(wave => (
           <Card key={wave.waveNumber} data-testid={`card-wave-${wave.waveNumber}`}>
             <CardContent className="p-4 flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">Wave {wave.waveNumber}</span>
+                <span className="text-xs font-medium text-muted-foreground">{isMagentic ? "Step" : "Wave"} {wave.waveNumber}</span>
                 {wave.durationMs > 0 && <span className="text-[11px] text-muted-foreground">{durationLabel(wave.durationMs)}</span>}
               </div>
               <div className="flex flex-col gap-1.5">
                 {wave.nodes.map(node => (
-                  <div key={node.nodeId} className="flex items-center gap-2 text-sm" data-testid={`row-node-${node.nodeId}`}>
-                    {node.status === "completed" ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    ) : node.status === "failed" ? (
-                      <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                    ) : node.status === "skipped" ? (
-                      <MinusCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    ) : (
-                      <Loader2 className="w-3.5 h-3.5 text-muted-foreground shrink-0 animate-spin" />
-                    )}
-                    <span className={node.status === "skipped" ? "truncate text-muted-foreground" : "truncate"}>{nodeLabels[node.nodeId] || node.nodeId}</span>
-                    {node.durationMs > 0 && <span className="text-[11px] text-muted-foreground">{durationLabel(node.durationMs)}</span>}
-                    {node.error && (
-                      <span className={`text-[11px] truncate ${node.status === "skipped" ? "text-muted-foreground" : "text-red-500"}`}>
-                        — {node.status === "skipped" ? "Condition not met" : node.error}
-                      </span>
+                  <div key={node.nodeId} className="flex flex-col gap-1" data-testid={`row-node-${node.nodeId}`}>
+                    <div className="flex items-center gap-2 text-sm">
+                      {node.status === "completed" ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      ) : node.status === "failed" ? (
+                        <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                      ) : node.status === "skipped" ? (
+                        <MinusCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      ) : (
+                        <Loader2 className="w-3.5 h-3.5 text-muted-foreground shrink-0 animate-spin" />
+                      )}
+                      <span className={node.status === "skipped" ? "truncate text-muted-foreground" : "truncate"}>{labelForNode(node)}</span>
+                      {node.durationMs > 0 && <span className="text-[11px] text-muted-foreground">{durationLabel(node.durationMs)}</span>}
+                      {node.error && (
+                        <span className={`text-[11px] truncate ${node.status === "skipped" ? "text-muted-foreground" : "text-red-500"}`}>
+                          — {node.status === "skipped" ? "Condition not met" : node.error}
+                        </span>
+                      )}
+                    </div>
+                    {isMagentic && node.output?.managerReasoning && (
+                      <span className="text-[11px] text-muted-foreground pl-5.5 truncate">Manager: {node.output.managerReasoning}</span>
                     )}
                   </div>
                 ))}
@@ -269,29 +449,53 @@ export default function DagRunMonitor() {
 
         {run.status === "running" && waveResults.length === 0 && (
           <Card><CardContent className="p-4 flex items-center gap-2 text-sm text-muted-foreground" data-testid="card-run-starting">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Starting first wave…
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> {isMagentic ? "Manager is deciding the first step…" : "Starting first wave…"}
           </CardContent></Card>
         )}
 
-        {pendingWaves > 0 && (
+        {!isMagentic && pendingWaves > 0 && (
           <Card className="border-dashed" data-testid="card-pending-waves">
             <CardContent className="p-4 text-xs text-muted-foreground">
               {pendingWaves} wave{pendingWaves !== 1 ? "s" : ""} not started yet
             </CardContent>
           </Card>
         )}
-      </div>
-
-      {run.status === "completed" && !!run.finalState && (
-        <div className="flex flex-col gap-2">
-          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Final State</span>
-          <Card>
-            <CardContent className="p-4">
-              <pre className="text-xs whitespace-pre-wrap break-words font-mono text-muted-foreground" data-testid="text-final-state">
-                {JSON.stringify(run.finalState, null, 2)}
-              </pre>
+        {isMagentic && run.status === "running" && (
+          <Card className="border-dashed" data-testid="card-magentic-cap">
+            <CardContent className="p-4 text-xs text-muted-foreground">
+              Up to {(run.totalWaves ?? 0) - waveResults.length} more step{((run.totalWaves ?? 0) - waveResults.length) !== 1 ? "s" : ""} may run before the manager finishes or hits the step cap.
             </CardContent>
           </Card>
+        )}
+      </div>
+
+      {(run.status === "completed" || run.status === "completed_with_skips") && !!run.finalState && (
+        <div className="flex flex-col gap-2">
+          <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">What This Run Produced</span>
+          <div className="flex flex-col gap-2" data-testid="section-run-outputs">
+            {Object.entries(run.finalState as Record<string, unknown>)
+              .filter(([key]) => key !== "request")
+              .map(([key, value]) => (
+                <Card key={key} data-testid={`card-output-${key}`}>
+                  <CardContent className="p-4 flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold">{humanizeKey(key)}</span>
+                    {typeof value === "string" ? (
+                      <p className="text-sm whitespace-pre-wrap break-words">{value}</p>
+                    ) : (
+                      <pre className="text-[11px] whitespace-pre-wrap break-words font-mono text-muted-foreground max-h-48 overflow-y-auto">
+                        {JSON.stringify(value, null, 2)}
+                      </pre>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+          </div>
+          <details className="text-xs" data-testid="details-raw-final-state">
+            <summary className="cursor-pointer text-muted-foreground">Raw final state (JSON)</summary>
+            <pre className="mt-2 text-xs whitespace-pre-wrap break-words font-mono text-muted-foreground border rounded-md p-3" data-testid="text-final-state">
+              {JSON.stringify(run.finalState, null, 2)}
+            </pre>
+          </details>
         </div>
       )}
     </div>

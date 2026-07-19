@@ -115,6 +115,7 @@ import { useIndustry } from "@/components/industry-provider";
 import { usePermission, useRole } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { streamProposeAgents } from "@/lib/propose-agents-stream";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
 import { normalizeToGraph, flattenGraphToSteps } from "@shared/process-flow";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
@@ -459,6 +460,7 @@ export default function OutcomeDetail() {
   const [processAnalysisOpen, setProcessAnalysisOpen] = useState(false);
   const [launchStep, setLaunchStep] = useState<number>(0);
   const [launchingWorkers, setLaunchingWorkers] = useState(false);
+  const [launchProgressMessage, setLaunchProgressMessage] = useState<string | null>(null);
   const [supportRequestSent, setSupportRequestSent] = useState(false);
   const [, setLocation] = useLocation();
 
@@ -1040,15 +1042,17 @@ export default function OutcomeDetail() {
     if (!outcomeId || !outcome) return;
     setLaunchingWorkers(true);
     setLaunchStep(1);
+    setLaunchProgressMessage(null);
     try {
-      const proposalsRes = await apiRequest("POST", "/api/ai/propose-agents", {
-        outcomeContract: outcome,
-        kpis: kpis || [],
-        industryContext: { industryId: industry?.id || "general", frameworks: [], jurisdictions: [], departments: [] },
-        ...(processFlowSteps.length > 0 && { processFlowSteps }),
-      });
-      if (!proposalsRes.ok) throw new Error("Failed to design your Digital Workers. Please try again.");
-      const proposalsData = await proposalsRes.json();
+      const proposalsData = await streamProposeAgents(
+        {
+          outcomeContract: outcome,
+          kpis: kpis || [],
+          industryContext: { industryId: industry?.id || "general", frameworks: [], jurisdictions: [], departments: [] },
+          ...(processFlowSteps.length > 0 && { processFlowSteps }),
+        },
+        setLaunchProgressMessage,
+      );
 
       const agentWorkers: any[] = proposalsData.agents || [];
       const orchestratorProp: any = proposalsData.orchestrator || null;
@@ -1059,6 +1063,7 @@ export default function OutcomeDetail() {
       }
 
       setLaunchStep(2);
+      setLaunchProgressMessage(null);
       let createdAgentIds: string[] = [];
 
       if (orchestratorProp && agentWorkers.length > 0) {
@@ -1130,6 +1135,7 @@ export default function OutcomeDetail() {
       });
     } finally {
       setLaunchingWorkers(false);
+      setLaunchProgressMessage(null);
     }
   }
 
@@ -1760,7 +1766,9 @@ export default function OutcomeDetail() {
             <div className="rounded-lg border bg-card px-6 py-10 flex flex-col items-center gap-8" data-testid="section-launch-progress">
               <div className="text-center flex flex-col gap-2">
                 <h2 className="text-base font-semibold">Setting up your Digital Workers</h2>
-                <p className="text-sm text-muted-foreground">This takes about 30 seconds — please stay on the page.</p>
+                <p className="text-sm text-muted-foreground">
+                  Usually well under a minute — larger teams can take a few minutes. Please stay on the page.
+                </p>
               </div>
               <div className="flex flex-col gap-5 w-full max-w-sm">
                 {([
@@ -1768,17 +1776,24 @@ export default function OutcomeDetail() {
                   { label: "Building your team", step: 2 },
                   { label: "Activating your workers", step: 3 },
                 ] as { label: string; step: number }[]).map(({ label, step }) => (
-                  <div key={step} className="flex items-center gap-3">
-                    {launchStep > step ? (
-                      <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-                    ) : launchStep === step ? (
-                      <Loader2 className="w-5 h-5 text-primary animate-spin shrink-0" />
-                    ) : (
-                      <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30 shrink-0" />
+                  <div key={step} className="flex flex-col gap-1">
+                    <div className="flex items-center gap-3">
+                      {launchStep > step ? (
+                        <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+                      ) : launchStep === step ? (
+                        <Loader2 className="w-5 h-5 text-primary animate-spin shrink-0" />
+                      ) : (
+                        <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30 shrink-0" />
+                      )}
+                      <span className={`text-sm transition-colors ${launchStep > step ? "text-emerald-700 dark:text-emerald-400" : launchStep === step ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                        {label}
+                      </span>
+                    </div>
+                    {launchStep === step && launchProgressMessage && (
+                      <span className="text-xs text-muted-foreground pl-8" data-testid={`text-launch-progress-${step}`}>
+                        {launchProgressMessage}
+                      </span>
                     )}
-                    <span className={`text-sm transition-colors ${launchStep > step ? "text-emerald-700 dark:text-emerald-400" : launchStep === step ? "text-foreground font-medium" : "text-muted-foreground"}`}>
-                      {label}
-                    </span>
                   </div>
                 ))}
               </div>
@@ -5432,53 +5447,22 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
   const updatedBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showCreateConfirm, setShowCreateConfirm] = useState(false);
   const [streamLogs, setStreamLogs] = useState<{ time: string; message: string }[]>([]);
-  const logIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamLogsEndRef = useRef<HTMLDivElement | null>(null);
 
-  const PLAN_LOG_STEPS = [
-    "Reading outcome contract and business goals...",
-    "Analyzing KPIs and success metrics...",
-    "Designing orchestrator agent architecture...",
-    "Proposing specialized worker agents...",
-    "Binding MCP tools and system integrations...",
-    "Building agent pipeline and task dependencies...",
-    "Validating agent roles against business outcomes...",
-    "Checking policy compliance and governance constraints...",
-    "Optimizing agent skill assignments...",
-    "Finalizing development plan...",
-    "Verifying pipeline execution graph...",
-    "Running final validation checks...",
-  ];
+  const nowClock = () => new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-  function startStreamLogs() {
-    setStreamLogs([]);
-    let step = 0;
-    let waitTick = 0;
-    const now = () => new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    logIntervalRef.current = setInterval(() => {
-      if (step < PLAN_LOG_STEPS.length) {
-        setStreamLogs(prev => [...prev, { time: now(), message: PLAN_LOG_STEPS[step] }]);
-        step++;
-      } else {
-        waitTick++;
-        const dots = ".".repeat((waitTick % 3) + 1);
-        setStreamLogs(prev => {
-          const last = prev[prev.length - 1];
-          const isWaiting = last?.message?.startsWith("Waiting for AI response");
-          if (isWaiting) {
-            return [...prev.slice(0, -1), { time: now(), message: `Waiting for AI response${dots}` }];
-          }
-          return [...prev, { time: now(), message: `Waiting for AI response${dots}` }];
-        });
-      }
-    }, 4000);
+  // Real progress from the propose-agents SSE stream (see
+  // server/routes/improvements.ts and client/src/lib/propose-agents-stream.ts)
+  // -- this used to be a canned list of messages advanced on a fixed 4s
+  // timer regardless of what the server was actually doing, which drifted
+  // out of sync (or sat on "Finalizing..." for two minutes) on anything but
+  // the average-case request. Pass this as the onProgress callback.
+  function pushStreamLog(message: string) {
+    setStreamLogs(prev => [...prev, { time: nowClock(), message }]);
   }
 
-  function stopStreamLogs() {
-    if (logIntervalRef.current) {
-      clearInterval(logIntervalRef.current);
-      logIntervalRef.current = null;
-    }
+  function startStreamLogs() {
+    setStreamLogs([{ time: nowClock(), message: "Starting..." }]);
   }
 
   function deepCloneAgent(p: AgentProposal): AgentProposal {
@@ -5857,7 +5841,11 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     startStreamLogs();
     const prevProposals = proposals;
     const abort = new AbortController();
-    const abortTimer = setTimeout(() => abort.abort(), 120_000);
+    // Server-side budget for this call scales up to 240s for larger teams
+    // (openAITimeoutMs in server/routes/improvements.ts) -- give it headroom
+    // above that ceiling so the client doesn't abort a request the server
+    // would have finished, which used to happen on anything but a small team.
+    const abortTimer = setTimeout(() => abort.abort(), 260_000);
     try {
       const feedbackPayload: Record<string, unknown> = {
         outcomeContract: outcome,
@@ -5872,8 +5860,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       };
       if (pendingTemplateId) feedbackPayload.templateId = pendingTemplateId;
       if (processFlowSteps && processFlowSteps.length > 0) feedbackPayload.processFlowSteps = processFlowSteps;
-      const res = await apiRequest("POST", "/api/ai/propose-agents", feedbackPayload, abort.signal);
-      const data = await res.json();
+      const data = await streamProposeAgents(feedbackPayload, pushStreamLog, abort.signal);
       pushUndo("Regenerate with feedback");
       const newAgents: AgentProposal[] = data.agents || [];
       if (onProcessFlowStepsGenerated && newAgents.length > 0) {
@@ -5912,15 +5899,14 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       queryClient.invalidateQueries({ queryKey: ["/api/agent-proposals", outcome.id] });
       toast({ title: "Plan regenerated with feedback", description: "The plan has been updated based on your feedback." });
     } catch (err: any) {
-      const isTimeout = err?.name === "AbortError" || abort.signal.aborted;
+      const isTimeout = err?.name === "AbortError" || abort.signal.aborted || err?.timeout;
       toast({
         title: isTimeout ? "Regeneration timed out" : "Failed to regenerate",
-        description: isTimeout ? "The request took too long. Please try again." : "Please try again.",
+        description: isTimeout ? (err?.message || "The request took too long. Please try again.") : (err?.message || "Please try again."),
         variant: "destructive",
       });
     } finally {
       clearTimeout(abortTimer);
-      stopStreamLogs();
       setGeneratingWithFeedback(false);
     }
   }
@@ -6009,7 +5995,13 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
             systemPrompt: finalSystemPrompt,
             complianceTags: worker.complianceTags || [],
             ontologyTags: worker.matchedOntologyConcepts?.length ? { concepts: worker.matchedOntologyConcepts } : {},
-            policyBindings: worker.policyConstraints?.length ? { policies: worker.policyConstraints } : {},
+            // Every other place that reads agent.policyBindings (agent-detail.tsx,
+            // agent-playground.tsx, the blueprint compile endpoint) expects an
+            // array and guards with Array.isArray -- writing an object here was
+            // the one place that diverged, and it's what made Compile 500 with
+            // a raw "l.map is not a function" for any blueprint linked to a
+            // worker agent created through this flow.
+            policyBindings: worker.policyConstraints || [],
             blueprintId: worker.suggestedBlueprintId || undefined,
             runtimeConfig: {
               prompt: taskPrompt,
@@ -6093,7 +6085,9 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     setGeneratingFresh(true);
     startStreamLogs();
     const abort = new AbortController();
-    const abortTimer = setTimeout(() => abort.abort(), 120_000);
+    // See the matching comment in generateProposalsWithFeedback above --
+    // must stay above the server's own up-to-240s budget.
+    const abortTimer = setTimeout(() => abort.abort(), 260_000);
     try {
       const payload: Record<string, unknown> = {
         outcomeContract: outcome,
@@ -6102,8 +6096,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       };
       if (pendingTemplateId) payload.templateId = pendingTemplateId;
       if (processFlowSteps && processFlowSteps.length > 0) payload.processFlowSteps = processFlowSteps;
-      const res = await apiRequest("POST", "/api/ai/propose-agents", payload, abort.signal);
-      const data = await res.json();
+      const data = await streamProposeAgents(payload, pushStreamLog, abort.signal);
       setProposals(data.agents || []);
       setOrchestrator(data.orchestrator || null);
       setPipeline(data.pipeline || null);
@@ -6122,15 +6115,14 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       }
       queryClient.invalidateQueries({ queryKey: ["/api/agent-proposals", outcome.id] });
     } catch (err: any) {
-      const isTimeout = err?.name === "AbortError" || abort.signal.aborted;
+      const isTimeout = err?.name === "AbortError" || abort.signal.aborted || err?.timeout;
       toast({
         title: isTimeout ? "Plan generation timed out" : "Failed to generate proposals",
-        description: isTimeout ? "The request took too long. Please try again." : "Please try again.",
+        description: isTimeout ? (err?.message || "The request took too long. Please try again.") : (err?.message || "Please try again."),
         variant: "destructive",
       });
     } finally {
       clearTimeout(abortTimer);
-      stopStreamLogs();
       setGeneratingFresh(false);
     }
   }

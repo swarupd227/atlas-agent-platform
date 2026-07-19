@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useRef, useEffect, useMemo } from "react";
-import { useLocation, useSearch } from "wouter";
+import { useLocation, useSearch, Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
@@ -1207,9 +1207,20 @@ export default function AgentWizard() {
       memoryRagConfig: template.memoryRagConfig
         ? (template.memoryRagConfig as WizardState["memoryRagConfig"])
         : defaultWizardState.memoryRagConfig,
+      // Template node definitions (server/templates-batch*.ts) only carry
+      // {id, type, label} -- no x/y. The canvas falls back to node.x||0 /
+      // node.y||0, so every template node used to land stacked exactly on
+      // top of the others at (0,0); a drag only ever grabbed whichever one
+      // was topmost in the DOM, and the rest of the stack looked unchanged
+      // afterward ("overlapping and undraggable"). Lay them out with the
+      // same grid formula addNodeToCanvas uses for manually-added nodes.
       workflowNodes: template.blueprintJson
         ? Array.isArray((template.blueprintJson as Record<string, unknown>).nodes)
-          ? ((template.blueprintJson as Record<string, unknown>).nodes as WorkflowNode[])
+          ? ((template.blueprintJson as Record<string, unknown>).nodes as WorkflowNode[]).map((n, i) => ({
+              ...n,
+              x: typeof n.x === "number" ? n.x : 40 + (i % 3) * 220,
+              y: typeof n.y === "number" ? n.y : 40 + Math.floor(i / 3) * 140,
+            }))
           : []
         : [],
       policyBindings: Array.isArray(template.policyBindings)
@@ -3088,7 +3099,14 @@ function Step2ChooseBlueprint({
           <CardContent className="flex flex-col items-center justify-center py-10 gap-2">
             <Layers className="w-8 h-8 text-muted-foreground/50" />
             <p className="text-sm text-muted-foreground">No shared blueprints available yet</p>
-            <p className="text-xs text-muted-foreground">Create and share blueprints in the Blueprint Library to see them here</p>
+            <p className="text-xs text-muted-foreground max-w-sm text-center">
+              A blueprint must be shared to the org before it can be selected here -- open the Blueprint Library and click "Share" on any card.
+            </p>
+            <Link href="/blueprints">
+              <Button variant="outline" size="sm" className="mt-1" data-testid="button-open-blueprint-library">
+                Open Blueprint Library
+              </Button>
+            </Link>
           </CardContent>
         </Card>
       ) : (

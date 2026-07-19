@@ -62,6 +62,14 @@ function toRFNodes(nodes: ProcessNode[]): RFNode[] {
     type: "process",
     position: n.position && (n.position.x || n.position.y) ? n.position : { x: (i % 5) * 240, y: Math.floor(i / 5) * 140 },
     data: { ntype: n.type, label: n.label, description: n.description, actor: n.actor, config: n.config } as RFData,
+    // React Flow can't compute an edge path to/from a node it hasn't measured
+    // yet (via ResizeObserver, after first paint) -- when nodes AND edges are
+    // both set in the same initial state (AI-generated flow, template load),
+    // every edge silently fails to render until that measurement lands. These
+    // hints give it an immediate box to route edges against; real DOM
+    // measurement still takes over right after mount for accurate sizing.
+    initialWidth: 176,
+    initialHeight: 64,
   }));
 }
 function toRFEdges(edges: ProcessEdge[]): RFEdge[] {
@@ -114,14 +122,23 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
 
   const addNode = useCallback((ntype: ProcessNodeType) => {
     const id = newId();
-    const count = nodes.length;
-    setNodes(nds => nds.concat({
-      id, type: "process",
-      position: { x: (count % 5) * 240, y: Math.floor(count / 5) * 140 + 40 },
-      data: { ntype, label: NODE_META[ntype].label, description: "", actor: "" } as RFData,
-    }));
+    // Compute the grid slot from the functional-update's own `nds`, not the
+    // `nodes` closed over at render time -- two palette clicks fired before
+    // React commits the first click's state update (e.g. a fast double-click)
+    // otherwise both read the same stale count and land on identical
+    // coordinates, silently stacking the second node exactly under the first.
+    setNodes(nds => {
+      const count = nds.length;
+      return nds.concat({
+        id, type: "process",
+        position: { x: (count % 5) * 240, y: Math.floor(count / 5) * 140 + 40 },
+        data: { ntype, label: NODE_META[ntype].label, description: "", actor: "" } as RFData,
+        initialWidth: 176,
+        initialHeight: 64,
+      });
+    });
     setSelectedNodeId(id);
-  }, [nodes.length, setNodes]);
+  }, [setNodes]);
 
   const patchNode = useCallback((id: string, patch: Partial<RFData>) => {
     setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...(n.data as RFData), ...patch } } : n));

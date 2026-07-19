@@ -826,6 +826,53 @@ function AgentDetailInner() {
     },
   });
 
+  // Flow lifecycle for teams created from a Process Flow: run, watch, and
+  // promote all live HERE, so users never have to discover that "run" hides
+  // on the Blueprint screen and "promote" hides on the Deployments screen.
+  const [runFlowOpen, setRunFlowOpen] = useState(false);
+  const [runFlowRequest, setRunFlowRequest] = useState("");
+  const runFlowMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/team-agents/${agentId}/run-dag`, { request: runFlowRequest });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setRunFlowOpen(false);
+      setRunFlowRequest("");
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
+      if (data.dagRunId) {
+        navigate(`/dag-runs/${data.dagRunId}`);
+      } else {
+        toast({ title: "Flow started", description: "Watch progress under Runs & Traces." });
+      }
+    },
+    onError: (err: Error) => toast({ title: "Could not start the flow", description: err.message, variant: "destructive" }),
+  });
+  const promoteFlowMutation = useMutation({
+    mutationFn: async (deploymentId: string) => {
+      const res = await apiRequest("POST", `/api/deployments/${deploymentId}/promote`, {});
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
+      toast({ title: "Flow promoted", description: data?.environment ? `Now running in ${data.environment}.` : "Promoted to the next environment." });
+    },
+    onError: (err: Error) => {
+      // The promote route explains exactly which readiness gate blocked it
+      // (eval pass rate, launch-readiness approval, ...) in a JSON body --
+      // surface that reason instead of a bare status code.
+      let description = err.message;
+      const jsonStart = err.message.indexOf("{");
+      if (jsonStart >= 0) {
+        try {
+          const parsed = JSON.parse(err.message.slice(jsonStart));
+          if (parsed?.message) description = parsed.message;
+        } catch {}
+      }
+      toast({ title: "Promotion blocked", description, variant: "destructive" });
+    },
+  });
+
   const [assignMcpOpen, setAssignMcpOpen] = useState(false);
   const [selectedMcpServerId, setSelectedMcpServerId] = useState("");
   const [mcpPolicyWarnings, setMcpPolicyWarnings] = useState<Array<{
@@ -1654,6 +1701,11 @@ function AgentDetailInner() {
               try {
                 await apiRequest("PATCH", `/api/agents/${agentId}`, { environment: val });
                 queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                // The Agents list's Environment filter reads the ["/api/agents"]
+                // list query -- without invalidating it too, a freshly-changed
+                // environment kept matching stale cached data and never showed
+                // up when filtering by the new value.
+                queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
                 toast({ title: `Environment changed to ${val}`, description: val === "production" ? "Agent is now in production environment" : `Agent moved to ${val}` });
               } catch (err: any) {
                 toast({ title: "Failed to change environment", description: err.message, variant: "destructive" });
@@ -1777,6 +1829,102 @@ function AgentDetailInner() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* One home for the whole flow lifecycle: edit → run → promote.
+          Feedback that prompted this: after "Turn into a live automation",
+          running lived on the Blueprint screen and promotion on Deployments,
+          with nothing on this page connecting them. */}
+      {agent.agentType === "team" && agent.blueprintId && (() => {
+        // "pending" is what a just-promoted deployment looks like while its
+        // deployment-review approval is open -- it IS the current deployment,
+        // so include it, but represent it as awaiting approval rather than
+        // offering another promotion on top of it.
+        const activeDep = agentDeployments
+          .filter(d => ["deployed", "active", "canary", "pending"].includes(d.status || ""))
+          .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0];
+        const depPending = activeDep?.status === "pending";
+        const envOrder = ["staging", "pilot", "prod"];
+        const envIdx = activeDep ? envOrder.indexOf(activeDep.environment || "") : -1;
+        const nextEnv = !depPending && envIdx >= 0 && envIdx < envOrder.length - 1 ? envOrder[envIdx + 1] : null;
+        return (
+          <div className="flex items-center gap-2.5 rounded-md border bg-primary/5 px-4 py-2.5 flex-wrap" data-testid="flow-lifecycle-bar">
+            <Workflow className="w-4 h-4 text-primary shrink-0" />
+            <div className="flex flex-col">
+              <span className="text-sm font-medium leading-tight">This team runs a flow</span>
+              <span className="text-[11px] text-muted-foreground leading-tight">Edit the steps, run it, then promote it through environments — all from here</span>
+            </div>
+            <div className="flex-1" />
+            <Button variant="outline" size="sm" onClick={() => navigate(`/blueprints/${agent.blueprintId}`)} data-testid="button-edit-flow">
+              <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit Flow
+            </Button>
+            <Button size="sm" onClick={() => setRunFlowOpen(true)} data-testid="button-run-flow">
+              <Play className="w-3.5 h-3.5 mr-1.5" /> Run Flow
+            </Button>
+            {activeDep ? (
+              <div className="flex items-center gap-1.5" data-testid="flow-env-controls">
+                <Badge variant="secondary" className="capitalize" data-testid="badge-flow-env">{activeDep.environment}</Badge>
+                {nextEnv ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={promoteFlowMutation.isPending}
+                    onClick={() => promoteFlowMutation.mutate(activeDep.id)}
+                    data-testid="button-promote-flow"
+                  >
+                    {promoteFlowMutation.isPending ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Promoting…</>
+                    ) : (
+                      <><TrendingUp className="w-3.5 h-3.5 mr-1.5" /> Promote to {nextEnv}</>
+                    )}
+                  </Button>
+                ) : depPending ? (
+                  <Badge
+                    className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 cursor-pointer"
+                    onClick={() => navigate("/governance?tab=approvals")}
+                    data-testid="badge-flow-pending"
+                  >
+                    Awaiting deployment approval — review in Governance
+                  </Badge>
+                ) : (
+                  <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30" data-testid="badge-flow-prod">In production</Badge>
+                )}
+              </div>
+            ) : (
+              <span className="text-xs text-muted-foreground" data-testid="text-flow-not-deployed">Not deployed yet — use Deploy above first</span>
+            )}
+          </div>
+        );
+      })()}
+
+      <Dialog open={runFlowOpen} onOpenChange={setRunFlowOpen}>
+        <DialogContent className="max-w-md" data-testid="dialog-run-flow">
+          <DialogHeader>
+            <DialogTitle>Run this flow</DialogTitle>
+            <DialogDescription>Describe what this run should process — like the request that would normally kick it off.</DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={runFlowRequest}
+            onChange={e => setRunFlowRequest(e.target.value)}
+            placeholder="e.g. New campaign request: promote our fitness tracker to US millennials, $250K budget, launch in August."
+            className="min-h-[100px] text-sm"
+            data-testid="input-run-flow-request"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRunFlowOpen(false)} data-testid="button-cancel-run-flow">Cancel</Button>
+            <Button
+              onClick={() => runFlowMutation.mutate()}
+              disabled={runFlowRequest.trim().length < 5 || runFlowMutation.isPending}
+              data-testid="button-confirm-run-flow"
+            >
+              {runFlowMutation.isPending ? (
+                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Starting…</>
+              ) : (
+                <><Play className="w-3.5 h-3.5 mr-1.5" /> Start Run</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-4">
         {(() => {

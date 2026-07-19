@@ -6,7 +6,7 @@ import {
   insertAutonomyProfileSchema,
   insertOversightDecisionSchema,
 } from "@shared/schema";
-import { callClaude, stripJsonFences } from "../claude";
+import { callClaude, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
 
 const router = Router();
 
@@ -306,8 +306,15 @@ Return ONLY valid JSON.`,
         jsonMode: true,
         maxTokens: 4096,
       });
-      res.json(JSON.parse(stripJsonFences(raw)));
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+      res.json(parseAIJsonResponse(raw));
+    } catch (e: any) {
+      // Raw provider errors (e.g. Anthropic's 529 overloaded_error) and raw
+      // JSON-parse exceptions were both being handed straight to the user
+      // as "AI enhancement failed" with the internal detail attached.
+      const message = e instanceof AIResponseParseError ? e.message : friendlyAIErrorMessage(e);
+      console.error("[enhance-autonomy-profile] AI enhancement failed:", e);
+      res.status(500).json({ error: message });
+    }
   });
 
   router.post("/api/ai/autonomy-recommendations", async (req, res) => {

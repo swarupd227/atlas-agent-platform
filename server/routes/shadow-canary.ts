@@ -705,7 +705,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         deployment = await storage.createDeployment({
           agentId: req.params.id,
           agentName: agent.name,
-          environment: "production",
+          environment: "staging",
           industry,
           status: "pending",
           version: agent.currentVersion || "1.0.0",

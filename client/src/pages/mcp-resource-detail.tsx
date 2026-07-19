@@ -581,10 +581,20 @@ export default function McpResourceDetailPage() {
                 {contentText}
               </pre>
             ) : (
-              <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground" data-testid="text-content-unavailable">
+              <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground text-center" data-testid="text-content-unavailable">
                 <AlertCircle className="w-6 h-6" />
-                <p className="text-sm">Content not available via server proxy.</p>
-                <p className="text-xs">Access this resource directly via its URI.</p>
+                <p className="text-sm">This MCP server doesn't proxy the resource's content back through Astra.</p>
+                <p className="text-xs max-w-sm">
+                  {/* The URI's own scheme (repo://, db://, etc.) names the
+                      origin system -- that's the closest thing to
+                      "how to access it" we can offer without a proxy, since
+                      these aren't clickable web links. */}
+                  Use "Copy URI" above and open it in{" "}
+                  {resource?.uri?.startsWith("repo://") ? "the source repository"
+                    : resource?.uri?.startsWith("db://") ? "the source database"
+                    : "the system this resource comes from"}
+                  {" "}-- Astra can't render this content type directly.
+                </p>
               </div>
             )}
           </div>
