@@ -361,6 +361,7 @@ export interface IStorage {
   getPendingAuditChainJob(): Promise<Job | null>;
   getPendingOtcSmokeTestJob(): Promise<Job | null>;
   hasPendingJobOfType(type: string): Promise<boolean>;
+  cancelQueuedJobsOfType(type: string): Promise<number>;
   persistAuditChainCheckResult(
     integrityResult: { valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number },
     durationMs: number,
@@ -1978,6 +1979,18 @@ export class DatabaseStorage implements IStorage {
     return !!job;
   }
 
+  // For the self-re-enqueuing scan chains: replaces however many queued links
+  // exist (0, 1, or duplicates) with a clean slate so the caller can enqueue
+  // exactly one. Returns how many were cancelled.
+  async cancelQueuedJobsOfType(type: string): Promise<number> {
+    const cancelled = await db
+      .update(jobs)
+      .set({ status: "cancelled", completedAt: new Date() })
+      .where(and(eq(jobs.type, type), eq(jobs.status, "queued")))
+      .returning({ id: jobs.id });
+    return cancelled.length;
+  }
+
   async getPendingAuditChainJob() {
     // Queued-only: a crash-stuck "processing" row should not block re-enqueue.
     const [job] = await db
@@ -2315,10 +2328,12 @@ export class DatabaseStorage implements IStorage {
       .orderBy(sql`${jobs.scheduledFor} ASC NULLS FIRST`, asc(jobs.createdAt))
       .limit(1);
     if (!job) return undefined;
+    // Conditional claim: the job may have been cancelled (startup scan-chain
+    // reset) between the SELECT above and this UPDATE -- only claim if still queued.
     const [claimed] = await db
       .update(jobs)
       .set({ status: "processing", startedAt: new Date() })
-      .where(eq(jobs.id, job.id))
+      .where(and(eq(jobs.id, job.id), eq(jobs.status, "queued")))
       .returning();
     return claimed;
   }

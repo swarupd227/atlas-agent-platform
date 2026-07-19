@@ -702,23 +702,35 @@ async function processAuditChainCheckpoint(job: Job): Promise<Record<string, unk
   return { checkpointsCreated: created.length, durationMs: Date.now() - startedAt };
 }
 
-export async function enqueueAuditChainCheckpoint() {
+// Startup reset for the self-re-enqueuing job chains. Each chain's handler
+// enqueues its successor in a finally block, so a restart can leave the queue
+// in any state: the normal single queued link, duplicates (the old link was
+// mid-execution -- status "processing", invisible to a queued-only check --
+// when the new boot also enqueued one), or nothing at all (crash before the
+// finally-block re-enqueue ran). Counting queued rows cannot distinguish
+// these, so instead: cancel every queued link of the type and start exactly
+// one fresh chain. Deterministic single chain per boot -- collapses duplicate
+// chains AND revives dead ones.
+async function resetScanChain(type: string, label: string, firstRunAt: Date) {
   try {
-    const hasPending = await storage.hasPendingJobOfType("audit_chain_checkpoint");
-    if (hasPending) {
-      console.log("[startup] Audit chain checkpoint already queued, skipping initial enqueue");
-      return;
+    const cancelled = await storage.cancelQueuedJobsOfType(type);
+    if (cancelled > 0) {
+      console.log(`[startup] Cancelled ${cancelled} queued ${label} job(s) left over from previous run`);
     }
     await storage.createJob({
-      type: "audit_chain_checkpoint",
+      type,
       status: "queued",
       payload: { triggeredBy: "scheduled" },
-      scheduledFor: new Date(Date.now() + 60_000), // first run 1 min after startup
+      scheduledFor: firstRunAt,
     });
-    console.log("[startup] Enqueued initial audit chain checkpoint");
+    console.log(`[startup] Enqueued fresh ${label} chain`);
   } catch (err: any) {
-    console.error("[startup] Failed to enqueue audit chain checkpoint:", err.message);
+    console.error(`[startup] Failed to reset ${label} chain:`, err.message);
   }
+}
+
+export async function enqueueAuditChainCheckpoint() {
+  await resetScanChain("audit_chain_checkpoint", "audit chain checkpoint", new Date(Date.now() + 60_000));
 }
 
 // ── Report Schedule Worker ────────────────────────────────────────────────────
@@ -828,22 +840,7 @@ async function processReportScheduleRun(job: Job): Promise<Record<string, unknow
 }
 
 export async function enqueueReportScheduleCheck() {
-  try {
-    const hasPending = await storage.hasPendingJobOfType("eval_report_schedule_check");
-    if (hasPending) {
-      console.log("[startup] Report schedule check already queued, skipping initial enqueue");
-      return;
-    }
-    await storage.createJob({
-      type: "eval_report_schedule_check",
-      status: "queued",
-      payload: { triggeredBy: "scheduled" },
-      scheduledFor: new Date(Date.now() + 60_000), // first run 1 min after startup
-    });
-    console.log("[startup] Enqueued initial report schedule check");
-  } catch (err: any) {
-    console.error("[startup] Failed to enqueue report schedule check:", err.message);
-  }
+  await resetScanChain("eval_report_schedule_check", "report schedule check", new Date(Date.now() + 60_000));
 }
 
 export async function enqueueAuditChainCheck() {
@@ -898,22 +895,7 @@ async function processMcpResourceChangeScan(job: Job): Promise<Record<string, un
 }
 
 export async function enqueueMcpResourceChangeScan() {
-  try {
-    const hasPending = await storage.hasPendingJobOfType("mcp_resource_change_scan");
-    if (hasPending) {
-      console.log("[startup] Connector resource-change scan already queued, skipping initial enqueue");
-      return;
-    }
-    await storage.createJob({
-      type: "mcp_resource_change_scan",
-      status: "queued",
-      payload: { triggeredBy: "scheduled" },
-      scheduledFor: new Date(),
-    });
-    console.log("[startup] Enqueued initial connector resource-change scan");
-  } catch (err: any) {
-    console.error("[startup] Failed to enqueue connector resource-change scan:", err.message);
-  }
+  await resetScanChain("mcp_resource_change_scan", "connector resource-change scan", new Date());
 }
 
 // ─── Schedule (cron) Trigger Firing ───────────────────────────────────────────
@@ -949,22 +931,7 @@ async function processScheduleTriggerScan(job: Job): Promise<Record<string, unkn
 }
 
 export async function enqueueScheduleTriggerScan() {
-  try {
-    const hasPending = await storage.hasPendingJobOfType("schedule_trigger_scan");
-    if (hasPending) {
-      console.log("[startup] Schedule trigger scan already queued, skipping initial enqueue");
-      return;
-    }
-    await storage.createJob({
-      type: "schedule_trigger_scan",
-      status: "queued",
-      payload: { triggeredBy: "scheduled" },
-      scheduledFor: new Date(),
-    });
-    console.log("[startup] Enqueued initial schedule trigger scan");
-  } catch (err: any) {
-    console.error("[startup] Failed to enqueue schedule trigger scan:", err.message);
-  }
+  await resetScanChain("schedule_trigger_scan", "schedule trigger scan", new Date());
 }
 
 // ─── DAG Approval-Gate Resume Scan ────────────────────────────────────────────
@@ -1004,22 +971,7 @@ async function processDagResumeScan(job: Job): Promise<Record<string, unknown>> 
 }
 
 export async function enqueueDagResumeScan() {
-  try {
-    const hasPending = await storage.hasPendingJobOfType("dag_resume_scan");
-    if (hasPending) {
-      console.log("[startup] DAG resume scan already queued, skipping initial enqueue");
-      return;
-    }
-    await storage.createJob({
-      type: "dag_resume_scan",
-      status: "queued",
-      payload: { triggeredBy: "scheduled" },
-      scheduledFor: new Date(),
-    });
-    console.log("[startup] Enqueued initial DAG resume scan");
-  } catch (err: any) {
-    console.error("[startup] Failed to enqueue DAG resume scan:", err.message);
-  }
+  await resetScanChain("dag_resume_scan", "DAG resume scan", new Date());
 }
 
 // ─── OTC Fulfillment Smoke Test ───────────────────────────────────────────────
