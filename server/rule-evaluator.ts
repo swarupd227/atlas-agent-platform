@@ -16,14 +16,25 @@ function formatValue(v: unknown): string {
   return JSON.stringify(v);
 }
 
+// Equality is case- and whitespace-insensitive for strings: both the rule's
+// expected value and the runtime state value are typically authored by an LLM
+// (the team proposer writes `value: "High"`, the worker's structured output
+// emits "high"), and a casing mismatch must not make BOTH branches of a
+// decision unsatisfiable -- that skips every downstream step and fails the
+// whole run over formatting, not substance.
+function looseEquals(actual: unknown, expected: unknown): boolean {
+  if (actual === expected) return true;
+  return String(actual).trim().toLowerCase() === String(expected).trim().toLowerCase();
+}
+
 function compare(actual: unknown, operator: RuleLeaf["operator"], expected: unknown): boolean {
   switch (operator) {
     case ">": return Number(actual) > Number(expected);
     case "<": return Number(actual) < Number(expected);
     case ">=": return Number(actual) >= Number(expected);
     case "<=": return Number(actual) <= Number(expected);
-    case "==": return actual === expected || String(actual) === String(expected);
-    case "!=": return !(actual === expected || String(actual) === String(expected));
+    case "==": return looseEquals(actual, expected);
+    case "!=": return !looseEquals(actual, expected);
     case "contains":
       if (typeof actual === "string") return actual.toLowerCase().includes(String(expected).toLowerCase());
       if (Array.isArray(actual)) return actual.some(x => x === expected || String(x) === String(expected));

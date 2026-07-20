@@ -73,4 +73,17 @@ describe("evaluateRule", () => {
     expect(evaluateRule(rule, { vendorName: "Acme Corp" }).result).toBe(true);
     expect(evaluateRule(rule, { vendorName: "Other Corp" }).result).toBe(false);
   });
+
+  // Regression: cloud UI E2E (claims triage) — the proposer wrote value "Low"
+  // but the worker's structured output emitted "low"; case-sensitive equality
+  // made BOTH decision branches unsatisfiable and skipped the entire flow.
+  it("string equality ignores case and surrounding whitespace", () => {
+    const low: RuleGroup = { combinator: "AND", conditions: [{ field: "fraudRiskLevel", operator: "==", value: "Low" }] };
+    expect(evaluateRule(low, { fraudRiskLevel: "low" }).result).toBe(true);
+    expect(evaluateRule(low, { fraudRiskLevel: " LOW " }).result).toBe(true);
+    expect(evaluateRule(low, { fraudRiskLevel: "high" }).result).toBe(false);
+    const notLow: RuleGroup = { combinator: "AND", conditions: [{ field: "fraudRiskLevel", operator: "!=", value: "Low" }] };
+    expect(evaluateRule(notLow, { fraudRiskLevel: "low" }).result).toBe(false);
+    expect(evaluateRule(notLow, { fraudRiskLevel: "high" }).result).toBe(true);
+  });
 });
