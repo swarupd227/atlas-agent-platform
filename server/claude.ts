@@ -7,6 +7,21 @@ export const anthropicClient = new Anthropic({
   baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || undefined,
 });
 
+// Transient provider failures worth retrying: rate limits (429), Anthropic's
+// overloaded_error (529 -- the observed cause of "AI Enhance is still
+// non-functional", test finding AUT-012), gateway blips (5xx), and dropped
+// connections. One immediate failure otherwise made every AI-Enhance feature
+// a coin flip during provider load spikes.
+function isTransientAIError(e: any): boolean {
+  const status = e?.status ?? e?.response?.status;
+  if (status === 429 || status === 529 || (status >= 500 && status <= 504)) return true;
+  const code = e?.error?.type || e?.code;
+  if (code === "overloaded_error" || code === "rate_limit_error") return true;
+  if (e?.constructor?.name === "APIConnectionError" || e?.constructor?.name === "APIConnectionTimeoutError") return true;
+  if (e?.message === "fetch failed") return true;
+  return false;
+}
+
 export async function callClaude(opts: {
   system: string;
   user: string;
@@ -17,16 +32,29 @@ export async function callClaude(opts: {
   const systemPrompt = opts.jsonMode
     ? `${opts.system}\n\nReturn ONLY valid JSON with no markdown fences or prose.`
     : opts.system;
-  const response = await anthropicClient.messages.create({
-    model: opts.model ?? "claude-opus-4-5",
-    system: systemPrompt,
-    messages: [{ role: "user", content: opts.user }],
-    max_tokens: opts.maxTokens ?? 4096,
-  });
-  const textBlock = response.content.find(
-    (b): b is Anthropic.TextBlock => b.type === "text"
-  );
-  return textBlock?.text ?? "";
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await anthropicClient.messages.create({
+        model: opts.model ?? "claude-opus-4-5",
+        system: systemPrompt,
+        messages: [{ role: "user", content: opts.user }],
+        max_tokens: opts.maxTokens ?? 4096,
+      });
+      const textBlock = response.content.find(
+        (b): b is Anthropic.TextBlock => b.type === "text"
+      );
+      return textBlock?.text ?? "";
+    } catch (e) {
+      lastErr = e;
+      if (attempt === MAX_ATTEMPTS - 1 || !isTransientAIError(e)) throw e;
+      const delayMs = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
+      console.warn(`[callClaude] transient AI error (attempt ${attempt + 1}/${MAX_ATTEMPTS}), retrying in ${delayMs}ms:`, (e as any)?.status ?? (e as any)?.message);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
 }
 
 export function stripJsonFences(raw: string): string {

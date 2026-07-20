@@ -332,11 +332,14 @@ export default function McpServersPage() {
                     </span>
                   </div>
                 </CardContent>
+                {/* Flush to the top-right corner with its own surface so it reads
+                    as a deliberate card action rather than a stray icon floating
+                    over the health-status row (test finding UI-INT-001). */}
                 <Button
                   size="icon"
                   variant="ghost"
                   aria-label={`Delete server ${server.name}`}
-                  className="absolute top-2 right-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity z-10 text-destructive hover:text-destructive"
+                  className="absolute top-1.5 right-1.5 h-7 w-7 rounded-md border border-border bg-background/90 shadow-sm opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity z-20 text-destructive hover:text-destructive hover:bg-destructive/10"
                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(server.id); }}
                   data-testid={`button-delete-server-${server.id}`}
                 >

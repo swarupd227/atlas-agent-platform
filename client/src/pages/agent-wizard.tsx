@@ -4250,12 +4250,14 @@ function Step4MemoryContext({
                 const nodeId = e.dataTransfer.getData("nodeId");
                 if (!nodeId || !canvasRef.current) return;
                 const rect = canvasRef.current.getBoundingClientRect();
-                const offsetX = parseInt(e.dataTransfer.getData("offsetX") || "0");
-                const offsetY = parseInt(e.dataTransfer.getData("offsetY") || "0");
-                const newX = Math.max(0, e.clientX - offsetX);
-                const newY = Math.max(0, e.clientY - offsetY);
-                const relX = Math.max(0, Math.min(newX - rect.left, rect.width - 200));
-                const relY = Math.max(0, newY - rect.top);
+                // grabX/grabY = where inside the node the user grabbed it.
+                // The previous math mixed a canvas-relative node coordinate with
+                // a viewport clientX, so the node landed offset by ~the canvas's
+                // left edge instead of under the cursor (test finding TMP-001).
+                const grabX = parseFloat(e.dataTransfer.getData("grabX") || "0");
+                const grabY = parseFloat(e.dataTransfer.getData("grabY") || "0");
+                const relX = Math.max(0, Math.min(e.clientX - rect.left - grabX, rect.width - 200));
+                const relY = Math.max(0, e.clientY - rect.top - grabY);
                 updateNodePosition(nodeId, relX, relY);
               }}
             >
@@ -4338,9 +4340,13 @@ function Step4MemoryContext({
                     style={{ left: node.x || 0, top: node.y || 0, zIndex: 2 }}
                     draggable
                     onDragStart={(e) => {
+                      // Capture the grab point relative to the node's own box, so
+                      // the drop handler can place the node's top-left under the
+                      // cursor minus this offset (standard HTML5 drag math).
+                      const nodeRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                       e.dataTransfer.setData("nodeId", node.id);
-                      e.dataTransfer.setData("offsetX", String(e.clientX - (node.x || 0)));
-                      e.dataTransfer.setData("offsetY", String(e.clientY - (node.y || 0)));
+                      e.dataTransfer.setData("grabX", String(e.clientX - nodeRect.left));
+                      e.dataTransfer.setData("grabY", String(e.clientY - nodeRect.top));
                     }}
                     data-testid={`workflow-node-${node.id}`}
                   >

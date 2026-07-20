@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatDate } from "@/lib/format";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -536,6 +536,29 @@ export default function Monitor() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [monitorTab, setMonitorTab] = useState("outcome-sla");
 
+  // Refresh button feedback (test finding ENH_002): the button previously had
+  // no handler at all -- clicking it did nothing. Refetch every monitor query
+  // with a visible spinner and a "Last refreshed" timestamp afterwards.
+  const monitorQueryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  async function handleRefreshMonitor() {
+    setRefreshing(true);
+    try {
+      await Promise.all(
+        [
+          "/api/agents", "/api/traces", "/api/drift-signals", "/api/monitor/impact",
+          "/api/approvals", "/api/monitor/tool-health", "/api/monitor/policy-violations",
+          "/api/healing-pipelines", "/api/agent-runtime/active", "/api/agent-runtime/runs",
+        ].map(key => monitorQueryClient.refetchQueries({ queryKey: [key] }))
+      );
+      await monitorQueryClient.refetchQueries({ predicate: q => String(q.queryKey[0]).startsWith("/api/monitor/series") });
+    } finally {
+      setRefreshing(false);
+      setLastRefreshedAt(new Date());
+    }
+  }
+
   const { data: agents, isLoading } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
@@ -1019,9 +1042,22 @@ export default function Monitor() {
             Industry-contextualized monitoring, outcome assurance & regulatory compliance
           </p>
         </div>
-        <Button variant="outline" size="sm" data-testid="button-refresh-monitor">
-          <RefreshCcw className="w-3.5 h-3.5 mr-1.5" /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          {lastRefreshedAt && !refreshing && (
+            <span className="text-[11px] text-muted-foreground" data-testid="text-last-refreshed">
+              Last refreshed {lastRefreshedAt.toLocaleTimeString()}
+            </span>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={refreshing}
+            onClick={handleRefreshMonitor}
+            data-testid="button-refresh-monitor"
+          >
+            <RefreshCcw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? "animate-spin" : ""}`} /> {refreshing ? "Refreshing…" : "Refresh"}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -1941,13 +1977,14 @@ export default function Monitor() {
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P95 Latency</span>
                           <span className="text-sm font-semibold">{formatMs(agent.avgLatencyMs)}</span>
-                          {/* Normalized against this page's own SLA bands (good <=500ms,
-                              warn <=1500ms, bad above -- see latColor a few hundred lines
-                              down) rather than an arbitrary /200 divisor that put the
-                              "normal" range within a few percent of each other and, for
-                              null/no-data agents, rendered a misleading full bar via ||0. */}
+                          {/* Fuller bar = lower (better) latency. Scaled to a 30s
+                              ceiling: the previous 3s ceiling clamped every real
+                              multi-second latency (5s, 12s, 19s) to 0, so the bar
+                              vanished entirely for exactly the agents testers looked
+                              at (test finding TC_006). 30s keeps realistic values
+                              visible and distinct. null/no-data renders empty. */}
                           <Progress
-                            value={agent.avgLatencyMs == null ? 0 : Math.max(0, 100 - (agent.avgLatencyMs / 3000) * 100)}
+                            value={agent.avgLatencyMs == null ? 0 : Math.min(100, Math.max(2, 100 - (agent.avgLatencyMs / 30000) * 100))}
                             className="h-1"
                           />
                         </div>

@@ -2524,7 +2524,7 @@ export default function Governance() {
             <Input
               value={feedSearchQuery}
               onChange={(e) => setFeedSearchQuery(e.target.value)}
-              placeholder="Search by policy name..."
+              placeholder="Search by policy, agent, or event details..."
               className="pl-8 h-8 text-xs"
               data-testid="input-feed-search"
             />
@@ -2623,7 +2623,17 @@ export default function Governance() {
               if (feedTypeFilter !== "all" && item.objectType !== feedTypeFilter) return false;
               if (feedAgentFilter !== "all" && item.agentName !== feedAgentFilter) return false;
               if (feedPolicyFilter !== "all" && item.policyName !== feedPolicyFilter) return false;
-              if (searchQuery && !(item.policyName || "").toLowerCase().includes(searchQuery)) return false;
+              // policyName is only set when the event's object IS the policy;
+              // most events reference the policy inside their details text, so
+              // a name-only search missed nearly everything (test finding
+              // ENH_003). Search across every human-readable field instead.
+              if (searchQuery) {
+                const haystack = [item.policyName, item.agentName, item.details, item.action?.replace(/_/g, " ")]
+                  .filter(Boolean)
+                  .join(" ")
+                  .toLowerCase();
+                if (!haystack.includes(searchQuery)) return false;
+              }
               return true;
             });
             return filtered.length > 0 ? (

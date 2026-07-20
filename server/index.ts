@@ -6,7 +6,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabase } from "./seed";
 import { autoResumeRuntimes } from "./agent-runtime";
-import { authMiddleware, seedDefaultAdmin, getSecurityMode, setDefaultOrgId } from "./auth";
+import { authMiddleware, seedDefaultAdmin, getSecurityMode, setDefaultOrgId, isLoopbackSocket } from "./auth";
 import { storage } from "./storage";
 import { otlpIngestRouter } from "./routes/observability";
 import { pool } from "./db";
@@ -159,15 +159,26 @@ app.use((req, res, next) => {
   const { seedDemoMcpServer, seedWorkerMcpEndpoints, demoRouter } = await import("./demo-routes");
 
   // Hard-gate all demo & mock surfaces off unless demos are explicitly enabled.
+  // Loopback self-calls are exempt: agents' tool calls hit their own mock
+  // connector endpoints via http://localhost:<port>, and gating those made
+  // every mock-backed tool call 404 in production (test finding AG-003) even
+  // though the agents and their tool registrations are real. External requests
+  // arrive through the front proxy with a non-loopback TCP source, so demo &
+  // mock surfaces remain hidden from outside when demos are disabled.
   app.use((req, res, next) => {
-    if (!demosEnabled() && (req.path.startsWith("/demo-api") || req.path.startsWith("/api/mock"))) {
+    if (
+      !demosEnabled() &&
+      (req.path.startsWith("/demo-api") || req.path.startsWith("/api/mock")) &&
+      !isLoopbackSocket(req)
+    ) {
       return res.status(404).json({ message: "Not found" });
     }
     next();
   });
-  if (demosEnabled()) {
-    app.use("/demo-api", demoRouter);
-  }
+  // The demo router itself must be mounted whenever loopback traffic can reach
+  // it -- worker MCP endpoints registered under /demo-api/* are tool backends
+  // for real agents, not just demo UI surfaces.
+  app.use("/demo-api", demoRouter);
 
   log(`Security mode: ${getSecurityMode()}`);
   await registerRoutes(httpServer, app);

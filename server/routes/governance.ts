@@ -101,7 +101,10 @@ Industry: ${industry || "General"}
 
 Current (basic) rules:
 ${JSON.stringify(existingRules, null, 2)}`,
-        maxTokens: 2048,
+        // 2048 was routinely too small for the "4-6 detailed rules" this
+        // prompt demands -- the response truncated mid-string and JSON.parse
+        // threw "Unterminated string in JSON" as a raw 500 (test finding TC_003).
+        maxTokens: 8192,
         jsonMode: true,
       });
 
@@ -110,11 +113,18 @@ ${JSON.stringify(existingRules, null, 2)}`,
         return res.status(500).json({ error: "No response from AI" });
       }
 
-      const enhanced = JSON.parse(content);
+      let enhanced: unknown;
+      try {
+        enhanced = JSON.parse(content);
+      } catch {
+        return res.status(502).json({
+          error: "The AI response was incomplete and could not be applied. Please try again — your existing rules were not changed.",
+        });
+      }
       res.json({ enhancedRules: enhanced });
     } catch (e: any) {
       console.error("AI enhance policy error:", e);
-      res.status(500).json({ error: e.message || "Failed to enhance policy rules" });
+      res.status(500).json({ error: "AI enhancement is temporarily unavailable. Please try again in a moment — your existing rules were not changed." });
     }
   });
 
@@ -1383,17 +1393,22 @@ Ontology: ${ontologyName || "industry standard"}`,
     // branches do.
     if (status === "approved" && approval.objectType === "agent" && approval.objectId) {
       if (approval.type === "retirement_review") {
+        // Approving the retirement review IS the human decision to retire, so
+        // it must finish the job -- move straight to "retired". Previously it
+        // only advanced to the intermediate "retiring" state and waited on a
+        // second handover_review the UI never surfaces, so the agent sat in
+        // "Retiring" forever (test finding AG-004). A retired agent is skipped.
         const agent = await storage.getAgent(approval.objectId, getOrgId(req));
-        if (agent && agent.status !== "retiring" && agent.status !== "retired") {
-          await storage.updateAgent(approval.objectId, { status: "retiring" });
+        if (agent && agent.status !== "retired") {
+          await storage.updateAgent(approval.objectId, { status: "retired" });
           await storage.createAuditEvent({
             organizationId: getOrgId(req) ?? undefined,
             actorType: "system",
             actorId: "system",
-            action: "agent_retirement_initiated",
+            action: "agent_retired",
             objectType: "agent",
             objectId: approval.objectId,
-            details: JSON.stringify({ previousStatus: agent.status, approvedBy: decidedBy || "Expert Validator" }),
+            details: JSON.stringify({ previousStatus: agent.status, retiredAt: new Date().toISOString(), approvedBy: decidedBy || "Expert Validator" }),
           });
         }
       } else if (approval.type === "handover_review") {
@@ -3708,7 +3723,10 @@ Eval Suites: ${evalSuites.length} configured`,
       const toolStats: Record<string, { total: number; errors: number; totalLatency: number; lastSeen: string }> = {};
 
       for (const trace of recentTraces) {
-        const tools = (trace.toolCalls as any[] | null) || [];
+        // Array.isArray guard: a trace whose toolCalls persisted as an object
+        // rather than an array would make this for...of throw "not iterable"
+        // and 500 the Monitor tool-health tab (same class as TC_002).
+        const tools = Array.isArray(trace.toolCalls) ? trace.toolCalls : [];
         for (const tc of tools) {
           const toolType = tc.type || tc.tool || tc.name || "unknown";
           if (!toolStats[toolType]) {

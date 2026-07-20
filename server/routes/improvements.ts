@@ -78,7 +78,11 @@ const router = Router();
       }> = [];
 
       for (const trace of traces) {
-        const checks = (trace.policyChecks as any[] | null) || [];
+        // Array.isArray, not `|| []`: some traces persisted policyChecks as a
+        // JSON object ({...}) rather than an array. That's truthy, so `|| []`
+        // let it through and `for...of` threw "c is not iterable" (minified),
+        // 500-ing the whole Monitor dashboard (test findings TC_002/APP-001).
+        const checks = Array.isArray(trace.policyChecks) ? trace.policyChecks : [];
         for (const pc of checks) {
           if (pc.blocked || pc.violated) {
             violations.push({
@@ -98,7 +102,7 @@ const router = Router();
       }
 
       for (const trace of traces) {
-        const softViolations = ((trace as any).softPolicyViolations as any[] | null) || [];
+        const softViolations = Array.isArray((trace as any).softPolicyViolations) ? (trace as any).softPolicyViolations : [];
         for (const r of softViolations) {
           if (!r.compliant) {
             violations.push({

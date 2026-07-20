@@ -141,7 +141,7 @@ export function getPriceTable() {
 
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 1000;
-const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
+const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504, 529]); // 529 = Anthropic overloaded_error
 const RETRYABLE_ERROR_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "ECONNREFUSED"]);
 
 function isRetryable(err: unknown): boolean {

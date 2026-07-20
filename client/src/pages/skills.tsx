@@ -93,15 +93,17 @@ export default function SkillCatalog() {
   const { toast } = useToast();
   const { industry: currentIndustry } = useIndustry();
   const [search, setSearch] = useState("");
+  // Default to the workspace's industry only when it's a real skill industry.
+  // A blank/custom workspace (id "custom") isn't in INDUSTRY_CONFIG and no
+  // skill carries it, so defaulting to it rendered an empty filter select and
+  // "No skills match your filters" on first load (test finding TC-SKILL-001).
   const [industryFilter, setIndustryFilter] = useState(() =>
-    currentIndustry?.id ?? "all"
+    currentIndustry?.id && INDUSTRY_CONFIG[currentIndustry.id] ? currentIndustry.id : "all"
   );
   const [domainFilter, setDomainFilter] = useState("all");
 
   useEffect(() => {
-    if (currentIndustry?.id) {
-      setIndustryFilter(currentIndustry.id);
-    }
+    setIndustryFilter(currentIndustry?.id && INDUSTRY_CONFIG[currentIndustry.id] ? currentIndustry.id : "all");
   }, [currentIndustry?.id]);
   const [trustFilter, setTrustFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");

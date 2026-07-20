@@ -133,7 +133,8 @@ const AUTH_EXEMPT_PATHS = [
 
 // Loopback per the actual TCP source address -- unlike req.ip this ignores
 // X-Forwarded-For and therefore cannot be spoofed by an external caller.
-function isLoopbackSocket(req: Request): boolean {
+// Exported for index.ts's demo-surface gate, which applies the same principle.
+export function isLoopbackSocket(req: Request): boolean {
   const addr = req.socket?.remoteAddress;
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
