@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file to terraform.tfvars and edit the values.
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Do NOT put real API keys in terraform.tfvars if the file will be committed.
+# Prefer environment variables for secrets:
+#   export TF_VAR_anthropic_api_key="sk-ant-..."
+#   export TF_VAR_openai_api_key="sk-..."
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Azure placement ──────────────────────────────────────────────────────────
+# subscription_id     = "00000000-0000-0000-0000-000000000000"  # optional; uses active sub if blank
+location            = "eastus"
+resource_group_name = "astra-agents-rg"
+
+# ── Application source ───────────────────────────────────────────────────────
+github_repo_url = "https://github.com/swarupd227/atlas-agent-platform"
+github_branch   = "main"
+
+# ── App Service (app_name and db_server_name must be GLOBALLY UNIQUE) ─────────
+app_name              = "astra-agents-artizent"
+app_service_plan_sku  = "B1"
+
+# ── PostgreSQL ───────────────────────────────────────────────────────────────
+db_server_name = "astra-agents-db"
+db_name        = "astra"
+db_sku_name    = "B_Standard_B1ms"
+
+# Allowlist your own public IP so you can run DB migrations from Cloud Shell.
+# Find it with:  curl -s ifconfig.me
+# admin_client_ip = "203.0.113.10"
+
+# ── LLM providers ────────────────────────────────────────────────────────────
+default_llm_provider = "anthropic"
+# Prefer TF_VAR_anthropic_api_key / TF_VAR_openai_api_key over putting keys here.
+# anthropic_api_key = "sk-ant-..."
+# openai_api_key    = "sk-..."
+
+enable_demos = false

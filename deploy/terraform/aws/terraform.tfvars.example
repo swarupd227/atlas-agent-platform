@@ -1,0 +1,41 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file to terraform.tfvars and edit the values.
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Do NOT put real API keys in terraform.tfvars if the file will be committed.
+# Prefer environment variables for secrets:
+#   export TF_VAR_anthropic_api_key="sk-ant-..."
+#   export TF_VAR_openai_api_key="sk-..."
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── AWS placement ────────────────────────────────────────────────────────────
+aws_region = "us-east-1"
+
+# ── Application source ───────────────────────────────────────────────────────
+github_repo_url = "https://github.com/swarupd227/atlas-agent-platform"
+github_branch   = "main"
+
+# ── Compute (Elastic Beanstalk) ──────────────────────────────────────────────
+app_name         = "astra-agents"
+eb_instance_type = "t3.small"
+# Confirm this matches an available stack in your region:
+#   aws elasticbeanstalk list-available-solution-stacks --query "SolutionStacks[?contains(@,'Node.js 22')]"
+eb_solution_stack = "64bit Amazon Linux 2023 v6.1.2 running Node.js 22"
+
+# ── PostgreSQL (RDS) ─────────────────────────────────────────────────────────
+db_server_name    = "astra-agents-db"
+db_name           = "astra"
+db_admin_username = "astraadmin"
+db_instance_class = "db.t4g.micro"
+
+# Allowlist your own IP (as a /32 CIDR) so you can run DB migrations.
+# Find it with:  echo "$(curl -s ifconfig.me)/32"
+# admin_client_cidr = "203.0.113.10/32"
+
+# ── LLM providers ────────────────────────────────────────────────────────────
+default_llm_provider = "anthropic"
+# Prefer TF_VAR_anthropic_api_key / TF_VAR_openai_api_key over putting keys here.
+# anthropic_api_key = "sk-ant-..."
+# openai_api_key    = "sk-..."
+
+enable_demos = false
