@@ -1,9 +1,12 @@
 # Process Flow Module — Self-Service Test Scenarios (UAT)
 
+> New here? Start with the [User Manual](USER_MANUAL.md) — it explains every screen these scenarios touch.
+
 Preconditions for all scenarios:
-- Dev server running at `http://localhost:5000`
-- Workspace: **Cross-Industry** · Role: **Admin** (top-right header)
-- After a fresh server start, run any one flow once and discard the result — the
+- **Cloud:** https://astra-agents-artizent.azurewebsites.net — sign in with your username and password.
+  (**Local:** dev server at `http://localhost:5000`, no login needed.)
+- Signed in with a builder or admin role (business-only roles can run Scenarios 3–4 but not create flows).
+- After a maintenance window or fresh start, run any one flow once and discard the result — the
   first LLM call after a cold start can hit 30-second step timeouts.
 
 ---
@@ -103,5 +106,6 @@ Preconditions for all scenarios:
 - A rejected gate **halts** the run — that is deliberate; there is no "continue anyway" for a decision nobody made.
 
 ### Reference — demo assets
-- Guided auto-demo: `node scripts/demo-flow-lifecycle.mjs` (server must be running)
-- Campaign teams: Stage 0 Intake `3ad0ffcd…`, Stage 1 Planning `81f69dbe…`, Stage 2 Content Planning `91578bdf…`, Stage 3a Copy `ca94f53c…`, Stage 3b Visual `52414114…`
+- Guided auto-demo (local): `node scripts/demo-flow-lifecycle.mjs` (server must be running)
+- Campaign teams (local): Stage 0 Intake `3ad0ffcd…`, Stage 1 Planning `81f69dbe…`, Stage 2 Content Planning `91578bdf…`, Stage 3a Copy `ca94f53c…`, Stage 3b Visual `52414114…`
+- Worked examples (cloud): **Cloud E2E Refund Handling Orchestrator** (refund flow with $200 manager gate, promoted staging → pilot) and **Auto Claim Intake & Triage Orchestrator** (17-step insurance claims flow with fraud screening, $10K adjuster gate, and a completed $18,500 settlement run) — both under **Agents**, with full run history.
