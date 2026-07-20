@@ -131,9 +131,9 @@ Return JSON with this structure:
 Make each decision unique, realistic, and industry-appropriate. Include diverse risk levels and action types. Use real regulation names and realistic agent scenarios.`,
         user: `Generate ${Math.min(count, 5)} realistic pending oversight decisions for the ${industry || "financial_services"} industry. Make them diverse in risk level and action type. Return ONLY valid JSON.`,
         jsonMode: true,
-        maxTokens: 4096,
+        maxTokens: 8192,
       });
-      const parsed = JSON.parse(stripJsonFences(raw));
+      const parsed = parseAIJsonResponse(raw);
       const createdDecisions = [];
       for (const d of (parsed.decisions || [])) {
         const decision = await storage.createOversightDecision({
@@ -201,7 +201,7 @@ Decision Details: ${JSON.stringify(decision || {})}
 
 Analyze risk dimensions, find similar past decisions, identify applicable regulations, and provide a recommendation. Return ONLY valid JSON.`,
         jsonMode: true,
-        maxTokens: 4096,
+        maxTokens: 8192,
       });
       res.json(JSON.parse(stripJsonFences(raw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -263,7 +263,7 @@ Consider industry-specific regulations, risk tolerances, and common business pat
 
 Return ONLY valid JSON.`,
         jsonMode: true,
-        maxTokens: 4096,
+        maxTokens: 8192,
       });
       res.json(JSON.parse(stripJsonFences(raw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -304,9 +304,13 @@ Analyze the current configuration and suggest specific enhancements. Identify ga
 
 Return ONLY valid JSON.`,
         jsonMode: true,
-        maxTokens: 4096,
+        // 4096 truncated the large enhanced-profile schema (dimensions +
+        // levels + rules + improvements + scores) mid-object, so parsing
+        // failed and enhance stayed "non-functional" even after the error was
+        // made friendly (test finding AUT-012). 8192 gives it room to finish.
+        maxTokens: 8192,
       });
-      res.json(parseAIJsonResponse(raw));
+      res.json(parseAIJsonResponse(raw, { wasTruncatedByTokenLimit: false }));
     } catch (e: any) {
       // Raw provider errors (e.g. Anthropic's 529 overloaded_error) and raw
       // JSON-parse exceptions were both being handed straight to the user
@@ -362,7 +366,7 @@ Provide specific, actionable recommendations for calibrating autonomy levels bas
 
 Return ONLY valid JSON.`,
         jsonMode: true,
-        maxTokens: 4096,
+        maxTokens: 8192,
       });
       res.json(JSON.parse(stripJsonFences(raw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
