@@ -3,7 +3,8 @@ import { createHash } from "crypto";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import type { AarConfig, InsertAarConfig } from "../../shared/schema";
-import { mcpCallTool, buildMcpAuthHeaders } from "../mcp-client";
+import { buildMcpAuthHeaders } from "../mcp-client";
+import { gatherAvailableTools, executeTool } from "../tool-dispatcher";
 
 // ─── Task 1: Token-bucket rate limiter (in-memory, per agentId:toolName) ─────
 interface TokenBucket {
@@ -579,43 +580,43 @@ async function invokeViaMcp(
   toolName: string,
   serverId: string | undefined,
   args: Record<string, unknown>,
+  orgId?: string,
+  agentId?: string,
 ): Promise<{ result: unknown; error?: string; matchedToolId?: string; credentialInjected: boolean }> {
-  if (serverId) {
-    const mcpServer = await storage.getMcpServer(serverId);
-    if (!mcpServer) return { result: null, error: `MCP server '${serverId}' not found`, credentialInjected: false };
-    // Try to find the specific tool record for fingerprinting
-    const allTools = await storage.getAllMcpServerTools();
-    const matchedTool = allTools.find(t => t.serverId === serverId && t.name === toolName);
-    // CredentialManager: resolve and inject auth headers
-    const serverAuth = await storage.getMcpServerAuth(serverId);
-    const authHeaders = buildMcpAuthHeaders(serverAuth);
-    const credentialInjected = Object.keys(authHeaders).length > 0;
-    if (credentialInjected) {
-      console.log(`[AAR][CredentialManager] Injecting '${serverAuth?.authType}' credentials for MCP server '${serverId}' tool='${toolName}'`);
-    }
-    try {
-      return { result: await mcpCallTool(mcpServer, toolName, args, serverAuth), matchedToolId: matchedTool?.id, credentialInjected };
-    } catch (e: any) {
-      return { result: null, error: e.message, matchedToolId: matchedTool?.id, credentialInjected };
-    }
-  }
-  // No server_id: locate first MCP server that hosts this tool
+  // Resolve the target server: an explicit id, else the first server hosting the tool.
   const allTools = await storage.getAllMcpServerTools();
-  const matched = allTools.find(t => t.name === toolName);
-  if (!matched) return { result: null, error: `No MCP server tool found for '${toolName}'`, credentialInjected: false };
-  const mcpServer = await storage.getMcpServer(matched.serverId);
-  if (!mcpServer) return { result: null, error: `MCP server for tool '${toolName}' not found`, credentialInjected: false };
-  // CredentialManager: resolve and inject auth headers
-  const serverAuth = await storage.getMcpServerAuth(matched.serverId);
-  const authHeaders = buildMcpAuthHeaders(serverAuth);
-  const credentialInjected = Object.keys(authHeaders).length > 0;
+  const matchedTool = serverId
+    ? allTools.find(t => t.serverId === serverId && t.name === toolName)
+    : allTools.find(t => t.name === toolName);
+  const resolvedServerId = serverId ?? matchedTool?.serverId;
+  if (!resolvedServerId) return { result: null, error: `No MCP server tool found for '${toolName}'`, credentialInjected: false };
+  const mcpServer = await storage.getMcpServer(resolvedServerId);
+  if (!mcpServer) return { result: null, error: `MCP server '${resolvedServerId}' not found`, credentialInjected: false };
+
+  // Route execution through the SAME shared dispatcher the agent runtime uses
+  // (gatherAvailableTools -> executeTool), so enterprise connectors (credential
+  // vault) and rest-proxy/OpenAPI-imported connectors (plain HTTP) execute
+  // correctly instead of being forced down the MCP streamable-HTTP transport —
+  // which only real remote MCP servers speak. Previously this always called
+  // mcpCallTool, so every enterprise/rest-proxy/mock connector failed here with
+  // "Streamable HTTP error", even though real agent runs invoke them fine.
+  const available = await gatherAvailableTools([resolvedServerId]);
+  const tool = available.find(t => t.toolName === toolName);
+  if (!tool) return { result: null, error: `Tool '${toolName}' is not exposed by server '${mcpServer.name}'`, matchedToolId: matchedTool?.id, credentialInjected: false };
+
+  // credentialInjected is telemetry: enterprise connectors resolve creds from the
+  // vault inside callTool; other transports inject via mcpServerAuth headers.
+  const serverAuth = await storage.getMcpServerAuth(resolvedServerId);
+  const credentialInjected = !!tool.enterpriseIntegration || Object.keys(buildMcpAuthHeaders(serverAuth)).length > 0;
   if (credentialInjected) {
-    console.log(`[AAR][CredentialManager] Injecting '${serverAuth?.authType}' credentials for MCP server '${matched.serverId}' tool='${toolName}'`);
+    console.log(`[AAR][CredentialManager] Credentials available for tool='${toolName}' on server='${resolvedServerId}'`);
   }
+
   try {
-    return { result: await mcpCallTool(mcpServer, toolName, args, serverAuth), matchedToolId: matched.id, credentialInjected };
+    const result = await executeTool(tool, args as Record<string, any>, orgId ?? null, agentId);
+    return { result, matchedToolId: matchedTool?.id, credentialInjected };
   } catch (e: any) {
-    return { result: null, error: e.message, matchedToolId: matched.id, credentialInjected };
+    return { result: null, error: e.message, matchedToolId: matchedTool?.id, credentialInjected };
   }
 }
 
@@ -911,7 +912,7 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
     const maxDriftPercent = (fingerprintCfg?.maxDriftPercent as number | undefined) ?? 10;
 
     // CredentialManager.InjectCredentials + MCPProxy.Forward
-    const { result: toolResult, error: invocationError, matchedToolId, credentialInjected } = await invokeViaMcp(tool_name, server_id, args ?? {});
+    const { result: toolResult, error: invocationError, matchedToolId, credentialInjected } = await invokeViaMcp(tool_name, server_id, args ?? {}, orgId, agentId);
     if (invocationError) {
       console.error(`[AAR] invoke-tool MCP call failed: ${invocationError}`);
     }
@@ -1094,7 +1095,7 @@ router.get("/api/agents/:agentId/aar/invoke-tool/stream", async (req, res) => {
     }
 
     // CredentialManager.InjectCredentials + MCPProxy.Forward
-    const { result: toolResult, error: invocationError, credentialInjected: _streamCredInjected } = await invokeViaMcp(tool_name, server_id, {});
+    const { result: toolResult, error: invocationError, credentialInjected: _streamCredInjected } = await invokeViaMcp(tool_name, server_id, {}, orgId, agentId);
 
     if (invocationError) {
       res.write(`data: ${JSON.stringify({ chunk: null, done: true, error: "INVOCATION_ERROR", reason: invocationError })}\n\n`);

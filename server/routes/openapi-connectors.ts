@@ -61,7 +61,15 @@ router.post("/api/openapi-import/parse", checkPermission("manage_mcp_servers"), 
       throw e;
     }
 
-    const effectiveBaseUrl = baseUrlOverride || parsed.baseUrl;
+    let effectiveBaseUrl = baseUrlOverride || parsed.baseUrl;
+    // OpenAPI allows a relative server URL (e.g. servers: [{ url: "/api/v3" }],
+    // as the canonical Swagger Petstore spec uses). Resolve it against the spec's
+    // own location so the SSRF check sees an absolute URL — otherwise a bare path
+    // fails as "Not a valid URL" and blocks many real-world specs. Only possible
+    // when the spec was fetched by URL; pasted spec text must supply baseUrlOverride.
+    if (effectiveBaseUrl && !/^https?:\/\//i.test(effectiveBaseUrl) && specUrl) {
+      try { effectiveBaseUrl = new URL(effectiveBaseUrl, specUrl).href; } catch { /* leave as-is; the check below reports it */ }
+    }
     if (effectiveBaseUrl) {
       const check = await safeUrlOrThrow(effectiveBaseUrl);
       if (!check.ok) return res.status(400).json({ message: `Spec's API base URL isn't usable: ${check.message}` });

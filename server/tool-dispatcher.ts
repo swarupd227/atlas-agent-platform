@@ -342,7 +342,7 @@ function resultErrorMessage(result: any): string | null {
   return typeof text === "string" && text.length > 0 ? text : "Tool returned an error";
 }
 
-async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
+export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
   if (tool.isRealMcp) {
     const server = await storage.getMcpServer(tool.serverId);
     if (server) {
