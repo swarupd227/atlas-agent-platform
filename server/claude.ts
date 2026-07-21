@@ -57,12 +57,24 @@ export async function callClaude(opts: {
   throw lastErr;
 }
 
+// Strips a markdown code fence that WRAPS a JSON response. It must only do that
+// when the fence is actually the wrapper: these patterns used to match anywhere
+// in the string, so a response whose own JSON *contains* a fenced block -- e.g.
+// skill-instruction-builder returns {"markdownBody": "...```\nexample\n```..."}
+// -- had the first inner fence treated as the wrapper. That returned just the
+// text between those backticks and threw the surrounding JSON away, so parsing
+// failed 100% of the time on otherwise-valid model output (reported as
+// AUT-SKL-002, and misdiagnosed as token truncation because the recovery path
+// then reported the response as "cut off"). Anchoring to the start makes the
+// no-fence case a no-op, which is the common one.
 export function stripJsonFences(raw: string): string {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("```")) return trimmed;
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```\s*$/);
   if (fenced) return fenced[1].trim();
-  const openFence = raw.match(/```(?:json)?\s*([\s\S]*)/);
+  const openFence = trimmed.match(/^```(?:json)?\s*([\s\S]*)$/);
   if (openFence) return openFence[1].trim();
-  return raw.trim();
+  return trimmed;
 }
 
 // Thrown by parseAIJsonResponse so callers can catch it specifically and

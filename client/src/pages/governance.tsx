@@ -1711,11 +1711,23 @@ export default function Governance() {
     const entitySet = new Set<string>();
     const systemSet = new Set<string>();
     const regulationSet = new Set<string>();
+    // Every value here becomes a <SelectItem value={...}> in the Audit Log
+    // filters, and Radix throws "A <Select.Item /> must have a value prop that
+    // is not an empty string" for a blank one -- which crashed the whole
+    // Governance page the moment the Audit Log tab rendered (AUT-GOV-001).
+    // splitting "a, , b" (or a trailing separator) yields an empty segment, and
+    // a truthy check still lets a whitespace-only tag through, so trim first
+    // and drop anything blank.
+    const addIfPresent = (set: Set<string>, value: unknown) => {
+      if (typeof value !== "string") return;
+      const v = value.trim();
+      if (v) set.add(v);
+    };
     auditEvents.forEach((e) => {
       const tags = (e.ontologyTags || {}) as Record<string, string>;
-      if (tags.entity_type) tags.entity_type.split(", ").forEach(t => entitySet.add(t.trim()));
-      if (tags.system) systemSet.add(tags.system);
-      if (tags.regulation) regulationSet.add(tags.regulation);
+      if (tags.entity_type) tags.entity_type.split(",").forEach(t => addIfPresent(entitySet, t));
+      addIfPresent(systemSet, tags.system);
+      addIfPresent(regulationSet, tags.regulation);
     });
     return {
       entityTypes: Array.from(entitySet).sort(),
