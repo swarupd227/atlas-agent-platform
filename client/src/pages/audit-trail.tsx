@@ -19,6 +19,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -392,19 +393,34 @@ export default function AuditTrail() {
               </SelectContent>
             </Select>
 
-            <Input
-              type="date"
-              value={startDate}
-              onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
-              data-testid="input-start-date"
-            />
+            {/* Both fields previously rendered as bare "dd-mm-yyyy" with no way
+                to tell which was which. The native calendar glyph is also drawn
+                dark-on-dark in dark theme, so invert it there to stay visible. */}
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="audit-start-date" className="text-xs text-muted-foreground">Start date</Label>
+              <Input
+                id="audit-start-date"
+                type="date"
+                aria-label="Start date"
+                className="dark:[&::-webkit-calendar-picker-indicator]:invert"
+                value={startDate}
+                onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+                data-testid="input-start-date"
+              />
+            </div>
 
-            <Input
-              type="date"
-              value={endDate}
-              onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
-              data-testid="input-end-date"
-            />
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="audit-end-date" className="text-xs text-muted-foreground">End date</Label>
+              <Input
+                id="audit-end-date"
+                type="date"
+                aria-label="End date"
+                className="dark:[&::-webkit-calendar-picker-indicator]:invert"
+                value={endDate}
+                onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+                data-testid="input-end-date"
+              />
+            </div>
           </div>
 
           {hasActiveFilters && (

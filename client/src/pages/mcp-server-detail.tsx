@@ -847,18 +847,27 @@ export default function McpServerDetail() {
                       </Select>
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <Label>Owner</Label>
+                      {/* Owner is required server-side. It used to look optional
+                          here, so submitting without it surfaced a raw backend
+                          validation error about a null field. Mark it, and gate
+                          the submit on it. */}
+                      <Label>Owner <span className="text-destructive">*</span></Label>
                       <Input
                         placeholder="e.g. platform-team"
+                        required
+                        aria-required="true"
                         value={newToolOwner}
                         onChange={(e) => setNewToolOwner(e.target.value)}
                         data-testid="input-tool-owner"
                       />
+                      {!newToolOwner.trim() && (
+                        <p className="text-xs text-muted-foreground">Required — the team or person accountable for this tool.</p>
+                      )}
                     </div>
                   </div>
                   <Button
                     onClick={() => addToolMutation.mutate()}
-                    disabled={!newToolName.trim() || !!newToolSchemaError || addToolMutation.isPending}
+                    disabled={!newToolName.trim() || !newToolOwner.trim() || !!newToolSchemaError || addToolMutation.isPending}
                     data-testid="button-submit-tool"
                   >
                     {addToolMutation.isPending ? (

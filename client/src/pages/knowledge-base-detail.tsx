@@ -608,7 +608,9 @@ export default function KnowledgeBaseDetail() {
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList data-testid="tabs-kb-detail">
+        {/* Scroll horizontally rather than clipping: at 100% zoom the last tab
+            ("Eval KB Gaps") was cut off and only became reachable at 90% zoom. */}
+        <TabsList className="max-w-full overflow-x-auto justify-start" data-testid="tabs-kb-detail">
           <TabsTrigger value="sources" data-testid="tab-sources">
             <FileText className="w-3.5 h-3.5 mr-1.5" /> Sources ({sources.length})
           </TabsTrigger>

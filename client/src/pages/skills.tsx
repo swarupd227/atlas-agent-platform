@@ -378,14 +378,25 @@ export default function SkillCatalog() {
               {skills.length} Skills
             </Badge>
             {compareList.length > 0 && (
+              // The panel below only renders with 2+ skills, but this button
+              // used to appear from the first selection — so "Compare (1)" was
+              // a dead click with no feedback. Keep it visible (so the count is
+              // still discoverable) but disable it and say what's needed.
               <Button
                 size="sm"
+                disabled={compareList.length < 2}
+                title={compareList.length < 2 ? "Select at least 2 skills to compare" : undefined}
                 onClick={() => setShowCompare(true)}
                 data-testid="button-open-compare"
               >
                 <BarChart3 className="w-4 h-4 mr-1" />
                 Compare ({compareList.length})
               </Button>
+            )}
+            {compareList.length === 1 && (
+              <span className="text-xs text-muted-foreground" data-testid="text-compare-hint">
+                Select one more skill to compare
+              </span>
             )}
             <Button
               size="sm"

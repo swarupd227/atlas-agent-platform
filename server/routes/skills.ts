@@ -20,7 +20,7 @@ import {
   insertTemporalGraphEntrySchema,
 } from "@shared/schema";
 
-import { callClaude, stripJsonFences } from "../claude";
+import { callClaude, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
 
 const router = Router();
 
@@ -1463,12 +1463,18 @@ Domain: ${domain || "General"}
 Domain expert description:
 ${naturalLanguageInput}`,
         jsonMode: true,
-        maxTokens: 4096,
+        maxTokens: 8192,
       });
-      res.json(JSON.parse(stripJsonFences(instructionRaw)));
+      res.json(parseAIJsonResponse(instructionRaw, { wasTruncatedByTokenLimit: true }));
     } catch (e: any) {
+      // SKILL.md content is long, so a truncated response used to throw a raw
+      // "Unterminated string in JSON at position ..." SyntaxError straight to
+      // the user as a 500. Recover where possible, otherwise explain it.
       console.error("AI instruction builder error:", e);
-      res.status(500).json({ error: e.message || "Failed to generate instructions" });
+      const status = e instanceof AIResponseParseError ? 502 : 500;
+      res.status(status).json({
+        error: e instanceof AIResponseParseError ? e.message : friendlyAIErrorMessage(e),
+      });
     }
   });
 
@@ -2089,10 +2095,23 @@ Return JSON: { "testCases": [{ "name": string, "inputScenario": string (detailed
         user: `Generate ${totalCount} golden evaluation test cases for "${useCase}" in ${industry.replace(/_/g, " ")}.`,
         model: "claude-haiku-4-5",
         jsonMode: true,
-        maxTokens: 4096,
+        maxTokens: 8192,
       });
       let result;
-      try { result = JSON.parse(stripJsonFences(goldenRaw)); } catch { result = { testCases: [] }; }
+      // Don't swallow a parse failure into an empty result: that surfaced in the
+      // UI as "0 test cases generated" with no error at all, so the user had no
+      // idea anything went wrong. Recover truncated JSON where possible, and
+      // otherwise fail loudly.
+      try {
+        result = parseAIJsonResponse(goldenRaw, { wasTruncatedByTokenLimit: true });
+      } catch (parseErr: any) {
+        console.error("[generate-golden-dataset] parse failed:", parseErr?.message);
+        return res.status(502).json({
+          error: parseErr instanceof AIResponseParseError
+            ? parseErr.message
+            : "The AI response couldn't be parsed. Please try again.",
+        });
+      }
       const testCasesRaw = (result.testCases || []).slice(0, 50);
 
       // Preview mode: return generated cases without persisting anything
@@ -2271,10 +2290,21 @@ ${existingSummary ? `\nExisting test cases (avoid duplicates):\n${existingSummar
         user: `Generate ${Math.min(count, 50)} golden evaluation test cases for "${useCase}" in ${industry}.`,
         model: "claude-haiku-4-5",
         jsonMode: true,
-        maxTokens: 4096,
+        maxTokens: 8192,
       });
       let result;
-      try { result = JSON.parse(stripJsonFences(goldenTCRaw)); } catch { result = { testCases: [] }; }
+      // Same as generate-golden-dataset: a swallowed parse error here is what
+      // made "Regenerate All" report "0 test cases generated" silently.
+      try {
+        result = parseAIJsonResponse(goldenTCRaw, { wasTruncatedByTokenLimit: true });
+      } catch (parseErr: any) {
+        console.error("[generate-golden-test-cases] parse failed:", parseErr?.message);
+        return res.status(502).json({
+          error: parseErr instanceof AIResponseParseError
+            ? parseErr.message
+            : "The AI response couldn't be parsed. Please try again.",
+        });
+      }
 
       const created = [];
       for (const tc of (result.testCases || []).slice(0, 50)) {
@@ -2582,11 +2612,20 @@ Return a JSON object with:
   - "autoActions": Array of automatic actions (e.g., "encrypt", "redact", "purge", "archive")`,
         user: `Generate ${tier ? `${tier} tier` : "all tier"} memory governance rules for ${industry} industry AI agents. Return ONLY valid JSON.`,
         jsonMode: true,
-        maxTokens: 2000,
+        maxTokens: 8192,
       });
 
       let parsed;
-      try { parsed = JSON.parse(stripJsonFences(memRulesRaw)); } catch { return res.status(500).json({ error: "AI returned malformed response" }); }
+      try {
+        parsed = parseAIJsonResponse(memRulesRaw, { wasTruncatedByTokenLimit: true });
+      } catch (parseErr: any) {
+        console.error("[suggest-memory-rules] parse failed:", parseErr?.message);
+        return res.status(502).json({
+          error: parseErr instanceof AIResponseParseError
+            ? parseErr.message
+            : "The AI response couldn't be parsed. Please try again.",
+        });
+      }
       res.json(parsed);
     } catch (e: any) {
       console.error("AI suggest memory rules error:", e);
@@ -2836,10 +2875,16 @@ Industry context: ${industry || "general"}
 
 Return ONLY valid JSON.`,
         jsonMode: true,
-        maxTokens: 1500,
+        maxTokens: 8192,
       });
-      res.json(JSON.parse(stripJsonFences(resolveRaw)));
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+      res.json(parseAIJsonResponse(resolveRaw, { wasTruncatedByTokenLimit: true }));
+    } catch (e: any) {
+      // A truncated response used to throw a raw SyntaxError out of JSON.parse,
+      // which the UI showed only as a generic "AI analysis failed" toast.
+      console.error("[resolve-entities] failed:", e?.message);
+      const status = e instanceof AIResponseParseError ? 502 : 500;
+      res.status(status).json({ error: e instanceof AIResponseParseError ? e.message : friendlyAIErrorMessage(e) });
+    }
   });
 
   router.post("/api/ai/extract-relationships", async (req, res) => {

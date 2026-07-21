@@ -264,7 +264,13 @@ export default function AgentPlayground() {
 
     const conceptsByLabel: Record<string, { label: string }> = {};
     for (const tag of agentOntologyTags) {
-      conceptsByLabel[tag.conceptLabel.toLowerCase()] = { label: tag.conceptLabel };
+      // An ontology tag with a missing/blank label threw "Cannot read properties
+      // of undefined (reading 'toLowerCase')" here, which unmounted the whole
+      // Playground behind the error boundary (and Reload couldn't recover it,
+      // because the same bad tag came straight back).
+      const label = tag?.conceptLabel;
+      if (typeof label !== "string" || label.trim() === "") continue;
+      conceptsByLabel[label.toLowerCase()] = { label };
     }
 
     const verbMap: Record<string, string> = {

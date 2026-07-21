@@ -318,6 +318,12 @@ export default function KnowledgeGraphIngestion() {
   const extractionsQuery = useQuery<ExtractionView[]>({ queryKey: ["/api/relationship-extractions"] });
   const temporalQuery = useQuery<TemporalView[]>({ queryKey: ["/api/temporal-graph-entries"] });
 
+  // SEED_* lists are illustrative placeholders rendered only while the real
+  // list is empty. They are indistinguishable from real rows today, so adding
+  // a first real connector makes them vanish and reads as "my connectors
+  // disappeared" (they were never saved). Track when we're showing samples so
+  // the UI can say so.
+  const showingSampleConnectors = (connectorsQuery.data?.length ?? 0) === 0;
   const connectors = useMemo(() => {
     const data = connectorsQuery.data || [];
     if (data.length === 0) return SEED_CONNECTORS.map((s, i) => ({ ...s, id: `seed-${i}`, createdAt: new Date().toISOString() }));
@@ -753,6 +759,15 @@ export default function KnowledgeGraphIngestion() {
           <TabsContent value="connectors" className="flex-1 overflow-hidden mt-0 px-6 pt-3">
             <ScrollArea className="h-full">
               <div className="space-y-3">
+                {showingSampleConnectors && (
+                  <div
+                    className="rounded-md border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+                    data-testid="banner-sample-connectors"
+                  >
+                    These are <span className="font-medium">example connectors</span> to show what this page looks like — none are configured yet.
+                    They disappear once you add your first real connector.
+                  </div>
+                )}
                 {filteredConnectors.map((connector) => {
                   const Icon = getConnectorIcon(connector.sourceType);
                   const typeInfo = CONNECTOR_TYPES.find((t) => t.value === connector.sourceType);

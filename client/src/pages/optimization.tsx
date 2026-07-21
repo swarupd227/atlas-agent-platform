@@ -1269,7 +1269,11 @@ export default function Optimization() {
           </div>
 
           <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-            <DialogContent className="sm:max-w-lg">
+            {/* Cap the height and scroll the body: this form runs past the
+                viewport on shorter screens, and without this the trailing
+                fields (Max Error Rate / Max Duration / Max Sample Size) and the
+                Create button were unreachable. */}
+            <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Create Experiment</DialogTitle>
               </DialogHeader>
