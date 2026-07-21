@@ -348,7 +348,18 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
         events = events.filter(e => e.actorType === actorType);
       }
       if (action) {
-        events = events.filter(e => e.action === action);
+        // Audit actions are namespaced ("mcp_server.created", "agent_created"),
+        // but the Action filter offers bare verbs ("created"). Exact equality
+        // therefore matched nothing, so both this list and the CSV export
+        // always came back empty. Accept an exact match, or the verb as the
+        // trailing segment after a "." / "_" separator, so "created" also
+        // selects "mcp_server.created". Compound filter values such as
+        // "mcp_tool_call" still match exactly.
+        const wanted = String(action).toLowerCase();
+        events = events.filter(e => {
+          const a = (e.action || "").toLowerCase();
+          return a === wanted || a.endsWith(`.${wanted}`) || a.endsWith(`_${wanted}`);
+        });
       }
       if (objectType) {
         events = events.filter(e => e.objectType === objectType);
@@ -396,7 +407,18 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
         events = events.filter(e => e.actorType === actorType);
       }
       if (action) {
-        events = events.filter(e => e.action === action);
+        // Audit actions are namespaced ("mcp_server.created", "agent_created"),
+        // but the Action filter offers bare verbs ("created"). Exact equality
+        // therefore matched nothing, so both this list and the CSV export
+        // always came back empty. Accept an exact match, or the verb as the
+        // trailing segment after a "." / "_" separator, so "created" also
+        // selects "mcp_server.created". Compound filter values such as
+        // "mcp_tool_call" still match exactly.
+        const wanted = String(action).toLowerCase();
+        events = events.filter(e => {
+          const a = (e.action || "").toLowerCase();
+          return a === wanted || a.endsWith(`.${wanted}`) || a.endsWith(`_${wanted}`);
+        });
       }
       if (objectType) {
         events = events.filter(e => e.objectType === objectType);

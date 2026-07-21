@@ -807,10 +807,14 @@ export default function EvalSimulator() {
                 {/* Metric collection selector */}
                 <div className="space-y-2">
                   <Label>Pre-compute metrics (optional)</Label>
-                  <Select value={metricCollectionId} onValueChange={setMetricCollectionId}>
+                  {/* "none" sentinel rather than "": Radix rejects an empty
+                      SelectItem value at runtime and crashes the page. State
+                      still holds "" for none, so the submit mapping below
+                      (metricCollectionId || undefined) is unchanged. */}
+                  <Select value={metricCollectionId} onValueChange={(v) => setMetricCollectionId(v === "none" ? "" : v)}>
                     <SelectTrigger data-testid="select-metric-collection"><SelectValue placeholder="No metric collection" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">None</SelectItem>
+                      <SelectItem value="none">None</SelectItem>
                       {(metricCollections || []).map(mc => (
                         <SelectItem key={mc.id} value={mc.id}>{mc.name}</SelectItem>
                       ))}

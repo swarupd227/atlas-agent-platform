@@ -1557,7 +1557,13 @@ export default function Governance() {
 
   const ontologyCategories = useMemo(() => {
     if (!allOntologyConcepts) return [];
-    const cats = new Set(allOntologyConcepts.map(c => c.category));
+    // Drop blank categories: a concept with an empty/null category would render
+    // <SelectItem value="">, which Radix rejects at runtime ("A <Select.Item />
+    // must have a value prop that is not an empty string") and takes the whole
+    // page down. Same guard the compliance-feed filters already use.
+    const cats = new Set(
+      allOntologyConcepts.map(c => c.category).filter((c): c is string => typeof c === "string" && c.trim() !== "")
+    );
     return Array.from(cats).sort();
   }, [allOntologyConcepts]);
 
