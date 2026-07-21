@@ -1463,7 +1463,12 @@ Domain: ${domain || "General"}
 Domain expert description:
 ${naturalLanguageInput}`,
         jsonMode: true,
-        maxTokens: 8192,
+        // A full SKILL.md (YAML frontmatter + seven markdown sections +
+        // dependencies + tags) is generated regardless of how short the input
+        // is, so even 8192 truncated this 100% of the time in production --
+        // every request came back "the AI response was too large and got cut
+        // off". Opus supports far more; give this document-sized response room.
+        maxTokens: 16384,
       });
       res.json(parseAIJsonResponse(instructionRaw, { wasTruncatedByTokenLimit: true }));
     } catch (e: any) {
