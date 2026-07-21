@@ -620,7 +620,29 @@ async function upsertIntegrationMcpServer(
       return existing.id;
     }
 
-    // Create a new MCP server record linked to this connection
+    // Adopt the catalog row this integration already has, rather than inserting
+    // a second one. registerEnterpriseIntegrations() seeds exactly one row per
+    // integration at <BASE_URL>/api/integrations/<id> and hangs every tool off
+    // it. Matching only on connectionId (null before the first connect) meant
+    // every first-time connect created a parallel "<Name> MCP" row that carried
+    // no tools and no URL — so the catalog showed two rows per integration and
+    // the connection pointed at the empty one. Match on the route suffix, which
+    // is stable even if the catalog row gets renamed.
+    const [seeded] = await db
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(like(mcpServers.url, `%/api/integrations/${integrationId}`))
+      .limit(1);
+
+    if (seeded) {
+      await db
+        .update(mcpServers)
+        .set({ connectionId, status: "registered", updatedAt: new Date() })
+        .where(eq(mcpServers.id, seeded.id));
+      return seeded.id;
+    }
+
+    // No seeded catalog row (integration registered without one) — create it.
     const [created] = await db
       .insert(mcpServers)
       .values({

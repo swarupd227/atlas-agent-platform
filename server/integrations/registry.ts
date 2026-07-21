@@ -76,7 +76,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
   {
     id: "hubspot",
     name: "HubSpot",
-    description: "CRM & marketing hub — contacts, deals, pipelines, and email sequences",
+    description: "CRM & marketing hub — contacts, companies, deals, pipelines, support tickets, and email sequences",
     category: "crm",
     logoColor: "#FF7A59",
     authMethod: "apikey",
@@ -86,7 +86,13 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     ],
     docsUrl: "https://developers.hubspot.com",
     wave: 1,
-    capabilities: ["read_contacts", "write_contacts", "read_deals", "write_deals", "read_companies"],
+    capabilities: [
+      "read_contacts", "write_contacts",
+      "read_companies", "write_companies",
+      "read_deals", "write_deals",
+      "read_tickets", "write_tickets",
+      "read_sequences",
+    ],
   },
   {
     id: "dynamics365",

@@ -3,7 +3,8 @@
 ## Overview
 The HubSpot MCP server connects to a HubSpot portal via the CRM v3 REST API
 using a **Private App token** (no OAuth redirect required). Supports contacts,
-companies, deals, notes, and pipeline management.
+companies, deals, support tickets, notes, and pipeline management, plus
+read-only access to sales sequences via the v4 automation API.
 
 ## Prerequisites
 1. A HubSpot account (free CRM: https://app.hubspot.com/signup)
@@ -28,7 +29,11 @@ companies, deals, notes, and pipeline management.
    - `crm.objects.deals.write`
    - `crm.schemas.contacts.read`
    - `crm.schemas.deals.read`
+   - `tickets` (for the ticket tools)
    - `timeline` (for notes/engagements)
+   - `sequences` (optional — only for `hs_list_sequences`; requires Sales Hub
+     Professional or Enterprise. Without it that one tool returns a 403; every
+     other tool is unaffected.)
 5. Click **Create app** → copy the **Access Token** (starts with `pat-na1-...`)
 
 ---
@@ -104,6 +109,18 @@ or create test contacts/deals manually. All writes in test mode use a separate p
 | `hs_update_deal_stage` | Move deal to new stage |
 | `hs_create_note` | Add note to contact, company, or deal |
 | `hs_search_deals` | Search deals by pipeline, stage, owner, amount |
+| `hs_get_pipelines` | List pipelines + stage IDs for deals or tickets |
+| `hs_create_company` | Create a company record |
+| `hs_update_company` | Update company properties |
+| `hs_search_tickets` | Search tickets by subject, pipeline, stage, priority, owner |
+| `hs_get_ticket` | Ticket record with associated contacts |
+| `hs_create_ticket` | Create a support ticket in a pipeline stage |
+| `hs_update_ticket` | Update ticket properties (stage, priority, owner) |
+| `hs_list_sequences` | List sales email sequences (Sales Hub Pro/Enterprise only) |
+
+> **Tip:** stage IDs are portal-specific. Call `hs_get_pipelines` first and use the
+> returned stage IDs with `hs_create_deal`, `hs_update_deal_stage`, and
+> `hs_create_ticket` rather than relying on the sample IDs above.
 
 ---
 

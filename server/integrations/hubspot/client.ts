@@ -31,6 +31,12 @@ export interface HSNote {
   properties: Record<string, string | null>;
 }
 
+export interface HSTicket {
+  id: string;
+  properties: Record<string, string | null>;
+  associations?: Record<string, { results: Array<{ id: string; type: string }> }>;
+}
+
 export interface HSSearchResult<T> {
   total: number;
   results: T[];
@@ -51,7 +57,7 @@ export interface HSFilterGroup {
   }>;
 }
 
-export type HSObjType = "contacts" | "companies" | "deals" | "notes" | "meetings" | "tasks";
+export type HSObjType = "contacts" | "companies" | "deals" | "notes" | "meetings" | "tasks" | "tickets";
 
 /** Fetcher type: relative path under HS_BASE, injected by MCP server */
 export type HsFetcher = (path: string, options?: RequestInit) => Promise<Response>;
@@ -139,7 +145,7 @@ export class HubSpotClient {
     });
   }
 
-  async getPipelines(objectType: "deals"): Promise<
+  async getPipelines(objectType: "deals" | "tickets"): Promise<
     Array<{
       id: string;
       label: string;
@@ -154,6 +160,27 @@ export class HubSpotClient {
       }>;
     }>(`/crm/v3/pipelines/${objectType}`);
     return res.results;
+  }
+
+  /**
+   * Sales sequences (Sequences API v4). Note this is NOT a CRM object API —
+   * it lives under /automation and requires the `sequences` scope on the
+   * Private App plus a Sales Hub Professional/Enterprise subscription. On a
+   * lower tier HubSpot answers 403, which surfaces as an honest tool error.
+   */
+  async listSequences(limit = 20, after?: string): Promise<{
+    total?: number;
+    results: Array<Record<string, unknown>>;
+    paging?: { next?: { after: string } };
+  }> {
+    const params = new URLSearchParams({ limit: String(Math.min(limit, 100)) });
+    if (after) params.append("after", after);
+    const res = await this.request<{
+      total?: number;
+      results?: Array<Record<string, unknown>>;
+      paging?: { next?: { after: string } };
+    }>(`/automation/v4/sequences?${params.toString()}`);
+    return { total: res.total, results: res.results ?? [], paging: res.paging };
   }
 
   async createEngagement(
@@ -240,6 +267,19 @@ export const DEFAULT_DEAL_PROPS = [
   "description",
   "createdate",
   "lastmodifieddate",
+];
+
+export const DEFAULT_TICKET_PROPS = [
+  "subject",
+  "content",
+  "hs_pipeline",
+  "hs_pipeline_stage",
+  "hs_ticket_priority",
+  "hs_ticket_category",
+  "source_type",
+  "hubspot_owner_id",
+  "createdate",
+  "hs_lastmodifieddate",
 ];
 
 /** Full HubSpot API base URL — prepend to relative paths for fetchWithAuth */

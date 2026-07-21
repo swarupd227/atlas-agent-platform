@@ -1,5 +1,6 @@
 /**
- * HubSpot MCP Server — extends RealMcpBase with 10 HubSpot v3 CRM tools.
+ * HubSpot MCP Server — extends RealMcpBase with 18 HubSpot tools (v3 CRM,
+ * plus the v4 automation API for sales sequences).
  * Uses RealMcpBase.fetchWithAuth() for all HTTP calls so 429 rate-limit backoff
  * and 5xx retry are transparently handled by the base class.
  * Express router mounts at /api/integrations/hubspot/tools/:toolName
@@ -13,6 +14,9 @@ import {
   hsSearchContacts, hsGetContact, hsCreateContact, hsUpdateContact,
   hsSearchCompanies, hsGetDeal, hsCreateDeal, hsUpdateDealStage,
   hsCreateNote, hsSearchDeals,
+  hsGetPipelines, hsCreateCompany, hsUpdateCompany,
+  hsSearchTickets, hsGetTicket, hsCreateTicket, hsUpdateTicket,
+  hsListSequences,
 } from "./tools";
 
 export class HubSpotMcpServer extends RealMcpBase {
@@ -188,6 +192,128 @@ export class HubSpotMcpServer extends RealMcpBase {
         },
       },
     },
+    {
+      name: "hs_get_pipelines",
+      description:
+        "List HubSpot pipelines and their stage IDs for deals or tickets. Call this first — stage IDs are portal-specific and are required by hs_create_deal, hs_update_deal_stage, and hs_create_ticket.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          objectType: {
+            type: "string",
+            enum: ["deals", "tickets"],
+            description: "Which pipeline set to list (default 'deals')",
+          },
+        },
+      },
+    },
+    {
+      name: "hs_create_company",
+      description: "Create a new HubSpot company record.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Company name (required)" },
+          domain: { type: "string", description: "Primary domain, e.g. 'acme.com'" },
+          industry: { type: "string", description: "Industry (exact HubSpot enum value)" },
+          city: { type: "string", description: "City" },
+          country: { type: "string", description: "Country" },
+          phone: { type: "string", description: "Phone number" },
+          description: { type: "string", description: "Company description" },
+          numberOfEmployees: { type: "number", description: "Employee headcount" },
+          annualRevenue: { type: "number", description: "Annual revenue" },
+        },
+        required: ["name"],
+      },
+    },
+    {
+      name: "hs_update_company",
+      description: "Update properties on an existing HubSpot company.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          companyId: { type: "string", description: "HubSpot company ID to update" },
+          properties: {
+            type: "object",
+            description: "Company property key-value pairs (HubSpot internal names: name, domain, industry, city, country, phone, description)",
+            additionalProperties: { type: "string" },
+          },
+        },
+        required: ["companyId", "properties"],
+      },
+    },
+    {
+      name: "hs_search_tickets",
+      description: "Search HubSpot support tickets by subject, pipeline, stage, priority, or owner.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subject: { type: "string", description: "Filter by ticket subject (partial match)" },
+          pipeline: { type: "string", description: "Filter by ticket pipeline ID" },
+          stage: { type: "string", description: "Filter by pipeline stage ID (see hs_get_pipelines)" },
+          priority: { type: "string", description: "Filter by priority (LOW, MEDIUM, HIGH)" },
+          ownerId: { type: "string", description: "Filter by HubSpot owner ID" },
+          limit: { type: "number", description: "Max tickets to return (default 20, max 100)" },
+        },
+      },
+    },
+    {
+      name: "hs_get_ticket",
+      description: "Retrieve a HubSpot ticket by ID, including associated contacts.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticketId: { type: "string", description: "HubSpot ticket ID" },
+          includeContacts: { type: "boolean", description: "Include associated contacts (default true)" },
+        },
+        required: ["ticketId"],
+      },
+    },
+    {
+      name: "hs_create_ticket",
+      description: "Create a new HubSpot support ticket in a pipeline stage.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subject: { type: "string", description: "Ticket subject (required)" },
+          content: { type: "string", description: "Ticket body / description" },
+          pipeline: { type: "string", description: "Ticket pipeline ID (default '0', the standard pipeline)" },
+          stage: { type: "string", description: "Pipeline stage ID (required — see hs_get_pipelines with objectType 'tickets')" },
+          priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"], description: "Ticket priority" },
+          category: { type: "string", description: "Ticket category (portal-specific enum)" },
+          ownerId: { type: "string", description: "HubSpot owner ID to assign" },
+        },
+        required: ["subject", "stage"],
+      },
+    },
+    {
+      name: "hs_update_ticket",
+      description: "Update properties on an existing HubSpot ticket (e.g. move stage, change priority, reassign).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ticketId: { type: "string", description: "HubSpot ticket ID to update" },
+          properties: {
+            type: "object",
+            description: "Ticket property key-value pairs (HubSpot internal names: subject, content, hs_pipeline, hs_pipeline_stage, hs_ticket_priority, hubspot_owner_id)",
+            additionalProperties: { type: "string" },
+          },
+        },
+        required: ["ticketId", "properties"],
+      },
+    },
+    {
+      name: "hs_list_sequences",
+      description:
+        "List sales email sequences. Requires the 'sequences' scope and a Sales Hub Professional/Enterprise subscription — on lower tiers HubSpot returns 403 and this reports an explicit entitlement error.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max sequences to return (default 20, max 100)" },
+          after: { type: "string", description: "Pagination cursor from a previous call's nextPage" },
+        },
+      },
+    },
   ];
 
   async handleTool(
@@ -229,6 +355,14 @@ export class HubSpotMcpServer extends RealMcpBase {
         case "hs_update_deal_stage": return this.ok(await hsUpdateDealStage(client, args as any));
         case "hs_create_note":      return this.ok(await hsCreateNote(client, args as any));
         case "hs_search_deals":     return this.ok(await hsSearchDeals(client, args as any));
+        case "hs_get_pipelines":    return this.ok(await hsGetPipelines(client, args as any));
+        case "hs_create_company":   return this.ok(await hsCreateCompany(client, args as any));
+        case "hs_update_company":   return this.ok(await hsUpdateCompany(client, args as any));
+        case "hs_search_tickets":   return this.ok(await hsSearchTickets(client, args as any));
+        case "hs_get_ticket":       return this.ok(await hsGetTicket(client, args as any));
+        case "hs_create_ticket":    return this.ok(await hsCreateTicket(client, args as any));
+        case "hs_update_ticket":    return this.ok(await hsUpdateTicket(client, args as any));
+        case "hs_list_sequences":   return this.ok(await hsListSequences(client, args as any));
         default:
           return this.err(
             `Unknown HubSpot tool: '${toolName}'. Available: ${this.tools.map((t) => t.name).join(", ")}`

@@ -1,13 +1,14 @@
 /**
- * HubSpot tool implementations — 10 tools backed by the HubSpot v3 CRM API.
+ * HubSpot tool implementations — 18 tools backed by the HubSpot v3 CRM API
+ * (plus the v4 automation API for sales sequences).
  * Uses CRM search API with filter groups for flexible querying.
  * PII fields (email, phone) are subject to Atlas PII masking (R1/R2 policy).
  */
 
 import {
   HubSpotClient,
-  DEFAULT_CONTACT_PROPS, DEFAULT_COMPANY_PROPS, DEFAULT_DEAL_PROPS,
-  type HSContact, type HSCompany, type HSDeal, type HSFilterGroup,
+  DEFAULT_CONTACT_PROPS, DEFAULT_COMPANY_PROPS, DEFAULT_DEAL_PROPS, DEFAULT_TICKET_PROPS,
+  type HSContact, type HSCompany, type HSDeal, type HSTicket, type HSFilterGroup,
 } from "./client";
 
 // ── PII masking (Atlas R1/R2 policy) ─────────────────────────────────────────
@@ -411,5 +412,243 @@ export async function hsSearchDeals(client: HubSpotClient, args: HsSearchDealsAr
   return {
     total: result.total,
     deals: result.results.map(d => ({ id: d.id, properties: d.properties })),
+  };
+}
+
+// ── Tool: hs_get_pipelines ────────────────────────────────────────────────────
+// Deal/ticket stages are portal-specific IDs, so hs_create_deal and
+// hs_update_deal_stage can't be used reliably without first enumerating them.
+
+export interface HsGetPipelinesArgs {
+  objectType?: "deals" | "tickets";
+}
+
+export async function hsGetPipelines(client: HubSpotClient, args: HsGetPipelinesArgs) {
+  const { objectType = "deals" } = args;
+  if (objectType !== "deals" && objectType !== "tickets") {
+    throw new Error("objectType must be either 'deals' or 'tickets'");
+  }
+
+  const pipelines = await client.getPipelines(objectType);
+
+  return {
+    objectType,
+    total: pipelines.length,
+    pipelines: pipelines.map(p => ({
+      id: p.id,
+      label: p.label,
+      stages: p.stages.map(s => ({
+        id: s.id,
+        label: s.label,
+        displayOrder: (s.metadata as { displayOrder?: unknown } | undefined)?.displayOrder,
+      })),
+    })),
+  };
+}
+
+// ── Tool: hs_create_company ───────────────────────────────────────────────────
+
+export interface HsCreateCompanyArgs {
+  name: string;
+  domain?: string;
+  industry?: string;
+  city?: string;
+  country?: string;
+  phone?: string;
+  description?: string;
+  numberOfEmployees?: number;
+  annualRevenue?: number;
+}
+
+export async function hsCreateCompany(client: HubSpotClient, args: HsCreateCompanyArgs) {
+  const { name, domain, industry, city, country, phone, description, numberOfEmployees, annualRevenue } = args;
+  if (!name?.trim()) throw new Error("name is required to create a company");
+
+  const properties: Record<string, string> = { name: name.trim() };
+  if (domain) properties.domain = domain;
+  if (industry) properties.industry = industry;
+  if (city) properties.city = city;
+  if (country) properties.country = country;
+  if (phone) properties.phone = phone;
+  if (description) properties.description = description;
+  if (numberOfEmployees !== undefined) properties.numberofemployees = String(numberOfEmployees);
+  if (annualRevenue !== undefined) properties.annualrevenue = String(annualRevenue);
+
+  const company = await client.createObject<HSCompany>("companies", properties);
+  return {
+    id: company.id,
+    properties: company.properties,
+    success: true,
+    message: `Company created with ID ${company.id}`,
+  };
+}
+
+// ── Tool: hs_update_company ───────────────────────────────────────────────────
+
+export interface HsUpdateCompanyArgs {
+  companyId: string;
+  properties: Record<string, string>;
+}
+
+export async function hsUpdateCompany(client: HubSpotClient, args: HsUpdateCompanyArgs) {
+  const { companyId, properties } = args;
+  if (!companyId) throw new Error("companyId is required");
+  if (!properties || typeof properties !== "object") throw new Error("properties object is required");
+
+  const updated = await client.updateObject<HSCompany>("companies", companyId, properties);
+  return {
+    id: updated.id,
+    updatedProperties: Object.keys(properties),
+    success: true,
+    message: `Company ${companyId} updated successfully`,
+  };
+}
+
+// ── Tool: hs_search_tickets ───────────────────────────────────────────────────
+
+export interface HsSearchTicketsArgs {
+  subject?: string;
+  pipeline?: string;
+  stage?: string;
+  priority?: string;
+  ownerId?: string;
+  limit?: number;
+}
+
+export async function hsSearchTickets(client: HubSpotClient, args: HsSearchTicketsArgs) {
+  const { subject, pipeline, stage, priority, ownerId, limit = 20 } = args;
+  const filterGroups: HSFilterGroup[] = [];
+
+  if (subject) filterGroups.push({ filters: [{ propertyName: "subject", operator: "CONTAINS_TOKEN", value: subject }] });
+  if (pipeline) filterGroups.push({ filters: [{ propertyName: "hs_pipeline", operator: "EQ", value: pipeline }] });
+  if (stage) filterGroups.push({ filters: [{ propertyName: "hs_pipeline_stage", operator: "EQ", value: stage }] });
+  if (priority) filterGroups.push({ filters: [{ propertyName: "hs_ticket_priority", operator: "EQ", value: priority }] });
+  if (ownerId) filterGroups.push({ filters: [{ propertyName: "hubspot_owner_id", operator: "EQ", value: ownerId }] });
+
+  if (!filterGroups.length) {
+    filterGroups.push({ filters: [{ propertyName: "createdate", operator: "HAS_PROPERTY" }] });
+  }
+
+  const result = await client.searchObjects<HSTicket>(
+    "tickets", filterGroups, DEFAULT_TICKET_PROPS,
+    [{ propertyName: "hs_lastmodifieddate", direction: "DESCENDING" }], limit
+  );
+
+  return {
+    total: result.total,
+    tickets: result.results.map(t => ({ id: t.id, properties: t.properties })),
+  };
+}
+
+// ── Tool: hs_get_ticket ───────────────────────────────────────────────────────
+
+export interface HsGetTicketArgs {
+  ticketId: string;
+  includeContacts?: boolean;
+}
+
+export async function hsGetTicket(client: HubSpotClient, args: HsGetTicketArgs) {
+  const { ticketId, includeContacts = true } = args;
+  if (!ticketId) throw new Error("ticketId is required");
+
+  const ticket = await client.getObject<HSTicket>(
+    "tickets", ticketId, DEFAULT_TICKET_PROPS, includeContacts ? ["contacts"] : []
+  );
+
+  const result: Record<string, unknown> = {
+    id: ticket.id,
+    properties: ticket.properties,
+  };
+
+  if (includeContacts && ticket.associations?.contacts) {
+    const contactIds = ticket.associations.contacts.results.map(r => r.id).slice(0, 5);
+    result.contacts = await Promise.all(
+      contactIds.map(id => client.getObject<HSContact>("contacts", id, DEFAULT_CONTACT_PROPS).catch(() => null))
+    ).then(cs => cs.filter(Boolean).map(c => ({ id: c!.id, properties: maskContactPii(c!.properties) })));
+  }
+
+  return result;
+}
+
+// ── Tool: hs_create_ticket ────────────────────────────────────────────────────
+
+export interface HsCreateTicketArgs {
+  subject: string;
+  content?: string;
+  pipeline?: string;
+  stage: string;
+  priority?: "LOW" | "MEDIUM" | "HIGH";
+  category?: string;
+  ownerId?: string;
+}
+
+export async function hsCreateTicket(client: HubSpotClient, args: HsCreateTicketArgs) {
+  const { subject, content, pipeline = "0", stage, priority, category, ownerId } = args;
+  if (!subject?.trim()) throw new Error("subject is required");
+  if (!stage?.trim()) throw new Error("stage is required — call hs_get_pipelines with objectType 'tickets' to list valid stage IDs");
+
+  const properties: Record<string, string> = {
+    subject: subject.trim(),
+    hs_pipeline: pipeline,
+    hs_pipeline_stage: stage,
+  };
+  if (content) properties.content = content;
+  if (priority) properties.hs_ticket_priority = priority;
+  if (category) properties.hs_ticket_category = category;
+  if (ownerId) properties.hubspot_owner_id = ownerId;
+
+  const ticket = await client.createObject<HSTicket>("tickets", properties);
+  return {
+    id: ticket.id,
+    properties: ticket.properties,
+    success: true,
+    message: `Ticket created with ID ${ticket.id}`,
+  };
+}
+
+// ── Tool: hs_update_ticket ────────────────────────────────────────────────────
+
+export interface HsUpdateTicketArgs {
+  ticketId: string;
+  properties: Record<string, string>;
+}
+
+export async function hsUpdateTicket(client: HubSpotClient, args: HsUpdateTicketArgs) {
+  const { ticketId, properties } = args;
+  if (!ticketId) throw new Error("ticketId is required");
+  if (!properties || typeof properties !== "object") throw new Error("properties object is required");
+
+  const updated = await client.updateObject<HSTicket>("tickets", ticketId, properties);
+  return {
+    id: updated.id,
+    updatedProperties: Object.keys(properties),
+    success: true,
+    message: `Ticket ${ticketId} updated successfully`,
+  };
+}
+
+// ── Tool: hs_list_sequences ───────────────────────────────────────────────────
+// Sales sequences live under the /automation API, not the CRM object API, and
+// need the `sequences` scope plus Sales Hub Professional/Enterprise. On a lower
+// tier HubSpot returns 403, which surfaces as an honest tool error rather than
+// an empty list, so the caller can tell "none configured" from "not entitled".
+
+export interface HsListSequencesArgs {
+  limit?: number;
+  after?: string;
+}
+
+export async function hsListSequences(client: HubSpotClient, args: HsListSequencesArgs) {
+  const { limit = 20, after } = args;
+  const result = await client.listSequences(limit, after);
+
+  return {
+    total: result.total ?? result.results.length,
+    sequences: result.results.map(s => ({
+      id: String(s.id ?? ""),
+      name: (s.name as string | undefined) ?? (s.sequenceName as string | undefined) ?? "(unnamed)",
+      properties: s,
+    })),
+    nextPage: result.paging?.next?.after,
   };
 }
