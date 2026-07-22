@@ -727,7 +727,9 @@ export default function AutonomyEngine() {
                       data-testid={`button-profile-${profile.id}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium truncate">{profile.name}</span>
+                        {/* title= so a long profile name is readable without
+                            having to open the profile to see it. */}
+                        <span className="text-sm font-medium truncate" title={profile.name}>{profile.name}</span>
                         <Badge variant={profile.status === "active" ? "default" : "secondary"} className="text-[10px] shrink-0">
                           {profile.status}
                         </Badge>

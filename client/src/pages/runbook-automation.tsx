@@ -672,7 +672,10 @@ export default function RunbookAutomation() {
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <span className="text-sm font-medium truncate block" data-testid={`text-runbook-name-${r.id}`}>{r.name}</span>
+                      {/* title= so a long runbook name is still readable: the
+                          side panel is a fixed width with no horizontal scroll,
+                          so truncation alone left no way to see the full name. */}
+                      <span className="text-sm font-medium truncate block" title={r.name} data-testid={`text-runbook-name-${r.id}`}>{r.name}</span>
                     </div>
                     <ChevronRight className="w-3 h-3 text-muted-foreground mt-1" />
                   </div>

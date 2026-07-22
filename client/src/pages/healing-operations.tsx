@@ -629,7 +629,9 @@ export default function HealingOperations() {
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <span className="text-sm font-medium truncate block" data-testid={`text-healing-title-${p.id}`}>{p.title}</span>
+                      {/* title= so a long issue title stays readable — the panel
+                          is fixed-width with no horizontal scroll. */}
+                      <span className="text-sm font-medium truncate block" title={p.title} data-testid={`text-healing-title-${p.id}`}>{p.title}</span>
                       <span className="text-xs text-muted-foreground" data-testid={`text-healing-agent-${p.id}`}>{p.agentName}</span>
                     </div>
                     <ChevronRight className="w-3 h-3 text-muted-foreground mt-1" />

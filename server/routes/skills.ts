@@ -2043,11 +2043,23 @@ ${naturalLanguageInput}`,
         jsonMode: true,
         maxTokens: 512,
       });
+      // Last of the golden-dataset handlers that swallowed a parse failure into
+      // an empty list: the UI then showed "no suggestions" with no success and
+      // no error, so the user couldn't tell it had failed (EVAL-DATA-002).
       let result;
-      try { result = JSON.parse(stripJsonFences(raw)); } catch { result = { useCases: [] }; }
+      try {
+        result = parseAIJsonResponse(raw, { wasTruncatedByTokenLimit: true });
+      } catch (parseErr: any) {
+        console.error("[suggest-golden-use-cases] parse failed:", parseErr?.message);
+        return res.status(502).json({
+          error: parseErr instanceof AIResponseParseError
+            ? parseErr.message
+            : "The AI response couldn't be parsed. Please try again.",
+        });
+      }
       res.json({ useCases: result.useCases || [] });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      res.status(500).json({ error: friendlyAIErrorMessage(e) });
     }
   });
 
