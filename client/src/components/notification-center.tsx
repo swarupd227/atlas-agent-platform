@@ -41,6 +41,8 @@ interface DriftSignal {
   id: string;
   agentId: string;
   agentName: string;
+  /** /api/drift-signals already returns this; it was just never declared here. */
+  suiteName: string;
   metric: string;
   severity: string;
   baseline: number;
@@ -195,8 +197,18 @@ export function NotificationCenter() {
                         : <TrendingDown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                       }
                       title={d.agentName}
-                      subtitle={`${d.metric} drift (${d.severity})`}
-                      onClick={() => navigate("/monitor")}
+                      // Name the suite that drifted, not just the metric: with
+                      // several signals open, "pass_rate drift (high)" alone
+                      // gave nothing to tell them apart.
+                      subtitle={`${d.suiteName} — ${d.metric} drift (${d.severity})`}
+                      // Deep-link to the affected agent when the signal has a
+                      // real one. Some suites are platform-owned and carry the
+                      // sentinel agentId "system", which is not a navigable
+                      // agent, so those still fall back to the dashboard rather
+                      // than routing to a page that would 404 (TC_NOTIFY_001).
+                      onClick={() =>
+                        navigate(d.agentId && d.agentId !== "system" ? `/agents/${d.agentId}` : "/monitor")
+                      }
                       testId={`notification-drift-${i}`}
                     />
                   ))}

@@ -2888,12 +2888,22 @@ Ontology: ${ontologyName || "industry standard"}`,
         const driftPercent = ((baselinePassRate - currentPassRate) / baselinePassRate) * 100;
         
         const agent = agents.find(a => a.id === suite.agentId);
-        
+        // Not every eval suite belongs to a real agent: platform-generated
+        // suites carry the sentinel agentId "system" (and some carry none), so
+        // this lookup misses and every such signal surfaced as the meaningless
+        // "Unknown Agent" in notifications (TC_NOTIFY_002). Name what it
+        // actually is, and keep a diagnosable id fragment for a genuinely
+        // dangling reference.
+        const agentLabel = agent?.name
+          ?? (!suite.agentId || suite.agentId === "system"
+            ? "System eval suite"
+            : `Unassigned agent (${String(suite.agentId).slice(0, 8)})`);
+
         if (Math.abs(driftPercent) > 2) {
           signals.push({
             id: `drift-${suite.id}`,
             agentId: suite.agentId,
-            agentName: agent?.name || "Unknown Agent",
+            agentName: agentLabel,
             suiteName: suite.name,
             suiteType: suite.type || "regression",
             metric: "pass_rate",
