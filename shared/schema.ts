@@ -623,7 +623,12 @@ export const evalRuns = pgTable("eval_runs", {
   completedAt: timestamp("completed_at"),
 });
 
-export const insertEvalRunSchema = createInsertSchema(evalRuns).omit({ id: true, startedAt: true });
+// passRate is stored as a 0-1 fraction everywhere it's read (client multiplies by 100
+// to display a percentage) -- reject out-of-range values instead of silently storing
+// a percentage-scale number (e.g. 80 meaning 80%) that corrupts averages/thresholds.
+export const insertEvalRunSchema = createInsertSchema(evalRuns, {
+  passRate: z.number().min(0).max(1).optional(),
+}).omit({ id: true, startedAt: true });
 export type InsertEvalRun = z.infer<typeof insertEvalRunSchema>;
 export type EvalRun = typeof evalRuns.$inferSelect;
 

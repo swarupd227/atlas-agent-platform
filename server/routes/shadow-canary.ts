@@ -153,8 +153,8 @@ Generate diverse, realistic traces with varying complexity, risk levels, and edg
   });
 
   router.post("/api/ai/shadow-replay-analyze", async (req, res) => {
+    const { sessionId, industry } = req.body;
     try {
-      const { sessionId, industry } = req.body;
       const session = await storage.getShadowReplaySession(sessionId);
       if (!session) return res.status(404).json({ error: "Session not found" });
 
@@ -241,7 +241,16 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       } as any);
 
       res.json({ session: updated, analysis });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) {
+      if (sessionId) {
+        await storage.updateShadowReplaySession(sessionId, {
+          status: "failed",
+          aggregateScores: { error: e.message },
+          completedAt: new Date(),
+        } as any).catch(() => {});
+      }
+      res.status(500).json({ error: e.message });
+    }
   });
 
   router.post("/api/live-agent-test", async (req, res) => {

@@ -262,7 +262,10 @@ export default function ShadowReplayStudio() {
       queryClient.invalidateQueries({ queryKey: ["/api/shadow-replay-sessions"] });
       toast({ title: "Analysis complete" });
     },
-    onError: (e: any) => toast({ title: "Analysis failed", description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/shadow-replay-sessions"] });
+      toast({ title: "Analysis failed", description: e.message, variant: "destructive" });
+    },
   });
 
   const liveTestMutation = useMutation({

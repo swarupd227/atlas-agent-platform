@@ -501,14 +501,14 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
     };
   }
 
-  await storage.createEvalRun({
-    suiteId,
+  await storage.updateEvalRun(evalRun.id, {
     status: "completed",
     passRate,
     totalCases: testCases.length,
     passedCases: passed,
     failedCases: failed,
     avgLatencyMs: avgLatency,
+    completedAt: new Date(),
     ...(Object.keys(runResultsJson).length > 0 ? { resultsJson: runResultsJson } : {}),
   });
 
@@ -1110,9 +1110,10 @@ async function processOtcSmokeTest(job: Job): Promise<Record<string, unknown>> {
         const passRate = testCases.length > 0 ? passed / testCases.length : 0;
         const avgLatency = testCases.length > 0 ? Math.round(totalLatency / testCases.length) : 0;
         freshPassRate = passRate;
-        await storage.createEvalRun({
-          suiteId: suite.id, status: "completed", passRate,
+        await storage.updateEvalRun(freshEvalRunId, {
+          status: "completed", passRate,
           totalCases: testCases.length, passedCases: passed, failedCases: failed, avgLatencyMs: avgLatency,
+          completedAt: new Date(),
         });
 
         const passRatePct = Math.round(passRate * 100);
