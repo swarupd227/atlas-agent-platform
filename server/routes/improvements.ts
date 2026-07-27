@@ -1990,6 +1990,20 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
       const allMcpServers = await storage.getMcpServers();
 
+      // The AI proposal only names skills ("matchedSkills": exact skill names, per the
+      // prompt schema above) -- resolve those against the real catalog so the created
+      // agent's preloadedSkills (what agent-runtime.ts actually reads at prompt-assembly
+      // time) is populated, not just the display-only runtimeConfig.matchedSkills below.
+      const orgSkills = (await storage.getSkills(getOrgId(req))).filter(s => s.status === "active");
+      const skillsByLowerName = new Map(orgSkills.map(s => [s.name.toLowerCase().trim(), s]));
+      const resolveMatchedSkills = function(names?: string[]): { skillId: string; skillName: string }[] {
+        if (!names?.length) return [];
+        return names
+          .map(name => skillsByLowerName.get(name.toLowerCase().trim()))
+          .filter((s): s is typeof orgSkills[0] => !!s)
+          .map(s => ({ skillId: s.id, skillName: s.name }));
+      };
+
       const linkMcpBindings = async function(agentId: string, bindings?: Array<{ server: string; tool: string }>) {
         if (!bindings?.length) return;
         const serverNames = Array.from(new Set(bindings.map(b => b.server)));
@@ -2098,6 +2112,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         complianceTags: orchestrator.complianceTags || [],
         ontologyTags: orchestrator.matchedOntologyConcepts?.length ? { concepts: orchestrator.matchedOntologyConcepts } : {},
         policyBindings: orchestrator.policyConstraints?.length ? { policies: orchestrator.policyConstraints } : {},
+        preloadedSkills: resolveMatchedSkills(orchestrator.matchedSkills),
         runtimeConfig: {
           prompt: composeTaskPrompt(orchestrator, true),
           kpiBindings: orchestrator.kpiBindings || [],
@@ -2137,6 +2152,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           complianceTags: worker.complianceTags || [],
           ontologyTags: worker.matchedOntologyConcepts?.length ? { concepts: worker.matchedOntologyConcepts } : {},
           policyBindings: worker.policyConstraints?.length ? { policies: worker.policyConstraints } : {},
+          preloadedSkills: resolveMatchedSkills(worker.matchedSkills),
           blueprintId: worker.suggestedBlueprintId || undefined,
           runtimeConfig: {
             prompt: composeTaskPrompt(worker, false),

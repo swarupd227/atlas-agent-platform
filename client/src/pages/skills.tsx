@@ -369,11 +369,21 @@ export default function SkillCatalog() {
                 <Pencil className="w-4 h-4 mr-1" /> Skill Studio
               </Button>
             </Link>
-            <Link href="/skills/composer">
-              <Button variant="outline" size="sm" data-testid="button-skill-composer">
-                <Link2 className="w-4 h-4 mr-1" /> Skill Composer
-              </Button>
-            </Link>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link href="/skills/composer">
+                  <Button variant="outline" size="sm" data-testid="button-skill-composer" className="gap-1">
+                    <Link2 className="w-4 h-4 mr-1" /> Skill Composer
+                    <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-normal" data-testid="badge-composer-preview">
+                      Preview
+                    </Badge>
+                  </Button>
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-[220px] text-xs">
+                Design-time only — chains built here aren't executed by the agent runtime yet.
+              </TooltipContent>
+            </Tooltip>
             <Badge variant="secondary" className="text-xs" data-testid="badge-total-skills">
               {skills.length} Skills
             </Badge>

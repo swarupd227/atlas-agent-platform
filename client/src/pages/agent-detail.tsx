@@ -4753,10 +4753,13 @@ function AgentDetailInner() {
                 {matchedSkills.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {matchedSkills.map((skill: Skill, skillIdx: number) => {
-                      const hash = (skill.name || "").split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-                      const perfScore = skill.performanceScore || (70 + (hash % 26));
-                      const activations = skill.activationCount || (100 + (hash * 3) % 400);
-                      const perfColor = perfScore >= 90 ? "text-emerald-600 dark:text-emerald-400" : perfScore >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+                      // performanceScore/activationCount default to 0 in the DB, which is a real,
+                      // meaningful value (never evaluated / never activated) -- only lastEvalAt tells
+                      // us whether a score is actually backed by a real eval run.
+                      const hasEval = !!skill.lastEvalAt;
+                      const perfScore = hasEval ? (skill.performanceScore ?? 0) : null;
+                      const activations = skill.activationCount ?? 0;
+                      const perfColor = perfScore == null ? "text-muted-foreground" : perfScore >= 90 ? "text-emerald-600 dark:text-emerald-400" : perfScore >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
                       const tags = (skill.tags as string[]) || [];
                       return (
                         <Card key={skill.id} data-testid={`card-skill-${skill.id}`}>
@@ -4775,8 +4778,8 @@ function AgentDetailInner() {
                                 )}
                               </div>
                               <div className="flex flex-col items-end gap-1 shrink-0">
-                                <span className={`text-lg font-semibold ${perfColor}`}>{perfScore}%</span>
-                                <span className="text-[10px] text-muted-foreground">performance</span>
+                                <span className={`text-lg font-semibold ${perfColor}`}>{perfScore == null ? "—" : `${perfScore}%`}</span>
+                                <span className="text-[10px] text-muted-foreground">{perfScore == null ? "not yet evaluated" : "performance"}</span>
                               </div>
                             </div>
                             <div className="flex items-center gap-3 mt-3 pt-2 border-t">

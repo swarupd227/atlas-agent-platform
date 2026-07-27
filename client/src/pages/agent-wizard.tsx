@@ -1335,6 +1335,32 @@ export default function AgentWizard() {
       },
     });
     if (draft.sourceTemplateId) setSelectedTemplateId(draft.sourceTemplateId);
+
+    // draft.preloadedSkills is a real, server-validated array of skill ids (see
+    // POST /api/ai/draft-agent) -- resolve names/domains for display and feed them
+    // into the same templateSkills.required slot the Review step (and handleCreate's
+    // payload builder) already knows how to render and submit. Previously this was
+    // silently dropped here, so an AI-drafted agent's skill picks never reached the
+    // created agent even though the server had already validated them.
+    if (Array.isArray(draft.preloadedSkills) && draft.preloadedSkills.length > 0) {
+      fetch("/api/skills")
+        .then((r) => r.json())
+        .then((catalog: Array<{ id: string; name: string; domain: string }>) => {
+          const byId = new Map(catalog.map((c) => [c.id, c]));
+          const required = (draft.preloadedSkills as string[])
+            .map((id, i) => {
+              const s = byId.get(id);
+              return s ? { skillId: s.id, skillName: s.name, domain: s.domain, executionOrder: i } : null;
+            })
+            .filter((s): s is { skillId: string; skillName: string; domain: string; executionOrder: number } => !!s);
+          if (required.length === 0) return;
+          setWizardState((prev) => ({
+            ...prev,
+            templateSkills: { ...prev.templateSkills, required, optional: [], selectedOptional: [] },
+          }));
+        })
+        .catch(() => {});
+    }
   }
 
   async function draftAgentFromDescription() {
