@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Select,
   SelectTrigger,
@@ -1991,6 +1992,30 @@ export default function AgentWizard() {
                   : [...sel, skillId];
                 return { ...prev, templateSkills: { ...prev.templateSkills, selectedOptional: newSel } };
               });
+            }}
+            onAttachSkill={(skill: { id: string; name: string; domain: string }) => {
+              setWizardState(prev => {
+                if (prev.templateSkills.required.some(s => s.skillId === skill.id)) return prev;
+                const executionOrder = prev.templateSkills.required.length + prev.templateSkills.optional.length;
+                return {
+                  ...prev,
+                  templateSkills: {
+                    ...prev.templateSkills,
+                    required: [...prev.templateSkills.required, { skillId: skill.id, skillName: skill.name, domain: skill.domain, executionOrder }],
+                  },
+                };
+              });
+            }}
+            onRemoveSkill={(skillId: string) => {
+              setWizardState(prev => ({
+                ...prev,
+                templateSkills: {
+                  ...prev.templateSkills,
+                  required: prev.templateSkills.required.filter(s => s.skillId !== skillId),
+                  optional: prev.templateSkills.optional.filter(s => s.skillId !== skillId),
+                  selectedOptional: prev.templateSkills.selectedOptional.filter(id => id !== skillId),
+                },
+              }));
             }}
           />
         )}
@@ -5597,6 +5622,8 @@ function StepReview({
   isDynamicPreset,
   dynamicAdjustmentCount,
   onToggleOptionalSkill,
+  onAttachSkill,
+  onRemoveSkill,
   aiDraftReasoning,
   aiDraftConflicts,
 }: {
@@ -5612,11 +5639,18 @@ function StepReview({
   isDynamicPreset?: boolean;
   dynamicAdjustmentCount?: number;
   onToggleOptionalSkill?: (skillId: string) => void;
+  onAttachSkill?: (skill: { id: string; name: string; domain: string }) => void;
+  onRemoveSkill?: (skillId: string) => void;
   aiDraftReasoning?: string | null;
   aiDraftConflicts?: Array<{ severity: "warn" | "error"; message: string }>;
 }) {
   const linkedOutcome = outcomes?.find((o) => o.id === state.outcomeId);
   const [governanceOverride, setGovernanceOverride] = useState(false);
+  const [attachSkillOpen, setAttachSkillOpen] = useState(false);
+  const [skillSearchQuery, setSkillSearchQuery] = useState("");
+  const { data: skillCatalog } = useQuery<Array<{ id: string; name: string; domain: string; description?: string; status?: string; requiredMcpServers?: string[] | null }>>({
+    queryKey: ["/api/skills"],
+  });
 
   const { data: designTimeCheck, isLoading: designTimeLoading } = useQuery<DesignTimeCheckResult>({
     queryKey: ["/api/governance/design-time-check", state.industryId, state.riskTier],
@@ -5928,23 +5962,90 @@ function StepReview({
         </CardContent>
       </Card>
 
-      {(state.templateSkills.required.length > 0 || state.templateSkills.optional.length > 0) && (
+      {(() => {
+        const attachedIds = new Set([...state.templateSkills.required, ...state.templateSkills.optional].map(s => s.skillId).filter(Boolean));
+        const attachCandidates = (skillCatalog || [])
+          .filter(s => (s.status ?? "active") === "active" && !attachedIds.has(s.id))
+          .filter(s => {
+            const q = skillSearchQuery.trim().toLowerCase();
+            if (!q) return true;
+            return s.name.toLowerCase().includes(q) || (s.domain || "").toLowerCase().includes(q) || (s.description || "").toLowerCase().includes(q);
+          })
+          .slice(0, 40);
+        return (
         <Card data-testid="card-template-skills">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium">Template Skills</CardTitle>
+              <CardTitle className="text-sm font-medium">Skills</CardTitle>
               {state.templateSkills.templateId && (
-                <Badge variant="outline" className="text-[10px] ml-auto">From Template</Badge>
+                <Badge variant="outline" className="text-[10px]">From Template</Badge>
               )}
+              <Dialog open={attachSkillOpen} onOpenChange={(open) => { setAttachSkillOpen(open); if (!open) setSkillSearchQuery(""); }}>
+                <Button variant="outline" size="sm" className="text-xs h-7 ml-auto" onClick={() => setAttachSkillOpen(true)} data-testid="button-wizard-attach-skill">
+                  <Plus className="w-3.5 h-3.5 mr-1" /> Attach Skill
+                </Button>
+                <DialogContent className="max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>Attach a Skill</DialogTitle>
+                    <DialogDescription>Search the Skills Library and click a skill to bind it to this agent — no template required.</DialogDescription>
+                  </DialogHeader>
+                  <Input
+                    autoFocus
+                    placeholder="Search by name, domain, or description..."
+                    value={skillSearchQuery}
+                    onChange={(e) => setSkillSearchQuery(e.target.value)}
+                    data-testid="input-wizard-skill-search"
+                  />
+                  <div className="flex flex-col gap-1.5 max-h-[360px] overflow-y-auto">
+                    {attachCandidates.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-6">
+                        {skillCatalog?.length ? "No matching skills." : "No skills in the library yet."}
+                      </p>
+                    ) : (
+                      attachCandidates.map(skill => (
+                        <button
+                          key={skill.id}
+                          type="button"
+                          className="flex items-start gap-2 p-2.5 border rounded-md text-left hover-elevate"
+                          data-testid={`wizard-option-attach-skill-${skill.id}`}
+                          onClick={() => { onAttachSkill?.(skill); }}
+                        >
+                          <Plus className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-medium">{skill.name}</span>
+                              <Badge variant="outline" className="text-[9px]">{skill.domain || "General"}</Badge>
+                            </div>
+                            {skill.description && (
+                              <p className="text-[11px] text-muted-foreground line-clamp-1">{skill.description}</p>
+                            )}
+                            {!!skill.requiredMcpServers?.length && (
+                              <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1" data-testid={`wizard-warning-mcp-${skill.id}`}>
+                                <AlertTriangle className="w-3 h-3 shrink-0" />
+                                Requires MCP server{skill.requiredMcpServers.length > 1 ? "s" : ""}: {skill.requiredMcpServers.join(", ")} — link after creation
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            {state.templateSkills.required.length === 0 && state.templateSkills.optional.length === 0 && (
+              <p className="text-xs text-muted-foreground text-center py-3" data-testid="text-no-skills-attached">
+                No skills attached yet. Click "Attach Skill" to bind one from the library.
+              </p>
+            )}
             {state.templateSkills.required.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Required Skills</span>
                 {[...state.templateSkills.required].sort((a, b) => a.executionOrder - b.executionOrder).map((skill, i) => (
-                  <div key={skill.skillId || i} className="flex items-center gap-2 text-sm" data-testid={`review-required-skill-${i}`}>
+                  <div key={skill.skillId || i} className="flex items-center gap-2 text-sm group" data-testid={`review-required-skill-${i}`}>
                     <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                     <span className="font-medium">{skill.skillName}</span>
                     {skill.domain && <Badge variant="outline" className="text-[9px]">{skill.domain}</Badge>}
@@ -5954,6 +6055,16 @@ function StepReview({
                       </Badge>
                     )}
                     <Badge variant="secondary" className="text-[9px] ml-auto">#{skill.executionOrder}</Badge>
+                    {skill.skillId && (
+                      <Button
+                        size="icon" variant="ghost" className="h-5 w-5 opacity-0 group-hover:opacity-100"
+                        onClick={() => onRemoveSkill?.(skill.skillId)}
+                        data-testid={`button-wizard-remove-skill-${skill.skillId}`}
+                        title="Remove"
+                      >
+                        <X className="w-3 h-3 text-muted-foreground" />
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -5990,7 +6101,8 @@ function StepReview({
             )}
           </CardContent>
         </Card>
-      )}
+        );
+      })()}
 
       {state.memoryRagEnabled && (
         <Card>

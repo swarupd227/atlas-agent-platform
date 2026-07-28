@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap,
   useNodesState, useEdgesState, addEdge, Handle, Position,
@@ -7,12 +8,13 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   Play, Database, Brain, GitBranch, UserCheck, Zap, Bell, GitFork, RotateCcw, Square,
-  Trash2, X, Workflow,
+  Trash2, X, Workflow, Sparkles,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import type { ProcessNode, ProcessEdge, ProcessNodeType } from "@shared/process-flow";
+import type { Skill } from "@shared/schema";
 
 type NodeMeta = { label: string; icon: any; color: string; bg: string; border: string };
 const NODE_META: Record<ProcessNodeType, NodeMeta> = {
@@ -49,12 +51,76 @@ function ProcessFlowNode({ data, selected }: NodeProps) {
       </div>
       <p className="text-xs font-semibold text-foreground leading-snug line-clamp-2">{d.label || "Untitled"}</p>
       {d.actor && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{d.actor}</p>}
+      {!!d.config?.skillName && (
+        <p className="text-[9px] text-violet-600 dark:text-violet-400 mt-0.5 truncate flex items-center gap-0.5">
+          <Sparkles className="w-2.5 h-2.5 shrink-0" /> {String(d.config.skillName)}
+        </p>
+      )}
       <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-primary" />
     </div>
   );
 }
 
 const nodeTypes = { process: ProcessFlowNode };
+
+/** Compact search/attach control for binding a real catalog skill to a step --
+ *  mirrors the "skill" node pattern already proven in team-graph-editor.tsx,
+ *  scoped down to fit this panel's 240px inspector width. */
+function SkillPicker({ skillId, skillName, onAttach, onRemove }: {
+  skillId?: string;
+  skillName?: string;
+  onAttach: (skill: { id: string; name: string; domain: string }) => void;
+  onRemove: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const { data: skills } = useQuery<Skill[]>({ queryKey: ["/api/skills"] });
+  const matches = useMemo(() => {
+    if (!query.trim()) return [];
+    const q = query.trim().toLowerCase();
+    return (skills || [])
+      .filter(s => s.status === "active" && (s.name.toLowerCase().includes(q) || (s.domain || "").toLowerCase().includes(q)))
+      .slice(0, 8);
+  }, [skills, query]);
+
+  if (skillId) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-violet-500/30 bg-violet-500/5" data-testid="attached-skill">
+        <Sparkles className="w-3 h-3 text-violet-500 shrink-0" />
+        <span className="text-[11px] font-medium truncate flex-1">{skillName}</span>
+        <button type="button" onClick={onRemove} className="p-0.5 rounded hover:bg-muted shrink-0" data-testid="button-remove-node-skill">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <Input
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search skills library…"
+        className="h-7 text-xs"
+        data-testid="input-node-skill-search"
+      />
+      {matches.length > 0 && (
+        <div className="flex flex-col gap-0.5 max-h-32 overflow-y-auto rounded-md border p-0.5">
+          {matches.map(s => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => { onAttach({ id: s.id, name: s.name, domain: s.domain }); setQuery(""); }}
+              className="text-left px-1.5 py-1 rounded text-[11px] hover-elevate"
+              data-testid={`option-node-skill-${s.id}`}
+            >
+              <span className="font-medium">{s.name}</span>
+              <span className="text-muted-foreground"> · {s.domain}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function toRFNodes(nodes: ProcessNode[]): RFNode[] {
   return nodes.map((n, i) => ({
@@ -236,6 +302,19 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Actor</label>
                   <Input value={d.actor || ""} onChange={e => patchNode(selNode.id, { actor: e.target.value })} placeholder="System / AI / Manager…" className="h-7 text-xs" data-testid="input-node-actor" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Skill</label>
+                  <SkillPicker
+                    skillId={d.config?.skillId as string | undefined}
+                    skillName={d.config?.skillName as string | undefined}
+                    onAttach={(skill) => patchNode(selNode.id, { config: { ...(d.config || {}), skillId: skill.id, skillName: skill.name, skillDomain: skill.domain } })}
+                    onRemove={() => {
+                      const { skillId: _skillId, skillName: _skillName, skillDomain: _skillDomain, ...rest } = (d.config || {}) as Record<string, unknown>;
+                      patchNode(selNode.id, { config: rest });
+                    }}
+                  />
+                  <span className="text-[10px] text-muted-foreground">Grounds agent-generation in a real skill instead of guessing from this step's text.</span>
                 </div>
                 {d.ntype === "n8n" && (
                   <div className="flex flex-col gap-1 rounded-md border border-pink-500/30 bg-pink-500/5 p-2">

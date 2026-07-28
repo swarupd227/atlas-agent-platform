@@ -133,7 +133,6 @@ export const agents = pgTable("agents", {
   // previously this only lived inside runtimeConfig and was lost on most paths.
   sourceTemplateId: varchar("source_template_id"),
   preloadedSkills: jsonb("preloaded_skills").default(sql`'[]'::jsonb`),
-  linkedSkillChainId: varchar("linked_skill_chain_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1694,6 +1693,11 @@ export const skills = pgTable("skills", {
   knowledgeQueries: jsonb("knowledge_queries").default(sql`'[]'::jsonb`),
   lastEvalPassRate: real("last_eval_pass_rate"),
   lastEvalAt: timestamp("last_eval_at"),
+  // Distinct from lastEvalPassRate/lastEvalAt (the formal eval suite) -- this is the
+  // ad-hoc "Test in Sandbox" run from Skill Studio, kept separate so an unvalidated
+  // one-off run never masquerades as a real eval score in agent-detail.tsx's Skills tab.
+  lastSandboxTest: jsonb("last_sandbox_test"),
+  lastSandboxTestAt: timestamp("last_sandbox_test_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

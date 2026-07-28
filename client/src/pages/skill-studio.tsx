@@ -304,6 +304,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
   const [userInvocable, setUserInvocable] = useState(true);
   const [version, setVersion] = useState("1.0.0");
   const [complexity, setComplexity] = useState("intermediate");
+  const [status, setStatus] = useState("draft");
   const [markdownBody, setMarkdownBody] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -458,8 +459,14 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
       setUserInvocable(skill.userInvocable ?? true);
       setVersion(skill.version);
       setComplexity(skill.complexity);
+      setStatus(skill.status ?? "draft");
       setMarkdownBody(skill.markdownBody ?? "");
       setQualityScore(skill.descriptionQualityScore ?? null);
+      const persistedTest = skill.lastSandboxTest as (SandboxResult & { testScenario?: string }) | null;
+      if (persistedTest) {
+        setWithSkillResult(persistedTest);
+        if (persistedTest.testScenario) setTestScenario(persistedTest.testScenario);
+      }
       const loadedTags = (skill.tags as string[] | null)?.join(", ") ?? "";
       if (loadedTags && skill.industry) {
         validateOntologyTags(loadedTags, skill.industry);
@@ -558,6 +565,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
         userInvocable,
         version,
         complexity,
+        status,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/skills", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
@@ -1305,6 +1313,26 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="space-y-1.5">
+                    <Label>Status</Label>
+                    <Select value={status} onValueChange={setStatus}>
+                      <SelectTrigger data-testid="select-status">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="draft">Draft</SelectItem>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="deprecated">Deprecated</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      {status === "draft"
+                        ? "Not yet injected into any agent's context at runtime."
+                        : status === "active"
+                          ? "Eligible for explicit binding and industry/tag auto-matching at runtime."
+                          : "Excluded from runtime injection and new bindings, but existing history is kept."}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -1483,10 +1511,17 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   data-testid="input-test-scenario"
                 />
               </div>
-              <Button onClick={handleRunTest} disabled={testLoading || !testScenario} data-testid="button-run-test">
-                {testLoading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Play className="w-4 h-4 mr-1.5" />}
-                {testLoading ? "Running..." : "Run Test"}
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button onClick={handleRunTest} disabled={testLoading || !testScenario} data-testid="button-run-test">
+                  {testLoading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Play className="w-4 h-4 mr-1.5" />}
+                  {testLoading ? "Running..." : "Run Test"}
+                </Button>
+                {skill?.lastSandboxTestAt && (
+                  <span className="text-[11px] text-muted-foreground" data-testid="text-last-sandbox-test">
+                    Last tested {new Date(skill.lastSandboxTestAt).toLocaleString()}
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <SandboxResultCard title="With Skill" result={withSkillResult} loading={testLoading} />
                 <SandboxResultCard title="Without Skill" result={withoutSkillResult} loading={testLoading} />

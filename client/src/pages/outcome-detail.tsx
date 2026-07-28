@@ -1081,6 +1081,16 @@ export default function OutcomeDetail() {
           ...(teamData.workers || []).map((w: any) => w.id),
         ].filter(Boolean);
       } else {
+        // The AI proposal only names skills (worker.matchedSkills: exact skill names) --
+        // resolve those against the real catalog so preloadedSkills (what agent-runtime.ts
+        // actually reads at prompt-assembly time) gets populated, same as create-team-from-proposals.
+        const activeSkillsByName = new Map((allSkills || []).filter(s => s.status === "active").map(s => [s.name.toLowerCase().trim(), s]));
+        const resolveMatchedSkills = (names?: string[]) =>
+          (names || [])
+            .map(name => activeSkillsByName.get(name.toLowerCase().trim()))
+            .filter((s): s is Skill => !!s)
+            .map((s, i) => ({ skillId: s.id, skillName: s.name, loadOrder: i }));
+
         const allWorkers = orchestratorProp ? [orchestratorProp, ...agentWorkers] : agentWorkers;
         for (const worker of allWorkers) {
           try {
@@ -1093,6 +1103,7 @@ export default function OutcomeDetail() {
               autonomyMode: worker.autonomyMode || "assisted",
               outcomeId,
               systemPrompt: worker.systemPrompt || worker.description,
+              preloadedSkills: resolveMatchedSkills(worker.matchedSkills),
             });
             const agentData = await agentRes.json();
             if (agentData.id) createdAgentIds.push(agentData.id);
@@ -5158,6 +5169,7 @@ interface AutoProcessStep {
   label: string;
   description: string;
   actor?: string;
+  config?: Record<string, unknown>;
 }
 
 function inferStepType(role: string): AutoProcessStep["type"] {
@@ -5448,6 +5460,10 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
   const [showCreateConfirm, setShowCreateConfirm] = useState(false);
   const [streamLogs, setStreamLogs] = useState<{ time: string; message: string }[]>([]);
   const streamLogsEndRef = useRef<HTMLDivElement | null>(null);
+
+  const { data: allSkills } = useQuery<Skill[]>({
+    queryKey: ["/api/skills"],
+  });
 
   const nowClock = () => new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -5942,6 +5958,17 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
           description: `Team "${data.teamAgent.name}" created with ${data.membershipCount} worker agent${data.membershipCount > 1 ? "s" : ""}, team blueprint, and pipeline graph.`,
         });
       } else {
+        // worker.matchedSkills is exact skill names from the AI proposal -- resolve
+        // against the real catalog so preloadedSkills (what agent-runtime.ts actually
+        // reads at prompt-assembly time) is populated, not just the display-only
+        // runtimeConfig.matchedSkills below.
+        const activeSkillsByName = new Map((allSkills || []).filter(s => s.status === "active").map(s => [s.name.toLowerCase().trim(), s]));
+        const resolveMatchedSkills = (names?: string[]) =>
+          (names || [])
+            .map(name => activeSkillsByName.get(name.toLowerCase().trim()))
+            .filter((s): s is Skill => !!s)
+            .map((s, i) => ({ skillId: s.id, skillName: s.name, loadOrder: i }));
+
         for (const worker of selectedWorkers) {
           const taskLines: string[] = [];
           taskLines.push(`Role: ${worker.role || worker.name}`);
@@ -6003,6 +6030,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
             // worker agent created through this flow.
             policyBindings: worker.policyConstraints || [],
             blueprintId: worker.suggestedBlueprintId || undefined,
+            preloadedSkills: resolveMatchedSkills(worker.matchedSkills),
             runtimeConfig: {
               prompt: taskPrompt,
               kpiBindings: worker.kpiBindings || [],

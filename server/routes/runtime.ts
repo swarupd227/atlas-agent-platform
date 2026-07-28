@@ -5978,27 +5978,32 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
       }));
 
       const rtConfig = (agent.runtimeConfig as Record<string, unknown>) || {};
-      const rawMatchedSkills: Array<{ name: string; executionOrder?: number }> = Array.isArray((rtConfig as Record<string, unknown>).matchedSkills)
-        ? ((rtConfig as Record<string, unknown>).matchedSkills as Array<Record<string, unknown>>).map((s) => ({ name: String(s.name || s), executionOrder: s.executionOrder as number | undefined }))
-        : [];
 
+      // preloadedSkills (not runtimeConfig.matchedSkills, a stale display-only field
+      // that predates several attach-skill paths -- e.g. the Skills tab and wizard
+      // attach dialogs only ever write preloadedSkills) is what agent-runtime.ts
+      // actually resolves at prompt-assembly time. Source the export from the same
+      // field the agent really runs with, resolved by skillId rather than name.
+      const preloadedSkillEntries: Array<{ skillId?: string; loadOrder?: number }> = Array.isArray(agent.preloadedSkills)
+        ? agent.preloadedSkills as Array<{ skillId?: string; loadOrder?: number }>
+        : [];
       const allSkillsDb = await storage.getSkills(getOrgId(req));
-      const skillLookup = new Map(allSkillsDb.map(s => [s.name.toLowerCase(), s]));
-      const rtRequiredSkills: Array<Record<string, unknown>> = Array.isArray((rtConfig as Record<string, unknown>).requiredSkills) ? (rtConfig as Record<string, unknown>).requiredSkills as Array<Record<string, unknown>> : [];
-      const rtOptionalSkills: Array<Record<string, unknown>> = Array.isArray((rtConfig as Record<string, unknown>).optionalSkills) ? (rtConfig as Record<string, unknown>).optionalSkills as Array<Record<string, unknown>> : [];
-      const requiredSkillNames = new Set(rtRequiredSkills.map(s => String(s.skillName || s.name || "").toLowerCase()));
-      const optionalSkillNames = new Set(rtOptionalSkills.map(s => String(s.skillName || s.name || "").toLowerCase()));
-      const matchedSkills: Array<{ name: string; domain: string; description: string; executionOrder?: number; required: boolean }> = rawMatchedSkills.map((ms, idx) => {
-        const dbSkill = skillLookup.get(ms.name.toLowerCase());
-        const isRequired = requiredSkillNames.has(ms.name.toLowerCase());
-        const isOptional = optionalSkillNames.has(ms.name.toLowerCase());
-        return {
-          name: ms.name,
-          domain: dbSkill?.domain || "general",
-          description: dbSkill?.description || "",
-          executionOrder: ms.executionOrder ?? (idx + 1),
-          required: isRequired ? true : isOptional ? false : true,
-        };
+      const skillById = new Map(allSkillsDb.map(s => [s.id, s]));
+      const matchedSkills: Array<{ name: string; domain: string; description: string; executionOrder: number; required: boolean }> = [];
+      preloadedSkillEntries.forEach((entry, idx) => {
+        const dbSkill = entry.skillId ? skillById.get(entry.skillId) : undefined;
+        if (!dbSkill) return;
+        matchedSkills.push({
+          name: dbSkill.name,
+          domain: dbSkill.domain,
+          description: dbSkill.description,
+          executionOrder: entry.loadOrder ?? idx,
+          // preloadedSkills carries no required/optional distinction -- that only
+          // existed transiently during wizard creation (templateSkills.required/
+          // optional) and collapses once the agent exists. Every bound skill here
+          // is explicit, so "required" is the accurate framing.
+          required: true,
+        });
       });
 
       const agentKbLinks = await storage.getAgentKnowledgeBases(agent.id);
@@ -10400,6 +10405,16 @@ clean:
         }
       }
 
+      // The field agent-runtime.ts actually resolves at prompt-assembly time --
+      // a manifest meant to fully describe this agent was previously omitting it.
+      const preloadedSkillEntries: Array<{ skillId?: string; loadOrder?: number }> = Array.isArray(agent.preloadedSkills)
+        ? agent.preloadedSkills as Array<{ skillId?: string; loadOrder?: number }>
+        : [];
+      const manifestSkills = preloadedSkillEntries.length > 0
+        ? (await storage.getSkillsByIds(preloadedSkillEntries.map(e => e.skillId).filter((id): id is string => !!id)))
+            .map(s => ({ id: s.id, name: s.name, domain: s.domain, description: s.description }))
+        : [];
+
       const agentSection = {
         name: agent.name,
         description: agent.description,
@@ -10412,6 +10427,7 @@ clean:
         toolsConfig: agent.toolsConfig,
         permissionsConfig: agent.permissionsConfig,
         systemPrompt: agent.systemPrompt,
+        skills: manifestSkills,
       };
 
       const blueprintSection = blueprint ? {

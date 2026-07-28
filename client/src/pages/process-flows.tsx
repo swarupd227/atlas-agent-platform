@@ -143,7 +143,7 @@ export default function ProcessFlows() {
     return (flowName ? `${flowName}: ${steps}` : steps) + branchLines;
   }, [graph.nodes, graph.edges, flowName]);
   const proposalSteps = useMemo(
-    () => graph.nodes.map(n => ({ type: n.type, label: n.label, description: n.description, actor: n.actor })),
+    () => graph.nodes.map(n => ({ type: n.type, label: n.label, description: n.description, actor: n.actor, config: n.config })),
     [graph.nodes],
   );
 

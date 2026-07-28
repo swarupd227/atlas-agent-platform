@@ -59,6 +59,10 @@ export interface LegacyProcessStep {
   description?: string;
   actor?: string;
   estimatedMins?: number;
+  /** A step-bound skill (config.skillId/skillName on the source node), carried
+   *  through flattening so agent-generation can ground its skill match in an
+   *  explicit human choice instead of guessing from the step text alone. */
+  config?: Record<string, unknown>;
 }
 
 export function isProcessFlowGraph(x: unknown): x is ProcessFlowGraph {
@@ -98,6 +102,7 @@ export function stepsToGraph(name: string, steps: LegacyProcessStep[]): ProcessF
     actor: s.actor,
     estimatedMins: s.estimatedMins,
     position: { x: i * 240, y: 0 },
+    config: s.config,
   }));
   const edges: ProcessEdge[] = nodes.slice(0, -1).map((n, i) => ({
     id: `e${i}`,
@@ -163,6 +168,6 @@ export function flattenGraphToSteps(g: ProcessFlowGraph): LegacyProcessStep[] {
   // Append any nodes not reached (cycles / disconnected) preserving node order.
   for (const n of nodes) if (!seen.has(n.id)) order.push(n.id);
   return order.map(id => byId.get(id)!).filter(Boolean).map(n => ({
-    id: n.id, type: n.type, label: n.label, description: n.description, actor: n.actor, estimatedMins: n.estimatedMins,
+    id: n.id, type: n.type, label: n.label, description: n.description, actor: n.actor, estimatedMins: n.estimatedMins, config: n.config,
   }));
 }

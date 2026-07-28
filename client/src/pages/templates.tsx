@@ -256,6 +256,7 @@ export default function Templates() {
         evalBindings: template.evalBindings,
         rollbackPlan: template.rollbackPlan,
         complianceTags: template.complianceCertifications || [],
+        preloadedSkills: template.preloadedSkills || [],
         sourceTemplateId: template.id,
       });
     },

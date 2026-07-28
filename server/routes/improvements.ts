@@ -1213,9 +1213,9 @@ BUSINESS PROCESS FLOW (authored by business users — align agent names and role
 ═══════════════════════════════════════════
 The business team has defined this process flow for the outcome. Each agent you propose should map to one or more of these business steps. Use the step labels as the primary inspiration for agent names.
 
-${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}`).join("\n")}
+${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}${s.config?.skillName ? ` [REQUIRED SKILL: "${s.config.skillName}" — the business user explicitly bound this skill to this step; the agent handling it MUST include this exact name in matchedSkills]` : ""}`).join("\n")}
 
-IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above.
+IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above. Any step marked REQUIRED SKILL is a business-user commitment, not a suggestion -- the resulting agent's matchedSkills MUST include that exact skill name.
 ` : ""}
 ═══════════════════════════════════════════
 OUTPUT CONCISENESS RULES — MANDATORY
@@ -1703,6 +1703,28 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           result.pipeline.mcpGaps = result.pipeline.mcpGaps.filter((g: any) => {
             return !findCoveringServer(g.system, systemCoverageGT);
           });
+        }
+      }
+
+      // Post-process: enforce explicit step-bound skills — the prompt instructs the
+      // LLM to include a step's REQUIRED SKILL in matchedSkills, but that's a
+      // request, not a guarantee. A business user's explicit skill choice must
+      // never be silently dropped just because the LLM didn't comply, so verify
+      // it landed somewhere and force it onto the orchestrator (or first worker,
+      // if there's no orchestrator) when it didn't.
+      if (Array.isArray(processFlowSteps)) {
+        const requiredSkillNames = Array.from(new Set(
+          processFlowSteps.map((s: any) => s?.config?.skillName).filter((n: any): n is string => typeof n === "string" && n.trim().length > 0)
+        ));
+        const allProposedAgents = [result.orchestrator, ...(Array.isArray(result.agents) ? result.agents : [])].filter(Boolean);
+        for (const skillName of requiredSkillNames) {
+          const alreadyPresent = allProposedAgents.some((a: any) =>
+            Array.isArray(a.matchedSkills) && a.matchedSkills.some((n: any) => String(n).toLowerCase().trim() === skillName.toLowerCase().trim())
+          );
+          if (!alreadyPresent) {
+            const target = result.orchestrator || (Array.isArray(result.agents) ? result.agents[0] : null);
+            if (target) target.matchedSkills = [...(Array.isArray(target.matchedSkills) ? target.matchedSkills : []), skillName];
+          }
         }
       }
 

@@ -875,6 +875,8 @@ function AgentDetailInner() {
 
   const [assignMcpOpen, setAssignMcpOpen] = useState(false);
   const [selectedMcpServerId, setSelectedMcpServerId] = useState("");
+  const [attachSkillOpen, setAttachSkillOpen] = useState(false);
+  const [skillSearchQuery, setSkillSearchQuery] = useState("");
   const [mcpPolicyWarnings, setMcpPolicyWarnings] = useState<Array<{
     toolName: string;
     toolId: string;
@@ -1939,6 +1941,7 @@ function AgentDetailInner() {
             { value: "summary", label: "Summary" },
             { value: "traces", label: "Runs & Traces" },
             { value: "knowledge-base", label: "Knowledge Base" },
+            { value: "skills", label: "Skills" },
             { value: "mcp-servers", label: "MCP Servers" },
             { value: "releases", label: "Releases" },
           ];
@@ -1952,7 +1955,6 @@ function AgentDetailInner() {
             { value: "governance", label: "Governance" },
             { value: "timeline", label: "Timeline" },
             { value: "knowledge-graph", label: "Knowledge Graph" },
-            { value: "skills", label: "Skills" },
             { value: "compliance", label: "Compliance" },
             { value: "context-profile", label: "Context Profile" },
             { value: "ontology", label: "Ontology" },
@@ -4716,16 +4718,54 @@ function AgentDetailInner() {
         {/* Skills Tab */}
         <TabsContent value="skills" className="flex flex-col gap-4 mt-0" data-testid="tab-content-skills">
           {(() => {
-            const preloadedSkillBindings: Array<{ skillId: string; loadOrder: number }> =
+            type SkillBinding = { skillId: string; skillName?: string; domain?: string; loadOrder?: number };
+            const preloadedSkillBindings: SkillBinding[] =
               Array.isArray((agent as any).preloadedSkills)
                 ? (agent as any).preloadedSkills
                 : [];
-            const matchedSkills: Skill[] = preloadedSkillBindings.length > 0
-              ? preloadedSkillBindings
-                  .sort((a, b) => (a.loadOrder ?? 0) - (b.loadOrder ?? 0))
-                  .map(binding => allSkills?.find((s: Skill) => s.id === binding.skillId))
-                  .filter((s): s is Skill => !!s)
-              : [];
+            const orderedBindings = [...preloadedSkillBindings].sort((a, b) => (a.loadOrder ?? 0) - (b.loadOrder ?? 0));
+            const matchedSkills: Skill[] = orderedBindings
+              .map(binding => allSkills?.find((s: Skill) => s.id === binding.skillId))
+              .filter((s): s is Skill => !!s);
+            const attachedIds = new Set(preloadedSkillBindings.map(b => b.skillId));
+
+            const saveBindings = async (next: SkillBinding[], successMessage: string) => {
+              const reindexed = next.map((b, i) => ({ ...b, loadOrder: i }));
+              try {
+                await apiRequest("PATCH", `/api/agents/${agentId}`, { preloadedSkills: reindexed });
+                queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                toast({ title: successMessage });
+              } catch {
+                toast({ title: "Failed to update skills", variant: "destructive" });
+              }
+            };
+            const attachSkill = (skill: Skill) =>
+              saveBindings([...preloadedSkillBindings, { skillId: skill.id, skillName: skill.name, domain: skill.domain }], `Attached "${skill.name}"`);
+            const removeSkill = (skill: Skill) =>
+              saveBindings(preloadedSkillBindings.filter(b => b.skillId !== skill.id), `Removed "${skill.name}"`);
+            const moveSkill = (index: number, direction: -1 | 1) => {
+              const target = index + direction;
+              if (target < 0 || target >= orderedBindings.length) return;
+              const next = [...orderedBindings];
+              [next[index], next[target]] = [next[target], next[index]];
+              saveBindings(next, "Reordered skills");
+            };
+
+            const attachCandidates = (allSkills || [])
+              .filter(s => s.status === "active" && !attachedIds.has(s.id))
+              .filter(s => {
+                const q = skillSearchQuery.trim().toLowerCase();
+                if (!q) return true;
+                return s.name.toLowerCase().includes(q) || (s.domain || "").toLowerCase().includes(q) || (s.description || "").toLowerCase().includes(q);
+              })
+              .slice(0, 40);
+
+            const linkedServerIds = new Set((agentMcpLinks || []).map(l => l.serverId));
+            const linkedServerNames = new Set(
+              (allMcpServers || []).filter(s => linkedServerIds.has(s.id)).map(s => s.name.toLowerCase().trim())
+            );
+            const missingServersFor = (skill: Skill) =>
+              ((skill.requiredMcpServers as string[] | null) || []).filter(name => !linkedServerNames.has(name.toLowerCase().trim()));
 
             return (
               <>
@@ -4742,6 +4782,61 @@ function AgentDetailInner() {
                     <Badge variant="outline" className="text-[11px]" data-testid="badge-skill-count">
                       {matchedSkills.length} skill{matchedSkills.length !== 1 ? "s" : ""} linked
                     </Badge>
+                    <Dialog open={attachSkillOpen} onOpenChange={(open) => { setAttachSkillOpen(open); if (!open) setSkillSearchQuery(""); }}>
+                      <Button size="sm" className="text-xs h-7" onClick={() => setAttachSkillOpen(true)} data-testid="button-attach-skill">
+                        <Plus className="w-3.5 h-3.5 mr-1" /> Attach Skill
+                      </Button>
+                      <DialogContent className="max-w-lg">
+                        <DialogHeader>
+                          <DialogTitle>Attach a Skill</DialogTitle>
+                          <DialogDescription>Search the Skills Library and click a skill to bind it to this agent.</DialogDescription>
+                        </DialogHeader>
+                        <Input
+                          autoFocus
+                          placeholder="Search by name, domain, or description..."
+                          value={skillSearchQuery}
+                          onChange={(e) => setSkillSearchQuery(e.target.value)}
+                          data-testid="input-skill-search"
+                        />
+                        <div className="flex flex-col gap-1.5 max-h-[360px] overflow-y-auto">
+                          {attachCandidates.length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-6">
+                              {allSkills?.length ? "No matching skills." : "No skills in the library yet."}
+                            </p>
+                          ) : (
+                            attachCandidates.map(skill => {
+                              const missingServers = missingServersFor(skill);
+                              return (
+                                <button
+                                  key={skill.id}
+                                  type="button"
+                                  className="flex items-start gap-2 p-2.5 border rounded-md text-left hover-elevate"
+                                  data-testid={`option-attach-skill-${skill.id}`}
+                                  onClick={() => attachSkill(skill)}
+                                >
+                                  <Plus className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                                  <div className="flex flex-col gap-0.5 min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-xs font-medium">{skill.name}</span>
+                                      <Badge variant="outline" className="text-[9px]">{skill.domain || "General"}</Badge>
+                                    </div>
+                                    {skill.description && (
+                                      <p className="text-[11px] text-muted-foreground line-clamp-1">{skill.description}</p>
+                                    )}
+                                    {missingServers.length > 0 && (
+                                      <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1" data-testid={`warning-missing-mcp-${skill.id}`}>
+                                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                                        Needs MCP server{missingServers.length > 1 ? "s" : ""} not yet linked: {missingServers.join(", ")}
+                                      </p>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                     <Link href="/skills">
                       <Button variant="outline" size="sm" className="text-xs h-7" data-testid="button-browse-skills">
                         <Sparkles className="w-3 h-3 mr-1" /> Browse Skills Library
@@ -4762,11 +4857,39 @@ function AgentDetailInner() {
                       const perfColor = perfScore == null ? "text-muted-foreground" : perfScore >= 90 ? "text-emerald-600 dark:text-emerald-400" : perfScore >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
                       const tags = (skill.tags as string[]) || [];
                       return (
-                        <Card key={skill.id} data-testid={`card-skill-${skill.id}`}>
+                        <Card key={skill.id} data-testid={`card-skill-${skill.id}`} className="group relative">
+                          <div className="absolute top-2 right-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button
+                              size="icon" variant="ghost" className="h-6 w-6"
+                              disabled={skillIdx === 0}
+                              onClick={() => moveSkill(skillIdx, -1)}
+                              data-testid={`button-move-up-skill-${skill.id}`}
+                              title="Move earlier in load order"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              size="icon" variant="ghost" className="h-6 w-6"
+                              disabled={skillIdx === matchedSkills.length - 1}
+                              onClick={() => moveSkill(skillIdx, 1)}
+                              data-testid={`button-move-down-skill-${skill.id}`}
+                              title="Move later in load order"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              size="icon" variant="ghost" className="h-6 w-6"
+                              onClick={() => removeSkill(skill)}
+                              data-testid={`button-remove-skill-${skill.id}`}
+                              title="Remove from this agent"
+                            >
+                              <X className="w-3.5 h-3.5 text-muted-foreground" />
+                            </Button>
+                          </div>
                           <CardContent className="p-4">
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex flex-col gap-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
+                                <div className="flex items-center gap-2 flex-wrap pr-16">
                                   <Link href={`/skills/${skill.id}`} className="text-sm font-semibold hover:underline" data-testid={`link-skill-${skill.id}`}>
                                     {skill.name}
                                   </Link>
@@ -4813,7 +4936,7 @@ function AgentDetailInner() {
                     <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
                       <Sparkles className="w-8 h-8 text-muted-foreground/50" />
                       <p className="text-sm text-muted-foreground">No skills bound to this agent yet</p>
-                      <p className="text-[11px] text-muted-foreground">Visit the Skills Library to browse and assign skills</p>
+                      <p className="text-[11px] text-muted-foreground">Click "Attach Skill" above to bind one from the library</p>
                     </CardContent>
                   </Card>
                 )}

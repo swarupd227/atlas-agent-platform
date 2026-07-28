@@ -1544,7 +1544,7 @@ ${naturalLanguageInput}`,
         judge = JSON.parse(stripJsonFences(judgeRaw));
       } catch { /* grading is best-effort; the real output still returns */ }
 
-      res.json({
+      const result = {
         realExecution: true,
         limitations: ["Tool dispatch is not exercised in the sandbox — deploy to a staging agent to validate tool usage."],
         activationTriggered: withSkill ? Boolean(judge.activationTriggered) : false,
@@ -1555,7 +1555,21 @@ ${naturalLanguageInput}`,
         qualityScore: typeof judge.qualityScore === "number" ? Math.max(0, Math.min(100, judge.qualityScore)) : null,
         issues: Array.isArray(judge.issues) ? judge.issues : [],
         recommendations: Array.isArray(judge.recommendations) ? judge.recommendations : [],
-      });
+      };
+
+      // Only persist for a saved skill (a draft being authored in Skill Studio
+      // before its first Save has no id yet) -- keep separate from lastEvalAt/
+      // lastEvalPassRate, which are the formal eval suite, not this ad-hoc run.
+      if (skillId) {
+        try {
+          await storage.updateSkill(skillId, {
+            lastSandboxTest: { testScenario, withSkill: !!withSkill, ...result },
+            lastSandboxTestAt: new Date(),
+          });
+        } catch { /* best-effort -- the real result still returns to the caller */ }
+      }
+
+      res.json(result);
     } catch (e: any) {
       console.error("AI sandbox test error:", e);
       res.status(500).json({ error: e.message || "Failed to run sandbox test" });
