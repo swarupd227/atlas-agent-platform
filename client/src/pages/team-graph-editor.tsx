@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema, Skill, RuleLeaf, RuleGroup, RuleOperator, DagExecutionRun } from "@shared/schema";
+import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema, Skill, KnowledgeBase, RuleLeaf, RuleGroup, RuleOperator, DagExecutionRun } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -68,6 +68,7 @@ const TEAM_NODE_TYPES = [
   { type: "edge_gate", label: "Edge Gate", icon: ShieldCheck, color: "bg-orange-500" },
   { type: "remote_agent", label: "Remote Agent", icon: Globe, color: "bg-purple-500" },
   { type: "skill", label: "Skill", icon: Sparkles, color: "bg-teal-500" },
+  { type: "knowledge_base", label: "Knowledge Base", icon: Database, color: "bg-emerald-500" },
 ] as const;
 
 const NODE_COLOR_MAP: Record<string, string> = {
@@ -76,6 +77,7 @@ const NODE_COLOR_MAP: Record<string, string> = {
   edge_gate: "bg-orange-500",
   remote_agent: "bg-purple-500",
   skill: "bg-teal-500",
+  knowledge_base: "bg-emerald-500",
 };
 
 const NODE_ICON_MAP: Record<string, typeof Brain> = {
@@ -84,6 +86,7 @@ const NODE_ICON_MAP: Record<string, typeof Brain> = {
   edge_gate: ShieldCheck,
   remote_agent: Globe,
   skill: Sparkles,
+  knowledge_base: Database,
 };
 
 const PART_TYPE_OPTIONS = [
@@ -119,6 +122,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   const { data: mcpTools } = useQuery<McpServerTool[]>({ queryKey: ["/api/mcp-tools"] });
   const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"] });
   const { data: skills } = useQuery<Skill[]>({ queryKey: ["/api/skills"] });
+  const { data: knowledgeBases } = useQuery<KnowledgeBase[]>({ queryKey: ["/api/knowledge-bases"] });
 
   const nodes = graphData?.nodes || [];
   const edges = graphData?.edges || [];
@@ -382,6 +386,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
                   const refTeamAgentOnCard = node.refTeamAgentId ? (agents || []).find(a => a.id === node.refTeamAgentId) : null;
                   const refRemoteAgent = node.refRemoteAgentId ? (remoteAgents || []).find(ra => ra.id === node.refRemoteAgentId) : null;
                   const refSkill = (node as any).refSkillId ? (skills || []).find(s => s.id === (node as any).refSkillId) : null;
+                  const refKb = (node as any).refKnowledgeBaseId ? (knowledgeBases || []).find(k => k.id === (node as any).refKnowledgeBaseId) : null;
                   const toolCount = (node.refToolIds || []).length;
 
                   return (
@@ -456,6 +461,11 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
                               <Sparkles className="w-2.5 h-2.5" />{refSkill.name}
                             </Badge>
                           )}
+                          {node.nodeType === "knowledge_base" && refKb && (
+                            <Badge variant="outline" className="text-[10px] shrink-0 bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 flex items-center gap-1" data-testid={`badge-kb-ref-${node.id}`}>
+                              <Database className="w-2.5 h-2.5" />{refKb.name}
+                            </Badge>
+                          )}
                           {stateKeyConflictIds.has(node.id) && (
                             <Badge variant="outline" className="text-[9px] shrink-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5 px-1" data-testid={`badge-canvas-state-key-conflict-${node.id}`}>
                               <AlertTriangle className="w-2.5 h-2.5" /> key conflict
@@ -495,6 +505,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
                 mcpTools={mcpTools || []}
                 policies={policies || []}
                 skills={skills || []}
+                knowledgeBases={knowledgeBases || []}
                 onUpdate={(updates) => updateNodeMutation.mutate({ id: selectedNode.id, updates })}
                 isPending={updateNodeMutation.isPending}
               />
@@ -706,6 +717,7 @@ function NodeConfigPanel({
   mcpTools,
   policies,
   skills,
+  knowledgeBases,
   onUpdate,
   isPending,
 }: {
@@ -717,11 +729,12 @@ function NodeConfigPanel({
   mcpTools: McpServerTool[];
   policies: Policy[];
   skills: Skill[];
+  knowledgeBases: KnowledgeBase[];
   onUpdate: (updates: Partial<TeamBlueprintNode>) => void;
   isPending: boolean;
 }) {
   const autoStateKey = (label: string) => label.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
-  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill";
+  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill" || t === "knowledge_base";
 
   const initialStateKey = (node.stateKey && node.stateKey.length > 0)
     ? node.stateKey
@@ -732,6 +745,8 @@ function NodeConfigPanel({
   const [localTimeoutMs, setLocalTimeoutMs] = useState(node.timeoutMs != null ? String(node.timeoutMs) : "30000");
   const [nodeKind, setNodeKind] = useState<"agent" | "team_reference">(node.refTeamAgentId ? "team_reference" : "agent");
   const [wavePlanOpen, setWavePlanOpen] = useState(false);
+
+  const [localKbQuery, setLocalKbQuery] = useState((node.config as any)?.kbQuery || "");
 
   const [trackedNodeId, setTrackedNodeId] = useState(node.id);
   if (trackedNodeId !== node.id) {
@@ -744,6 +759,7 @@ function NodeConfigPanel({
     setLocalTimeoutMs(node.timeoutMs != null ? String(node.timeoutMs) : "30000");
     setNodeKind(node.refTeamAgentId ? "team_reference" : "agent");
     setWavePlanOpen(false);
+    setLocalKbQuery((node.config as any)?.kbQuery || "");
   }
 
   useEffect(() => {
@@ -774,6 +790,7 @@ function NodeConfigPanel({
   const selectedRemoteAgent = node.refRemoteAgentId ? remoteAgents.find(ra => ra.id === node.refRemoteAgentId) : null;
   const selectedPolicy = node.refPolicyId ? policies.find(p => p.id === node.refPolicyId) : null;
   const selectedSkill = (node as any).refSkillId ? skills.find(s => s.id === (node as any).refSkillId) : null;
+  const selectedKb = (node as any).refKnowledgeBaseId ? knowledgeBases.find(k => k.id === (node as any).refKnowledgeBaseId) : null;
   const selectedToolIds = new Set(node.refToolIds || []);
 
   return (
@@ -1102,6 +1119,77 @@ function NodeConfigPanel({
               }}
               placeholder={autoStateKey(localLabel) || "e.g. compliance_context"}
               data-testid="input-skill-state-key"
+            />
+          </div>
+        </>
+      )}
+
+      {node.nodeType === "knowledge_base" && (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Knowledge Base</label>
+            <select
+              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+              value={(node as any).refKnowledgeBaseId || ""}
+              onChange={e => onUpdate({ refKnowledgeBaseId: e.target.value || null } as any)}
+              data-testid="select-ref-kb"
+            >
+              <option value="">-- Select Knowledge Base --</option>
+              {knowledgeBases.map(kb => (
+                <option key={kb.id} value={kb.id}>{kb.name}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-muted-foreground">
+              At runtime, this searches the KB with the query below and merges the results into shared DAG state under State Key — any agent node reached afterward picks them up automatically.
+            </p>
+          </div>
+          {selectedKb && (
+            <Card className="border-emerald-500/30">
+              <CardContent className="p-3 flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Database className="w-3 h-3 text-emerald-500 shrink-0" />
+                  <span className="text-xs font-medium">{selectedKb.name}</span>
+                </div>
+                {selectedKb.description && <p className="text-xs text-muted-foreground">{selectedKb.description}</p>}
+              </CardContent>
+            </Card>
+          )}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Search Query</label>
+            <Input
+              value={localKbQuery}
+              onChange={e => setLocalKbQuery(e.target.value)}
+              onBlur={() => {
+                if (localKbQuery !== ((node.config as any)?.kbQuery || "")) {
+                  onUpdate({ config: { ...(node.config as any || {}), kbQuery: localKbQuery } } as any);
+                }
+              }}
+              placeholder="e.g. return policy exceptions for damaged goods"
+              data-testid="input-kb-query"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              A fixed search query -- this node isn't conversational, so it can't reformulate its own query from context.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              State Key
+              {stateKeyConflict && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5">
+                  <AlertTriangle className="w-2.5 h-2.5" /> conflict
+                </Badge>
+              )}
+            </label>
+            <Input
+              value={localStateKey}
+              onChange={e => setLocalStateKey(e.target.value)}
+              onBlur={() => {
+                const val = localStateKey || autoStateKey(localLabel);
+                if (!localStateKey) setLocalStateKey(val);
+                if (val !== (node.stateKey || "")) onUpdate({ stateKey: val || null });
+              }}
+              placeholder={autoStateKey(localLabel) || "e.g. return_policy_context"}
+              data-testid="input-kb-state-key"
             />
           </div>
         </>

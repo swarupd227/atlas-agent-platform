@@ -1322,6 +1322,21 @@ export async function runStartupMigrations() {
       console.log(`[db] Self-healed ${healed.rowCount} loopback MCP server URL(s) to port ${selfPort}`);
     }
 
+    // Ad-hoc "Test in Sandbox" run in Skill Studio, kept separate from the
+    // formal eval suite (lastEvalAt/lastEvalPassRate) so an unvalidated
+    // one-off run never masquerades as a real eval score.
+    await client.query(`
+      ALTER TABLE skills ADD COLUMN IF NOT EXISTS last_sandbox_test JSONB;
+      ALTER TABLE skills ADD COLUMN IF NOT EXISTS last_sandbox_test_at TIMESTAMP;
+    `);
+
+    // Blueprint DAG "knowledge_base" node type -- same mechanism as the
+    // existing "skill" node's ref_skill_id, for real KB retrieval scoped to
+    // downstream nodes instead of a whole agent's preloadedSkills.
+    await client.query(`
+      ALTER TABLE team_blueprint_nodes ADD COLUMN IF NOT EXISTS ref_knowledge_base_id VARCHAR;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

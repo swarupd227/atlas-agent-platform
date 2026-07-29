@@ -7,6 +7,7 @@ import { industryEvalFrameworks } from "./routes";
 import { runLlmJudge, runAgentOnInput, buildAgentContext, routeMetricMeasurement } from "./eval-judge";
 import { getDefaultProvider, getProvider, completeWithFallback } from "./llm-provider";
 import { runAlertCheck } from "./routes/observability";
+import { searchKnowledgeBaseChunks } from "./embeddings";
 import { db } from "./db";
 import { eq, and, isNull } from "drizzle-orm";
 import { ensureOtcFulfillmentAgents, runOtcFulfillmentPipeline } from "./otc-fulfillment-live-run";
@@ -2564,6 +2565,15 @@ async function processSimulatorRun(job: Job): Promise<Record<string, unknown>> {
   const totalConversations = personas.length * scenarios.length;
   let done = 0;
 
+  // runAgentOnInput below is a bare systemPrompt+message completion -- it does not
+  // go through agent-runtime.ts's real execution pipeline, so simulated turns never
+  // exercised real KB retrieval at all (not just "the field wasn't populated" --
+  // retrieval itself never ran). Fetch the agent's real KB bindings once here and
+  // run a genuine search per turn below, so simulated conversations are actually
+  // grounded and eval-metric-builder's RAG scoring category has real retrievalContext
+  // to work with when a conversation gets promoted to a golden dataset.
+  const agentKbLinksForSim = await storage.getAgentKnowledgeBases(agentId).catch(() => []);
+
   // Pre-load metric collection metrics for real turn-level scoring (if requested)
   type MetricDim = { id: string; name: string; scoringCriteria: string[] };
   let metricDimensions: MetricDim[] = [];
@@ -2657,8 +2667,26 @@ Engage in a natural conversation with the AI agent to accomplish your goals. Be 
 
         history.push({ role: "user", content: userMessage });
 
+        // Real retrieval per turn, same search agent-runtime.ts does for a live
+        // agent -- capped to 3 KBs like agent-runtime.ts, since this is a
+        // per-turn cost multiplied by maxTurns * personas * scenarios.
+        let turnRetrievalContext: string[] = [];
+        if (agentKbLinksForSim.length > 0) {
+          try {
+            const chunkResults = await Promise.all(
+              agentKbLinksForSim.slice(0, 3).map(link =>
+                searchKnowledgeBaseChunks(link.knowledgeBaseId, userMessage, 3, 0.3).catch(() => []),
+              ),
+            );
+            turnRetrievalContext = chunkResults.flat().map(c => c.content);
+          } catch { /* retrieval is best-effort -- the turn still proceeds without it */ }
+        }
+        const turnPrompt = turnRetrievalContext.length > 0
+          ? `${agentSystemPrompt}\n\n## Retrieved context for this message\n${turnRetrievalContext.join("\n\n---\n\n")}`
+          : agentSystemPrompt;
+
         // Get agent response
-        const agentResult = await runAgentOnInput(agentSystemPrompt, { input: userMessage, conversationHistory: history.slice(0, -1) });
+        const agentResult = await runAgentOnInput(turnPrompt, { input: userMessage, conversationHistory: history.slice(0, -1) });
         const agentResponse = agentResult.output || "I understand. How can I help you further?";
         history.push({ role: "assistant", content: agentResponse });
 
@@ -2706,6 +2734,7 @@ Engage in a natural conversation with the AI agent to accomplish your goals. Be 
           agentResponse,
           latencyMs,
           relevancyScore,
+          retrievalContext: turnRetrievalContext,
           ...(metricScores && !scoringDegraded ? { metricScores } : {}),
           ...(scoringDegraded ? { scoringDegraded: true, scoringDegradedReason: (metricScores as any)._reason } : {}),
         });

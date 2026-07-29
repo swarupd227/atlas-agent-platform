@@ -69,6 +69,12 @@ export default function ProcessFlows() {
         replaceGraph({ nodes: g.nodes, edges: g.edges });
         setFlowName(data.name || "Generated Flow");
         toast({ title: "Process flow generated" });
+      } else {
+        // The request can succeed (200 OK) while still carrying an empty
+        // graph -- e.g. the model's response got truncated and failed to
+        // parse server-side. Without this, that case showed nothing at all:
+        // no error, no flow, just a "Generate Flow" button silently ending.
+        toast({ title: "Generation failed", description: "The AI didn't return a usable flow. Try a shorter description or simplify it, then retry.", variant: "destructive" });
       }
     },
     onError: () => {

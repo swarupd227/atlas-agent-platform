@@ -35,8 +35,9 @@ and `git pull` to pick up new commits.
 cd deploy/azure
 cp config.env.example config.env   # fill in your values
 ./provision.sh                     # one-time: create every resource + secrets + app settings
-./deploy.sh                        # push the app code (run again after every commit you want live)
-./migrate.sh                       # run once now, and again after every schema change
+./deploy.sh                        # push the app code (run again after every commit you want live) --
+                                    # this also applies any pending schema change, since the app
+                                    # migrates itself on every restart (see migrate.sh below)
 ./verify.sh                        # confirm it's actually up
 ```
 
@@ -45,7 +46,7 @@ cp config.env.example config.env   # fill in your values
 - `config.env.example` — copy to `config.env` and fill in (resource group, region, app name, LLM keys). `config.env` is gitignored — never commit it, it ends up holding real API keys once filled in.
 - `provision.sh` — creates the resource group, Postgres Flexible Server (+ pgvector), App Service plan + Web App, generates the three production-required secrets (`JWT_SECRET`, `INTEGRATION_VAULT_KEY`, `AUDIT_SIGNING_PRIVATE_KEY`), wires up all app settings, and enables WebSockets/Always On. Safe to re-run — every step uses idempotent `az` commands (`create` calls no-op or update in place if the resource already exists).
 - `deploy.sh` — builds the app locally (`npm install` + `npm run build`), prunes devDependencies, and zips the built artifact (`package.json`, `package-lock.json`, `dist/`, `node_modules/`) straight to the Web App via `az webapp deployment source config-zip`. **This is the actual deploy mechanism** — run it after every commit you want live.
-- `migrate.sh` — runs `npm run db:push` against the deployed database. Installs `node_modules` first if missing (so it works on a fresh Cloud Shell clone) and warns if the active Node is older than 18. Re-run this after every commit that changes `shared/schema.ts`.
+- `migrate.sh` — **does not run `db:push`.** This app applies schema changes automatically on every boot via `runStartupMigrations()` in `server/db.ts` (idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements), so a normal `./deploy.sh` restart already migrates the database — there is usually nothing to run here. `drizzle-kit push` is unsafe against this database specifically: `knowledge_chunks.embedding` isn't declared in `shared/schema.ts` at all (it's created out-of-band by `ensurePgVector()` so drizzle-kit never manages it), so `db:push` always proposes dropping it, taking real pgvector embeddings with it. If you have a schema change that isn't covered by an existing startup migration, add an idempotent statement to `runStartupMigrations()` instead and just redeploy.
 - `verify.sh` — opens the app URL, curls the health endpoint, and tails the last few minutes of App Service logs.
 - `sync-local-data.sh` — copies data from your local Docker Postgres (`atlas-postgres`, used by `npm run dev`) into the Azure database, replacing whatever's there. Run this **locally** (Git Bash on your machine, not Cloud Shell) — it needs the local Docker container.
 - `recover-secrets.sh` — rebuilds `config.env` and `.generated-secrets.env` from the live Azure app settings of an already-deployed app. Use this if a Cloud Shell session loses `$HOME` (or you're setting up a fresh machine) and you need to reconnect to an existing deployment — see "Recovering after losing local state" below.

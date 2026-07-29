@@ -1072,6 +1072,12 @@ export async function executePromptWithMcp(
 
   const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
   const hasKnowledgeBases = linkedKbs.length > 0;
+  // Resolved for the discovery event below so the Playground can list which KBs
+  // are in play by name, the same way it already lists tools by name -- previously
+  // this only ever showed a bare count ("Searched 2 knowledge bases"), unlike tools.
+  const linkedKbNames = hasKnowledgeBases
+    ? (await Promise.all(linkedKbs.map(l => storage.getKnowledgeBase(l.knowledgeBaseId)))).filter((kb): kb is NonNullable<typeof kb> => !!kb).map(kb => kb.name)
+    : [];
 
   let policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>> | null = null;
   try {
@@ -1254,6 +1260,7 @@ export async function executePromptWithMcp(
     toolCount: availableTools.length,
     tools: availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription })),
     knowledgeBases: linkedKbs.length,
+    knowledgeBaseNames: linkedKbNames,
     mode: availableTools.length > 0 ? "tools+kb" : (hasKnowledgeBases ? "kb-only" : "reasoning-only"),
   };
 
@@ -1261,6 +1268,7 @@ export async function executePromptWithMcp(
     toolCount: availableTools.length,
     tools: availableTools.map(t => ({ server: t.serverName, tool: t.toolName })),
     knowledgeBases: linkedKbs.length,
+    knowledgeBaseNames: linkedKbNames,
   });
 
   steps.push({

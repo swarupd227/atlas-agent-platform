@@ -239,6 +239,15 @@ export default function Templates() {
 
   const deployTeamMutation = useMutation({
     mutationFn: async (template: AgentTemplate) => {
+      // Templates store KB association inside blueprintJson.linkedKnowledgeBases
+      // (no first-class column) -- same field agent-wizard.tsx reads for template
+      // inheritance. POST /api/agents resolves knowledgeBaseNames against the real
+      // catalog and creates the agentKnowledgeBases rows server-side (agents.ts's
+      // "Fix #3"), so passing the names through is the whole fix.
+      const linkedKbs = (template.blueprintJson as Record<string, any>)?.linkedKnowledgeBases;
+      const knowledgeBaseNames = Array.isArray(linkedKbs)
+        ? linkedKbs.map((k: any) => typeof k === "string" ? k : k.name || k.kbName || "").filter(Boolean)
+        : [];
       return apiRequest("POST", "/api/agents", {
         name: template.name,
         description: template.description,
@@ -257,6 +266,7 @@ export default function Templates() {
         rollbackPlan: template.rollbackPlan,
         complianceTags: template.complianceCertifications || [],
         preloadedSkills: template.preloadedSkills || [],
+        knowledgeBaseNames,
         sourceTemplateId: template.id,
       });
     },

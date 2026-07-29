@@ -1213,9 +1213,9 @@ BUSINESS PROCESS FLOW (authored by business users — align agent names and role
 ═══════════════════════════════════════════
 The business team has defined this process flow for the outcome. Each agent you propose should map to one or more of these business steps. Use the step labels as the primary inspiration for agent names.
 
-${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}${s.config?.skillName ? ` [REQUIRED SKILL: "${s.config.skillName}" — the business user explicitly bound this skill to this step; the agent handling it MUST include this exact name in matchedSkills]` : ""}`).join("\n")}
+${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}${s.config?.skillName ? ` [REQUIRED SKILL: "${s.config.skillName}" — the business user explicitly bound this skill to this step; the agent handling it MUST include this exact name in matchedSkills]` : ""}${s.config?.kbName ? ` [REQUIRED KNOWLEDGE BASE: id="${s.config.kbId}" name="${s.config.kbName}" — the business user explicitly bound this KB to this step; the agent handling it MUST include this exact {id, name} in suggestedKnowledgeBases]` : ""}`).join("\n")}
 
-IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above. Any step marked REQUIRED SKILL is a business-user commitment, not a suggestion -- the resulting agent's matchedSkills MUST include that exact skill name.
+IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above. Any step marked REQUIRED SKILL or REQUIRED KNOWLEDGE BASE is a business-user commitment, not a suggestion -- the resulting agent's matchedSkills / suggestedKnowledgeBases MUST include those exact values.
 ` : ""}
 ═══════════════════════════════════════════
 OUTPUT CONCISENESS RULES — MANDATORY
@@ -1724,6 +1724,26 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           if (!alreadyPresent) {
             const target = result.orchestrator || (Array.isArray(result.agents) ? result.agents[0] : null);
             if (target) target.matchedSkills = [...(Array.isArray(target.matchedSkills) ? target.matchedSkills : []), skillName];
+          }
+        }
+
+        // Same backstop for step-bound knowledge bases -- these already carry a
+        // real KB id (set in the node inspector), so no fuzzy name matching is
+        // needed, just an exact id check.
+        const requiredKbs = Array.from(
+          new Map(
+            processFlowSteps
+              .map((s: any) => (s?.config?.kbId && s?.config?.kbName) ? [s.config.kbId as string, s.config.kbName as string] : null)
+              .filter((e: any): e is [string, string] => !!e)
+          ).entries()
+        );
+        for (const [kbId, kbName] of requiredKbs) {
+          const alreadyPresent = allProposedAgents.some((a: any) =>
+            Array.isArray(a.suggestedKnowledgeBases) && a.suggestedKnowledgeBases.some((k: any) => k?.id === kbId)
+          );
+          if (!alreadyPresent) {
+            const target = result.orchestrator || (Array.isArray(result.agents) ? result.agents[0] : null);
+            if (target) target.suggestedKnowledgeBases = [...(Array.isArray(target.suggestedKnowledgeBases) ? target.suggestedKnowledgeBases : []), { id: kbId, name: kbName }];
           }
         }
       }
@@ -2743,10 +2763,18 @@ Rules:
 
 Respond ONLY with valid JSON, no markdown fences.`;
 
-      const rawFlow = await callClaude({ model: "claude-haiku-4-5", system: "", user: prompt, maxTokens: 2000, jsonMode: true });
+      // 2000 was too tight for real multi-branch descriptions (5+ distinct
+      // terminal outcomes, detailed system context) -- the model's JSON response
+      // got cut off mid-object, JSON.parse threw, and the catch below silently
+      // fell back to an empty graph with no visibility into why. Confirmed via
+      // direct reproduction: a detailed 8-branch description returned 200 OK
+      // with nodes:[] every time at the old cap.
+      const rawFlow = await callClaude({ model: "claude-haiku-4-5", system: "", user: prompt, maxTokens: 6000, jsonMode: true });
       const content = stripJsonFences(rawFlow);
       let parsed: any = {};
-      try { parsed = JSON.parse(content); } catch {}
+      try { parsed = JSON.parse(content); } catch (e: any) {
+        console.error("[generate-process-flow] JSON.parse failed -- likely a truncated/malformed model response:", e.message, "| raw length:", content.length);
+      }
 
       // Validate defensively -- drop anything malformed rather than trusting
       // the LLM's structure outright, since a bad node/edge id reference

@@ -1189,6 +1189,11 @@ export const teamBlueprintNodes = pgTable("team_blueprint_nodes", {
   // injection mechanism agents.preloadedSkills already uses, just scoped to the nodes
   // that come after it in the graph instead of the whole agent.
   refSkillId: varchar("ref_skill_id"),
+  // Same mechanism as refSkillId above, for a "knowledge_base" node type: at
+  // execution time its retrieval results are merged into shared DAG state
+  // under the node's stateKey, scoped to downstream nodes. The search query
+  // itself lives in config.kbQuery (free text, not a DB-referenced field).
+  refKnowledgeBaseId: varchar("ref_knowledge_base_id"),
 });
 
 export const insertTeamBlueprintNodeSchema = createInsertSchema(teamBlueprintNodes).omit({ id: true, createdAt: true });

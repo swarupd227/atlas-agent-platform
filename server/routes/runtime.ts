@@ -10415,6 +10415,15 @@ clean:
             .map(s => ({ id: s.id, name: s.name, domain: s.domain, description: s.description }))
         : [];
 
+      // Same gap as skills above -- export-code already resolves this (agentKbLinks/
+      // kbDetails), but export-manifest never did.
+      const manifestKbLinks = await storage.getAgentKnowledgeBases(agent.id);
+      const manifestKnowledgeBases: Array<{ id: string; name: string; embeddingModel: string | null; chunkSize: number | null; chunkOverlap: number | null }> = [];
+      for (const link of manifestKbLinks) {
+        const kb = await storage.getKnowledgeBase(link.knowledgeBaseId);
+        if (kb) manifestKnowledgeBases.push({ id: kb.id, name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap });
+      }
+
       const agentSection = {
         name: agent.name,
         description: agent.description,
@@ -10428,6 +10437,7 @@ clean:
         permissionsConfig: agent.permissionsConfig,
         systemPrompt: agent.systemPrompt,
         skills: manifestSkills,
+        knowledgeBases: manifestKnowledgeBases,
       };
 
       const blueprintSection = blueprint ? {

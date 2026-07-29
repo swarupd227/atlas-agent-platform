@@ -1,20 +1,34 @@
 #!/usr/bin/env bash
-# Pushes the current shared/schema.ts to the deployed Azure Postgres database.
-# Run this once after provision.sh, and again after every commit that changes
-# shared/schema.ts.
+# Applies pending schema changes to the deployed Azure Postgres database.
+#
+# IMPORTANT: this codebase does NOT use `drizzle-kit push` (npm run db:push)
+# as its migration mechanism. server/db.ts's runStartupMigrations() runs a
+# sequence of idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` / `CREATE
+# TABLE IF NOT EXISTS` statements automatically every time the app boots --
+# so a normal `./deploy.sh` (which restarts the Web App) already applies any
+# schema change that's been added there. There is usually nothing for this
+# script to do.
+#
+# db:push is actively dangerous here: shared/schema.ts has no `embedding`
+# column on knowledge_chunks at all (it's created out-of-band by
+# server/embeddings.ts's ensurePgVector() specifically so drizzle-kit never
+# manages it), so `drizzle-kit push` always proposes DROPPING that column --
+# taking real pgvector embeddings with it, irreversibly, on a live database.
+# This has already almost happened once. Do not run db:push against this
+# database. If you hit "Missing config.env" or "drizzle-kit: command not
+# found" errors while trying to, that is not a sign to fix your way through
+# to running it -- it's a sign to add your change to runStartupMigrations()
+# instead.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-# Cloud Shell sessions restart often and never auto-pull -- do it here so a
-# fresh session never migrates against a stale shared/schema.ts just because
-# you forgot the manual `git pull` step first.
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "Pulling latest from git..."
   git pull --ff-only || { echo "git pull failed -- resolve manually (uncommitted changes / diverged branch?) before continuing." >&2; exit 1; }
 fi
 
 if [ ! -f config.env ] || [ ! -f .generated-secrets.env ]; then
-  echo "Missing config.env or .generated-secrets.env — run ./provision.sh first." >&2
+  echo "Missing config.env or .generated-secrets.env — run ./provision.sh or ./recover-secrets.sh first." >&2
   exit 1
 fi
 # shellcheck disable=SC1091
@@ -22,29 +36,14 @@ source config.env
 # shellcheck disable=SC1091
 source .generated-secrets.env
 
-export DATABASE_URL="postgresql://${DB_ADMIN}:${DB_PASSWORD}@${DB_SERVER}.postgres.database.azure.com:5432/${DB_NAME}?sslmode=require"
-
-REPO_ROOT="$(cd ../.. && pwd)"
-if [ ! -f "$REPO_ROOT/package.json" ]; then
-  echo "Expected a full repo clone at $REPO_ROOT (couldn't find package.json there)." >&2
-  echo "Run this script from inside a git clone of the repo, e.g.:" >&2
-  echo "  git clone https://github.com/swarupd227/atlas-agent-platform.git && cd atlas-agent-platform/deploy/azure" >&2
-  exit 1
-fi
-
-NODE_VERSION=$(node --version 2>/dev/null || echo "not found")
-echo "Node: $NODE_VERSION"
-NODE_MAJOR=$(node -e "console.log(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)
-if [ "$NODE_MAJOR" -lt 18 ] 2>/dev/null; then
-  echo "Warning: Node $NODE_VERSION detected — this repo is built/tested on Node 22." >&2
-  echo "If db:push fails below, install a newer Node first, e.g.:" >&2
-  echo "  nvm install 22 && nvm use 22   (Cloud Shell ships nvm)" >&2
-fi
-
-if [ ! -d "$REPO_ROOT/node_modules" ]; then
-  echo "node_modules not found — running npm install first (this can take a minute)..."
-  (cd "$REPO_ROOT" && npm install)
-fi
-
-echo "Pushing schema from $REPO_ROOT to ${DB_SERVER}.postgres.database.azure.com..."
-(cd "$REPO_ROOT" && npm run db:push)
+echo "This app applies schema changes automatically on startup (server/db.ts's"
+echo "runStartupMigrations()) -- redeploying with ./deploy.sh already migrates"
+echo "the database. This script cannot verify pending migrations without direct"
+echo "DB access, and does not run drizzle-kit push (see the warning at the top"
+echo "of this file for why)."
+echo
+echo "If you have a genuinely new table/column that isn't in runStartupMigrations()"
+echo "yet: add an idempotent 'ALTER TABLE ... ADD COLUMN IF NOT EXISTS' or"
+echo "'CREATE TABLE IF NOT EXISTS' statement there (see the existing statements in"
+echo "server/db.ts for the pattern), commit it, then run ./deploy.sh -- the restart"
+echo "applies it. Do not use drizzle-kit push against this database."

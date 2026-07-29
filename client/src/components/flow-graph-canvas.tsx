@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import type { ProcessNode, ProcessEdge, ProcessNodeType } from "@shared/process-flow";
-import type { Skill } from "@shared/schema";
+import type { Skill, KnowledgeBase } from "@shared/schema";
 
 type NodeMeta = { label: string; icon: any; color: string; bg: string; border: string };
 const NODE_META: Record<ProcessNodeType, NodeMeta> = {
@@ -54,6 +54,11 @@ function ProcessFlowNode({ data, selected }: NodeProps) {
       {!!d.config?.skillName && (
         <p className="text-[9px] text-violet-600 dark:text-violet-400 mt-0.5 truncate flex items-center gap-0.5">
           <Sparkles className="w-2.5 h-2.5 shrink-0" /> {String(d.config.skillName)}
+        </p>
+      )}
+      {!!d.config?.kbName && (
+        <p className="text-[9px] text-emerald-600 dark:text-emerald-400 mt-0.5 truncate flex items-center gap-0.5">
+          <Database className="w-2.5 h-2.5 shrink-0" /> {String(d.config.kbName)}
         </p>
       )}
       <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-primary" />
@@ -114,6 +119,62 @@ function SkillPicker({ skillId, skillName, onAttach, onRemove }: {
             >
               <span className="font-medium">{s.name}</span>
               <span className="text-muted-foreground"> · {s.domain}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Same pattern as SkillPicker above, for binding a real knowledge base to a step. */
+function KbPicker({ kbId, kbName, onAttach, onRemove }: {
+  kbId?: string;
+  kbName?: string;
+  onAttach: (kb: { id: string; name: string }) => void;
+  onRemove: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const { data: kbs } = useQuery<KnowledgeBase[]>({ queryKey: ["/api/knowledge-bases"] });
+  const matches = useMemo(() => {
+    if (!query.trim()) return [];
+    const q = query.trim().toLowerCase();
+    return (kbs || [])
+      .filter(k => k.status === "active" && (k.name.toLowerCase().includes(q) || (k.description || "").toLowerCase().includes(q)))
+      .slice(0, 8);
+  }, [kbs, query]);
+
+  if (kbId) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-emerald-500/30 bg-emerald-500/5" data-testid="attached-kb">
+        <Database className="w-3 h-3 text-emerald-500 shrink-0" />
+        <span className="text-[11px] font-medium truncate flex-1">{kbName}</span>
+        <button type="button" onClick={onRemove} className="p-0.5 rounded hover:bg-muted shrink-0" data-testid="button-remove-node-kb">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <Input
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search knowledge bases…"
+        className="h-7 text-xs"
+        data-testid="input-node-kb-search"
+      />
+      {matches.length > 0 && (
+        <div className="flex flex-col gap-0.5 max-h-32 overflow-y-auto rounded-md border p-0.5">
+          {matches.map(k => (
+            <button
+              key={k.id}
+              type="button"
+              onClick={() => { onAttach({ id: k.id, name: k.name }); setQuery(""); }}
+              className="text-left px-1.5 py-1 rounded text-[11px] hover-elevate"
+              data-testid={`option-node-kb-${k.id}`}
+            >
+              <span className="font-medium">{k.name}</span>
             </button>
           ))}
         </div>
@@ -315,6 +376,18 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
                     }}
                   />
                   <span className="text-[10px] text-muted-foreground">Grounds agent-generation in a real skill instead of guessing from this step's text.</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Knowledge Base</label>
+                  <KbPicker
+                    kbId={d.config?.kbId as string | undefined}
+                    kbName={d.config?.kbName as string | undefined}
+                    onAttach={(kb) => patchNode(selNode.id, { config: { ...(d.config || {}), kbId: kb.id, kbName: kb.name } })}
+                    onRemove={() => {
+                      const { kbId: _kbId, kbName: _kbName, ...rest } = (d.config || {}) as Record<string, unknown>;
+                      patchNode(selNode.id, { config: rest });
+                    }}
+                  />
                 </div>
                 {d.ntype === "n8n" && (
                   <div className="flex flex-col gap-1 rounded-md border border-pink-500/30 bg-pink-500/5 p-2">

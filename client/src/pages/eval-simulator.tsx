@@ -73,6 +73,7 @@ interface Turn {
   agentResponse: string;
   latencyMs: number;
   relevancyScore: number;
+  retrievalContext?: string[];
 }
 
 interface Conversation {
@@ -429,7 +430,7 @@ export default function EvalSimulator() {
           .flatMap(c => c.turns.map((t, i) => ({
             input: t.userMessage,
             expectedOutput: t.agentResponse,
-            retrievalContext: [],
+            retrievalContext: t.retrievalContext || [],
             tags: ["simulated", c.personaName.toLowerCase().replace(/\s+/g, "-"), `turn-${i + 1}`],
             provenance: {
               conversationId: c.id,

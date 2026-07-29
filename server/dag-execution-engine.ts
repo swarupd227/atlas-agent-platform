@@ -2,6 +2,7 @@ import { storage } from "./storage";
 import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineState, extractStructuredOutput } from "./agent-runtime";
 import { publishDagRunEvent, previewOutput } from "./dag-run-events";
 import { evaluateRule } from "./rule-evaluator";
+import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 
 // Turns a node label like "Brief Approval Agent" into "brief_approval_agent"
@@ -97,6 +98,8 @@ export interface NodePlanConfig {
   refTeamAgentId: string | null;
   refRemoteAgentId: string | null;
   refSkillId: string | null;
+  refKnowledgeBaseId: string | null;
+  kbQuery: string | null;
   label: string;
   gateType: string | null;
   refToolIds: string[] | null;
@@ -291,6 +294,8 @@ export function computeWaves(
       refTeamAgentId: node.refTeamAgentId || null,
       refRemoteAgentId: node.refRemoteAgentId || null,
       refSkillId: (node as any).refSkillId || null,
+      refKnowledgeBaseId: (node as any).refKnowledgeBaseId || null,
+      kbQuery: (node.config as any)?.kbQuery || null,
       label: node.label,
       gateType: node.gateType || null,
       refToolIds: (node.refToolIds as string[] | null) || null,
@@ -783,6 +788,10 @@ export class DAGExecutionEngine {
       return this.executeSkillNode(nodeId, nc, start);
     }
 
+    if (nc.nodeType === "knowledge_base" && nc.refKnowledgeBaseId) {
+      return this.executeKnowledgeBaseNode(nodeId, nc, start);
+    }
+
     if (nc.nodeType === "edge_gate" || nc.gateType) {
       return this.executeGateNode(nodeId, nc, currentState, config, start);
     }
@@ -948,6 +957,55 @@ export class DAGExecutionEngine {
 
     const toolsNote = skill.allowedTools?.length ? `\n\nAllowed tools: ${skill.allowedTools.join(", ")}` : "";
     const content = `# ${skill.name}\n${skill.description}${toolsNote}\n\n${skill.markdownBody || ""}`.trim();
+
+    return {
+      nodeId,
+      agentId: "",
+      status: "completed",
+      output: { [nc.stateKey]: content },
+      durationMs: Date.now() - start,
+      promptTokens: 0,
+      completionTokens: 0,
+      traceId: "",
+    };
+  }
+
+  /**
+   * Execute a "knowledge_base" node: run a real pgvector search (the same
+   * searchKnowledgeBaseChunks agent-runtime.ts uses for a whole agent's
+   * explicit KB bindings) and merge the retrieved chunks into shared DAG
+   * state under the node's stateKey, so downstream agent nodes pick them up
+   * automatically via buildAgentInput's state dump -- same content-injection
+   * mechanism as executeSkillNode above, just backed by a live search instead
+   * of static content. kbQuery is a fixed string set in the node inspector
+   * (this is advisory retrieval scoped to the graph, not a conversational
+   * agent that can reformulate its own query).
+   */
+  private async executeKnowledgeBaseNode(
+    nodeId: string,
+    nc: NodePlanConfig,
+    start: number,
+  ): Promise<NodeExecutionResult> {
+    const kb = await storage.getKnowledgeBase(nc.refKnowledgeBaseId!);
+    if (!kb) {
+      return {
+        nodeId,
+        agentId: "",
+        status: "failed",
+        output: {},
+        error: `Knowledge base ${nc.refKnowledgeBaseId} not found`,
+        durationMs: Date.now() - start,
+        promptTokens: 0,
+        completionTokens: 0,
+        traceId: "",
+      };
+    }
+
+    const query = nc.kbQuery?.trim() || nc.label;
+    const chunks = await searchKnowledgeBaseChunks(kb.id, query, 5, 0.3);
+    const content = chunks.length > 0
+      ? `# ${kb.name} (retrieved for: "${query}")\n\n${chunks.map(c => c.content).join("\n\n---\n\n")}`
+      : `# ${kb.name}\nNo results above the relevance threshold for: "${query}"`;
 
     return {
       nodeId,

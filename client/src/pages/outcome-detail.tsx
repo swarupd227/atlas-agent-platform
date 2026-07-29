@@ -117,7 +117,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { streamProposeAgents } from "@/lib/propose-agents-stream";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
-import { normalizeToGraph, flattenGraphToSteps } from "@shared/process-flow";
+import { normalizeToGraph, flattenGraphToSteps, PROCESS_FLOW_VERSION } from "@shared/process-flow";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 import { AgentPlanGraph } from "@/components/agent-plan-graph";
 
@@ -1106,7 +1106,16 @@ export default function OutcomeDetail() {
               preloadedSkills: resolveMatchedSkills(worker.matchedSkills),
             });
             const agentData = await agentRes.json();
-            if (agentData.id) createdAgentIds.push(agentData.id);
+            if (agentData.id) {
+              createdAgentIds.push(agentData.id);
+              if (worker.suggestedKnowledgeBases?.length) {
+                for (const kb of worker.suggestedKnowledgeBases) {
+                  try {
+                    await apiRequest("POST", `/api/agents/${agentData.id}/knowledge-bases`, { knowledgeBaseId: kb.id });
+                  } catch {}
+                }
+              }
+            }
           } catch {}
         }
       }
@@ -5269,11 +5278,23 @@ function BusinessProcessFlowSection({
         outcomeContext,
       });
       const data = await res.json();
-      if (Array.isArray(data.steps) && data.steps.length > 0) {
-        const aiSteps: AutoProcessStep[] = data.steps.map((s: any, i: number) => ({
-          id: `ai_${i}`,
+      // /api/ai/generate-process-flow returns the graph model ({name, nodes,
+      // edges} -- shared/process-flow.ts's ProcessFlowGraph), not the old flat
+      // {steps: [...]} shape this used to check for. That stale check meant
+      // this always fell through to "AI did not return a revised flow" even
+      // when the AI call succeeded -- flatten the real graph the same way the
+      // rest of the app does instead of re-reading a field that no longer exists.
+      if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+        const flatSteps = flattenGraphToSteps({
+          version: PROCESS_FLOW_VERSION,
+          name: data.name || outcome.name,
+          nodes: data.nodes,
+          edges: Array.isArray(data.edges) ? data.edges : [],
+        });
+        const aiSteps: AutoProcessStep[] = flatSteps.map((s, i) => ({
+          id: s.id || `ai_${i}`,
           type: s.type || "take_action",
-          label: s.label || s.name || `Step ${i + 1}`,
+          label: s.label || `Step ${i + 1}`,
           description: s.description || "",
           actor: s.actor || "Digital Worker",
         }));

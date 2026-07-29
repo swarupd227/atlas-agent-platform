@@ -1336,6 +1336,11 @@ function ExecutionTracePanel({ trace }: { trace: ExecutionTraceData }) {
                   ({(discoveryEvent.tools as Array<{ tool: string }>).map(t => t.tool).join(", ")})
                 </span>
               )}
+              {Array.isArray(discoveryEvent.knowledgeBaseNames) && (discoveryEvent.knowledgeBaseNames as string[]).length > 0 && (
+                <span className="text-muted-foreground truncate">
+                  ({(discoveryEvent.knowledgeBaseNames as string[]).join(", ")})
+                </span>
+              )}
             </div>
           )}
 
