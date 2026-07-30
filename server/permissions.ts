@@ -24,7 +24,8 @@ type PermissionAction =
   | "manage_mcp_servers"
   | "manage_security"
   | "manage_agents"
-  | "view_agents";
+  | "view_agents"
+  | "manage_autonomy";
 
 type AccessLevel = "full" | "conditional" | "denied";
 
@@ -43,6 +44,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_security: "full",
     manage_agents: "full",
     view_agents: "full",
+    manage_autonomy: "full",
   },
   outcome_owner: {
     create_modify_outcomes: "full",
@@ -58,6 +60,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_security: "denied",
     manage_agents: "denied",
     view_agents: "conditional",
+    manage_autonomy: "denied",
   },
   agent_engineer: {
     create_modify_outcomes: "conditional",
@@ -73,6 +76,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_security: "denied",
     manage_agents: "full",
     view_agents: "full",
+    manage_autonomy: "conditional",
   },
   ops_sre: {
     create_modify_outcomes: "denied",
@@ -88,6 +92,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_security: "conditional",
     manage_agents: "conditional",
     view_agents: "full",
+    manage_autonomy: "denied",
   },
   compliance_security: {
     create_modify_outcomes: "conditional",
@@ -103,6 +108,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_security: "full",
     manage_agents: "conditional",
     view_agents: "full",
+    manage_autonomy: "full",
   },
   expert_validator: {
     create_modify_outcomes: "conditional",
@@ -118,6 +124,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_security: "denied",
     manage_agents: "conditional",
     view_agents: "full",
+    manage_autonomy: "full",
   },
   finance: {
     create_modify_outcomes: "denied",
@@ -133,6 +140,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_security: "denied",
     manage_agents: "denied",
     view_agents: "denied",
+    manage_autonomy: "denied",
   },
   domain_expert: {
     create_modify_outcomes: "conditional",
@@ -148,6 +156,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_security: "denied",
     manage_agents: "denied",
     view_agents: "full",
+    manage_autonomy: "denied",
   },
 };
 

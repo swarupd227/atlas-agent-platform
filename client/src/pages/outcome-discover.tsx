@@ -524,6 +524,19 @@ export default function OutcomeDiscover() {
     setFormKpis([...formKpis, { name: "", target: 0, unit: "percent", baseline: 0, slaThreshold: 0, weight: 1, targetOperator: ">=" }]);
   }
 
+  function addIndustryKpi(kpi: IndustryKpi) {
+    if (formKpis.some((k) => k.name === kpi.name)) {
+      toast({ title: "Already added", description: `"${kpi.name}" is already in your KPI list.` });
+      return;
+    }
+    const match = kpi.target.match(/[\d.]+/);
+    const numericTarget = match ? parseFloat(match[0]) : 0;
+    const targetOperator = kpi.target.trim().startsWith("<") ? "<=" : ">=";
+    const unit = kpi.target.includes("%") ? "percent" : /h(ours)?\b/i.test(kpi.target) ? "hours" : "count";
+    setFormKpis([...formKpis, { name: kpi.name, target: numericTarget, unit, baseline: 0, slaThreshold: 0, weight: 1, targetOperator }]);
+    toast({ title: "KPI added", description: `"${kpi.name}" added to your outcome's KPI list.` });
+  }
+
   function removeFormKpi(index: number) {
     setFormKpis(formKpis.filter((_, i) => i !== index));
   }
@@ -2784,7 +2797,7 @@ export default function OutcomeDiscover() {
                                 <span className="text-xs text-muted-foreground">Benchmark: {kpi.benchmark}</span>
                               </div>
                             </div>
-                            <Button variant="ghost" size="icon" data-testid={`button-add-kpi-${i}`}>
+                            <Button variant="ghost" size="icon" onClick={() => addIndustryKpi(kpi)} data-testid={`button-add-kpi-${i}`}>
                               <Plus className="w-3 h-3" />
                             </Button>
                           </div>

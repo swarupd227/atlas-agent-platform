@@ -489,6 +489,19 @@ function mergeWaveOutputs(
  */
 export class DAGExecutionEngine {
   /**
+   * Single source of truth for "is this node a gate" -- must stay in sync
+   * across dispatch (executeNode, which routes to executeGateNode) and the
+   * halt-on-reject check (execute's per-wave rejectedGate scan). Previously
+   * those two lived as separately-written conditions that could (and did)
+   * drift apart: a node with nodeType "edge_gate" but no gateType would be
+   * dispatched as a gate but not recognized as one when deciding whether a
+   * rejection should halt the DAG.
+   */
+  private isGateNode(nc: Pick<NodePlanConfig, "nodeType" | "gateType"> | undefined | null): boolean {
+    return !!nc && (nc.nodeType === "edge_gate" || !!nc.gateType);
+  }
+
+  /**
    * Execute the full DAG wave by wave.
    * Returns the merged final state.
    */
@@ -639,7 +652,7 @@ export class DAGExecutionEngine {
       // there is no sensible "continue anyway" for a decision nobody made.
       // (fail_fast already halts on any failure via the throw above.)
       const rejectedGate = nodeResults.find(
-        (nr) => nr.status === "failed" && config.executionPlan.nodeConfig[nr.nodeId]?.gateType,
+        (nr) => nr.status === "failed" && this.isGateNode(config.executionPlan.nodeConfig[nr.nodeId]),
       );
       if (rejectedGate) {
         success = false;
@@ -792,7 +805,7 @@ export class DAGExecutionEngine {
       return this.executeKnowledgeBaseNode(nodeId, nc, start);
     }
 
-    if (nc.nodeType === "edge_gate" || nc.gateType) {
+    if (this.isGateNode(nc)) {
       return this.executeGateNode(nodeId, nc, currentState, config, start);
     }
 
@@ -1284,6 +1297,14 @@ export class DAGExecutionEngine {
       errorStrategy: config.errorStrategy,
       teamAgentId,
       teamAgentRuntimeConfig: (teamAgent.runtimeConfig as Record<string, any>) || {},
+      // Forward the parked approval id so a resumed parent run whose paused
+      // wave contains this Team Reference node lets the nested gate (however
+      // deep inside the child's own blueprint it sits) recognize its
+      // already-decided approval via waitForApproval's existingApprovalId
+      // param, instead of the nested gate creating a duplicate approval or
+      // the resume otherwise getting stuck re-asking for a decision that was
+      // already made. See executeGateNode and setupResumeForDagRun.
+      resumePendingApprovalId: config.resumePendingApprovalId,
       onWaveComplete: config.onWaveComplete,
       onApprovalPending: config.onApprovalPending,
     });

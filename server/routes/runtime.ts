@@ -17777,6 +17777,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   });
 
   router.post("/api/pipeline-runs/:id/approve", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!hasPermission(role, "approve_changes")) {
+      return res.status(403).json({ error: "Insufficient permissions to approve a pipeline gate" });
+    }
     const run = await storage.getPipelineRun(req.params.id);
     if (!run) return res.status(404).json({ error: "Pipeline run not found" });
     if (run.status !== "paused_at_gate") return res.status(400).json({ error: "Run is not paused at an approval gate" });
@@ -17892,6 +17896,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   });
 
   router.post("/api/pipeline-runs/:id/reject", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!hasPermission(role, "approve_changes")) {
+      return res.status(403).json({ error: "Insufficient permissions to reject a pipeline gate" });
+    }
     const run = await storage.getPipelineRun(req.params.id);
     if (!run) return res.status(404).json({ error: "Pipeline run not found" });
     if (run.status !== "paused_at_gate") return res.status(400).json({ error: "Run is not paused at an approval gate" });
@@ -17999,6 +18007,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
   router.post("/api/pipeline-runs/:id/resume", async (req, res) => {
     try {
+      const role = getRequestRole(req);
+      if (!hasPermission(role, "approve_changes")) {
+        return res.status(403).json({ error: "Insufficient permissions to resume a pipeline gate" });
+      }
       const run = await storage.getPipelineRun(req.params.id);
       if (!run) return res.status(404).json({ error: "Pipeline run not found" });
       if (run.status !== "paused_at_gate") {
@@ -18811,6 +18823,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   // ── Workflow State: POST restore run to a checkpoint ──
   router.post("/api/pipeline-runs/:id/restore/:num", async (req, res) => {
     try {
+      const role = getRequestRole(req);
+      if (!hasPermission(role, "approve_changes")) {
+        return res.status(403).json({ error: "Insufficient permissions to restore a pipeline run" });
+      }
       const num = parseInt(req.params.num, 10);
       if (isNaN(num) || num < 1) return res.status(400).json({ error: "Invalid checkpoint number" });
       const run = await storage.getPipelineRun(req.params.id);

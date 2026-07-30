@@ -1201,12 +1201,35 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     const { signedBy } = req.body;
 
     const newVersion = (blueprint.version || 0) + 1;
+    // Team blueprints store their graph in team_blueprint_nodes/edges;
+    // blueprintJson.nodes/edges only holds the real graph for single-agent
+    // blueprints (see the compile route's comment above for why). Resolve
+    // real counts here so both the archived history entry and the diff
+    // below reflect the actual graph instead of a field that never exists
+    // on the Blueprint row itself.
+    const agent = blueprint.agentId ? await storage.getAgent(blueprint.agentId, getOrgId(req)) : undefined;
+    let realNodeCount = 0;
+    let realEdgeCount = 0;
+    if (agent?.agentType === "team") {
+      const [teamNodesForSign, teamEdgesForSign] = await Promise.all([
+        storage.getTeamBlueprintNodes(blueprint.id),
+        storage.getTeamBlueprintEdges(blueprint.id),
+      ]);
+      realNodeCount = teamNodesForSign.length;
+      realEdgeCount = teamEdgesForSign.length;
+    } else {
+      const bpJson = blueprint.blueprintJson as any;
+      realNodeCount = Array.isArray(bpJson?.nodes) ? bpJson.nodes.length : 0;
+      realEdgeCount = Array.isArray(bpJson?.edges) ? bpJson.edges.length : 0;
+    }
     const historyEntry = {
       version: newVersion,
       signedBy: signedBy || "system",
       signedAt: new Date().toISOString(),
       blueprintJson: blueprint.blueprintJson,
       validationResults: blueprint.validationResults,
+      nodeCount: realNodeCount,
+      edgeCount: realEdgeCount,
     };
     const existingHistory = Array.isArray(blueprint.versionHistory) ? blueprint.versionHistory : [];
     const versionHistory = [...(existingHistory as any[]), historyEntry];
@@ -1220,7 +1243,6 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     });
 
     if (blueprint.agentId) {
-      const agent = await storage.getAgent(blueprint.agentId, getOrgId(req));
       if (agent && (agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL")) {
         await storage.createApproval({
           type: "blueprint_review",
@@ -1240,38 +1262,24 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
               if (newVersion <= 1) return { added: 0, removed: 0, changed: 0, summary: "Initial version" };
               const prevHistory = existingHistory as any[];
               const prevVersion = prevHistory.length > 0 ? prevHistory[prevHistory.length - 1] : null;
-              const currentNodes = Array.isArray((blueprint as any).nodes) ? (blueprint as any).nodes.length : 0;
-              const currentEdges = Array.isArray((blueprint as any).edges) ? (blueprint as any).edges.length : 0;
-              const prevNodes = prevVersion?.nodeCount || currentNodes;
-              const prevEdges = prevVersion?.edgeCount || currentEdges;
+              const currentNodes = realNodeCount;
+              const currentEdges = realEdgeCount;
+              const prevNodes = typeof prevVersion?.nodeCount === "number" ? prevVersion.nodeCount : currentNodes;
+              const prevEdges = typeof prevVersion?.edgeCount === "number" ? prevVersion.edgeCount : currentEdges;
               const added = Math.max(0, currentNodes - prevNodes) + Math.max(0, currentEdges - prevEdges);
               const removed = Math.max(0, prevNodes - currentNodes) + Math.max(0, prevEdges - currentEdges);
-              const changed = Math.abs(currentNodes - prevNodes) === 0 && Math.abs(currentEdges - prevEdges) === 0 ? 1 : 0;
+              const changed = added === 0 && removed === 0 ? 1 : 0;
               return {
                 added, removed, changed,
                 summary: `v${newVersion - 1} → v${newVersion}: ${added > 0 ? `Added ${added} elements` : ""}${removed > 0 ? ` Removed ${removed} elements` : ""}${changed > 0 ? " Modified configuration" : ""}`.trim() || "Updated",
               };
             })(),
-            evalResults: {
-              before: [
-                { name: "Accuracy Benchmark", passRate: 88.5, totalCases: 200 },
-                { name: "Latency SLA", passRate: 95.0, totalCases: 200 },
-              ],
-              after: [
-                { name: "Accuracy Benchmark", passRate: 90.2, totalCases: 200 },
-                { name: "Latency SLA", passRate: 94.8, totalCases: 200 },
-              ],
-            },
-            blastRadius: {
-              affectedOutcomes: [
-                { name: "Blueprint-bound Outcome", riskTier: agent.riskTier || "HIGH", kpiImpact: "Accuracy benchmark change: +1.7%" },
-              ],
-              affectedSegments: [
-                { name: "All Agent Users", userCount: 5000, revenueImpact: "N/A until deployed" },
-              ],
-              totalUsersAffected: 5000,
-              riskSummary: `Blueprint v${newVersion} signing for ${agent.riskTier} risk agent. Changes affect accuracy and latency benchmarks.`,
-            },
+            // No evalResults/blastRadius here: there's no real mapping between
+            // a blueprint version sign and a specific eval run's before/after
+            // pass rates, and no real user/segment impact data available at
+            // sign time. Fabricated numbers here previously misled reviewers
+            // into approving against evidence that didn't exist -- see the
+            // real eval history via the agent's eval runs instead.
           },
         });
       }

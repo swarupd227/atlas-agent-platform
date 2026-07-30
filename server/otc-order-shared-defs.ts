@@ -22,7 +22,7 @@ export function makeOtcOrderMcpServerDefs(baseUrl: string) {
       tools: [
         { name: "validate_customer_identity", description: "Validates Meridian Manufacturing customer identity, account standing, MSA contract, and OFAC sanctions screening.",         endpoint: "validate-customer-identity", method: "POST" },
         { name: "validate_ship_address",      description: "Resolves ship-to address discrepancy for ORD-2026-78432 using prior delivery history. Clears VAL-004.",                    endpoint: "validate-ship-address",       method: "POST" },
-        { name: "calculate_taxes",            description: "Computes IL sales tax and confirms ASC 606 revenue recognition treatment for ORD-2026-78432.",                             endpoint: "calculate-taxes",             method: "POST" },
+        { name: "calculate_taxes",            description: "Computes MI sales tax and confirms ASC 606 revenue recognition treatment for ORD-2026-78432.",                             endpoint: "calculate-taxes",             method: "POST" },
         { name: "check_compliance",           description: "Runs export control (EAR99), OFAC restricted-party, and ASC 606 checks for all order line items.",                         endpoint: "check-compliance",            method: "POST" },
         { name: "release_order",              description: "Releases order ORD-2026-78432 into ERP once all 8 validation holds are cleared. Returns deterministic ERP-TXN-2026-78432.", endpoint: "release",                    method: "POST" },
       ],
@@ -43,7 +43,7 @@ export function makeOtcOrderMcpServerDefs(baseUrl: string) {
       description: "NovaTech Warehouse Management: retrieves inventory by location, calculates ATP, evaluates shipping options, and reserves inventory for fulfillment.",
       url:         `${baseUrl}/api/mock/otc-order-inventory`,
       tools: [
-        { name: "get_inventory_by_location", description: "Returns SKU-level inventory across Chicago DC and Atlanta Hub for ORD-2026-78432 (12 turbine units all available at Chicago).", endpoint: "get-inventory-by-location", method: "GET"  },
+        { name: "get_inventory_by_location", description: "Returns SKU-level inventory across Chicago DC and Atlanta Hub for ORD-2026-78432 (13 turbine units all available at Chicago).", endpoint: "get-inventory-by-location", method: "GET"  },
         { name: "calculate_atp",             description: "Computes Available-To-Promise date for all 13 units from Chicago DC. Returns ATP 2026-05-02 for all SKUs.",                    endpoint: "calculate-atp",             method: "GET"  },
         { name: "get_shipping_options",      description: "Returns 3 fulfillment options: Option A split-ship $1,840 (rec), Option B consolidated $2,120, Option C air express $3,400.", endpoint: "get-shipping-options",      method: "GET"  },
         { name: "reserve_inventory",         description: "Reserves all 13 units from Chicago DC under Option A. Issues pick tickets PT-CHI-7842-A/B/C, clears VAL-003.",               endpoint: "reserve-inventory",         method: "POST" },
@@ -253,7 +253,7 @@ FULFILLMENT PRIORITY:
 2. Primary-secondary split ($840 surcharge, 3-day vs 1-day transit)
 3. Cross-dock or postponement (only for B/C customers or >15 unit orders)
 
-CURRENT SCENARIO: 48-line order, 12 turbine units in the inventory hold. Chicago DC alone has all 12 turbine units — split-ship flag is a false positive. Confirm Chicago-only fulfillment, save $840 surcharge, deliver May 2–3.`,
+CURRENT SCENARIO: 48-line order, 13 turbine units in the inventory hold. Chicago DC alone has all 13 turbine units — split-ship flag is a false positive. Confirm Chicago-only fulfillment, save $840 surcharge, deliver May 2–3.`,
 };
 
 // ─── Per-agent governance policies (canonical — used by prod migration) ───────

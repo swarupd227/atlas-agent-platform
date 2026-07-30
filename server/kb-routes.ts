@@ -759,13 +759,15 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   });
 
   app.get("/api/knowledge-bases/:id/sources", async (req, res) => {
+    const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
+    if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
     const sources = await storage.getKnowledgeSources(req.params.id as string);
     res.json(sources);
   });
 
   app.post("/api/knowledge-bases/:id/sources/upload", upload.single("file"), async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const file = req.file;
@@ -847,7 +849,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/sources/url", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const { url, name, crawl, crawlDepth: rawDepth, maxPages: rawMax } = req.body;
@@ -900,7 +902,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/sources/text", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const { title, content } = req.body;
@@ -934,7 +936,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/sources/structured", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const { name, data, fieldMapping } = req.body;
@@ -979,14 +981,14 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.patch("/api/knowledge-bases/:id/sources/:sourceId", async (req, res) => {
     try {
-      const source = await storage.getKnowledgeSource(req.params.sourceId as string);
+      const source = await storage.getKnowledgeSource(req.params.sourceId as string, getOrgId(req));
       if (!source) return res.status(404).json({ message: "Source not found" });
       const { name, status, metadata } = req.body;
       const updates: Record<string, any> = {};
       if (name !== undefined) updates.name = name;
       if (status !== undefined) updates.status = status;
       if (metadata !== undefined) updates.metadata = metadata;
-      const updated = await storage.updateKnowledgeSource(req.params.sourceId as string, updates);
+      const updated = await storage.updateKnowledgeSource(req.params.sourceId as string, updates, getOrgId(req));
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -995,7 +997,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/sources/:sourceId/reprocess", async (req, res) => {
     try {
-      const source = await storage.getKnowledgeSource(req.params.sourceId as string);
+      const source = await storage.getKnowledgeSource(req.params.sourceId as string, getOrgId(req));
       if (!source) return res.status(404).json({ message: "Source not found" });
 
       await storage.deleteKnowledgeChunksBySource(req.params.sourceId as string);
@@ -1010,7 +1012,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/embed", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const chunks = await storage.getKnowledgeChunks(req.params.id as string);
@@ -1049,7 +1051,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.get("/api/knowledge-bases/:id/embedding-status", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const chunks = await storage.getKnowledgeChunks(req.params.id as string);
@@ -1074,7 +1076,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   });
 
   app.delete("/api/knowledge-bases/:kbId/sources/:sourceId", async (req, res) => {
-    const success = await storage.deleteKnowledgeSource(req.params.sourceId as string);
+    const success = await storage.deleteKnowledgeSource(req.params.sourceId as string, getOrgId(req));
     if (!success) return res.status(404).json({ message: "Not found" });
 
     const allSources = await storage.getKnowledgeSources(req.params.kbId as string);
@@ -1089,7 +1091,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/refresh-stats", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
       const allSources = await storage.getKnowledgeSources(req.params.id as string);
       const totalChunks = allSources.reduce((sum, s) => sum + (s.chunkCount || 0), 0);
@@ -1104,13 +1106,15 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   });
 
   app.get("/api/knowledge-bases/:id/chunks", async (req, res) => {
+    const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
+    if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
     const chunks = await storage.getKnowledgeChunks(req.params.id as string);
     res.json(chunks);
   });
 
   app.post("/api/knowledge-bases/:id/search", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const { query, topK = 5, scoreThreshold = 0.5 } = req.body;
@@ -1152,13 +1156,15 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   });
 
   app.get("/api/knowledge-bases/:id/agents", async (req, res) => {
+    const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
+    if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
     const links = await storage.getKnowledgeBaseAgents(req.params.id as string);
     res.json(links);
   });
 
   app.get("/api/knowledge-bases/:id/ontology-alignment", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const sources = await storage.getKnowledgeSources(req.params.id as string);
@@ -1195,7 +1201,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.get("/api/knowledge-bases/:id/ontology-coverage", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const concepts = await storage.getOntologyConcepts(kb.industry);
@@ -1291,7 +1297,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/query", async (req, res) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const { question, topK = 5 } = req.body;
@@ -1323,7 +1329,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/check-staleness", async (req: Request, res: Response) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const sources = await storage.getKnowledgeSources(req.params.id as string);
@@ -1374,12 +1380,19 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         }
 
         await storage.createAuditEvent({
-          // @ts-expect-error
-          agentId: affectedAgentIds[0] || "system",
-          eventType: "knowledge.staleness_detected",
-          severity: critical > 0 ? "high" : "medium",
-          description: `KB "${kb.name}" has ${stale} stale and ${critical} critical sources. ${affectedAgentIds.length} agent(s) flagged for revalidation.`,
-          metadata: { kbId: kb.id, kbName: kb.name, stale, critical, affectedAgentIds },
+          actorType: "system",
+          actorId: "kb-staleness-checker",
+          action: "knowledge.staleness_detected",
+          objectType: "knowledge_base",
+          objectId: kb.id,
+          details: JSON.stringify({
+            severity: critical > 0 ? "high" : "medium",
+            description: `KB "${kb.name}" has ${stale} stale and ${critical} critical sources. ${affectedAgentIds.length} agent(s) flagged for revalidation.`,
+            kbName: kb.name,
+            stale,
+            critical,
+            affectedAgentIds,
+          }),
         });
 
         if (critical > 0) {
@@ -1457,12 +1470,19 @@ export function registerKnowledgeBaseRoutes(app: Express) {
           }
 
           await storage.createAuditEvent({
-            // @ts-expect-error
-            agentId: affectedAgentIds[0] || "system",
-            eventType: "knowledge.staleness_detected",
-            severity: critical > 0 ? "high" : "medium",
-            description: `KB "${kb.name}" has ${stale} stale and ${critical} critical sources. ${affectedAgentIds.length} agent(s) flagged for revalidation.`,
-            metadata: { kbId: kb.id, kbName: kb.name, stale, critical, affectedAgentIds },
+            actorType: "system",
+            actorId: "kb-staleness-checker",
+            action: "knowledge.staleness_detected",
+            objectType: "knowledge_base",
+            objectId: kb.id,
+            details: JSON.stringify({
+              severity: critical > 0 ? "high" : "medium",
+              description: `KB "${kb.name}" has ${stale} stale and ${critical} critical sources. ${affectedAgentIds.length} agent(s) flagged for revalidation.`,
+              kbName: kb.name,
+              stale,
+              critical,
+              affectedAgentIds,
+            }),
           });
 
           if (critical > 0) {
@@ -1506,7 +1526,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.get("/api/knowledge-bases/:id/usage-analytics", async (req: Request, res: Response) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const sources = await storage.getKnowledgeSources(req.params.id as string);
@@ -1557,7 +1577,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/auto-tune", async (req: Request, res: Response) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const agentLinks = await storage.getKnowledgeBaseAgents(req.params.id as string);
@@ -1713,7 +1733,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases/:id/apply-tuning", async (req: Request, res: Response) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const { chunkSize, chunkOverlap, retrievalTopK } = req.body;
@@ -1763,7 +1783,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         });
       } catch {}
 
-      const updatedKb = await storage.getKnowledgeBase(req.params.id as string);
+      const updatedKb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       res.json({
         kbId: kb.id,
         changes,
@@ -1779,7 +1799,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.get("/api/knowledge-bases/:id/staleness-impact", async (req: Request, res: Response) => {
     try {
-      const kb = await storage.getKnowledgeBase(req.params.id as string);
+      const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const sources = await storage.getKnowledgeSources(req.params.id as string);

@@ -16,6 +16,9 @@ import {
   isPollableIntegration,
   buildJiraArgs,
   buildSalesforceArgs,
+  JIRA_PAGE_SIZE,
+  SALESFORCE_PAGE_SIZE,
+  resolveNextPollCursor,
 } from "./connector-poll-query";
 
 export { MIN_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, isPollableIntegration };
@@ -80,15 +83,43 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
   }
 
   let recordCount = 0;
+  // Last fetched record's own changed-at timestamp, used by resolveNextPollCursor
+  // to avoid advancing the cursor past records that didn't fit in this page (see
+  // that function's doc comment for why "always advance to now" silently drops
+  // overflow). Jira issues carry `fields.updated`; Salesforce records carry
+  // `LastModifiedDate`. Computed as a max over the fetched page since neither
+  // query guarantees a particular arrival order (the cursor-bound Jira query
+  // does ORDER BY updated ASC, but the baseline query and the Salesforce query
+  // do not).
+  let lastRecordTimestampIso: string | null = null;
   try {
     const parsed = JSON.parse(result.content[0]?.text ?? "{}");
-    recordCount = integrationId === "jira" ? (parsed.count ?? parsed.issues?.length ?? 0) : (parsed.records?.length ?? 0);
+    if (integrationId === "jira") {
+      recordCount = parsed.count ?? parsed.issues?.length ?? 0;
+      const issues: any[] = Array.isArray(parsed.issues) ? parsed.issues : [];
+      for (const issue of issues) {
+        const updated = issue?.fields?.updated;
+        if (typeof updated === "string" && (!lastRecordTimestampIso || new Date(updated) > new Date(lastRecordTimestampIso))) {
+          lastRecordTimestampIso = updated;
+        }
+      }
+    } else {
+      const records: any[] = Array.isArray(parsed.records) ? parsed.records : [];
+      recordCount = records.length;
+      for (const record of records) {
+        const modified = record?.LastModifiedDate;
+        if (typeof modified === "string" && (!lastRecordTimestampIso || new Date(modified) > new Date(lastRecordTimestampIso))) {
+          lastRecordTimestampIso = modified;
+        }
+      }
+    }
   } catch {
     // Unparseable result body — treat as zero new records this cycle but still
     // advance the cursor below so we don't reprocess the same window forever.
   }
 
   const nowIso = new Date().toISOString();
+  const pageSize = integrationId === "jira" ? JIRA_PAGE_SIZE : SALESFORCE_PAGE_SIZE;
   const isBaseline = !cursorIso;
 
   if (isBaseline) {
@@ -99,11 +130,24 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
     return { triggerId: trigger.id, recordCount, fired: false };
   }
 
+  // Cursor to persist this cycle. If this page hit its size cap, there may be
+  // more matching records beyond it — advancing to "now" would permanently
+  // skip them, so the cursor only advances to the last fetched record's own
+  // timestamp (or stays put if that's unavailable), letting the next poll's
+  // "changed since" filter pick up the overflow. See resolveNextPollCursor.
+  const nextCursorIso = resolveNextPollCursor({
+    previousCursorIso: cursorIso,
+    requestedAtIso: nowIso,
+    recordCount,
+    pageSize,
+    lastRecordTimestampIso,
+  });
+
   if (recordCount > 0) {
     await storage.updateAgentTrigger(trigger.id, {
       lastFiredAt: new Date(),
       fireCount: (trigger.fireCount || 0) + 1,
-      config: { ...config, lastPolledAt: nowIso },
+      config: { ...config, lastPolledAt: nextCursorIso },
     });
     const job = await storage.createJob({
       type: "agent_run",
@@ -127,7 +171,7 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
     return { triggerId: trigger.id, recordCount, fired: true };
   }
 
-  await storage.updateAgentTrigger(trigger.id, { config: { ...config, lastPolledAt: nowIso } });
+  await storage.updateAgentTrigger(trigger.id, { config: { ...config, lastPolledAt: nextCursorIso } });
   return { triggerId: trigger.id, recordCount, fired: false };
 }
 

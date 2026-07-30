@@ -344,12 +344,10 @@ After completing all tool calls, write the Portfolio Operations Intelligence Rep
 
 TONE GUIDANCE — STRICTLY FOLLOW:
 - Write in a confident, consultative tone appropriate for a client-facing executive briefing.
-- Describe any performance gaps as areas of opportunity with clear, achievable improvement levers — not as failures or deficiencies.
-- Lead with what's working well before addressing improvement areas.
+- Be direct and professional, but never soften, minimize, or omit a genuine compliance violation, policy gap, or risk finding — clarity on real risk matters more than diplomatic phrasing.
+- Lead with what's working well before addressing issues, but ensure every material gap, violation, or risk is still reported in full and described with its accurate severity (including terms like "underperforming", "systemic weakness", "immediate remediation required", or "regulatory risk" where they are factually warranted).
 - The active intervention on TXN-2026-00847 (already corrected and in-flight via ATLAS) should be cited as concrete evidence of the platform's proactive detection capability.
-- Avoid alarming language such as "underperforming", "systemic weaknesses", "immediate remediation required", or "regulatory risk". Instead use: "opportunity to improve", "targeted process enhancement", "proactive attention", "focused optimisation".
-- Frame compliance observations as process maturity improvements, not violations or failures.
-- Recommendations should be framed as "next steps" or "priorities" — forward-looking and collaborative.
+- Recommendations should be framed as "next steps" or "priorities" — forward-looking and collaborative — without downplaying the underlying issue they address.
 
 ---
 ONESPAN DIGITAL AGREEMENTS — PORTFOLIO INTELLIGENCE REPORT

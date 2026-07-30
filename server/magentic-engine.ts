@@ -238,6 +238,7 @@ async function executeMagenticTeamRun(setup: MagenticRunSetup): Promise<Magentic
           state[k] = v;
         }
       }
+      const producedNewState = newKeys.length > 0;
       const stateKey = `specialist_${specialist.name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_round_${round}`;
       state[stateKey] = workerResult.output;
       newKeys.push(stateKey);
@@ -262,7 +263,7 @@ async function executeMagenticTeamRun(setup: MagenticRunSetup): Promise<Magentic
 
       // Stall detection: the same specialist picked twice in a row while
       // writing no new state means the manager is spinning, not progressing.
-      if (specialist.agentId === lastAgentId && parsed === null) {
+      if (specialist.agentId === lastAgentId && !producedNewState) {
         stallStreak++;
       } else {
         stallStreak = 0;

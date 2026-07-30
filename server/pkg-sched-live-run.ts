@@ -676,17 +676,33 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
     send("agent_complete", {
       role:      "order_intelligence",
       agentName: PKG_AGT_001_NAME,
-      success:   true,
-      message:   "Order Intelligence complete — 47 orders analysed, 3 RUSH flagged, B-Flute AT_RISK confirmed",
+      success:   r1.success,
+      message:   r1.success
+        ? "Order Intelligence complete — 47 orders analysed, 3 RUSH flagged, B-Flute AT_RISK confirmed"
+        : (r1.message?.slice(0, 300) ?? "PKG-001 failed"),
       parallel:  true,
     });
     send("agent_complete", {
       role:      "capacity_mapping",
       agentName: PKG_AGT_002_NAME,
-      success:   true,
-      message:   "Capacity Map complete — M3 offline 10:00–11:30, B-Flute depletion curve computed, constraint map assembled",
+      success:   r2.success,
+      message:   r2.success
+        ? "Capacity Map complete — M3 offline 10:00–11:30, B-Flute depletion curve computed, constraint map assembled"
+        : (r2.message?.slice(0, 300) ?? "PKG-002 failed"),
       parallel:  true,
     });
+
+    if (!r1.success || !r2.success) {
+      aborted = true;
+      runtimeEvents.off("agent_execution", onRuntimeEvent);
+      _pkgSchedRunActive = false;
+      const failParts: string[] = [];
+      if (!r1.success) failParts.push(`PKG-001: ${r1.message?.slice(0, 200) ?? "failed"}`);
+      if (!r2.success) failParts.push(`PKG-002: ${r2.message?.slice(0, 200) ?? "failed"}`);
+      send("agent_error", { role: "parallel_phase", message: `Phase 1 failed — ${failParts.join("; ")}` });
+      res.end();
+      return;
+    }
 
     phase1Ok = true;
     send("parallel_complete", {
@@ -716,14 +732,27 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
   try {
     const r3 = await runAgentOnce(dep3Id, buildPkgOptimizerTask(phase1OrderBrief, phase1CapacityBrief), 6);
     phase2OptimizerBrief = extractAgentOutput(r3);
-    phase2Ok = true;
+
     send("agent_complete", {
       role:      "schedule_optimization",
       agentName: PKG_AGT_003_NAME,
-      success:   true,
-      message:   "Schedule Optimizer complete — Alternative A recommended: OEE +11.2pp, OTIF +4 orders, all 3 RUSH orders on-time",
+      success:   r3.success,
+      message:   r3.success
+        ? "Schedule Optimizer complete — Alternative A recommended: OEE +11.2pp, OTIF +4 orders, all 3 RUSH orders on-time"
+        : (r3.message?.slice(0, 300) ?? "PKG-003 failed"),
       phase:     2,
     });
+
+    if (!r3.success) {
+      aborted = true;
+      runtimeEvents.off("agent_execution", onRuntimeEvent);
+      _pkgSchedRunActive = false;
+      send("agent_error", { role: "schedule_optimization", message: `PKG-003 failed: ${r3.message?.slice(0, 200) ?? "unknown error"}` });
+      res.end();
+      return;
+    }
+
+    phase2Ok = true;
   } catch (err: any) {
     aborted = true;
     runtimeEvents.off("agent_execution", onRuntimeEvent);
@@ -743,14 +772,26 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
   });
 
   try {
-    await runAgentOnce(dep4Id, buildPkgProposalTask(phase2OptimizerBrief), 6);
+    const r4 = await runAgentOnce(dep4Id, buildPkgProposalTask(phase2OptimizerBrief), 6);
+
     send("agent_complete", {
       role:      "schedule_proposal",
       agentName: PKG_AGT_004_NAME,
-      success:   true,
-      message:   "Schedule Proposal published — Kiwiplan ID KWP-SCHED-2026-0415-D · Approval: Awaiting Plant Planner Sarah Kowalski",
+      success:   r4.success,
+      message:   r4.success
+        ? "Schedule Proposal published — Kiwiplan ID KWP-SCHED-2026-0415-D · Approval: Awaiting Plant Planner Sarah Kowalski"
+        : (r4.message?.slice(0, 300) ?? "PKG-004 failed"),
       phase:     3,
     });
+
+    if (!r4.success) {
+      aborted = true;
+      runtimeEvents.off("agent_execution", onRuntimeEvent);
+      _pkgSchedRunActive = false;
+      send("agent_error", { role: "schedule_proposal", message: `PKG-004 failed: ${r4.message?.slice(0, 200) ?? "unknown error"}` });
+      res.end();
+      return;
+    }
   } catch (err: any) {
     aborted = true;
     runtimeEvents.off("agent_execution", onRuntimeEvent);

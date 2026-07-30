@@ -190,34 +190,46 @@ create_or_find_agent() {
 bind_mcp() {
   local agent_id="$1" server_id="$2" label="$3"
   echo "  ▸ Binding ${label}…" >&2
-  curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/mcp-servers" \
+  if curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/mcp-servers" \
     -H "Content-Type: application/json" \
-    -d "{\"serverId\":\"${server_id}\"}" > /dev/null 2>&1 || true
-  echo "    ✓ bound" >&2
+    -d "{\"serverId\":\"${server_id}\"}" > /dev/null 2>&1; then
+    echo "    ✓ bound" >&2
+  else
+    echo "    ✗ FAILED to bind ${label}" >&2
+  fi
 }
 
 link_kb() {
   local agent_id="$1" kb_id="$2" label="$3"
-  curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/knowledge-bases" \
+  if curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/knowledge-bases" \
     -H "Content-Type: application/json" \
-    -d "{\"knowledgeBaseId\":\"${kb_id}\"}" > /dev/null 2>&1 || true
-  echo "  ✓ KB: ${label}" >&2
+    -d "{\"knowledgeBaseId\":\"${kb_id}\"}" > /dev/null 2>&1; then
+    echo "  ✓ KB: ${label}" >&2
+  else
+    echo "  ✗ FAILED to link KB: ${label}" >&2
+  fi
 }
 
 link_skill() {
   local agent_id="$1" skill_id="$2" label="$3"
-  curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/skills" \
+  if curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/skills" \
     -H "Content-Type: application/json" \
-    -d "{\"skillId\":\"${skill_id}\"}" > /dev/null 2>&1 || true
-  echo "  ✓ Skill: ${label}" >&2
+    -d "{\"skillId\":\"${skill_id}\"}" > /dev/null 2>&1; then
+    echo "  ✓ Skill: ${label}" >&2
+  else
+    echo "  ✗ FAILED to link Skill: ${label}" >&2
+  fi
 }
 
 link_policy() {
   local agent_id="$1" policy_id="$2" label="$3"
-  curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/policies" \
+  if curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/policies" \
     -H "Content-Type: application/json" \
-    -d "{\"policyId\":\"${policy_id}\"}" > /dev/null 2>&1 || true
-  echo "  ✓ Policy: ${label}" >&2
+    -d "{\"policyId\":\"${policy_id}\"}" > /dev/null 2>&1; then
+    echo "  ✓ Policy: ${label}" >&2
+  else
+    echo "  ✗ FAILED to link Policy: ${label}" >&2
+  fi
 }
 
 create_deployment() {

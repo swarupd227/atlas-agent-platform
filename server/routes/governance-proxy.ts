@@ -2,7 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { z, ZodError } from "zod";
 import { resolvePolicyBundle } from "./helpers";
-import { getOrgId } from "../auth";
+import { getOrgId, getSecurityMode } from "../auth";
 import { getToolRateLimiterSnapshot } from "../tool-dispatcher";
 
 const router = Router();
@@ -142,6 +142,21 @@ const router = Router();
       return { allowed: false, result: { error: policyCheck.reason }, policyCheck, trustCheck };
     }
 
+    const skillNameLower = skillName.toLowerCase();
+    const isPolicyBlocked = policyBundle.blockedTools.some(b => b.toLowerCase() === skillNameLower);
+    if (isPolicyBlocked) {
+      const policyCheck = { remoteAgentId, allowed: false, reason: `Skill "${skillName}" is blocked by a strict/block-enforcement policy` };
+      await storage.createAuditEvent({
+        action: "a2a_delegation_blocked",
+        objectType: "remote_agent",
+        objectId: remoteAgentId,
+        actorId: options.agentId,
+        actorType: "agent",
+        details: `A2A delegation blocked: skill ${skillName} is blocked by policy [${policyBundle.blockedToolsToPolicyIds?.[skillNameLower]?.join(",") || ""}]`,
+      });
+      return { allowed: false, result: { error: policyCheck.reason }, policyCheck, trustCheck };
+    }
+
     const rateCheck = checkA2aRateLimit(options.agentId, remoteAgentId);
     if (!rateCheck.allowed) {
       await storage.createAuditEvent({
@@ -172,7 +187,9 @@ const router = Router();
 
     const policyCheck = { remoteAgentId, allowed: true, reason: "Delegation permitted", trustTier: remoteAgent.trustTier, skill: skillName };
 
-    const simulateInterruption = (taskInput as Record<string, unknown>)._simulateInterruption as string | undefined;
+    const simulateInterruption = getSecurityMode() === "demo"
+      ? (taskInput as Record<string, unknown>)._simulateInterruption as string | undefined
+      : undefined;
     if (simulateInterruption === "input_required" || simulateInterruption === "auth_required") {
       const gate = await storage.createMcpElicitation({
         mode: simulateInterruption === "auth_required" ? "url" : "form",
@@ -224,16 +241,63 @@ const router = Router();
       };
     }
 
-    const delegationResult: Record<string, unknown> = {
-      status: "completed",
-      taskState: "TASK_STATE_COMPLETED",
-      skill: skillName,
-      remoteAgentId,
-      output: `Delegated "${skillName}" to remote agent successfully`,
-      executedAt: new Date().toISOString(),
+    if (!remoteAgent.agentCardUrl) {
+      const failResult = { status: "failed", skill: skillName, remoteAgentId, error: "Remote agent has no agentCardUrl configured" };
+      return { allowed: true, result: failResult, policyCheck, trustCheck, rateLimit: { remaining: rateCheck.remaining } };
+    }
+
+    const recordOutcome = (success: boolean, failureReason?: string) => {
+      const invocationCount = (remoteAgent.invocationCount ?? 0) + 1;
+      const successCount = (remoteAgent.successCount ?? 0) + (success ? 1 : 0);
+      storage.updateRemoteAgent(remoteAgent.id, {
+        invocationCount,
+        successCount,
+        trustScore: successCount / invocationCount,
+        lastInvokedAt: new Date(),
+        ...(failureReason ? { lastFailureReason: failureReason } : {}),
+      } as any).catch(() => {});
     };
 
-    return { allowed: true, result: delegationResult, policyCheck, trustCheck, rateLimit: { remaining: rateCheck.remaining } };
+    // Agent Card URLs conventionally point at the card document itself
+    // (e.g. .../.well-known/agent.json); the message endpoint lives at the
+    // same base with that suffix swapped out. Mirrors dag-execution-engine.ts's
+    // executeRemoteAgentNode, the "real" A2A client this proxy previously
+    // fabricated a result instead of calling.
+    const invokeUrl = remoteAgent.agentCardUrl.replace(/\/\.well-known\/agent\.json$/, "/message");
+    const messageText = JSON.stringify({ skill: skillName, input: taskInput });
+
+    try {
+      const httpRes = await fetch(invokeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: { role: "user", parts: [{ type: "text", text: messageText }] } }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!httpRes.ok) {
+        recordOutcome(false, `HTTP ${httpRes.status}`);
+        const failResult = { status: "failed", skill: skillName, remoteAgentId, error: `Remote agent returned ${httpRes.status}` };
+        return { allowed: true, result: failResult, policyCheck, trustCheck, rateLimit: { remaining: rateCheck.remaining } };
+      }
+      const data: any = await httpRes.json();
+      const text = data?.message?.parts?.find((p: any) => p?.type === "text")?.text
+        ?? data?.message?.parts?.[0]?.text
+        ?? (typeof data === "string" ? data : JSON.stringify(data));
+      recordOutcome(true);
+      const delegationResult: Record<string, unknown> = {
+        status: "completed",
+        taskState: "TASK_STATE_COMPLETED",
+        skill: skillName,
+        remoteAgentId,
+        output: text,
+        executedAt: new Date().toISOString(),
+        taskId: data?.taskId,
+      };
+      return { allowed: true, result: delegationResult, policyCheck, trustCheck, rateLimit: { remaining: rateCheck.remaining } };
+    } catch (err: any) {
+      recordOutcome(false, err.message);
+      const failResult = { status: "failed", skill: skillName, remoteAgentId, error: `A2A call failed: ${err.message}` };
+      return { allowed: true, result: failResult, policyCheck, trustCheck, rateLimit: { remaining: rateCheck.remaining } };
+    }
   }
 
   // POST /api/tool-proxy/a2a-delegate — A2A delegation through governance proxy

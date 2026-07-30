@@ -120,6 +120,18 @@ router.post("/api/v1/knowledge-bases/:id/search", requireApiKey, async (req: Req
     const kb = await storage.getKnowledgeBase(kbId);
     if (!kb) return res.status(404).json({ error: "Knowledge base not found" });
 
+    // A per-agent key may only query KBs actually linked to that agent — otherwise
+    // any exported agent's key could enumerate/query any org's KB by guessing its id.
+    // The admin fallback env key (no apiKeyAgentId) is already a trusted, unscoped
+    // credential by design, so it keeps unrestricted access.
+    const keyAgentId = (req as any).apiKeyAgentId as string | undefined;
+    if (keyAgentId) {
+      const links = await storage.getAgentKnowledgeBases(keyAgentId);
+      if (!links.some(l => l.knowledgeBaseId === kbId)) {
+        return res.status(404).json({ error: "Knowledge base not found" });
+      }
+    }
+
     const { searchKnowledgeBaseChunks } = await import("../embeddings");
     const results = await searchKnowledgeBaseChunks(
       kbId,

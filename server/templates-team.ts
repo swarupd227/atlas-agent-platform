@@ -15,8 +15,6 @@ export const teamTemplates = [
     defaultRiskTier: "HIGH",
     defaultAutonomyMode: "assisted",
     complianceCertifications: ["HIPAA", "HITRUST"],
-    deploymentCount: 12,
-    avgKpiDelivery: 87,
     estimatedTimeToProd: "3-5 weeks",
     toolsConfig: [
       { name: "patient_intake_system", description: "Reads patient intake forms and triage data from EHR", permissions: ["patients:read"] },
@@ -69,8 +67,6 @@ export const teamTemplates = [
     defaultRiskTier: "HIGH",
     defaultAutonomyMode: "manual",
     complianceCertifications: ["HIPAA", "HITRUST", "FDA-21CFR11"],
-    deploymentCount: 6,
-    avgKpiDelivery: 82,
     estimatedTimeToProd: "6-8 weeks",
     toolsConfig: [
       { name: "protocol_manager", description: "Manages clinical trial protocol documents and amendments", permissions: ["protocols:read", "protocols:write"] },
@@ -126,8 +122,6 @@ export const teamTemplates = [
     defaultRiskTier: "HIGH",
     defaultAutonomyMode: "assisted",
     complianceCertifications: ["SOC2", "SOX", "BSA-AML"],
-    deploymentCount: 18,
-    avgKpiDelivery: 91,
     estimatedTimeToProd: "4-6 weeks",
     toolsConfig: [
       { name: "id_verification_service", description: "Validates government-issued IDs and performs liveness checks", permissions: ["documents:verify"] },
@@ -180,8 +174,6 @@ export const teamTemplates = [
     defaultRiskTier: "HIGH",
     defaultAutonomyMode: "assisted",
     complianceCertifications: ["SOC2", "PCI-DSS", "BSA-AML"],
-    deploymentCount: 22,
-    avgKpiDelivery: 93,
     estimatedTimeToProd: "4-6 weeks",
     toolsConfig: [
       { name: "transaction_stream_monitor", description: "Monitors real-time transaction streams for anomalous patterns", permissions: ["transactions:read"] },
@@ -237,8 +229,6 @@ export const teamTemplates = [
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     complianceCertifications: ["ISO-9001", "IEC-62443"],
-    deploymentCount: 15,
-    avgKpiDelivery: 89,
     estimatedTimeToProd: "2-4 weeks",
     toolsConfig: [
       { name: "visual_inspection_system", description: "Performs automated visual inspection using computer vision models", permissions: ["inspection:read", "images:read"] },
@@ -289,8 +279,6 @@ export const teamTemplates = [
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
     complianceCertifications: ["ISO-9001", "IEC-62443"],
-    deploymentCount: 10,
-    avgKpiDelivery: 85,
     estimatedTimeToProd: "3-5 weeks",
     toolsConfig: [
       { name: "sensor_telemetry_reader", description: "Reads real-time sensor data from equipment IoT endpoints", permissions: ["telemetry:read"] },
@@ -346,8 +334,6 @@ export const teamTemplates = [
     defaultRiskTier: "HIGH",
     defaultAutonomyMode: "assisted",
     complianceCertifications: ["SOC2", "NAIC-MDL"],
-    deploymentCount: 20,
-    avgKpiDelivery: 90,
     estimatedTimeToProd: "3-5 weeks",
     toolsConfig: [
       { name: "fnol_intake_system", description: "Receives and processes first notice of loss submissions", permissions: ["claims:write"] },
@@ -400,8 +386,6 @@ export const teamTemplates = [
     defaultRiskTier: "HIGH",
     defaultAutonomyMode: "manual",
     complianceCertifications: ["SOC2", "NAIC-MDL"],
-    deploymentCount: 14,
-    avgKpiDelivery: 86,
     estimatedTimeToProd: "4-6 weeks",
     toolsConfig: [
       { name: "application_data_validator", description: "Validates and enriches insurance application data from multiple sources", permissions: ["applications:read"] },
@@ -457,8 +441,6 @@ export const teamTemplates = [
     defaultRiskTier: "LOW",
     defaultAutonomyMode: "autonomous",
     complianceCertifications: ["PCI-DSS", "SOC2"],
-    deploymentCount: 25,
-    avgKpiDelivery: 94,
     estimatedTimeToProd: "2-3 weeks",
     toolsConfig: [
       { name: "order_validation_engine", description: "Validates order details, payment authorization, and address verification", permissions: ["orders:read", "payments:verify"] },
@@ -510,8 +492,6 @@ export const teamTemplates = [
     defaultRiskTier: "LOW",
     defaultAutonomyMode: "autonomous",
     complianceCertifications: ["PCI-DSS", "SOC2"],
-    deploymentCount: 19,
-    avgKpiDelivery: 91,
     estimatedTimeToProd: "2-3 weeks",
     toolsConfig: [
       { name: "inquiry_router", description: "Routes customer inquiries to appropriate handling agents based on intent classification", permissions: ["inquiries:read"] },

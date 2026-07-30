@@ -1387,6 +1387,10 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     }
 
     const scores: Record<string, number> = {};
+    // Real per-metric thresholds, keyed by metric name -- used below for gate
+    // enforcement so it doesn't fall back to a hardcoded 0.5 that would
+    // silently accept scores below a metric's actually configured bar.
+    const metricThresholdByName = new Map<string, number>();
     // Per-metric reasoning keyed by metric name — persisted in child span JSONB
     const metricReasonings: Record<string, { score: number; pass: boolean; reason: string; threshold: number; evaluationSteps?: string[] }> = {};
     // Per-metric duration tracked in a proper Map — no `any` mutation
@@ -1433,6 +1437,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
             : (1 - metricResult.confidence) * (metric.threshold || 0.5);
           const roundedScore = Math.round(score * 1000) / 1000;
           scores[metric.name] = roundedScore;
+          metricThresholdByName.set(metric.name, metric.threshold || 0.5);
           metricReasonings[metric.name] = {
             score: roundedScore,
             pass: metricResult.isPassed,
@@ -1468,7 +1473,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       if (typeof score !== "number") continue;
       const bucket = perMetricAgg.get(metric) ?? { total: 0, passed: 0 };
       bucket.total++;
-      if (score >= 0.5) bucket.passed++;
+      if (score >= (metricThresholdByName.get(metric) ?? 0.5)) bucket.passed++;
       perMetricAgg.set(metric, bucket);
     }
 
@@ -1741,7 +1746,7 @@ export function startWorker(intervalMs = 2000) {
           } else if (job.type === "dag_resume_scan") {
             result = await processDagResumeScan(job);
           } else {
-            result = { message: `Unknown job type: ${job.type}` };
+            throw new Error(`Unknown job type: ${job.type}`);
           }
           await storage.completeJob(job.id, result);
           jobEvents.emit("completed", { jobId: job.id, agentId: job.agentId, result });

@@ -397,9 +397,10 @@ export default function Optimization() {
 
   const rollbackMutation = useMutation({
     mutationFn: async (id: string) => {
-      await apiRequest("POST", `/api/patches/${id}/simulate`);
+      await apiRequest("PATCH", `/api/patches/${id}`, { status: "rolled_back" });
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patches"] });
       queryClient.invalidateQueries({
         queryKey: ["/api/remediation-timeline"],
       });

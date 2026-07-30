@@ -1110,6 +1110,12 @@ export async function fitchRWLiveRunHandler(req: Request, res: Response): Promis
     // This is set from the final_analysis event captured during runAgentOnce and used verbatim
     // in the pipeline_complete memoText field, satisfying the requirement for the real memo text.
     let memoAgentRawOutput = "";
+    // Tracks real per-agent success so pipeline_complete can't unconditionally report COMPLETE
+    // when one or more of the 4 agents actually failed (mirrors the halt-on-failure pattern in
+    // server/advantive-support-live-run.ts, adapted to also record which agent(s) failed).
+    let allAgentsSucceeded = true;
+    let succeededAgentCount = 0;
+    const failedAgentNames: string[] = [];
 
     for (const def of FITCH_RW_AGENT_DEFS) {
       if (clientDisconnected) break;
@@ -1117,6 +1123,8 @@ export async function fitchRWLiveRunHandler(req: Request, res: Response): Promis
       const agentId = _fitchRWAgentIdByKey[def.key];
       if (!agentId) {
         sse(res, "agent_error", { agentName: def.name, error: "Agent not found after setup" });
+        allAgentsSucceeded = false;
+        failedAgentNames.push(def.name);
         continue;
       }
 
@@ -1198,6 +1206,22 @@ export async function fitchRWLiveRunHandler(req: Request, res: Response): Promis
         resultSummary: parsed,
       });
 
+      if (!runSuccess) {
+        allAgentsSucceeded = false;
+        failedAgentNames.push(def.name);
+        // Halt the pipeline on a real agent failure, mirroring the break-on-failure pattern in
+        // advantive-support-live-run.ts — downstream agents (e.g. the memo agent) synthesize
+        // upstream results, so continuing on a failed step would produce a misleading memo.
+        sse(res, "agent_error", {
+          agentId,
+          agentName: def.name,
+          key:       def.key,
+          message:   resultText || `${def.name} failed`,
+        });
+        break;
+      }
+      succeededAgentCount++;
+
       if (!clientDisconnected) await new Promise<void>(r => setTimeout(r, 500));
     }
 
@@ -1235,11 +1259,16 @@ export async function fitchRWLiveRunHandler(req: Request, res: Response): Promis
     }
 
     sse(res, "pipeline_complete", {
-      message:        "All 4 Fitch RW agents completed — Rating Watch pipeline run finished",
-      scenario:       `${TARGET_ISSUER} Rating Watch Negative screening`,
-      summaries:      resultSummaries,
+      message: allAgentsSucceeded
+        ? "All 4 Fitch RW agents completed — Rating Watch pipeline run finished"
+        : `Fitch RW pipeline did not complete — ${failedAgentNames.join(", ")} failed (${succeededAgentCount}/${FITCH_RW_AGENT_DEFS.length} agents succeeded). Memo below is partial/unverified and must not be treated as a completed Rating Watch action.`,
+      scenario:        `${TARGET_ISSUER} Rating Watch Negative screening`,
+      summaries:       resultSummaries,
       memoText,
-      pipelineStatus: "COMPLETE",
+      pipelineStatus:  allAgentsSucceeded ? "COMPLETE" : "FAILED",
+      agentsSucceeded: succeededAgentCount,
+      totalAgents:     FITCH_RW_AGENT_DEFS.length,
+      failedAgents:    failedAgentNames,
     });
   } catch (err: unknown) {
     sse(res, "error", { message: err instanceof Error ? err.message : "Pipeline error" });

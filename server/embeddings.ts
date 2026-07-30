@@ -54,6 +54,12 @@ export async function ensurePgVector(): Promise<boolean> {
 }
 
 export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
+  if (!openai) {
+    throw new Error(
+      "OPENAI_API_KEY not configured — embeddings unavailable. Set OPENAI_API_KEY to enable semantic search.",
+    );
+  }
+
   const batchSize = 100;
   const allEmbeddings: number[][] = [];
 
@@ -97,13 +103,17 @@ export async function searchKnowledgeBaseChunks(
   topK: number = 5,
   scoreThreshold: number = 0.3,
   callerRole?: RoleId | null,
-): Promise<Array<{ id: string; content: string; similarity: number; metadata: any }>> {
+): Promise<Array<{ id: string; content: string; similarity: number | null; metadata: any }>> {
   const available = await ensurePgVector();
   const allowedLevels = getAllowedKbSensitivityLevels(callerRole);
 
   if (!available) {
+    // pgvector is unavailable, so this is a recency-ordered fallback with no
+    // actual vector comparison behind it. similarity is explicitly NULL here
+    // (not a fake constant like 0.5) so callers/UIs don't mistake a filler
+    // value for a real relevance score.
     const fallback = await db.execute(sql`
-      SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id, 0.5 as similarity
+      SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id, NULL::real as similarity
       FROM knowledge_chunks c
       LEFT JOIN knowledge_sources s ON s.id = c.source_id
       WHERE c.knowledge_base_id = ${knowledgeBaseId}

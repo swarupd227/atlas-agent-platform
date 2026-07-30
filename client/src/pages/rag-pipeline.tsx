@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -235,16 +235,69 @@ export default function RagPipeline() {
     queryKey: ["/api/rag-pipelines"],
   });
 
+  const [currentPipelineId, setCurrentPipelineId] = useState<string | null>(null);
+  const [loadedPipelineIndustry, setLoadedPipelineIndustry] = useState<string | null>(null);
+
   const savePipelineMutation = useMutation({
     mutationFn: async (data: Record<string, unknown>) => {
       const res = await apiRequest("POST", "/api/rag-pipelines", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (created: Record<string, unknown>) => {
+      setCurrentPipelineId(created.id as string);
       queryClient.invalidateQueries({ queryKey: ["/api/rag-pipelines"] });
       toast({ title: "Pipeline configuration saved" });
     },
   });
+
+  const updatePipelineMutation = useMutation({
+    mutationFn: async ({ id, updates }: { id: string; updates: Record<string, unknown> }) => {
+      const res = await apiRequest("PATCH", `/api/rag-pipelines/${id}`, updates);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rag-pipelines"] });
+    },
+  });
+
+  // Persist knowledge source / strategy / chunk changes to a real rag_pipelines
+  // row instead of only local state -- previously every action here (add
+  // source, configure strategy, toggle active) showed a success toast
+  // ("is now syncing", "Strategy configured") but nothing survived a refresh.
+  function persistPipeline(overrides: { sources?: KnowledgeSource[]; strategies?: RetrievalStrategy[]; chunkStrategies?: ChunkStrategy[] }) {
+    const payload = {
+      name: `${currentIndustry?.label || "Cross-Industry"} RAG Pipeline`,
+      industry: industryId,
+      knowledgeSources: overrides.sources ?? sources,
+      retrievalStrategies: overrides.strategies ?? strategies,
+      chunkStrategies: overrides.chunkStrategies ?? (chunkStrategies[industryId] || industryChunks),
+      status: "active",
+    };
+    if (currentPipelineId) {
+      updatePipelineMutation.mutate({ id: currentPipelineId, updates: payload });
+    } else {
+      savePipelineMutation.mutate(payload);
+    }
+  }
+
+  // Load this industry's real persisted pipeline (if one exists) into local
+  // state instead of always starting from the DEFAULT_STRATEGIES/empty
+  // sources -- runs once per industry switch, not on every pipelines refetch.
+  useEffect(() => {
+    if (isLoading || loadedPipelineIndustry === industryId) return;
+    const existing = pipelines.find((p) => (p as any).industry === industryId) as Record<string, any> | undefined;
+    if (existing) {
+      setCurrentPipelineId(existing.id);
+      if (Array.isArray(existing.knowledgeSources)) setSources(existing.knowledgeSources);
+      if (Array.isArray(existing.retrievalStrategies) && existing.retrievalStrategies.length > 0) setStrategies(existing.retrievalStrategies);
+      if (Array.isArray(existing.chunkStrategies) && existing.chunkStrategies.length > 0) {
+        setChunkStrategies((prev) => ({ ...prev, [industryId]: existing.chunkStrategies }));
+      }
+    } else {
+      setCurrentPipelineId(null);
+    }
+    setLoadedPipelineIndustry(industryId);
+  }, [pipelines, isLoading, industryId, loadedPipelineIndustry]);
 
   const industrySources = useMemo(() => {
     const base = INDUSTRY_SOURCES[industryId] || INDUSTRY_SOURCES.insurance;
@@ -297,7 +350,9 @@ export default function RagPipeline() {
       qualityScore: 70,
       status: "syncing",
     };
-    setSources((prev) => [...prev, src]);
+    const updated = [...sources, src];
+    setSources(updated);
+    persistPipeline({ sources: updated });
     setAddSourceOpen(false);
     setNewSourceName("");
     setNewSourceDesc("");
@@ -316,21 +371,21 @@ export default function RagPipeline() {
 
   function saveStrategyConfig() {
     if (!configStrategy) return;
-    setStrategies((prev) =>
-      prev.map((s) =>
-        s.id === configStrategy.id
-          ? { ...s, topK: configTopK, confidenceThreshold: configThreshold, maxLatency: configMaxLatency, rerankingEnabled: configReranking }
-          : s
-      )
+    const updated = strategies.map((s) =>
+      s.id === configStrategy.id
+        ? { ...s, topK: configTopK, confidenceThreshold: configThreshold, maxLatency: configMaxLatency, rerankingEnabled: configReranking }
+        : s
     );
+    setStrategies(updated);
+    persistPipeline({ strategies: updated });
     setConfigDialogOpen(false);
     toast({ title: "Strategy configured", description: `${configStrategy.name} settings updated` });
   }
 
   function toggleStrategyActive(strategyId: string) {
-    setStrategies((prev) =>
-      prev.map((s) => (s.id === strategyId ? { ...s, active: !s.active } : s))
-    );
+    const updated = strategies.map((s) => (s.id === strategyId ? { ...s, active: !s.active } : s));
+    setStrategies(updated);
+    persistPipeline({ strategies: updated });
   }
 
   function toggleChunkActive(chunkId: string) {
@@ -338,6 +393,7 @@ export default function RagPipeline() {
     const current = chunkStrategies[industryId] || base;
     const updated = current.map((c) => (c.id === chunkId ? { ...c, active: !c.active } : c));
     setChunkStrategies((prev) => ({ ...prev, [industryId]: updated }));
+    persistPipeline({ chunkStrategies: updated });
   }
 
   return (

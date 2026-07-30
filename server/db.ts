@@ -1337,6 +1337,14 @@ export async function runStartupMigrations() {
       ALTER TABLE team_blueprint_nodes ADD COLUMN IF NOT EXISTS ref_knowledge_base_id VARCHAR;
     `);
 
+    // Deploy-time customization (cost ceiling, quality floor, risk tolerance,
+    // max latency, data sources, additional skills) collected in wizards like
+    // the template "Customize & Deploy" flow -- previously collected and
+    // shown in a summary but never persisted anywhere.
+    await client.query(`
+      ALTER TABLE deployments ADD COLUMN IF NOT EXISTS customization JSONB;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

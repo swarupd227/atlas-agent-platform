@@ -26,6 +26,15 @@ export interface LLMCompletionOptions {
   maxTokens?: number;
   responseFormat?: "text" | "json";
   tools?: CanonicalToolDefinition[];
+  /**
+   * The provider name the caller originally asked for (e.g. from
+   * agent/template config), before any getProvider() substitution. Pass this
+   * through so provider implementations can compare it against the provider
+   * that actually runs and surface a silent substitution (see getProvider())
+   * via LLMCompletionResult.requestedProvider/actualProvider/providerFallback
+   * instead of only a server-side console.warn.
+   */
+  requestedProvider?: string;
 }
 
 export interface LLMCompletionResult {
@@ -34,6 +43,17 @@ export interface LLMCompletionResult {
   tokensUsed: { prompt: number; completion: number; total: number };
   costUsd: number;
   rawAssistantMessage?: any;
+  /** The provider that actually served this completion (e.g. "openai", "anthropic"). */
+  actualProvider?: string;
+  /**
+   * The provider originally requested (from LLMCompletionOptions.requestedProvider),
+   * when the caller supplied one. Compare against actualProvider to detect a
+   * silent substitution, e.g. an unimplemented provider ("google",
+   * "azure_openai", "self_hosted") that getProvider() falls back to OpenAI for.
+   */
+  requestedProvider?: string;
+  /** True when requestedProvider was supplied and differs from actualProvider. */
+  providerFallback?: boolean;
 }
 
 export interface LLMEmbeddingResult {
@@ -70,7 +90,7 @@ export interface LLMProviderInfo {
 // version is recorded in run provenance and exposed at
 // GET /api/llm-providers/pricing. Rates are provider list prices per 1k tokens.
 // ---------------------------------------------------------------------------
-export const PRICE_TABLE_VERSION = "2026-07-06";
+export const PRICE_TABLE_VERSION = "2026-07-29";
 
 // Conservative fallback when a model id is missing from the table — better to
 // overestimate spend than silently record $0 (rates ~ Claude Sonnet tier).
@@ -92,6 +112,7 @@ const OPENAI_EMBEDDING_MODELS: LLMProviderInfo["embeddingModels"] = [
 ];
 
 const ANTHROPIC_MODELS: LLMProviderInfo["models"] = [
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", contextWindow: 200000, costPer1kInput: 0.001, costPer1kOutput: 0.005, supportsToolCalling: true, supportsJson: true },
   { id: "claude-sonnet-4-5", name: "Claude Sonnet 4", contextWindow: 200000, costPer1kInput: 0.003, costPer1kOutput: 0.015, supportsToolCalling: true, supportsJson: true },
   { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", contextWindow: 200000, costPer1kInput: 0.003, costPer1kOutput: 0.015, supportsToolCalling: true, supportsJson: true },
   { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", contextWindow: 200000, costPer1kInput: 0.0008, costPer1kOutput: 0.004, supportsToolCalling: true, supportsJson: true },
@@ -268,6 +289,26 @@ function cbRecordFailure(providerName: string): void {
   }
 }
 
+/**
+ * Builds the actualProvider/requestedProvider/providerFallback fields for a
+ * LLMCompletionResult. requestedProvider/providerFallback are only included
+ * when the caller supplied LLMCompletionOptions.requestedProvider, so a
+ * silent getProvider() substitution (e.g. "google" -> OpenAI) is visible on
+ * the result instead of only a server-side console.warn.
+ */
+function buildProviderResultFields(
+  actualProvider: string,
+  options?: LLMCompletionOptions,
+): Pick<LLMCompletionResult, "actualProvider" | "requestedProvider" | "providerFallback"> {
+  const requestedProvider = options?.requestedProvider;
+  if (!requestedProvider) return { actualProvider };
+  return {
+    actualProvider,
+    requestedProvider,
+    providerFallback: requestedProvider !== actualProvider,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Provider interface
 // ---------------------------------------------------------------------------
@@ -379,6 +420,7 @@ class OpenAIProvider implements LLMProvider {
       tokensUsed: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
       costUsd: estimateCost(promptTokens, completionTokens, OPENAI_MODELS, model),
       rawAssistantMessage: choice?.message,
+      ...buildProviderResultFields(this.providerName, options),
     };
   }
 
@@ -500,6 +542,7 @@ class OpenAIProvider implements LLMProvider {
           function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
         })),
       },
+      ...buildProviderResultFields(this.providerName, options),
     };
   }
 
@@ -689,6 +732,7 @@ class AnthropicProvider implements LLMProvider {
           function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
         })),
       },
+      ...buildProviderResultFields(this.providerName, options),
     };
   }
 
@@ -801,6 +845,7 @@ class AnthropicProvider implements LLMProvider {
             function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
           })),
         },
+        ...buildProviderResultFields(this.providerName, options),
       };
     } catch (err) {
       cbRecordFailure(this.providerName);
@@ -840,6 +885,17 @@ class AnthropicProvider implements LLMProvider {
 
 const providerInstances: Record<string, LLMProvider> = {};
 
+/**
+ * Resolves a provider instance by name. For unimplemented providers
+ * ("google", "azure_openai", "self_hosted") or unknown names, this silently
+ * substitutes the OpenAI provider instance and only logs a console.warn --
+ * the caller gets back an LLMProvider whose providerName is "openai", not
+ * the name it asked for. Callers that care about this substitution being
+ * visible to the eventual result (not just server logs) should pass the
+ * originally-requested name via LLMCompletionOptions.requestedProvider on
+ * the subsequent complete()/streamComplete() call, which populates
+ * LLMCompletionResult.requestedProvider/actualProvider/providerFallback.
+ */
 export function getProvider(providerName: string): LLMProvider {
   const resolvedName = providerName || "openai";
   if (!providerInstances[resolvedName]) {

@@ -395,38 +395,13 @@ const router = Router();
             ...regulatoryConstraints.map(r => ({ ...r, category: "regulatory" })),
             ...escalationPaths.map(e => ({ ...e, category: "escalation" })),
           ],
-          evalResults: {
-            before: [
-              { name: "Core Accuracy Suite", passRate: 87.2, totalCases: 120 },
-              { name: "Safety & Compliance", passRate: 94.5, totalCases: 45 },
-            ],
-            after: [
-              { name: "Core Accuracy Suite", passRate: 91.8, totalCases: 120 },
-              { name: "Safety & Compliance", passRate: 96.1, totalCases: 45 },
-            ],
-          },
-          shadowReplayResults: {
-            divergenceCount: 3,
-            totalReplays: 150,
-            matchRate: 98.0,
-            samples: [
-              { input: "Summarize Q4 earnings report", expected: "Revenue up 12% YoY", actual: "Revenue increased 12.3% year-over-year", matched: true },
-              { input: "Flag compliance risks in contract", expected: "2 risks identified", actual: "3 risks identified (1 new edge case)", matched: false },
-              { input: "Generate customer follow-up email", expected: "Professional tone, 3 action items", actual: "Professional tone, 3 action items", matched: true },
-            ],
-          },
-          blastRadius: {
-            affectedOutcomes: [
-              { name: agent.outcomeId ? "Primary Outcome Contract" : "Customer Support Automation", riskTier: agent.riskTier || "MEDIUM", kpiImpact: "Success rate +4.6%" },
-              { name: "Cost Optimization Program", riskTier: "LOW", kpiImpact: "Cost per run -8%" },
-            ],
-            affectedSegments: [
-              { name: "Enterprise Tier", userCount: 2400, revenueImpact: "$12K/mo at risk" },
-              { name: "Growth Tier", userCount: 8900, revenueImpact: "$4.2K/mo at risk" },
-            ],
-            totalUsersAffected: 11300,
-            riskSummary: "Change affects 2 outcome contracts across 2 customer segments. Primary risk: regression in edge-case compliance detection for Enterprise tier.",
-          },
+          // No evalResults/shadowReplayResults/blastRadius here: this approval
+          // is created at agent-creation time, before the auto-scaffolded eval
+          // suite (created below) has ever run. There is no real "before"
+          // version and no real replay/blast-radius data to report yet --
+          // fabricating plausible-looking numbers previously misled reviewers
+          // into approving against evidence that didn't exist. A reviewer can
+          // check the real eval suite (evalSuiteId above) once it has run.
         },
       });
 
@@ -482,14 +457,19 @@ const router = Router();
 
   router.post("/api/agents/bulk-action", async (req, res) => {
     try {
+      // rotate_secrets and export_audit were removed: neither has a real
+      // per-agent mechanism backing it (no secret-rotation vault operation
+      // scoped to an agent, no per-agent audit-bundle export) -- they
+      // previously only wrote an audit-log sentence and did nothing.
       const bulkActionSchema = z.object({
-        action: z.enum(["regression_eval", "freeze_deployments", "rotate_secrets", "export_audit", "delete"]),
+        action: z.enum(["regression_eval", "freeze_deployments", "delete"]),
         agentIds: z.array(z.string()).min(1),
       });
       const { action, agentIds } = bulkActionSchema.parse(req.body);
 
       const allAgents = await storage.getAgents(getOrgId(req));
       const targetAgents = allAgents.filter(a => agentIds.includes(a.id));
+      const allEvalSuites = action === "regression_eval" ? await storage.getEvalSuites() : [];
 
       for (const agent of targetAgents) {
         let actionDescription = "";
@@ -497,13 +477,29 @@ const router = Router();
           actionDescription = `Agent "${agent.name}" deleted via bulk action`;
           await storage.deleteAgent(agent.id);
         } else if (action === "regression_eval") {
-          actionDescription = `Regression eval triggered for agent "${agent.name}"`;
+          const suite = allEvalSuites.find(s => s.agentId === agent.id);
+          if (suite) {
+            const job = await storage.createJob({
+              type: "eval_baseline",
+              status: "queued",
+              agentId: agent.id,
+              payload: { agentId: agent.id, suiteId: suite.id, blueprintId: null },
+              progress: 0,
+            });
+            actionDescription = `Regression eval job ${job.id} enqueued for agent "${agent.name}" (suite ${suite.id})`;
+          } else {
+            actionDescription = `Regression eval skipped for agent "${agent.name}": no eval suite configured`;
+          }
         } else if (action === "freeze_deployments") {
+          await storage.createAuditEvent({
+            actorType: "user",
+            actorId: "ops_user",
+            action: "deployment_freeze",
+            objectType: "agent",
+            objectId: agent.id,
+            details: JSON.stringify({ scope: "agent", targetId: agent.id, reason: "Bulk action" }),
+          });
           actionDescription = `Deployments frozen for agent "${agent.name}"`;
-        } else if (action === "rotate_secrets") {
-          actionDescription = `Secret rotation initiated for agent "${agent.name}"`;
-        } else if (action === "export_audit") {
-          actionDescription = `Audit bundle export requested for agent "${agent.name}"`;
         }
 
         const bulkAgentTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
@@ -2120,12 +2116,41 @@ const router = Router();
     res.json(deployments);
   });
 
+  // Freeze/freeze-status (above) previously only recorded that something was
+  // frozen -- nothing ever checked it before create/promote/routing actions,
+  // so a freeze was purely advisory. This mirrors freeze-status's own
+  // org-wide-then-agent-scoped lookup so the two stay consistent.
+  async function checkDeploymentFreeze(orgId: string | undefined, agentId: string | undefined): Promise<{ frozen: boolean; reason?: string; scope?: string }> {
+    const auditEvents = await storage.getAuditEvents(orgId);
+    const freezeEvents = auditEvents.filter(e => e.action === "deployment_freeze" || e.action === "deployment_unfreeze");
+    const statusMap: Record<string, { frozen: boolean; reason?: string; scope?: string }> = {};
+    for (const evt of freezeEvents) {
+      try {
+        const details = JSON.parse(evt.details || "{}");
+        const key = details.targetId || details.scope || "unknown";
+        if (evt.action === "deployment_freeze") {
+          statusMap[key] = { frozen: true, reason: details.reason, scope: details.scope };
+        } else {
+          delete statusMap[key];
+        }
+      } catch {}
+    }
+    if (statusMap["org"]?.frozen) return statusMap["org"];
+    if (agentId && statusMap[agentId]?.frozen) return statusMap[agentId];
+    return { frozen: false };
+  }
+
   router.post("/api/deployments", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
       const bypassOntologyCheck = req.body.bypassOntologyCheck === true;
       const { bypassOntologyCheck: _boc, organizationId: _orgIdFromBody, ...deploymentBody } = req.body;
       const data = insertDeploymentSchema.parse(deploymentBody);
       const env = data.environment || "staging";
+
+      const freezeCheck = await checkDeploymentFreeze(getOrgId(req), data.agentId);
+      if (freezeCheck.frozen) {
+        return res.status(423).json({ message: `Deployments are frozen${freezeCheck.reason ? `: ${freezeCheck.reason}` : ""}`, frozen: true });
+      }
 
       const agent = await storage.getAgent(data.agentId, getOrgId(req));
 
@@ -2419,7 +2444,7 @@ const router = Router();
 
       if (req.body.status === "active" && existing.status !== "active") {
         const agent = await storage.getAgent(existing.agentId, getOrgId(req));
-        const srcTplId = (agent?.runtimeConfig as any)?.sourceTemplateId;
+        const srcTplId = agent?.sourceTemplateId || (agent?.runtimeConfig as any)?.sourceTemplateId;
         if (srcTplId) {
           await storage.incrementTemplateDeployments(srcTplId);
         }
@@ -2519,6 +2544,11 @@ const router = Router();
     try {
       const source = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!source) return res.status(404).json({ message: "Deployment not found" });
+
+      const promoteFreezeCheck = await checkDeploymentFreeze(getOrgId(req), source.agentId);
+      if (promoteFreezeCheck.frozen) {
+        return res.status(423).json({ message: `Deployments are frozen${promoteFreezeCheck.reason ? `: ${promoteFreezeCheck.reason}` : ""}`, frozen: true });
+      }
 
       const envOrder = ["staging", "pilot", "prod"];
       const currentIdx = envOrder.indexOf(source.environment);
@@ -2984,6 +3014,11 @@ const router = Router();
       const deployment = await storage.getDeployment(req.params.id as string, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
+      const routingFreezeCheck = await checkDeploymentFreeze(getOrgId(req), deployment.agentId);
+      if (routingFreezeCheck.frozen) {
+        return res.status(423).json({ message: `Deployments are frozen${routingFreezeCheck.reason ? `: ${routingFreezeCheck.reason}` : ""}`, frozen: true });
+      }
+
       const { shadowEnabled, canaryPercent, action } = req.body;
       const updateData: Record<string, unknown> = {};
 
@@ -3118,7 +3153,7 @@ const router = Router();
 
       if (updateData.status === "active" && deployment.status !== "active") {
         const agent = await storage.getAgent(deployment.agentId, getOrgId(req));
-        const srcTplId = (agent?.runtimeConfig as any)?.sourceTemplateId;
+        const srcTplId = agent?.sourceTemplateId || (agent?.runtimeConfig as any)?.sourceTemplateId;
         if (srcTplId) {
           await storage.incrementTemplateDeployments(srcTplId);
         }
@@ -3529,9 +3564,21 @@ const router = Router();
 
     const caseResults = await storage.getEvalCaseResults(latestRun.id);
     const failingCases = caseResults.filter(r => !r.passed);
-    res.json({ run: latestRun, caseResults, failingCases });
+    // Runs surfaced here are always produced by the self-graded/simulated
+    // POST /api/skills/:id/eval/run flow (see its docstring) -- flag that
+    // explicitly so the UI doesn't present it as a real sandboxed test run.
+    res.json({ run: latestRun, caseResults, failingCases, mode: "simulated", selfGraded: true });
   });
 
+  // Self-graded / simulated eval: for each test case, a single LLM call is asked to
+  // *imagine* how the skill would behave for the given input and then judge its own
+  // imagined output against the expected criteria. The skill's real instructions are
+  // never actually injected into a live agent run and no tools are dispatched, so this
+  // is NOT the same as the real, sandboxed execution done by
+  // POST /api/ai/skill-test-sandbox (server/routes/skills.ts), which runs the scenario
+  // against the live model with the real skill-context block and grades that real
+  // output. Callers/UI must treat this endpoint's results as simulated, not as a
+  // verified sandbox run.
   router.post("/api/skills/:id/eval/run", async (req, res) => {
     try {
       const skillId = req.params.id;
@@ -3683,7 +3730,16 @@ Respond in JSON format:
       });
 
       const caseResults = await storage.getEvalCaseResults(run.id);
-      res.json({ run, caseResults, failingCases: caseResults.filter(r => !r.passed) });
+      res.json({
+        run,
+        caseResults,
+        failingCases: caseResults.filter(r => !r.passed),
+        // Each case is graded by asking the model to simulate the skill's behavior and
+        // then judge that simulated output -- no real skill execution or tool dispatch
+        // occurs. Distinct from the real sandbox run at POST /api/ai/skill-test-sandbox.
+        mode: "simulated",
+        selfGraded: true,
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message || "Failed to run skill eval" });
     }

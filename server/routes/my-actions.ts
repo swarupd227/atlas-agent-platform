@@ -4,6 +4,7 @@ import { db } from "../db";
 import { eq, inArray } from "drizzle-orm";
 import { agentAlerts, agents, improvementRecommendations, policyExceptions, mcpElicitations } from "@shared/schema";
 import { getOrgId } from "../auth";
+import { getRequestRole, hasPermission } from "../permissions";
 
 const router = Router();
 
@@ -522,6 +523,13 @@ router.post("/api/my-actions/decide", async (req, res) => {
 
     if (!source || !sourceId || !decision) {
       return res.status(400).json({ error: "source, sourceId, and decision are required" });
+    }
+
+    if (source === "approval" || source === "governance" || source === "autonomy") {
+      const role = getRequestRole(req);
+      if (!hasPermission(role, "approve_changes")) {
+        return res.status(403).json({ error: "Insufficient permissions to decide on this item" });
+      }
     }
 
     if (source === "approval") {

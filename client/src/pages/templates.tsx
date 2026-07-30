@@ -593,10 +593,6 @@ export default function Templates() {
                         <Users className="w-3 h-3" />
                         {template.deploymentCount || 0} deployments
                       </span>
-                      <span className="flex items-center gap-1" data-testid={`text-kpi-${template.id}`}>
-                        <BarChart3 className="w-3 h-3" />
-                        {template.avgKpiDelivery || 0}% KPI
-                      </span>
                       <span className="flex items-center gap-1 ml-auto">
                         <Clock className="w-3 h-3" />
                         {template.estimatedTimeToProd || "2-4 wks"}
@@ -711,7 +707,6 @@ export default function Templates() {
           </DialogHeader>
           {(() => {
             const showCompliance = compareTemplates.some(t => (t.complianceCertifications || []).length > 0);
-            const showAvgKpi = compareTemplates.some(t => (t.avgKpiDelivery || 0) > 0);
             const showMonthlyCost = compareTemplates.some(t => !!(t.costProfile as any)?.monthlyEstimate);
             const showComputeTier = compareTemplates.some(t => !!(t.costProfile as any)?.computeTier);
             const showApiCalls = compareTemplates.some(t => !!(t.costProfile as any)?.apiCallsPerMonth);
@@ -781,24 +776,6 @@ export default function Templates() {
                     <td key={t.id} className="p-2 text-xs font-medium">{t.deploymentCount || 0}</td>
                   ))}
                 </tr>
-                {showAvgKpi && (
-                  <tr className="border-b">
-                    <td className="p-2 text-xs text-muted-foreground">Avg KPI</td>
-                    {compareTemplates.map((t) => (
-                      <td key={t.id} className="p-2">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 bg-muted rounded-full h-1.5">
-                            <div
-                              className={`h-1.5 rounded-full ${(t.avgKpiDelivery || 0) >= 80 ? "bg-green-600 dark:bg-green-500" : (t.avgKpiDelivery || 0) >= 60 ? "bg-yellow-600 dark:bg-yellow-500" : "bg-red-600 dark:bg-red-500"}`}
-                              style={{ width: `${Math.min(100, t.avgKpiDelivery || 0)}%` }}
-                            />
-                          </div>
-                          <span className="text-xs font-medium">{t.avgKpiDelivery || 0}%</span>
-                        </div>
-                      </td>
-                    ))}
-                  </tr>
-                )}
                 <tr className="border-b">
                   <td className="p-2 text-xs text-muted-foreground">Time to Prod</td>
                   {compareTemplates.map((t) => (
@@ -1019,18 +996,6 @@ function TemplateDetail({
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground flex items-center gap-1"><Users className="w-3 h-3" /> Deployments</span>
                 <span className="font-medium">{template.deploymentCount || 0}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground flex items-center gap-1"><BarChart3 className="w-3 h-3" /> Avg KPI Delivery</span>
-                  <span className="font-medium">{template.avgKpiDelivery || 0}%</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-1.5">
-                  <div
-                    className={`h-1.5 rounded-full ${(template.avgKpiDelivery || 0) >= 80 ? "bg-green-600 dark:bg-green-500" : (template.avgKpiDelivery || 0) >= 60 ? "bg-yellow-600 dark:bg-yellow-500" : "bg-red-600 dark:bg-red-500"}`}
-                    style={{ width: `${Math.min(100, template.avgKpiDelivery || 0)}%` }}
-                  />
-                </div>
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" /> Time to Production</span>

@@ -723,6 +723,9 @@ export default function TemplateDetail() {
         status: "pending",
         version: "1.0.0",
         shadowEnabled: true,
+        // Collected across the Customize & Deploy wizard's steps -- previously
+        // computed and shown in the step-4 summary but never sent here.
+        customization,
       });
       return res.json();
     },

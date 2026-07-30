@@ -7,6 +7,7 @@ import {
   insertOversightDecisionSchema,
 } from "@shared/schema";
 import { callClaude, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
+import { getRequestRole, hasPermission } from "../permissions";
 
 const router = Router();
 
@@ -26,6 +27,10 @@ const router = Router();
   });
 
   router.post("/api/autonomy-profiles", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!hasPermission(role, "manage_autonomy")) {
+      return res.status(403).json({ error: "Insufficient permissions to create an autonomy profile" });
+    }
     try {
       const data = insertAutonomyProfileSchema.parse(req.body);
       const created = await storage.createAutonomyProfile(data);
@@ -37,6 +42,10 @@ const router = Router();
   });
 
   router.patch("/api/autonomy-profiles/:id", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!hasPermission(role, "manage_autonomy")) {
+      return res.status(403).json({ error: "Insufficient permissions to modify an autonomy profile" });
+    }
     try {
       const updated = await storage.updateAutonomyProfile(req.params.id, req.body);
       if (!updated) return res.status(404).json({ error: "Not found" });
@@ -45,6 +54,10 @@ const router = Router();
   });
 
   router.delete("/api/autonomy-profiles/:id", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!hasPermission(role, "manage_autonomy")) {
+      return res.status(403).json({ error: "Insufficient permissions to delete an autonomy profile" });
+    }
     try {
       const ok = await storage.deleteAutonomyProfile(req.params.id);
       if (!ok) return res.status(404).json({ error: "Not found" });
@@ -655,6 +668,10 @@ Return ONLY valid JSON.`,
   });
 
   router.post("/api/autonomy/calibration-proposals/:id/review", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!hasPermission(role, "manage_autonomy")) {
+      return res.status(403).json({ error: "Insufficient permissions to review a calibration proposal" });
+    }
     try {
       const { decision, reviewNote, reviewedBy } = req.body;
       if (!decision || !["approved", "rejected"].includes(decision)) {
@@ -736,6 +753,10 @@ Return ONLY valid JSON.`,
   });
 
   router.post("/api/autonomy/calibration-proposals/:id/auto-apply", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!hasPermission(role, "manage_autonomy")) {
+      return res.status(403).json({ error: "Insufficient permissions to auto-apply a calibration proposal" });
+    }
     try {
       const proposal = await storage.getAutonomyBoundaryProposal(req.params.id);
       if (!proposal) return res.status(404).json({ message: "Proposal not found" });
@@ -944,6 +965,10 @@ Return ONLY valid JSON.`,
   });
 
   router.post("/api/autonomy/apply-industry-baseline", async (req, res) => {
+    const role = getRequestRole(req);
+    if (!hasPermission(role, "manage_autonomy")) {
+      return res.status(403).json({ error: "Insufficient permissions to apply an industry baseline" });
+    }
     try {
       const { agentId, industry } = req.body;
       if (!agentId || !industry) {
@@ -979,6 +1004,23 @@ Return ONLY valid JSON.`,
         else if (avgAccuracy < 0.80) recommendedLevel = "expert_approval";
 
         applied.push({ decisionType, recommendedLevel, industryAccuracy: Math.round(avgAccuracy * 10000) / 10000, industrySample: totalSample });
+
+        if (agentProfile) {
+          await storage.updateDecisionQualityProfile(agentProfile.id, {
+            currentAutonomyLevel: recommendedLevel,
+            recommendedAutonomyLevel: recommendedLevel,
+            lastCalibrationAt: new Date(),
+          });
+        } else {
+          await storage.createDecisionQualityProfile({
+            agentId,
+            industry,
+            decisionType,
+            currentAutonomyLevel: recommendedLevel,
+            recommendedAutonomyLevel: recommendedLevel,
+            lastCalibrationAt: new Date(),
+          });
+        }
       }
 
       await storage.createAuditEvent({

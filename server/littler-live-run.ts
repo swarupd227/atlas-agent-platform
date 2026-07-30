@@ -351,30 +351,33 @@ export async function littlerLiveRunHandler(req: Request, res: Response): Promis
     });
 
     const priorContext: Record<string, string> = {};
+    let pipelineFailed = false;
+    let failureMessage = "";
 
     for (const step of LITTLER_PIPELINE_STEPS) {
-      if (aborted) break;
+      if (aborted || pipelineFailed) break;
 
       const agentName = step.agentName;
       const agentId = _littlerAgentIdByName[agentName];
 
       if (!agentId) {
-        sendEvent("agent_event", {
+        const msg = `Agent "${agentName}" not found in this environment`;
+        sendEvent("agent_error", {
+          role: step.role,
           agentName: step.agentName,
-          type: "agent_skipped",
-          data: { role: step.role, reason: `Agent "${agentName}" not found in this environment` },
-          success: false,
+          message: msg,
         });
-        // Emit a completion event with the computed fallback data so the UI still progresses
         sendEvent("agent_complete", {
           role: step.role,
           agentName: step.agentName,
           agentId: null,
-          success: true,
-          message: `[Computed fallback data for ${step.role}]`,
-          resultSummary: { role: step.role, usedFallback: true },
+          success: false,
+          message: msg,
+          resultSummary: { role: step.role, success: false },
         });
-        continue;
+        pipelineFailed = true;
+        failureMessage = msg;
+        break;
       }
 
       currentAgentName = agentName;
@@ -420,16 +423,38 @@ export async function littlerLiveRunHandler(req: Request, res: Response): Promis
         resultSummary: { role: step.role, success: result.success },
       });
 
+      if (!result.success) {
+        failureMessage = `${step.label} (${step.role}) failed: ${result.message?.slice(0, 200) ?? "unknown error"}`;
+        sendEvent("agent_error", {
+          role: step.role,
+          agentName,
+          message: failureMessage,
+        });
+        pipelineFailed = true;
+        break;
+      }
+
       // Small pause between steps for visual effect
       if (!aborted) await new Promise(r => setTimeout(r, 500));
     }
 
-    sendEvent("run_complete", {
-      success: true,
-      message: "Analysis complete — 7 compliance gaps identified across MN, ME, and IL",
-      gapCount: LITTLER_COMPUTED_GAPS.length,
-      states: ["MN", "ME", "IL"],
-    });
+    if (!aborted) {
+      if (!pipelineFailed) {
+        sendEvent("run_complete", {
+          success: true,
+          message: "Analysis complete — 7 compliance gaps identified across MN, ME, and IL",
+          gapCount: LITTLER_COMPUTED_GAPS.length,
+          states: ["MN", "ME", "IL"],
+        });
+      } else {
+        sendEvent("run_complete", {
+          success: false,
+          message: failureMessage || "Compliance analysis pipeline failed — one or more agents did not complete successfully",
+          gapCount: 0,
+          states: ["MN", "ME", "IL"],
+        });
+      }
+    }
 
   } catch (err: any) {
     console.error("[littler-live-run] Error:", err?.message);

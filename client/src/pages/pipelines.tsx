@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/components/auth-provider";
 import type { AgentPipeline, PipelineRun, Agent } from "@shared/schema";
 import { StructuredInterruptReview } from "@/components/structured-interrupt-review";
 import { InterruptDefConfigurator } from "@/components/interrupt-def-configurator";
@@ -453,6 +454,7 @@ function InterruptRow({ intr, stages }: {
 
 export default function Pipelines() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [, setLocation] = useLocation();
 
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
@@ -855,7 +857,7 @@ export default function Pipelines() {
 
   const approveMutation = useMutation({
     mutationFn: async ({ runId, decision, notes, stateUpdates }: ApprovePayload) => {
-      const body: Record<string, unknown> = { approvedBy: "admin", decision };
+      const body: Record<string, unknown> = { approvedBy: user?.username || "unknown", decision };
       if (notes) body.notes = notes;
       if (stateUpdates) body.stateUpdates = stateUpdates;
       const res = await apiRequest("POST", `/api/pipeline-runs/${runId}/approve`, body);

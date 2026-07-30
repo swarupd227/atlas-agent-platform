@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { setSecurityMode as syncSecurityMode } from "@/lib/queryClient";
+import { toast } from "@/hooks/use-toast";
 
 interface AuthUser {
   id?: string;
@@ -47,8 +48,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const meData = await meRes.json();
           setUser(meData.user);
           setIsAuthenticated(true);
+        } else if (meRes.status !== 401) {
+          // A genuine 401 just means "not logged in" -- expected, stay
+          // silent and fall through to the unauthenticated state below.
+          // Any other non-ok status (500, auth service misconfigured, etc.)
+          // is an unexpected failure that would otherwise look identical to
+          // "not logged in" -- surface it instead of hiding it.
+          toast({
+            title: "Couldn't verify your session",
+            description: "Please retry, or refresh the page.",
+            variant: "destructive",
+          });
         }
       } catch {
+        // fetch() only rejects on network-level failures (offline, DNS,
+        // CORS) or when a response body fails to parse as JSON -- both are
+        // unexpected failures, not "not logged in", so surface them here too
+        // instead of silently leaving the user looking merely logged out.
+        toast({
+          title: "Couldn't verify your session",
+          description: "Please retry, or refresh the page.",
+          variant: "destructive",
+        });
       } finally {
         setIsLoading(false);
       }

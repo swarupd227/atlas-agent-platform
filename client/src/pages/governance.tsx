@@ -3,6 +3,7 @@ import { formatDate } from "@/lib/format";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { POLICY_PACKS } from "@/lib/policy-packs";
+import { useAuth } from "@/components/auth-provider";
 import type { PolicyPack, PolicyPackPolicy } from "@/lib/policy-packs";
 import {
   Shield,
@@ -1018,6 +1019,7 @@ function OntologyTagBadges({ eventId, ontologyTags }: { eventId: string; ontolog
 
 export default function Governance() {
   const { industry, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [domainFilter, setDomainFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -2923,7 +2925,7 @@ export default function Governance() {
                                 <Button
                                   size="sm"
                                   onClick={() => {
-                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "approve", comment: controlPointComments[item.id] })
+                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "approve", comment: controlPointComments[item.id], decidedBy: user?.username })
                                       .then(() => { refetchPending(); toast({ title: "Action recorded", description: `${item.kind === "workflow_interrupt" ? "Interrupt approved" : "Deployment unblocked"}` }); });
                                   }}
                                   data-testid={`button-approve-${item.kind}-${item.id}`}
@@ -2934,7 +2936,7 @@ export default function Governance() {
                                   variant="outline"
                                   size="sm"
                                   onClick={() => {
-                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "reject", comment: controlPointComments[item.id] })
+                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "reject", comment: controlPointComments[item.id], decidedBy: user?.username })
                                       .then(() => { refetchPending(); toast({ title: "Action recorded", description: "Rejected" }); });
                                   }}
                                   data-testid={`button-reject-${item.kind}-${item.id}`}
@@ -2949,7 +2951,7 @@ export default function Governance() {
                                   size="sm"
                                   variant="outline"
                                   onClick={() => {
-                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "acknowledge", comment: controlPointComments[item.id] })
+                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "acknowledge", comment: controlPointComments[item.id], decidedBy: user?.username })
                                       .then(() => { refetchPending(); toast({ title: "Violation acknowledged" }); });
                                   }}
                                   data-testid={`button-acknowledge-${item.id}`}
@@ -2960,7 +2962,7 @@ export default function Governance() {
                                   size="sm"
                                   variant="destructive"
                                   onClick={() => {
-                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "escalate", comment: controlPointComments[item.id] })
+                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "escalate", comment: controlPointComments[item.id], decidedBy: user?.username })
                                       .then(() => { refetchPending(); toast({ title: "Escalated", variant: "destructive" }); });
                                   }}
                                   data-testid={`button-escalate-${item.id}`}

@@ -3144,16 +3144,19 @@ function AgentDetailInner() {
                 <PenTool className="w-3.5 h-3.5 mr-1.5" /> Edit in Blueprint Studio
               </Button>
             </Link>
-            <Button variant="outline" size="sm" onClick={() => toast({ title: "Draft saved" })} data-testid="button-save-draft">
-              <FileCode className="w-3.5 h-3.5 mr-1.5" /> Save as Draft
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => toast({ title: "New version created" })} data-testid="button-create-version">
-              <GitBranch className="w-3.5 h-3.5 mr-1.5" /> Create Version
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => toast({ title: "Eval suite triggered" })} data-testid="button-run-eval-suite">
+            {/* Draft-save and versioning are real actions in Blueprint Studio
+                (Save/Compile/Sign & Version), not on this page -- there was no
+                local blueprint-editing state here for "Save as Draft"/"Create
+                Version" to act on, so those buttons only ever showed a fake
+                toast. Removed rather than fabricating a save/version that
+                never happened; "Edit in Blueprint Studio" above is the real
+                entry point. Eval Suite and version comparison DO have a real
+                home on this page (the Evals and Releases tabs), so those
+                route there instead of faking success locally. */}
+            <Button variant="outline" size="sm" onClick={() => setActiveTab("evals")} data-testid="button-run-eval-suite">
               <FlaskConical className="w-3.5 h-3.5 mr-1.5" /> Run Eval Suite
             </Button>
-            <Button variant="outline" size="sm" onClick={() => toast({ title: "Version comparison opened" })} data-testid="button-compare-version">
+            <Button variant="outline" size="sm" onClick={() => setActiveTab("releases")} data-testid="button-compare-version">
               <Layers className="w-3.5 h-3.5 mr-1.5" /> Compare vs Version...
             </Button>
             <div className="flex-1" />
@@ -3785,8 +3788,20 @@ function AgentDetailInner() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      toast({ title: "Credentials revoked", description: `All tool access for ${agent?.name} has been disabled` });
+                    onClick={async () => {
+                      try {
+                        const linksRes = await fetch(`/api/agents/${agentId}/mcp-servers`);
+                        const links: Array<{ id: string }> = await linksRes.json();
+                        let revoked = 0;
+                        for (const link of links) {
+                          const delRes = await fetch(`/api/agents/${agentId}/mcp-servers/${link.id}`, { method: "DELETE" });
+                          if (delRes.ok) revoked++;
+                        }
+                        queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+                        toast({ title: revoked > 0 ? "Credentials revoked" : "No credentials to revoke", description: revoked > 0 ? `Removed ${revoked} tool credential link(s) for ${agent?.name}` : `${agent?.name} has no linked tool credentials` });
+                      } catch {
+                        toast({ title: "Failed to revoke credentials", variant: "destructive" });
+                      }
                     }}
                     data-testid="button-revoke-credentials"
                   >

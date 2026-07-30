@@ -2045,13 +2045,12 @@ export default function AgentWizard() {
             <ArrowRight className="w-4 h-4 ml-1.5" />
           </Button>
         ) : (
-          <Button
-            onClick={handleCreate}
-            disabled={createMutation.isPending || !wizardState.name}
-            data-testid="button-create-agent"
-          >
-            {createMutation.isPending ? "Creating..." : "Create Agent"}
-          </Button>
+          // Step 8 (Review) renders its own gated Create Agent button inline
+          // (data-testid="button-create-agent-review") that blocks on missing
+          // required compliance policies unless governanceOverride is checked.
+          // This footer must not render a second, ungated path to the same
+          // create action -- it previously did, letting users skip the gate.
+          <div />
         )}
       </div>
 

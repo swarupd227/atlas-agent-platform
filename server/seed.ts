@@ -4339,6 +4339,19 @@ export async function seedDatabase() {
       await db.insert(marketplaceServers).values(ms as any);
     }
 
+    // Reconcile registrySources.serverCount and trustedPublishers.serverCount
+    // against the marketplaceServer rows actually inserted above, rather than
+    // relying on the hardcoded counts in the seed definitions.
+    const allMarketplaceServers = await storage.getMarketplaceServers();
+    for (const rs of registrySourceSeeds) {
+      const count = allMarketplaceServers.filter((m: any) => m.registrySourceId === rs.id).length;
+      await storage.updateRegistrySource(rs.id, { serverCount: count });
+    }
+    for (const tp of trustedPublisherSeeds) {
+      const count = allMarketplaceServers.filter((m: any) => m.namespace === tp.namespace).length;
+      await storage.updateTrustedPublisher(tp.id, { serverCount: count });
+    }
+
     const installRequestSeeds = [
       {
         id: "ir-001",
@@ -4970,9 +4983,7 @@ export async function seedDatabase() {
     const allPolicies = await storage.getRegulatoryPolicies();
     for (const reg of createdRegs) {
       const count = allPolicies.filter((p: any) => p.regulationId === reg.id).length;
-      if (count > 0) {
-        await storage.updateRegulation(reg.id, { encodedPolicyCount: count });
-      }
+      await storage.updateRegulation(reg.id, { encodedPolicyCount: count });
     }
 
     console.log(`Seeded ${createdRegs.length} regulations, ${seedPolicies.length} policies, ${seedControls.length} controls, ${seedChanges.length} changes`);
@@ -5175,6 +5186,13 @@ export async function seedDatabase() {
         for (const tc of kycTestCases) {
           await storage.createGoldenTestCase(tc as any);
         }
+      }
+
+      // Reconcile testCaseCount against the GoldenTestCase rows actually
+      // inserted above (only the first two datasets get seeded test cases).
+      for (const ds of createdDatasets) {
+        const testCases = await storage.getGoldenTestCases(ds.id);
+        await storage.updateGoldenDataset(ds.id, { testCaseCount: testCases.length });
       }
 
       console.log(`Seeded ${createdDatasets.length} golden datasets with test cases`);

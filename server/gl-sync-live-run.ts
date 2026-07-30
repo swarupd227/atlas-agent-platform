@@ -457,6 +457,11 @@ export async function glSyncLiveRunHandler(req: Request, res: Response): Promise
 
     const agentList = AGENT_DEFS;
 
+    // Real success tracking — the scenario-specific stats/narrative below must only
+    // be surfaced when the underlying agent actually completed successfully.
+    let anyAgentFailed = false;
+    let firstFailureMessage = "";
+
     for (let i = 0; i < agentList.length; i++) {
       if (aborted || getGlSyncGeneration() !== thisGen) break;
 
@@ -518,6 +523,18 @@ export async function glSyncLiveRunHandler(req: Request, res: Response): Promise
       const prompt = buildAgentPrompt(i, scenario, ctx);
       const result = await runAgentOnce(dep.id, prompt, maxSteps, onProgress as any);
 
+      if (!result.success) {
+        anyAgentFailed = true;
+        const msg = `${GL_SYNC_AGENTS[i].name} failed: ${result.message?.slice(0, 200) ?? "unknown error"}`;
+        if (!firstFailureMessage) firstFailureMessage = msg;
+        sendEvent("agent_error", {
+          agentIndex: i,
+          agentId: agentDef.id,
+          agentName: GL_SYNC_AGENTS[i].name,
+          message: msg,
+        });
+      }
+
       // Capture latest trace ID for this agent
       const traces = await storage.getTracesByAgent(agentDef.id);
       const sorted = [...traces].sort((a: any, b: any) =>
@@ -527,14 +544,15 @@ export async function glSyncLiveRunHandler(req: Request, res: Response): Promise
 
       const toolCalls = result.steps?.length ?? 0;
 
-      // Scenario-specific post-processing
-      if (i === 2) {
+      // Scenario-specific post-processing — only surfaced when the agent actually
+      // succeeded; a real technical failure must not produce fabricated stats/events.
+      if (i === 2 && result.success) {
         updateStats({ entriesExtracted: 1742, debitTotal: 47382156.29, creditTotal: 47382156.29, controlHash: "SHA256-7f4e2a1b9c3d5e8f" });
         ctx.entryCount = 1742; ctx.debitTotal = 47382156.29;
         sendEvent("gl_stats", { entriesExtracted: 1742, debitTotal: 47382156.29, creditTotal: 47382156.29, controlHash: "SHA256-7f4e2a1b9c3d5e8f" });
       }
 
-      if (i === 4) {
+      if (i === 4 && result.success) {
         const excepted = scenario === "dimension_mismatch" ? 47 : 0;
         const toPost = 1742 - excepted;
         updateStats({ entriesExcepted: excepted, entriesTransformed: toPost });
@@ -546,7 +564,7 @@ export async function glSyncLiveRunHandler(req: Request, res: Response): Promise
         }
       }
 
-      if (i === 5) {
+      if (i === 5 && result.success) {
         const posted = scenario === "dimension_mismatch" ? 1695 : 1742;
         const intacctTotal = scenario === "control_total_variance" ? 47381156.29 : 47382156.29 - (scenario === "dimension_mismatch" ? 1247388.41 : 0);
         updateStats({ entriesPosted: posted, intacctTotal, jeId: `JE-${bDate}-GL-001` });
@@ -559,7 +577,7 @@ export async function glSyncLiveRunHandler(req: Request, res: Response): Promise
         });
       }
 
-      if (i === 6) {
+      if (i === 6 && result.success) {
         const variance = scenario === "control_total_variance" ? -1000.00 : 0;
         const balanced = variance === 0;
         updateStats({ balanced, variance });
@@ -581,8 +599,9 @@ export async function glSyncLiveRunHandler(req: Request, res: Response): Promise
         }
       }
 
-      const agentSummary =
-        i === 0 ? `Idempotency verified — cycle clear to proceed. Watermark: ${ctx.watermark || "prior business day"}.`
+      const agentSummary = !result.success
+        ? `${GL_SYNC_AGENTS[i].name} did not complete: ${result.message?.slice(0, 200) ?? "agent execution error"}`
+        : i === 0 ? `Idempotency verified — cycle clear to proceed. Watermark: ${ctx.watermark || "prior business day"}.`
         : i === 1 ? "GL account crosswalk validated — all 25 core accounts map to Intacct IDs."
         : i === 2 ? `Extracted 1,742 entries. Debit = Credit = $47,382,156.29. Control hash verified.`
         : i === 3 ? "Transformation mapping complete — all entries mapped to Intacct account IDs."
@@ -619,12 +638,16 @@ export async function glSyncLiveRunHandler(req: Request, res: Response): Promise
       return;
     }
 
-    const finalMessage =
-      scenario === "happy" ? "GL sync complete — 1,742 entries posted, balanced, watermark advanced."
+    const finalMessage = anyAgentFailed
+      ? (firstFailureMessage || "GL sync pipeline failed — one or more agents did not complete successfully.")
+      : scenario === "happy" ? "GL sync complete — 1,742 entries posted, balanced, watermark advanced."
       : scenario === "dimension_mismatch" ? "GL sync partial — 1,695 posted, 47 in exception queue for Kirkland branch dimension."
       : "GL sync PENDING_REVIEW — $1,000 FX variance detected, GL Controller alerted.";
 
-    const finalSuccess = scenario !== "control_total_variance";
+    // Real success depends on both the actual agent execution results AND the
+    // narrative scenario (control_total_variance is a designed PENDING_REVIEW
+    // outcome, not a technical failure — but a genuine agent failure always wins).
+    const finalSuccess = !anyAgentFailed && scenario !== "control_total_variance";
     setGlSyncRunning(false);
 
     sendEvent("run_complete", {
@@ -633,10 +656,10 @@ export async function glSyncLiveRunHandler(req: Request, res: Response): Promise
       message: finalMessage,
       stats: {
         businessDate: bDate,
-        entriesExtracted: 1742,
-        entriesPosted: scenario === "dimension_mismatch" ? 1695 : 1742,
-        entriesExcepted: scenario === "dimension_mismatch" ? 47 : 0,
-        balanced: scenario !== "control_total_variance",
+        entriesExtracted: ctx.entryCount ?? 0,
+        entriesPosted: ctx.entriesPosted ?? 0,
+        entriesExcepted: ctx.excCount ?? 0,
+        balanced: !anyAgentFailed && scenario !== "control_total_variance",
         variance: scenario === "control_total_variance" ? -1000 : 0,
       },
     });

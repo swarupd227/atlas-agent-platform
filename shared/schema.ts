@@ -204,6 +204,11 @@ export const deployments = pgTable("deployments", {
   pipelineStages: jsonb("pipeline_stages"),
   industryRollbackTriggers: jsonb("industry_rollback_triggers"),
   evidencePackage: jsonb("evidence_package"),
+  // Deploy-time customization collected in wizards like the template
+  // "Customize & Deploy" flow (cost ceiling, quality floor, risk tolerance,
+  // max latency, data source selections, additional skills) -- previously
+  // collected in the UI and shown in a summary but never sent anywhere.
+  customization: jsonb("customization"),
   pipelineComplete: boolean("pipeline_complete").default(false),
   promotedAt: timestamp("promoted_at"),
   deployedAt: timestamp("deployed_at"),

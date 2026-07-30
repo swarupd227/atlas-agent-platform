@@ -55,7 +55,7 @@ const ORDER = {
 const VALIDATION_CHECKS = [
   { checkId: "VAL-001", name: "Order Header Completeness",    status: "PASS",  detail: "All required header fields present. PO number, customer ID, order date validated." },
   { checkId: "VAL-002", name: "Customer Account Standing",    status: "HOLD",  detail: "Credit exposure at 92% of limit. OTC-AGT-003 reviewing — see credit check for details." },
-  { checkId: "VAL-003", name: "Product Availability Check",   status: "HOLD",  detail: "12 turbine units requested. Inventory split across Chicago (8) and Atlanta (4). OTC-AGT-004 resolving fulfillment option." },
+  { checkId: "VAL-003", name: "Product Availability Check",   status: "HOLD",  detail: "13 turbine units requested. Inventory split across Chicago and Atlanta. OTC-AGT-004 resolving fulfillment option." },
   { checkId: "VAL-004", name: "Ship-To Address Validation",   status: "WARN",  detail: "Suite-number discrepancy detected between ERP master and PO. Astra Agents recommends removal — industrial facility. Confirm to clear." },
   { checkId: "VAL-005", name: "Pricing & Contract Alignment", status: "PASS",  detail: "Order value $429,711 matches approved quote Q-78432. Contract MSA-2024-0892 in force." },
   { checkId: "VAL-006", name: "Export Control Screening",     status: "PASS",  detail: "No restricted party hits. EAR99 classification confirmed for all 48 order lines." },
@@ -183,7 +183,7 @@ export const toolManifest = [
   },
   {
     name: "calculate_taxes",
-    description: "Computes Illinois sales tax for ORD-2026-78432, applies manufacturing exemption where applicable, and confirms ASC 606 revenue recognition treatment.",
+    description: "Computes Michigan sales tax for ORD-2026-78432, applies manufacturing exemption where applicable, and confirms ASC 606 revenue recognition treatment.",
     parameters: { type: "object", properties: {}, required: [] },
   },
   {

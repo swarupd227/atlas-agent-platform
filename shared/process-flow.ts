@@ -131,7 +131,7 @@ export function normalizeToGraph(input: unknown, fallbackName = "Process Flow"):
   const steps: LegacyProcessStep[] | null = Array.isArray(input)
     ? (input as LegacyProcessStep[])
     : (Array.isArray((input as any).steps) ? (input as any).steps as LegacyProcessStep[] : null);
-  if (steps && steps.length >= 0) {
+  if (steps && steps.length > 0) {
     return stepsToGraph((input as any)?.name || fallbackName, steps);
   }
   return null;

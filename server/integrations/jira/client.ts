@@ -38,7 +38,10 @@ export interface JiraTransition {
 export type JiraFetcher = (path: string, options?: RequestInit) => Promise<Response>;
 
 export class JiraClient {
-  constructor(private readonly fetcher: JiraFetcher) {}
+  /** Host only (e.g. "acme.atlassian.net"), for building browse/UI links -- the
+   *  fetcher above already has this baked into its API base URL, but issue
+   *  links need the bare host, not the /rest/api/3 path. */
+  constructor(private readonly fetcher: JiraFetcher, readonly instanceUrl?: string) {}
 
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const res = await this.fetcher(path, options);

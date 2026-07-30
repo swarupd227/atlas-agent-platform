@@ -668,6 +668,19 @@ const router = Router();
         return res.status(400).json({ error: "No unbilled billable events found for this period" });
       }
 
+      // Same period/invoiced window as eligibleEvents, but non-billable --
+      // this is what excludedUnits on the invoice should actually report,
+      // rather than the hardcoded 0 it used to be regardless of how many
+      // events were excluded.
+      const excludedEvents = allEvents.filter(e => {
+        if (e.billable) return false;
+        if (e.invoiceId) return false;
+        if (!e.createdAt) return false;
+        const eventDate = new Date(e.createdAt);
+        return eventDate >= pStart && eventDate <= pEnd;
+      });
+      const excludedUnits = excludedEvents.reduce((sum, e) => sum + (e.unitCount || 1), 0);
+
       // Compute totals based on pricing model
       let totalAmount = 0;
       const totalUnits = eligibleEvents.reduce((sum, e) => sum + (e.unitCount || 1), 0);
@@ -703,7 +716,7 @@ const router = Router();
         periodEnd: pEnd,
         totalUnits,
         billableUnits: totalUnits,
-        excludedUnits: 0,
+        excludedUnits,
         unitPrice: outcome.pricePerUnit || 0,
         amount: Math.round(totalAmount * 100) / 100,
         status: "pending",

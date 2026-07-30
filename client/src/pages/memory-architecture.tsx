@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -434,12 +434,16 @@ export default function MemoryArchitecture() {
     queryKey: ["/api/memory-profiles"],
   });
 
+  const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
+  const [loadedProfileIndustry, setLoadedProfileIndustry] = useState<string | null>(null);
+
   const createProfileMutation = useMutation({
     mutationFn: async (data: Partial<MemoryProfile>) => {
       const res = await apiRequest("POST", "/api/memory-profiles", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (created: MemoryProfile) => {
+      setCurrentProfileId(created.id);
       queryClient.invalidateQueries({ queryKey: ["/api/memory-profiles"] });
       toast({ title: "Memory profile created" });
     },
@@ -453,6 +457,44 @@ export default function MemoryArchitecture() {
       queryClient.invalidateQueries({ queryKey: ["/api/memory-profiles"] });
     },
   });
+
+  // Persist a tier/policy/rule change to the real memory profile instead of
+  // only updating local state -- previously every edit here (capacity,
+  // retention, policies, applied rules) lived only in useState and vanished
+  // on refresh despite each action showing a success toast.
+  function persistProfile(overrides: Partial<Pick<MemoryProfile, "tierConfigs" | "forgettingPolicies" | "industryRules">>) {
+    const payload = {
+      name: `${currentIndustry?.label || "Cross-Industry"} Memory Profile`,
+      industry: industryId,
+      agentId: null,
+      tierConfigs: overrides.tierConfigs ?? tierConfigs,
+      forgettingPolicies: overrides.forgettingPolicies ?? forgettingPolicies,
+      industryRules: overrides.industryRules ?? appliedRules,
+      status: "active",
+    };
+    if (currentProfileId) {
+      updateProfileMutation.mutate({ id: currentProfileId, updates: payload });
+    } else {
+      createProfileMutation.mutate(payload);
+    }
+  }
+
+  // Load this industry's real persisted profile (if one exists) into local
+  // state instead of always starting from the DEFAULT_* constants -- runs
+  // once per industry switch, not on every profiles refetch.
+  useEffect(() => {
+    if (isLoading || loadedProfileIndustry === industryId) return;
+    const existing = profiles.find((p) => p.industry === industryId);
+    if (existing) {
+      setCurrentProfileId(existing.id);
+      if (Array.isArray(existing.tierConfigs) && existing.tierConfigs.length > 0) setTierConfigs(existing.tierConfigs);
+      if (Array.isArray(existing.forgettingPolicies)) setForgettingPolicies(existing.forgettingPolicies);
+      if (Array.isArray(existing.industryRules)) setAppliedRules(existing.industryRules);
+    } else {
+      setCurrentProfileId(null);
+    }
+    setLoadedProfileIndustry(industryId);
+  }, [profiles, isLoading, industryId, loadedProfileIndustry]);
 
   const generateRulesMutation = useMutation({
     mutationFn: async (body: { industry: string; tier?: string }) => {
@@ -499,22 +541,28 @@ export default function MemoryArchitecture() {
   function updateTierCapacity(index: number, value: string) {
     const num = parseInt(value, 10);
     if (isNaN(num) || num < 0) return;
-    setTierConfigs((prev) => prev.map((t, i) => i === index ? { ...t, capacity: num } : t));
+    const updated = tierConfigs.map((t, i) => i === index ? { ...t, capacity: num } : t);
+    setTierConfigs(updated);
+    persistProfile({ tierConfigs: updated });
   }
 
   function updateTierRetention(index: number, value: string) {
     const num = parseInt(value, 10);
-    setTierConfigs((prev) => prev.map((t, i) => i === index ? { ...t, retentionDays: isNaN(num) ? null : num } : t));
+    const updated = tierConfigs.map((t, i) => i === index ? { ...t, retentionDays: isNaN(num) ? null : num } : t);
+    setTierConfigs(updated);
+    persistProfile({ tierConfigs: updated });
   }
 
   function togglePolicyActive(policyId: string) {
-    setForgettingPolicies((prev) =>
-      prev.map((p) => p.id === policyId ? { ...p, active: !p.active } : p)
-    );
+    const updated = forgettingPolicies.map((p) => p.id === policyId ? { ...p, active: !p.active } : p);
+    setForgettingPolicies(updated);
+    persistProfile({ forgettingPolicies: updated });
   }
 
   function removePolicy(policyId: string) {
-    setForgettingPolicies((prev) => prev.filter((p) => p.id !== policyId));
+    const updated = forgettingPolicies.filter((p) => p.id !== policyId);
+    setForgettingPolicies(updated);
+    persistProfile({ forgettingPolicies: updated });
     toast({ title: "Policy removed" });
   }
 
@@ -530,7 +578,9 @@ export default function MemoryArchitecture() {
       timeline: newPolicyTimeline,
       active: true,
     };
-    setForgettingPolicies((prev) => [...prev, policy]);
+    const updated = [...forgettingPolicies, policy];
+    setForgettingPolicies(updated);
+    persistProfile({ forgettingPolicies: updated });
     setAddPolicyOpen(false);
     setNewPolicyName("");
     setNewPolicyDesc("");
@@ -574,7 +624,9 @@ export default function MemoryArchitecture() {
       ...rest,
       id: `applied-${Date.now()}-${rest.id}`,
     }));
-    setAppliedRules((prev) => [...prev, ...newRules]);
+    const updated = [...appliedRules, ...newRules];
+    setAppliedRules(updated);
+    persistProfile({ industryRules: updated });
     setReviewDialogOpen(false);
     setReviewRules([]);
     setAiGeneratedRules([]);
@@ -582,7 +634,9 @@ export default function MemoryArchitecture() {
   }
 
   function removeAppliedRule(ruleId: string) {
-    setAppliedRules((prev) => prev.filter((r) => r.id !== ruleId));
+    const updated = appliedRules.filter((r) => r.id !== ruleId);
+    setAppliedRules(updated);
+    persistProfile({ industryRules: updated });
     toast({ title: "Rule removed" });
   }
 

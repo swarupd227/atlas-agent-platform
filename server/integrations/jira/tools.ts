@@ -49,7 +49,7 @@ export async function jira_search(
     labels: issue.fields.labels,
     updated: issue.fields.updated,
     created: issue.fields.created,
-    url: `https://atlassian.net/browse/${issue.key}`,
+    url: client.instanceUrl ? `https://${client.instanceUrl}/browse/${issue.key}` : undefined,
   }));
 
   return ok({ total: result.total, start_at, count: issues.length, has_more: result.total > start_at + issues.length, issues });

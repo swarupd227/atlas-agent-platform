@@ -209,7 +209,7 @@ Three parallel validation agents have completed their work on RUSH order ORD-202
 
 RESULTS FROM PARALLEL AGENTS:
 1. OTC-AGT-003 (Credit): VAL-002 CLEARED — Temporary $950K limit approved (60 days). Meridian A+ rated, automated pre-auth threshold satisfied. Net exposure risk: LOW.
-2. OTC-AGT-004 (Inventory): VAL-003 CLEARED — Chicago DC fulfills all 12 turbine units. Single-warehouse shipment confirmed. Split-ship avoided. Savings: $840.
+2. OTC-AGT-004 (Inventory): VAL-003 CLEARED — Chicago DC fulfills all 13 turbine units. Single-warehouse shipment confirmed. Split-ship avoided. Savings: $840.
 3. OTC-AGT-002 self (Address): VAL-004 CLEARED — Suite 110 removed from ERP master. Industrial facility confirmed via 8 prior delivery records. Confidence 94%.
 
 REMAINING VALIDATION STATUS:
@@ -242,11 +242,11 @@ ORDER SUMMARY:
 - Customer: Meridian Manufacturing (CUST-00892)
 - PO: MER-PO-9921 | Quote: Q-78432
 - Value: $429,711 | Type: RUSH
-- SKUs: 48 line items (12 turbine units + accessories) | Ship-from: Chicago DC
+- SKUs: 48 line items (13 turbine units + accessories) | Ship-from: Chicago DC
 
 RELEASE CHECKLIST:
 ✓ Credit hold cleared (temp limit $950K / 60 days)
-✓ Inventory allocated at Chicago DC (all 12 turbine units)
+✓ Inventory allocated at Chicago DC (all 13 turbine units)
 ✓ Address corrected (Suite 110 removed)
 ✓ RUSH surcharge applied ($1,800 per MSA §7.4(b))
 ✓ All 8 validation checks PASS
@@ -697,6 +697,13 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
           await new Promise(r => setTimeout(r, 300));
         }
         result = await runStep(depId, step.taskPrompt, step.maxIterations);
+        if (!result.success) {
+          sendEvent("agent_error", {
+            role: step.role,
+            agentName: step.agentName,
+            message: `${step.label} (${step.role}) failed: ${result.message?.slice(0, 200) ?? "unknown error"}`,
+          });
+        }
       }
 
       sendEvent("agent_complete", {
@@ -719,14 +726,28 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
       if (pr?.message) priorContext[pr.role] = pr.message.slice(0, 1200);
     }
 
+    // Real success check — a parallel task that never resolved (rejected/aborted)
+    // or that came back with success:false means validation did NOT actually clear.
+    const failedParallel = parallelResults.filter(pr => !pr?.success);
+    const missingParallel = parallelSteps.length - parallelResults.length;
+    let pipelineFailed = !aborted && (failedParallel.length > 0 || missingParallel > 0);
+    let failureMessage = pipelineFailed
+      ? [
+          ...failedParallel.map(pr => `${pr.role}: ${pr.message?.slice(0, 150) ?? "failed"}`),
+          missingParallel > 0 ? `${missingParallel} validation agent(s) did not complete` : null,
+        ].filter(Boolean).join("; ") || "One or more validation agents failed"
+      : "";
+
     sendEvent("parallel_complete", {
-      message: "All 3 validation agents complete — synthesising resolutions…",
-      resolvedChecks: ["VAL-002 Credit", "VAL-003 Inventory", "VAL-004 Address"],
+      message: pipelineFailed
+        ? "Validation failed — one or more agents did not clear their checks"
+        : "All 3 validation agents complete — synthesising resolutions…",
+      resolvedChecks: pipelineFailed ? [] : ["VAL-002 Credit", "VAL-003 Inventory", "VAL-004 Address"],
     });
 
     // ── STEPS 2 & 3: Sequential (synthesis → release) ────────────────────────
     for (const step of sequentialSteps) {
-      if (aborted) break;
+      if (aborted || pipelineFailed) break;
 
       const agentId = agentIdMap[step.agentName];
 
@@ -773,16 +794,36 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
         message: result.message?.slice(0, 600),
         parallel: false,
       });
+
+      if (!result.success) {
+        pipelineFailed = true;
+        failureMessage = `${step.label} (${step.role}) failed: ${result.message?.slice(0, 200) ?? "unknown error"}`;
+        if (agentId) {
+          sendEvent("agent_error", { role: step.role, agentName: step.agentName, message: failureMessage });
+        }
+        break;
+      }
     }
 
-    sendEvent("run_complete", {
-      success: true,
-      message: "ORD-2026-78432 released — all 8 checks cleared in parallel — delivery promise May 2–3, 2026",
-      orderId: "ORD-2026-78432",
-      orderValue: 429_711,
-      checksCleared: 8,
-      parallelAgents: 3,
-    });
+    if (!aborted) {
+      if (!pipelineFailed) {
+        sendEvent("run_complete", {
+          success: true,
+          message: "ORD-2026-78432 released — all 8 checks cleared in parallel — delivery promise May 2–3, 2026",
+          orderId: "ORD-2026-78432",
+          orderValue: 429_711,
+          checksCleared: 8,
+          parallelAgents: 3,
+        });
+      } else {
+        sendEvent("run_complete", {
+          success: false,
+          message: failureMessage || "Order validation pipeline failed — one or more agents did not complete successfully",
+          orderId: "ORD-2026-78432",
+          parallelAgents: 3,
+        });
+      }
+    }
 
   } catch (err: any) {
     console.error("[otc-order-live] Error:", err?.message);

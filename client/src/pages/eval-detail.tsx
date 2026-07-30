@@ -438,7 +438,7 @@ export default function EvalDetail() {
 
   const addGeneratedCaseMutation = useMutation({
     mutationFn: async (c: { name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number }) => {
-      await apiRequest("POST", `/api/evals/${id}/cases`, {
+      await apiRequest("POST", `/api/evals/${id}/test-cases`, {
         name: c.name,
         inputData: c.inputData,
         expectedOutput: c.expectedOutput,
@@ -447,7 +447,7 @@ export default function EvalDetail() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "cases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "test-cases"] });
       toast({ title: "Test case added" });
     },
     onError: (error: Error) => {

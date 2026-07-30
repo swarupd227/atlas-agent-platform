@@ -246,12 +246,26 @@ function pruneIdempotencyCache(): void {
   }
 }
 
+/** Deterministic AAR approval risk score, derived from what's actually known
+ *  at the gate: the agent's own declared risk tier, and whether the tool is
+ *  read-only or side-effectful (write/destructive actions score higher).
+ *  Replaces a flat constant that gave every approval the same 0.7 regardless
+ *  of what was actually being approved. */
+function computeApprovalRiskScore(riskLevel: string, sideEffectful: boolean): number {
+  const normalized = (riskLevel || "").toUpperCase();
+  const base = normalized === "HIGH" ? 0.6 : normalized === "LOW" ? 0.2 : 0.4;
+  const score = base + (sideEffectful ? 0.25 : 0);
+  return Math.min(1, Math.round(score * 100) / 100);
+}
+
 // ── AAR constraint-list gate ─────────────────────────────────────────────────
 async function evaluateActionPolicy(
   agentId: string,
-  toolName: string,
-  serverId: string | undefined,
+  tool: AvailableTool,
 ): Promise<{ decision: string; reason: string; approvalId?: string }> {
+  const evalStartMs = performance.now();
+  const toolName = tool.toolName;
+  const serverId = tool.serverId;
   const agent = await storage.getAgent(agentId);
   const aarConfig = await storage.getAarConfig(agentId);
 
@@ -294,7 +308,7 @@ async function evaluateActionPolicy(
       objectType: "mcp-tool",
       objectId: serverId ?? agentId,
       objectName: toolName,
-      riskScore: 0.7,
+      riskScore: computeApprovalRiskScore(riskLevel, isSideEffectful(tool)),
       status: "pending",
       requestedBy: agentId,
       requesterType: "agent",
@@ -305,6 +319,7 @@ async function evaluateActionPolicy(
 
   // Persist the decision (best-effort — do not let persistence failure block policy enforcement)
   try {
+    const evaluationTimeUs = Math.round((performance.now() - evalStartMs) * 1000);
     await storage.createAarActionDecision({
       agentId,
       orgId: agent?.organizationId ?? null,
@@ -316,7 +331,7 @@ async function evaluateActionPolicy(
       rulesTriggered,
       riskLevel,
       approvalId: approvalId ?? null,
-      evaluationTimeUs: 0,
+      evaluationTimeUs,
     });
   } catch (persistErr: any) {
     console.error(`[AAR] evaluateActionPolicy: failed to persist decision (non-fatal): ${persistErr.message}`);
@@ -390,17 +405,36 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
     throw new Error(`MCP tool ${tool.toolName} missing required path params: ${missingPathParams.join(", ")}`);
   }
 
+  // Header-type parameters — recorded by openapi-import.ts on each generated
+  // tool's inputSchema property as `in: "header"` (see schemaToProperty /
+  // the parameter loop in parseOpenApiSpec). Without this, header params are
+  // documented in the schema but silently dropped: they'd otherwise fall
+  // through into the JSON body (POST/PUT/PATCH) or the query string (GET)
+  // instead of becoming actual HTTP headers.
+  const schemaProperties: Record<string, any> =
+    tool.toolInputSchema && typeof tool.toolInputSchema === "object" && tool.toolInputSchema.properties && typeof tool.toolInputSchema.properties === "object"
+      ? tool.toolInputSchema.properties
+      : {};
+  const headerParams: Record<string, string> = {};
+  for (const [paramName, propSchema] of Object.entries(schemaProperties)) {
+    if (propSchema && typeof propSchema === "object" && propSchema.in === "header" && remainingArgs[paramName] != null) {
+      headerParams[paramName] = String(remainingArgs[paramName]);
+      delete remainingArgs[paramName];
+    }
+  }
+
   let fetchUrl = `${baseUrl}${endpointPath}`;
   const fetchOpts: RequestInit = { method };
 
   if (method === "POST" || method === "PUT" || method === "PATCH") {
-    fetchOpts.headers = { "Content-Type": "application/json" };
+    fetchOpts.headers = { "Content-Type": "application/json", ...headerParams };
     fetchOpts.body = JSON.stringify(remainingArgs);
   } else {
     const qs = new URLSearchParams(
       Object.fromEntries(Object.entries(remainingArgs).map(([k, v]) => [k, String(v)]))
     ).toString();
     if (qs) fetchUrl += `?${qs}`;
+    if (Object.keys(headerParams).length > 0) fetchOpts.headers = { ...headerParams };
   }
 
   const res = await fetch(fetchUrl, fetchOpts);
@@ -516,7 +550,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   }
 
   // 3. AAR constraint-list gate.
-  const aar = await evaluateActionPolicy(agentId, tool.toolName, tool.serverId);
+  const aar = await evaluateActionPolicy(agentId, tool);
   if (aar.decision === "BLOCK") {
     return finish({ outcome: "gate_blocked_aar", ok: false, result: null, error: aar.reason, reason: aar.reason, aarDecision: aar.decision, monitorFlagged });
   }

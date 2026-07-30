@@ -2161,11 +2161,18 @@ export default function Monitor() {
                       <div className="flex items-center justify-between gap-2 mt-1 pt-2 border-t border-dashed flex-wrap">
                         <span className="text-[10px] text-muted-foreground">{alert.actionRequired}</span>
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <Button variant="outline" size="sm" data-testid={`button-review-alert-${alert.id}`}>
+                          {/* Regulatory alerts are industry-scoped static guidance (no agentId/incidentId
+                              on the alert itself -- affectedAgents is just a count), so there's no
+                              per-agent or per-incident detail page to deep-link to. Governance is the
+                              existing home for reviewing regulatory frameworks and compliance posture;
+                              its Policy Engine sub-page is where policies actually get generated/managed
+                              in response to a regulation -- so route "Review" there to inspect, and
+                              "Take Action" to the policy engine to act. */}
+                          <Button variant="outline" size="sm" onClick={() => navigate("/governance")} data-testid={`button-review-alert-${alert.id}`}>
                             <Eye className="w-3 h-3 mr-1" />
                             Review
                           </Button>
-                          <Button variant="outline" size="sm" data-testid={`button-action-alert-${alert.id}`}>
+                          <Button variant="outline" size="sm" onClick={() => navigate("/governance/policy-engine")} data-testid={`button-action-alert-${alert.id}`}>
                             <CheckCircle className="w-3 h-3 mr-1" />
                             Take Action
                           </Button>

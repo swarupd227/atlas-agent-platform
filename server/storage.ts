@@ -1439,7 +1439,10 @@ export class DatabaseStorage implements IStorage {
   async getOutcomeEventsByOutcome(outcomeId: string, orgId?: string) {
     const conditions: ReturnType<typeof eq>[] = [eq(outcomeEvents.outcomeId, outcomeId)];
     if (orgId) conditions.push(eq(outcomeEvents.organizationId, orgId));
-    return db.select().from(outcomeEvents).where(and(...conditions));
+    // Ordered newest-first: callers (e.g. billing.ts fraud check, agent-runtime.ts
+    // "latest event" lookup) rely on a deterministic chronological order rather than
+    // whatever incidental order the DB happens to return.
+    return db.select().from(outcomeEvents).where(and(...conditions)).orderBy(desc(outcomeEvents.createdAt));
   }
 
   async createOutcomeEvent(event: InsertOutcomeEvent) {
@@ -3744,8 +3747,13 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(knowledgeSources).where(eq(knowledgeSources.knowledgeBaseId, kbId)).orderBy(desc(knowledgeSources.createdAt));
   }
 
-  async getKnowledgeSource(id: string): Promise<KnowledgeSource | undefined> {
+  async getKnowledgeSource(id: string, orgId?: string): Promise<KnowledgeSource | undefined> {
     const [source] = await db.select().from(knowledgeSources).where(eq(knowledgeSources.id, id));
+    if (!source) return undefined;
+    if (orgId) {
+      const kb = await this.getKnowledgeBase(source.knowledgeBaseId, orgId);
+      if (!kb) return undefined;
+    }
     return source;
   }
 
@@ -3754,12 +3762,20 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateKnowledgeSource(id: string, data: Partial<KnowledgeSource>): Promise<KnowledgeSource | undefined> {
+  async updateKnowledgeSource(id: string, data: Partial<KnowledgeSource>, orgId?: string): Promise<KnowledgeSource | undefined> {
+    if (orgId) {
+      const existing = await this.getKnowledgeSource(id, orgId);
+      if (!existing) return undefined;
+    }
     const [updated] = await db.update(knowledgeSources).set(data).where(eq(knowledgeSources.id, id)).returning();
     return updated;
   }
 
-  async deleteKnowledgeSource(id: string): Promise<boolean> {
+  async deleteKnowledgeSource(id: string, orgId?: string): Promise<boolean> {
+    if (orgId) {
+      const existing = await this.getKnowledgeSource(id, orgId);
+      if (!existing) return false;
+    }
     await db.delete(knowledgeChunks).where(eq(knowledgeChunks.sourceId, id));
     const result = await db.delete(knowledgeSources).where(eq(knowledgeSources.id, id)).returning();
     return result.length > 0;

@@ -235,10 +235,47 @@ const router = Router();
     }
   });
 
+  // Cheaper-tier fallback per model -- the only suggestedChanges action with
+  // a clear, mechanically-safe "apply": swapping to a cheaper model in the
+  // same family. retrain/workflow_optimization recommendations don't have an
+  // equivalent safe mechanical action (they require real engineering work),
+  // so those still only flip status -- but this one genuinely applies.
+  const MODEL_DOWNGRADE_MAP: Record<string, string> = {
+    "gpt-4.1": "gpt-4.1-mini",
+    "gpt-4.1-mini": "gpt-4.1-nano",
+    "gpt-4o": "gpt-4o-mini",
+    "claude-sonnet-4-5": "claude-haiku-4-5",
+    "claude-3-5-sonnet-20241022": "claude-3-5-haiku-20241022",
+    "gemini-2.5-pro": "gemini-2.5-flash",
+  };
+
   router.patch("/api/recommendations/:id", async (req, res) => {
     try {
+      const allRecsBefore = await storage.getImprovementRecommendations();
+      const before = allRecsBefore.find(r => r.id === req.params.id);
       const updated = await storage.updateImprovementRecommendation(req.params.id, req.body);
       if (!updated) return res.status(404).json({ message: "Recommendation not found" });
+
+      if (req.body?.status === "applied" && before?.status !== "applied") {
+        const changes = updated.suggestedChanges as Record<string, unknown> | null;
+        const strategies = Array.isArray(changes?.strategies) ? changes!.strategies as string[] : [];
+        if (changes?.action === "cost_optimization" && strategies.includes("model_downgrade")) {
+          const agent = await storage.getAgent(updated.agentId, getOrgId(req));
+          const cheaperModel = agent?.modelName ? MODEL_DOWNGRADE_MAP[agent.modelName] : undefined;
+          if (agent && cheaperModel) {
+            await storage.updateAgent(agent.id, { modelName: cheaperModel });
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "improvement-recommendations",
+              action: "agent_model_downgraded",
+              objectType: "agent",
+              objectId: agent.id,
+              details: JSON.stringify({ recommendationId: updated.id, from: agent.modelName, to: cheaperModel }),
+            });
+          }
+        }
+      }
+
       res.json(updated);
     } catch (e) {
       handleZodError(res, e);
@@ -4643,15 +4680,36 @@ Analyze and respond in JSON:
       const patch = allPatches.find(p => p.id === evalPatchId);
       if (!patch) return res.status(404).json({ message: "Patch not found" });
 
-      const evalResult = {
-        suiteId: `eval-${crypto.randomUUID().slice(0, 8)}`,
-        totalCases: 48,
-        passed: 44,
-        failed: 4,
-        passRate: 0.917,
-        regressions: patch.riskLevel === "high" ? 2 : 0,
-        improvements: patch.changeType === "prompt_tweak" ? 6 : 3,
+      // Real eval history, not a fabricated pass rate: look up the agent's
+      // most recently completed eval run instead of inventing numbers. A
+      // patch has no eval run of its own (it hasn't been applied yet), so
+      // this reports the agent's current baseline as the best available
+      // real signal, rather than pretending a suite ran against the patch.
+      const allEvalRuns = await storage.getAllEvalRuns();
+      const agentEvalRuns = allEvalRuns
+        .filter(r => r.agentId === patch.agentId && r.status === "completed")
+        .sort((a, b) => new Date(b.completedAt || b.startedAt || 0).getTime() - new Date(a.completedAt || a.startedAt || 0).getTime());
+      const latestRun = agentEvalRuns[0];
+
+      const evalResult = latestRun ? {
+        suiteId: latestRun.suiteId,
+        runId: latestRun.id,
+        totalCases: latestRun.totalCases || 0,
+        passed: latestRun.passedCases || 0,
+        failed: latestRun.failedCases || 0,
+        passRate: latestRun.passRate || 0,
         evaluatedAt: new Date().toISOString(),
+        source: "agent_baseline",
+        note: "Reflects the agent's most recent completed eval run; the patch itself has not been evaluated yet.",
+      } : {
+        suiteId: null,
+        totalCases: 0,
+        passed: 0,
+        failed: 0,
+        passRate: null,
+        evaluatedAt: new Date().toISOString(),
+        source: "unavailable",
+        note: "No completed eval run exists for this agent yet.",
       };
 
       await storage.updatePatch(evalPatchId, {
@@ -4660,8 +4718,7 @@ Analyze and respond in JSON:
       });
 
       setTimeout(async () => {
-        const finalStatus = evalResult.regressions > 0 ? "proposed" : "proposed";
-        await storage.updatePatch(evalPatchId, { status: finalStatus });
+        await storage.updatePatch(evalPatchId, { status: "proposed" });
       }, 2000);
 
       res.json(evalResult);

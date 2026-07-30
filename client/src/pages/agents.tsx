@@ -14,8 +14,6 @@ import {
   X,
   Play,
   Pause,
-  KeyRound,
-  FileDown,
   ChevronDown,
   AlertTriangle,
   CheckCircle,
@@ -159,13 +157,15 @@ function getDaysSinceCompliance(lastApproval: Approval | undefined): number | nu
   return Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-type BulkAction = "regression_eval" | "freeze_deployments" | "rotate_secrets" | "export_audit" | "delete";
+// rotate_secrets and export_audit were removed: neither had a real per-agent
+// mechanism backing it server-side (no secret-rotation vault operation
+// scoped to an agent, no per-agent audit-bundle export) -- they previously
+// just showed a success toast and did nothing.
+type BulkAction = "regression_eval" | "freeze_deployments" | "delete";
 
 const BULK_ACTION_META: Record<BulkAction, { label: string; description: string; icon: typeof Play; destructive?: boolean }> = {
   regression_eval: { label: "Run Regression Eval", description: "Trigger regression evaluation suites for the selected agents. This will run all bound eval suites and generate comparison reports.", icon: Play },
   freeze_deployments: { label: "Freeze Deployments", description: "Freeze all deployment pipelines for the selected agents. No new releases will be promoted until unfrozen.", icon: Pause },
-  rotate_secrets: { label: "Rotate Secrets", description: "Initiate secret rotation for API keys and credentials used by the selected agents. Active sessions will be gracefully migrated.", icon: KeyRound },
-  export_audit: { label: "Export Audit Bundle", description: "Generate and download a compliance audit bundle containing traces, evaluations, policy checks, and approval history for the selected agents.", icon: FileDown },
   delete: { label: "Delete Agents", description: "Permanently delete the selected agents and all associated data including API keys, channels, MCP server links, knowledge base links, and team memberships. This action cannot be undone.", icon: Trash2, destructive: true },
 };
 
@@ -188,7 +188,6 @@ export default function Agents() {
   const { role } = useRole();
   const { industry } = useIndustry();
   const blueprintPerm = usePermission("create_modify_blueprints");
-  const auditPerm = usePermission("export_audit_bundle");
   const billingPerm = usePermission("billing_invoices");
 
   const canSeeHealth = role.id === "admin" || role.id === "ops_sre" || role.id === "agent_engineer" || role.id === "expert_validator" || role.id === "compliance_security";
@@ -562,21 +561,6 @@ export default function Agents() {
             <Button variant="outline" size="sm" onClick={() => setBulkAction("freeze_deployments")} data-testid="bulk-freeze-deployments">
               <Pause className="w-3.5 h-3.5 mr-1" /> Freeze Deployments
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setBulkAction("rotate_secrets")} data-testid="bulk-rotate-secrets">
-              <KeyRound className="w-3.5 h-3.5 mr-1" /> Rotate Secrets
-            </Button>
-            {!auditPerm.allowed ? (
-              <Button variant="outline" size="sm" disabled title="You do not have permission to export audit bundles" data-testid="bulk-export-audit">
-                <FileDown className="w-3.5 h-3.5 mr-1" /> Export Audit Bundle
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => setBulkAction("export_audit")} data-testid="bulk-export-audit">
-                <FileDown className="w-3.5 h-3.5 mr-1" /> Export Audit Bundle
-                {auditPerm.permission.access === "conditional" && auditPerm.permission.annotation && (
-                  <Badge variant="secondary" className="text-[10px] ml-1">{auditPerm.permission.annotation}</Badge>
-                )}
-              </Button>
-            )}
             {blueprintPerm.allowed && (
               <Button variant="outline" size="sm" className="text-red-600 dark:text-red-400 border-red-500/30 hover:bg-red-500/10" onClick={() => setBulkAction("delete")} data-testid="bulk-delete-agents">
                 <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete

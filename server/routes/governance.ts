@@ -3234,7 +3234,12 @@ Ontology: ${ontologyName || "industry standard"}`,
           title: `SLA Breach: ${alert.agentName} — ${alert.driftMetric} drift ${alert.driftPercent}%`,
           agentId: alert.agentId,
           agentName: alert.agentName,
-          industry: outcome.riskTier === "CRITICAL" ? "financial_services" : "financial_services",
+          // agents has no industry column to derive this from per-agent; the
+          // sibling "SLA At Risk" pipeline below hardcodes the same value.
+          // This was a dead self-ternary (both branches identical) rather
+          // than a real per-outcome/per-risk-tier distinction -- collapsed
+          // to a plain literal to match its sibling honestly.
+          industry: "financial_services",
           severity: "critical",
           issueType: "sla_breach",
           issueDescription: `Outcome SLA breach detected. ${breachDescription}. Agent ${alert.driftMetric} drifted by ${alert.driftPercent}% from baseline.`,
@@ -4276,14 +4281,15 @@ Eval Suites: ${evalSuites.length} configured`,
   router.post("/api/governance/control-point-action", async (req, res) => {
     try {
       const orgId = getOrgId(req);
-      const { id, kind, action, comment } = z.object({
+      const { id, kind, action, comment, decidedBy: bodyDecidedBy } = z.object({
         id: z.string(),
         kind: z.enum(["workflow_interrupt", "deployment_block", "policy_violation"]),
         action: z.enum(["approve", "reject", "acknowledge", "escalate"]),
         comment: z.string().optional(),
+        decidedBy: z.string().optional(),
       }).parse(req.body);
 
-      const decidedBy = "current-user";
+      const decidedBy = bodyDecidedBy || getRequestRole(req);
 
       if (kind === "workflow_interrupt") {
         // Ownership check: verify this run has an activeInterruptId and is org-reachable via audit events
@@ -4348,7 +4354,7 @@ Eval Suites: ${evalSuites.length} configured`,
 
       res.json({ ok: true, id, kind, action });
     } catch (e: any) {
-      if (e instanceof ZodError) return handleZodError(e, res);
+      if (e instanceof ZodError) return handleZodError(res, e);
       console.error("[control-point-action] Error:", e);
       res.status(500).json({ error: "Failed to process control-point action" });
     }

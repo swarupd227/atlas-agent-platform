@@ -9,6 +9,7 @@ interface UseSpeechToTextReturn {
   isListening: boolean;
   interimText: string;
   isSupported: boolean;
+  error: string | null;
   startListening: () => void;
   stopListening: () => void;
   toggleListening: () => void;
@@ -18,6 +19,7 @@ export function useSpeechToText(options: UseSpeechToTextOptions = {}): UseSpeech
   const { onTranscript, lang = "en-US" } = options;
   const [isListening, setIsListening] = useState(false);
   const [interimText, setInterimText] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
@@ -39,6 +41,8 @@ export function useSpeechToText(options: UseSpeechToTextOptions = {}): UseSpeech
   const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition || recognitionRef.current) return;
+
+    setError(null);
 
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -65,7 +69,24 @@ export function useSpeechToText(options: UseSpeechToTextOptions = {}): UseSpeech
       setInterimText(interim);
     };
 
-    recognition.onerror = () => {};
+    recognition.onerror = (event: any) => {
+      const code = event?.error as string | undefined;
+      setError(code || "unknown-error");
+
+      const unrecoverable = code === "not-allowed" || code === "permission-denied" || code === "audio-capture";
+      if (unrecoverable) {
+        // Permission/hardware failures aren't transient like `no-speech` --
+        // stop the auto-restart loop below and reset isListening instead of
+        // leaving it stuck true while onend keeps retrying a mic that will
+        // never work.
+        active = false;
+        if (recognitionRef.current === recognition) {
+          recognitionRef.current = null;
+        }
+        setIsListening(false);
+        setInterimText("");
+      }
+    };
     recognition.onend = () => {
       if (active && recognitionRef.current) {
         try { recognitionRef.current.start(); } catch {}
@@ -99,5 +120,5 @@ export function useSpeechToText(options: UseSpeechToTextOptions = {}): UseSpeech
     };
   }, []);
 
-  return { isListening, interimText, isSupported, startListening, stopListening, toggleListening };
+  return { isListening, interimText, isSupported, error, startListening, stopListening, toggleListening };
 }

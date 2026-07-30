@@ -1287,7 +1287,7 @@ export async function executePromptWithMcp(
   const canonicalTools = buildCanonicalTools(availableTools);
 
   let kbContext = "";
-  const kbRetrievals: Array<{ kbId: string; kbName: string; embeddingModel: string; chunks: Array<{ chunkId: string; sourceDocId: string; similarityScore: number; contentHash: string }> }> = [];
+  const kbRetrievals: Array<{ kbId: string; kbName: string; embeddingModel: string; chunks: Array<{ chunkId: string; sourceDocId: string; similarityScore: number | null; contentHash: string }> }> = [];
   try {
     if (linkedKbs.length > 0) {
       const ontologyLabels = options?.ontologyLabels || [];
@@ -1317,7 +1317,7 @@ export async function executePromptWithMcp(
               chunks: chunks.map((c: any) => ({
                 chunkId: c.id,
                 sourceDocId: c.source_id || c.sourceId || "",
-                similarityScore: typeof c.similarity === "number" ? c.similarity : 0.5,
+                similarityScore: typeof c.similarity === "number" ? c.similarity : null,
                 contentHash: createHash("sha256").update(c.content || "").digest("hex"),
               })),
             });
@@ -1346,7 +1346,7 @@ export async function executePromptWithMcp(
               chunks: selectedFallback.map((c: any) => ({
                 chunkId: c.id,
                 sourceDocId: c.sourceId || "",
-                similarityScore: 0.5,
+                similarityScore: null,
                 contentHash: createHash("sha256").update(c.content || "").digest("hex"),
               })),
             });
@@ -1458,6 +1458,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             model: modelName,
             tools: canonicalTools.length > 0 ? canonicalTools : undefined,
             maxTokens: 4096,
+            requestedProvider: providerName,
           },
           (chunk) => {
             onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
@@ -1473,6 +1474,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             model: modelName,
             tools: canonicalTools.length > 0 ? canonicalTools : undefined,
             maxTokens: 4096,
+            requestedProvider: providerName,
           },
           [llmProvider, fallbackLlmProvider],
         ));
@@ -1903,7 +1905,22 @@ After receiving tool results, provide a structured analysis with key findings, s
             toolCallsInIteration: currentToolCalls.length,
             hasMoreIterations: currentToolCalls.length > 0,
           });
-        } catch {
+        } catch (err: unknown) {
+          // Previously a bare `break` here silently truncated the run while
+          // it still reported success: true -- record the failure as a real
+          // step so it's visible in the trace and correctly flips the run's
+          // overall success flag (computed below from failedSteps.length).
+          const anyErr = err as Error;
+          steps.push({
+            id: `step_${steps.length + 1}`,
+            name: `AI Re-Planning (iteration ${iterationsUsed + 1})`,
+            type: "ai_planning",
+            status: "failed",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            error: `Tool-continuation LLM call failed: ${anyErr?.message || "Unknown error"}`,
+          });
+          emitProgress("error", { message: anyErr?.message || "Tool-continuation LLM call failed", stage: "tool_continuation", iteration: iterationsUsed });
           break;
         }
       }
@@ -2149,11 +2166,36 @@ After receiving tool results, provide a structured analysis with key findings, s
 
   const ind = industry || "general";
   const toolSources = toolCallResults.filter(r => !r.error).map(r => `${r.serverName} / ${r.toolName}`);
+  const failedToolCalls = toolCallResults.filter(r => !!r.error);
+  const stepsMissingTimestamps = steps.filter(s => s.status === "completed" && (!s.startedAt || !s.completedAt));
+  const hasReasoningStep = steps.some(s => s.status === "completed" && /planning|analysis/i.test(s.name));
   const complianceChecks: Array<{ rule: string; status: string; detail: string }> = [
-    { rule: "Data Source Verification", status: "pass", detail: toolSources.length > 0 ? `Data sourced via registered MCP integrations: ${toolSources.join(", ")}` : "No external data sources used" },
-    { rule: "Decision Audit Trail", status: "pass", detail: "All decision factors logged with timestamps in execution steps" },
-    { rule: "AI Reasoning Logged", status: "pass", detail: "AI planning and analysis steps captured in execution trace" },
-    { rule: `${ind.charAt(0).toUpperCase() + ind.slice(1)} Industry Protocol`, status: "pass", detail: "Execution complied with industry governance framework" },
+    {
+      rule: "Data Source Verification",
+      status: failedToolCalls.length > 0 ? "fail" : "pass",
+      detail: failedToolCalls.length > 0
+        ? `${failedToolCalls.length} tool call(s) failed: ${failedToolCalls.map(r => r.toolName).join(", ")}`
+        : toolSources.length > 0 ? `Data sourced via registered MCP integrations: ${toolSources.join(", ")}` : "No external data sources used",
+    },
+    {
+      rule: "Decision Audit Trail",
+      status: stepsMissingTimestamps.length > 0 ? "fail" : "pass",
+      detail: stepsMissingTimestamps.length > 0
+        ? `${stepsMissingTimestamps.length} step(s) missing start/completion timestamps: ${stepsMissingTimestamps.map(s => s.name).join(", ")}`
+        : "All decision factors logged with timestamps in execution steps",
+    },
+    {
+      rule: "AI Reasoning Logged",
+      status: hasReasoningStep ? "pass" : "warn",
+      detail: hasReasoningStep ? "AI planning and analysis steps captured in execution trace" : "No AI planning/analysis step found in this run's execution trace",
+    },
+    {
+      rule: `${ind.charAt(0).toUpperCase() + ind.slice(1)} Industry Protocol`,
+      status: runtimeHardViolations.length > 0 ? "fail" : "pass",
+      detail: runtimeHardViolations.length > 0
+        ? `${runtimeHardViolations.length} hard policy violation(s) during execution: ${runtimeHardViolations.map(v => v.reason).join("; ")}`
+        : "No hard policy violations during execution",
+    },
   ];
 
   let ontologyComplianceResult: OntologyComplianceResult | null = null;
@@ -3518,7 +3560,7 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
         }),
         ...(memoryGovernanceCheck ? { memoryGovernanceCheck } : {}),
       },
-      modelId: "gpt-4.1",
+      modelId: agent.modelName || "gpt-4.1",
       tokenUsage: result.summary.tokenUsage || null,
       toolCalls: result.steps.filter((s: any) => s.type === "api_call").map((s: any) => ({
         tool: s.mcpTool || s.name,

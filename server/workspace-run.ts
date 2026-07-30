@@ -309,6 +309,12 @@ async function runTeamWorkspaceRun(
   let status: "completed" | "failed";
   let waveResultsForTrace: any[] = [];
   let dagResultForProvenance: { totalNodes: number; totalWaves: number } = { totalNodes: 0, totalWaves: 0 };
+  // DAGExecutionEngine.execute() already sums each worker node's own costUsd
+  // into DAGExecutionResult.totalCostUsd (see dag-execution-engine.ts) -- that
+  // real aggregate is captured below instead of being hardcoded to 0. Stays 0
+  // only if the pipeline threw before producing a result (cost genuinely
+  // unknown in that case).
+  let costUsd = 0;
 
   try {
     const { dagRunId: id, result, wavePlan } = await runTeamAgentDag(agentId, blueprintId, input, {
@@ -328,16 +334,12 @@ async function runTeamWorkspaceRun(
     status = result.success ? "completed" : "failed";
     waveResultsForTrace = result.waveResults;
     dagResultForProvenance = { totalNodes: wavePlan.totalNodes, totalWaves: wavePlan.totalWaves };
+    costUsd = result.totalCostUsd;
   } catch (execErr: any) {
     output = `Team pipeline failed: ${execErr.message}`;
     status = "failed";
     dagRunId = execErr.dagRunId;
   }
-
-  // DAGExecutionEngine doesn't currently aggregate a total cost across worker
-  // agents (each worker's own cost is tracked on its own trace, not rolled
-  // up here) -- known gap, not blocking.
-  const costUsd = 0;
 
   let traceId: string | null = null;
   try {

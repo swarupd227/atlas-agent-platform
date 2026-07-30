@@ -215,8 +215,12 @@ async function runStepWithFallback(
     return { ...result, usedFallback: false };
   } catch (err: any) {
     console.warn(`[otc-quote-live] Step "${role}" agent call failed, using fallback:`, err?.message);
+    // NOTE: the agent call genuinely failed (network/runtime error) — report success: false
+    // so the SSE stream doesn't lie about a real failure. The fallback message is still
+    // returned (usedFallback: true) so downstream context/logging isn't empty, but callers
+    // must not treat this as a successful run.
     return {
-      success: true,
+      success: false,
       message: getFallbackMessage(role),
       usedFallback: true,
     };
@@ -295,6 +299,10 @@ export async function otcQuoteLiveRunHandler(req: Request, res: Response): Promi
     });
 
     const priorContext: Record<string, string> = {};
+    // Tracks whether any agent call genuinely failed (thrown error), as opposed to an agent
+    // simply being absent/not-yet-registered (which is expected demo behaviour). Used to keep
+    // run_complete from reporting success when a real failure occurred.
+    let anyAgentCallFailed = false;
 
     for (const step of OTC_QUOTE_PIPELINE_STEPS) {
       if (aborted) break;
@@ -366,6 +374,7 @@ export async function otcQuoteLiveRunHandler(req: Request, res: Response): Promi
 
         const results = await Promise.allSettled(tasks);
         const messages: string[] = [];
+        let dualStepSuccess = true;
 
         for (const res of results) {
           if (res.status === "fulfilled") {
@@ -377,8 +386,13 @@ export async function otcQuoteLiveRunHandler(req: Request, res: Response): Promi
               data: { success: r.success, usedFallback: r.usedFallback },
               success: r.success,
             });
+            if (!r.success) dualStepSuccess = false;
+          } else {
+            dualStepSuccess = false;
           }
         }
+
+        if (!dualStepSuccess) anyAgentCallFailed = true;
 
         if (messages.length > 0) {
           priorContext[step.role] = messages.join("\n").slice(0, 1500);
@@ -389,7 +403,7 @@ export async function otcQuoteLiveRunHandler(req: Request, res: Response): Promi
           agentName: step.agentName,
           secondaryAgentName: step.secondaryAgentName,
           agentId: primaryAgentId || null,
-          success: true,
+          success: dualStepSuccess,
           message: messages[0]?.slice(0, 600) || getFallbackMessage(step.role),
           resultSummary: { role: step.role, dualAgent: true },
         });
@@ -421,6 +435,8 @@ export async function otcQuoteLiveRunHandler(req: Request, res: Response): Promi
           result = { success: true, message: getFallbackMessage(step.role), usedFallback: true };
         }
 
+        if (!result.success) anyAgentCallFailed = true;
+
         if (result.message) {
           priorContext[step.role] = result.message.slice(0, 1500);
         }
@@ -439,12 +455,15 @@ export async function otcQuoteLiveRunHandler(req: Request, res: Response): Promi
     }
 
     sendEvent("run_complete", {
-      success: true,
-      message: "Quote Q-78432 generated — $429,711 net — approved by Sarah Chen, Regional VP",
+      success: !anyAgentCallFailed,
+      message: anyAgentCallFailed
+        ? "Quote Q-78432 generated with degraded results — one or more agent calls failed and fell back to computed data. Review before sending to customer."
+        : "Quote Q-78432 generated — $429,711 net — approved by Sarah Chen, Regional VP",
       quoteNumber: "Q-78432",
       totalPrice: 429_711,
       effectiveDiscount: 11.8,
       skuCount: 48,
+      degraded: anyAgentCallFailed,
     });
 
   } catch (err: any) {

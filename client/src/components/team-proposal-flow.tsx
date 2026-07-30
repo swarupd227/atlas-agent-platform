@@ -176,18 +176,43 @@ export function TeamProposalDialog({
       // the time the user lands on the agent page, "is ready" is literally
       // true instead of aspirational.
       const agentIds: string[] = [data.teamAgent?.id, ...((data.workers || []).map((w: any) => w.id))].filter(Boolean);
+      const agentNamesById = new Map<string, string>();
+      if (data.teamAgent?.id) agentNamesById.set(data.teamAgent.id, data.teamAgent.name || data.teamAgent.id);
+      for (const w of data.workers || []) {
+        if (w?.id) agentNamesById.set(w.id, w.name || w.id);
+      }
       let deploySuccesses = 0;
+      // Per-agent deploy failures used to be swallowed by an empty catch, so a
+      // partial-failure team only ever showed an aggregate success/fail count
+      // -- capture which agent failed and why so it can be surfaced in the UI.
+      const deployErrors: { agentId: string; agentName: string; error: string }[] = [];
       for (const agentId of agentIds) {
         try {
-          const deployRes = await apiRequest("POST", `/api/agents/${agentId}/deploy-and-run`, {});
-          if (deployRes.ok) deploySuccesses++;
-        } catch {}
+          await apiRequest("POST", `/api/agents/${agentId}/deploy-and-run`, {});
+          deploySuccesses++;
+        } catch (err: any) {
+          // apiRequest throws `<status>: <json-or-text-body>` on non-2xx
+          // responses (see throwIfResNotOk in queryClient.ts) -- unwrap the
+          // JSON body's `error`/`message` field when present, same as the
+          // onError handler above, so the surfaced text is specific.
+          let message = err?.message || "Unknown error";
+          const jsonStart = message.indexOf("{");
+          if (jsonStart >= 0) {
+            try {
+              const parsed = JSON.parse(message.slice(jsonStart));
+              if (parsed?.error) message = parsed.error;
+              else if (parsed?.message) message = parsed.message;
+            } catch {}
+          }
+          deployErrors.push({ agentId, agentName: agentNamesById.get(agentId) || agentId, error: message });
+        }
       }
-      return { ...data, deploySuccesses, deployTotal: agentIds.length };
+      return { ...data, deploySuccesses, deployTotal: agentIds.length, deployErrors };
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
       const deployedAll = data.deployTotal > 0 && data.deploySuccesses === data.deployTotal;
+      const deployErrors: { agentId: string; agentName: string; error: string }[] = data.deployErrors || [];
       // deploy-and-run only actually executes immediately for continuous/
       // scheduled triggers -- for the on-demand default it just registers
       // the runtime (confirmed via its own response message: "Use 'Run Now'
@@ -195,9 +220,23 @@ export function TeamProposalDialog({
       // second instance of the exact overclaim this fix exists to remove.
       toast({
         title: deployedAll ? "Automation created and deployed" : "Automation created",
-        description: deployedAll
-          ? `"${data.teamAgent?.name}" is live and ready. Use "Run Test" on its page to see it work.`
-          : `"${data.teamAgent?.name}" was created, but couldn't deploy automatically. Deploy it from its page to run it.`,
+        description: deployedAll ? (
+          `"${data.teamAgent?.name}" is live and ready. Use "Run Test" on its page to see it work.`
+        ) : deployErrors.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            <span>
+              {`"${data.teamAgent?.name}" was created, but ${deployErrors.length} of ${data.deployTotal} agent(s) failed to deploy:`}
+            </span>
+            <ul className="list-disc pl-4">
+              {deployErrors.map((e, i) => (
+                <li key={i}>{`${e.agentName}: ${e.error}`}</li>
+              ))}
+            </ul>
+            <span>Deploy the failed agent(s) from its page to run it.</span>
+          </div>
+        ) : (
+          `"${data.teamAgent?.name}" was created, but couldn't deploy automatically. Deploy it from its page to run it.`
+        ),
         variant: deployedAll ? "default" : "destructive",
       });
       onOpenChange(false);

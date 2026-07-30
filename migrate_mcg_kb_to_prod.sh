@@ -97,10 +97,13 @@ for a in lst:
 bind_mcp() {
   local agent_id="$1"; local server_id="$2"; local name="$3"
   echo "  ▸ Binding '${name}'…"
-  curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/mcp-servers" \
+  if curl -sf -X POST "${BASE_URL}/api/agents/${agent_id}/mcp-servers" \
     -H "Content-Type: application/json" \
-    -d "{\"serverId\":\"${server_id}\"}" > /dev/null 2>&1 || true
-  echo "    ✓ Bound."
+    -d "{\"serverId\":\"${server_id}\"}" > /dev/null 2>&1; then
+    echo "    ✓ Bound."
+  else
+    echo "    ✗ FAILED to bind '${name}'." >&2
+  fi
 }
 
 create_deployment() {

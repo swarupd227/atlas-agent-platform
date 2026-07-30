@@ -190,7 +190,7 @@ export class JiraMcpServer extends RealMcpBase {
       });
     };
 
-    const client = new JiraClient(fetcher);
+    const client = new JiraClient(fetcher, instanceUrl);
 
     switch (toolName) {
       case "jira_search":          return jira_search(client, args);

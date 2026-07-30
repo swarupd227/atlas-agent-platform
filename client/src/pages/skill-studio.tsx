@@ -306,6 +306,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
   const [complexity, setComplexity] = useState("intermediate");
   const [status, setStatus] = useState("draft");
   const [markdownBody, setMarkdownBody] = useState("");
+  const [dependencies, setDependencies] = useState<Array<{ name: string; type: string }>>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -461,6 +462,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
       setComplexity(skill.complexity);
       setStatus(skill.status ?? "draft");
       setMarkdownBody(skill.markdownBody ?? "");
+      setDependencies((skill.dependencies as Array<{ name: string; type: string }> | null) ?? []);
       setQualityScore(skill.descriptionQualityScore ?? null);
       const persistedTest = skill.lastSandboxTest as (SandboxResult & { testScenario?: string }) | null;
       if (persistedTest) {
@@ -513,6 +515,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     requiredMcpServers: requiredMcpServers.split("\n").map(t => t.trim()).filter(Boolean),
     requiredDataClassifications: requiredDataClassifications.split("\n").map(t => t.trim()).filter(Boolean),
     markdownBody,
+    dependencies,
   });
 
   const handleValidate = async (): Promise<ValidationResult | null> => {
@@ -610,8 +613,8 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     if (builderResult.industry) setIndustry(builderResult.industry);
     if (builderResult.domain) setDomain(builderResult.domain);
     if (builderResult.tags) setTags(Array.isArray(builderResult.tags) ? builderResult.tags.join(", ") : "");
-    if (builderResult.dependencies) {
-      // dependencies is handled on save via the skill object
+    if (builderResult.dependencies && Array.isArray(builderResult.dependencies)) {
+      setDependencies(builderResult.dependencies);
     }
     setActiveTab("editor");
     toast({ title: "Applied generated content to editor" });
@@ -1794,6 +1797,8 @@ function SkillEvalResultsPanel({ skillId }: { skillId: string }) {
     run: any;
     caseResults: any[];
     failingCases: any[];
+    mode?: string;
+    selfGraded?: boolean;
   }>({
     queryKey: ["/api/eval/results", skillId],
     queryFn: async () => {
@@ -1829,6 +1834,14 @@ function SkillEvalResultsPanel({ skillId }: { skillId: string }) {
 
   return (
     <div className="space-y-4">
+      {(data.mode === "simulated" || data.selfGraded) && (
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="badge-eval-simulated">
+          <Badge variant="secondary" className="no-default-hover-elevate no-default-active-elevate bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            Simulated
+          </Badge>
+          <span>Self-graded by the model, not a real sandboxed execution. Use the "Sandbox" tab for a real run.</span>
+        </div>
+      )}
       <Card data-testid="card-eval-summary">
         <CardContent className="p-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

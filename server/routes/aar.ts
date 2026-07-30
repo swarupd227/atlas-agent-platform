@@ -271,26 +271,35 @@ interface ModuleMetric {
   secondary: string;
 }
 
-function deriveModuleHealth(agentId: string, moduleId: string) {
+function deriveModuleHealth(
+  agentId: string,
+  moduleId: string,
+  real?: { policyDecisionCounts: { block: number; alert: number; log: number }; toolCallsProxied: number; autonomyMode: string | null; pendingApprovals: number },
+) {
   const seed = seedFromAgentId(agentId + moduleId);
-  const evalsPerMin = 120 + (seed % 180);
-  const mcpCallsProxied = 4000 + (seed % 8000);
+  // provenance-store, credential-manager, and health-monitor have no real
+  // backing subsystem in this platform (no WAL, no cert store, no separate
+  // sidecar heartbeat) -- their numbers stay simulated. policy-engine,
+  // mcp-proxy, and autonomy-enforcer DO have real data available (real
+  // policy decisions, real tool-call counters, the agent's real autonomy
+  // mode/pending approvals) and use it instead of a fabricated number.
   const eventsQueued = seed % 12;
   const eventsTotal = 50000 + (seed % 100000);
   const certDaysLeft = 45 + (seed % 315);
   const certExpiry = new Date(Date.now() + certDaysLeft * 86400000).toISOString().split("T")[0];
-  const lastHeartbeat = new Date(Date.now() - (seed % 30000)).toISOString();
-  const blockCount = seed % 8;
-  const alertCount = 12 + (seed % 40);
-  const logCount = 300 + (seed % 700);
+  const lastHeartbeat = real ? new Date().toISOString() : new Date(Date.now() - (seed % 30000)).toISOString();
+
+  const realPolicyCounts = real?.policyDecisionCounts ?? { block: seed % 8, alert: 12 + (seed % 40), log: 300 + (seed % 700) };
+  const realEvalsPerMin = real ? realPolicyCounts.block + realPolicyCounts.alert + realPolicyCounts.log : 120 + (seed % 180);
+  const realMcpCalls = real ? real.toolCallsProxied : 4000 + (seed % 8000);
 
   const metricsMap: Record<string, ModuleMetric> = {
-    "policy-engine": { label: "Evals / min", value: evalsPerMin, secondary: `${blockCount} BLOCK · ${alertCount} ALERT · ${logCount} LOG` },
-    "mcp-proxy": { label: "MCP calls proxied", value: mcpCallsProxied.toLocaleString(), secondary: "Rate limits: OK · Fingerprint: nominal" },
-    "provenance-store": { label: "Events synced", value: eventsTotal.toLocaleString(), secondary: `${eventsQueued} queued (WAL)` },
+    "policy-engine": { label: "Evals / min", value: realEvalsPerMin, secondary: `${realPolicyCounts.block} BLOCK · ${realPolicyCounts.alert} ALERT · ${realPolicyCounts.log} LOG` },
+    "mcp-proxy": { label: "MCP calls proxied", value: realMcpCalls.toLocaleString(), secondary: real ? "Live tool-call counters (this process)" : "Rate limits: OK · Fingerprint: nominal" },
+    "provenance-store": { label: "Events synced (simulated)", value: eventsTotal.toLocaleString(), secondary: `${eventsQueued} queued (WAL)` },
     "telemetry-emitter": { label: "OTLP endpoint", value: "astra-agents-collector:4317", secondary: "Metrics + traces + logs active" },
-    "autonomy-enforcer": { label: "Autonomy level", value: "Guided", secondary: "0 approvals pending" },
-    "credential-manager": { label: "Cert expiry", value: certExpiry, secondary: `${certDaysLeft} days remaining · Last rotation: 30d ago` },
+    "autonomy-enforcer": { label: "Autonomy level", value: real?.autonomyMode || "Guided", secondary: `${real?.pendingApprovals ?? 0} approvals pending` },
+    "credential-manager": { label: "Cert expiry (simulated)", value: certExpiry, secondary: `${certDaysLeft} days remaining · Last rotation: 30d ago` },
     "health-monitor": { label: "Last heartbeat", value: "just now", secondary: "7 / 7 checks passed · Fingerprint: stable" },
   };
 
@@ -311,10 +320,14 @@ function deriveModuleHealth(agentId: string, moduleId: string) {
   };
 }
 
-function buildModuleConfig(agentId: string, targetPlatform: string) {
+function buildModuleConfig(
+  agentId: string,
+  targetPlatform: string,
+  real?: { policyDecisionCounts: { block: number; alert: number; log: number }; toolCallsProxied: number; autonomyMode: string | null; pendingApprovals: number },
+) {
   return AAR_MODULES.map((m) => ({
     ...m,
-    health: deriveModuleHealth(agentId, m.id),
+    health: deriveModuleHealth(agentId, m.id, real),
   }));
 }
 
@@ -493,14 +506,30 @@ router.get("/api/agents/:agentId/aar", async (req, res) => {
       return res.json({ aarConfig: null, modules: null, processModel: null, policyActions: null, agentName: agent.name });
     }
 
-    const modules = buildModuleConfig(agentId, aarConfig.targetPlatform);
-    const processModel = buildProcessModel(agentId);
-    const seed = seedFromAgentId(agentId);
+    // Real signals for the modules/summary that have a genuine backing
+    // source: this agent's own persisted policy decisions (aar_action_decisions),
+    // this process's live tool-call counters, and its real pending
+    // elicitations -- instead of a deterministic hash pretending to be
+    // live telemetry.
+    const agentDecisions = await storage.listAarActionDecisions(agentId, orgId, 1000);
     const policyActions = {
-      block: seed % 8,
-      alert: 12 + (seed % 40),
-      log: 300 + (seed % 700),
+      block: agentDecisions.filter(d => d.decision === "BLOCK").length,
+      alert: agentDecisions.filter(d => d.decision === "ALERT_AND_ALLOW" || d.decision === "REQUIRE_APPROVAL").length,
+      log: agentDecisions.filter(d => d.decision === "ALLOW").length,
     };
+    const toolCallsProxied = Array.from(_toolCallCounters.entries())
+      .filter(([key]) => key.startsWith(`${agentId}:`))
+      .reduce((sum, [, value]) => sum + value, 0);
+    const pendingElicitations = await storage.getMcpElicitationsByStatus("pending");
+    const pendingApprovals = pendingElicitations.filter(e => e.agentId === agentId).length;
+
+    const modules = buildModuleConfig(agentId, aarConfig.targetPlatform, {
+      policyDecisionCounts: policyActions,
+      toolCallsProxied,
+      autonomyMode: agent.autonomyMode,
+      pendingApprovals,
+    });
+    const processModel = buildProcessModel(agentId);
 
     return res.json({
       aarConfig,
