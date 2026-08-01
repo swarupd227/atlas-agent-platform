@@ -20346,6 +20346,20 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     }
   });
 
+  // Org-scoped recent DAG runs across every team agent -- backs Monitor's
+  // Agent Runtime tab. Registered before the /:id route below so "recent"
+  // isn't swallowed as a run id.
+  router.get("/api/dag-execution-runs/recent", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+      const runs = await storage.listDagExecutionRunsByOrg(orgId, limit);
+      res.json(runs);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   router.get("/api/dag-execution-runs/:id", async (req, res) => {
     try {
       const run = await storage.getDagExecutionRun(req.params.id);

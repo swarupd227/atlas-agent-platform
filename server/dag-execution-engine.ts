@@ -3,7 +3,41 @@ import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineSt
 import { publishDagRunEvent, previewOutput } from "./dag-run-events";
 import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
+import { recomputeOutcomeKpis } from "./routes/helpers";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
+
+// A completed team-workflow run had no path to ever reach its linked
+// outcome's KPI tracking -- this file never wrote an outcomeEvent, so
+// recomputeOutcomeKpis (which drives kpiDefinitions.currentValue) was never
+// invoked either, no matter how many real runs happened (test finding
+// TC_MONITOR_001). Fire-and-forget: an outcome-tracking failure must never
+// take down the DAG run response that's already been sent/returned to the
+// caller.
+async function recordDagRunOutcomeEvent(
+  teamAgentId: string,
+  dagRunId: string,
+  status: "completed" | "completed_with_skips" | "failed",
+  totalCostUsd?: number,
+): Promise<void> {
+  try {
+    const agent = await storage.getAgent(teamAgentId);
+    if (!agent?.outcomeId) return;
+    await storage.createOutcomeEvent({
+      organizationId: agent.organizationId ?? undefined,
+      outcomeId: agent.outcomeId,
+      agentId: teamAgentId,
+      type: "team_workflow_run",
+      billable: status !== "failed",
+      excludeReason: status === "failed" ? "run_failed" : undefined,
+      unitCount: 1,
+      unitValue: totalCostUsd ?? undefined,
+      payload: { dagRunId, status },
+    });
+    await recomputeOutcomeKpis(agent.outcomeId, agent.organizationId ?? undefined);
+  } catch (err: any) {
+    console.error(`[dag-outcome-event] failed to record outcome event for run ${dagRunId}:`, err.message);
+  }
+}
 
 // Turns a node label like "Brief Approval Agent" into "brief_approval_agent"
 // -- a state key a person building a deterministic rule can actually guess,
@@ -1517,6 +1551,7 @@ async function executeTeamAgentDagRun(
       completedAt: new Date(),
     });
     publishDagRunEvent(dagRun.id, { type: "run_complete", runStatus: deriveRunStatus(result), totalWaves: wavePlan.totalWaves });
+    recordDagRunOutcomeEvent(teamAgentId, dagRun.id, deriveRunStatus(result), result.totalCostUsd).catch(() => {});
 
     return result;
   } catch (execErr: any) {
@@ -1528,6 +1563,7 @@ async function executeTeamAgentDagRun(
       completedAt: new Date(),
     });
     publishDagRunEvent(dagRun.id, { type: "run_complete", runStatus: "failed", error: execErr.message });
+    recordDagRunOutcomeEvent(teamAgentId, dagRun.id, "failed").catch(() => {});
     // Callers (the run-dag route) still want to point the user at the failed
     // run record even though the promise rejected -- attach it rather than
     // making every caller thread a separate try/catch around each awaited step.

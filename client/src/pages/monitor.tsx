@@ -33,6 +33,7 @@ import {
   FileWarning,
   Loader2,
   ChevronDown,
+  GitBranch,
 } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,7 +53,7 @@ import { PolicyViolationDialog } from "@/components/policy-violation-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import type { Agent, RunTrace, Approval } from "@shared/schema";
+import type { Agent, RunTrace, Approval, DagExecutionRun } from "@shared/schema";
 
 interface ToolConnector {
   name: string;
@@ -513,7 +514,87 @@ function AgentRuntimeTab() {
           )}
         </CardContent>
       </Card>
+
+      <TeamWorkflowRunsCard />
     </div>
+  );
+}
+
+// Team/blueprint DAG runs (launched from a team agent's Workspace) live in a
+// completely separate table from the on-demand single-agent runtime above --
+// previously this tab had no visibility into them at all, so a completed
+// team workflow simply never appeared anywhere under Agent Runtime (test
+// finding TC_MONITOR_001). Detail rendering (wave-by-wave state, node
+// outputs) already exists on the dedicated /dag-runs/:runId page, so this
+// stays a summary list rather than duplicating that view inline.
+function TeamWorkflowRunsCard() {
+  const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
+  const { data: dagRuns } = useQuery<DagExecutionRun[]>({
+    queryKey: ["/api/dag-execution-runs/recent"],
+    refetchInterval: 10000,
+  });
+
+  const runs = dagRuns || [];
+  const agentNameById = new Map((agents || []).map(a => [a.id, a.name]));
+
+  return (
+    <Card data-testid="section-team-workflow-runs">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <GitBranch className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Team Workflow Runs</CardTitle>
+          </div>
+          <Badge variant="outline" className="text-[10px]" data-testid="badge-team-run-count">{runs.length} runs</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {runs.length === 0 ? (
+          <div className="text-center py-6">
+            <span className="text-xs text-muted-foreground">No team workflow runs yet. Runs launched from a team agent's Workspace will appear here.</span>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {runs.slice(0, 20).map((run) => {
+              const name = (run.teamAgentId && agentNameById.get(run.teamAgentId)) || "Unknown team agent";
+              const isFailed = run.status === "failed";
+              const isInFlight = run.status === "running" || run.status === "waiting_approval";
+              return (
+                <div key={run.id} className="flex items-center justify-between gap-3 p-2.5 rounded-md bg-muted/30" data-testid={`team-run-${run.id}`}>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {isFailed ? (
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                    ) : isInFlight ? (
+                      <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
+                    ) : (
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    )}
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-medium truncate">{name}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {run.status === "waiting_approval" ? "Waiting on approval" : run.status.replace(/_/g, " ")}
+                        {run.totalWaves ? ` · wave ${run.currentWave ?? 0}/${run.totalWaves}` : ""}
+                        {run.startedAt ? ` · ${new Date(run.startedAt).toLocaleString()}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {run.totalCostUsd != null && (
+                      <span className="text-[10px] text-muted-foreground">${run.totalCostUsd.toFixed(4)}</span>
+                    )}
+                    <Link href={`/dag-runs/${run.id}`}>
+                      <Button variant="outline" size="sm" data-testid={`button-view-team-run-${run.id}`}>
+                        <Eye className="w-3 h-3 mr-1" /> View
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -550,6 +631,7 @@ export default function Monitor() {
           "/api/agents", "/api/traces", "/api/drift-signals", "/api/monitor/impact",
           "/api/approvals", "/api/monitor/tool-health", "/api/monitor/policy-violations",
           "/api/healing-pipelines", "/api/agent-runtime/active", "/api/agent-runtime/runs",
+          "/api/dag-execution-runs/recent",
         ].map(key => monitorQueryClient.refetchQueries({ queryKey: [key] }))
       );
       await monitorQueryClient.refetchQueries({ predicate: q => String(q.queryKey[0]).startsWith("/api/monitor/series") });
@@ -1977,14 +2059,19 @@ export default function Monitor() {
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P95 Latency</span>
                           <span className="text-sm font-semibold">{formatMs(agent.avgLatencyMs)}</span>
-                          {/* Fuller bar = lower (better) latency. Scaled to a 30s
-                              ceiling: the previous 3s ceiling clamped every real
-                              multi-second latency (5s, 12s, 19s) to 0, so the bar
-                              vanished entirely for exactly the agents testers looked
-                              at (test finding TC_006). 30s keeps realistic values
-                              visible and distinct. null/no-data renders empty. */}
+                          {/* Bar length tracks latency magnitude directly (fuller =
+                              higher/worse), matching the Success/Health bars right next
+                              to it where fuller = higher number. An earlier inverted
+                              version (fuller = lower/better) was mathematically correct
+                              but read as "doesn't match the value" to testers scanning
+                              all three bars left-to-right (test finding TC_006) -- a
+                              bigger displayed number rendering a *shorter* bar looked
+                              broken even though it wasn't. Scaled to a 30s ceiling: the
+                              original 3s ceiling clamped every real multi-second latency
+                              (5s, 12s, 19s) to the same maxed-out value. null/no-data
+                              renders empty. */}
                           <Progress
-                            value={agent.avgLatencyMs == null ? 0 : Math.min(100, Math.max(2, 100 - (agent.avgLatencyMs / 30000) * 100))}
+                            value={agent.avgLatencyMs == null ? 0 : Math.min(100, Math.max(2, (agent.avgLatencyMs / 30000) * 100))}
                             className="h-1"
                           />
                         </div>

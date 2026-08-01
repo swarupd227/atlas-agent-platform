@@ -845,6 +845,7 @@ export interface IStorage {
   listDagExecutionRuns(pipelineRunId?: string): Promise<DagExecutionRun[]>;
   listDagExecutionRunsByTeamAgent(teamAgentId: string, limit?: number): Promise<DagExecutionRun[]>;
   listDagExecutionRunsByStatus(status: string): Promise<DagExecutionRun[]>;
+  listDagExecutionRunsByOrg(orgId?: string, limit?: number): Promise<DagExecutionRun[]>;
   createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun>;
   updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined>;
   // Atomically flips a run from "waiting_approval" to "running" -- returns
@@ -4173,6 +4174,28 @@ export class DatabaseStorage implements IStorage {
 
   async listDagExecutionRunsByStatus(status: string): Promise<DagExecutionRun[]> {
     return db.select().from(dagExecutionRuns).where(eq(dagExecutionRuns.status, status));
+  }
+
+  // dagExecutionRuns has no organizationId column of its own -- scope it via
+  // the owning team agent's org, same in-memory-filter convention the rest of
+  // this file uses instead of joins. Used by Monitor's Agent Runtime tab,
+  // which previously had no visibility into team/blueprint DAG runs at all
+  // (only single-agent on-demand runtime deployments) -- test finding
+  // TC_MONITOR_001.
+  async listDagExecutionRunsByOrg(orgId?: string, limit: number = 50): Promise<DagExecutionRun[]> {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (!scopedOrgId) {
+      return db.select().from(dagExecutionRuns).orderBy(desc(dagExecutionRuns.createdAt)).limit(limit);
+    }
+    const orgAgents = await db.select({ id: agents.id }).from(agents).where(eq(agents.organizationId, scopedOrgId));
+    const agentIds = orgAgents.map(a => a.id);
+    if (agentIds.length === 0) return [];
+    return db
+      .select()
+      .from(dagExecutionRuns)
+      .where(inArray(dagExecutionRuns.teamAgentId, agentIds))
+      .orderBy(desc(dagExecutionRuns.createdAt))
+      .limit(limit);
   }
 
   async createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun> {
