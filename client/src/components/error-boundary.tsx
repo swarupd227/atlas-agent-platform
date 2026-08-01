@@ -21,7 +21,7 @@ interface State {
 // refresh. That "intermittent freeze during navigation that a refresh fixes"
 // is exactly what testers reported (UI-001). The remedy is always the same:
 // fetch the fresh index.html, so we auto-reload once (guarded against loops).
-function isChunkLoadError(error: Error): boolean {
+export function isChunkLoadError(error: Error): boolean {
   const msg = error?.message || "";
   return (
     error?.name === "ChunkLoadError" ||

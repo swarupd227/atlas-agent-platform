@@ -1340,7 +1340,11 @@ function AgentDetailInner() {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
       setRetireDialogOpen(false);
-      toast({ title: data.status === "pending_approval" ? "Retirement sent for expert approval" : "Retirement initiated" });
+      toast(
+        data.status === "pending_approval"
+          ? { title: "Retirement sent for expert approval", description: "Once approved, the agent will move straight to Retired." }
+          : { title: "Retirement initiated", description: "Complete the handover checklist below, then click \"Complete Archival\" to finish — the agent will stay in \"Retiring\" until you do." }
+      );
     },
     onError: () => toast({ title: "Failed to initiate retirement", variant: "destructive" }),
   });
