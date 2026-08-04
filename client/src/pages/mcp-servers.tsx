@@ -334,17 +334,28 @@ export default function McpServersPage() {
                 </CardContent>
                 {/* Flush to the top-right corner with its own surface so it reads
                     as a deliberate card action rather than a stray icon floating
-                    over the health-status row (test finding UI-INT-001). */}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Delete server ${server.name}`}
-                  className="absolute top-1.5 right-1.5 h-7 w-7 rounded-md border border-border bg-background/90 shadow-sm opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity z-20 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(server.id); }}
-                  data-testid={`button-delete-server-${server.id}`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                </Button>
+                    over the health-status row (test finding UI-INT-001). The
+                    positioning has to live on this wrapping div, not the Button
+                    itself: shadcn's Button always carries the "hover-elevate"
+                    class, and index.css's `.hover-elevate:not(...)` rule forces
+                    `position: relative` at higher specificity than Tailwind's
+                    plain `.absolute` utility -- so `absolute` on the Button was
+                    silently losing the cascade and the button rendered in normal
+                    document flow (bottom of the card) instead of pinned to the
+                    corner, which is why the delete control still looked
+                    misplaced after the first attempt at this fix. */}
+                <div className="absolute top-1.5 right-1.5 z-20 opacity-0 group-hover:opacity-100 has-[:focus-visible]:opacity-100 transition-opacity">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Delete server ${server.name}`}
+                    className="h-7 w-7 rounded-md border border-border bg-background/90 shadow-sm text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(server.id); }}
+                    data-testid={`button-delete-server-${server.id}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  </Button>
+                </div>
               </Card>
               </Link>
             </div>
