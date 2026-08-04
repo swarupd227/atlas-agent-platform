@@ -1945,15 +1945,31 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
     }
   });
 
+  // The model occasionally emits an operator with incidental whitespace
+  // (e.g. "!= " instead of "!="), which fails ruleOperatorSchema's exact
+  // enum match -- trim every operator in the (possibly nested leaf/group)
+  // shape before validating rather than let a stray space alone knock an
+  // otherwise well-formed AI-generated rule into the "malformed" fallback.
+  function trimRuleOperators(node: unknown): unknown {
+    if (!node || typeof node !== "object") return node;
+    const obj = node as Record<string, unknown>;
+    if (typeof obj.operator === "string") {
+      return { ...obj, operator: obj.operator.trim() };
+    }
+    if (Array.isArray(obj.conditions)) {
+      return { ...obj, conditions: obj.conditions.map(trimRuleOperators) };
+    }
+    return node;
+  }
   // A proposed edge's branchRule may arrive as a single leaf ({field,operator,value})
   // or an already-compound group ({combinator,conditions}) -- normalize to RuleGroup
   // so downstream storage always sees the same shape EdgeConfigPanel edits.
-  const pipelineBranchRuleSchema = z.union([ruleLeafSchema, ruleGroupSchema]).nullable().optional();
   function normalizeBranchRule(rule: unknown): RuleGroup | null {
     if (!rule || typeof rule !== "object") return null;
-    const leaf = ruleLeafSchema.safeParse(rule);
+    const trimmed = trimRuleOperators(rule);
+    const leaf = ruleLeafSchema.safeParse(trimmed);
     if (leaf.success) return { combinator: "AND", conditions: [leaf.data] };
-    const group = ruleGroupSchema.safeParse(rule);
+    const group = ruleGroupSchema.safeParse(trimmed);
     if (group.success) return group.data;
     return null; // hallucinated/malformed shape -- silently drop, edge falls back to AI-judged text
   }
@@ -1963,7 +1979,14 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
     label: z.string().optional(),
     type: z.string().optional(),
     branchCondition: z.string().nullable().optional(),
-    branchRule: pipelineBranchRuleSchema,
+    // Deliberately not validated against the strict leaf/group union here --
+    // normalizeBranchRule (below) already re-validates and gracefully drops
+    // a malformed/hallucinated shape per-edge. Enforcing the strict schema at
+    // this outer gate meant one AI-mangled edge (e.g. a stray-whitespace
+    // operator) failed the ENTIRE team-creation request with a raw Zod dump
+    // instead of just falling that one edge back to AI-judged text, exactly
+    // the fallback this file already documents as the intended behavior.
+    branchRule: z.any().nullable().optional(),
   }).passthrough();
   // Resolves a single proposed edge spec into the fields
   // storage.createTeamBlueprintEdge expects. Shared by resolveEdgeRule
