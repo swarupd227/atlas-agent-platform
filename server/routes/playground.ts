@@ -5,7 +5,7 @@ import { eq, desc } from "drizzle-orm";
 import { getOrgId } from "../auth";
 import { getRequestRole } from "../permissions";
 import { conversations, messages as chatMessages } from "@shared/schema";
-import { buildAgentSystemPrompt } from "./helpers";
+import { buildAgentSystemPrompt, recomputeOutcomeKpis } from "./helpers";
 import { executePromptWithMcp, type RuntimeProgressEvent } from "../agent-runtime";
 import { callClaude, stripJsonFences, anthropicClient } from "../claude";
 import OpenAI from "openai";
@@ -14,6 +14,35 @@ const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
 });
+
+// A successful Playground execution against an outcome-bound agent produced
+// real usage but never fed the metering pipeline -- Billing -> Invoices reads
+// entirely off outcomeEvents (server/routes/governance.ts's metering
+// dashboard filters allEvents by outcomeId), and this route only ever wrote
+// a run_traces record. Same gap already fixed for team/blueprint DAG runs in
+// dag-execution-engine.ts; this is the single-agent Playground equivalent
+// (test finding TC_BILL_013). Fire-and-forget: metering must never break the
+// chat response already streaming back to the user.
+async function recordPlaygroundOutcomeEvent(
+  agent: { id: string; outcomeId: string | null; organizationId: string | null },
+  costUsd?: number,
+): Promise<void> {
+  if (!agent.outcomeId) return;
+  try {
+    await storage.createOutcomeEvent({
+      organizationId: agent.organizationId ?? undefined,
+      outcomeId: agent.outcomeId,
+      agentId: agent.id,
+      type: "playground_execution",
+      billable: true,
+      unitCount: 1,
+      unitValue: costUsd || undefined,
+    });
+    await recomputeOutcomeKpis(agent.outcomeId, agent.organizationId ?? undefined);
+  } catch (err: any) {
+    console.error(`[playground] failed to record outcome event for agent ${agent.id}:`, err.message);
+  }
+}
 
 const router = Router();
 
@@ -183,6 +212,9 @@ const router = Router();
               modelId: "claude-opus-4-5",
               toolCalls: toolCalls.length > 0 ? toolCalls : null,
             });
+            if (result.success) {
+              await recordPlaygroundOutcomeEvent(agent, result.summary?.costUsd);
+            }
           } catch {}
 
         } catch (err: any) {
@@ -251,6 +283,7 @@ const router = Router();
             outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
             modelId: agent.modelName || "gpt-4.1",
           });
+          await recordPlaygroundOutcomeEvent(agent);
         } catch {}
       } else {
         const claudeMsgs = existingMsgs.map(m => ({
@@ -282,6 +315,7 @@ const router = Router();
             outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
             modelId: "claude-opus-4-5",
           });
+          await recordPlaygroundOutcomeEvent(agent);
         } catch {}
       }
 
