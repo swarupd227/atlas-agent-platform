@@ -3455,6 +3455,27 @@ export const insertAgentIntegrationCredentialSchema = createInsertSchema(agentIn
 export type InsertAgentIntegrationCredential = z.infer<typeof insertAgentIntegrationCredentialSchema>;
 export type AgentIntegrationCredential = typeof agentIntegrationCredentials.$inferSelect;
 
+// Platform-global LLM provider API keys, settable from Admin instead of only
+// via env vars. One row per provider (openai/anthropic/google/azure_openai/
+// self_hosted) -- not org-scoped, matching the process-wide env-var semantics
+// this replaces/augments. apiKeyBlob is vault-encrypted (credential-vault.ts,
+// same AES-256-GCM scheme as integrationConnections.credentialBlob); keyPreview
+// is a non-secret display fragment (e.g. "sk-ant-...Wv8h") so the Admin UI can
+// show "a key is configured" without ever re-exposing the real value.
+export const llmProviderKeys = pgTable("llm_provider_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  provider: varchar("provider", { length: 40 }).notNull().unique(),
+  apiKeyBlob: text("api_key_blob").notNull(),
+  keyPreview: text("key_preview").notNull(),
+  baseUrl: text("base_url"),
+  updatedBy: varchar("updated_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertLlmProviderKeySchema = createInsertSchema(llmProviderKeys).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertLlmProviderKey = z.infer<typeof insertLlmProviderKeySchema>;
+export type LlmProviderKey = typeof llmProviderKeys.$inferSelect;
+
 // ── Eval Personas (Marketplace install target) ────────────────────────────────
 export const evalPersonas = pgTable("eval_personas", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

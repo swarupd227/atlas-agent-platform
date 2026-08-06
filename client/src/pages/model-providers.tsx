@@ -3,8 +3,11 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SiOpenai, SiGoogle } from "react-icons/si";
 import {
   Activity,
@@ -20,6 +23,11 @@ import {
   Info,
   Layers,
   ArrowRight,
+  KeyRound,
+  Trash2,
+  Eye,
+  EyeOff,
+  Loader2,
 } from "lucide-react";
 import { Link } from "wouter";
 import {
@@ -79,6 +87,17 @@ interface UsageData {
     totalRuns: number;
   };
 }
+
+interface ProviderKeyStatus {
+  provider: string;
+  configured: boolean;
+  source: "vault" | "env" | "none";
+  keyPreview: string | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+const NOT_YET_WIRED_PROVIDERS = new Set(["google", "azure_openai", "self_hosted"]);
 
 const PROVIDER_ICONS: Record<string, typeof SiOpenai> = {
   openai: SiOpenai,
@@ -152,6 +171,68 @@ export default function ModelProviders() {
         description: "Unable to reach provider endpoints",
         variant: "destructive",
       });
+    },
+  });
+
+  const { data: keyStatuses } = useQuery<ProviderKeyStatus[]>({
+    queryKey: ["/api/admin/llm-provider-keys"],
+  });
+
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+
+  function invalidateKeyQueries() {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/llm-provider-keys"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/llm-providers"] });
+  }
+
+  const saveKeyMutation = useMutation({
+    mutationFn: async (provider: string) => {
+      const res = await apiRequest("POST", `/api/admin/llm-provider-keys/${provider}`, { apiKey: apiKeyInput });
+      return res.json();
+    },
+    onSuccess: (data: ProviderKeyStatus & { note?: string }) => {
+      setApiKeyInput("");
+      setShowApiKey(false);
+      invalidateKeyQueries();
+      toast({
+        title: "API key saved",
+        description: data.note || "Takes effect on the next request — no restart required.",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to save API key", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const clearKeyMutation = useMutation({
+    mutationFn: async (provider: string) => {
+      const res = await apiRequest("DELETE", `/api/admin/llm-provider-keys/${provider}`);
+      return res.json();
+    },
+    onSuccess: (_data, provider) => {
+      invalidateKeyQueries();
+      toast({ title: "Admin-set key removed", description: `Reverted to the ${PROVIDER_ENV_VARS[provider]} environment variable, if any.` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to clear API key", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const testKeyMutation = useMutation({
+    mutationFn: async (provider: string) => {
+      const res = await apiRequest("POST", `/api/admin/llm-provider-keys/${provider}/test`);
+      return res.json() as Promise<{ ok: boolean; latencyMs: number; error?: string }>;
+    },
+    onSuccess: (result) => {
+      toast({
+        title: result.ok ? "Connection OK" : "Connection Failed",
+        description: result.ok ? `Responded in ${result.latencyMs}ms` : result.error,
+        variant: result.ok ? "default" : "destructive",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Test failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -289,8 +370,8 @@ export default function ModelProviders() {
                 key={provider.name}
                 className={`cursor-pointer transition-all hover:shadow-md ${
                   provider.configured ? "border-green-200 dark:border-green-800" : ""
-                } ${isComingSoon ? "opacity-60" : ""}`}
-                onClick={() => !isComingSoon && setSelectedProvider(provider)}
+                }`}
+                onClick={() => { setApiKeyInput(""); setShowApiKey(false); setSelectedProvider(provider); }}
                 data-testid={`card-provider-${provider.name}`}
               >
                 <CardHeader className="pb-3">
@@ -303,18 +384,21 @@ export default function ModelProviders() {
                       )}
                       <CardTitle className="text-lg">{provider.displayName}</CardTitle>
                     </div>
-                    {isComingSoon ? (
-                      <Badge variant="outline" className="text-xs">Coming Soon</Badge>
-                    ) : provider.configured ? (
-                      <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" data-testid={`badge-configured-${provider.name}`}>
-                        <CheckCircle2 className="h-3 w-3 mr-1" />
-                        Configured
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs" data-testid={`badge-not-configured-${provider.name}`}>
-                        Not Configured
-                      </Badge>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {isComingSoon && (
+                        <Badge variant="outline" className="text-xs">Not Wired</Badge>
+                      )}
+                      {provider.configured ? (
+                        <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" data-testid={`badge-configured-${provider.name}`}>
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Configured
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-xs" data-testid={`badge-not-configured-${provider.name}`}>
+                          Not Configured
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   <CardDescription className="text-xs mt-1">
                     {PROVIDER_DESCRIPTIONS[provider.name]}
@@ -346,10 +430,10 @@ export default function ModelProviders() {
                       </div>
                     </>
                   )}
-                  {!provider.configured && !isComingSoon && (
+                  {!provider.configured && (
                     <div className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 p-2 rounded">
-                      <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                      <span>Set <code className="font-mono text-[10px]">{PROVIDER_ENV_VARS[provider.name]}</code> to configure</span>
+                      <KeyRound className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span>Click to set an API key, or set <code className="font-mono text-[10px]">{PROVIDER_ENV_VARS[provider.name]}</code></span>
                     </div>
                   )}
                 </CardContent>
@@ -405,7 +489,7 @@ export default function ModelProviders() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!selectedProvider} onOpenChange={() => setSelectedProvider(null)}>
+      <Dialog open={!!selectedProvider} onOpenChange={() => { setSelectedProvider(null); setApiKeyInput(""); setShowApiKey(false); }}>
         {selectedProvider && (
           <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
@@ -418,16 +502,123 @@ export default function ModelProviders() {
                 ) : (
                   <Cpu className={`h-5 w-5 ${PROVIDER_COLORS[selectedProvider.name]}`} />
                 )}
-                {selectedProvider.displayName} — Model Catalog
+                {selectedProvider.displayName}
               </DialogTitle>
               <DialogDescription>
-                {selectedProvider.configured
-                  ? "This provider is configured and ready for use."
-                  : `Set the ${PROVIDER_ENV_VARS[selectedProvider.name]} environment variable to enable this provider.`}
+                API key configuration and model catalog for {selectedProvider.displayName}.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4 mt-4">
+              {(() => {
+                const keyStatus = keyStatuses?.find((s) => s.provider === selectedProvider.name);
+                const isNotWired = NOT_YET_WIRED_PROVIDERS.has(selectedProvider.name);
+                const isPending =
+                  (saveKeyMutation.isPending && saveKeyMutation.variables === selectedProvider.name) ||
+                  (clearKeyMutation.isPending && clearKeyMutation.variables === selectedProvider.name) ||
+                  (testKeyMutation.isPending && testKeyMutation.variables === selectedProvider.name);
+                return (
+                  <div className="space-y-3 rounded-lg border p-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium text-sm flex items-center gap-2">
+                        <KeyRound className="h-4 w-4" />
+                        API Key
+                      </h4>
+                      {keyStatus?.source === "vault" && (
+                        <Badge variant="outline" className="text-[10px]" data-testid={`badge-key-source-${selectedProvider.name}`}>
+                          Admin-set
+                        </Badge>
+                      )}
+                      {keyStatus?.source === "env" && (
+                        <Badge variant="outline" className="text-[10px]">From environment variable</Badge>
+                      )}
+                    </div>
+
+                    {isNotWired && (
+                      <div className="flex items-start gap-1.5 text-xs text-muted-foreground bg-muted/50 p-2 rounded">
+                        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        <span>This provider isn't wired to real completions yet — requests still route through OpenAI/Anthropic. The key is stored for when it is.</span>
+                      </div>
+                    )}
+
+                    {keyStatus?.configured && (
+                      <div className="text-xs text-muted-foreground font-mono" data-testid={`text-key-preview-${selectedProvider.name}`}>
+                        {keyStatus.keyPreview}
+                        {keyStatus.source === "vault" && keyStatus.updatedAt && (
+                          <span className="not-italic font-sans"> · updated {new Date(keyStatus.updatedAt).toLocaleString()}{keyStatus.updatedBy ? ` by ${keyStatus.updatedBy}` : ""}</span>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          type={showApiKey ? "text" : "password"}
+                          placeholder={keyStatus?.configured ? "Enter a new key to rotate…" : "Paste API key…"}
+                          value={apiKeyInput}
+                          onChange={(e) => setApiKeyInput(e.target.value)}
+                          disabled={isPending}
+                          data-testid={`input-api-key-${selectedProvider.name}`}
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          onClick={() => setShowApiKey((v) => !v)}
+                          tabIndex={-1}
+                          data-testid={`button-toggle-key-visibility-${selectedProvider.name}`}
+                        >
+                          {showApiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
+                      <Button
+                        size="sm"
+                        disabled={!apiKeyInput.trim() || isPending}
+                        onClick={() => saveKeyMutation.mutate(selectedProvider.name)}
+                        data-testid={`button-save-key-${selectedProvider.name}`}
+                      >
+                        {saveKeyMutation.isPending && saveKeyMutation.variables === selectedProvider.name ? (
+                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        ) : null}
+                        Save
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!keyStatus?.configured || isNotWired || isPending}
+                        onClick={() => testKeyMutation.mutate(selectedProvider.name)}
+                        data-testid={`button-test-key-${selectedProvider.name}`}
+                      >
+                        {testKeyMutation.isPending && testKeyMutation.variables === selectedProvider.name ? (
+                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        ) : (
+                          <Activity className="h-3.5 w-3.5 mr-1.5" />
+                        )}
+                        Test Connection
+                      </Button>
+                      {keyStatus?.source === "vault" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isPending}
+                          onClick={() => clearKeyMutation.mutate(selectedProvider.name)}
+                          data-testid={`button-clear-key-${selectedProvider.name}`}
+                        >
+                          {clearKeyMutation.isPending && clearKeyMutation.variables === selectedProvider.name ? (
+                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                          )}
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div>
                 <h4 className="font-medium text-sm mb-2">Completion Models</h4>
                 <Table>

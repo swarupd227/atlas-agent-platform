@@ -1345,6 +1345,23 @@ export async function runStartupMigrations() {
       ALTER TABLE deployments ADD COLUMN IF NOT EXISTS customization JSONB;
     `);
 
+    // Admin-managed LLM provider API keys (openai/anthropic/google/azure_openai/
+    // self_hosted), vault-encrypted, taking priority over the equivalent env
+    // var -- see server/llm-provider-keys.ts. Platform-global (no org column),
+    // matching the process-wide env-var semantics this augments.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS llm_provider_keys (
+        id           VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        provider     VARCHAR(40) NOT NULL UNIQUE,
+        api_key_blob TEXT NOT NULL,
+        key_preview  TEXT NOT NULL,
+        base_url     TEXT,
+        updated_by   VARCHAR,
+        created_at   TIMESTAMP DEFAULT NOW(),
+        updated_at   TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

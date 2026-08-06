@@ -8,6 +8,8 @@ import {
   type IntegrationConnection, type InsertIntegrationConnection,
   agentIntegrationCredentials,
   type AgentIntegrationCredential, type InsertAgentIntegrationCredential,
+  llmProviderKeys,
+  type LlmProviderKey, type InsertLlmProviderKey,
   users, agents, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
@@ -5319,6 +5321,38 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date(),
       })
       .where(eq(integrationConnections.id, connectionId));
+  }
+
+  async listLlmProviderKeys(): Promise<LlmProviderKey[]> {
+    return db.select().from(llmProviderKeys);
+  }
+
+  async getLlmProviderKey(provider: string): Promise<LlmProviderKey | null> {
+    const [row] = await db.select().from(llmProviderKeys).where(eq(llmProviderKeys.provider, provider));
+    return row ?? null;
+  }
+
+  async upsertLlmProviderKey(data: InsertLlmProviderKey): Promise<LlmProviderKey> {
+    const existing = await this.getLlmProviderKey(data.provider);
+    if (existing) {
+      const [row] = await db.update(llmProviderKeys)
+        .set({
+          apiKeyBlob: data.apiKeyBlob,
+          keyPreview: data.keyPreview,
+          baseUrl: data.baseUrl,
+          updatedBy: data.updatedBy,
+          updatedAt: new Date(),
+        })
+        .where(eq(llmProviderKeys.id, existing.id))
+        .returning();
+      return row;
+    }
+    const [row] = await db.insert(llmProviderKeys).values(data).returning();
+    return row;
+  }
+
+  async deleteLlmProviderKey(provider: string): Promise<void> {
+    await db.delete(llmProviderKeys).where(eq(llmProviderKeys.provider, provider));
   }
 }
 

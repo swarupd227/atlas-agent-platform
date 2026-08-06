@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
+import { resolveProviderKey } from "./llm-provider-keys";
 
 export interface LLMMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -319,7 +320,7 @@ export interface LLMProvider {
   streamComplete?(messages: LLMMessage[], options: LLMCompletionOptions | undefined, onChunk: (chunk: string) => void): Promise<LLMCompletionResult>;
   embed?(texts: string[], model?: string): Promise<LLMEmbeddingResult>;
   healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }>;
-  getInfo(): LLMProviderInfo;
+  getInfo(): Promise<LLMProviderInfo>;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,13 +329,21 @@ export interface LLMProvider {
 
 class OpenAIProvider implements LLMProvider {
   readonly providerName = "openai";
-  private client: OpenAI;
+  private client: OpenAI | null = null;
+  private clientKey: string | undefined;
 
-  constructor() {
-    this.client = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-    });
+  // Rebuilds the SDK client only when the resolved key/baseURL actually
+  // changed since the last call -- so an Admin-saved key rotation (or the
+  // vault falling back to env, or vice versa) takes effect on the very next
+  // completion, no restart, without reconstructing the client on every call.
+  private async getClient(): Promise<OpenAI> {
+    const resolved = await resolveProviderKey("openai");
+    const cacheKey = `${resolved.apiKey ?? ""}::${resolved.baseUrl ?? ""}`;
+    if (!this.client || this.clientKey !== cacheKey) {
+      this.client = new OpenAI({ apiKey: resolved.apiKey, baseURL: resolved.baseUrl || undefined });
+      this.clientKey = cacheKey;
+    }
+    return this.client;
   }
 
   async complete(messages: LLMMessage[], options?: LLMCompletionOptions): Promise<LLMCompletionResult> {
@@ -375,11 +384,12 @@ class OpenAIProvider implements LLMProvider {
 
     cbCheck(this.providerName);
 
+    const client = await this.getClient();
     let response: OpenAI.ChatCompletion;
     try {
       response = await withRetry(
         () =>
-          this.client.chat.completions.create({
+          client.chat.completions.create({
             model,
             messages: openaiMessages,
             tools: openaiTools,
@@ -466,6 +476,7 @@ class OpenAIProvider implements LLMProvider {
 
     cbCheck(this.providerName);
 
+    const client = await this.getClient();
     let fullContent = "";
     const toolCallsMap: Record<number, { id: string; name: string; arguments: string }> = {};
     let promptTokens = 0;
@@ -475,7 +486,7 @@ class OpenAIProvider implements LLMProvider {
     try {
       const stream = await withRetry(
         () =>
-          this.client.chat.completions.create({
+          client.chat.completions.create({
             model,
             messages: openaiMessages,
             tools: openaiTools,
@@ -551,10 +562,11 @@ class OpenAIProvider implements LLMProvider {
     const batchSize = 100;
     const allEmbeddings: number[][] = [];
     let totalTokens = 0;
+    const client = await this.getClient();
 
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
-      const response = await this.client.embeddings.create({
+      const response = await client.embeddings.create({
         model: embeddingModel,
         input: batch,
       });
@@ -571,7 +583,8 @@ class OpenAIProvider implements LLMProvider {
   async healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
     const start = Date.now();
     try {
-      await this.client.chat.completions.create({
+      const client = await this.getClient();
+      await client.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: "ping" }],
         max_completion_tokens: 5,
@@ -582,11 +595,12 @@ class OpenAIProvider implements LLMProvider {
     }
   }
 
-  getInfo(): LLMProviderInfo {
+  async getInfo(): Promise<LLMProviderInfo> {
+    const resolved = await resolveProviderKey("openai");
     return {
       name: "openai",
       displayName: "OpenAI",
-      configured: !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY),
+      configured: !!resolved.apiKey,
       models: OPENAI_MODELS,
       embeddingModels: OPENAI_EMBEDDING_MODELS,
     };
@@ -599,18 +613,18 @@ class OpenAIProvider implements LLMProvider {
 
 class AnthropicProvider implements LLMProvider {
   readonly providerName = "anthropic";
-  private client: Anthropic;
+  private client: Anthropic | null = null;
+  private clientKey: string | undefined;
 
-  constructor() {
-    const useGateway = !!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
-    this.client = new Anthropic({
-      apiKey: useGateway
-        ? process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY!
-        : process.env.ANTHROPIC_API_KEY || "not-configured",
-      baseURL: useGateway
-        ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || undefined
-        : undefined,
-    });
+  // See OpenAIProvider.getClient() -- same lazy rebuild-on-key-change pattern.
+  private async getClient(): Promise<Anthropic> {
+    const resolved = await resolveProviderKey("anthropic");
+    const cacheKey = `${resolved.apiKey ?? ""}::${resolved.baseUrl ?? ""}`;
+    if (!this.client || this.clientKey !== cacheKey) {
+      this.client = new Anthropic({ apiKey: resolved.apiKey || "not-configured", baseURL: resolved.baseUrl || undefined });
+      this.clientKey = cacheKey;
+    }
+    return this.client;
   }
 
   async complete(messages: LLMMessage[], options?: LLMCompletionOptions): Promise<LLMCompletionResult> {
@@ -681,11 +695,12 @@ class AnthropicProvider implements LLMProvider {
 
     cbCheck(this.providerName);
 
+    const client = await this.getClient();
     let response: Anthropic.Message;
     try {
       response = await withRetry(
         () =>
-          this.client.messages.create({
+          client.messages.create({
             model,
             max_tokens: options?.maxTokens || 4096,
             ...(systemPrompt ? { system: systemPrompt } : {}),
@@ -792,13 +807,14 @@ class AnthropicProvider implements LLMProvider {
 
     cbCheck(this.providerName);
 
+    const client = await this.getClient();
     let fullContent = "";
     const toolCalls: CanonicalToolCall[] = [];
 
     try {
       const stream = await withRetry(
         () =>
-          this.client.messages.stream({
+          client.messages.stream({
             model,
             max_tokens: options?.maxTokens || 4096,
             ...(systemPrompt ? { system: systemPrompt } : {}),
@@ -856,7 +872,8 @@ class AnthropicProvider implements LLMProvider {
   async healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
     const start = Date.now();
     try {
-      await this.client.messages.create({
+      const client = await this.getClient();
+      await client.messages.create({
         model: "claude-haiku-4-5",
         max_tokens: 5,
         messages: [{ role: "user", content: "ping" }],
@@ -867,13 +884,12 @@ class AnthropicProvider implements LLMProvider {
     }
   }
 
-  getInfo(): LLMProviderInfo {
+  async getInfo(): Promise<LLMProviderInfo> {
+    const resolved = await resolveProviderKey("anthropic");
     return {
       name: "anthropic",
       displayName: "Anthropic",
-      configured:
-        !!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY ||
-        !!process.env.ANTHROPIC_API_KEY,
+      configured: !!resolved.apiKey,
       models: ANTHROPIC_MODELS,
     };
   }
@@ -1098,30 +1114,41 @@ export async function streamCompleteWithFallback(
   throw new Error(`[llm-provider] All providers failed. Errors: ${errors.join(" | ")}`);
 }
 
-export function getAvailableProviders(): LLMProviderInfo[] {
-  const providers: LLMProviderInfo[] = [
+export async function getAvailableProviders(): Promise<LLMProviderInfo[]> {
+  // google/azure_openai/self_hosted have no real LLMProvider implementation
+  // yet (getProvider() silently substitutes OpenAI for them) -- still check
+  // the vault/env here so Admin can see "a key is on file" for these ahead
+  // of that implementation landing, without claiming they're wired to real
+  // completions.
+  const [openaiInfo, anthropicInfo, googleKey, azureKey, selfHostedKey] = await Promise.all([
     getProvider("openai").getInfo(),
     getProvider("anthropic").getInfo(),
+    resolveProviderKey("google"),
+    resolveProviderKey("azure_openai"),
+    resolveProviderKey("self_hosted"),
+  ]);
+  return [
+    openaiInfo,
+    anthropicInfo,
     {
       name: "google",
       displayName: "Google AI (Gemini)",
-      configured: !!process.env.GOOGLE_AI_API_KEY,
+      configured: !!googleKey.apiKey,
       models: GOOGLE_MODELS,
     },
     {
       name: "azure_openai",
       displayName: "Azure OpenAI",
-      configured: !!process.env.AZURE_OPENAI_API_KEY,
+      configured: !!azureKey.apiKey,
       models: [],
     },
     {
       name: "self_hosted",
       displayName: "Self-Hosted (vLLM/Ollama)",
-      configured: !!process.env.SELF_HOSTED_LLM_URL,
+      configured: !!selfHostedKey.apiKey,
       models: [],
     },
   ];
-  return providers;
 }
 
 export function buildCanonicalTools(

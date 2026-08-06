@@ -3,18 +3,23 @@ import { storage } from "../storage";
 import { z, ZodError } from "zod";
 import { getProvider, getAvailableProviders, getPriceTable } from "../llm-provider";
 import { getOrgId } from "../auth";
+import { checkPermission } from "../permissions";
 import { insertAgentTriggerSchema } from "@shared/schema";
 import { runtimeEvents } from "../agent-runtime";
 import { resolveIntegrationIdForMcpServer } from "../connector-poller";
 import { isPollableIntegration, MIN_POLL_INTERVAL_MS } from "../connector-poll-query";
+import { listProviderKeyStatuses, saveProviderKey, clearProviderKey, type LlmProviderName } from "../llm-provider-keys";
 
 const router = Router();
+
+const LLM_PROVIDER_NAMES: LlmProviderName[] = ["openai", "anthropic", "google", "azure_openai", "self_hosted"];
+const NOT_YET_WIRED_PROVIDERS = new Set<LlmProviderName>(["google", "azure_openai", "self_hosted"]);
 
   // === LLM Provider Management Routes ===
 
   router.get("/api/llm-providers", async (req, res) => {
     try {
-      const providers = getAvailableProviders();
+      const providers = await getAvailableProviders();
       res.json(providers);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to get providers" });
@@ -29,7 +34,7 @@ const router = Router();
 
   router.get("/api/llm-providers/health", async (req, res) => {
     try {
-      const providers = getAvailableProviders();
+      const providers = await getAvailableProviders();
       const healthResults = await Promise.all(
         providers
           .filter((p) => p.configured)
@@ -70,6 +75,95 @@ const router = Router();
       res.status(500).json({ error: err.message || "Failed to get usage" });
     }
   });
+
+  // === Admin: LLM provider API keys ===
+  // Vault-backed, platform-global (not org-scoped, matching the process-wide
+  // env vars these override) key management -- see llm-provider-keys.ts.
+  // Real key values never round-trip back to the client after being saved;
+  // only a masked preview does.
+
+  router.get("/api/admin/llm-provider-keys", checkPermission("manage_security"), async (_req, res) => {
+    try {
+      const statuses = await listProviderKeyStatuses();
+      res.json(statuses);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to list provider keys" });
+    }
+  });
+
+  router.post("/api/admin/llm-provider-keys/:provider", checkPermission("manage_security"), async (req, res) => {
+    try {
+      const provider = req.params.provider as LlmProviderName;
+      if (!LLM_PROVIDER_NAMES.includes(provider)) {
+        return res.status(400).json({ error: `Unknown provider "${provider}". Expected one of: ${LLM_PROVIDER_NAMES.join(", ")}` });
+      }
+      const bodySchema = z.object({ apiKey: z.string().min(1), baseUrl: z.string().url().optional() });
+      const { apiKey, baseUrl } = bodySchema.parse(req.body);
+
+      await saveProviderKey(provider, apiKey, baseUrl, req.authUser?.username);
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: req.authUser?.username || "admin",
+        action: "llm_provider_key_updated",
+        objectType: "llm_provider_key",
+        objectId: provider,
+        details: `API key ${provider === "openai" || provider === "anthropic" ? "updated — takes effect on the next request, no restart required" : "stored"} for provider "${provider}"`,
+      });
+
+      const statuses = await listProviderKeyStatuses();
+      const updated = statuses.find((s) => s.provider === provider);
+      res.json({
+        ...updated,
+        note: NOT_YET_WIRED_PROVIDERS.has(provider)
+          ? "Key stored, but this provider isn't wired to real completions yet — requests still route through OpenAI/Anthropic."
+          : undefined,
+      });
+    } catch (e) {
+      if (e instanceof ZodError) {
+        return res.status(400).json({ message: "Validation error", errors: e.errors });
+      }
+      res.status(500).json({ error: (e as Error).message || "Failed to save provider key" });
+    }
+  });
+
+  router.delete("/api/admin/llm-provider-keys/:provider", checkPermission("manage_security"), async (req, res) => {
+    try {
+      const provider = req.params.provider as LlmProviderName;
+      if (!LLM_PROVIDER_NAMES.includes(provider)) {
+        return res.status(400).json({ error: `Unknown provider "${provider}"` });
+      }
+      await clearProviderKey(provider);
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: req.authUser?.username || "admin",
+        action: "llm_provider_key_cleared",
+        objectType: "llm_provider_key",
+        objectId: provider,
+        details: `Admin-set API key removed for provider "${provider}" — reverting to the environment variable, if any`,
+      });
+      const statuses = await listProviderKeyStatuses();
+      res.json(statuses.find((s) => s.provider === provider));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to clear provider key" });
+    }
+  });
+
+  router.post("/api/admin/llm-provider-keys/:provider/test", checkPermission("manage_security"), async (req, res) => {
+    try {
+      const provider = req.params.provider as LlmProviderName;
+      if (!LLM_PROVIDER_NAMES.includes(provider)) {
+        return res.status(400).json({ error: `Unknown provider "${provider}"` });
+      }
+      if (NOT_YET_WIRED_PROVIDERS.has(provider)) {
+        return res.json({ ok: false, latencyMs: 0, error: "This provider isn't wired to real completions yet, so there's nothing to test against — the key is stored for when it is." });
+      }
+      const health = await getProvider(provider).healthCheck();
+      res.json(health);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to test provider key" });
+    }
+  });
+
   router.get("/api/agents/:agentId/triggers", async (req, res) => {
     try {
       const triggers = await storage.getAgentTriggers(req.params.agentId);
