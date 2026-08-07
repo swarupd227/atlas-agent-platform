@@ -489,7 +489,106 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     ],
     slaDescription: "90% forecast accuracy with <2% stockout rate measured monthly",
   },
+  {
+    id: "card-dispute-chargeback-resolution",
+    name: "Card Services Dispute & Chargeback Resolution",
+    description: "Automate cardholder dispute intake, evidence gathering, and chargeback filing across networks, with Regulation E compliance checks and human review for high-value or ambiguous cases.",
+    industry: "financial_services",
+    subVertical: "Card Services",
+    riskTier: "HIGH",
+    complexity: "complex",
+    tools: ["Visa Claims Resolution (VCR)", "Mastercard Dispute Resolution", "FIS", "Salesforce Service Cloud", "Chargebacks911"],
+    complianceCertifications: ["PCI DSS", "Regulation E", "SOC 2"],
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 6.00,
+    riskThreshold: 0.75,
+    maxDriftPercent: 8,
+    kpis: [
+      { name: "Dispute Resolution Time", target: 5, unit: "days", baseline: null, slaThreshold: 10 },
+      { name: "First-Pass Resolution Rate", target: 75, unit: "percent", baseline: null, slaThreshold: 60 },
+      { name: "Chargeback Win Rate", target: 55, unit: "percent", baseline: null, slaThreshold: 40 },
+      { name: "Regulation E Compliance Rate", target: 100, unit: "percent", baseline: null, slaThreshold: 100 },
+    ],
+    slaDescription: "75% first-pass resolution with <5 day cycle time measured monthly",
+  },
+  {
+    id: "trade-settlement-exception-management",
+    name: "Trade Operations Settlement Exception Management",
+    description: "Detect and resolve trade settlement breaks and exceptions across custodians and counterparties in near-real-time, escalating fails-to-deliver and high-value mismatches for human sign-off.",
+    industry: "financial_services",
+    subVertical: "Trade Operations",
+    riskTier: "HIGH",
+    complexity: "complex",
+    tools: ["DTCC", "SWIFT", "Bloomberg AIM", "Broadridge", "Murex"],
+    complianceCertifications: ["SEC Rule 15c3-3", "FINRA", "SOC 2"],
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 12.00,
+    riskThreshold: 0.85,
+    maxDriftPercent: 5,
+    kpis: [
+      { name: "Same-Day Settlement Rate", target: 98, unit: "percent", baseline: null, slaThreshold: 95 },
+      { name: "Exception Resolution Time", target: 2, unit: "hours", baseline: null, slaThreshold: 4 },
+      { name: "Trade Break Reduction", target: 40, unit: "percent", baseline: null, slaThreshold: 25 },
+      { name: "Fails-to-Deliver Rate", target: 1, unit: "percent", baseline: null, slaThreshold: 2 },
+    ],
+    slaDescription: "98% same-day settlement rate with <2hr exception resolution measured daily",
+  },
+  {
+    id: "collections-optimization",
+    name: "Delinquent Account Collections Optimization",
+    description: "Prioritize and personalize collections outreach across channels using propensity-to-pay scoring, with automated promise-to-pay tracking and FDCPA/Regulation F guardrails on contact frequency and content.",
+    industry: "financial_services",
+    subVertical: "Collections",
+    riskTier: "MEDIUM",
+    complexity: "moderate",
+    tools: ["TrueAccord", "FICO Debt Manager", "Experian", "Twilio", "Salesforce Financial Services Cloud"],
+    complianceCertifications: ["FDCPA", "Regulation F", "SOC 2"],
+    pricingModel: "PER_OUTCOME_EVENT",
+    pricePerUnit: 3.00,
+    riskThreshold: 0.70,
+    maxDriftPercent: 10,
+    kpis: [
+      { name: "Right-Party Contact Rate", target: 65, unit: "percent", baseline: null, slaThreshold: 50 },
+      { name: "Promise-to-Pay Conversion", target: 45, unit: "percent", baseline: null, slaThreshold: 30 },
+      { name: "Recovery Rate", target: 35, unit: "percent", baseline: null, slaThreshold: 25 },
+      { name: "FDCPA Complaint Rate", target: 0.1, unit: "percent", baseline: null, slaThreshold: 0.5 },
+    ],
+    slaDescription: "65% right-party contact rate with 35% recovery rate measured monthly",
+  },
+  {
+    id: "regulatory-reporting-automation",
+    name: "Automated Regulatory Reporting & Filing",
+    description: "Assemble, validate, and file recurring regulatory reports (call reports, CCAR, liquidity) from source ledgers with automated reconciliation and full audit trail, escalating data anomalies for compliance review before submission.",
+    industry: "financial_services",
+    subVertical: "Regulatory Reporting",
+    riskTier: "HIGH",
+    complexity: "complex",
+    tools: ["AxiomSL", "Wolters Kluwer OneSumX", "Moody's RiskFoundation", "FIS Regulatory Reporting"],
+    complianceCertifications: ["Dodd-Frank", "Basel III", "SOC 2"],
+    pricingModel: "FIXED_MONTHLY",
+    pricePerUnit: 8000.00,
+    riskThreshold: 0.90,
+    maxDriftPercent: 3,
+    kpis: [
+      { name: "On-Time Filing Rate", target: 100, unit: "percent", baseline: null, slaThreshold: 100 },
+      { name: "Data Accuracy Rate", target: 99.5, unit: "percent", baseline: null, slaThreshold: 99 },
+      { name: "Report Preparation Time Reduction", target: 60, unit: "percent", baseline: null, slaThreshold: 40 },
+      { name: "Regulatory Exception Rate", target: 0.5, unit: "percent", baseline: null, slaThreshold: 1 },
+    ],
+    slaDescription: "100% on-time filing with 99.5% data accuracy measured quarterly",
+  },
 ];
+
+// INDUSTRIES.goldenTemplates was a flat marketing number (e.g. 28 for
+// Financial Services) with no backing data -- the Industry Workspace
+// onboarding screen advertised it before a user has created anything, and
+// the real catalog (OUTCOME_TEMPLATES above) has 7 templates total across
+// every industry combined. Recompute it here as soon as both arrays exist,
+// so the badge a tester sees on their very first screen matches what's
+// actually selectable afterward (test finding TC_GEN_001).
+for (const ind of INDUSTRIES) {
+  ind.goldenTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry === ind.id).length;
+}
 
 type TermKey =
   | "outcomes"
