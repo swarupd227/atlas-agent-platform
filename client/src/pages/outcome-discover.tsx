@@ -793,6 +793,18 @@ export default function OutcomeDiscover() {
     setInput("");
     setStreaming(true);
 
+    // Belt-and-suspenders client-side stall guard: the server now aborts
+    // its own idle Anthropic stream, but a proxy/connection that stalls
+    // between server and browser wouldn't hit that. Reset on every read
+    // so a normal multi-second generation isn't cut short.
+    const abortController = new AbortController();
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => abortController.abort(), 60_000);
+    };
+    resetIdleTimer();
+
     try {
       const discoveryContext: Record<string, unknown> = {};
       if (processSteps.length > 0) {
@@ -813,6 +825,7 @@ export default function OutcomeDiscover() {
           industry: industry || undefined,
           discoveryContext: Object.keys(discoveryContext).length > 0 ? discoveryContext : undefined,
         }),
+        signal: abortController.signal,
       });
 
       if (!res.ok) throw new Error("Discovery request failed");
@@ -826,6 +839,7 @@ export default function OutcomeDiscover() {
 
       outer: while (true) {
         const { done, value } = await reader.read();
+        resetIdleTimer();
         if (done) break;
         // Accumulate into a buffer so partial lines across TCP chunks are rejoined
         sseBuffer += decoder.decode(value, { stream: true });
@@ -885,9 +899,15 @@ export default function OutcomeDiscover() {
             .finally(() => setDetectingRegulations(false));
         }
       }
-    } catch (err) {
-      toast({ title: "Discovery assistant error", description: "Please try again.", variant: "destructive" });
+    } catch (err: any) {
+      const isTimeout = err?.name === "AbortError";
+      toast({
+        title: "Discovery assistant error",
+        description: isTimeout ? "The AI assistant stopped responding. Please try again." : "Please try again.",
+        variant: "destructive",
+      });
     } finally {
+      clearTimeout(idleTimer);
       setStreaming(false);
     }
   }

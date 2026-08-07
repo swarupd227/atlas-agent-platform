@@ -2998,27 +2998,49 @@ Rules:
             : m.content,
         }));
 
+      // Guard against a stalled Anthropic connection (observed: SSE hangs
+      // indefinitely with no error and no chunk, test finding
+      // TC_OUTCOME_CHAT_001). Reset on every token so long-but-active
+      // generations aren't cut short -- only a silent stall trips it.
+      const streamController = new AbortController();
+      const STREAM_IDLE_TIMEOUT_MS = 45_000;
+      let idleTimer: NodeJS.Timeout | undefined;
+      const resetIdleTimer = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => streamController.abort(), STREAM_IDLE_TIMEOUT_MS);
+      };
+      resetIdleTimer();
+
       const claudeStream = anthropicClient.messages.stream({
         model: "claude-haiku-4-5",
         system: systemPrompt,
         messages: anthropicMessages,
         max_tokens: 2400,
-      });
+      }, { signal: streamController.signal });
 
       claudeStream.on("text", (text: string) => {
+        resetIdleTimer();
         res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
       });
 
-      await claudeStream.finalMessage();
+      try {
+        await claudeStream.finalMessage();
+      } finally {
+        clearTimeout(idleTimer);
+      }
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
-    } catch (error) {
-      console.error("Outcome discovery error:", error);
+    } catch (error: any) {
+      const isTimeout = error?.name === "AbortError" || /aborted/i.test(String(error?.message));
+      console.error("Outcome discovery error:", isTimeout ? "stream stalled, aborted after idle timeout" : error);
+      const message = isTimeout
+        ? "The AI assistant stopped responding. Please try again."
+        : "Discovery assistant error";
       if (res.headersSent) {
-        res.write(`data: ${JSON.stringify({ error: "Discovery assistant error" })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
         res.end();
       } else {
-        res.status(500).json({ error: "Discovery assistant failed" });
+        res.status(isTimeout ? 504 : 500).json({ error: message });
       }
     }
   });
