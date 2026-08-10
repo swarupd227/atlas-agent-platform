@@ -212,9 +212,24 @@ function hashCode(str: string): number {
       });
 
       // --- Agents At Risk ---
+      // One bulk fetch grouped in memory instead of a per-suite round trip --
+      // this route used to await storage.getEvalRunsBySuite() once per suite
+      // here AND again below for the backlog count, so an org with N eval
+      // suites paid for up to 2N sequential DB round trips on every Overview
+      // load (the backlog loop was even capped to the first 20 suites to
+      // limit the damage, silently undercounting the real backlog beyond
+      // that). A single getAllEvalRuns() call replaces both.
+      const allEvalRuns = await storage.getAllEvalRuns();
+      const runsBySuite = new Map<string, typeof allEvalRuns>();
+      for (const r of allEvalRuns) {
+        if (!r.suiteId) continue;
+        const list = runsBySuite.get(r.suiteId);
+        if (list) list.push(r); else runsBySuite.set(r.suiteId, [r]);
+      }
+
       const driftMap: Record<string, { driftPercent: number; detectedAt: string }> = {};
       for (const suite of evalSuites) {
-        const runs = await storage.getEvalRunsBySuite(suite.id);
+        const runs = runsBySuite.get(suite.id) || [];
         if (runs.length < 2) continue;
         const sorted = [...runs].sort((a, b) =>
           new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
@@ -315,13 +330,7 @@ function hashCode(str: string): number {
       const failedTraces = recentTraces.filter((t) => t.status === "failed" || t.status === "error");
       const toolErrorRate = recentTraces.length > 0 ? (failedTraces.length / recentTraces.length) * 100 : 0;
 
-      const pendingEvalRuns: number[] = [];
-      for (const suite of evalSuites.slice(0, 20)) {
-        const runs = await storage.getEvalRunsBySuite(suite.id);
-        const pending = runs.filter((r) => r.status === "running" || r.status === "pending");
-        pendingEvalRuns.push(pending.length);
-      }
-      const evalBacklog = pendingEvalRuns.reduce((s, n) => s + n, 0);
+      const evalBacklog = allEvalRuns.filter((r) => r.status === "running" || r.status === "pending").length;
 
       const connectedConnectors = toolConnectors.filter((c) => c.status === "connected").length;
       const connectorHealth = toolConnectors.length > 0
