@@ -106,7 +106,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger, Runbook } from "@shared/schema";
-import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp, HeartPulse, MoreHorizontal } from "lucide-react";
+import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp, HeartPulse, MoreHorizontal, UserPlus } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useIndustry } from "@/components/industry-provider";
 import { formatMs } from "@/components/shared-utils";
@@ -887,6 +887,14 @@ function AgentDetailInner() {
 
   const [assignMcpOpen, setAssignMcpOpen] = useState(false);
   const [selectedMcpServerId, setSelectedMcpServerId] = useState("");
+  // The Team Members tab only ever displayed the roster -- adding a member
+  // required leaving this page entirely for the separate Agent Teams list's
+  // "Manage" dialog (client/src/pages/agent-teams.tsx), even though every
+  // other linkable-resource tab here (MCP Servers, Knowledge Base, Skills)
+  // has its own add control right on the agent's settings page.
+  const [addTeamMemberOpen, setAddTeamMemberOpen] = useState(false);
+  const [addMemberAgentId, setAddMemberAgentId] = useState("");
+  const [addMemberRole, setAddMemberRole] = useState("member");
   const [attachSkillOpen, setAttachSkillOpen] = useState(false);
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
   const [mcpPolicyWarnings, setMcpPolicyWarnings] = useState<Array<{
@@ -924,6 +932,26 @@ function AgentDetailInner() {
     },
     onError: (err: Error) => {
       toast({ title: "Failed to link MCP server", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const addTeamMemberMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", "/api/agent-teams/members", {
+        teamAgentId: agentId,
+        memberAgentId: addMemberAgentId,
+        role: addMemberRole,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agent-teams", agentId, "members"] });
+      setAddTeamMemberOpen(false);
+      setAddMemberAgentId("");
+      setAddMemberRole("member");
+      toast({ title: "Member added", description: "The agent has been added to this team's roster." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add member", description: err.message, variant: "destructive" });
     },
   });
 
@@ -5297,8 +5325,59 @@ function AgentDetailInner() {
         {agent.agentType === "team" && (
           <TabsContent value="team" className="flex flex-col gap-4 mt-0" data-testid="tab-content-team">
             <Card>
-              <CardHeader className="pb-2">
+              <CardHeader className="pb-2 flex flex-row items-center justify-between gap-4 flex-wrap">
                 <CardTitle className="text-base">Team Composition</CardTitle>
+                <Dialog open={addTeamMemberOpen} onOpenChange={setAddTeamMemberOpen}>
+                  <Button size="sm" onClick={() => setAddTeamMemberOpen(true)} data-testid="button-add-team-member">
+                    <UserPlus className="w-4 h-4 mr-1.5" /> Add Member
+                  </Button>
+                  <DialogContent className="max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Add Team Member</DialogTitle>
+                      <DialogDescription>Link an existing agent to this team's roster.</DialogDescription>
+                    </DialogHeader>
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Agent</Label>
+                        <Select value={addMemberAgentId} onValueChange={setAddMemberAgentId}>
+                          <SelectTrigger data-testid="select-add-team-member-agent">
+                            <SelectValue placeholder="Select an agent" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {allAgents
+                              ?.filter(a => a.agentType !== "team" && a.id !== agentId && !teamMembers?.some(tm => tm.memberAgentId === a.id))
+                              .map(a => (
+                                <SelectItem key={a.id} value={a.id}>
+                                  {a.agentType === "remote" ? "[A2A] " : ""}{a.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Role</Label>
+                        <Select value={addMemberRole} onValueChange={setAddMemberRole}>
+                          <SelectTrigger data-testid="select-add-team-member-role">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="lead">Lead</SelectItem>
+                            <SelectItem value="member">Member</SelectItem>
+                            <SelectItem value="observer">Observer</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        onClick={() => addTeamMemberMutation.mutate()}
+                        disabled={!addMemberAgentId || addTeamMemberMutation.isPending}
+                        data-testid="button-confirm-add-team-member"
+                      >
+                        {addTeamMemberMutation.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
+                        Add Member
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </CardHeader>
               <CardContent>
                 {teamMembers && teamMembers.length > 0 ? (
