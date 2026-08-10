@@ -6,7 +6,7 @@ import { getOrgId } from "../auth";
 import { getRequestRole } from "../permissions";
 import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt, recomputeOutcomeKpis } from "./helpers";
-import { executePromptWithMcp, type RuntimeProgressEvent } from "../agent-runtime";
+import { executePromptWithMcp, executeTeamPipeline, type RuntimeProgressEvent, type RuntimeAgent } from "../agent-runtime";
 import { callClaude, stripJsonFences, getAnthropicClient } from "../claude";
 import OpenAI from "openai";
 
@@ -155,7 +155,64 @@ const router = Router();
 
       let fullResponse = "";
 
-      if (hasMcpServers || hasKnowledgeBases) {
+      // Team/Magentic agents were falling straight into the single-agent
+      // branches below -- executePromptWithMcp has no idea how to run a team's
+      // worker pipeline, so it either mishandled the agent's shape or bailed,
+      // surfacing as the generic "chat agent error" the user sees (test
+      // finding SC18_TC_02). Route team agents through the same
+      // executeTeamPipeline used by the working /api/agents/:id/run-test path
+      // instead, before any of the single-agent branches get a chance to run.
+      if (agent.agentType === "team") {
+        res.write(`data: ${JSON.stringify({ content: "" })}\n\n`);
+        try {
+          const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+          const conversationHistory = existingMsgs.length > 1
+            ? existingMsgs.slice(0, -1).map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n\n")
+            : "";
+          const teamPrompt = conversationHistory
+            ? `## Conversation History\n${conversationHistory}\n\n## Current User Message\n${content}`
+            : content;
+          const teamOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
+          const teamRuntimeAgent: RuntimeAgent = {
+            deploymentId: "playground",
+            agentId,
+            agentName: agent.name,
+            blueprintId: rtConfig.orchestration?.blueprintId || undefined,
+            mcpServerIds,
+            intervalMs: 0,
+            industry: (agent as any).industry || undefined,
+            prompt: teamPrompt,
+            agentSystemPrompt: systemPrompt,
+            outcomeId: (agent as any).outcomeId || undefined,
+            agentType: "team",
+            runtimeConfig: rtConfig,
+            ontologyTags: teamOntologyTags,
+          };
+          const result = await executeTeamPipeline(teamRuntimeAgent);
+
+          const orchestrationSummary = result.steps.find((s: any) => s.type === "orchestration_summary")?.output?.finalOutput;
+          fullResponse = orchestrationSummary || result.summary?.analysis?.summary || "I processed your request but couldn't generate a detailed response.";
+          res.write(`data: ${JSON.stringify({ type: "complete", content: fullResponse })}\n\n`);
+
+          try {
+            await storage.createTrace({
+              agentId,
+              environment: "playground",
+              status: result.success ? "completed" : "failed",
+              inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
+              outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
+              stepsJson: result.steps,
+              modelId: agent.modelName || "gpt-4.1",
+            });
+            if (result.success) {
+              await recordPlaygroundOutcomeEvent(agent, result.summary?.costUsd);
+            }
+          } catch {}
+        } catch (err: any) {
+          fullResponse = `I encountered an error while processing your request: ${err.message}`;
+          res.write(`data: ${JSON.stringify({ type: "error", content: fullResponse })}\n\n`);
+        }
+      } else if (hasMcpServers || hasKnowledgeBases) {
         res.write(`data: ${JSON.stringify({ content: "" })}\n\n`);
 
         const conversationHistory = existingMsgs.length > 1

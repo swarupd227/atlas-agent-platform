@@ -72,13 +72,18 @@ export function GlobalSearch() {
   const [search, setSearch] = useState("");
   const [, navigate] = useLocation();
 
-  const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
-  const { data: outcomes } = useQuery<OutcomeContract[]>({ queryKey: ["/api/outcomes"] });
-  const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"] });
-  const { data: traces } = useQuery<RunTrace[]>({ queryKey: ["/api/traces"] });
-  const { data: approvals } = useQuery<Approval[]>({ queryKey: ["/api/approvals"] });
-  const { data: deployments } = useQuery<Deployment[]>({ queryKey: ["/api/deployments"] });
-  const { data: invoices } = useQuery<Invoice[]>({ queryKey: ["/api/invoices"] });
+  // This command palette is mounted globally (every page renders it) but was
+  // fetching all seven of these -- including the full, unbounded /api/traces
+  // list with its large per-row jsonb payloads -- unconditionally on mount,
+  // before the user ever opens it. That meant every single page load paid
+  // for a search index nobody asked for yet. Only fetch once opened.
+  const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"], enabled: open });
+  const { data: outcomes } = useQuery<OutcomeContract[]>({ queryKey: ["/api/outcomes"], enabled: open });
+  const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"], enabled: open });
+  const { data: traces } = useQuery<RunTrace[]>({ queryKey: ["/api/traces"], enabled: open });
+  const { data: approvals } = useQuery<Approval[]>({ queryKey: ["/api/approvals"], enabled: open });
+  const { data: deployments } = useQuery<Deployment[]>({ queryKey: ["/api/deployments"], enabled: open });
+  const { data: invoices } = useQuery<Invoice[]>({ queryKey: ["/api/invoices"], enabled: open });
 
   const go = useCallback((path: string) => {
     navigate(path);

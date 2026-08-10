@@ -3,7 +3,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
-import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError } from "./helpers";
+import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError, draftSingleAgent } from "./helpers";
 import {
   insertAgentTemplateSchema,
   insertEvalSuiteSchema,
@@ -1614,196 +1614,13 @@ Guidelines:
 
       const orgId = getOrgId(req);
       const industryId = requestedIndustryId || "general";
-
-      const [templates, allSkills, allMcpServers, allPolicies, ontologyConcepts] = await Promise.all([
-        storage.getAgentTemplates(),
-        storage.getSkills(orgId),
-        storage.getMcpServers(),
-        storage.getPolicies(orgId),
-        storage.getOntologyConcepts(industryId).catch(() => [] as any[]),
-      ]);
-
-      // Rank every candidate slice by keyword overlap with the description —
-      // same relevance scorer shape as propose-agents, kept independent here
-      // since this endpoint has no outcomeContract/KPIs to score against.
-      const keywords = description.toLowerCase().split(/\W+/).filter((w: string) => w.length > 3);
-      const relevanceScore = (obj: any): number => {
-        const text = [obj.name || "", obj.label || "", obj.description || "", ...(Array.isArray(obj.tags) ? obj.tags : []), obj.domain || "", obj.category || ""].join(" ").toLowerCase();
-        return keywords.filter((k: string) => text.includes(k)).length;
-      };
-
-      const rankedMcpServers = allMcpServers
-        .filter(s => !s.industryId || s.industryId === industryId)
-        .map(s => ({ server: s, score: relevanceScore(s) }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 8)
-        .map(x => x.server);
-
-      const mcpToolsByServer: Record<string, Array<{ name: string; description: string | null }>> = {};
-      for (const server of rankedMcpServers) {
-        try {
-          const tools = await storage.getMcpServerTools(server.id);
-          if (tools.length > 0) {
-            mcpToolsByServer[server.name] = tools.slice(0, 6).map(t => ({ name: t.name, description: t.description }));
-          }
-        } catch { /* skip servers whose tools can't be loaded */ }
-      }
-
-      const rankedSkills = allSkills
-        .filter(s => s.industry === industryId || s.industry === "cross_industry")
-        .sort((a, b) => relevanceScore(b) - relevanceScore(a))
-        .slice(0, 8);
-
-      const activePolicies = allPolicies.filter(p => p.status === "active")
-        .sort((a, b) => relevanceScore(b) - relevanceScore(a))
-        .slice(0, 8);
-      const policySummary = activePolicies.map(p => ({ id: p.id, name: p.name, domain: p.domain, description: p.description, policyJson: p.policyJson }));
-
-      const rankedTemplates = templates
-        .filter((t: any) => t.industry === industryId || t.industry === "cross_industry")
-        .sort((a: any, b: any) => relevanceScore(b) - relevanceScore(a))
-        .slice(0, 5);
-      const templateSummary = rankedTemplates.map((t: any) => ({ id: t.id, name: t.name, description: t.description, defaultRiskTier: t.defaultRiskTier, defaultAutonomyMode: t.defaultAutonomyMode, tags: t.tags }));
-
-      const rankedOntology = ontologyConcepts
-        .map((c: any) => ({ concept: c, score: relevanceScore(c) }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 10)
-        .map((x: any) => x.concept);
-      const ontologySummary = rankedOntology.map((c: any) => ({ id: c.id, label: c.label, description: c.description }));
-
-      const systemPrompt = `You are an Agent Design Drafter for the ATLAS agent orchestration platform. Given a plain-language description of an outcome/goal, draft a SINGLE governed agent configuration that a human will review and edit before creation. Draft confidently and specifically, using ONLY the real platform resources listed below — never invent a tool, skill, policy, or ontology concept that isn't listed.
-
-DATA MODEL TO RETURN:
-- name, description: concise, specific to the description given
-- riskTier: one of LOW, MEDIUM, HIGH, CRITICAL
-- autonomyMode: one of manual, assisted, autonomous
-- systemPrompt: a complete operating system prompt for this agent (its role, scope, constraints)
-- toolsConfig: array of { name, description } — ONLY drawn from AVAILABLE MCP TOOLS below (empty array if none genuinely fit)
-- mcpServerNames: array of MCP server names actually referenced in toolsConfig above
-- policyBindings: array of { policyId, enforcement } — ONLY drawn from ACTIVE POLICIES below, enforcement one of "hard", "strict", "monitor"
-- ontologyTags: array of { conceptId, conceptLabel } — ONLY drawn from ONTOLOGY CONCEPTS below
-- preloadedSkills: array of skill ids — ONLY drawn from AVAILABLE SKILLS below
-- guardrailsConfig: { stopConditions: string[], escalationTriggers: string[], forbiddenOutputs: string[] }
-- evalSuiteConfig: { customCases: array of { name, input, expectedOutput } } — 3 to 5 concrete test cases that would catch this agent behaving wrong
-- sourceTemplateId: the id of the closest-fitting template below, or null if none genuinely fit
-- reasoning: 2-3 sentences explaining the key design choices
-
-AVAILABLE MCP TOOLS (grouped by server): ${JSON.stringify(mcpToolsByServer)}
-AVAILABLE SKILLS: ${JSON.stringify(rankedSkills.map(s => ({ id: s.id, name: s.name, description: s.description })))}
-ACTIVE POLICIES: ${JSON.stringify(policySummary)}
-MATCHING TEMPLATES: ${JSON.stringify(templateSummary)}
-ONTOLOGY CONCEPTS: ${JSON.stringify(ontologySummary)}
-INDUSTRY: ${industryId}
-
-Return ONLY a JSON object with exactly these fields: name, description, riskTier, autonomyMode, systemPrompt, toolsConfig, mcpServerNames, policyBindings, ontologyTags, preloadedSkills, guardrailsConfig, evalSuiteConfig, sourceTemplateId, reasoning.`;
-
-      const raw = await callClaude({ system: systemPrompt, user: description, model: "claude-opus-4-5", maxTokens: 3000, jsonMode: true });
-      let parsed: any;
-      try {
-        parsed = JSON.parse(stripJsonFences(raw));
-      } catch {
-        return res.status(422).json({ error: "Agent draft generation failed: the model's response wasn't valid JSON." });
-      }
-
-      const draftShape = z.object({
-        name: z.string(),
-        description: z.string(),
-        riskTier: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
-        autonomyMode: z.enum(["manual", "assisted", "autonomous"]).optional(),
-        systemPrompt: z.string().optional(),
-        toolsConfig: z.array(z.any()).optional(),
-        mcpServerNames: z.array(z.string()).optional(),
-        policyBindings: z.array(z.any()).optional(),
-        ontologyTags: z.array(z.any()).optional(),
-        preloadedSkills: z.array(z.any()).optional(),
-        guardrailsConfig: z.any().optional(),
-        evalSuiteConfig: z.any().optional(),
-        sourceTemplateId: z.string().nullable().optional(),
-        reasoning: z.string().optional(),
-      });
-      const validation = draftShape.safeParse(parsed);
-      if (!validation.success) {
-        console.error("[draft-agent] LLM response failed schema validation:", validation.error.message);
-        return res.status(422).json({ error: "Agent draft generation failed: invalid response structure", details: validation.error.message });
-      }
-      const draft: any = validation.data;
-
-      // Enrich policyBindings with real name/domain/description — never trust
-      // the LLM to echo these back accurately, look them up from the same
-      // policy list it was given.
-      if (Array.isArray(draft.policyBindings)) {
-        draft.policyBindings = draft.policyBindings
-          .map((b: any) => {
-            const policy = allPolicies.find(p => p.id === b.policyId);
-            if (!policy) return null; // drop bindings referencing a policy the LLM hallucinated
-            return { policyId: policy.id, policyName: policy.name, enforcement: b.enforcement || "monitor", domain: policy.domain, description: policy.description || "" };
-          })
-          .filter(Boolean);
-      }
-
-      // Same anti-hallucination discipline for ontology tags and tool
-      // selections: only keep entries that actually match a real concept /
-      // real MCP tool from the candidate lists the LLM was given.
-      if (Array.isArray(draft.ontologyTags)) {
-        draft.ontologyTags = draft.ontologyTags
-          .map((t: any) => {
-            const concept = rankedOntology.find((c: any) => c.id === t.conceptId);
-            if (!concept) return null;
-            return { conceptId: concept.id, conceptLabel: concept.label };
-          })
-          .filter(Boolean);
-      }
-      if (Array.isArray(draft.toolsConfig)) {
-        const validToolNames = new Set(Object.values(mcpToolsByServer).flat().map(t => t.name));
-        draft.toolsConfig = draft.toolsConfig.filter((t: any) => t?.name && validToolNames.has(t.name));
-      }
-      if (Array.isArray(draft.preloadedSkills)) {
-        const validSkillIds = new Set(rankedSkills.map(s => s.id));
-        draft.preloadedSkills = draft.preloadedSkills.filter((id: any) => validSkillIds.has(id));
-      }
-
-      // Deterministic policy-conflict check against the drafted config. Never
-      // trust the LLM's own compliance claim — mirrors propose-agents' conflict
-      // annotation pass so the review UI can surface real violations before create.
-      const orgLevelPolicies = allPolicies.filter(p => p.status === "active" && (p.scopeType === "org" || p.scopeType === "outcome"));
-      const tierOrder: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
-      const policyConflicts: Array<{ severity: "warn" | "error"; message: string; policyId?: string; policyName?: string }> = [];
-      for (const p of orgLevelPolicies) {
-        const pj = p.policyJson as Record<string, any> | null;
-        if (!pj) continue;
-        if (draft.autonomyMode && Array.isArray(pj.blockedAutonomyModes) && pj.blockedAutonomyModes.includes(draft.autonomyMode)) {
-          policyConflicts.push({ severity: "error", message: `Drafted autonomy="${draft.autonomyMode}" is blocked by policy "${p.name}"`, policyId: p.id, policyName: p.name });
-        }
-        if (draft.riskTier && pj.maxRiskTier) {
-          const draftTierVal = tierOrder[draft.riskTier] || 2;
-          const maxTierVal = tierOrder[pj.maxRiskTier] || 4;
-          if (draftTierVal > maxTierVal) {
-            policyConflicts.push({ severity: "error", message: `Drafted riskTier="${draft.riskTier}" exceeds policy "${p.name}" max="${pj.maxRiskTier}"`, policyId: p.id, policyName: p.name });
-          }
-        }
-        if (Array.isArray(pj.blockedTools) && Array.isArray(draft.toolsConfig)) {
-          const draftToolNames = draft.toolsConfig.map((t: any) => (t.name || "").toLowerCase());
-          const blockedMatches = (pj.blockedTools as string[]).filter((bt: string) => draftToolNames.some((n: string) => n.includes(bt.toLowerCase()) || bt.toLowerCase().includes(n)));
-          if (blockedMatches.length > 0) {
-            policyConflicts.push({ severity: "error", message: `Tools [${blockedMatches.join(", ")}] are blocked by policy "${p.name}"`, policyId: p.id, policyName: p.name });
-          }
-        }
-      }
-
-      res.json({
-        draft,
-        policyConflicts,
-        candidateContext: {
-          mcpServersConsidered: rankedMcpServers.length,
-          skillsConsidered: rankedSkills.length,
-          policiesConsidered: activePolicies.length,
-          templatesConsidered: rankedTemplates.length,
-          ontologyConceptsConsidered: rankedOntology.length,
-        },
-      });
+      const result = await draftSingleAgent(description, industryId, orgId);
+      res.json(result);
     } catch (error: any) {
       console.error("[draft-agent] error:", error.message);
+      if (/^Agent draft generation failed/.test(error.message)) {
+        return res.status(422).json({ error: error.message });
+      }
       res.status(500).json({ error: "Agent draft generation failed" });
     }
   });

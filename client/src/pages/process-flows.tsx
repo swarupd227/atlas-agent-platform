@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeToGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
@@ -120,6 +120,39 @@ export default function ProcessFlows() {
     },
   });
 
+  // Same query key outcome-detail.tsx already uses for its agent list -- react-query
+  // dedupes/caches this, so visiting from the outcome page costs no extra request.
+  const { data: allAgents } = useQuery<any[]>({ queryKey: ["/api/agents"], enabled: !!urlParams.outcomeId });
+  const linkedTeamAgent = useMemo(
+    () => (allAgents || []).find(a => a.agentType === "team" && a.outcomeId === urlParams.outcomeId && a.blueprintId),
+    [allAgents, urlParams.outcomeId],
+  );
+
+  const [syncResult, setSyncResult] = useState<any | null>(null);
+  const [syncResultOpen, setSyncResultOpen] = useState(false);
+  const [syncLegacyChoiceOpen, setSyncLegacyChoiceOpen] = useState(false);
+  const syncMutation = useMutation({
+    mutationFn: async (forceFullRebuild?: boolean) => {
+      const res = await apiRequest("POST", `/api/outcomes/${urlParams.outcomeId}/process-flow/sync-to-automation`, {
+        teamAgentId: linkedTeamAgent?.id,
+        ...(forceFullRebuild ? { forceFullRebuild: true } : {}),
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (data.needsChoice === "legacy_blueprint") {
+        setSyncLegacyChoiceOpen(true);
+        return;
+      }
+      setSyncResult(data.summary);
+      setSyncResultOpen(true);
+      toast({ title: "Synced to automation" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const [compiled, setCompiled] = useState<any | null>(null);
   const [compileOpen, setCompileOpen] = useState(false);
   const compileMutation = useMutation({
@@ -206,10 +239,21 @@ export default function ProcessFlows() {
             Validate &amp; Preview
           </Button>
         )}
-        {nodeCount > 0 && (
+        {nodeCount > 0 && !linkedTeamAgent && (
           <Button size="sm" onClick={() => setShowTeamProposal(true)} data-testid="button-turn-into-automation">
             <Zap className="w-3.5 h-3.5 mr-1.5" />
             Turn into a live automation
+          </Button>
+        )}
+        {nodeCount > 0 && linkedTeamAgent && (
+          <Button
+            size="sm"
+            onClick={() => syncMutation.mutate(undefined)}
+            disabled={syncMutation.isPending}
+            data-testid="button-sync-to-automation"
+          >
+            {syncMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
+            Sync to Automation
           </Button>
         )}
       </div>
@@ -352,6 +396,61 @@ export default function ProcessFlows() {
         initialDescription={proposalDescription}
         processFlowSteps={proposalSteps}
       />
+
+      <Dialog open={syncLegacyChoiceOpen} onOpenChange={setSyncLegacyChoiceOpen}>
+        <DialogContent className="max-w-md" data-testid="dialog-sync-legacy-choice">
+          <DialogHeader>
+            <DialogTitle>This automation predates edit-tracking</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Its current agents can't be matched to specific process-flow steps, so I can't tell what changed.
+            Rebuild it fully — every current step gets a fresh agent, and the existing ones are superseded — or skip syncing for now.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSyncLegacyChoiceOpen(false)} data-testid="button-skip-sync">Skip for now</Button>
+            <Button
+              onClick={() => { setSyncLegacyChoiceOpen(false); syncMutation.mutate(true); }}
+              disabled={syncMutation.isPending}
+              data-testid="button-full-rebuild-sync"
+            >
+              {syncMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
+              Rebuild fully
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={syncResultOpen} onOpenChange={setSyncResultOpen}>
+        <DialogContent className="max-w-md" data-testid="dialog-sync-result">
+          <DialogHeader><DialogTitle>Sync complete</DialogTitle></DialogHeader>
+          {syncResult && (
+            <div className="flex flex-col gap-3 text-sm">
+              <p className="text-muted-foreground">{syncResult.unchanged} step{syncResult.unchanged !== 1 ? "s" : ""} unchanged — nothing touched.</p>
+              {syncResult.changed?.length > 0 && (
+                <div>
+                  <p className="font-medium text-xs mb-1">Regenerated</p>
+                  <div className="flex flex-wrap gap-1">{syncResult.changed.map((l: string) => <Badge key={l} variant="secondary" className="text-[10px]">{l}</Badge>)}</div>
+                </div>
+              )}
+              {syncResult.added?.length > 0 && (
+                <div>
+                  <p className="font-medium text-xs mb-1">Added</p>
+                  <div className="flex flex-wrap gap-1">{syncResult.added.map((l: string) => <Badge key={l} variant="secondary" className="text-[10px]">{l}</Badge>)}</div>
+                </div>
+              )}
+              {syncResult.superseded?.length > 0 && (
+                <div>
+                  <p className="font-medium text-xs mb-1">Superseded — retire manually when ready</p>
+                  <div className="flex flex-wrap gap-1">{syncResult.superseded.map((s: any) => <Badge key={s.agentId} variant="outline" className="text-[10px]">{s.label}</Badge>)}</div>
+                </div>
+              )}
+              {syncResult.draftFailures?.length > 0 && (
+                <p className="text-[11px] text-destructive">Failed to draft: {syncResult.draftFailures.map((f: any) => f.label).join(", ")} — retry the sync to pick these up.</p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -23,7 +23,7 @@ import { db } from "./db";
 import { workspaceRuns, type WorkspaceRun } from "@shared/schema";
 import { storage } from "./storage";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
-import { resolvePolicyBundle, buildAgentSystemPrompt } from "./routes/helpers";
+import { resolvePolicyBundle, buildAgentSystemPrompt, recomputeOutcomeKpis } from "./routes/helpers";
 import { getProvider, completeWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage } from "./llm-provider";
 import { RunSpanCollector } from "./run-spans";
 import { canonicalJsonStringify } from "./agent-runtime";
@@ -32,6 +32,39 @@ import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
 
 const MAX_ITERATIONS_DEFAULT = 5;
+
+// The single-agent advance()/finalize() loop below never fed the metering
+// pipeline -- Billing reads entirely off outcomeEvents, and this path only
+// ever wrote a run_traces record, same gap already fixed for Playground
+// (playground.ts) and team/DAG runs (dag-execution-engine.ts). This is the
+// single-agent Workspace equivalent, including standalone (no-outcome)
+// Process Flow automations, which simply no-op here since they have no
+// outcomeId to meter against (test finding TC_ODF_009). Fire-and-forget:
+// metering must never break a run result that's already being returned.
+async function recordWorkspaceOutcomeEvent(
+  agentId: string,
+  orgId: string | undefined,
+  status: "completed" | "failed",
+  costUsd: number,
+): Promise<void> {
+  try {
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent?.outcomeId) return;
+    await storage.createOutcomeEvent({
+      organizationId: agent.organizationId ?? undefined,
+      outcomeId: agent.outcomeId,
+      agentId,
+      type: "workspace_run",
+      billable: status === "completed",
+      excludeReason: status === "failed" ? "run_failed" : undefined,
+      unitCount: 1,
+      unitValue: costUsd || undefined,
+    });
+    await recomputeOutcomeKpis(agent.outcomeId, agent.organizationId ?? undefined);
+  } catch (err: any) {
+    console.error(`[workspace-run] failed to record outcome event for agent ${agentId}:`, err.message);
+  }
+}
 
 /** Live events streamed to the Workspace so a human watches the agent work. */
 export type WorkspaceEvent =
@@ -607,6 +640,7 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
     } catch (e: any) {
       console.error("[workspace-run] trace write failed (non-fatal):", e.message);
     }
+    await recordWorkspaceOutcomeEvent(agentId, orgId, status, cost);
     delete cp.pendingToolCalls; delete cp.pendingToolIndex;
     await persist({ status, outputSummary: output.slice(0, 4000), costUsd: cost, traceId: traceId ?? undefined, pendingApprovalId: null, pendingSummary: null });
     onEvent({ type: "completed", output, costUsd: cost, traceId });

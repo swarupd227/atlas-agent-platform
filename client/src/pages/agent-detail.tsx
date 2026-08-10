@@ -814,10 +814,22 @@ function AgentDetailInner() {
     },
   });
 
+  // "Run Test" used to POST an empty body — fine for agents whose systemPrompt
+  // or description doubles as a task prompt, but a Magentic team's actual task
+  // (e.g. "Current position: $2.1M short at 2pm settlement — recommend
+  // action.") lives nowhere the server's fallback chain (body.prompt ->
+  // runtimeConfig.prompt -> systemPrompt -> description) can reach, so it hit
+  // the server's "no task prompt configured" 400 every time (test finding
+  // SC18_TC_01). Collect the prompt in a dialog instead, pre-filled with
+  // whatever fallback the server would have used, so the user can just confirm
+  // it for simple agents or type the real task for anything else.
+  const [runTestDialogOpen, setRunTestDialogOpen] = useState(false);
+  const [runTestPrompt, setRunTestPrompt] = useState("");
   const runTestMutation = useMutation({
-    mutationFn: () =>
-      apiRequest("POST", `/api/agents/${agentId}/run-test`, {}),
+    mutationFn: (prompt: string) =>
+      apiRequest("POST", `/api/agents/${agentId}/run-test`, { prompt }),
     onSuccess: () => {
+      setRunTestDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "traces"] });
       toast({ title: "Test run completed", description: "The agent executed a one-time test run. Check the Runs & Traces tab for results." });
     },
@@ -1751,12 +1763,17 @@ function AgentDetailInner() {
             <MessageSquare className="w-3.5 h-3.5 mr-1.5" /> Playground
           </Button>
         </Link>
-        <Button variant="outline" size="sm" data-testid="button-run-test" onClick={() => runTestMutation.mutate()} disabled={runTestMutation.isPending}>
-          {runTestMutation.isPending ? (
-            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Running...</>
-          ) : (
-            <><Play className="w-3.5 h-3.5 mr-1.5" /> Run Test</>
-          )}
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid="button-run-test"
+          onClick={() => {
+            const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
+            setRunTestPrompt(rtConfig.prompt || agent.systemPrompt || agent.description || "");
+            setRunTestDialogOpen(true);
+          }}
+        >
+          <Play className="w-3.5 h-3.5 mr-1.5" /> Run Test
         </Button>
         {agentDeployments.length > 0 ? (
           <Button size="sm" data-testid="button-view-deployment" onClick={() => {
@@ -1933,6 +1950,36 @@ function AgentDetailInner() {
                 <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Starting…</>
               ) : (
                 <><Play className="w-3.5 h-3.5 mr-1.5" /> Start Run</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={runTestDialogOpen} onOpenChange={setRunTestDialogOpen}>
+        <DialogContent className="max-w-md" data-testid="dialog-run-test">
+          <DialogHeader>
+            <DialogTitle>Run a test</DialogTitle>
+            <DialogDescription>Describe the task for this one-time test run.</DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={runTestPrompt}
+            onChange={e => setRunTestPrompt(e.target.value)}
+            placeholder="e.g. Current position: $2.1M short at 2pm settlement — recommend action."
+            className="min-h-[100px] text-sm"
+            data-testid="input-run-test-prompt"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRunTestDialogOpen(false)} data-testid="button-cancel-run-test">Cancel</Button>
+            <Button
+              onClick={() => runTestMutation.mutate(runTestPrompt)}
+              disabled={runTestPrompt.trim().length < 5 || runTestMutation.isPending}
+              data-testid="button-confirm-run-test"
+            >
+              {runTestMutation.isPending ? (
+                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Running…</>
+              ) : (
+                <><Play className="w-3.5 h-3.5 mr-1.5" /> Run Test</>
               )}
             </Button>
           </DialogFooter>
