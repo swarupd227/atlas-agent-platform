@@ -175,7 +175,7 @@ function hashCode(str: string): number {
         storage.getOutcomeEvents(orgId),
         storage.getBillingDisputes(),
         storage.getEvalSuites(),
-        storage.getTraces(orgId),
+        storage.getTraceSummaries(orgId),
         storage.getDeployments(orgId),
         storage.getToolConnectors(),
       ]);

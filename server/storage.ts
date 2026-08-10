@@ -240,6 +240,8 @@ export interface IStorage {
   getDeploymentsByPromotedFrom(promotedFrom: string): Promise<Deployment[]>;
 
   getTraces(orgId?: string): Promise<RunTrace[]>;
+  getTraceSummaries(orgId?: string): Promise<Pick<RunTrace, "id" | "agentId" | "status" | "startedAt" | "latencyMs">[]>;
+  getRecentBlockedTraces(orgId: string | undefined, since: Date): Promise<Pick<RunTrace, "id" | "agentId" | "status" | "startedAt" | "policyChecks">[]>;
   getTrace(id: string, orgId?: string): Promise<RunTrace | undefined>;
   getTracesByAgent(agentId: string, orgId?: string): Promise<RunTrace[]>;
   getAgentCostSince(agentId: string, since: Date): Promise<number>;
@@ -1206,6 +1208,29 @@ export class DatabaseStorage implements IStorage {
       return db.select().from(runTraces).where(eq(runTraces.organizationId, scopedOrgId));
     }
     return db.select().from(runTraces);
+  }
+
+  // run_traces carries several large jsonb columns (full prompt/tool-call/span
+  // payloads per run) -- a plain SELECT * for dashboard aggregation (Overview,
+  // critical-violations) pulled tens of MB over the wire for a few hundred
+  // rows, dominating page load time even after fixing the eval-suite N+1
+  // queries. These two callers only ever read a handful of scalar fields, so
+  // select just those columns instead of the whole row.
+  async getTraceSummaries(orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const cols = { id: runTraces.id, agentId: runTraces.agentId, status: runTraces.status, startedAt: runTraces.startedAt, latencyMs: runTraces.latencyMs };
+    if (scopedOrgId) {
+      return db.select(cols).from(runTraces).where(eq(runTraces.organizationId, scopedOrgId));
+    }
+    return db.select(cols).from(runTraces);
+  }
+
+  async getRecentBlockedTraces(orgId: string | undefined, since: Date) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const cols = { id: runTraces.id, agentId: runTraces.agentId, status: runTraces.status, startedAt: runTraces.startedAt, policyChecks: runTraces.policyChecks };
+    const conditions = [eq(runTraces.status, "blocked"), gte(runTraces.startedAt, since)];
+    if (scopedOrgId) conditions.push(eq(runTraces.organizationId, scopedOrgId));
+    return db.select(cols).from(runTraces).where(and(...conditions));
   }
 
   async getTrace(id: string, orgId?: string) {

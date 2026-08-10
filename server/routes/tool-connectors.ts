@@ -117,10 +117,10 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
 
   router.get("/api/alerts/critical-violations", async (req, res) => {
     try {
-      const traces = await storage.getTraces(getOrgId(req));
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const traces = await storage.getRecentBlockedTraces(getOrgId(req), oneHourAgo);
       const agents = await storage.getAgents(getOrgId(req));
       const agentMap = new Map(agents.map(a => [a.id, a]));
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
       const violations: Array<{
         id: string;
@@ -135,9 +135,8 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
       }> = [];
 
       for (const trace of traces) {
-        if (trace.status !== "blocked") continue;
         const traceTime = trace.startedAt ? new Date(trace.startedAt) : null;
-        if (!traceTime || traceTime < oneHourAgo) continue;
+        if (!traceTime) continue;
 
         const policyChecks = trace.policyChecks;
         if (!policyChecks || !Array.isArray(policyChecks)) continue;
