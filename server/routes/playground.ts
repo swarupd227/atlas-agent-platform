@@ -7,7 +7,7 @@ import { getRequestRole } from "../permissions";
 import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt, recomputeOutcomeKpis } from "./helpers";
 import { executePromptWithMcp, type RuntimeProgressEvent } from "../agent-runtime";
-import { callClaude, stripJsonFences, anthropicClient } from "../claude";
+import { callClaude, stripJsonFences, getAnthropicClient } from "../claude";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -291,6 +291,7 @@ const router = Router();
           content: m.content,
         }));
 
+        const anthropicClient = await getAnthropicClient();
         const claudeStream = anthropicClient.messages.stream({
           model: "claude-opus-4-5",
           system: systemPrompt,
@@ -372,7 +373,8 @@ const router = Router();
         { role: "user" as const, content },
       ];
 
-      const claudeGenericStream = anthropicClient.messages.stream({
+      const anthropicClientGeneric = await getAnthropicClient();
+      const claudeGenericStream = anthropicClientGeneric.messages.stream({
         model: "claude-opus-4-5",
         system: genericPrompt,
         messages: genericMsgs,

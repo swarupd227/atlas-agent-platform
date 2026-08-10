@@ -45,7 +45,7 @@ import multer from "multer";
 import path from "path";
 import os from "os";
 import fs from "fs";
-import { anthropicClient, callClaude, stripJsonFences } from "../claude";
+import { getAnthropicClient, callClaude, stripJsonFences } from "../claude";
 import { runMeetingTranscription, aiConfigured } from "../meeting-transcription";
 
 const openai = new OpenAI({
@@ -3011,6 +3011,7 @@ Rules:
       };
       resetIdleTimer();
 
+      const anthropicClient = await getAnthropicClient();
       const claudeStream = anthropicClient.messages.stream({
         model: "claude-haiku-4-5",
         system: systemPrompt,

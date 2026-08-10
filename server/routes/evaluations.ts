@@ -12,7 +12,7 @@ import {
   insertEvalCaseResultSchema,
   insertBlueprintSchema,
 } from "@shared/schema";
-import { callClaude, stripJsonFences, anthropicClient } from "../claude";
+import { callClaude, stripJsonFences, getAnthropicClient } from "../claude";
 
 export default function createEvaluationsRouter(industryEvalFrameworks: Record<string, any>) {
   const router = Router();
@@ -1565,6 +1565,7 @@ Guidelines:
         .filter(m => m.role === "user" || m.role === "assistant")
         .map(m => ({ role: m.role as "user" | "assistant", content: m.content }));
 
+      const anthropicClient = await getAnthropicClient();
       const claudeStream = anthropicClient.messages.stream({
         model: "claude-opus-4-5",
         system: systemPrompt,

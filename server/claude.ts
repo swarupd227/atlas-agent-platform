@@ -1,11 +1,26 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { resolveProviderKey } from "./llm-provider-keys";
 
-export const anthropicClient = new Anthropic({
-  // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
-  // back to a direct Anthropic API key. baseURL undefined => api.anthropic.com.
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || undefined,
-});
+// Lazily rebuilds the SDK client only when the resolved key/baseURL actually
+// changes (vault-set key via Admin, env var, or a rotation between the two) --
+// mirrors AnthropicProvider.getClient() in llm-provider.ts. This module used
+// to build one Anthropic client permanently from process.env at import time,
+// so an Admin-rotated key (server/routes/llm-providers.ts) never took effect
+// for any of the ~10 routes that call this client directly -- they kept
+// hitting the stale env-var key (and its exhausted credit balance) until a
+// full server restart, defeating the "no restart" point of key rotation.
+let cachedClient: Anthropic | null = null;
+let cachedClientKey: string | undefined;
+
+export async function getAnthropicClient(): Promise<Anthropic> {
+  const resolved = await resolveProviderKey("anthropic");
+  const cacheKey = `${resolved.apiKey ?? ""}::${resolved.baseUrl ?? ""}`;
+  if (!cachedClient || cachedClientKey !== cacheKey) {
+    cachedClient = new Anthropic({ apiKey: resolved.apiKey || "not-configured", baseURL: resolved.baseUrl || undefined });
+    cachedClientKey = cacheKey;
+  }
+  return cachedClient;
+}
 
 // Transient provider failures worth retrying: rate limits (429), Anthropic's
 // overloaded_error (529 -- the observed cause of "AI Enhance is still
@@ -36,7 +51,8 @@ export async function callClaude(opts: {
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      const response = await anthropicClient.messages.create({
+      const client = await getAnthropicClient();
+      const response = await client.messages.create({
         model: opts.model ?? "claude-opus-4-5",
         system: systemPrompt,
         messages: [{ role: "user", content: opts.user }],

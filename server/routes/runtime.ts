@@ -97,17 +97,13 @@ import { seedPartnerPortalRegistry, PARTNER_PORTAL_REGISTRY_SERVER_NAME } from "
 import { seedHearstAgentRuns } from "../seed-hearst-runs";
 import { resetDemo, setSodPending, setPrivEscPending } from "../demo-store";
 import OpenAI, { toFile } from "openai";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
+import { getAnthropicClient } from "../claude";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-});
-
-const anthropicClient = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || undefined,
 });
 
 const router = Router();
@@ -5401,6 +5397,7 @@ ${nodeSetup}
   // Helper: call Anthropic and return plain text (no JSON wrapping)
   async function callAnthropicForFile(systemMsg: string, userMsg: string, label: string): Promise<string | null> {
     try {
+      const anthropicClient = await getAnthropicClient();
       const response = await anthropicClient.messages.create({
         model: "claude-sonnet-4-5",
         max_tokens: 8192,
