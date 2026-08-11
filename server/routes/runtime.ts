@@ -100,6 +100,12 @@ import OpenAI, { toFile } from "openai";
 import type Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
 import { getAnthropicClient } from "../claude";
+import {
+  MCP_OAUTH_PROVIDERS,
+  findMcpOAuthProvider,
+  isMcpOAuthProviderConfigured,
+  getMcpOAuthClientCredentials,
+} from "../mcp-oauth-providers";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
@@ -107,6 +113,23 @@ const openai = new OpenAI({
 });
 
 const router = Router();
+
+// ── Pending MCP OAuth state (PKCE) ──────────────────────────────────────────
+interface PendingMcpOAuthState {
+  serverId: string;
+  orgId: string;
+  userId: string;
+  providerId: string;
+  codeVerifier: string;
+  expiresAt: number;
+}
+const pendingMcpOAuthStates = new Map<string, PendingMcpOAuthState>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pendingMcpOAuthStates) {
+    if (v.expiresAt < now) pendingMcpOAuthStates.delete(k);
+  }
+}, 60_000);
 
 // PostgreSQL-backed store for completed export jobs.
 // Using the shared DB instead of an in-memory Map so that autoscale deployments
@@ -12889,6 +12912,137 @@ async function performMcpServerInitialize(serverId: string): Promise<
     } catch (e: any) {
       if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
       res.status(500).json({ message: "Failed to update MCP server auth" });
+    }
+  });
+
+  // ── Real MCP OAuth 2.0 + PKCE connect flow (e.g. Figma) ─────────────────────
+
+  router.get("/api/mcp-servers/:id/oauth/provider", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id as string);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+      const provider = findMcpOAuthProvider(server.url);
+      if (!provider) return res.json({ provider: null });
+      res.json({
+        provider: provider.id,
+        providerName: provider.name,
+        configured: isMcpOAuthProviderConfigured(provider),
+        scopes: provider.defaultScopes,
+      });
+    } catch (e) {
+      res.status(500).json({ message: "Failed to resolve OAuth provider" });
+    }
+  });
+
+  router.get("/api/mcp-servers/:id/oauth/start", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const server = await storage.getMcpServer(req.params.id as string);
+      if (!server) return res.status(404).json({ message: "MCP server not found" });
+      const provider = findMcpOAuthProvider(server.url);
+      if (!provider) return res.status(400).json({ message: "This MCP server has no known OAuth provider" });
+      if (!isMcpOAuthProviderConfigured(provider)) {
+        return res.status(400).json({
+          message: `${provider.name} MCP client access is not yet configured — set ${provider.clientIdEnvVar}/${provider.clientSecretEnvVar} once the ${provider.name} MCP client waitlist approves this app.`,
+        });
+      }
+      if (!req.authUser) return res.status(401).json({ message: "Authentication required" });
+
+      const state = crypto.randomBytes(24).toString("hex");
+      const codeVerifier = crypto.randomBytes(48).toString("base64url");
+      const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
+
+      pendingMcpOAuthStates.set(state, {
+        serverId: server.id,
+        orgId: getOrgId(req) ?? "",
+        userId: req.authUser.userId,
+        providerId: provider.id,
+        codeVerifier,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
+
+      const { clientId } = getMcpOAuthClientCredentials(provider);
+      const redirectUri = `${req.protocol}://${req.get("host")}/api/mcp-servers/oauth/callback`;
+      const url = new URL(provider.authorizationUrl);
+      url.searchParams.set("client_id", clientId);
+      url.searchParams.set("redirect_uri", redirectUri);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("state", state);
+      url.searchParams.set("scope", provider.defaultScopes.join(" "));
+      url.searchParams.set("code_challenge", codeChallenge);
+      url.searchParams.set("code_challenge_method", "S256");
+
+      res.redirect(url.toString());
+    } catch (e) {
+      res.status(500).json({ message: "Failed to start OAuth flow" });
+    }
+  });
+
+  router.get("/api/mcp-servers/oauth/callback", async (req, res) => {
+    const { state, code, error } = req.query as Record<string, string>;
+    const pending = state ? pendingMcpOAuthStates.get(state) : undefined;
+    const failRedirect = (msg: string) =>
+      res.redirect(`/integrations/mcp-servers${pending ? "/" + pending.serverId : ""}?oauth_error=${encodeURIComponent(msg)}`);
+
+    if (error) return failRedirect(error);
+    if (!pending || pending.expiresAt < Date.now()) return failRedirect("state_expired");
+    pendingMcpOAuthStates.delete(state);
+
+    const provider = MCP_OAUTH_PROVIDERS.find((p) => p.id === pending.providerId);
+    if (!provider) return failRedirect("invalid_provider");
+
+    try {
+      const redirectUri = `${req.protocol}://${req.get("host")}/api/mcp-servers/oauth/callback`;
+      const { clientId, clientSecret } = getMcpOAuthClientCredentials(provider);
+
+      const bodyParams: Record<string, string> = {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: pending.codeVerifier,
+      };
+      const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded" };
+      if (provider.tokenAuthMethod === "basic") {
+        headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
+      } else {
+        bodyParams.client_id = clientId;
+        bodyParams.client_secret = clientSecret;
+      }
+
+      const tokenRes = await fetch(provider.tokenUrl, {
+        method: "POST",
+        headers,
+        body: new URLSearchParams(bodyParams).toString(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const tokenData = await tokenRes.json() as any;
+      if (!tokenRes.ok || tokenData.error) {
+        return failRedirect(tokenData.error_description ?? tokenData.error ?? "token_exchange_failed");
+      }
+
+      const expiresAt = tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : undefined;
+      await storage.upsertMcpServerAuth({
+        serverId: pending.serverId,
+        authType: "oauth2",
+        config: {
+          accessToken: tokenData.access_token ?? "",
+          refreshToken: tokenData.refresh_token ?? "",
+          tokenType: tokenData.token_type ?? "Bearer",
+          expiresAt,
+          scope: tokenData.scope ?? provider.defaultScopes.join(" "),
+        },
+      });
+
+      await storage.createAuditEvent({
+        action: "mcp_server.oauth_connected",
+        objectType: "mcp_server",
+        objectId: pending.serverId,
+        actorId: pending.userId,
+        details: JSON.stringify({ provider: provider.id }),
+      });
+
+      res.redirect(`/integrations/mcp-servers/${pending.serverId}?oauth_success=1`);
+    } catch (err: any) {
+      failRedirect(err?.message ?? "token_exchange_failed");
     }
   });
 

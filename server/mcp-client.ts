@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer, McpServerAuth } from "@shared/schema";
+import { findMcpOAuthProvider, getMcpOAuthClientCredentials } from "./mcp-oauth-providers";
 
 export interface McpToolDef {
   name: string;
@@ -47,7 +48,73 @@ export function isRealMcpServer(server: Pick<McpServer, "url" | "transportType">
 //   basic:    { username: string, password: string }        → Authorization: Basic <b64>
 //   oauth2:   { accessToken: string }                       → Authorization: Bearer <accessToken>
 
-export function buildMcpAuthHeaders(auth: McpServerAuth | undefined | null): Record<string, string> {
+/**
+ * Returns a valid OAuth2 access token for this server, refreshing it first if
+ * it's within 60s of expiry (or already expired) and a refresh token is on
+ * file. Best-effort: a failed refresh falls back to the existing (possibly
+ * stale) access token rather than failing the MCP call outright.
+ */
+async function getValidOAuthAccessToken(server: McpServer, cfg: Record<string, unknown>): Promise<string> {
+  const accessToken = (cfg.accessToken as string | undefined) ?? "";
+  const expiresAt = cfg.expiresAt as number | undefined;
+  const refreshToken = cfg.refreshToken as string | undefined;
+
+  if (!expiresAt || expiresAt - Date.now() > 60_000 || !refreshToken) {
+    return accessToken;
+  }
+
+  const provider = findMcpOAuthProvider(server.url);
+  if (!provider) return accessToken;
+
+  try {
+    const { clientId, clientSecret } = getMcpOAuthClientCredentials(provider);
+    const bodyParams: Record<string, string> = { grant_type: "refresh_token", refresh_token: refreshToken };
+    const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded" };
+    if (provider.tokenAuthMethod === "basic") {
+      headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
+    } else {
+      bodyParams.client_id = clientId;
+      bodyParams.client_secret = clientSecret;
+    }
+
+    const res = await fetch(provider.refreshUrl, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams(bodyParams).toString(),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const data = await res.json() as any;
+    if (!res.ok || data.error) {
+      console.warn(`[mcp-client] OAuth refresh failed for server ${server.id}: ${data.error ?? res.status}`);
+      return accessToken;
+    }
+
+    const newAccessToken = data.access_token ?? accessToken;
+    const newExpiresAt = data.expires_in ? Date.now() + data.expires_in * 1000 : undefined;
+
+    const { storage } = await import("./storage");
+    await storage.upsertMcpServerAuth({
+      serverId: server.id,
+      authType: "oauth2",
+      config: {
+        ...cfg,
+        accessToken: newAccessToken,
+        refreshToken: data.refresh_token ?? refreshToken,
+        expiresAt: newExpiresAt,
+      },
+    });
+
+    return newAccessToken;
+  } catch (err: any) {
+    console.warn(`[mcp-client] OAuth refresh error for server ${server.id}:`, err?.message);
+    return accessToken;
+  }
+}
+
+export async function buildMcpAuthHeaders(
+  server: McpServer,
+  auth: McpServerAuth | undefined | null,
+): Promise<Record<string, string>> {
   if (!auth || auth.authType === "none") return {};
   const cfg = (auth.config as Record<string, unknown> | null) ?? {};
 
@@ -70,7 +137,7 @@ export function buildMcpAuthHeaders(auth: McpServerAuth | undefined | null): Rec
       return { Authorization: `Basic ${encoded}` };
     }
     case "oauth2": {
-      const accessToken = cfg.accessToken as string | undefined;
+      const accessToken = await getValidOAuthAccessToken(server, cfg);
       if (!accessToken) return {};
       return { Authorization: `Bearer ${accessToken}` };
     }
@@ -138,7 +205,7 @@ export async function mcpInitialize(server: McpServer, auth?: McpServerAuth | nu
   if (!server.url) throw new Error("MCP server has no URL");
 
   evictConnection(server.id);
-  const authHeaders = buildMcpAuthHeaders(auth);
+  const authHeaders = await buildMcpAuthHeaders(server, auth);
   const { client, transport } = await getConnection(server.id, server.url, authHeaders);
 
   const sdkServerVersion = client.getServerVersion();
@@ -196,7 +263,7 @@ export async function mcpInitialize(server: McpServer, auth?: McpServerAuth | nu
 
 export async function mcpListTools(server: McpServer, auth?: McpServerAuth | null): Promise<McpToolDef[]> {
   if (!server.url) throw new Error("MCP server has no URL");
-  const authHeaders = buildMcpAuthHeaders(auth);
+  const authHeaders = await buildMcpAuthHeaders(server, auth);
   let conn: CachedConnection;
   try {
     conn = await getConnection(server.id, server.url, authHeaders);
@@ -219,7 +286,7 @@ export async function mcpCallTool(
   auth?: McpServerAuth | null,
 ): Promise<unknown> {
   if (!server.url) throw new Error("MCP server has no URL");
-  const authHeaders = buildMcpAuthHeaders(auth);
+  const authHeaders = await buildMcpAuthHeaders(server, auth);
   let conn: CachedConnection;
   try {
     conn = await getConnection(server.id, server.url, authHeaders);
@@ -233,7 +300,7 @@ export async function mcpCallTool(
 
 export async function mcpListResources(server: McpServer, auth?: McpServerAuth | null): Promise<McpResourceDef[]> {
   if (!server.url) throw new Error("MCP server has no URL");
-  const authHeaders = buildMcpAuthHeaders(auth);
+  const authHeaders = await buildMcpAuthHeaders(server, auth);
   const { client } = await getConnection(server.id, server.url, authHeaders);
   const result = await client.listResources();
   return result.resources.map((r) => ({
@@ -246,7 +313,7 @@ export async function mcpListResources(server: McpServer, auth?: McpServerAuth |
 
 export async function mcpListPrompts(server: McpServer, auth?: McpServerAuth | null): Promise<McpPromptDef[]> {
   if (!server.url) throw new Error("MCP server has no URL");
-  const authHeaders = buildMcpAuthHeaders(auth);
+  const authHeaders = await buildMcpAuthHeaders(server, auth);
   const { client } = await getConnection(server.id, server.url, authHeaders);
   const result = await client.listPrompts();
   return result.prompts.map((p) => ({

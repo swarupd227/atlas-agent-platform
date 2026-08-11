@@ -636,7 +636,7 @@ async function invokeViaMcp(
   // credentialInjected is telemetry: enterprise connectors resolve creds from the
   // vault inside callTool; other transports inject via mcpServerAuth headers.
   const serverAuth = await storage.getMcpServerAuth(resolvedServerId);
-  const credentialInjected = !!tool.enterpriseIntegration || Object.keys(buildMcpAuthHeaders(serverAuth)).length > 0;
+  const credentialInjected = !!tool.enterpriseIntegration || Object.keys(await buildMcpAuthHeaders(mcpServer, serverAuth)).length > 0;
   if (credentialInjected) {
     console.log(`[AAR][CredentialManager] Credentials available for tool='${toolName}' on server='${resolvedServerId}'`);
   }

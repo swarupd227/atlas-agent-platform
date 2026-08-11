@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useRoute, Link } from "wouter";
+import { useState, useMemo, useEffect } from "react";
+import { useRoute, useSearch, useLocation, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,24 @@ export default function McpServerDetail() {
   const { toast } = useToast();
   const [, params] = useRoute("/integrations/mcp-servers/:id");
   const id = params?.id || "";
+  const search = useSearch();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    const qs = new URLSearchParams(search);
+    const success = qs.get("oauth_success");
+    const error = qs.get("oauth_error");
+    if (success) {
+      toast({ title: "Connected", description: "OAuth connection established." });
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id, "auth"] });
+    } else if (error) {
+      toast({ title: "OAuth connection failed", description: error, variant: "destructive" });
+    }
+    if (success || error) {
+      navigate(`/integrations/mcp-servers/${id}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const { data: server, isLoading } = useQuery<McpServer>({
     queryKey: ["/api/mcp-servers", id],
@@ -153,16 +171,19 @@ export default function McpServerDetail() {
   const [authToken, setAuthToken] = useState("");
   const [authKeyName, setAuthKeyName] = useState("");
   const [authKeyValue, setAuthKeyValue] = useState("");
-  const [authClientId, setAuthClientId] = useState("");
-  const [authClientSecret, setAuthClientSecret] = useState("");
-  const [authTokenUrl, setAuthTokenUrl] = useState("");
+  const [authAccessToken, setAuthAccessToken] = useState("");
+
+  const { data: oauthProvider } = useQuery<{ provider: string | null; providerName?: string; configured?: boolean; scopes?: string[] }>({
+    queryKey: ["/api/mcp-servers", id, "oauth", "provider"],
+    enabled: !!id,
+  });
 
   const saveAuthMutation = useMutation({
     mutationFn: () => {
       let config: Record<string, string> = {};
       if (authType === "bearer_token") config = { token: authToken };
       else if (authType === "api_key") config = { keyName: authKeyName, keyValue: authKeyValue };
-      else if (authType === "oauth2") config = { clientId: authClientId, clientSecret: authClientSecret, tokenUrl: authTokenUrl };
+      else if (authType === "oauth2") config = { accessToken: authAccessToken };
       return apiRequest("PUT", `/api/mcp-servers/${id}/auth`, { authType, config });
     },
     onSuccess: () => {
@@ -1478,49 +1499,64 @@ export default function McpServerDetail() {
                   </>
                 )}
 
-                {authType === "oauth2" && (
-                  <>
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="auth-client-id">Client ID</Label>
-                      <Input
-                        id="auth-client-id"
-                        value={authClientId}
-                        onChange={(e) => setAuthClientId(e.target.value)}
-                        placeholder="Client ID"
-                        data-testid="input-auth-client-id"
-                      />
+                {authType === "oauth2" && oauthProvider?.provider && (
+                  <div className="flex flex-col gap-2 rounded-md border p-3">
+                    <div className="text-sm">
+                      Detected provider: <span className="font-medium">{oauthProvider.providerName ?? oauthProvider.provider}</span>
                     </div>
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="auth-client-secret">Client Secret</Label>
-                      <Input
-                        id="auth-client-secret"
-                        type="password"
-                        value={authClientSecret}
-                        onChange={(e) => setAuthClientSecret(e.target.value)}
-                        placeholder="Client Secret"
-                        data-testid="input-auth-client-secret"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="auth-token-url">Token URL</Label>
-                      <Input
-                        id="auth-token-url"
-                        value={authTokenUrl}
-                        onChange={(e) => setAuthTokenUrl(e.target.value)}
-                        placeholder="https://auth.example.com/token"
-                        data-testid="input-auth-token-url"
-                      />
-                    </div>
-                  </>
+                    {oauthProvider.scopes && oauthProvider.scopes.length > 0 && (
+                      <div className="text-xs text-muted-foreground">
+                        Requested scopes: {oauthProvider.scopes.join(", ")}
+                      </div>
+                    )}
+                    {oauthProvider.configured ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => { window.location.href = `/api/mcp-servers/${id}/oauth/start`; }}
+                        data-testid="button-connect-oauth"
+                      >
+                        Connect via {oauthProvider.providerName ?? oauthProvider.provider} OAuth
+                      </Button>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        <Button variant="secondary" disabled data-testid="button-connect-oauth-disabled">
+                          Connect via {oauthProvider.providerName ?? oauthProvider.provider} OAuth
+                        </Button>
+                        <p className="text-xs text-muted-foreground">
+                          Not yet configured — this app is waiting on {oauthProvider.providerName ?? oauthProvider.provider}'s
+                          MCP client approval. Once granted, set the client credentials as environment variables to enable this.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 )}
 
-                <Button
-                  onClick={() => saveAuthMutation.mutate()}
-                  disabled={saveAuthMutation.isPending}
-                  data-testid="button-save-auth"
-                >
-                  {saveAuthMutation.isPending ? "Saving..." : "Save Auth Configuration"}
-                </Button>
+                {authType === "oauth2" && !oauthProvider?.provider && (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="auth-access-token">Access Token</Label>
+                    <Input
+                      id="auth-access-token"
+                      type="password"
+                      value={authAccessToken}
+                      onChange={(e) => setAuthAccessToken(e.target.value)}
+                      placeholder="Pre-obtained OAuth access token"
+                      data-testid="input-auth-access-token"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      No known OAuth provider for this server's URL — paste an access token obtained out-of-band.
+                    </p>
+                  </div>
+                )}
+
+                {!(authType === "oauth2" && oauthProvider?.provider) && (
+                  <Button
+                    onClick={() => saveAuthMutation.mutate()}
+                    disabled={saveAuthMutation.isPending}
+                    data-testid="button-save-auth"
+                  >
+                    {saveAuthMutation.isPending ? "Saving..." : "Save Auth Configuration"}
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
