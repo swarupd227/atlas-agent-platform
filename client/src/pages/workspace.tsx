@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Sparkles, Send, Brain, Wrench, CheckCircle2, ShieldQuestion, XCircle,
-  Ban, Loader2, Clock, Receipt, ArrowRight, CircleDollarSign,
+  Ban, Loader2, Clock, Receipt, ArrowRight, CircleDollarSign, Download,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,7 @@ type TimelineItem =
   | { kind: "denied"; tool: string }
   | { kind: "team_progress"; wave: number; totalWaves: number; nodeLabel: string; status: "running" | "completed" | "failed" }
   | { kind: "team_awaiting_approval"; wave: number; totalWaves: number; nodeLabel: string; approvalId: string }
-  | { kind: "answer"; text: string; costUsd: number; traceId: string | null };
+  | { kind: "answer"; text: string; costUsd: number; traceId: string | null; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }> };
 
 interface Pending { approvalId: string | null; tool: string; summary: string; args: Record<string, unknown> }
 
@@ -107,7 +107,7 @@ export default function Workspace() {
       case "team_awaiting_approval":
         setTimeline(t => [...t, { kind: "team_awaiting_approval", wave: evt.wave, totalWaves: evt.totalWaves, nodeLabel: evt.nodeLabel, approvalId: evt.approvalId }]);
         break;
-      case "completed": setTimeline(t => [...t, { kind: "answer", text: evt.output, costUsd: evt.costUsd, traceId: evt.traceId }]); break;
+      case "completed": setTimeline(t => [...t, { kind: "answer", text: evt.output, costUsd: evt.costUsd, traceId: evt.traceId, generatedFiles: evt.generatedFiles }]); break;
       case "error": setTimeline(t => [...t, { kind: "answer", text: `Something went wrong: ${evt.message}`, costUsd: 0, traceId: null }]); break;
     }
   }
@@ -380,6 +380,23 @@ function TimelineRow({ item }: { item: TimelineItem }) {
   return (
     <div className="rounded-lg border bg-muted/30 p-4 mt-1 flex flex-col gap-2" data-testid="workspace-answer">
       <div className="text-sm whitespace-pre-wrap">{item.text}</div>
+      {item.generatedFiles && item.generatedFiles.length > 0 && (
+        <div className="flex flex-col gap-1" data-testid="workspace-generated-files">
+          {item.generatedFiles.map(f => (
+            <a
+              key={f.id}
+              href={`/api/agent-files/${f.id}/download`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 text-xs text-primary hover:underline w-fit"
+              data-testid={`link-download-file-${f.id}`}
+            >
+              <Download className="h-3 w-3 shrink-0" />
+              <span>{f.filename || "Download generated file"}</span>
+            </a>
+          ))}
+        </div>
+      )}
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground border-t pt-2">
         <span className="flex items-center gap-1"><Receipt className="w-3 h-3" /> ${item.costUsd.toFixed(4)}</span>
         {item.traceId && <Link href={`/runtime/runs/${item.traceId}`} className="flex items-center gap-1 text-primary">signed trace <ArrowRight className="w-3 h-3" /></Link>}

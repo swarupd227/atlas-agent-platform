@@ -75,7 +75,7 @@ export type WorkspaceEvent =
   | { type: "tool_start"; tool: string; server: string; args: Record<string, any> }
   | { type: "tool_result"; tool: string; outcome: string; ok: boolean; preview: string }
   | { type: "awaiting_approval"; approvalId: string | null; tool: string; summary: string; args: Record<string, any> }
-  | { type: "completed"; output: string; costUsd: number; traceId: string | null }
+  | { type: "completed"; output: string; costUsd: number; traceId: string | null; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }> }
   | { type: "denied"; tool: string }
   | { type: "error"; message: string }
   | { type: "team_progress"; wave: number; totalWaves: number; nodeLabel: string; status: "running" | "completed" | "failed" }
@@ -99,9 +99,12 @@ interface Checkpoint {
   pendingToolIndex?: number;
   // Anthropic code execution (see server/anthropic-code-execution.ts): the
   // container id is reused across turns so created files / REPL state
-  // persist; generatedFileIds accumulates across the whole run.
+  // persist; generatedFiles accumulates across the whole run. Stores the
+  // local agent_generated_files row (id/filename/mimeType), not Anthropic's
+  // raw fileId, since the download route and client both key off the row id
+  // -- mirrors agent-runtime.ts's captureCodeExecResult.
   containerId?: string;
-  generatedFileIds?: string[];
+  generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>;
 }
 
 export interface WorkspaceRunView {
@@ -120,6 +123,7 @@ export interface WorkspaceRunView {
     args: Record<string, any>;
   };
   steps: any[];
+  generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>;
 }
 
 function toolFuncName(idx: number, tool: AvailableTool): string {
@@ -230,6 +234,7 @@ function view(run: WorkspaceRun): WorkspaceRunView {
     createdAt: run.createdAt ? (run.createdAt instanceof Date ? run.createdAt.toISOString() : String(run.createdAt)) : null,
     pending,
     steps: (cp?.steps as any[]) ?? [],
+    generatedFiles: cp?.generatedFiles,
   };
 }
 
@@ -666,7 +671,7 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
     await recordWorkspaceOutcomeEvent(agentId, orgId, status, cost);
     delete cp.pendingToolCalls; delete cp.pendingToolIndex;
     await persist({ status, outputSummary: output.slice(0, 4000), costUsd: cost, traceId: traceId ?? undefined, pendingApprovalId: null, pendingSummary: null });
-    onEvent({ type: "completed", output, costUsd: cost, traceId });
+    onEvent({ type: "completed", output, costUsd: cost, traceId, generatedFiles: cp.generatedFiles });
     const [fresh] = await db.select().from(workspaceRuns).where(eq(workspaceRuns.id, runId)).limit(1);
     return view(fresh);
   };
@@ -697,8 +702,8 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
 
       if (llm.containerId) cp.containerId = llm.containerId;
       if (llm.generatedFiles?.length) {
-        await persistGeneratedFiles(llm.generatedFiles, { organizationId: orgId ?? null, agentId, workspaceRunId: runId });
-        cp.generatedFileIds = [...(cp.generatedFileIds ?? []), ...llm.generatedFiles.map(f => f.fileId)];
+        const records = await persistGeneratedFiles(llm.generatedFiles, { organizationId: orgId ?? null, agentId, workspaceRunId: runId });
+        cp.generatedFiles = [...(cp.generatedFiles ?? []), ...records.map(r => ({ id: r.id, filename: r.filename, mimeType: r.mimeType }))];
       }
 
       if (!llm.toolCalls || llm.toolCalls.length === 0) {
