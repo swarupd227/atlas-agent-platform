@@ -163,6 +163,20 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
 
   // ── Wave 3: Collaboration ─────────────────────────────────────────────────
   {
+    id: "figma",
+    name: "Figma",
+    description: "Design files — read file structure, export images, read/post comments, list team projects",
+    category: "collaboration",
+    logoColor: "#F24E1E",
+    authMethod: "apikey",
+    credentialFields: [
+      { key: "token", label: "Personal Access Token", type: "password", required: true, placeholder: "figd_..." },
+    ],
+    docsUrl: "https://developers.figma.com/docs/rest-api/",
+    wave: 3,
+    capabilities: ["read_files", "read_comments", "write_comments", "read_projects", "export_images"],
+  },
+  {
     id: "slack",
     name: "Slack",
     description: "Team messaging — channels, DMs, threads, and workflow triggers",

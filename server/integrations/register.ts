@@ -11,6 +11,7 @@ import { hubspotMcpServer } from "./hubspot/mcp-server";
 import { serviceNowMcpServer } from "./servicenow/mcp-server";
 import { jiraMcpServer } from "./jira/mcp-server";
 import { githubMcpServer } from "./github/mcp-server";
+import { figmaMcpServer } from "./figma/mcp-server";
 import { slackMcpServer } from "./slack/mcp-server";
 import { microsoftGraphMcpServer } from "./msgraph/mcp-server";
 import { snowflakeMcpServer } from "./snowflake/mcp-server";
@@ -70,6 +71,14 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
       route: "/api/integrations/github",
       riskTier: "MEDIUM",
       tags: ["devops", "github", "enterprise", "wave-2"],
+    },
+    {
+      server: figmaMcpServer,
+      catalogName: "Figma (Design)",
+      description: "Figma REST API v1 — 8 real tools for reading file structure, exporting images, reading/posting comments, and listing team projects and files. Requires Personal Access Token.",
+      route: "/api/integrations/figma",
+      riskTier: "LOW",
+      tags: ["design", "figma", "enterprise", "wave-3"],
     },
     {
       server: slackMcpServer,
@@ -190,7 +199,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
   return { servers, tools: toolCount };
 }
 
-export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer, workdayMcpServer, sapMcpServer };
+export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer, workdayMcpServer, sapMcpServer };
 
 // ── In-process enterprise connector registry ──────────────────────────────────
 // Maps integrationId → connector singleton so the agent runtime can dispatch tool
@@ -199,7 +208,7 @@ export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServ
 const ENTERPRISE_SERVER_BY_ID = new Map<string, RealMcpBase>(
   [
     salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer,
-    githubMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer,
+    githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer,
     workdayMcpServer, sapMcpServer,
   ].map((s) => [s.integrationId, s]),
 );

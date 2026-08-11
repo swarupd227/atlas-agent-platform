@@ -114,6 +114,7 @@ import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
 import { createServiceNowRouter } from "./integrations/servicenow/mcp-server";
 import { createJiraRouter } from "./integrations/jira/mcp-server";
 import { createGitHubRouter } from "./integrations/github/mcp-server";
+import { createFigmaRouter } from "./integrations/figma/mcp-server";
 import { createSlackRouter } from "./integrations/slack/mcp-server";
 import { createMicrosoftGraphRouter } from "./integrations/msgraph/mcp-server";
 import { createSnowflakeRouter } from "./integrations/snowflake/mcp-server";
@@ -380,6 +381,7 @@ export async function registerRoutes(
   app.use("/api/integrations/servicenow", createServiceNowRouter());
   app.use("/api/integrations/jira", createJiraRouter());
   app.use("/api/integrations/github", createGitHubRouter());
+  app.use("/api/integrations/figma", createFigmaRouter());
   app.use("/api/integrations/slack", createSlackRouter());
   app.use("/api/integrations/msgraph", createMicrosoftGraphRouter());
   // ── Enterprise Integration routers (Wave 4: Data & ERP) ──────────────────

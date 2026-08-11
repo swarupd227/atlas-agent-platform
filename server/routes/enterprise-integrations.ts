@@ -724,6 +724,15 @@ async function testConnectionHealth(
           ? { ok: true, latencyMs: Date.now() - start }
           : { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
       }
+      case "figma": {
+        const r = await fetch("https://api.figma.com/v1/me", {
+          headers: { "X-Figma-Token": credentials.token },
+          signal: AbortSignal.timeout(5000),
+        });
+        return r.ok
+          ? { ok: true, latencyMs: Date.now() - start }
+          : { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
+      }
       case "servicenow": {
         const r = await fetch(`${credentials.instance_url}/api/now/table/incident?sysparm_limit=1`, {
           headers: {
