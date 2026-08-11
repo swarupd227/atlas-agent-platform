@@ -543,7 +543,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     setSaving(true);
     try {
       const result = await handleValidate();
@@ -553,8 +553,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
           description: "Could not validate skill against policies. Save blocked for safety.",
           variant: "destructive",
         });
-        setSaving(false);
-        return;
+        return false;
       }
       if (!result.canSave) {
         toast({
@@ -562,8 +561,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
           description: `${result.summary.critical} critical violation${result.summary.critical !== 1 ? "s" : ""} must be resolved before saving`,
           variant: "destructive",
         });
-        setSaving(false);
-        return;
+        return false;
       }
 
       const parsedTags = tags.split(",").map(t => t.trim()).filter(Boolean);
@@ -587,8 +585,10 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
       } else {
         toast({ title: "Skill saved successfully" });
       }
+      return true;
     } catch (e: any) {
       toast({ title: "Save failed", description: e.message, variant: "destructive" });
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1349,11 +1349,17 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                             <Button
                               size="sm"
                               variant="secondary"
-                              disabled={requestingCodeExecApproval}
+                              disabled={requestingCodeExecApproval || saving}
                               data-testid="button-request-code-exec-approval"
                               onClick={async () => {
                                 setRequestingCodeExecApproval(true);
                                 try {
+                                  // The server checks the persisted skill row, not this
+                                  // component's local skillKind/anthropicSkillIds state --
+                                  // save first so a freshly-toggled "Code Execution" kind
+                                  // doesn't 400 with "Skill is not a code_execution skill".
+                                  const saved = await handleSave();
+                                  if (!saved) return;
                                   await apiRequest("POST", `/api/skills/${id}/enable-code-execution`, {});
                                   toast({ title: "Approval requested", description: "A platform admin needs to approve this before agents can use code execution." });
                                   queryClient.invalidateQueries({ queryKey: ["/api/skills", id] });
@@ -1364,7 +1370,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                                 }
                               }}
                             >
-                              Request Approval
+                              Save & Request Approval
                             </Button>
                           )}
                         </div>
