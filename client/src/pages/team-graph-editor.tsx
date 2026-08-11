@@ -13,6 +13,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/status-badge";
+import TeamGraphCanvas from "@/components/team-graph-canvas";
+import { NODE_COLOR_MAP, TRUST_TIER_COLORS } from "@/lib/team-graph-node-meta";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
@@ -71,24 +73,6 @@ const TEAM_NODE_TYPES = [
   { type: "knowledge_base", label: "Knowledge Base", icon: Database, color: "bg-emerald-500" },
 ] as const;
 
-const NODE_COLOR_MAP: Record<string, string> = {
-  internal_agent: "bg-blue-500",
-  tool_set: "bg-amber-500",
-  edge_gate: "bg-orange-500",
-  remote_agent: "bg-purple-500",
-  skill: "bg-teal-500",
-  knowledge_base: "bg-emerald-500",
-};
-
-const NODE_ICON_MAP: Record<string, typeof Brain> = {
-  internal_agent: Brain,
-  tool_set: Wrench,
-  edge_gate: ShieldCheck,
-  remote_agent: Globe,
-  skill: Sparkles,
-  knowledge_base: Database,
-};
-
 const PART_TYPE_OPTIONS = [
   { value: "text", label: "Text", icon: Type },
   { value: "url", label: "URL", icon: LinkIcon },
@@ -96,18 +80,11 @@ const PART_TYPE_OPTIONS = [
   { value: "file", label: "File", icon: FileText },
 ];
 
-const TRUST_TIER_COLORS: Record<string, string> = {
-  full: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-  verified: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20",
-  basic: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
-  untrusted: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
-};
 
 export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView, processFlowSteps }: TeamGraphEditorProps) {
   const { toast } = useToast();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [edgeMode, setEdgeMode] = useState<string | null>(null);
   const [runDialogOpen, setRunDialogOpen] = useState(false);
 
   const graphQueryKey = ["/api/blueprints", blueprintId, "team-graph"];
@@ -159,35 +136,22 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   const createNodeMutation = useMutation({
     mutationFn: async (nodeType: string) => {
       const def = TEAM_NODE_TYPES.find(t => t.type === nodeType);
+      // Next open grid slot -- same shape as flow-graph-canvas.tsx's addNode.
+      // Appropriate for a free-form 2D canvas; the old vertical-list-only
+      // positionY: nodes.length * 120 made no sense once nodes can branch.
       const res = await apiRequest("POST", "/api/team-blueprint-nodes", {
         blueprintId,
         nodeType,
         label: def?.label || nodeType,
-        positionX: 0,
-        positionY: nodes.length * 120,
+        positionX: (nodes.length % 5) * 280,
+        positionY: Math.floor(nodes.length / 5) * 120 + 40,
       });
       return res.json() as Promise<TeamBlueprintNode>;
     },
     onSuccess: (created) => {
       invalidateGraph();
-      // On a long flow the new node lands at the bottom of the column, below
-      // the fold -- without selecting and scrolling to it, the click looks
-      // like it did nothing.
       setSelectedNodeId(created.id);
       setSelectedEdgeId(null);
-      // The card only exists after the invalidated graph query refetches and
-      // re-renders, which takes longer than one frame -- poll briefly for it
-      // rather than scrolling before it's in the DOM.
-      let scrollTries = 0;
-      const scrollToCard = () => {
-        const el = document.querySelector(`[data-testid="card-team-node-${created.id}"]`);
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-        } else if (scrollTries++ < 10) {
-          setTimeout(scrollToCard, 200);
-        }
-      };
-      setTimeout(scrollToCard, 200);
       toast({ title: "Step added", description: `"${created.label}" was added at the end of the flow.` });
     },
     onError: (err: Error) => toast({ title: "Failed to add node", description: err.message, variant: "destructive" }),
@@ -249,27 +213,34 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
     onError: (err: Error) => toast({ title: "Failed to delete edge", description: err.message, variant: "destructive" }),
   });
 
-  const handleNodeClick = useCallback((nodeId: string) => {
-    if (edgeMode === "__waiting__") {
-      setEdgeMode(nodeId);
-    } else if (edgeMode && edgeMode !== "__waiting__") {
-      if (edgeMode !== nodeId) {
-        const alreadyExists = edges.some(e => e.sourceNodeId === edgeMode && e.targetNodeId === nodeId);
-        if (!alreadyExists) {
-          createEdgeMutation.mutate({ sourceNodeId: edgeMode, targetNodeId: nodeId });
-        }
-      }
-      setEdgeMode(null);
-    } else {
-      setSelectedNodeId(nodeId);
-      setSelectedEdgeId(null);
-    }
-  }, [edgeMode, edges, createEdgeMutation]);
+  const handleNodeSelect = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setSelectedEdgeId(null);
+  }, []);
 
-  const handleEdgeClick = useCallback((edgeId: string) => {
+  const handleEdgeSelect = useCallback((edgeId: string) => {
     setSelectedEdgeId(edgeId);
     setSelectedNodeId(null);
   }, []);
+
+  const handlePaneClick = useCallback(() => {
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+  }, []);
+
+  // Drag-to-connect from the canvas -- replaces the old click-source/
+  // click-target "Add Edge" mode. Duplicate-edge guard preserved from the
+  // old handleNodeClick edge-mode branch.
+  const handleConnect = useCallback((sourceNodeId: string, targetNodeId: string) => {
+    const alreadyExists = edges.some(e => e.sourceNodeId === sourceNodeId && e.targetNodeId === targetNodeId);
+    if (!alreadyExists) {
+      createEdgeMutation.mutate({ sourceNodeId, targetNodeId });
+    }
+  }, [edges, createEdgeMutation]);
+
+  const handleNodeDragStop = useCallback((nodeId: string, x: number, y: number) => {
+    updateNodeMutation.mutate({ id: nodeId, updates: { positionX: x, positionY: y } });
+  }, [updateNodeMutation]);
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
   const selectedEdge = edges.find(e => e.id === selectedEdgeId);
@@ -319,23 +290,12 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
           </div>
         </ScrollArea>
         <div className="p-3 border-t">
-          <Button
-            variant={edgeMode ? "default" : "outline"}
-            size="sm"
-            className="w-full"
-            onClick={() => {
-              setEdgeMode(edgeMode ? null : "__waiting__");
-              if (edgeMode) setEdgeMode(null);
-            }}
-            data-testid="button-add-edge-mode"
-          >
-            <Link2 className="w-3.5 h-3.5 mr-1.5" /> {edgeMode ? "Cancel Edge Mode" : "Add Edge"}
-          </Button>
+          <p className="text-[10px] text-muted-foreground mb-2">Drag from a node's right dot to a target node to connect them.</p>
           {teamAgentId && (
             <Button
               variant="default"
               size="sm"
-              className="w-full mt-2"
+              className="w-full"
               disabled={nodes.length === 0}
               onClick={() => setRunDialogOpen(true)}
               data-testid="button-run-team-graph"
@@ -352,143 +312,27 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
       )}
 
       {/* Center Panel - Graph Canvas */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {edgeMode && (
-          <div className="flex items-center gap-2 p-2 bg-blue-500/10 border-b flex-wrap">
-            <MousePointer className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span className="text-xs text-blue-600 dark:text-blue-400" data-testid="text-edge-mode">
-              {edgeMode === "__waiting__" ? "Click a source node to start" : "Now click the target node"}
-            </span>
-          </div>
-        )}
-        <ScrollArea className="flex-1">
-          <div className="p-6 flex flex-col items-center gap-0">
-            {nodes.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-24 gap-3">
-                <Brain className="w-10 h-10 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground" data-testid="text-empty-canvas">Add team nodes from the palette to get started</p>
-              </div>
-            ) : (
-              <>
-                <svg className="absolute" width="0" height="0">
-                  <defs>
-                    <marker id="team-arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
-                      <polygon points="0 0, 10 3.5, 0 7" fill="hsl(var(--muted-foreground))" />
-                    </marker>
-                  </defs>
-                </svg>
-                {nodes.map((node, idx) => {
-                  const Icon = NODE_ICON_MAP[node.nodeType] || Brain;
-                  const isSelected = selectedNodeId === node.id;
-                  const isEdgeSource = edgeMode === node.id;
-                  const incomingEdges = edges.filter(e => e.targetNodeId === node.id);
-                  const refAgent = node.refAgentId ? (agents || []).find(a => a.id === node.refAgentId) : null;
-                  const refTeamAgentOnCard = node.refTeamAgentId ? (agents || []).find(a => a.id === node.refTeamAgentId) : null;
-                  const refRemoteAgent = node.refRemoteAgentId ? (remoteAgents || []).find(ra => ra.id === node.refRemoteAgentId) : null;
-                  const refSkill = (node as any).refSkillId ? (skills || []).find(s => s.id === (node as any).refSkillId) : null;
-                  const refKb = (node as any).refKnowledgeBaseId ? (knowledgeBases || []).find(k => k.id === (node as any).refKnowledgeBaseId) : null;
-                  const toolCount = (node.refToolIds || []).length;
-
-                  return (
-                    <div key={node.id} className="flex flex-col items-center w-full max-w-md">
-                      {incomingEdges.map(edge => {
-                        const partTypes = edge.contentPartTypes || [];
-                        const sla = edge.slaTimeoutMs;
-                        const fm = edge.failureMode;
-                        return (
-                          <div key={`edge-${edge.id}`} className="flex flex-col items-center group cursor-pointer" onClick={() => handleEdgeClick(edge.id)}>
-                            <svg width="2" height="40" className="overflow-visible">
-                              <line x1="1" y1="0" x2="1" y2="40" stroke={selectedEdgeId === edge.id ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))"} strokeWidth={selectedEdgeId === edge.id ? 2 : 1.5} markerEnd="url(#team-arrowhead)" />
-                            </svg>
-                            <div className="flex items-center gap-1 -mt-1 mb-1 flex-wrap justify-center">
-                              {partTypes.map(pt => (
-                                <Badge key={pt} variant="outline" className="text-[9px] px-1 py-0" data-testid={`badge-part-type-${pt}`}>{pt}</Badge>
-                              ))}
-                              {sla != null && sla > 0 && (
-                                <Badge variant="outline" className="text-[9px] px-1 py-0" data-testid={`text-edge-sla-${edge.id}`}>{(sla / 1000).toFixed(0)}s SLA</Badge>
-                              )}
-                              {fm && fm !== "escalate" && (
-                                <Badge variant="outline" className="text-[9px] px-1 py-0">{fm}</Badge>
-                              )}
-                            </div>
-                            <button
-                              className="invisible group-hover:visible -mt-1 mb-1 rounded-full bg-destructive text-destructive-foreground w-5 h-5 flex items-center justify-center text-xs"
-                              onClick={(e) => { e.stopPropagation(); deleteEdgeMutation.mutate(edge.id); }}
-                              data-testid={`button-delete-team-edge-${edge.id}`}
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        );
-                      })}
-                      {idx > 0 && incomingEdges.length === 0 && <div className="h-4" />}
-                      <Card
-                        className={`w-full cursor-pointer ${isSelected ? "ring-2 ring-ring" : ""} ${isEdgeSource ? "ring-2 ring-blue-500" : ""}`}
-                        onClick={() => handleNodeClick(node.id)}
-                        data-testid={`card-team-node-${node.id}`}
-                      >
-                        <CardContent className="p-3 flex items-center gap-2.5 flex-wrap">
-                          <div className={`w-1 h-6 rounded-full shrink-0 ${NODE_COLOR_MAP[node.nodeType] || "bg-gray-500"}`} />
-                          <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
-                          <span className="text-sm font-medium flex-1 truncate" data-testid={`text-node-label-${node.id}`}>{getNodeDisplayLabel(node)}</span>
-                          <Badge variant="outline" className="text-[10px] shrink-0">{node.nodeType.replace("_", " ")}</Badge>
-                          {node.nodeType === "internal_agent" && refAgent && !node.refTeamAgentId && (
-                            <Badge variant="outline" className="text-[10px] shrink-0 bg-blue-500/10">{refAgent.name}</Badge>
-                          )}
-                          {node.nodeType === "internal_agent" && node.refTeamAgentId && (
-                            <Badge variant="outline" className="text-[10px] shrink-0 bg-purple-500/10 border-purple-500/30 text-purple-700 dark:text-purple-300 flex items-center gap-1" data-testid={`badge-team-ref-${node.id}`}>
-                              <Network className="w-2.5 h-2.5" />{refTeamAgentOnCard?.name || "Team Ref"}
-                            </Badge>
-                          )}
-                          {node.nodeType === "remote_agent" && refRemoteAgent && (
-                            <>
-                              <Badge variant="outline" className={`text-[10px] shrink-0 ${TRUST_TIER_COLORS[refRemoteAgent.trustTier || "basic"] || ""}`}>
-                                {refRemoteAgent.trustTier || "basic"}
-                              </Badge>
-                              <Badge variant="outline" className="text-[10px] shrink-0">
-                                {refRemoteAgent.connectivityStatus || "unknown"}
-                              </Badge>
-                            </>
-                          )}
-                          {node.nodeType === "tool_set" && toolCount > 0 && (
-                            <Badge variant="outline" className="text-[10px] shrink-0 bg-amber-500/10">{toolCount} tools</Badge>
-                          )}
-                          {node.nodeType === "edge_gate" && node.gateType && (
-                            <Badge variant="outline" className="text-[10px] shrink-0 bg-orange-500/10">{node.gateType}</Badge>
-                          )}
-                          {node.nodeType === "skill" && refSkill && (
-                            <Badge variant="outline" className="text-[10px] shrink-0 bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 flex items-center gap-1" data-testid={`badge-skill-ref-${node.id}`}>
-                              <Sparkles className="w-2.5 h-2.5" />{refSkill.name}
-                            </Badge>
-                          )}
-                          {node.nodeType === "knowledge_base" && refKb && (
-                            <Badge variant="outline" className="text-[10px] shrink-0 bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 flex items-center gap-1" data-testid={`badge-kb-ref-${node.id}`}>
-                              <Database className="w-2.5 h-2.5" />{refKb.name}
-                            </Badge>
-                          )}
-                          {stateKeyConflictIds.has(node.id) && (
-                            <Badge variant="outline" className="text-[9px] shrink-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5 px-1" data-testid={`badge-canvas-state-key-conflict-${node.id}`}>
-                              <AlertTriangle className="w-2.5 h-2.5" /> key conflict
-                            </Badge>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="shrink-0"
-                            onClick={e => { e.stopPropagation(); deleteNodeMutation.mutate(node.id); }}
-                            data-testid={`button-delete-team-node-${node.id}`}
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </Button>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        </ScrollArea>
+      <div className="flex-1 flex flex-col min-w-0 min-h-0" data-testid="team-graph-canvas-container">
+        <TeamGraphCanvas
+          blueprintId={blueprintId}
+          teamAgentId={teamAgentId}
+          nodes={nodes}
+          edges={edges}
+          selectedNodeId={selectedNodeId}
+          selectedEdgeId={selectedEdgeId}
+          stateKeyConflictIds={stateKeyConflictIds}
+          getNodeDisplayLabel={getNodeDisplayLabel}
+          agents={agents || []}
+          remoteAgents={remoteAgents || []}
+          skills={skills || []}
+          knowledgeBases={knowledgeBases || []}
+          onNodeSelect={handleNodeSelect}
+          onEdgeSelect={handleEdgeSelect}
+          onPaneClick={handlePaneClick}
+          onConnect={handleConnect}
+          onNodeDragStop={handleNodeDragStop}
+          onNodeDelete={(id) => deleteNodeMutation.mutate(id)}
+        />
       </div>
 
       {/* Right Panel - Config */}
