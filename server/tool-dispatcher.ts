@@ -259,7 +259,12 @@ function computeApprovalRiskScore(riskLevel: string, sideEffectful: boolean): nu
 }
 
 // ── AAR constraint-list gate ─────────────────────────────────────────────────
-async function evaluateActionPolicy(
+// Exported for server/anthropic-code-execution.ts, which reuses this same
+// allowedTools/deniedTools/requireApprovalTools mechanism for a synthetic
+// "execute_code" tool name -- code execution never becomes a real tool_use
+// this dispatcher sees (Anthropic runs it server-side), so it can't go
+// through the normal per-dispatch pipeline below.
+export async function evaluateActionPolicy(
   agentId: string,
   tool: AvailableTool,
 ): Promise<{ decision: string; reason: string; approvalId?: string }> {

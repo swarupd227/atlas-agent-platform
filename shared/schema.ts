@@ -1708,12 +1708,45 @@ export const skills = pgTable("skills", {
   // one-off run never masquerades as a real eval score in agent-detail.tsx's Skills tab.
   lastSandboxTest: jsonb("last_sandbox_test"),
   lastSandboxTestAt: timestamp("last_sandbox_test_at"),
+  // "code_execution" skills run inside Anthropic's sandboxed code execution
+  // container (see server/anthropic-code-execution.ts) instead of being
+  // injected as prompt context. anthropicSkillIds reference Anthropic's own
+  // built-in skills (e.g. "pptx","docx","pdf","xlsx") by id -- no upload
+  // needed. codeExecutionApproved gates whether attaching this skill to an
+  // agent actually enables code execution on a run, mirroring
+  // mcpServers.status/allowlisted: attaching a skill is not the same as
+  // approving it.
+  skillKind: text("skill_kind").notNull().default("prompt"),
+  anthropicSkillIds: text("anthropic_skill_ids").array().default(sql`'{}'::text[]`),
+  codeExecutionApproved: boolean("code_execution_approved").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertSkillSchema = createInsertSchema(skills).omit({ id: true, createdAt: true, lastEvalPassRate: true, lastEvalAt: true }).extend({ organizationId: z.string().optional() });
 export type InsertSkill = z.infer<typeof insertSkillSchema>;
 export type Skill = typeof skills.$inferSelect;
+
+// Files agents produce via the code execution tool (e.g. generated PPTX/DOCX/PDF).
+// No bytes stored here -- anthropicFileId is the source of truth, fetched on
+// demand from Anthropic's Files API, since Anthropic retains those files
+// until explicitly deleted. Exactly one of workspaceRunId/traceId is set,
+// depending on which turn-loop engine produced the file.
+export const agentGeneratedFiles = pgTable("agent_generated_files", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  workspaceRunId: varchar("workspace_run_id"),
+  traceId: varchar("trace_id"),
+  filename: text("filename"),
+  mimeType: text("mime_type"),
+  sizeBytes: integer("size_bytes"),
+  anthropicFileId: text("anthropic_file_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentGeneratedFileSchema = createInsertSchema(agentGeneratedFiles).omit({ id: true, createdAt: true });
+export type InsertAgentGeneratedFile = z.infer<typeof insertAgentGeneratedFileSchema>;
+export type AgentGeneratedFile = typeof agentGeneratedFiles.$inferSelect;
 
 export const skillVersions = pgTable("skill_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

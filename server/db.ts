@@ -1362,6 +1362,33 @@ export async function runStartupMigrations() {
       );
     `);
 
+    // Real code execution for agents (server/anthropic-code-execution.ts):
+    // "code_execution" skills reference Anthropic's built-in docx/pptx/pdf/xlsx
+    // skills by id and run in Anthropic's sandboxed container instead of being
+    // injected as prompt context. codeExecutionApproved mirrors mcpServers'
+    // production-enablement gate -- attaching the skill to an agent isn't the
+    // same as approving it. agent_generated_files stores only a reference to
+    // each created file (Anthropic's Files API retains the bytes), not the
+    // bytes themselves.
+    await client.query(`
+      ALTER TABLE skills ADD COLUMN IF NOT EXISTS skill_kind TEXT NOT NULL DEFAULT 'prompt';
+      ALTER TABLE skills ADD COLUMN IF NOT EXISTS anthropic_skill_ids TEXT[] DEFAULT '{}'::text[];
+      ALTER TABLE skills ADD COLUMN IF NOT EXISTS code_execution_approved BOOLEAN DEFAULT FALSE;
+      CREATE TABLE IF NOT EXISTS agent_generated_files (
+        id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id   VARCHAR,
+        agent_id          VARCHAR NOT NULL,
+        workspace_run_id  VARCHAR,
+        trace_id          VARCHAR,
+        filename          TEXT,
+        mime_type         TEXT,
+        size_bytes        INTEGER,
+        anthropic_file_id TEXT NOT NULL,
+        created_at        TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_generated_files_agent_id ON agent_generated_files(agent_id);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

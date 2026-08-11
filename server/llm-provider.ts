@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
+import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import { resolveProviderKey } from "./llm-provider-keys";
 
 export interface LLMMessage {
@@ -36,6 +37,18 @@ export interface LLMCompletionOptions {
    * instead of only a server-side console.warn.
    */
   requestedProvider?: string;
+  /**
+   * Anthropic-only server tools (e.g. the code execution tool). Deliberately
+   * separate from `tools`/CanonicalToolDefinition[]: these have no
+   * input_schema and never become a tool_use the platform dispatches --
+   * Anthropic executes them server-side and returns the result inline.
+   * OpenAIProvider ignores this field.
+   */
+  anthropicServerTools?: Array<Record<string, unknown>>;
+  /** Anthropic code-execution container: skills to load, and/or a container id to reuse across turns. */
+  anthropicContainer?: { skills?: Array<{ type: string; skill_id: string; version?: string }>; id?: string };
+  /** anthropic-beta header value(s) required by anthropicServerTools/anthropicContainer, e.g. ["code-execution-2025-08-25","skills-2025-10-02"]. */
+  anthropicBetas?: string[];
 }
 
 export interface LLMCompletionResult {
@@ -55,6 +68,12 @@ export interface LLMCompletionResult {
   requestedProvider?: string;
   /** True when requestedProvider was supplied and differs from actualProvider. */
   providerFallback?: boolean;
+  /** Files the code execution tool created this turn (Anthropic only). Download via the Files API. */
+  generatedFiles?: Array<{ fileId: string; toolUseId: string }>;
+  /** Anthropic code-execution container id, if a server tool ran -- pass back via anthropicContainer.id to reuse. */
+  containerId?: string;
+  /** Truncated summary of code-execution commands/file ops run this turn, for audit -- not full stdout. */
+  codeExecutionTrace?: Array<{ tool: string; input: unknown; summary: string }>;
 }
 
 export interface LLMEmbeddingResult {
@@ -611,6 +630,38 @@ class OpenAIProvider implements LLMProvider {
 // Anthropic provider
 // ---------------------------------------------------------------------------
 
+/**
+ * Anthropic's code execution tool returns bash_code_execution_tool_result /
+ * text_editor_code_execution_tool_result blocks alongside text/tool_use --
+ * cast defensively since the exact block shape varies by tool version and
+ * isn't exposed as a single discriminated union in the installed SDK's
+ * public types.
+ */
+function extractAnthropicServerToolData(content: Anthropic.ContentBlock[]): {
+  generatedFiles: Array<{ fileId: string; toolUseId: string }>;
+  codeExecutionTrace: Array<{ tool: string; input: unknown; summary: string }>;
+} {
+  const generatedFiles: Array<{ fileId: string; toolUseId: string }> = [];
+  const codeExecutionTrace: Array<{ tool: string; input: unknown; summary: string }> = [];
+
+  for (const block of content as any[]) {
+    if (block.type === "server_tool_use" && (block.name === "bash_code_execution" || block.name === "text_editor_code_execution")) {
+      codeExecutionTrace.push({ tool: block.name, input: block.input, summary: JSON.stringify(block.input ?? {}).slice(0, 500) });
+    } else if (block.type === "bash_code_execution_tool_result" || block.type === "text_editor_code_execution_tool_result") {
+      const result = block.content;
+      if (result?.type === "bash_code_execution_result" && Array.isArray(result.content)) {
+        for (const outputBlock of result.content) {
+          if (outputBlock?.file_id) {
+            generatedFiles.push({ fileId: outputBlock.file_id, toolUseId: block.tool_use_id });
+          }
+        }
+      }
+    }
+  }
+
+  return { generatedFiles, codeExecutionTrace };
+}
+
 class AnthropicProvider implements LLMProvider {
   readonly providerName = "anthropic";
   private client: Anthropic | null = null;
@@ -625,6 +676,11 @@ class AnthropicProvider implements LLMProvider {
       this.clientKey = cacheKey;
     }
     return this.client;
+  }
+
+  /** Exposed for server/anthropic-code-execution.ts, which needs the same client to call the Files API. */
+  async getRawClient(): Promise<Anthropic> {
+    return this.getClient();
   }
 
   async complete(messages: LLMMessage[], options?: LLMCompletionOptions): Promise<LLMCompletionResult> {
@@ -677,8 +733,8 @@ class AnthropicProvider implements LLMProvider {
       anthropicMessages.push({ role: "user", content: "Hello" });
     }
 
-    const anthropicTools: Anthropic.Tool[] | undefined =
-      options?.tools && options.tools.length > 0
+    const anthropicTools: Array<Anthropic.Tool | Record<string, unknown>> | undefined = (() => {
+      const custom = options?.tools && options.tools.length > 0
         ? options.tools.map((t) => ({
             name: t.name,
             description: t.description,
@@ -687,7 +743,11 @@ class AnthropicProvider implements LLMProvider {
               ...(t.parameters && typeof t.parameters === "object" ? t.parameters : {}),
             },
           }))
-        : undefined;
+        : [];
+      const server = options?.anthropicServerTools ?? [];
+      const all = [...custom, ...server];
+      return all.length > 0 ? all : undefined;
+    })();
 
     if (options?.responseFormat === "json" && systemPrompt) {
       systemPrompt += "\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text outside the JSON object.";
@@ -700,14 +760,18 @@ class AnthropicProvider implements LLMProvider {
     try {
       response = await withRetry(
         () =>
-          client.messages.create({
-            model,
-            max_tokens: options?.maxTokens || 4096,
-            ...(systemPrompt ? { system: systemPrompt } : {}),
-            messages: anthropicMessages,
-            ...(anthropicTools ? { tools: anthropicTools } : {}),
-            ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-          }),
+          client.messages.create(
+            {
+              model,
+              max_tokens: options?.maxTokens || 4096,
+              ...(systemPrompt ? { system: systemPrompt } : {}),
+              messages: anthropicMessages,
+              ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
+              ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+              ...(options?.anthropicContainer ? { container: options.anthropicContainer as any } : {}),
+            },
+            options?.anthropicBetas?.length ? { headers: { "anthropic-beta": options.anthropicBetas.join(",") } } : undefined,
+          ),
         this.providerName,
       );
       cbRecordSuccess(this.providerName);
@@ -731,6 +795,8 @@ class AnthropicProvider implements LLMProvider {
       }
     }
 
+    const { generatedFiles, codeExecutionTrace } = extractAnthropicServerToolData(response.content);
+
     const promptTokens = response.usage?.input_tokens || 0;
     const completionTokens = response.usage?.output_tokens || 0;
 
@@ -747,6 +813,9 @@ class AnthropicProvider implements LLMProvider {
           function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
         })),
       },
+      ...(generatedFiles.length ? { generatedFiles } : {}),
+      ...(codeExecutionTrace.length ? { codeExecutionTrace } : {}),
+      ...((response as any).container?.id ? { containerId: (response as any).container.id } : {}),
       ...buildProviderResultFields(this.providerName, options),
     };
   }
@@ -789,8 +858,8 @@ class AnthropicProvider implements LLMProvider {
       anthropicMessages.push({ role: "user", content: "Hello" });
     }
 
-    const anthropicTools: Anthropic.Tool[] | undefined =
-      options?.tools && options.tools.length > 0
+    const anthropicTools: Array<Anthropic.Tool | Record<string, unknown>> | undefined = (() => {
+      const custom = options?.tools && options.tools.length > 0
         ? options.tools.map((t) => ({
             name: t.name,
             description: t.description,
@@ -799,7 +868,11 @@ class AnthropicProvider implements LLMProvider {
               ...(t.parameters && typeof t.parameters === "object" ? t.parameters : {}),
             },
           }))
-        : undefined;
+        : [];
+      const server = options?.anthropicServerTools ?? [];
+      const all = [...custom, ...server];
+      return all.length > 0 ? all : undefined;
+    })();
 
     if (options?.responseFormat === "json" && systemPrompt) {
       systemPrompt += "\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text outside the JSON object.";
@@ -812,16 +885,25 @@ class AnthropicProvider implements LLMProvider {
     const toolCalls: CanonicalToolCall[] = [];
 
     try {
-      const stream = await withRetry(
+      // Cast to `any`: passing a second (per-call header) argument to .stream()
+      // resolves to a different SDK overload whose return type isn't the
+      // MessageStream withRetry's generic expects -- this is the same runtime
+      // call shape the Anthropic SDK documents for header overrides, just not
+      // the specific overload this pinned SDK version's .d.ts picks by default.
+      const stream: MessageStream = await withRetry(
         () =>
-          client.messages.stream({
-            model,
-            max_tokens: options?.maxTokens || 4096,
-            ...(systemPrompt ? { system: systemPrompt } : {}),
-            messages: anthropicMessages,
-            ...(anthropicTools ? { tools: anthropicTools } : {}),
-            ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-          }),
+          (client.messages.stream as any)(
+            {
+              model,
+              max_tokens: options?.maxTokens || 4096,
+              ...(systemPrompt ? { system: systemPrompt } : {}),
+              messages: anthropicMessages,
+              ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
+              ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+              ...(options?.anthropicContainer ? { container: options.anthropicContainer as any } : {}),
+            },
+            options?.anthropicBetas?.length ? { headers: { "anthropic-beta": options.anthropicBetas.join(",") } } : undefined,
+          ) as Promise<MessageStream>,
         this.providerName,
       );
 
@@ -843,6 +925,8 @@ class AnthropicProvider implements LLMProvider {
         }
       }
 
+      const { generatedFiles, codeExecutionTrace } = extractAnthropicServerToolData(finalMsg.content);
+
       const promptTokens = finalMsg.usage.input_tokens || 0;
       const completionTokens = finalMsg.usage.output_tokens || 0;
 
@@ -861,6 +945,9 @@ class AnthropicProvider implements LLMProvider {
             function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
           })),
         },
+        ...(generatedFiles.length ? { generatedFiles } : {}),
+        ...(codeExecutionTrace.length ? { codeExecutionTrace } : {}),
+        ...((finalMsg as any).container?.id ? { containerId: (finalMsg as any).container.id } : {}),
         ...buildProviderResultFields(this.providerName, options),
       };
     } catch (err) {
@@ -944,6 +1031,12 @@ export function getProvider(providerName: string): LLMProvider {
 export function getDefaultProvider(): LLMProvider {
   const defaultName = process.env.DEFAULT_LLM_PROVIDER || "openai";
   return getProvider(defaultName);
+}
+
+/** Shared Anthropic client for callers outside AnthropicProvider (e.g. anthropic-code-execution.ts's Files API download). */
+export async function getAnthropicRawClient(): Promise<Anthropic> {
+  const provider = getProvider("anthropic") as AnthropicProvider;
+  return provider.getRawClient();
 }
 
 // HTTP status codes that represent permanent request errors — do NOT cascade on these.

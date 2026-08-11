@@ -30,6 +30,8 @@ import { canonicalJsonStringify } from "./agent-runtime";
 import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
+import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles } from "./anthropic-code-execution";
+import type { Skill } from "@shared/schema";
 
 const MAX_ITERATIONS_DEFAULT = 5;
 
@@ -95,6 +97,11 @@ interface Checkpoint {
   // Present only while suspended at an approval gate:
   pendingToolCalls?: Array<{ id: string; name: string; arguments: Record<string, any> }>;
   pendingToolIndex?: number;
+  // Anthropic code execution (see server/anthropic-code-execution.ts): the
+  // container id is reused across turns so created files / REPL state
+  // persist; generatedFileIds accumulates across the whole run.
+  containerId?: string;
+  generatedFileIds?: string[];
 }
 
 export interface WorkspaceRunView {
@@ -184,6 +191,18 @@ async function resolveSkillAllowlist(agent: any): Promise<string[] | null> {
     return declared ? Array.from(allow) : null;
   } catch {
     return null;
+  }
+}
+
+/** Full Skill rows for an agent's active preloaded skills (needed for skillKind/anthropicSkillIds, not just allowedTools). */
+async function resolveActiveSkills(agent: any): Promise<Skill[]> {
+  try {
+    const raw = agent?.preloadedSkills;
+    const skillIds: string[] = Array.isArray(raw) ? raw.map((p: any) => p?.skillId).filter(Boolean) : [];
+    if (skillIds.length === 0) return [];
+    return (await storage.getSkillsByIds(skillIds)).filter(s => s.status === "active");
+  } catch {
+    return [];
   }
 }
 
@@ -563,6 +582,10 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
 
   const { availableTools, policyBundle } = await buildContext(agentId, orgId, cp.mcpServerIds, cp.skillAllowlist);
   const canonicalTools = buildCanonicalTools(availableTools);
+  const agentRow = await storage.getAgent(agentId, orgId);
+  const activeSkills = await resolveActiveSkills(agentRow);
+  const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
+  const codeExecConfig = codeExecAccess.enabled ? buildCodeExecutionRequestConfig(activeSkills, cp.containerId) : null;
   const provider = getProvider(cp.modelName.startsWith("claude") ? "anthropic" : "openai");
   const fallback = getProvider(provider.providerName === "openai" ? "anthropic" : "openai");
   const spans = new RunSpanCollector();
@@ -659,13 +682,24 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
       onEvent({ type: "planning", iteration: cp.iterationsUsed + 1 });
       const llm = await completeWithFallback(
         cp.messages,
-        { model: cp.modelName, tools: canonicalTools.length > 0 ? canonicalTools : undefined, maxTokens: 4096 },
+        {
+          model: cp.modelName,
+          tools: canonicalTools.length > 0 ? canonicalTools : undefined,
+          maxTokens: 4096,
+          ...(codeExecConfig ?? {}),
+        },
         [provider, fallback],
       );
       cp.totalCostUsd += llm.costUsd;
       cp.totalTokens.prompt += llm.tokensUsed.prompt;
       cp.totalTokens.completion += llm.tokensUsed.completion;
       cp.totalTokens.total += llm.tokensUsed.total;
+
+      if (llm.containerId) cp.containerId = llm.containerId;
+      if (llm.generatedFiles?.length) {
+        await persistGeneratedFiles(llm.generatedFiles, { organizationId: orgId ?? null, agentId, workspaceRunId: runId });
+        cp.generatedFileIds = [...(cp.generatedFileIds ?? []), ...llm.generatedFiles.map(f => f.fileId)];
+      }
 
       if (!llm.toolCalls || llm.toolCalls.length === 0) {
         return finalize(llm.content || "Done.", "completed");

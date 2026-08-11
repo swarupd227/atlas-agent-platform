@@ -45,6 +45,7 @@ import {
   Brain,
   Activity,
   ListChecks,
+  Download,
 } from "lucide-react";
 import type { Agent } from "@shared/schema";
 
@@ -1302,6 +1303,10 @@ function ExecutionTracePanel({ trace }: { trace: ExecutionTraceData }) {
   const toolCallResults = trace.events.filter(e => e.type === "tool_call_result");
   const successfulCalls = toolCallResults.filter(e => e.success);
   const failedCalls = toolCallResults.filter(e => !e.success);
+  // Code execution (server/anthropic-code-execution.ts) emits its own tool_call_result
+  // with no matching tool_call_start, so it's rendered as its own section below rather
+  // than through the tool_call_start/result pairing loop.
+  const generatedFileEvents = toolCallResults.filter(e => Array.isArray(e.generatedFiles) && (e.generatedFiles as any[]).length > 0);
 
   return (
     <div className="ml-11 mt-1" data-testid="execution-trace">
@@ -1340,6 +1345,26 @@ function ExecutionTracePanel({ trace }: { trace: ExecutionTraceData }) {
                 <span className="text-muted-foreground truncate">
                   ({(discoveryEvent.knowledgeBaseNames as string[]).join(", ")})
                 </span>
+              )}
+            </div>
+          )}
+
+          {generatedFileEvents.length > 0 && (
+            <div className="flex flex-col gap-1" data-testid="trace-generated-files">
+              {generatedFileEvents.flatMap((event, ei) =>
+                (event.generatedFiles as Array<{ id: string; filename: string | null; mimeType: string | null }>).map((f, fi) => (
+                  <a
+                    key={`${ei}-${fi}`}
+                    href={`/api/agent-files/${f.id}/download`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-xs text-primary hover:underline w-fit"
+                    data-testid={`link-download-file-${f.id}`}
+                  >
+                    <Download className="h-3 w-3 shrink-0" />
+                    <span>{f.filename || "Download generated file"}</span>
+                  </a>
+                ))
               )}
             </div>
           )}

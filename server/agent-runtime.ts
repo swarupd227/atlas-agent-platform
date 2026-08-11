@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
+import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles } from "./anthropic-code-execution";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -1176,6 +1177,7 @@ export async function executePromptWithMcp(
   // additional allowlist. Previously allowedTools was advisory prompt text only.
   // Also records skill attribution on the trace and bumps activation telemetry.
   let dispatchSkillAllowlist: Set<string> | null = null;
+  let resolvedActiveSkills: Awaited<ReturnType<typeof storage.getSkillsByIds>> = [];
   try {
     const agentRec = await storage.getAgent(agentId);
     const rawPre = (agentRec as any)?.preloadedSkills;
@@ -1184,6 +1186,7 @@ export async function executePromptWithMcp(
       : [];
     if (skillIds.length > 0) {
       const activeSkills = (await storage.getSkillsByIds(skillIds)).filter(s => s.status === "active");
+      resolvedActiveSkills = activeSkills;
       const skillAllow = new Set<string>();
       let allowDeclared = false;
       for (const s of activeSkills) {
@@ -1220,6 +1223,30 @@ export async function executePromptWithMcp(
     // gated tool set rather than aborting the run.
     console.warn(`[skill-gate] skill enforcement skipped (non-fatal): ${sgErr.message}`);
   }
+
+  // ── Code execution gate (server/anthropic-code-execution.ts) ────────────────
+  // Not checkpointed (unlike workspace-run.ts) so containerId is just a local
+  // variable, reused across this run's own iterations to keep created files /
+  // REPL state alive turn to turn, then discarded when the run ends.
+  let codeExecContainerId: string | undefined;
+  const codeExecAccess = await resolveCodeExecutionAccess(agentId, resolvedActiveSkills);
+  const getCodeExecConfig = () => (codeExecAccess.enabled ? buildCodeExecutionRequestConfig(resolvedActiveSkills, codeExecContainerId) : null);
+  /** Fold a completion result's generatedFiles/containerId into this run -- call after every completeWithFallback/streamCompleteWithFallback. */
+  const captureCodeExecResult = async (llmResult: { generatedFiles?: Array<{ fileId: string; toolUseId: string }>; containerId?: string }) => {
+    if (llmResult.containerId) codeExecContainerId = llmResult.containerId;
+    if (llmResult.generatedFiles?.length) {
+      const records = await persistGeneratedFiles(llmResult.generatedFiles, { organizationId: orgId ?? null, agentId, traceId: idempotencyScope });
+      // Piggyback on the existing tool_call_result event type -- ExecutionTracePanel
+      // (client/src/pages/agent-playground.tsx) reads a generatedFiles field off any
+      // tool_call_result event's data to render a download card, no new event type needed.
+      emitProgress("tool_call_result", {
+        tool: "code_execution",
+        server: "anthropic",
+        result: `Generated ${records.length} file(s)`,
+        generatedFiles: records.map(r => ({ id: r.id, filename: r.filename, mimeType: r.mimeType })),
+      });
+    }
+  };
 
   // ── Tool Set gate ────────────────────────────────────────────────────────────
   // A Team Graph "Tool Set" node directly upstream of this node's internal_agent
@@ -1459,6 +1486,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             tools: canonicalTools.length > 0 ? canonicalTools : undefined,
             maxTokens: 4096,
             requestedProvider: providerName,
+            ...(getCodeExecConfig() ?? {}),
           },
           (chunk) => {
             onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
@@ -1475,10 +1503,12 @@ After receiving tool results, provide a structured analysis with key findings, s
             tools: canonicalTools.length > 0 ? canonicalTools : undefined,
             maxTokens: 4096,
             requestedProvider: providerName,
+            ...(getCodeExecConfig() ?? {}),
           },
           [llmProvider, fallbackLlmProvider],
         ));
     const planCallLatencyMs = performance.now() - planCallStartMs;
+    await captureCodeExecResult(planResult);
 
     totalPromptTokens += planResult.tokensUsed.prompt;
     totalCompletionTokens += planResult.tokensUsed.completion;
@@ -1831,6 +1861,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   model: modelName,
                   tools: canonicalTools.length > 0 ? canonicalTools : undefined,
                   maxTokens: 4096,
+                  ...(getCodeExecConfig() ?? {}),
                 },
                 (chunk) => {
                   onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
@@ -1843,10 +1874,12 @@ After receiving tool results, provide a structured analysis with key findings, s
                   model: modelName,
                   tools: canonicalTools.length > 0 ? canonicalTools : undefined,
                   maxTokens: 4096,
+                  ...(getCodeExecConfig() ?? {}),
                 },
                 [llmProvider, fallbackLlmProvider],
               ));
           const continueCallLatencyMs = performance.now() - continueCallStartMs;
+          await captureCodeExecResult(continueResult);
 
           totalPromptTokens += continueResult.tokensUsed.prompt;
           totalCompletionTokens += continueResult.tokensUsed.completion;

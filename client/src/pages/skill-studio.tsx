@@ -301,6 +301,10 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
   const [requiredDataClassifications, setRequiredDataClassifications] = useState("");
   const [disableModelInvocation, setDisableModelInvocation] = useState(false);
   const [contextMode, setContextMode] = useState("inline");
+  const [skillKind, setSkillKind] = useState("prompt");
+  const [anthropicSkillIds, setAnthropicSkillIds] = useState<string[]>([]);
+  const [codeExecutionApproved, setCodeExecutionApproved] = useState(false);
+  const [requestingCodeExecApproval, setRequestingCodeExecApproval] = useState(false);
   const [userInvocable, setUserInvocable] = useState(true);
   const [version, setVersion] = useState("1.0.0");
   const [complexity, setComplexity] = useState("intermediate");
@@ -457,6 +461,9 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
       setRequiredDataClassifications((skill.requiredDataClassifications as string[] | null)?.join("\n") ?? "");
       setDisableModelInvocation(skill.disableModelInvocation ?? false);
       setContextMode(skill.contextMode ?? "inline");
+      setSkillKind(skill.skillKind ?? "prompt");
+      setAnthropicSkillIds((skill.anthropicSkillIds as string[] | null) ?? []);
+      setCodeExecutionApproved(skill.codeExecutionApproved ?? false);
       setUserInvocable(skill.userInvocable ?? true);
       setVersion(skill.version);
       setComplexity(skill.complexity);
@@ -516,6 +523,8 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     requiredDataClassifications: requiredDataClassifications.split("\n").map(t => t.trim()).filter(Boolean),
     markdownBody,
     dependencies,
+    skillKind,
+    anthropicSkillIds,
   });
 
   const handleValidate = async (): Promise<ValidationResult | null> => {
@@ -1290,6 +1299,77 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                         ? "The full markdown body will be injected into agent context, subject to budget."
                         : "A concise one-line summary is injected into agent context."}
                     </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-md border p-3">
+                    <Label>Skill Kind</Label>
+                    <Select value={skillKind} onValueChange={setSkillKind}>
+                      <SelectTrigger data-testid="select-skill-kind">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="prompt">Prompt (injected as agent context)</SelectItem>
+                        <SelectItem value="code_execution">Code Execution (Anthropic sandbox)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {skillKind === "code_execution" && (
+                      <div className="space-y-2 pt-1">
+                        <p className="text-[11px] text-muted-foreground">
+                          Runs in Anthropic's sandboxed code execution container instead of being injected as prompt text. Select which built-in document skills this grants.
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {["pptx", "docx", "pdf", "xlsx"].map((sid) => {
+                            const active = anthropicSkillIds.includes(sid);
+                            return (
+                              <Badge
+                                key={sid}
+                                variant={active ? "default" : "outline"}
+                                className="cursor-pointer select-none"
+                                data-testid={`badge-anthropic-skill-${sid}`}
+                                onClick={() =>
+                                  setAnthropicSkillIds((prev) =>
+                                    active ? prev.filter((s) => s !== sid) : [...prev, sid]
+                                  )
+                                }
+                              >
+                                {sid}
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center justify-between rounded-md bg-muted/50 p-2">
+                          <div className="text-[11px]">
+                            <span className="font-medium">Code execution: </span>
+                            {codeExecutionApproved ? (
+                              <span className="text-green-600">Approved — agents can use this skill</span>
+                            ) : (
+                              <span className="text-muted-foreground">Not yet approved</span>
+                            )}
+                          </div>
+                          {!codeExecutionApproved && id && id !== "new" && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={requestingCodeExecApproval}
+                              data-testid="button-request-code-exec-approval"
+                              onClick={async () => {
+                                setRequestingCodeExecApproval(true);
+                                try {
+                                  await apiRequest("POST", `/api/skills/${id}/enable-code-execution`, {});
+                                  toast({ title: "Approval requested", description: "A platform admin needs to approve this before agents can use code execution." });
+                                  queryClient.invalidateQueries({ queryKey: ["/api/skills", id] });
+                                } catch (e: any) {
+                                  toast({ title: "Request failed", description: e.message, variant: "destructive" });
+                                } finally {
+                                  setRequestingCodeExecApproval(false);
+                                }
+                              }}
+                            >
+                              Request Approval
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center justify-between">
                     <div>

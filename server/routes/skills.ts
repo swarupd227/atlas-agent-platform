@@ -1202,6 +1202,49 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
+  // Code execution is a materially different risk surface than a prompt-context
+  // skill (arbitrary Python, even if sandboxed with no internet access), so a
+  // skillKind:"code_execution" skill starts unapproved -- mirrors
+  // POST /api/mcp-servers/:id/enable-production. Approval is per-skill
+  // (org-wide): once approved, any agent that attaches it can use it.
+  router.post("/api/skills/:id/enable-code-execution", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.id as string, getOrgId(req));
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+      if (skill.skillKind !== "code_execution") {
+        return res.status(400).json({ error: "Skill is not a code_execution skill" });
+      }
+      if (skill.codeExecutionApproved) {
+        return res.json({ approved: true, skill });
+      }
+
+      const requestedBy = (req.body && req.body.requestedBy) || "platform_admin";
+      const approval = await storage.createApproval({
+        organizationId: skill.organizationId ?? undefined,
+        type: "code_execution_enablement",
+        objectType: "skill",
+        objectId: skill.id,
+        objectName: skill.name,
+        status: "pending",
+        requestedBy,
+        description: `Code execution enablement for skill: ${skill.name}`,
+        evidenceJson: { skillName: skill.name, anthropicSkillIds: skill.anthropicSkillIds },
+      });
+
+      await storage.createAuditEvent({
+        action: "skill.code_execution_enablement_requested",
+        objectType: "skill",
+        objectId: skill.id,
+        actorId: requestedBy,
+        details: JSON.stringify({ approvalId: approval.id }),
+      });
+
+      res.json({ approved: false, approvalRequired: true, approvalId: approval.id });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to request code execution enablement" });
+    }
+  });
+
   // Skill Versions
   router.get("/api/skills/:skillId/versions", async (req, res) => {
     const versions = await storage.getSkillVersions(req.params.skillId as string);

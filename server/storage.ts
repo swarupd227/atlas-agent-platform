@@ -122,6 +122,8 @@ import {
   type OntologyEnhancement, type InsertOntologyEnhancement,
   skills,
   type Skill, type InsertSkill,
+  agentGeneratedFiles,
+  type AgentGeneratedFile, type InsertAgentGeneratedFile,
   skillVersions,
   type SkillVersion, type InsertSkillVersion,
   skillChains,
@@ -605,6 +607,9 @@ export interface IStorage {
   createSkill(skill: InsertSkill): Promise<Skill>;
   updateSkill(id: string, data: Partial<Skill>, orgId?: string): Promise<Skill | undefined>;
   deleteSkill(id: string, orgId?: string): Promise<boolean>;
+
+  createAgentGeneratedFile(data: InsertAgentGeneratedFile): Promise<AgentGeneratedFile>;
+  getAgentGeneratedFile(id: string, orgId?: string): Promise<AgentGeneratedFile | undefined>;
 
   getSkillVersions(skillId: string): Promise<SkillVersion[]>;
   getSkillVersion(id: string): Promise<SkillVersion | undefined>;
@@ -3056,6 +3061,16 @@ export class DatabaseStorage implements IStorage {
     if (!owned) return false;
     await db.delete(skills).where(eq(skills.id, id));
     return true;
+  }
+
+  async createAgentGeneratedFile(data: InsertAgentGeneratedFile) {
+    const [created] = await db.insert(agentGeneratedFiles).values(data).returning();
+    return created;
+  }
+  async getAgentGeneratedFile(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(agentGeneratedFiles.id, id), eq(agentGeneratedFiles.organizationId, orgId)) : eq(agentGeneratedFiles.id, id);
+    const [file] = await db.select().from(agentGeneratedFiles).where(clause);
+    return file;
   }
 
   async getSkillVersions(skillId: string) {

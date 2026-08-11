@@ -1225,6 +1225,15 @@ Ontology: ${ontologyName || "industry standard"}`,
       }
     }
 
+    // Real governance gate: approving a code-execution enablement request is
+    // what actually flips skills.codeExecutionApproved -- mirrors
+    // POST /api/mcp-servers/:id/enable-production, whose approval is
+    // per-resource (skill) not per-attachment, so any agent using this
+    // skill benefits once approved.
+    if (approval.type === "code_execution_enablement" && approval.objectId && status === "approved") {
+      await storage.updateSkill(approval.objectId, { codeExecutionApproved: true } as any);
+    }
+
     // Fast path for a DAG approval-gate decision: resume the paused run right
     // away instead of waiting for either the in-process waitForApproval poll
     // (up to 10s) or the recovery scan's next tick (up to 60s). Finds the run
