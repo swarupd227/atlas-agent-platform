@@ -121,6 +121,11 @@ interface ToolConfig {
   accessTier?: string;
   writeAccess?: boolean;
   parameters?: ToolParam[];
+  // Set once at creation (addCustomTool) and never re-derived from the current
+  // name/description value -- those change on every keystroke, so a condition
+  // like `tool.name ? staticText : <Input>` would unmount the input the
+  // instant the field became non-empty, mid-edit, after exactly one character.
+  isCustom?: boolean;
 }
 
 const TOOL_CATALOG: ToolConfig[] = [
@@ -3281,7 +3286,7 @@ function Step2IndustryTools({
   }
 
   function addCustomTool() {
-    updateState({ toolsConfig: [...state.toolsConfig, { name: "", description: "", permissionScope: "READ", accessTier: "STANDARD", parameters: [] }] });
+    updateState({ toolsConfig: [...state.toolsConfig, { name: "", description: "", permissionScope: "READ", accessTier: "STANDARD", parameters: [], isCustom: true }] });
   }
 
   function removeTool(i: number) {
@@ -3669,9 +3674,7 @@ function Step2IndustryTools({
                   <div className="flex items-start gap-2 p-3">
                     <div className="flex-1 flex flex-col gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {tool.name ? (
-                          <span className="text-xs font-medium font-mono">{tool.name}</span>
-                        ) : (
+                        {tool.isCustom ? (
                           <Input
                             placeholder="Tool name"
                             value={tool.name}
@@ -3679,6 +3682,8 @@ function Step2IndustryTools({
                             className="h-7 text-xs w-48"
                             data-testid={`input-tool-name-${i}`}
                           />
+                        ) : (
+                          <span className="text-xs font-medium font-mono">{tool.name}</span>
                         )}
                         {tool.accessTier && (
                           <Badge variant="outline" className={`text-[9px] ${tierColors[tool.accessTier]}`}>
@@ -3697,7 +3702,7 @@ function Step2IndustryTools({
                           </Badge>
                         )}
                       </div>
-                      {!tool.description && !TOOL_CATALOG.some(c => c.name === tool.name) ? (
+                      {tool.isCustom ? (
                         <Input
                           placeholder="Tool description"
                           value={tool.description}
@@ -6468,7 +6473,7 @@ function PerformanceSimulation({ state }: { state: WizardState }) {
   if (state.autonomyMode === "autonomous") riskFactors.push("Fully autonomous mode - no human checkpoint");
   if (toolCount > 3) riskFactors.push(`${toolCount} tools increase attack surface`);
   if (!hasRag && nodeCount > 3) riskFactors.push("Complex workflow without RAG may reduce accuracy");
-  if (!state.rollbackPlan) riskFactors.push("No rollback plan configured");
+  if (state.rolloutConfig.autoRollbackTriggers.length === 0) riskFactors.push("No rollback plan configured");
   const hasWriteTools = state.toolsConfig.some(t => /write|send|delete|create/i.test(t.name));
   if (hasWriteTools) riskFactors.push("Write/send tools carry higher blast radius");
 
