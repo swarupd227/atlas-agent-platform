@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { AgentTemplate } from "@shared/schema";
 import { useIndustry, INDUSTRIES, type IndustryId, type DataClassification, type WorkspaceConfig } from "./industry-provider";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +33,22 @@ export function IndustryWorkspaceSelector() {
   const [dataClassDefault, setDataClassDefault] = useState<DataClassification>("internal");
 
   const selected = selectedId ? INDUSTRIES.find((i) => i.id === selectedId) : null;
+
+  // Golden-template counts per industry, computed live from the real
+  // catalog rather than a static number -- a hardcoded count here drifted
+  // from what's actually in the catalog (e.g. Financial Services claimed
+  // 28 with 15 actually shipped) and nobody caught it because nothing
+  // required the two to agree. Matches the same industry-tag matching
+  // Templates uses ("custom" workspace = "cross_industry" templates).
+  const { data: templates } = useQuery<AgentTemplate[]>({ queryKey: ["/api/agent-templates"] });
+  const templateCountByIndustry = useMemo(() => {
+    const counts: Partial<Record<IndustryId, number>> = {};
+    for (const t of templates ?? []) {
+      const key = (t.industry === "cross_industry" ? "custom" : t.industry) as IndustryId;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }, [templates]);
 
   const integrationCategories = useMemo(() => {
     if (!selected) return {};
@@ -169,7 +187,7 @@ export function IndustryWorkspaceSelector() {
                             </div>
                             <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
                               <FileText className="h-3 w-3 shrink-0" />
-                              <span>{industry.goldenTemplates} templates</span>
+                              <span>{templateCountByIndustry[industry.id] ?? 0} templates</span>
                             </div>
                           </div>
                         ) : (

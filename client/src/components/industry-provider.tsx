@@ -53,7 +53,6 @@ export interface IndustryProfile {
   ontology: string;
   agentSkills: number;
   regulatoryFrameworks: string[];
-  goldenTemplates: number;
   subVerticals: string[];
   jurisdictions: string[];
   integrationSystems: IntegrationSystem[];
@@ -72,7 +71,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "FIBO (Financial Industry Business Ontology) + Credit Rating Ontology",
     agentSkills: 128,
     regulatoryFrameworks: ["EU AI Act", "MiFID II", "PSD2", "GDPR", "Basel III", "SOX", "SEC Rule 17g (NRSRO)", "EU CRA Regulation", "IOSCO Code of Conduct", "Dodd-Frank Title IX"],
-    goldenTemplates: 28,
     subVerticals: ["Credit Rating", "Retail Banking", "Capital Markets", "Wealth Management", "Payments", "Corporate Banking"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
@@ -106,7 +104,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "ACORD (Association for Cooperative Operations Research and Development)",
     agentSkills: 86,
     regulatoryFrameworks: ["Solvency II", "IFRS 17", "NAIC Model Laws", "GDPR", "EU AI Act", "ORSA"],
-    goldenTemplates: 16,
     subVerticals: ["Property & Casualty", "Life & Annuities", "Health Insurance", "Reinsurance", "InsurTech"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
@@ -138,7 +135,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "SNOMED CT (Clinical Terms)",
     agentSkills: 118,
     regulatoryFrameworks: ["HIPAA", "FDA AI/ML Guidance", "21 CFR Part 11", "HITECH", "GxP"],
-    goldenTemplates: 22,
     subVerticals: ["Hospital Systems", "Pharmaceuticals", "Medical Devices", "Clinical Research", "Payer/Insurance"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
@@ -170,7 +166,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "ISA-95 (Enterprise-Control Integration)",
     agentSkills: 96,
     regulatoryFrameworks: ["ISO 9001", "ISO 27001", "REACH", "RoHS", "ITAR"],
-    goldenTemplates: 18,
     subVerticals: ["Discrete Manufacturing", "Process Manufacturing", "Automotive", "Aerospace & Defense", "Electronics"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
@@ -202,7 +197,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "GS1 (Global Standards)",
     agentSkills: 108,
     regulatoryFrameworks: ["PCI DSS", "CCPA/CPRA", "GDPR", "FTC Guidelines", "ADA Compliance"],
-    goldenTemplates: 24,
     subVerticals: ["Omnichannel Retail", "D2C E-Commerce", "Grocery & FMCG", "Luxury & Fashion", "Marketplace"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
@@ -234,7 +228,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "ITIL / SRE (IT Service Management & Site Reliability)",
     agentSkills: 104,
     regulatoryFrameworks: ["SOC 2 Type II", "GDPR", "CCPA/CPRA", "ISO 27001", "HIPAA BAA", "FedRAMP"],
-    goldenTemplates: 20,
     subVerticals: ["B2B SaaS", "Developer Tools", "Cloud Infrastructure", "FinTech", "HealthTech", "Software Deployment & Patch Management"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
@@ -270,7 +263,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "LKIF (Legal Knowledge Interchange Format) + SALI LMSS",
     agentSkills: 94,
     regulatoryFrameworks: ["ABA Model Rules", "GDPR", "CCPA/CPRA", "FCPA", "SOX", "FRCP eDiscovery", "EU AI Act", "HIPAA BAA (for health law)"],
-    goldenTemplates: 16,
     subVerticals: ["Litigation & eDiscovery", "Corporate M&A", "Contract Management", "Intellectual Property", "Employment & Labor", "Compliance & Regulatory"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
@@ -302,7 +294,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "Cross-Industry Ontology",
     agentSkills: 0,
     regulatoryFrameworks: [],
-    goldenTemplates: 0,
     subVerticals: [],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [],
@@ -578,17 +569,6 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     slaDescription: "100% on-time filing with 99.5% data accuracy measured quarterly",
   },
 ];
-
-// INDUSTRIES.goldenTemplates was a flat marketing number (e.g. 28 for
-// Financial Services) with no backing data -- the Industry Workspace
-// onboarding screen advertised it before a user has created anything, and
-// the real catalog (OUTCOME_TEMPLATES above) has 7 templates total across
-// every industry combined. Recompute it here as soon as both arrays exist,
-// so the badge a tester sees on their very first screen matches what's
-// actually selectable afterward (test finding TC_GEN_001).
-for (const ind of INDUSTRIES) {
-  ind.goldenTemplates = OUTCOME_TEMPLATES.filter((t) => t.industry === ind.id).length;
-}
 
 type TermKey =
   | "outcomes"

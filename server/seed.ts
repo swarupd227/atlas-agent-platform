@@ -1,6 +1,6 @@
 import { db } from "./db";
 import crypto from "crypto";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { getDefaultOrgId } from "./auth";
 import { 
   outcomeContracts, kpiDefinitions, agents, deployments, 
@@ -1586,12 +1586,25 @@ export async function seedDatabase() {
   }
 
   // Agent Templates (~90 templates across 8 industries)
-  const existingTemplates = await db.select({ id: agentTemplates.id, name: agentTemplates.name }).from(agentTemplates);
+  const existingTemplates = await db.select({ id: agentTemplates.id, name: agentTemplates.name, industry: agentTemplates.industry }).from(agentTemplates);
   {
     const allTemplates = [...batch1Templates, ...batch2Templates, ...teamTemplates];
     const missingTemplates = seedRowsMissing(existingTemplates, allTemplates, "name");
     for (let i = 0; i < missingTemplates.length; i += 10) {
       await db.insert(agentTemplates).values(missingTemplates.slice(i, i + 10) as any);
+    }
+    // Reconcile industry-tag drift on already-seeded rows -- seedRowsMissing
+    // only inserts by name, so a row seeded before a source-file correction
+    // (e.g. the Technology/SaaS templates were tagged "technology" before it
+    // was renamed to match the platform's IndustryId "technology_saas")
+    // keeps its stale tag forever, silently zeroing that industry's template
+    // count and its "show my industry" filter on the Templates page.
+    const bySeedName = new Map(allTemplates.map((t) => [t.name, t]));
+    for (const existing of existingTemplates) {
+      const seed = bySeedName.get(existing.name);
+      if (seed && seed.industry !== existing.industry) {
+        await db.update(agentTemplates).set({ industry: seed.industry }).where(eq(agentTemplates.id, existing.id));
+      }
     }
   }
 
