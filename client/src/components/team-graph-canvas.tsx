@@ -89,6 +89,11 @@ function TeamFlowNode({ data, selected }: NodeProps) {
             <Network className="w-2.5 h-2.5" />{d.refTeamAgentName || "Team Ref"}
           </Badge>
         )}
+        {node.nodeType === "sub_flow" && (
+          <Badge variant="outline" className="text-[10px] shrink-0 bg-indigo-500/10 border-indigo-500/30 text-indigo-700 dark:text-indigo-300 flex items-center gap-1" data-testid={`badge-sub-flow-${node.id}`}>
+            <Network className="w-2.5 h-2.5" />{d.refTeamAgentName || "Not configured"}
+          </Badge>
+        )}
         {node.nodeType === "remote_agent" && d.refRemoteAgent && (
           <>
             <Badge variant="outline" className={`text-[10px] shrink-0 ${TRUST_TIER_COLORS[d.refRemoteAgent.trustTier || "basic"] || ""}`}>

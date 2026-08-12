@@ -16,6 +16,7 @@ export type ProcessNodeType =
   | "parallel"
   | "loop"
   | "n8n"
+  | "sub_flow"
   | "end";
 
 export interface ProcessNode {

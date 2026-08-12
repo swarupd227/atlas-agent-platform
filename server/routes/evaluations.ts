@@ -764,7 +764,10 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       if (teamNodes.length === 0) {
         teamErrors.push({ type: "schema", severity: "error", message: "Team blueprint must contain at least one node" });
       } else {
-        const validTeamNodeTypes = ["internal_agent", "tool_set", "edge_gate", "remote_agent", "skill"];
+        // Was missing "knowledge_base" (a pre-existing gap -- every KB node in
+        // a real blueprint failed compile validation with a false "invalid
+        // type" error) and "sub_flow", the new first-class node type.
+        const validTeamNodeTypes = ["internal_agent", "tool_set", "edge_gate", "remote_agent", "skill", "knowledge_base", "sub_flow"];
         for (const node of teamNodes) {
           if (!validTeamNodeTypes.includes(node.nodeType)) {
             teamErrors.push({ type: "schema", severity: "error", message: `Node '${node.label}' has invalid type '${node.nodeType}'`, nodeId: node.id });
@@ -778,6 +781,12 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
           }
           if (node.nodeType === "skill" && !node.refSkillId) {
             teamErrors.push({ type: "schema", severity: "error", message: `Skill node '${node.label}' has no skill selected`, nodeId: node.id });
+          }
+          if (node.nodeType === "knowledge_base" && !(node as any).refKnowledgeBaseId) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Knowledge Base node '${node.label}' has no knowledge base selected`, nodeId: node.id });
+          }
+          if (node.nodeType === "sub_flow" && !node.refTeamAgentId) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Sub-Flow node '${node.label}' has no flow selected`, nodeId: node.id });
           }
           if (node.nodeType === "edge_gate" && !node.gateType) {
             teamWarnings.push({ type: "schema", severity: "warning", message: `Edge Gate node '${node.label}' has no gate type selected`, nodeId: node.id });

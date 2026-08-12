@@ -1974,7 +1974,13 @@ async function createOutcomeVersion(
   const HUMAN_CHECKPOINT_NODE_TYPES = new Set(["expert_approval"]);
 
   function processNodeConfig(n: ProcessNode) {
-    return { sourceProcessNodeId: n.id, sourceLabel: n.label, sourceDescription: n.description || "", sourceType: n.type, sourceActor: n.actor || "" };
+    return {
+      sourceProcessNodeId: n.id, sourceLabel: n.label, sourceDescription: n.description || "", sourceType: n.type, sourceActor: n.actor || "",
+      // Persisted so a re-sync can tell "the referenced flow changed" apart
+      // from "nothing changed" -- the label/description/type/actor comparison
+      // alone can't see a change confined to config.refTeamAgentId.
+      sourceRefTeamAgentId: (n.config as any)?.refTeamAgentId || null,
+    };
   }
 
   // Sync an already-saved process flow into the live blueprint of the team
@@ -2070,7 +2076,8 @@ async function createOutcomeVersion(
         if (!existing) { added.push(pn); continue; }
         const cfg = (existing.config as any) || {};
         const same = cfg.sourceLabel === pn.label && (cfg.sourceDescription || "") === (pn.description || "")
-          && cfg.sourceType === pn.type && (cfg.sourceActor || "") === (pn.actor || "");
+          && cfg.sourceType === pn.type && (cfg.sourceActor || "") === (pn.actor || "")
+          && (cfg.sourceRefTeamAgentId || null) === ((pn.config as any)?.refTeamAgentId || null);
         if (same) unchanged.push(existing); else changed.push(pn);
       }
       // forceFullRebuild deliberately leaves byProcessNodeId empty (nothing
@@ -2120,6 +2127,22 @@ async function createOutcomeVersion(
               gateType: "approval",
               label: pn.label,
               refAgentId: null,
+              config: processNodeConfig(pn),
+            });
+            return { pn, node, ok: true as const };
+          }
+          if (pn.type === "sub_flow") {
+            const refTeamAgentId = (pn.config as any)?.refTeamAgentId || null;
+            if (!refTeamAgentId) {
+              return { pn, node: null, ok: false as const, error: `"${pn.label}" has no flow selected -- pick one in Process Flow Studio before syncing.` };
+            }
+            const node = await storage.createTeamBlueprintNode({
+              blueprintId,
+              nodeType: "sub_flow",
+              label: pn.label,
+              refAgentId: null,
+              refTeamAgentId,
+              stateKey: pn.id.replace(/-/g, "_"),
               config: processNodeConfig(pn),
             });
             return { pn, node, ok: true as const };

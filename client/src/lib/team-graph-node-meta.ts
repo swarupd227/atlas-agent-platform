@@ -1,4 +1,4 @@
-import { Brain, Wrench, ShieldCheck, Globe, Sparkles, Database } from "lucide-react";
+import { Brain, Wrench, ShieldCheck, Globe, Sparkles, Database, Network } from "lucide-react";
 
 // Shared between team-graph-editor.tsx (palette + config panels) and
 // team-graph-canvas.tsx (node card rendering) -- lives here instead of being
@@ -13,6 +13,9 @@ export const NODE_COLOR_MAP: Record<string, string> = {
   remote_agent: "bg-purple-500",
   skill: "bg-teal-500",
   knowledge_base: "bg-emerald-500",
+  // Distinct from remote_agent's purple -- a Sub-Flow calls another of THIS
+  // org's own team flows (executeTeamReferenceNode), not an external A2A peer.
+  sub_flow: "bg-indigo-500",
 };
 
 export const NODE_ICON_MAP: Record<string, typeof Brain> = {
@@ -22,6 +25,7 @@ export const NODE_ICON_MAP: Record<string, typeof Brain> = {
   remote_agent: Globe,
   skill: Sparkles,
   knowledge_base: Database,
+  sub_flow: Network,
 };
 
 export const TRUST_TIER_COLORS: Record<string, string> = {

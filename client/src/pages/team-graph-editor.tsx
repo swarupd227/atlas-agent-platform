@@ -71,6 +71,15 @@ const TEAM_NODE_TYPES = [
   { type: "remote_agent", label: "Remote Agent", icon: Globe, color: "bg-purple-500" },
   { type: "skill", label: "Skill", icon: Sparkles, color: "bg-teal-500" },
   { type: "knowledge_base", label: "Knowledge Base", icon: Database, color: "bg-emerald-500" },
+  // Calls another of this org's own team flows end to end and waits for it
+  // (executeTeamReferenceNode) -- the mechanism already existed as a hidden
+  // "Team Reference" toggle buried inside Internal Agent; this makes it its
+  // own discoverable node so a reviewer scanning the palette sees "one agent"
+  // vs. "an entire other flow" as two different things, not a checkbox one
+  // level down. Old internal_agent+refTeamAgentId nodes still work exactly
+  // as before -- executeNode() dispatches on refTeamAgentId presence, not
+  // nodeType, so nothing about existing blueprints needed to change.
+  { type: "sub_flow", label: "Sub-Flow", icon: Network, color: "bg-indigo-500" },
 ] as const;
 
 const PART_TYPE_OPTIONS = [
@@ -578,7 +587,7 @@ function NodeConfigPanel({
   isPending: boolean;
 }) {
   const autoStateKey = (label: string) => label.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
-  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill" || t === "knowledge_base";
+  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill" || t === "knowledge_base" || t === "sub_flow";
 
   const initialStateKey = (node.stateKey && node.stateKey.length > 0)
     ? node.stateKey
@@ -773,6 +782,75 @@ function NodeConfigPanel({
               }}
               placeholder={autoStateKey(localLabel) || "e.g. research_output"}
               data-testid="input-state-key"
+            />
+          </div>
+        </>
+      )}
+
+      {node.nodeType === "sub_flow" && (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground flex items-center justify-between">
+              <span>Team Agent</span>
+              {node.refTeamAgentId && (
+                <button
+                  className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline"
+                  onClick={() => setWavePlanOpen(true)}
+                  data-testid="button-view-waves-sub-flow"
+                >
+                  <Eye className="w-3 h-3" /> View Waves
+                </button>
+              )}
+            </label>
+            <select
+              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+              value={node.refTeamAgentId || ""}
+              onChange={e => onUpdate({ refTeamAgentId: e.target.value || null })}
+              data-testid="select-sub-flow-team-agent"
+            >
+              <option value="">-- Select Flow to Call --</option>
+              {teamAgentsList.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </div>
+          {selectedTeamAgent && (
+            <Card className="border-indigo-500/30">
+              <CardContent className="p-3 flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Network className="w-3 h-3 text-indigo-500 shrink-0" />
+                  <span className="text-xs font-medium">{selectedTeamAgent.name}</span>
+                </div>
+                {selectedTeamAgent.description && <p className="text-xs text-muted-foreground">{selectedTeamAgent.description}</p>}
+                <Badge variant="outline" className="w-fit text-[10px] bg-indigo-500/10 border-indigo-500/30 text-indigo-700 dark:text-indigo-300">Sub-Flow</Badge>
+              </CardContent>
+            </Card>
+          )}
+          {wavePlanOpen && node.refTeamAgentId && (
+            <WavePlanDialog teamAgentId={node.refTeamAgentId} open={wavePlanOpen} onClose={() => setWavePlanOpen(false)} />
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            This step runs the selected flow end to end and waits for it before continuing. Its full result is stored under this node's State Key.
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              State Key
+              {stateKeyConflict && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5" data-testid="badge-state-key-conflict-sub-flow">
+                  <AlertTriangle className="w-2.5 h-2.5" /> conflict
+                </Badge>
+              )}
+            </label>
+            <Input
+              value={localStateKey}
+              onChange={e => setLocalStateKey(e.target.value)}
+              onBlur={() => {
+                const val = localStateKey || autoStateKey(localLabel);
+                if (!localStateKey) setLocalStateKey(val);
+                if (val !== (node.stateKey || "")) onUpdate({ stateKey: val || null });
+              }}
+              placeholder={autoStateKey(localLabel) || "e.g. sub_flow_output"}
+              data-testid="input-state-key-sub-flow"
             />
           </div>
         </>

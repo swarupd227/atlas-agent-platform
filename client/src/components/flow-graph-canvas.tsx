@@ -8,13 +8,13 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   Play, Database, Brain, GitBranch, UserCheck, Zap, Bell, GitFork, RotateCcw, Square,
-  Trash2, X, Workflow, Sparkles,
+  Trash2, X, Workflow, Sparkles, Network,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import type { ProcessNode, ProcessEdge, ProcessNodeType } from "@shared/process-flow";
-import type { Skill, KnowledgeBase } from "@shared/schema";
+import type { Skill, KnowledgeBase, Agent } from "@shared/schema";
 
 type NodeMeta = { label: string; icon: any; color: string; bg: string; border: string };
 const NODE_META: Record<ProcessNodeType, NodeMeta> = {
@@ -28,12 +28,13 @@ const NODE_META: Record<ProcessNodeType, NodeMeta> = {
   parallel:          { label: "Parallel",     icon: GitFork,  color: "text-indigo-600",  bg: "bg-indigo-500/5",  border: "border-indigo-500/40" },
   loop:              { label: "Loop / Retry", icon: RotateCcw,color: "text-orange-600",  bg: "bg-orange-500/5",  border: "border-orange-500/40" },
   n8n:               { label: "External Workflow", icon: Workflow, color: "text-pink-600",    bg: "bg-pink-500/5",    border: "border-pink-500/40" },
+  sub_flow:          { label: "Sub-Flow",     icon: Network,  color: "text-indigo-600",  bg: "bg-indigo-500/5",  border: "border-indigo-500/40" },
   end:               { label: "End",          icon: Square,   color: "text-slate-600",   bg: "bg-slate-500/5",   border: "border-slate-500/40" },
 };
 
 export const PALETTE_TYPES: ProcessNodeType[] = [
   "trigger", "get_info", "ai_reasoning", "make_decision",
-  "expert_approval", "take_action", "send_notification", "parallel", "loop", "n8n", "end",
+  "expert_approval", "take_action", "send_notification", "parallel", "loop", "n8n", "sub_flow", "end",
 ];
 
 type RFData = { ntype: ProcessNodeType; label: string; description?: string; actor?: string; config?: Record<string, unknown> };
@@ -59,6 +60,11 @@ function ProcessFlowNode({ data, selected }: NodeProps) {
       {!!d.config?.kbName && (
         <p className="text-[9px] text-emerald-600 dark:text-emerald-400 mt-0.5 truncate flex items-center gap-0.5">
           <Database className="w-2.5 h-2.5 shrink-0" /> {String(d.config.kbName)}
+        </p>
+      )}
+      {d.ntype === "sub_flow" && (
+        <p className="text-[9px] text-indigo-600 dark:text-indigo-400 mt-0.5 truncate flex items-center gap-0.5">
+          <Network className="w-2.5 h-2.5 shrink-0" /> {d.config?.refTeamAgentName ? String(d.config.refTeamAgentName) : "Not configured"}
         </p>
       )}
       <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-primary" />
@@ -175,6 +181,65 @@ function KbPicker({ kbId, kbName, onAttach, onRemove }: {
               data-testid={`option-node-kb-${k.id}`}
             >
               <span className="font-medium">{k.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Same search-and-attach pattern as SkillPicker/KbPicker, for binding a
+ *  sub_flow step to a deployed team agent (the executable target
+ *  executeTeamReferenceNode calls). Excludes team agents with no blueprint --
+ *  nothing to actually run. */
+function SubFlowPicker({ teamAgentId, teamAgentName, onAttach, onRemove }: {
+  teamAgentId?: string;
+  teamAgentName?: string;
+  onAttach: (agent: { id: string; name: string }) => void;
+  onRemove: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
+  const matches = useMemo(() => {
+    if (!query.trim()) return [];
+    const q = query.trim().toLowerCase();
+    return (agents || [])
+      .filter(a => !!(a as any).blueprintId && a.name.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [agents, query]);
+
+  if (teamAgentId) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-indigo-500/30 bg-indigo-500/5" data-testid="attached-sub-flow">
+        <Network className="w-3 h-3 text-indigo-500 shrink-0" />
+        <span className="text-[11px] font-medium truncate flex-1">{teamAgentName}</span>
+        <button type="button" onClick={onRemove} className="p-0.5 rounded hover:bg-muted shrink-0" data-testid="button-remove-node-sub-flow">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <Input
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search flows to call…"
+        className="h-7 text-xs"
+        data-testid="input-node-sub-flow-search"
+      />
+      {matches.length > 0 && (
+        <div className="flex flex-col gap-0.5 max-h-32 overflow-y-auto rounded-md border p-0.5">
+          {matches.map(a => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => { onAttach({ id: a.id, name: a.name }); setQuery(""); }}
+              className="text-left px-1.5 py-1 rounded text-[11px] hover-elevate"
+              data-testid={`option-node-sub-flow-${a.id}`}
+            >
+              <span className="font-medium">{a.name}</span>
             </button>
           ))}
         </div>
@@ -400,6 +465,21 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
                       data-testid="input-node-n8n-path"
                     />
                     <span className="text-[10px] text-muted-foreground">Combined with your connected n8n base URL. Execution runs once the process-flow runtime is enabled (design-only today).</span>
+                  </div>
+                )}
+                {d.ntype === "sub_flow" && (
+                  <div className="flex flex-col gap-1 rounded-md border border-indigo-500/30 bg-indigo-500/5 p-2">
+                    <label className="text-[10px] text-indigo-600 dark:text-indigo-400 uppercase tracking-wide font-medium">Flow to call</label>
+                    <SubFlowPicker
+                      teamAgentId={d.config?.refTeamAgentId as string | undefined}
+                      teamAgentName={d.config?.refTeamAgentName as string | undefined}
+                      onAttach={(agent) => patchNode(selNode.id, { config: { ...(d.config || {}), refTeamAgentId: agent.id, refTeamAgentName: agent.name } })}
+                      onRemove={() => {
+                        const { refTeamAgentId: _id, refTeamAgentName: _name, ...rest } = (d.config || {}) as Record<string, unknown>;
+                        patchNode(selNode.id, { config: rest });
+                      }}
+                    />
+                    <span className="text-[10px] text-muted-foreground">Runs the selected flow end to end and waits for it before continuing (Sync to Automation compiles this to a real Sub-Flow step).</span>
                   </div>
                 )}
               </>
