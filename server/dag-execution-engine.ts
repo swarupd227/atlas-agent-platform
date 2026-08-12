@@ -771,31 +771,37 @@ export class DAGExecutionEngine {
 
       const outcomes = await Promise.all(incoming.map(async (edge) => {
         if (!edge.isGating) return !skippedNodeIds.has(edge.sourceNodeId);
-        if (edge.evaluationMode === "deterministic" && edge.rule) {
-          return evaluateRule(edge.rule, pipelineState).result;
-        }
+
         // An edge with an unresolved (skipped) source has no output to
         // judge a condition against -- treat it as not satisfied rather
         // than defaulting open, so a skip doesn't silently cascade approval.
         const sourceOutput = nodeOutputText.get(edge.sourceNodeId);
         if (sourceOutput == null) return false;
-        if (edge.evaluationMode === "handoff") {
-          return isHandoffTarget(sourceOutput, nodeLabelById.get(nodeId) || "");
-        }
+
         // An approval/HITL gate's output is always the deterministic
         // {approved: boolean} decision written by executeGateNode -- trust
-        // that directly rather than asking an LLM to re-interpret it as
-        // free text against a natural-language condition (e.g. "Order
-        // confirmed by advisor"). That LLM path is unreliable here: a
-        // response that doesn't literally start with "true" (a hedge, a
-        // restated explanation, anything but the bare word) silently reads
-        // as false and skips the entire rest of the pipeline downstream of
-        // an approval that actually succeeded.
+        // that directly, ahead of the edge's own "deterministic" rule or
+        // free-text condition. Both are authored against a natural-language
+        // description of the gate (e.g. "Order confirmed by advisor") and
+        // can reference a field name or phrasing that doesn't match the
+        // gate's actual output shape -- e.g. a rule checking field
+        // "confirmed" when the gate only ever emits "approved" -- which
+        // permanently fails and silently skips everything downstream of an
+        // approval that actually succeeded. Checking this first means a
+        // mismatched rule/condition on a gate-sourced edge can no longer
+        // mask the real decision.
         if (this.isGateNode(nodeConfig[edge.sourceNodeId])) {
           try {
             const parsed = JSON.parse(sourceOutput);
             if (typeof parsed.approved === "boolean") return parsed.approved;
-          } catch { /* fall through to LLM evaluation */ }
+          } catch { /* fall through to normal evaluation below */ }
+        }
+
+        if (edge.evaluationMode === "deterministic" && edge.rule) {
+          return evaluateRule(edge.rule, pipelineState).result;
+        }
+        if (edge.evaluationMode === "handoff") {
+          return isHandoffTarget(sourceOutput, nodeLabelById.get(nodeId) || "");
         }
         return evaluateCondition(edge.condition || "", sourceOutput);
       }));
