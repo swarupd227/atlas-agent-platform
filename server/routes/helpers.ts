@@ -986,8 +986,14 @@ export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): P
   const outcomeEvents = await storage.getOutcomeEvents(orgId);
   const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
   const boundAgentIds = new Set(boundAgents.map(a => a.id));
-  const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId));
-  const relevantEvents = outcomeEvents.filter(e => e.outcomeId === outcomeId);
+  // Scope to a trailing 30-day window, not all-time history. Volume/count KPIs
+  // below set currentValue to a raw count of matching traces/events; without a
+  // window that count only ever grows while its target stays fixed, eventually
+  // producing nonsensical attainment percentages (e.g. 38254%) once enough test
+  // runs and demo activity accumulate against a small target.
+  const windowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId) && t.startedAt && new Date(t.startedAt) >= windowStart);
+  const relevantEvents = outcomeEvents.filter(e => e.outcomeId === outcomeId && e.createdAt && new Date(e.createdAt) >= windowStart);
 
   if (relevantTraces.length === 0 && relevantEvents.length === 0) {
     return { updated: 0, totalRuns: 0, totalEvents: 0, changes: [], kpis };
@@ -1001,7 +1007,20 @@ export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): P
     const kpiNameLower = (kpi.name || "").toLowerCase();
     let newValue: number | null = null;
 
-    if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
+    // "Rate" is ambiguous: success/accuracy rate is higher-is-better (target near
+    // 100), but exception/error/failure rate is lower-is-better (target near 0).
+    // Applying the success-rate formula to the latter inverts the number (e.g. a
+    // clean run reads as "100% exception rate" against a target of 1%), which is
+    // exactly the kind of mismatch that produces a nonsensical attainment percentage.
+    const isInverseRate = kpiNameLower.includes("exception") || kpiNameLower.includes("error") ||
+      kpiNameLower.includes("failure") || kpiNameLower.includes("defect") || kpiNameLower.includes("escalation") ||
+      kpiNameLower.includes("churn") || kpiNameLower.includes("dispute") || kpiNameLower.includes("breach") ||
+      kpiNameLower.includes("violation") || kpiNameLower.includes("complaint");
+    if (isInverseRate) {
+      if (totalTraces > 0) {
+        newValue = Math.round((failedTraces / totalTraces) * 10000) / 100;
+      }
+    } else if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
       if (totalTraces > 0) {
         newValue = Math.round(((totalTraces - failedTraces) / totalTraces) * 10000) / 100;
       }
