@@ -95,6 +95,17 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+// A transient connection drop (e.g. mid-response-body-read) surfaces as a
+// TypeError with a browser-specific message like "Failed to fetch" or
+// "NetworkError when attempting to fetch resource" -- distinct from a real
+// HTTP error response (`${status}: ${text}`, thrown by throwIfResNotOk) or a
+// genuine malformed-JSON payload (a SyntaxError), neither of which a retry
+// would fix.
+function isTransientNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /Failed to fetch|NetworkError|network error|Load failed/i.test(error.message);
+}
+
 export const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error) => {
@@ -127,7 +138,8 @@ export const queryClient = new QueryClient({
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: Infinity,
-      retry: false,
+      retry: (failureCount, error) => isTransientNetworkError(error) && failureCount < 2,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 3000),
     },
     mutations: {
       retry: false,

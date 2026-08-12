@@ -4020,7 +4020,11 @@ function Step4MemoryContext({
 
   function addNodeToCanvas(type: string) {
     const count = state.workflowNodes.length;
-    const newId = `node_${count + 1}`;
+    const existingNums = state.workflowNodes
+      .map(n => parseInt(n.id.replace("node_", ""), 10))
+      .filter(n => !isNaN(n));
+    const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+    const newId = `node_${nextNum}`;
     const x = 40 + (count % 3) * 220;
     const y = 40 + Math.floor(count / 3) * 140;
     updateState({

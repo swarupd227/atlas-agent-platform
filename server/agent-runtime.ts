@@ -566,9 +566,12 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     if (Array.isArray(rtConfig.kpiBindings) && rtConfig.kpiBindings.length > 0) {
       rcLines.push(`\n## ASSIGNED KPI BINDINGS: ${rtConfig.kpiBindings.join(", ")}`);
     }
-    if (Array.isArray(rtConfig.workflowSteps) && rtConfig.workflowSteps.length > 0) {
+    const nonEmptyWorkflowSteps = Array.isArray(rtConfig.workflowSteps)
+      ? rtConfig.workflowSteps.filter((step: string) => step && step.trim())
+      : [];
+    if (nonEmptyWorkflowSteps.length > 0) {
       rcLines.push(`\n## WORKFLOW STEPS`);
-      rtConfig.workflowSteps.forEach((step: string, i: number) => {
+      nonEmptyWorkflowSteps.forEach((step: string, i: number) => {
         rcLines.push(`${i + 1}. ${step}`);
       });
     }

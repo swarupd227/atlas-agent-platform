@@ -1253,6 +1253,7 @@ The business team has defined this process flow for the outcome. Each agent you 
 ${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}${s.config?.skillName ? ` [REQUIRED SKILL: "${s.config.skillName}" — the business user explicitly bound this skill to this step; the agent handling it MUST include this exact name in matchedSkills]` : ""}${s.config?.kbName ? ` [REQUIRED KNOWLEDGE BASE: id="${s.config.kbId}" name="${s.config.kbName}" — the business user explicitly bound this KB to this step; the agent handling it MUST include this exact {id, name} in suggestedKnowledgeBases]` : ""}`).join("\n")}
 
 IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above. Any step marked REQUIRED SKILL or REQUIRED KNOWLEDGE BASE is a business-user commitment, not a suggestion -- the resulting agent's matchedSkills / suggestedKnowledgeBases MUST include those exact values.
+The orchestrator's own "workflowSteps" must include one non-empty bullet per step above, IN ORDER, including "expert_approval"/human-checkpoint steps -- those don't get a dedicated worker agent, so describe them from the orchestrator's perspective instead, e.g. "Route to human approval: <step label>". Never leave a workflowSteps entry blank.
 ` : ""}
 ═══════════════════════════════════════════
 OUTPUT CONCISENESS RULES — MANDATORY
@@ -2129,9 +2130,10 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         const lines: string[] = [];
         lines.push(`Role: ${agent.role || agent.name}`);
         lines.push(`Goal: ${agent.description}`);
-        if (agent.workflowSteps?.length) {
+        const nonEmptySteps = (agent.workflowSteps || []).filter(step => step && step.trim());
+        if (nonEmptySteps.length) {
           lines.push(`\nWorkflow Steps:`);
-          agent.workflowSteps.forEach((step, i) => lines.push(`${i + 1}. ${step}`));
+          nonEmptySteps.forEach((step, i) => lines.push(`${i + 1}. ${step}`));
         }
         if (agent.tools?.length) {
           lines.push(`\nAvailable Tools: ${agent.tools.map(t => t.name).join(", ")}`);
