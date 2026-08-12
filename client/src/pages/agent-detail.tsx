@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import JSZip from "jszip";
 import { formatDate } from "@/lib/format";
 import { useRoute, Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -1459,6 +1460,56 @@ function AgentDetailInner() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "recommendations"] });
       toast({ title: "Recommendation dismissed" });
+    },
+  });
+
+  const examPackageMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("GET", `/api/agents/${agentId}/regulatory-exam-package`);
+      return res.json();
+    },
+    onSuccess: async (pkg: any) => {
+      // Split into separate files, same shape an examiner would expect from
+      // a real evidence package -- not one undifferentiated JSON dump. The
+      // signature stays alongside the exact bundle it covers so it verifies
+      // against the unmodified JSON, matching the audit-bundle export's
+      // convention (governance.tsx's "Export Bundle" dialog).
+      const zip = new JSZip();
+      const readme = `Regulatory Exam Package — ${pkg.agent?.name || agent?.name || agentId}
+Generated: ${pkg.exportedAt}
+Time window: ${pkg.timeWindow?.start} to ${pkg.timeWindow?.end} (${pkg.timeWindow?.days} days)
+
+Contents:
+  agent-info.json               Agent identity, risk tier, autonomy mode
+  model-validation-summary.json AIUC-1 five-pillar report (Transparency, Accountability, Privacy, Safety, Fairness)
+  decision-log-sample.json      Recent audit events for this agent
+  human-override-log.json       Approval/rejection decisions on this agent's proposed actions
+  bias-fairness-results.json    Red-team bias-probe results underneath the Fairness pillar score
+  policy-coverage.json          Bound policies and this agent's own pass rate against each
+  signature.json                Ed25519 signature over the sha256 of this package's JSON body
+
+Verify: fetch the current public key from GET /api/audit-chain/public-key (keyId in
+signature.json must match) and verify signature.signature against sha256(bundleHash-covered
+JSON) — the platform never needs to be trusted, only the bytes in this archive.`;
+      zip.file("README.txt", readme);
+      zip.file("agent-info.json", JSON.stringify(pkg.agent, null, 2));
+      zip.file("model-validation-summary.json", JSON.stringify(pkg.modelValidationSummary, null, 2));
+      zip.file("decision-log-sample.json", JSON.stringify(pkg.decisionLogSample, null, 2));
+      zip.file("human-override-log.json", JSON.stringify(pkg.humanOverrideLog, null, 2));
+      zip.file("bias-fairness-results.json", JSON.stringify(pkg.biasFairnessResults, null, 2));
+      zip.file("policy-coverage.json", JSON.stringify(pkg.policyCoverage, null, 2));
+      zip.file("signature.json", JSON.stringify(pkg.signature, null, 2));
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${pkg.agent?.name || agent?.name || agentId}-regulatory-exam-package.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Exam package generated", description: "Signed evidence bundle downloaded." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to generate exam package", description: err.message, variant: "destructive" });
     },
   });
 
@@ -5078,9 +5129,21 @@ function AgentDetailInner() {
                       Per-agent compliance status, certifications, and evidence
                     </p>
                   </div>
-                  <Badge variant="outline" className={`text-[11px] ${euClassification.color}`} data-testid="badge-eu-ai-act">
-                    EU AI Act: {euClassification.label}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className={`text-[11px] ${euClassification.color}`} data-testid="badge-eu-ai-act">
+                      EU AI Act: {euClassification.label}
+                    </Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => examPackageMutation.mutate()}
+                      disabled={examPackageMutation.isPending}
+                      data-testid="button-generate-exam-package"
+                    >
+                      <FileCheck className="w-3.5 h-3.5 mr-1.5" />
+                      {examPackageMutation.isPending ? "Generating..." : "Generate Exam Package"}
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -27,6 +27,7 @@ import {
 } from "../permissions";
 import { resolveOntologyTags, handleZodError, checkPatchSafety, generateKpiAlignedEvalSuite, resolvePolicyBundle } from "./helpers";
 import { getPublicKeyInfo, signAuditPayload } from "../audit-signing";
+import { generateComplianceReport } from "../eval-report-generator";
 import billingRouter from "./billing";
 import { callClaude, stripJsonFences } from "../claude";
 
@@ -1748,6 +1749,146 @@ Ontology: ${ontologyName || "industry standard"}`,
     }).catch((e: any) => console.error("[export-bundle] failed to audit export:", e.message));
 
     res.json(bundle);
+  });
+
+  // One-click regulatory exam package: bundles evidence that already exists
+  // as separate pages/exports (audit trail, policy coverage, eval/red-team
+  // results, human-override log) into a single signed artifact per agent,
+  // shaped like what an OCC/Fed/FCA examiner actually requests -- model
+  // validation summary, decision-log sample, bias/fairness results, and a
+  // human-override log. This is assembly, not new evidence generation: each
+  // section reuses the same computation already backing its own page, so
+  // the package can never show something the individual pages don't.
+  router.get("/api/agents/:id/regulatory-exam-package", checkPermission("export_audit_bundle"), async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const agentId = req.params.id as string;
+      const agent = await storage.getAgent(agentId, orgId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const timeWindowDays = Math.max(1, parseInt(req.query.timeWindowDays as string, 10) || 90);
+      const since = new Date(Date.now() - timeWindowDays * 24 * 60 * 60 * 1000);
+
+      // 1. Model validation summary + bias/fairness scoring -- the AIUC-1
+      // five-pillar report is already agent-scoped (agentIds: [agentId]),
+      // so this is a direct call, not new logic.
+      const modelValidationSummary = await generateComplianceReport({
+        templateType: "aiuc1",
+        agentIds: [agentId],
+        timeWindowDays,
+        format: "json",
+        orgId,
+      });
+
+      // 2. Decision-log sample -- same objectId match the agent's own
+      // Timeline tab uses, so the sample can't diverge from what the agent
+      // detail page already shows for this agent.
+      const allAuditEvents = await storage.getAuditEvents(orgId);
+      const decisionLogSample = allAuditEvents
+        .filter(e => e.objectId === agentId && e.createdAt && new Date(e.createdAt) >= since)
+        .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())
+        .slice(0, 100)
+        .map(e => ({
+          timestamp: e.createdAt, action: e.action, actorType: e.actorType, actorId: e.actorId,
+          objectType: e.objectType, details: e.details, eventHash: e.eventHash, signature: e.signature,
+        }));
+
+      // 3. Human-override log -- approvals carry agentId directly (unlike
+      // audit events, which only carry objectId), so this is the more
+      // reliable field for "who overrode this agent's proposed actions".
+      const allApprovals = await storage.getApprovals(orgId);
+      const humanOverrideLog = allApprovals
+        .filter(a => a.agentId === agentId && a.decidedAt && new Date(a.decidedAt) >= since)
+        .sort((a, b) => new Date(b.decidedAt!).getTime() - new Date(a.decidedAt!).getTime())
+        .slice(0, 100)
+        .map(a => ({
+          decidedAt: a.decidedAt, type: a.type, status: a.status, decidedBy: a.decidedBy,
+          requestedBy: a.requestedBy, riskScore: a.riskScore, description: a.description,
+          recommendedAction: a.recommendedAction, escalationLevel: a.escalationLevel,
+        }));
+
+      // 4. Bias/fairness raw evidence -- red-team probe results underneath
+      // the AIUC-1 report's Fairness section, kept here so an examiner can
+      // see the actual attack inputs/responses, not just the rolled-up score.
+      const rtRuns = (await storage.getEvalRedteamRuns({ organizationId: orgId, agentId }))
+        .filter(r => r.startedAt && new Date(r.startedAt) >= since)
+        .slice(0, 5);
+      const rtResults = (await Promise.all(
+        rtRuns.map(r => storage.getEvalRedteamResults(r.id).catch(() => []))
+      )).flat();
+      const biasFairnessResults = {
+        runs: rtRuns.map(r => ({ id: r.id, startedAt: r.startedAt, categories: r.categories, totalProbes: r.totalProbes, vulnerabilitiesFound: r.vulnerabilitiesFound, postureScore: r.postureScore })),
+        biasProbeResults: rtResults.filter(r => r.category === "bias_probe").map(r => ({
+          attackInput: r.attackInput, agentResponse: r.agentResponse, vulnerabilityDetected: r.vulnerabilityDetected, severity: r.severity, reasoning: r.reasoning, createdAt: r.createdAt,
+        })),
+        otherCategoryCounts: Object.fromEntries(
+          Array.from(new Set(rtResults.map(r => r.category))).map(cat => [cat, rtResults.filter(r => r.category === cat).length])
+        ),
+      };
+
+      // 5. Policy coverage -- this agent's own bound policies, with domain
+      // coverage computed from ONLY this agent's traces (not pooled with
+      // other agents sharing a policy, unlike the org-wide coverage matrix)
+      // so the pass rate answers "how did THIS agent do", not a blend.
+      let bundleResolved: Awaited<ReturnType<typeof resolvePolicyBundle>> | null = null;
+      try { bundleResolved = await resolvePolicyBundle(agentId, orgId); } catch { /* no policies resolvable */ }
+      const appliedPolicies = bundleResolved?.appliedPolicies ?? [];
+      const agentTraces = (await storage.getTraces(orgId)).filter(t => t.agentId === agentId && t.startedAt && new Date(t.startedAt) >= since);
+      const tracesWithChecks = agentTraces.filter(t => t.policyChecks != null);
+      const policyCoverage = {
+        appliedPolicies: appliedPolicies.map((p: any) => {
+          const relevant = tracesWithChecks.filter(t => t.policyChecks != null);
+          const total = relevant.length;
+          const violated = relevant.filter(t => {
+            const violations = ((t.policyChecks as any)?.violations ?? []) as Array<{ policyIds?: string[] }>;
+            return violations.some(v => Array.isArray(v.policyIds) && v.policyIds.includes(p.id));
+          }).length;
+          return { id: p.id, name: p.name, domain: p.domain, scopeType: p.scopeType, tracesEvaluated: total, violations: violated, passRate: total > 0 ? Math.round(((total - violated) / total) * 100) : null };
+        }),
+        traceCount: agentTraces.length,
+      };
+
+      const bundle: any = {
+        exportType: "regulatory_exam_package",
+        exportedAt: new Date().toISOString(),
+        timeWindow: { start: since.toISOString(), end: new Date().toISOString(), days: timeWindowDays },
+        agent: {
+          id: agent.id, name: agent.name, description: agent.description, riskTier: agent.riskTier,
+          autonomyMode: agent.autonomyMode, environment: agent.environment, currentVersion: agent.currentVersion,
+          modelProvider: agent.modelProvider, modelName: agent.modelName,
+        },
+        modelValidationSummary,
+        decisionLogSample,
+        humanOverrideLog,
+        biasFairnessResults,
+        policyCoverage,
+      };
+
+      // Sign the bundle itself, same pattern as /api/audit-events/export-bundle:
+      // tamper-evident on its own, verifiable offline with the public key from
+      // GET /api/audit-chain/public-key -- no reason an examiner should have
+      // to trust the platform rather than the bytes they were handed.
+      const bundleBody = JSON.stringify(bundle, Object.keys(bundle).sort());
+      const bundleHash = nodeCrypto.createHash("sha256").update(bundleBody).digest("hex");
+      const { signature, signerKeyId } = await signAuditPayload(bundleHash);
+      const pub = await getPublicKeyInfo();
+      bundle.signature = { algorithm: "Ed25519", bundleHash, signature, signerKeyId, publicKeyPem: pub.publicKeyPem };
+
+      await storage.createAuditEvent({
+        action: "regulatory_exam_package_exported",
+        actorType: "user",
+        actorId: getRequestRole(req),
+        objectType: "agent",
+        objectId: agentId,
+        organizationId: orgId,
+        details: `Regulatory exam package exported for agent ${agent.name}: window=${timeWindowDays}d, decisionLogRecords=${decisionLogSample.length}, overrideRecords=${humanOverrideLog.length}`,
+      }).catch((e: any) => console.error("[regulatory-exam-package] failed to audit export:", e.message));
+
+      res.json(bundle);
+    } catch (err: any) {
+      console.error("[regulatory-exam-package] error:", err);
+      res.status(500).json({ error: err.message || "Failed to generate regulatory exam package" });
+    }
   });
 
   // Public key for OFFLINE verification of the chain / an exported bundle.
