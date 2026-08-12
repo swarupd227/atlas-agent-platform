@@ -595,6 +595,7 @@ export class DAGExecutionEngine {
         nodeOutputText,
         nodeLabelById,
         skippedNodeIds,
+        config.executionPlan.nodeConfig,
       );
 
       const nodePromises = eligibleNodeIds.map((nodeId) => {
@@ -749,6 +750,7 @@ export class DAGExecutionEngine {
     nodeOutputText: Map<string, string>,
     nodeLabelById: Map<string, string>,
     skippedNodeIds: Set<string>,
+    nodeConfig: Record<string, NodePlanConfig>,
   ): Promise<{ eligibleNodeIds: string[]; skippedResults: NodeExecutionResult[] }> {
     if (nodeIds.every((id) => (incomingEdges[id]?.length ?? 0) === 0)) {
       return { eligibleNodeIds: nodeIds, skippedResults: [] };
@@ -779,6 +781,21 @@ export class DAGExecutionEngine {
         if (sourceOutput == null) return false;
         if (edge.evaluationMode === "handoff") {
           return isHandoffTarget(sourceOutput, nodeLabelById.get(nodeId) || "");
+        }
+        // An approval/HITL gate's output is always the deterministic
+        // {approved: boolean} decision written by executeGateNode -- trust
+        // that directly rather than asking an LLM to re-interpret it as
+        // free text against a natural-language condition (e.g. "Order
+        // confirmed by advisor"). That LLM path is unreliable here: a
+        // response that doesn't literally start with "true" (a hedge, a
+        // restated explanation, anything but the bare word) silently reads
+        // as false and skips the entire rest of the pipeline downstream of
+        // an approval that actually succeeded.
+        if (this.isGateNode(nodeConfig[edge.sourceNodeId])) {
+          try {
+            const parsed = JSON.parse(sourceOutput);
+            if (typeof parsed.approved === "boolean") return parsed.approved;
+          } catch { /* fall through to LLM evaluation */ }
         }
         return evaluateCondition(edge.condition || "", sourceOutput);
       }));
