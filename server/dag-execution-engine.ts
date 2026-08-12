@@ -6,6 +6,10 @@ import { searchKnowledgeBaseChunks } from "./embeddings";
 import { recomputeOutcomeKpis } from "./routes/helpers";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 
+// Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
+// that isn't caught by the cycle check but would still nest indefinitely.
+const MAX_TEAM_REFERENCE_DEPTH = 10;
+
 // A completed team-workflow run had no path to ever reach its linked
 // outcome's KPI tracking -- this file never wrote an outcomeEvent, so
 // recomputeOutcomeKpis (which drives kpiDefinitions.currentValue) was never
@@ -180,6 +184,14 @@ export interface DAGExecutionConfig {
   // Threaded into executeGateNode so re-running the paused wave's gate node
   // reuses/short-circuits on this exact approval instead of creating a new one.
   resumePendingApprovalId?: string;
+  // Chain of teamAgentIds currently executing, root to immediate parent --
+  // NOT including config.teamAgentId itself. Absent/empty at the top-level
+  // call; executeTeamReferenceNode appends its own teamAgentId before
+  // recursing so a child can see the full ancestry and refuse to re-enter
+  // an agent already on the stack (A -> B -> A), which would otherwise
+  // recurse until the process hangs or stack-overflows -- there was no
+  // guard against this at all before.
+  ancestorTeamAgentIds?: string[];
 }
 
 export interface NodeExecutionResult {
@@ -1307,6 +1319,34 @@ export class DAGExecutionEngine {
   ): Promise<NodeExecutionResult> {
     const teamAgentId = nc.refTeamAgentId!;
 
+    const ancestry = config.ancestorTeamAgentIds || [];
+    if (ancestry.includes(teamAgentId) || config.teamAgentId === teamAgentId) {
+      return {
+        nodeId,
+        agentId: teamAgentId,
+        status: "failed",
+        output: {},
+        error: `Sub-flow cycle detected: team agent ${teamAgentId} is already running further up this call chain (${[...ancestry, config.teamAgentId].join(" -> ")} -> ${teamAgentId}). Refusing to recurse.`,
+        durationMs: Date.now() - start,
+        promptTokens: 0,
+        completionTokens: 0,
+        traceId: "",
+      };
+    }
+    if (ancestry.length >= MAX_TEAM_REFERENCE_DEPTH) {
+      return {
+        nodeId,
+        agentId: teamAgentId,
+        status: "failed",
+        output: {},
+        error: `Sub-flow nesting exceeded the maximum depth of ${MAX_TEAM_REFERENCE_DEPTH} (chain: ${[...ancestry, config.teamAgentId].join(" -> ")}).`,
+        durationMs: Date.now() - start,
+        promptTokens: 0,
+        completionTokens: 0,
+        traceId: "",
+      };
+    }
+
     const teamAgent = await storage.getAgent(teamAgentId);
     if (!teamAgent) {
       return {
@@ -1364,15 +1404,27 @@ export class DAGExecutionEngine {
       resumePendingApprovalId: config.resumePendingApprovalId,
       onWaveComplete: config.onWaveComplete,
       onApprovalPending: config.onApprovalPending,
+      ancestorTeamAgentIds: [...ancestry, config.teamAgentId],
     });
 
     const durationMs = Date.now() - start;
+
+    // Without this, a failed Team Reference node reported bare status:
+    // "failed" with no error text at all -- every level of nesting erased
+    // the reason underneath it, so a 3-deep sub-flow failure surfaced to the
+    // top as an unexplained "failed" no matter how descriptive the actual
+    // failing node's error was (the cycle guard above is a direct victim of
+    // this: its own error message would otherwise vanish one level up).
+    const firstFailure = childResult.success
+      ? undefined
+      : childResult.waveResults.flatMap(w => w.nodes).find(n => n.status === "failed" && n.error);
 
     return {
       nodeId,
       agentId: teamAgentId,
       status: childResult.success ? "completed" : "failed",
       output: { [nc.stateKey]: childResult.finalState },
+      error: firstFailure ? `Sub-flow "${teamAgent.name || teamAgentId}" failed at "${firstFailure.nodeId}": ${firstFailure.error}` : undefined,
       durationMs,
       promptTokens: childResult.totalPromptTokens,
       completionTokens: childResult.totalCompletionTokens,
