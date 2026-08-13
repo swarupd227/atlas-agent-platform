@@ -17,6 +17,9 @@ import { microsoftGraphMcpServer } from "./msgraph/mcp-server";
 import { snowflakeMcpServer } from "./snowflake/mcp-server";
 import { workdayMcpServer } from "./workday/mcp-server";
 import { sapMcpServer } from "./sap/mcp-server";
+import { postgresMcpServer } from "./sql/postgres/mcp-server";
+import { mysqlMcpServer } from "./sql/mysql/mcp-server";
+import { sqlServerMcpServer } from "./sql/sqlserver/mcp-server";
 import type { RealMcpBase } from "../real-mcp-base";
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
@@ -121,6 +124,31 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
       riskTier: "HIGH",
       tags: ["erp", "sap", "s4hana", "procurement", "enterprise", "wave-4"],
     },
+    // ── Wave 5: General-purpose SQL connectors (Data) ────────────────────────
+    {
+      server: postgresMcpServer,
+      catalogName: "PostgreSQL (Database)",
+      description: "Direct connection to a PostgreSQL database — 7 read-only tools for query execution, schema inspection, table search, and column statistics. All queries are enforced read-only; DDL/DML is blocked. Requires host/port/database/user/password.",
+      route: "/api/integrations/postgres",
+      riskTier: "MEDIUM",
+      tags: ["data", "postgres", "postgresql", "database", "wave-5"],
+    },
+    {
+      server: mysqlMcpServer,
+      catalogName: "MySQL / MariaDB (Database)",
+      description: "Direct connection to a MySQL or MariaDB database — 7 read-only tools for query execution, schema inspection, table search, and column statistics. All queries are enforced read-only; DDL/DML is blocked. Requires host/port/database/user/password.",
+      route: "/api/integrations/mysql",
+      riskTier: "MEDIUM",
+      tags: ["data", "mysql", "mariadb", "database", "wave-5"],
+    },
+    {
+      server: sqlServerMcpServer,
+      catalogName: "SQL Server (Database)",
+      description: "Direct connection to a Microsoft SQL Server database — 7 read-only tools for query execution, schema inspection, table search, and column statistics. All queries are enforced read-only; DDL/DML is blocked. Requires host/port/database/user/password.",
+      route: "/api/integrations/sqlserver",
+      riskTier: "MEDIUM",
+      tags: ["data", "sqlserver", "mssql", "database", "wave-5"],
+    },
   ];
 }
 
@@ -199,7 +227,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
   return { servers, tools: toolCount };
 }
 
-export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer, workdayMcpServer, sapMcpServer };
+export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer, workdayMcpServer, sapMcpServer, postgresMcpServer, mysqlMcpServer, sqlServerMcpServer };
 
 // ── In-process enterprise connector registry ──────────────────────────────────
 // Maps integrationId → connector singleton so the agent runtime can dispatch tool
@@ -209,7 +237,7 @@ const ENTERPRISE_SERVER_BY_ID = new Map<string, RealMcpBase>(
   [
     salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer,
     githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer,
-    workdayMcpServer, sapMcpServer,
+    workdayMcpServer, sapMcpServer, postgresMcpServer, mysqlMcpServer, sqlServerMcpServer,
   ].map((s) => [s.integrationId, s]),
 );
 

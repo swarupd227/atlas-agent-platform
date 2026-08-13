@@ -121,6 +121,9 @@ import { createMicrosoftGraphRouter } from "./integrations/msgraph/mcp-server";
 import { createSnowflakeRouter } from "./integrations/snowflake/mcp-server";
 import { createWorkdayRouter } from "./integrations/workday/mcp-server";
 import { createSapRouter } from "./integrations/sap/mcp-server";
+import { createPostgresRouter } from "./integrations/sql/postgres/mcp-server";
+import { createMySqlRouter } from "./integrations/sql/mysql/mcp-server";
+import { createSqlServerRouter } from "./integrations/sql/sqlserver/mcp-server";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -390,6 +393,10 @@ export async function registerRoutes(
   app.use("/api/integrations/snowflake", createSnowflakeRouter());
   app.use("/api/integrations/workday", createWorkdayRouter());
   app.use("/api/integrations/sap", createSapRouter());
+  // ── Enterprise Integration routers (Wave 5: General-purpose SQL) ─────────
+  app.use("/api/integrations/postgres", createPostgresRouter());
+  app.use("/api/integrations/mysql", createMySqlRouter());
+  app.use("/api/integrations/sqlserver", createSqlServerRouter());
 
   // ── Enterprise integration catalog endpoint ──────────────────────────────────
   app.post("/api/integrations/register", async (_req, res) => {

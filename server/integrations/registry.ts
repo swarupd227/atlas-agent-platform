@@ -32,7 +32,7 @@ export interface IntegrationDef {
   oauthConfig?: OAuthConfig;
   credentialFields?: FieldDef[];
   docsUrl?: string;
-  wave: 1 | 2 | 3 | 4;
+  wave: 1 | 2 | 3 | 4 | 5;
   capabilities: string[];
   /** Indicates whether connecting this integration requires advanced admin steps (key-pair auth, tenant config, etc.) */
   setupComplexity?: "standard" | "advanced";
@@ -327,6 +327,71 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     wave: 4,
     setupComplexity: "advanced",
     capabilities: ["read_materials", "read_purchase_orders", "read_financials", "create_service_orders"],
+  },
+
+  // ── Wave 5: General-purpose SQL connectors — direct connection mode ──────
+  // "Direct" means the platform's egress IPs must be allowlisted by the
+  // database (public/VPC-peered endpoint). SSH-tunnel and relay-agent
+  // connection modes are a separate, later phase — not implemented here.
+  {
+    id: "postgres",
+    name: "PostgreSQL",
+    description: "Relational database — direct connection, schema inspection, and read-only SQL queries",
+    category: "data",
+    logoColor: "#336791",
+    authMethod: "basic",
+    credentialFields: [
+      { key: "host", label: "Host", type: "text", required: true, placeholder: "mydb.abc123.us-east-1.rds.amazonaws.com" },
+      { key: "port", label: "Port", type: "text", required: false, placeholder: "5432" },
+      { key: "database", label: "Database", type: "text", required: true },
+      { key: "user", label: "User", type: "text", required: true },
+      { key: "password", label: "Password", type: "password", required: true },
+      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require)", type: "text", required: false, placeholder: "require" },
+    ],
+    docsUrl: "https://www.postgresql.org/docs/current/protocol.html",
+    wave: 5,
+    setupComplexity: "standard",
+    capabilities: ["run_queries", "read_schema", "read_tables"],
+  },
+  {
+    id: "mysql",
+    name: "MySQL / MariaDB",
+    description: "Relational database — direct connection, schema inspection, and read-only SQL queries",
+    category: "data",
+    logoColor: "#4479A1",
+    authMethod: "basic",
+    credentialFields: [
+      { key: "host", label: "Host", type: "text", required: true, placeholder: "mydb.abc123.us-east-1.rds.amazonaws.com" },
+      { key: "port", label: "Port", type: "text", required: false, placeholder: "3306" },
+      { key: "database", label: "Database", type: "text", required: true },
+      { key: "user", label: "User", type: "text", required: true },
+      { key: "password", label: "Password", type: "password", required: true },
+      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require)", type: "text", required: false, placeholder: "require" },
+    ],
+    docsUrl: "https://dev.mysql.com/doc/",
+    wave: 5,
+    setupComplexity: "standard",
+    capabilities: ["run_queries", "read_schema", "read_tables"],
+  },
+  {
+    id: "sqlserver",
+    name: "SQL Server",
+    description: "Relational database — direct connection, schema inspection, and read-only SQL queries",
+    category: "data",
+    logoColor: "#CC2927",
+    authMethod: "basic",
+    credentialFields: [
+      { key: "host", label: "Host", type: "text", required: true, placeholder: "mydb.database.windows.net" },
+      { key: "port", label: "Port", type: "text", required: false, placeholder: "1433" },
+      { key: "database", label: "Database", type: "text", required: true },
+      { key: "user", label: "User", type: "text", required: true },
+      { key: "password", label: "Password", type: "password", required: true },
+      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require)", type: "text", required: false, placeholder: "require" },
+    ],
+    docsUrl: "https://learn.microsoft.com/sql/connect/",
+    wave: 5,
+    setupComplexity: "standard",
+    capabilities: ["run_queries", "read_schema", "read_tables"],
   },
 ];
 
