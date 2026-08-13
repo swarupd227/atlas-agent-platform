@@ -91,6 +91,11 @@ describe("DAGExecutionEngine — approval gate execution", () => {
     });
 
     expect(result.success).toBe(false);
+    // executeGateNode forwards a 7th arg (config.resumePendingApprovalId, for
+    // resuming a paused run into the same in-flight approval) -- unset here,
+    // so undefined. toHaveBeenCalledWith requires an exact arg-count match,
+    // so this must list all 7 positions or the assertion fails regardless of
+    // whether the first 6 are individually correct.
     expect(waitForApproval).toHaveBeenCalledWith(
       "team-1",
       "Manager Sign-off",
@@ -98,6 +103,7 @@ describe("DAGExecutionEngine — approval gate execution", () => {
       expect.any(String),
       expect.any(Number),
       expect.any(Function),
+      undefined,
     );
   });
 

@@ -17,6 +17,7 @@ vi.mock("../server/agent-runtime", () => ({
   executeWorkerAgent: vi.fn().mockResolvedValue({ success: true, output: "ok" }),
   waitForApproval: vi.fn(),
   evaluateCondition: vi.fn().mockResolvedValue(true),
+  extractStructuredOutput: vi.fn().mockReturnValue(null),
   buildPipelineState: (outputs: Map<string, string>, labels: Map<string, string>) => {
     const state: Record<string, any> = {};
     for (const [nodeId, text] of Array.from(outputs.entries())) {
