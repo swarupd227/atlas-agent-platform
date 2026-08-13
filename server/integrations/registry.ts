@@ -350,6 +350,7 @@ const SQL_CONNECTION_MODE_FIELDS: FieldDef[] = [
     options: [
       { value: "direct", label: "Direct — allowlist our egress IPs" },
       { value: "ssh_tunnel", label: "SSH Tunnel — via a bastion host" },
+      { value: "relay_agent", label: "Relay Agent — outbound-only, no inbound access needed" },
     ],
   },
   { key: "sshHost", label: "SSH Bastion Host", type: "text", required: false, placeholder: "bastion.mycompany.com", showWhen: { field: "connectionMode", equals: "ssh_tunnel" } },
@@ -362,6 +363,11 @@ const SQL_CONNECTION_MODE_FIELDS: FieldDef[] = [
     key: "sshHostKeyFingerprint", label: "SSH Host Key Fingerprint (pin after first connect)", type: "text", required: false,
     placeholder: "shown in the connection-test result on first connect — paste it here to pin it",
     showWhen: { field: "connectionMode", equals: "ssh_tunnel" },
+  },
+  {
+    key: "relayAgentId", label: "Relay Agent", type: "text", required: false,
+    placeholder: "the agent id shown when you generated its token under Relay Agents",
+    showWhen: { field: "connectionMode", equals: "relay_agent" },
   },
 ];
 

@@ -12,6 +12,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { resolveConnectionTarget } from "../server/integrations/sql/tunnel";
+import { requestTunnel, isAgentConnected } from "../server/relay/relay-server";
 
 describe("resolveConnectionTarget — direct mode", () => {
   it("passes host/port straight through when connectionMode is unset", async () => {
@@ -43,5 +44,31 @@ describe("resolveConnectionTarget — ssh_tunnel mode validation", () => {
       { host: "10.0.1.5", connectionMode: "ssh_tunnel", sshHost: "bastion.example.com", sshPassword: "x" },
       5432
     )).rejects.toThrow(/ssh username/i);
+  });
+});
+
+describe("resolveConnectionTarget — relay_agent mode validation", () => {
+  it("rejects when relayAgentId is missing", async () => {
+    await expect(resolveConnectionTarget(
+      { host: "10.0.1.5", connectionMode: "relay_agent" },
+      5432
+    )).rejects.toThrow(/relay agent/i);
+  });
+
+  it("rejects when the named relay agent isn't connected", async () => {
+    await expect(resolveConnectionTarget(
+      { host: "10.0.1.5", connectionMode: "relay_agent", relayAgentId: "agent-not-registered" },
+      5432
+    )).rejects.toThrow(/not connected/i);
+  });
+});
+
+describe("requestTunnel — no DB involved, pure in-memory registry lookup", () => {
+  it("isAgentConnected is false for an agent that never connected", () => {
+    expect(isAgentConnected("some-random-agent-id")).toBe(false);
+  });
+
+  it("fails fast (no local listener left behind) for an unconnected agent", async () => {
+    await expect(requestTunnel("some-random-agent-id", "10.0.1.5", 5432)).rejects.toThrow(/not connected/i);
   });
 });

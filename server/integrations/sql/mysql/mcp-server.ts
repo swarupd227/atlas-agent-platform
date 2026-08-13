@@ -1,7 +1,7 @@
 import { SqlMcpServerBase, buildSqlToolDefs, createSqlRouter } from "../mcp-server";
 import { MySqlClient } from "./client";
 import type { RealMcpToolDef } from "../../../real-mcp-base";
-import type { SqlConnector } from "../types";
+import type { SqlConnector, SqlCredentials } from "../types";
 
 export class MySqlMcpServer extends SqlMcpServerBase {
   readonly integrationId = "mysql";
@@ -9,14 +9,7 @@ export class MySqlMcpServer extends SqlMcpServerBase {
   readonly tools: RealMcpToolDef[] = buildSqlToolDefs(this.dialectLabel);
 
   protected buildConnector(credentials: Record<string, string>): SqlConnector {
-    return new MySqlClient({
-      host: credentials.host,
-      port: credentials.port,
-      database: credentials.database,
-      user: credentials.user,
-      password: credentials.password,
-      ssl: credentials.ssl,
-    });
+    return new MySqlClient(credentials as SqlCredentials);
   }
 }
 

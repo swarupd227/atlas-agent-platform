@@ -10,7 +10,7 @@
 
 import mysql, { type Connection, type FieldPacket } from "mysql2/promise";
 import { guardReadOnly, assertSafeIdentifier, truncate } from "../shared";
-import { resolveConnectionTarget, type OpenTunnelResult } from "../tunnel";
+import { resolveConnectionTarget, type Tunnel } from "../tunnel";
 import type { SqlConnector, SqlCredentials, SqlResult, SqlColumn } from "../types";
 
 const STATEMENT_TIMEOUT_MS = 30_000;
@@ -38,7 +38,7 @@ function buildSsl(mode: string | undefined): Record<string, unknown> | undefined
 export class MySqlClient implements SqlConnector {
   readonly dialect = "mysql";
   private connPromise: Promise<Connection> | null = null;
-  private tunnel: OpenTunnelResult | null = null;
+  private tunnel: Tunnel | null = null;
 
   constructor(private readonly creds: SqlCredentials) {
     if (!creds.host) throw new Error("MySQL host is not configured. Connect via the Integrations settings.");

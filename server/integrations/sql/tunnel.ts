@@ -21,6 +21,7 @@
 import { Client as SshClient } from "ssh2";
 import net, { type Socket } from "net";
 import type { SqlCredentials } from "./types";
+import { requestTunnel as requestRelayTunnel } from "../../relay/relay-server";
 
 const CONNECT_TIMEOUT_MS = 10_000;
 
@@ -121,18 +122,28 @@ export function openSshTunnel(config: SshTunnelConfig): Promise<OpenTunnelResult
   });
 }
 
+/** Structural shape both openSshTunnel's and the relay agent's tunnel results satisfy. */
+export interface Tunnel {
+  localHost: string;
+  localPort: number;
+  hostFingerprint?: string;
+  close: () => Promise<void>;
+}
+
 export interface ConnectionTarget {
   host: string;
   port: number;
-  tunnel: OpenTunnelResult | null;
+  tunnel: Tunnel | null;
 }
 
 /**
  * Resolves the effective host/port a SQL client's driver should connect
- * to, transparently opening an SSH tunnel first when the credentials say
- * to. Shared by all three dialect clients so the tunnel-vs-direct branch
- * only needs to be written once. `defaultPort` is the dialect's standard
- * port (5432/3306/1433), used when the credential map doesn't specify one.
+ * to, transparently opening a tunnel first when the credentials say to
+ * (ssh_tunnel: via a bastion host; relay_agent: via an outbound-only agent
+ * running inside the client's network -- see server/relay/). Shared by all
+ * three dialect clients so the tunnel-vs-direct branch only needs to be
+ * written once. `defaultPort` is the dialect's standard port (5432/3306/
+ * 1433), used when the credential map doesn't specify one.
  */
 export async function resolveConnectionTarget(creds: SqlCredentials, defaultPort: number): Promise<ConnectionTarget> {
   const directHost = creds.host!;
@@ -153,6 +164,12 @@ export async function resolveConnectionTarget(creds: SqlCredentials, defaultPort
       knownHostFingerprint: creds.sshHostKeyFingerprint,
     });
     return { host: tunnel.localHost, port: tunnel.localPort, tunnel };
+  }
+
+  if (creds.connectionMode === "relay_agent") {
+    if (!creds.relayAgentId) throw new Error("Relay agent is not configured for relay_agent mode. Connect via the Integrations settings.");
+    const relayTunnel = await requestRelayTunnel(creds.relayAgentId, directHost, directPort);
+    return { host: relayTunnel.localHost, port: relayTunnel.localPort, tunnel: relayTunnel };
   }
 
   return { host: directHost, port: directPort, tunnel: null };

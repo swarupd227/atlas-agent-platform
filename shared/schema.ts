@@ -426,6 +426,24 @@ export const insertWorkspaceRunSchema = createInsertSchema(workspaceRuns).omit({
 export type InsertWorkspaceRun = z.infer<typeof insertWorkspaceRunSchema>;
 export type WorkspaceRun = typeof workspaceRuns.$inferSelect;
 
+// Relay agents: outbound-only tunnel agents a client deploys inside their
+// own network (SQL connector "relay_agent" connection mode, Phase 3).
+// Only a sha256 hash of the bearer token is ever stored -- the raw token is
+// shown once at creation time and cannot be retrieved again.
+export const relayAgents = pgTable("relay_agents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  label: text("label").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("offline"),
+  lastSeenAt: timestamp("last_seen_at"),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export const insertRelayAgentSchema = createInsertSchema(relayAgents).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertRelayAgent = z.infer<typeof insertRelayAgentSchema>;
+export type RelayAgent = typeof relayAgents.$inferSelect;
+
 export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
 export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
 export type AuditEvent = typeof auditEvents.$inferSelect;

@@ -124,6 +124,8 @@ import { createSapRouter } from "./integrations/sap/mcp-server";
 import { createPostgresRouter } from "./integrations/sql/postgres/mcp-server";
 import { createMySqlRouter } from "./integrations/sql/mysql/mcp-server";
 import { createSqlServerRouter } from "./integrations/sql/sqlserver/mcp-server";
+import { relayAgentsRouter } from "./relay/routes";
+import { attachRelayServer } from "./relay/relay-server";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -397,6 +399,10 @@ export async function registerRoutes(
   app.use("/api/integrations/postgres", createPostgresRouter());
   app.use("/api/integrations/mysql", createMySqlRouter());
   app.use("/api/integrations/sqlserver", createSqlServerRouter());
+
+  // ── Relay agents (SQL connector "relay_agent" connection mode) ───────────
+  app.use(relayAgentsRouter);
+  attachRelayServer(httpServer);
 
   // ── Enterprise integration catalog endpoint ──────────────────────────────────
   app.post("/api/integrations/register", async (_req, res) => {

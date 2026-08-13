@@ -1389,6 +1389,25 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_agent_generated_files_agent_id ON agent_generated_files(agent_id);
     `);
 
+    // Relay agents (SQL connector "relay_agent" connection mode, Phase 3):
+    // outbound-only tunnel agents a client deploys inside their own network.
+    // Only a sha256 hash of the bearer token is stored -- the raw token is
+    // shown once at creation and cannot be retrieved again.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS relay_agents (
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id  VARCHAR,
+        label            TEXT NOT NULL,
+        token_hash       TEXT NOT NULL,
+        status           VARCHAR(20) NOT NULL DEFAULT 'offline',
+        last_seen_at     TIMESTAMP,
+        revoked_at       TIMESTAMP,
+        created_at       TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_relay_agents_org ON relay_agents(organization_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_agents_token_hash ON relay_agents(token_hash);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

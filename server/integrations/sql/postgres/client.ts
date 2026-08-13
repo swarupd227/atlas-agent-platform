@@ -15,7 +15,7 @@
 
 import { Client, type QueryResult } from "pg";
 import { guardReadOnly, assertSafeIdentifier, truncate } from "../shared";
-import { resolveConnectionTarget, type OpenTunnelResult } from "../tunnel";
+import { resolveConnectionTarget, type Tunnel } from "../tunnel";
 import type { SqlConnector, SqlCredentials, SqlResult, SqlColumn } from "../types";
 
 const STATEMENT_TIMEOUT_MS = 30_000;
@@ -43,7 +43,7 @@ function buildSsl(mode: string | undefined): boolean | { rejectUnauthorized: boo
 export class PostgresClient implements SqlConnector {
   readonly dialect = "postgres";
   private clientPromise: Promise<Client> | null = null;
-  private tunnel: OpenTunnelResult | null = null;
+  private tunnel: Tunnel | null = null;
 
   constructor(private readonly creds: SqlCredentials) {
     if (!creds.host) throw new Error("PostgreSQL host is not configured. Connect via the Integrations settings.");

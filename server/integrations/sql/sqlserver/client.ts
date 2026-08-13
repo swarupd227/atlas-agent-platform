@@ -14,7 +14,7 @@
 
 import sql from "mssql";
 import { guardReadOnly, assertSafeIdentifier, truncate } from "../shared";
-import { resolveConnectionTarget, type OpenTunnelResult } from "../tunnel";
+import { resolveConnectionTarget, type Tunnel } from "../tunnel";
 import type { SqlConnector, SqlCredentials, SqlResult, SqlColumn } from "../types";
 
 const STATEMENT_TIMEOUT_MS = 30_000;
@@ -35,7 +35,7 @@ function buildOptions(mode: string | undefined): { encrypt: boolean; trustServer
 export class SqlServerClient implements SqlConnector {
   readonly dialect = "sqlserver";
   private poolPromise: Promise<sql.ConnectionPool> | null = null;
-  private tunnel: OpenTunnelResult | null = null;
+  private tunnel: Tunnel | null = null;
 
   constructor(private readonly creds: SqlCredentials) {
     if (!creds.host) throw new Error("SQL Server host is not configured. Connect via the Integrations settings.");
