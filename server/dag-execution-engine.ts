@@ -4,6 +4,7 @@ import { publishDagRunEvent, previewOutput } from "./dag-run-events";
 import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { recomputeOutcomeKpis } from "./routes/helpers";
+import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
@@ -138,6 +139,7 @@ export interface NodePlanConfig {
   refSkillId: string | null;
   refKnowledgeBaseId: string | null;
   kbQuery: string | null;
+  expression: string | null;
   label: string;
   gateType: string | null;
   refToolIds: string[] | null;
@@ -342,6 +344,7 @@ export function computeWaves(
       refSkillId: (node as any).refSkillId || null,
       refKnowledgeBaseId: (node as any).refKnowledgeBaseId || null,
       kbQuery: (node.config as any)?.kbQuery || null,
+      expression: (node.config as any)?.expression || null,
       label: node.label,
       gateType: node.gateType || null,
       refToolIds: (node.refToolIds as string[] | null) || null,
@@ -874,6 +877,10 @@ export class DAGExecutionEngine {
       return this.executeKnowledgeBaseNode(nodeId, nc, start);
     }
 
+    if (nc.nodeType === "expression" && nc.expression) {
+      return this.executeExpressionNode(nodeId, nc, currentState, start);
+    }
+
     if (this.isGateNode(nc)) {
       return this.executeGateNode(nodeId, nc, currentState, config, start);
     }
@@ -1099,6 +1106,63 @@ export class DAGExecutionEngine {
       completionTokens: 0,
       traceId: "",
     };
+  }
+
+  /**
+   * Execute an "expression" node: reshape the shared DAG state with a
+   * JSONata expression, no LLM call. This is the lightweight alternative to
+   * a full internal_agent node for the common case of "pull a few fields out
+   * and rename/recompute them" -- JSONata is a pure query/transform
+   * language (github.com/jsonata-js/jsonata), not a code-execution sandbox,
+   * so there's no eval/Function-constructor surface here even though the
+   * expression text is user-authored in the node inspector.
+   */
+  private async executeExpressionNode(
+    nodeId: string,
+    nc: NodePlanConfig,
+    currentState: Record<string, any>,
+    start: number,
+  ): Promise<NodeExecutionResult> {
+    const fail = (message: string): NodeExecutionResult => ({
+      nodeId,
+      agentId: "",
+      status: "failed",
+      output: {},
+      error: message,
+      durationMs: Date.now() - start,
+      promptTokens: 0,
+      completionTokens: 0,
+      traceId: "",
+    });
+
+    let expr;
+    try {
+      expr = jsonata(nc.expression!);
+    } catch (e: any) {
+      return fail(`Invalid expression: ${e.message || String(e)}`);
+    }
+
+    try {
+      // A pathological expression (e.g. a runaway recursive function) is
+      // unlikely in a query language with no unbounded loops, but a hard
+      // ceiling keeps one bad node from stalling the whole wave indefinitely.
+      const result = await Promise.race([
+        expr.evaluate(currentState),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Expression evaluation timed out after 5s")), 5000)),
+      ]);
+      return {
+        nodeId,
+        agentId: "",
+        status: "completed",
+        output: { [nc.stateKey]: result === undefined ? null : result },
+        durationMs: Date.now() - start,
+        promptTokens: 0,
+        completionTokens: 0,
+        traceId: "",
+      };
+    } catch (e: any) {
+      return fail(`Expression evaluation failed: ${e.message || String(e)}`);
+    }
   }
 
   /**

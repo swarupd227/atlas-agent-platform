@@ -6,7 +6,7 @@ import {
   type Node as RFNode, type Edge as RFEdge, type Connection, type NodeProps, type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Brain, Network, Sparkles, Database, AlertTriangle, X } from "lucide-react";
+import { Brain, Network, Sparkles, Database, AlertTriangle, X, SquareFunction } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,6 +92,11 @@ function TeamFlowNode({ data, selected }: NodeProps) {
         {node.nodeType === "sub_flow" && (
           <Badge variant="outline" className="text-[10px] shrink-0 bg-indigo-500/10 border-indigo-500/30 text-indigo-700 dark:text-indigo-300 flex items-center gap-1" data-testid={`badge-sub-flow-${node.id}`}>
             <Network className="w-2.5 h-2.5" />{d.refTeamAgentName || "Not configured"}
+          </Badge>
+        )}
+        {node.nodeType === "expression" && (
+          <Badge variant="outline" className="text-[10px] shrink-0 bg-slate-500/10 border-slate-500/30 text-slate-700 dark:text-slate-300 flex items-center gap-1 font-mono max-w-[160px] truncate" data-testid={`badge-expression-${node.id}`}>
+            <SquareFunction className="w-2.5 h-2.5 shrink-0" />{(node.config as any)?.expression || "Not configured"}
           </Badge>
         )}
         {node.nodeType === "remote_agent" && d.refRemoteAgent && (

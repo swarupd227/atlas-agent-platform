@@ -8,7 +8,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   Play, Database, Brain, GitBranch, UserCheck, Zap, Bell, GitFork, RotateCcw, Square,
-  Trash2, X, Workflow, Sparkles, Network,
+  Trash2, X, Workflow, Sparkles, Network, SquareFunction,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,12 +29,13 @@ const NODE_META: Record<ProcessNodeType, NodeMeta> = {
   loop:              { label: "Loop / Retry", icon: RotateCcw,color: "text-orange-600",  bg: "bg-orange-500/5",  border: "border-orange-500/40" },
   n8n:               { label: "External Workflow", icon: Workflow, color: "text-pink-600",    bg: "bg-pink-500/5",    border: "border-pink-500/40" },
   sub_flow:          { label: "Sub-Flow",     icon: Network,  color: "text-indigo-600",  bg: "bg-indigo-500/5",  border: "border-indigo-500/40" },
+  expression:        { label: "Expression",   icon: SquareFunction, color: "text-slate-600", bg: "bg-slate-500/5", border: "border-slate-500/40" },
   end:               { label: "End",          icon: Square,   color: "text-slate-600",   bg: "bg-slate-500/5",   border: "border-slate-500/40" },
 };
 
 export const PALETTE_TYPES: ProcessNodeType[] = [
   "trigger", "get_info", "ai_reasoning", "make_decision",
-  "expert_approval", "take_action", "send_notification", "parallel", "loop", "n8n", "sub_flow", "end",
+  "expert_approval", "take_action", "send_notification", "parallel", "loop", "n8n", "sub_flow", "expression", "end",
 ];
 
 type RFData = { ntype: ProcessNodeType; label: string; description?: string; actor?: string; config?: Record<string, unknown> };
@@ -65,6 +66,11 @@ function ProcessFlowNode({ data, selected }: NodeProps) {
       {d.ntype === "sub_flow" && (
         <p className="text-[9px] text-indigo-600 dark:text-indigo-400 mt-0.5 truncate flex items-center gap-0.5">
           <Network className="w-2.5 h-2.5 shrink-0" /> {d.config?.refTeamAgentName ? String(d.config.refTeamAgentName) : "Not configured"}
+        </p>
+      )}
+      {d.ntype === "expression" && (
+        <p className="text-[9px] text-slate-600 dark:text-slate-400 mt-0.5 truncate font-mono flex items-center gap-0.5">
+          <SquareFunction className="w-2.5 h-2.5 shrink-0" /> {d.config?.expression ? String(d.config.expression) : "Not configured"}
         </p>
       )}
       <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-primary" />
@@ -480,6 +486,22 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
                       }}
                     />
                     <span className="text-[10px] text-muted-foreground">Runs the selected flow end to end and waits for it before continuing (Sync to Automation compiles this to a real Sub-Flow step).</span>
+                  </div>
+                )}
+                {d.ntype === "expression" && (
+                  <div className="flex flex-col gap-1 rounded-md border border-slate-500/30 bg-slate-500/5 p-2">
+                    <label className="text-[10px] text-slate-600 dark:text-slate-400 uppercase tracking-wide font-medium">Expression (JSONata)</label>
+                    <Textarea
+                      value={String((d.config?.expression as string) || "")}
+                      onChange={e => patchNode(selNode.id, { config: { ...(d.config || {}), expression: e.target.value } })}
+                      placeholder={'{ "total": amount + tax, "customer": customerName }'}
+                      rows={4}
+                      className="text-xs font-mono resize-none"
+                      data-testid="input-node-expression"
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      Reshapes the flow's data with no LLM call -- Sync to Automation compiles this to a real Expression step. Uses JSONata syntax.
+                    </span>
                   </div>
                 )}
               </>

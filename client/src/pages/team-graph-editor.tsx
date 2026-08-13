@@ -18,7 +18,7 @@ import { NODE_COLOR_MAP, TRUST_TIER_COLORS } from "@/lib/team-graph-node-meta";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
-  Save, Sparkles, Play, Loader2, CheckCircle2, XCircle, History,
+  Save, Sparkles, Play, Loader2, CheckCircle2, XCircle, History, SquareFunction,
 } from "lucide-react";
 
 interface McpServerTool {
@@ -80,6 +80,10 @@ const TEAM_NODE_TYPES = [
   // as before -- executeNode() dispatches on refTeamAgentId presence, not
   // nodeType, so nothing about existing blueprints needed to change.
   { type: "sub_flow", label: "Sub-Flow", icon: Network, color: "bg-indigo-500" },
+  // Reshapes shared DAG state with a JSONata expression -- no LLM call, no
+  // cost, near-instant. The lightweight alternative to a full internal_agent
+  // node for "pull a few fields out and rename/recompute them" mid-flow.
+  { type: "expression", label: "Expression", icon: SquareFunction, color: "bg-slate-500" },
 ] as const;
 
 const PART_TYPE_OPTIONS = [
@@ -587,7 +591,7 @@ function NodeConfigPanel({
   isPending: boolean;
 }) {
   const autoStateKey = (label: string) => label.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
-  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill" || t === "knowledge_base" || t === "sub_flow";
+  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill" || t === "knowledge_base" || t === "sub_flow" || t === "expression";
 
   const initialStateKey = (node.stateKey && node.stateKey.length > 0)
     ? node.stateKey
@@ -600,6 +604,7 @@ function NodeConfigPanel({
   const [wavePlanOpen, setWavePlanOpen] = useState(false);
 
   const [localKbQuery, setLocalKbQuery] = useState((node.config as any)?.kbQuery || "");
+  const [localExpression, setLocalExpression] = useState((node.config as any)?.expression || "");
 
   const [trackedNodeId, setTrackedNodeId] = useState(node.id);
   if (trackedNodeId !== node.id) {
@@ -613,6 +618,7 @@ function NodeConfigPanel({
     setNodeKind(node.refTeamAgentId ? "team_reference" : "agent");
     setWavePlanOpen(false);
     setLocalKbQuery((node.config as any)?.kbQuery || "");
+    setLocalExpression((node.config as any)?.expression || "");
   }
 
   useEffect(() => {
@@ -851,6 +857,56 @@ function NodeConfigPanel({
               }}
               placeholder={autoStateKey(localLabel) || "e.g. sub_flow_output"}
               data-testid="input-state-key-sub-flow"
+            />
+          </div>
+        </>
+      )}
+
+      {node.nodeType === "expression" && (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Expression (JSONata)</label>
+            <Textarea
+              value={localExpression}
+              onChange={e => setLocalExpression(e.target.value)}
+              onBlur={() => {
+                if (localExpression !== ((node.config as any)?.expression || "")) {
+                  onUpdate({ config: { ...(node.config as any || {}), expression: localExpression } } as any);
+                }
+              }}
+              placeholder={'{ "total": amount + tax, "customer": customerName }'}
+              rows={4}
+              className="font-mono text-xs"
+              data-testid="input-expression"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              Runs against the shared DAG state (every upstream node's output, flattened) with no LLM call -- reshape a
+              JSON payload the way n8n's Function node does, without the cost or latency of a full agent step. Result
+              is stored under this node's State Key. Uses{" "}
+              <a href="https://docs.jsonata.org/overview" target="_blank" rel="noopener noreferrer" className="underline">
+                JSONata syntax
+              </a>.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              State Key
+              {stateKeyConflict && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5" data-testid="badge-state-key-conflict-expression">
+                  <AlertTriangle className="w-2.5 h-2.5" /> conflict
+                </Badge>
+              )}
+            </label>
+            <Input
+              value={localStateKey}
+              onChange={e => setLocalStateKey(e.target.value)}
+              onBlur={() => {
+                const val = localStateKey || autoStateKey(localLabel);
+                if (!localStateKey) setLocalStateKey(val);
+                if (val !== (node.stateKey || "")) onUpdate({ stateKey: val || null });
+              }}
+              placeholder={autoStateKey(localLabel) || "e.g. expression_output"}
+              data-testid="input-state-key-expression"
             />
           </div>
         </>

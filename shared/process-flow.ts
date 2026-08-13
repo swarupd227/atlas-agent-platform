@@ -17,6 +17,7 @@ export type ProcessNodeType =
   | "loop"
   | "n8n"
   | "sub_flow"
+  | "expression"
   | "end";
 
 export interface ProcessNode {

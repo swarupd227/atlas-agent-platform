@@ -75,6 +75,7 @@
     "helmet": "^8.2.0",
     "input-otp": "^1.4.2",
     "js-yaml": "^5.2.1",
+    "jsonata": "^2.2.2",
     "jsonwebtoken": "^9.0.3",
     "jszip": "^3.10.1",
     "jwks-rsa": "^4.1.0",

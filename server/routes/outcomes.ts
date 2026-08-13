@@ -1980,6 +1980,7 @@ async function createOutcomeVersion(
       // from "nothing changed" -- the label/description/type/actor comparison
       // alone can't see a change confined to config.refTeamAgentId.
       sourceRefTeamAgentId: (n.config as any)?.refTeamAgentId || null,
+      sourceExpression: (n.config as any)?.expression || null,
     };
   }
 
@@ -2077,7 +2078,8 @@ async function createOutcomeVersion(
         const cfg = (existing.config as any) || {};
         const same = cfg.sourceLabel === pn.label && (cfg.sourceDescription || "") === (pn.description || "")
           && cfg.sourceType === pn.type && (cfg.sourceActor || "") === (pn.actor || "")
-          && (cfg.sourceRefTeamAgentId || null) === ((pn.config as any)?.refTeamAgentId || null);
+          && (cfg.sourceRefTeamAgentId || null) === ((pn.config as any)?.refTeamAgentId || null)
+          && (cfg.sourceExpression || null) === ((pn.config as any)?.expression || null);
         if (same) unchanged.push(existing); else changed.push(pn);
       }
       // forceFullRebuild deliberately leaves byProcessNodeId empty (nothing
@@ -2144,6 +2146,21 @@ async function createOutcomeVersion(
               refTeamAgentId,
               stateKey: pn.id.replace(/-/g, "_"),
               config: processNodeConfig(pn),
+            });
+            return { pn, node, ok: true as const };
+          }
+          if (pn.type === "expression") {
+            const expression = (pn.config as any)?.expression || null;
+            if (!expression) {
+              return { pn, node: null, ok: false as const, error: `"${pn.label}" has no expression -- write one in Process Flow Studio before syncing.` };
+            }
+            const node = await storage.createTeamBlueprintNode({
+              blueprintId,
+              nodeType: "expression",
+              label: pn.label,
+              refAgentId: null,
+              stateKey: pn.id.replace(/-/g, "_"),
+              config: { ...processNodeConfig(pn), expression },
             });
             return { pn, node, ok: true as const };
           }

@@ -766,8 +766,8 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       } else {
         // Was missing "knowledge_base" (a pre-existing gap -- every KB node in
         // a real blueprint failed compile validation with a false "invalid
-        // type" error) and "sub_flow", the new first-class node type.
-        const validTeamNodeTypes = ["internal_agent", "tool_set", "edge_gate", "remote_agent", "skill", "knowledge_base", "sub_flow"];
+        // type" error), "sub_flow", and "expression".
+        const validTeamNodeTypes = ["internal_agent", "tool_set", "edge_gate", "remote_agent", "skill", "knowledge_base", "sub_flow", "expression"];
         for (const node of teamNodes) {
           if (!validTeamNodeTypes.includes(node.nodeType)) {
             teamErrors.push({ type: "schema", severity: "error", message: `Node '${node.label}' has invalid type '${node.nodeType}'`, nodeId: node.id });
@@ -787,6 +787,9 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
           }
           if (node.nodeType === "sub_flow" && !node.refTeamAgentId) {
             teamErrors.push({ type: "schema", severity: "error", message: `Sub-Flow node '${node.label}' has no flow selected`, nodeId: node.id });
+          }
+          if (node.nodeType === "expression" && !(node.config as any)?.expression) {
+            teamErrors.push({ type: "schema", severity: "error", message: `Expression node '${node.label}' has no expression written`, nodeId: node.id });
           }
           if (node.nodeType === "edge_gate" && !node.gateType) {
             teamWarnings.push({ type: "schema", severity: "warning", message: `Edge Gate node '${node.label}' has no gate type selected`, nodeId: node.id });
