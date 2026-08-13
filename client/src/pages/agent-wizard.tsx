@@ -4,7 +4,7 @@ import { useLocation, useSearch, Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
-import type { AgentTemplate, OutcomeContract, KpiDefinition } from "@shared/schema";
+import type { AgentTemplate, OutcomeContract, KpiDefinition, Agent, McpServer } from "@shared/schema";
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -77,6 +77,7 @@ import {
   Square,
   CheckSquare,
   Layers,
+  Globe,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -99,7 +100,8 @@ const STEPS = [
   { number: 5, label: "Memory & Context" },
   { number: 6, label: "Eval Suite" },
   { number: 7, label: "Rollout Plan" },
-  { number: 8, label: "Review & Create" },
+  { number: 8, label: "Autonomous Agent Mode" },
+  { number: 9, label: "Review & Create" },
 ];
 
 interface ToolParam {
@@ -245,6 +247,7 @@ interface WizardState {
   };
   mcpServerNames: string[];
   knowledgeBaseNames: string[];
+  autonomousTriggers: Array<{ triggerType: string; config: Record<string, unknown> }>;
 }
 
 interface DynamicPresetAdjustment {
@@ -352,6 +355,7 @@ const defaultWizardState: WizardState = {
   },
   mcpServerNames: [],
   knowledgeBaseNames: [],
+  autonomousTriggers: [],
 };
 
 const INDUSTRY_PRESETS: Record<string, {
@@ -893,6 +897,14 @@ export default function AgentWizard() {
     queryKey: ["/api/outcomes"],
   });
 
+  const { data: allAgentsForTriggers } = useQuery<Agent[]>({
+    queryKey: ["/api/agents"],
+  });
+
+  const { data: allMcpServersForTriggers } = useQuery<McpServer[]>({
+    queryKey: ["/api/mcp-servers"],
+  });
+
 
   const { data: ontologyConcepts } = useQuery<Array<{ id: string; label: string; category: string; description: string; synonyms: string[] | null }>>({
     queryKey: [`/api/ontology/concepts?industryId=${encodeURIComponent(wizardState.industryId || "")}`],
@@ -927,6 +939,15 @@ export default function AgentWizard() {
     },
     onSuccess: (data: { id: string; name: string; suiteId?: string; jobId?: string }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      for (const trigger of wizardState.autonomousTriggers) {
+        apiRequest("POST", `/api/agents/${data.id}/triggers`, {
+          triggerType: trigger.triggerType,
+          config: trigger.config,
+          enabled: true,
+        }).catch(() => {
+          toast({ title: "Trigger not created", description: `The ${trigger.triggerType} trigger could not be set up — add it from the agent's Triggers tab.`, variant: "destructive" });
+        });
+      }
       if (data.jobId && data.suiteId) {
         startJobTracking(data.id, data.jobId, data.suiteId, data.name || wizardState.name);
       } else if (creationPath === "template") {
@@ -1975,6 +1996,14 @@ export default function AgentWizard() {
           <Step7RolloutPlan state={wizardState} updateState={updateState} />
         )}
         {currentStep === 8 && (
+          <Step8AutonomousMode
+            state={wizardState}
+            updateState={updateState}
+            allAgents={allAgentsForTriggers || []}
+            allMcpServers={allMcpServersForTriggers || []}
+          />
+        )}
+        {currentStep === 9 && (
           <StepReview
             state={wizardState}
             onCreate={handleCreate}
@@ -2038,10 +2067,10 @@ export default function AgentWizard() {
           <ArrowLeft className="w-4 h-4 mr-1.5" />
           Back
         </Button>
-        {currentStep < 8 ? (
+        {currentStep < STEPS.length - 1 ? (
           <Button
             onClick={() => {
-              setCurrentStep((s) => Math.min(8, s + 1));
+              setCurrentStep((s) => Math.min(STEPS.length - 1, s + 1));
             }}
             disabled={currentStep === 0 && !wizardState.name}
             data-testid="button-next-step"
@@ -2050,11 +2079,12 @@ export default function AgentWizard() {
             <ArrowRight className="w-4 h-4 ml-1.5" />
           </Button>
         ) : (
-          // Step 8 (Review) renders its own gated Create Agent button inline
-          // (data-testid="button-create-agent-review") that blocks on missing
-          // required compliance policies unless governanceOverride is checked.
-          // This footer must not render a second, ungated path to the same
-          // create action -- it previously did, letting users skip the gate.
+          // The last step (Review) renders its own gated Create Agent button
+          // inline (data-testid="button-create-agent-review") that blocks on
+          // missing required compliance policies unless governanceOverride is
+          // checked. This footer must not render a second, ungated path to
+          // the same create action -- it previously did, letting users skip
+          // the gate.
           <div />
         )}
       </div>
@@ -5603,6 +5633,281 @@ function Step7RolloutPlan({
   );
 }
 
+const AUTONOMOUS_TRIGGER_TYPES: Record<string, { label: string; icon: LucideIcon; description: string }> = {
+  schedule: { label: "Schedule", icon: Clock, description: "Run on a cron schedule" },
+  webhook: { label: "Webhook", icon: Globe, description: "Receive HTTP POST requests from external systems" },
+  mcp_resource_change: { label: "Event Trigger", icon: Database, description: "Poll a connector (Jira, Salesforce) and fire when matching records change" },
+  agent_completion: { label: "Agent Completion", icon: CheckCircle, description: "Fire when another agent completes a run" },
+};
+
+function autonomousCronToHuman(cron: string): string {
+  const parts = cron.split(" ");
+  if (parts.length !== 5) return cron;
+  const [min, hour, dom] = parts;
+  if (min === "*" && hour === "*") return "Every minute";
+  if (min === "0" && hour === "*") return "Every hour";
+  if (min === "0" && hour === "0" && dom === "*") return "Every day at midnight";
+  if (min === "*/5") return "Every 5 minutes";
+  if (min === "*/15") return "Every 15 minutes";
+  if (min === "*/30") return "Every 30 minutes";
+  if (hour !== "*" && min !== "*" && dom === "*") return `Daily at ${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
+  return cron;
+}
+
+function Step8AutonomousMode({
+  state,
+  updateState,
+  allAgents,
+  allMcpServers,
+}: {
+  state: WizardState;
+  updateState: (updates: Partial<WizardState>) => void;
+  allAgents: Agent[];
+  allMcpServers: McpServer[];
+}) {
+  const [addOpen, setAddOpen] = useState(false);
+  const [triggerType, setTriggerType] = useState("schedule");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [cronExpression, setCronExpression] = useState("0 * * * *");
+  const [sourceAgentId, setSourceAgentId] = useState("");
+  const [mcpServerId, setMcpServerId] = useState("");
+  const [pollQuery, setPollQuery] = useState("");
+  const [pollIntervalMs, setPollIntervalMs] = useState("300000");
+
+  const pollableMcpServers = allMcpServers.filter(s => /jira|salesforce/i.test(s.name) && /\(Enterprise\)\s*$/i.test(s.name.trim()));
+
+  function resetForm() {
+    setTriggerType("schedule");
+    setWebhookSecret("");
+    setCronExpression("0 * * * *");
+    setSourceAgentId("");
+    setMcpServerId("");
+    setPollQuery("");
+    setPollIntervalMs("300000");
+  }
+
+  function addTrigger() {
+    const config: Record<string, unknown> = {};
+    if (triggerType === "webhook") {
+      if (webhookSecret) config.secret = webhookSecret;
+    } else if (triggerType === "schedule") {
+      config.cron = cronExpression;
+    } else if (triggerType === "agent_completion") {
+      if (!sourceAgentId) return;
+      config.sourceAgentId = sourceAgentId;
+    } else if (triggerType === "mcp_resource_change") {
+      if (!mcpServerId) return;
+      config.mcpServerId = mcpServerId;
+      config.query = pollQuery;
+      config.pollIntervalMs = Number(pollIntervalMs);
+    }
+    updateState({ autonomousTriggers: [...state.autonomousTriggers, { triggerType, config }] });
+    setAddOpen(false);
+    resetForm();
+  }
+
+  function removeTrigger(idx: number) {
+    updateState({ autonomousTriggers: state.autonomousTriggers.filter((_, i) => i !== idx) });
+  }
+
+  return (
+    <div className="flex flex-col gap-4 max-w-2xl">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-lg font-medium flex items-center gap-2">
+          <Zap className="w-5 h-5 text-amber-500" />
+          Autonomous Agent Mode
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Optional. Give this agent a way to start itself — on a schedule, from an inbound webhook, when another
+          agent finishes, or when a connected system changes — instead of only ever being run by hand.
+        </p>
+      </div>
+
+      {state.autonomousTriggers.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-10 gap-3">
+            <Zap className="w-8 h-8 text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">No triggers configured — this agent will only run when someone runs it</p>
+            <Button size="sm" variant="outline" onClick={() => setAddOpen(true)} data-testid="button-add-trigger-empty">
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add a Trigger
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {state.autonomousTriggers.map((trigger, idx) => {
+            const meta = AUTONOMOUS_TRIGGER_TYPES[trigger.triggerType] || { label: trigger.triggerType, icon: Zap, description: "" };
+            const TriggerIcon = meta.icon;
+            const cfg = trigger.config as Record<string, any>;
+            return (
+              <Card key={idx} data-testid={`card-autonomous-trigger-${idx}`}>
+                <CardContent className="flex items-center justify-between gap-3 py-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <TriggerIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-medium" data-testid={`text-trigger-type-${idx}`}>{meta.label}</span>
+                      {trigger.triggerType === "schedule" && (
+                        <span className="text-xs text-muted-foreground truncate">{cfg.cron} ({autonomousCronToHuman(String(cfg.cron))})</span>
+                      )}
+                      {trigger.triggerType === "webhook" && (
+                        <span className="text-xs text-muted-foreground">{cfg.secret ? "Secret configured" : "No secret — URL generated after creation"}</span>
+                      )}
+                      {trigger.triggerType === "agent_completion" && (
+                        <span className="text-xs text-muted-foreground truncate">
+                          {allAgents.find(a => a.id === cfg.sourceAgentId)?.name || cfg.sourceAgentId}
+                        </span>
+                      )}
+                      {trigger.triggerType === "mcp_resource_change" && (
+                        <span className="text-xs text-muted-foreground truncate">
+                          {allMcpServers.find(s => s.id === cfg.mcpServerId)?.name || cfg.mcpServerId}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <Button size="icon" variant="ghost" onClick={() => removeTrigger(idx)} data-testid={`button-remove-trigger-${idx}`}>
+                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+          <Button size="sm" variant="outline" className="self-start" onClick={() => setAddOpen(true)} data-testid="button-add-trigger">
+            <Plus className="w-3.5 h-3.5 mr-1" /> Add Another Trigger
+          </Button>
+        </div>
+      )}
+
+      <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) resetForm(); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-500" />
+              Add Trigger
+            </DialogTitle>
+            <DialogDescription>This trigger will be created as soon as the agent is created.</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs">Trigger Type</Label>
+              <Select value={triggerType} onValueChange={setTriggerType}>
+                <SelectTrigger data-testid="select-autonomous-trigger-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(AUTONOMOUS_TRIGGER_TYPES).map(([key, val]) => (
+                    <SelectItem key={key} value={key}>{val.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">{AUTONOMOUS_TRIGGER_TYPES[triggerType]?.description}</p>
+            </div>
+
+            {triggerType === "webhook" && (
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs">Webhook Secret (optional)</Label>
+                <Input
+                  value={webhookSecret}
+                  onChange={(e) => setWebhookSecret(e.target.value)}
+                  placeholder="Optional shared secret for payload verification"
+                  type="password"
+                  className="text-sm font-mono"
+                  data-testid="input-autonomous-webhook-secret"
+                />
+                <p className="text-[10px] text-muted-foreground">A unique webhook URL will be generated after the agent is created.</p>
+              </div>
+            )}
+
+            {triggerType === "schedule" && (
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs">Cron Expression</Label>
+                <Input
+                  value={cronExpression}
+                  onChange={(e) => setCronExpression(e.target.value)}
+                  placeholder="0 * * * *"
+                  className="text-sm font-mono"
+                  data-testid="input-autonomous-cron"
+                />
+                <p className="text-[10px] text-muted-foreground">Preview: {autonomousCronToHuman(cronExpression)}</p>
+              </div>
+            )}
+
+            {triggerType === "agent_completion" && (
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs">Source Agent</Label>
+                <Select value={sourceAgentId} onValueChange={setSourceAgentId}>
+                  <SelectTrigger data-testid="select-autonomous-source-agent">
+                    <SelectValue placeholder="Choose an agent..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allAgents.map(a => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {triggerType === "mcp_resource_change" && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Connector</Label>
+                  <Select value={mcpServerId} onValueChange={setMcpServerId}>
+                    <SelectTrigger data-testid="select-autonomous-mcp-server">
+                      <SelectValue placeholder="Choose a connector..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pollableMcpServers.map(s => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {pollableMcpServers.length === 0 && (
+                    <p className="text-[10px] text-muted-foreground">Only Jira and Salesforce (Enterprise) connectors support change polling today.</p>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Poll Query</Label>
+                  <Input
+                    value={pollQuery}
+                    onChange={(e) => setPollQuery(e.target.value)}
+                    placeholder={/salesforce/i.test(allMcpServers.find(s => s.id === mcpServerId)?.name || "") ? "LastModifiedDate >= YESTERDAY" : "updated >= -1d"}
+                    className="text-sm font-mono"
+                    data-testid="input-autonomous-poll-query"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Poll Interval</Label>
+                  <Select value={pollIntervalMs} onValueChange={setPollIntervalMs}>
+                    <SelectTrigger data-testid="select-autonomous-poll-interval">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="60000">Every minute</SelectItem>
+                      <SelectItem value="300000">Every 5 minutes</SelectItem>
+                      <SelectItem value="900000">Every 15 minutes</SelectItem>
+                      <SelectItem value="3600000">Every hour</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setAddOpen(false)} data-testid="button-cancel-autonomous-trigger">Cancel</Button>
+            <Button
+              onClick={addTrigger}
+              disabled={(triggerType === "agent_completion" && !sourceAgentId) || (triggerType === "mcp_resource_change" && !mcpServerId)}
+              data-testid="button-confirm-autonomous-trigger"
+            >
+              Add Trigger
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 interface GovernanceRequirement {
   domain: string;
   regulation: string;
@@ -6304,6 +6609,27 @@ function StepReview({
             <span className="text-muted-foreground">Auto-Rollback Triggers</span>
             <span className="font-medium">{state.rolloutConfig.autoRollbackTriggers.length} configured</span>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2 pb-3">
+          <Zap className="w-4 h-4 text-amber-500" />
+          <CardTitle className="text-sm font-medium">Autonomous Agent Mode</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          {state.autonomousTriggers.length === 0 ? (
+            <span className="text-muted-foreground" data-testid="review-autonomous-triggers-none">Not configured — this agent will only run when someone runs it</span>
+          ) : (
+            state.autonomousTriggers.map((t, i) => (
+              <div key={i} className="flex justify-between gap-4" data-testid={`review-autonomous-trigger-${i}`}>
+                <span className="text-muted-foreground">{AUTONOMOUS_TRIGGER_TYPES[t.triggerType]?.label || t.triggerType}</span>
+                <span className="font-medium">
+                  {t.triggerType === "schedule" ? autonomousCronToHuman(String((t.config as any).cron)) : "Configured"}
+                </span>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
 
