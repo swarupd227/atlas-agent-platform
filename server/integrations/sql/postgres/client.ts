@@ -15,6 +15,7 @@
 
 import { Client, type QueryResult } from "pg";
 import { guardReadOnly, assertSafeIdentifier, truncate } from "../shared";
+import { resolveConnectionTarget, type OpenTunnelResult } from "../tunnel";
 import type { SqlConnector, SqlCredentials, SqlResult, SqlColumn } from "../types";
 
 const STATEMENT_TIMEOUT_MS = 30_000;
@@ -42,6 +43,7 @@ function buildSsl(mode: string | undefined): boolean | { rejectUnauthorized: boo
 export class PostgresClient implements SqlConnector {
   readonly dialect = "postgres";
   private clientPromise: Promise<Client> | null = null;
+  private tunnel: OpenTunnelResult | null = null;
 
   constructor(private readonly creds: SqlCredentials) {
     if (!creds.host) throw new Error("PostgreSQL host is not configured. Connect via the Integrations settings.");
@@ -52,13 +54,19 @@ export class PostgresClient implements SqlConnector {
   private async getClient(): Promise<Client> {
     if (!this.clientPromise) {
       this.clientPromise = (async () => {
+        const target = await resolveConnectionTarget(this.creds, 5432);
+        this.tunnel = target.tunnel;
         const client = new Client({
-          host: this.creds.host,
-          port: this.creds.port ? Number(this.creds.port) : 5432,
+          host: target.host,
+          port: target.port,
           database: this.creds.database,
           user: this.creds.user,
           password: this.creds.password,
-          ssl: buildSsl(this.creds.ssl),
+          // A tunnel terminates in plaintext on our side (127.0.0.1) --
+          // the SSH channel itself is already the encrypted transport, so
+          // TLS-to-the-DB is neither necessary nor (usually) configured to
+          // accept connections from an unexpected local port.
+          ssl: target.tunnel ? false : buildSsl(this.creds.ssl),
           statement_timeout: STATEMENT_TIMEOUT_MS,
           query_timeout: STATEMENT_TIMEOUT_MS + 5_000,
           connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
@@ -68,6 +76,10 @@ export class PostgresClient implements SqlConnector {
       })();
     }
     return this.clientPromise;
+  }
+
+  getTunnelFingerprint(): string | undefined {
+    return this.tunnel?.hostFingerprint;
   }
 
   private async query(sql: string, params?: unknown[]): Promise<SqlResult> {
@@ -149,8 +161,10 @@ export class PostgresClient implements SqlConnector {
   }
 
   async close(): Promise<void> {
-    if (!this.clientPromise) return;
-    const client = await this.clientPromise;
-    await client.end();
+    if (this.clientPromise) {
+      const client = await this.clientPromise;
+      await client.end();
+    }
+    await this.tunnel?.close();
   }
 }

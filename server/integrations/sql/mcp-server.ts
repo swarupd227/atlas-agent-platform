@@ -133,6 +133,29 @@ export abstract class SqlMcpServerBase extends RealMcpBase {
       await client.close().catch(() => {});
     }
   }
+
+  /**
+   * Used by /connection-test instead of the generic tool-dispatch path so
+   * the response can surface a tunnel's host-key fingerprint (ssh_tunnel
+   * mode) even on failure -- e.g. a fingerprint mismatch needs to show the
+   * NEW fingerprint so the user can decide whether to trust and re-pin it.
+   */
+  async testConnection(credentials: Record<string, string>): Promise<{ ok: boolean; error?: string; hostFingerprint?: string }> {
+    let client: SqlConnector;
+    try {
+      client = this.buildConnector(credentials);
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+    try {
+      await client.executeQuery("SELECT 1 AS ok", 1);
+      return { ok: true, hostFingerprint: client.getTunnelFingerprint?.() };
+    } catch (e: any) {
+      return { ok: false, error: e.message, hostFingerprint: client.getTunnelFingerprint?.() };
+    } finally {
+      await client.close().catch(() => {});
+    }
+  }
 }
 
 export function createSqlRouter(server: SqlMcpServerBase, integrationId: string): Router {
@@ -162,11 +185,11 @@ export function createSqlRouter(server: SqlMcpServerBase, integrationId: string)
     if (!credentials) {
       return res.json({ connected: false, error: "No credentials configured. Connect this database via the Integrations settings." });
     }
-    const result = await server.callTool("sql_execute_query", { sql: "SELECT 1 AS ok", max_rows: 1 }, orgId);
-    if (result.isError) {
-      return res.json({ connected: false, integration: integrationId, error: result.content[0]?.text ?? "Connection test failed" });
+    const result = await server.testConnection(credentials);
+    if (!result.ok) {
+      return res.json({ connected: false, integration: integrationId, error: result.error ?? "Connection test failed", hostFingerprint: result.hostFingerprint });
     }
-    res.json({ connected: true, integration: integrationId });
+    res.json({ connected: true, integration: integrationId, hostFingerprint: result.hostFingerprint });
   });
 
   return router;

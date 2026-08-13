@@ -42,6 +42,22 @@ export interface SqlCredentials {
   password?: string;
   /** "require" | "disable" | "prefer" | "verify-full" -- Postgres-style values; MySQL/SQL Server clients interpret "require"/"disable" only. */
   ssl?: string;
+
+  /** "direct" (default) | "ssh_tunnel" | "relay_agent" -- how the client reaches `host`. */
+  connectionMode?: string;
+
+  // ── ssh_tunnel mode ────────────────────────────────────────────────────
+  sshHost?: string;
+  sshPort?: string;
+  sshUsername?: string;
+  sshPrivateKey?: string;
+  sshPassphrase?: string;
+  sshPassword?: string;
+  /** TOFU-pinned fingerprint from a prior connection; a mismatch on reconnect fails closed. */
+  sshHostKeyFingerprint?: string;
+
+  // ── relay_agent mode (Phase 3) ─────────────────────────────────────────
+  relayAgentId?: string;
 }
 
 export interface SqlConnector {
@@ -60,6 +76,9 @@ export interface SqlConnector {
   getColumnStats(schema: string | undefined, table: string, column: string): Promise<SqlResult>;
   previewTable(schema: string | undefined, table: string, limit?: number): Promise<SqlResult>;
 
-  /** Release the underlying connection/pool. Always call in a finally block. */
+  /** Release the underlying connection/pool (and any tunnel it opened). Always call in a finally block. */
   close(): Promise<void>;
+
+  /** Set once a tunnel (ssh_tunnel/relay_agent mode) has connected. Undefined in direct mode. */
+  getTunnelFingerprint?(): string | undefined;
 }

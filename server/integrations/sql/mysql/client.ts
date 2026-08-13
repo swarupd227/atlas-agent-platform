@@ -10,6 +10,7 @@
 
 import mysql, { type Connection, type FieldPacket } from "mysql2/promise";
 import { guardReadOnly, assertSafeIdentifier, truncate } from "../shared";
+import { resolveConnectionTarget, type OpenTunnelResult } from "../tunnel";
 import type { SqlConnector, SqlCredentials, SqlResult, SqlColumn } from "../types";
 
 const STATEMENT_TIMEOUT_MS = 30_000;
@@ -37,6 +38,7 @@ function buildSsl(mode: string | undefined): Record<string, unknown> | undefined
 export class MySqlClient implements SqlConnector {
   readonly dialect = "mysql";
   private connPromise: Promise<Connection> | null = null;
+  private tunnel: OpenTunnelResult | null = null;
 
   constructor(private readonly creds: SqlCredentials) {
     if (!creds.host) throw new Error("MySQL host is not configured. Connect via the Integrations settings.");
@@ -46,17 +48,26 @@ export class MySqlClient implements SqlConnector {
 
   private async getConnection(): Promise<Connection> {
     if (!this.connPromise) {
-      this.connPromise = mysql.createConnection({
-        host: this.creds.host,
-        port: this.creds.port ? Number(this.creds.port) : 3306,
-        database: this.creds.database,
-        user: this.creds.user,
-        password: this.creds.password,
-        ssl: buildSsl(this.creds.ssl),
-        connectTimeout: CONNECT_TIMEOUT_MS,
-      });
+      this.connPromise = (async () => {
+        const target = await resolveConnectionTarget(this.creds, 3306);
+        this.tunnel = target.tunnel;
+        return mysql.createConnection({
+          host: target.host,
+          port: target.port,
+          database: this.creds.database,
+          user: this.creds.user,
+          password: this.creds.password,
+          // See PostgresClient's getClient() for why TLS is skipped when tunneled.
+          ssl: target.tunnel ? undefined : buildSsl(this.creds.ssl),
+          connectTimeout: CONNECT_TIMEOUT_MS,
+        });
+      })();
     }
     return this.connPromise;
+  }
+
+  getTunnelFingerprint(): string | undefined {
+    return this.tunnel?.hostFingerprint;
   }
 
   private async query(sql: string, values?: unknown[]): Promise<SqlResult> {
@@ -140,8 +151,10 @@ export class MySqlClient implements SqlConnector {
   }
 
   async close(): Promise<void> {
-    if (!this.connPromise) return;
-    const conn = await this.connPromise;
-    await conn.end();
+    if (this.connPromise) {
+      const conn = await this.connPromise;
+      await conn.end();
+    }
+    await this.tunnel?.close();
   }
 }

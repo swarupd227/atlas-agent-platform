@@ -14,6 +14,7 @@
 
 import sql from "mssql";
 import { guardReadOnly, assertSafeIdentifier, truncate } from "../shared";
+import { resolveConnectionTarget, type OpenTunnelResult } from "../tunnel";
 import type { SqlConnector, SqlCredentials, SqlResult, SqlColumn } from "../types";
 
 const STATEMENT_TIMEOUT_MS = 30_000;
@@ -34,6 +35,7 @@ function buildOptions(mode: string | undefined): { encrypt: boolean; trustServer
 export class SqlServerClient implements SqlConnector {
   readonly dialect = "sqlserver";
   private poolPromise: Promise<sql.ConnectionPool> | null = null;
+  private tunnel: OpenTunnelResult | null = null;
 
   constructor(private readonly creds: SqlCredentials) {
     if (!creds.host) throw new Error("SQL Server host is not configured. Connect via the Integrations settings.");
@@ -44,13 +46,16 @@ export class SqlServerClient implements SqlConnector {
   private async getPool(): Promise<sql.ConnectionPool> {
     if (!this.poolPromise) {
       this.poolPromise = (async () => {
+        const target = await resolveConnectionTarget(this.creds, 1433);
+        this.tunnel = target.tunnel;
         const pool = new sql.ConnectionPool({
-          server: this.creds.host!,
-          port: this.creds.port ? Number(this.creds.port) : 1433,
+          server: target.host,
+          port: target.port,
           database: this.creds.database,
           user: this.creds.user,
           password: this.creds.password,
-          options: buildOptions(this.creds.ssl),
+          // See PostgresClient's getClient() for why TLS is skipped when tunneled.
+          options: target.tunnel ? { encrypt: false, trustServerCertificate: true } : buildOptions(this.creds.ssl),
           connectionTimeout: CONNECT_TIMEOUT_MS,
           requestTimeout: STATEMENT_TIMEOUT_MS,
         });
@@ -59,6 +64,10 @@ export class SqlServerClient implements SqlConnector {
       })();
     }
     return this.poolPromise;
+  }
+
+  getTunnelFingerprint(): string | undefined {
+    return this.tunnel?.hostFingerprint;
   }
 
   private async query(sqlText: string, params?: Record<string, unknown>): Promise<SqlResult> {
@@ -150,8 +159,10 @@ export class SqlServerClient implements SqlConnector {
   }
 
   async close(): Promise<void> {
-    if (!this.poolPromise) return;
-    const pool = await this.poolPromise;
-    await pool.close();
+    if (this.poolPromise) {
+      const pool = await this.poolPromise;
+      await pool.close();
+    }
+    await this.tunnel?.close();
   }
 }

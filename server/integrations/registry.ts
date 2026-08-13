@@ -17,9 +17,13 @@ export interface OAuthConfig {
 export interface FieldDef {
   key: string;
   label: string;
-  type: "text" | "password" | "url";
+  type: "text" | "password" | "url" | "select";
   required: boolean;
   placeholder?: string;
+  /** Required when type is "select" -- the dropdown's choices. */
+  options?: { value: string; label: string }[];
+  /** "select" only: shows this field's value alongside the option label, and other fields whose `showWhen` doesn't match the current value are hidden -- lets a connectionMode selector show/hide the SSH-only fields beneath it. */
+  showWhen?: { field: string; equals: string };
 }
 
 export interface IntegrationDef {
@@ -329,24 +333,54 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     capabilities: ["read_materials", "read_purchase_orders", "read_financials", "create_service_orders"],
   },
 
-  // ── Wave 5: General-purpose SQL connectors — direct connection mode ──────
-  // "Direct" means the platform's egress IPs must be allowlisted by the
-  // database (public/VPC-peered endpoint). SSH-tunnel and relay-agent
-  // connection modes are a separate, later phase — not implemented here.
+  // ── Wave 5: General-purpose SQL connectors ────────────────────────────────
+  // Two connection modes so far: "direct" (platform's egress IPs must be
+  // allowlisted by the database) and "ssh_tunnel" (via a bastion host the
+  // client already runs -- no inbound rule change needed on the DB itself).
+  // A third mode, "relay_agent" (an outbound-only agent the client deploys,
+  // for networks with no inbound access at all), is a separate later phase.
+];
+
+// Shared by postgres/mysql/sqlserver below -- keeps the connectionMode
+// selector and its SSH sub-fields in sync across all three rather than
+// tripling near-identical field lists.
+const SQL_CONNECTION_MODE_FIELDS: FieldDef[] = [
+  {
+    key: "connectionMode", label: "Connection Mode", type: "select", required: false,
+    options: [
+      { value: "direct", label: "Direct — allowlist our egress IPs" },
+      { value: "ssh_tunnel", label: "SSH Tunnel — via a bastion host" },
+    ],
+  },
+  { key: "sshHost", label: "SSH Bastion Host", type: "text", required: false, placeholder: "bastion.mycompany.com", showWhen: { field: "connectionMode", equals: "ssh_tunnel" } },
+  { key: "sshPort", label: "SSH Port", type: "text", required: false, placeholder: "22", showWhen: { field: "connectionMode", equals: "ssh_tunnel" } },
+  { key: "sshUsername", label: "SSH Username", type: "text", required: false, showWhen: { field: "connectionMode", equals: "ssh_tunnel" } },
+  { key: "sshPrivateKey", label: "SSH Private Key (PEM) — or use password below", type: "password", required: false, placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----", showWhen: { field: "connectionMode", equals: "ssh_tunnel" } },
+  { key: "sshPassphrase", label: "SSH Private Key Passphrase (if encrypted)", type: "password", required: false, showWhen: { field: "connectionMode", equals: "ssh_tunnel" } },
+  { key: "sshPassword", label: "SSH Password — if not using a private key", type: "password", required: false, showWhen: { field: "connectionMode", equals: "ssh_tunnel" } },
+  {
+    key: "sshHostKeyFingerprint", label: "SSH Host Key Fingerprint (pin after first connect)", type: "text", required: false,
+    placeholder: "shown in the connection-test result on first connect — paste it here to pin it",
+    showWhen: { field: "connectionMode", equals: "ssh_tunnel" },
+  },
+];
+
+INTEGRATION_REGISTRY.push(
   {
     id: "postgres",
     name: "PostgreSQL",
-    description: "Relational database — direct connection, schema inspection, and read-only SQL queries",
+    description: "Relational database — direct or SSH-tunneled connection, schema inspection, and read-only SQL queries",
     category: "data",
     logoColor: "#336791",
     authMethod: "basic",
     credentialFields: [
-      { key: "host", label: "Host", type: "text", required: true, placeholder: "mydb.abc123.us-east-1.rds.amazonaws.com" },
+      { key: "host", label: "Host (or the DB's address as reachable from the SSH bastion, in tunnel mode)", type: "text", required: true, placeholder: "mydb.abc123.us-east-1.rds.amazonaws.com" },
       { key: "port", label: "Port", type: "text", required: false, placeholder: "5432" },
       { key: "database", label: "Database", type: "text", required: true },
       { key: "user", label: "User", type: "text", required: true },
       { key: "password", label: "Password", type: "password", required: true },
-      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require)", type: "text", required: false, placeholder: "require" },
+      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require; ignored in ssh_tunnel mode)", type: "text", required: false, placeholder: "require" },
+      ...SQL_CONNECTION_MODE_FIELDS,
     ],
     docsUrl: "https://www.postgresql.org/docs/current/protocol.html",
     wave: 5,
@@ -356,17 +390,18 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
   {
     id: "mysql",
     name: "MySQL / MariaDB",
-    description: "Relational database — direct connection, schema inspection, and read-only SQL queries",
+    description: "Relational database — direct or SSH-tunneled connection, schema inspection, and read-only SQL queries",
     category: "data",
     logoColor: "#4479A1",
     authMethod: "basic",
     credentialFields: [
-      { key: "host", label: "Host", type: "text", required: true, placeholder: "mydb.abc123.us-east-1.rds.amazonaws.com" },
+      { key: "host", label: "Host (or the DB's address as reachable from the SSH bastion, in tunnel mode)", type: "text", required: true, placeholder: "mydb.abc123.us-east-1.rds.amazonaws.com" },
       { key: "port", label: "Port", type: "text", required: false, placeholder: "3306" },
       { key: "database", label: "Database", type: "text", required: true },
       { key: "user", label: "User", type: "text", required: true },
       { key: "password", label: "Password", type: "password", required: true },
-      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require)", type: "text", required: false, placeholder: "require" },
+      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require; ignored in ssh_tunnel mode)", type: "text", required: false, placeholder: "require" },
+      ...SQL_CONNECTION_MODE_FIELDS,
     ],
     docsUrl: "https://dev.mysql.com/doc/",
     wave: 5,
@@ -376,24 +411,25 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
   {
     id: "sqlserver",
     name: "SQL Server",
-    description: "Relational database — direct connection, schema inspection, and read-only SQL queries",
+    description: "Relational database — direct or SSH-tunneled connection, schema inspection, and read-only SQL queries",
     category: "data",
     logoColor: "#CC2927",
     authMethod: "basic",
     credentialFields: [
-      { key: "host", label: "Host", type: "text", required: true, placeholder: "mydb.database.windows.net" },
+      { key: "host", label: "Host (or the DB's address as reachable from the SSH bastion, in tunnel mode)", type: "text", required: true, placeholder: "mydb.database.windows.net" },
       { key: "port", label: "Port", type: "text", required: false, placeholder: "1433" },
       { key: "database", label: "Database", type: "text", required: true },
       { key: "user", label: "User", type: "text", required: true },
       { key: "password", label: "Password", type: "password", required: true },
-      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require)", type: "text", required: false, placeholder: "require" },
+      { key: "ssl", label: "SSL Mode (disable, require, verify-full — default: require; ignored in ssh_tunnel mode)", type: "text", required: false, placeholder: "require" },
+      ...SQL_CONNECTION_MODE_FIELDS,
     ],
     docsUrl: "https://learn.microsoft.com/sql/connect/",
     wave: 5,
     setupComplexity: "standard",
     capabilities: ["run_queries", "read_schema", "read_tables"],
   },
-];
+);
 
 export function getIntegrationDef(id: string): IntegrationDef | undefined {
   return INTEGRATION_REGISTRY.find((r) => r.id === id);

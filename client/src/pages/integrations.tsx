@@ -1321,9 +1321,11 @@ interface OAuthConfig {
 interface FieldDef {
   key: string;
   label: string;
-  type: "text" | "password" | "url";
+  type: "text" | "password" | "url" | "select";
   required: boolean;
   placeholder?: string;
+  options?: { value: string; label: string }[];
+  showWhen?: { field: string; equals: string };
 }
 
 interface IntegrationDef {
@@ -1336,7 +1338,7 @@ interface IntegrationDef {
   oauthConfig?: OAuthConfig;
   credentialFields?: FieldDef[];
   docsUrl?: string;
-  wave: 1 | 2 | 3 | 4;
+  wave: 1 | 2 | 3 | 4 | 5;
   capabilities: string[];
   connection: {
     id: string;
@@ -1491,31 +1493,49 @@ function ConnectDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3 py-1">
-          {fields.map((field) => (
+          {fields
+            .filter((field) => !field.showWhen || formValues[field.showWhen.field] === field.showWhen.equals)
+            .map((field) => (
             <div key={field.key} className="flex flex-col gap-1.5">
               <Label htmlFor={`field-${field.key}`} className="text-xs">
                 {field.label}
                 {field.required && <span className="text-destructive ml-0.5">*</span>}
               </Label>
-              <div className="relative">
-                <Input
-                  id={`field-${field.key}`}
-                  data-testid={`input-cred-${field.key}`}
-                  type={field.type === "password" && !showPasswords[field.key] ? "password" : "text"}
-                  placeholder={field.placeholder}
-                  value={formValues[field.key] ?? ""}
-                  onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                />
-                {field.type === "password" && (
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowPasswords((p) => ({ ...p, [field.key]: !p[field.key] }))}
-                  >
-                    {showPasswords[field.key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                )}
-              </div>
+              {field.type === "select" ? (
+                <Select
+                  value={formValues[field.key] ?? field.options?.[0]?.value ?? ""}
+                  onValueChange={(v) => setFormValues((prev) => ({ ...prev, [field.key]: v }))}
+                >
+                  <SelectTrigger id={`field-${field.key}`} data-testid={`select-cred-${field.key}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(field.options ?? []).map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="relative">
+                  <Input
+                    id={`field-${field.key}`}
+                    data-testid={`input-cred-${field.key}`}
+                    type={field.type === "password" && !showPasswords[field.key] ? "password" : "text"}
+                    placeholder={field.placeholder}
+                    value={formValues[field.key] ?? ""}
+                    onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                  />
+                  {field.type === "password" && (
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowPasswords((p) => ({ ...p, [field.key]: !p[field.key] }))}
+                    >
+                      {showPasswords[field.key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))}
           {integration.docsUrl && (
