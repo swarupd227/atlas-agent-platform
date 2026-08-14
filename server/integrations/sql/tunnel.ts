@@ -77,7 +77,12 @@ export function openSshTunnel(config: SshTunnelConfig): Promise<OpenTunnelResult
     ssh.on("ready", () => {
       const server = net.createServer((localSocket: Socket) => {
         ssh.forwardOut("127.0.0.1", localSocket.remotePort ?? 0, config.targetHost, config.targetPort, (err, stream) => {
-          if (err) { localSocket.destroy(); return; }
+          // Propagate the real reason (e.g. "administratively prohibited" when
+          // the bastion has AllowTcpForwarding disabled) instead of destroying
+          // silently -- otherwise the DB driver only ever reports its own
+          // generic "connection terminated unexpectedly", which gives no clue
+          // that the failure happened at the SSH layer, not the DB layer.
+          if (err) { localSocket.destroy(err instanceof Error ? err : new Error(String(err))); return; }
           localSocket.pipe(stream).pipe(localSocket);
           stream.on("error", () => localSocket.destroy());
           localSocket.on("error", () => stream.destroy());

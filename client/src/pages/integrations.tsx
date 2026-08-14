@@ -1795,6 +1795,7 @@ const WAVE_LABELS: Record<number, { label: string; description: string }> = {
   2: { label: "ITSM & DevOps", description: "IT service management and developer toolchains" },
   3: { label: "Collaboration", description: "Team messaging and productivity platforms" },
   4: { label: "Data & ERP", description: "Data warehouses and enterprise resource planning" },
+  5: { label: "SQL Databases", description: "General-purpose relational database connectors — direct, SSH tunnel, or relay agent" },
 };
 
 function EnterpriseConnectorsSection() {
@@ -1887,6 +1888,7 @@ function EnterpriseConnectorsSection() {
               <SelectItem value="2">ITSM & DevOps</SelectItem>
               <SelectItem value="3">Collaboration</SelectItem>
               <SelectItem value="4">Data & ERP</SelectItem>
+              <SelectItem value="5">SQL Databases</SelectItem>
             </SelectContent>
           </Select>
           <Select value={filterStatus} onValueChange={setFilterStatus}>
@@ -1913,7 +1915,7 @@ function EnterpriseConnectorsSection() {
         </Card>
       )}
 
-      {[1, 2, 3, 4].map((wave) => {
+      {[1, 2, 3, 4, 5].map((wave) => {
         const items = byWave[wave];
         if (!items || items.length === 0) return null;
         const waveLabel = WAVE_LABELS[wave];
