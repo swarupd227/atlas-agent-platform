@@ -58,6 +58,13 @@ export interface SqlCredentials {
 
   // ── relay_agent mode (Phase 3) ─────────────────────────────────────────
   relayAgentId?: string;
+
+  /**
+   * Comma-separated table names this connection is scoped to (case-
+   * insensitive, unqualified). Empty/unset = no restriction. Enforced by
+   * ScopedSqlConnector, not by the dialect clients themselves.
+   */
+  allowedTables?: string;
 }
 
 export interface SqlConnector {
@@ -76,9 +83,24 @@ export interface SqlConnector {
   getColumnStats(schema: string | undefined, table: string, column: string): Promise<SqlResult>;
   previewTable(schema: string | undefined, table: string, limit?: number): Promise<SqlResult>;
 
+  /**
+   * Up to `limit` distinct values of `column`, sampled from at most the
+   * first few thousand rows (bounded cost regardless of table size) --
+   * used to surface data-quality issues like case-variant duplicates
+   * ("MEDIUM" vs "medium") before an agent builds a query around them.
+   */
+  sampleDistinctValues(schema: string | undefined, table: string, column: string, limit: number): Promise<string[]>;
+
   /** Release the underlying connection/pool (and any tunnel it opened). Always call in a finally block. */
   close(): Promise<void>;
 
   /** Set once a tunnel (ssh_tunnel/relay_agent mode) has connected. Undefined in direct mode. */
   getTunnelFingerprint?(): string | undefined;
+
+  /**
+   * Tables this connector has described or previewed so far (session-
+   * scoped -- see session-cache.ts). Only ScopedSqlConnector implements
+   * this; a raw dialect client doesn't track it.
+   */
+  getExploredTables?(): Set<string>;
 }

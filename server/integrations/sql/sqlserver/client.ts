@@ -158,6 +158,18 @@ export class SqlServerClient implements SqlConnector {
     return this.query(`SELECT TOP (${Math.min(Math.max(limit, 1), 50)}) * FROM ${qualified}`);
   }
 
+  async sampleDistinctValues(schema: string | undefined = "dbo", table: string, column: string, limit: number): Promise<string[]> {
+    const qualified = `[${assertSafeIdentifier(schema, "schema")}].[${assertSafeIdentifier(table, "table")}]`;
+    const col = `[${assertSafeIdentifier(column, "column")}]`;
+    const boundedLimit = Math.min(Math.max(limit, 1), 100);
+    const result = await this.query(
+      `SELECT DISTINCT TOP (@lim) CAST(${col} AS NVARCHAR(4000)) AS v
+       FROM (SELECT TOP (5000) ${col} FROM ${qualified}) AS sub`,
+      { lim: boundedLimit }
+    );
+    return result.rows.map(r => String(r.v));
+  }
+
   async close(): Promise<void> {
     if (this.poolPromise) {
       const pool = await this.poolPromise;

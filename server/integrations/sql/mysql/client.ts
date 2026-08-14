@@ -150,6 +150,17 @@ export class MySqlClient implements SqlConnector {
     return this.query(`SELECT * FROM ${qualified} LIMIT ${Math.min(Math.max(limit, 1), 50)}`);
   }
 
+  async sampleDistinctValues(schema: string | undefined, table: string, column: string, limit: number): Promise<string[]> {
+    const qualified = `\`${assertSafeIdentifier(schema ?? this.creds.database!, "schema")}\`.\`${assertSafeIdentifier(table, "table")}\``;
+    const col = `\`${assertSafeIdentifier(column, "column")}\``;
+    const boundedLimit = Math.min(Math.max(limit, 1), 100);
+    const result = await this.query(
+      `SELECT DISTINCT CAST(${col} AS CHAR) AS v FROM (SELECT ${col} FROM ${qualified} LIMIT 5000) sub LIMIT ?`,
+      [boundedLimit]
+    );
+    return result.rows.map(r => String(r.v));
+  }
+
   async close(): Promise<void> {
     if (this.connPromise) {
       const conn = await this.connPromise;

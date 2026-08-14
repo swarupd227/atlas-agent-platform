@@ -160,6 +160,19 @@ export class PostgresClient implements SqlConnector {
     return this.query(`SELECT * FROM ${qualified} LIMIT ${Math.min(Math.max(limit, 1), 50)}`);
   }
 
+  async sampleDistinctValues(schema: string | undefined = "public", table: string, column: string, limit: number): Promise<string[]> {
+    const qualified = `"${assertSafeIdentifier(schema, "schema")}"."${assertSafeIdentifier(table, "table")}"`;
+    const col = `"${assertSafeIdentifier(column, "column")}"`;
+    const boundedLimit = Math.min(Math.max(limit, 1), 100);
+    // The inner LIMIT bounds scan cost regardless of table size; the outer
+    // DISTINCT+LIMIT then caps how many values come back.
+    const result = await this.query(
+      `SELECT DISTINCT ${col}::text AS v FROM (SELECT ${col} FROM ${qualified} LIMIT 5000) sub LIMIT $1`,
+      [boundedLimit]
+    );
+    return result.rows.map(r => String(r.v));
+  }
+
   async close(): Promise<void> {
     if (this.clientPromise) {
       const client = await this.clientPromise;

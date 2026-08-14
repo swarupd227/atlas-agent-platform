@@ -11,6 +11,7 @@
 
 import type { SqlConnector } from "./types";
 import type { McpToolResult } from "../../real-mcp-base";
+import { extractReferencedTables } from "./sql-parse";
 
 function ok(data: unknown): McpToolResult {
   return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] };
@@ -25,7 +26,30 @@ export async function sql_execute_query(client: SqlConnector, args: Record<strin
   if (!sql) return err("sql is required");
   try {
     const result = await client.executeQuery(sql, maxRows);
-    return ok({ ...result, note: result.truncated ? `Results truncated to ${maxRows} rows. Use LIMIT/WHERE to narrow results.` : undefined });
+    const notes: string[] = [];
+    if (result.truncated) {
+      notes.push(
+        `⚠ INCOMPLETE RESULT: only the first ${maxRows} rows are shown, there are more. ` +
+        `Do not answer as if these rows are the whole answer -- add a WHERE filter, or use ` +
+        `COUNT/SUM/AVG/etc. to get a complete aggregate instead of relying on the visible rows.`
+      );
+    }
+    // Advisory only (never blocks the query) -- ScopedSqlConnector's
+    // getExploredTables reflects what this session has actually described
+    // or previewed, which a bare "table looks obviously named" guess skips.
+    const explored = client.getExploredTables?.();
+    if (explored) {
+      const { tables, parsedOk } = extractReferencedTables(sql, client.dialect);
+      const unexplored = parsedOk ? tables.filter((t) => !explored.has(t)) : [];
+      if (unexplored.length > 0) {
+        notes.push(
+          `Note: this query references table(s) you haven't inspected yet this session (${unexplored.join(", ")}). ` +
+          `If the results look unexpected, run sql_describe_table on them first -- column names/types and data-quality ` +
+          `quirks (e.g. inconsistent casing in a status column) are easy to guess wrong.`
+        );
+      }
+    }
+    return ok({ ...result, note: notes.length > 0 ? notes.join(" ") : undefined });
   } catch (e: any) { return err(e.message); }
 }
 
@@ -44,6 +68,57 @@ export async function sql_list_tables(client: SqlConnector, args: Record<string,
   } catch (e: any) { return err(e.message); }
 }
 
+// Text-ish columns beyond this count aren't profiled, to bound how many
+// extra round-trips one describeTable call can trigger on a wide table.
+const MAX_PROFILED_COLUMNS = 5;
+const DISTINCT_SAMPLE_LIMIT = 21; // 20 shown + 1 to detect "more than 20 exist"
+
+function looksTextual(dataType: unknown): boolean {
+  return typeof dataType === "string" && /char|text/i.test(dataType);
+}
+
+function hasCaseVariants(values: string[]): boolean {
+  const seen = new Map<string, string>(); // lowercased -> first original casing seen
+  for (const v of values) {
+    const key = v.toLowerCase();
+    const prior = seen.get(key);
+    if (prior !== undefined && prior !== v) return true;
+    if (prior === undefined) seen.set(key, v);
+  }
+  return false;
+}
+
+/**
+ * For the first few text-like columns, samples distinct values so
+ * data-quality issues (case-variant duplicates like "MEDIUM"/"medium",
+ * stray whitespace) are visible BEFORE an agent writes a query assuming
+ * clean data -- found this the hard way live-testing a Data Agent against
+ * production data, where a naive GROUP BY silently undercounted a category.
+ */
+async function profileTextColumns(
+  client: SqlConnector, schema: string | undefined, table: string, columns: Record<string, unknown>[]
+): Promise<Record<string, { distinct_values?: string[]; case_variants_detected?: boolean; high_cardinality?: boolean; profile_error?: string }>> {
+  const candidates = columns.filter((c) => looksTextual(c.data_type)).slice(0, MAX_PROFILED_COLUMNS);
+  const profile: Record<string, { distinct_values?: string[]; case_variants_detected?: boolean; high_cardinality?: boolean; profile_error?: string }> = {};
+
+  await Promise.all(candidates.map(async (c) => {
+    const columnName = String(c.column_name ?? "");
+    if (!columnName) return;
+    try {
+      const values = await client.sampleDistinctValues(schema, table, columnName, DISTINCT_SAMPLE_LIMIT);
+      if (values.length >= DISTINCT_SAMPLE_LIMIT) {
+        profile[columnName] = { high_cardinality: true };
+      } else {
+        profile[columnName] = { distinct_values: values, case_variants_detected: hasCaseVariants(values) };
+      }
+    } catch (e: any) {
+      profile[columnName] = { profile_error: e.message };
+    }
+  }));
+
+  return profile;
+}
+
 export async function sql_describe_table(client: SqlConnector, args: Record<string, unknown>): Promise<McpToolResult> {
   const schema = args.schema ? String(args.schema) : undefined;
   const table = String(args.table ?? "");
@@ -56,12 +131,17 @@ export async function sql_describe_table(client: SqlConnector, args: Record<stri
 
     const columns = schemaResult.status === "fulfilled" ? schemaResult.value : null;
     const preview = previewResult.status === "fulfilled" ? previewResult.value : null;
+    const columnProfile = columns?.rows ? await profileTextColumns(client, schema, table, columns.rows) : {};
 
     return ok({
       schema,
       table,
       columns: columns?.rows ?? [],
       columns_meta: columns ? { row_count: columns.row_count } : null,
+      // Keyed by column_name; only present for columns cheap enough to profile.
+      // case_variants_detected: true is a strong signal to normalize (LOWER/
+      // TRIM) before GROUP BY/WHERE, not just cite the raw distinct values.
+      column_data_quality: columnProfile,
       sample_rows: preview?.rows ?? [],
       sample_row_count: preview?.row_count ?? 0,
       sample_columns: preview?.columns ?? [],

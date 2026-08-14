@@ -342,8 +342,9 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
 ];
 
 // Shared by postgres/mysql/sqlserver below -- keeps the connectionMode
-// selector and its SSH sub-fields in sync across all three rather than
-// tripling near-identical field lists.
+// selector and its SSH sub-fields (plus the allowed-tables governance
+// field, independent of connection mode) in sync across all three rather
+// than tripling near-identical field lists.
 const SQL_CONNECTION_MODE_FIELDS: FieldDef[] = [
   {
     key: "connectionMode", label: "Connection Mode", type: "select", required: false,
@@ -368,6 +369,10 @@ const SQL_CONNECTION_MODE_FIELDS: FieldDef[] = [
     key: "relayAgentId", label: "Relay Agent", type: "text", required: false,
     placeholder: "the agent id shown when you generated its token under Relay Agents",
     showWhen: { field: "connectionMode", equals: "relay_agent" },
+  },
+  {
+    key: "allowedTables", label: "Allowed Tables (governance — comma-separated, leave blank for no restriction)", type: "text", required: false,
+    placeholder: "e.g. agents, workspace_runs, organizations — an agent using this connection can't read or even discover any other table",
   },
 ];
 

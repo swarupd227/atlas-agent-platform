@@ -56,7 +56,10 @@ describe("sql_execute_query", () => {
   it("surfaces a truncation note when the result was truncated", async () => {
     const client = mockConnector({ executeQuery: vi.fn().mockResolvedValue(emptyResult({ truncated: true })) });
     const result = await sql_execute_query(client, { sql: "SELECT 1" });
-    expect(textOf(result).note).toMatch(/truncated/i);
+    // Wording strengthened in Phase 4 to push the agent toward a complete
+    // aggregate instead of narrating the visible rows as the whole answer --
+    // see tests/sql-tools-quality.test.ts for the full behavioral coverage.
+    expect(textOf(result).note).toMatch(/incomplete/i);
   });
 
   it("turns a connector error into an isError result instead of throwing", async () => {

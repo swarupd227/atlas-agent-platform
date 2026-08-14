@@ -9,7 +9,10 @@
 import { Router, Request, Response } from "express";
 import { RealMcpBase, type McpToolResult, type RealMcpToolDef } from "../../real-mcp-base";
 import { getOrgId, getDefaultOrgId } from "../../auth";
-import type { SqlConnector } from "./types";
+import type { SqlConnector, SqlCredentials } from "./types";
+import { getOrCreateSession, evictSession } from "./session-cache";
+import { ScopedSqlConnector, parseAllowedTables } from "./scoped-connector";
+import { explainConnectionError } from "./friendly-errors";
 import {
   sql_execute_query,
   sql_list_schemas,
@@ -24,7 +27,7 @@ export function buildSqlToolDefs(dialectLabel: string): RealMcpToolDef[] {
   return [
     {
       name: "sql_execute_query",
-      description: `Execute a read-only SQL SELECT query against the connected ${dialectLabel} database and return structured rows with column types. DDL/DML statements are blocked. Results are truncated at 1,000 rows — use LIMIT and WHERE filters.`,
+      description: `Execute a read-only SQL SELECT query against the connected ${dialectLabel} database and return structured rows with column types. DDL/DML statements are blocked. Results are truncated at 1,000 rows — use LIMIT and WHERE filters. This connection may be scoped to a fixed set of tables (governance); a query outside that set is rejected, not silently filtered. Prefer running sql_describe_table on any table you haven't already inspected this session before querying it — text columns often have data-quality issues (inconsistent casing, stray whitespace) that a blind query will get wrong.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -51,7 +54,7 @@ export function buildSqlToolDefs(dialectLabel: string): RealMcpToolDef[] {
     },
     {
       name: "sql_describe_table",
-      description: `Full column-level schema for a ${dialectLabel} table (names, types, nullable, defaults) plus a 5-row sample.`,
+      description: `Full column-level schema for a ${dialectLabel} table (names, types, nullable, defaults) plus a 5-row sample. Also profiles the first few text columns' actual distinct values (column_data_quality in the response) -- check case_variants_detected before writing a GROUP BY/WHERE on that column, since e.g. "MEDIUM" and "medium" being counted separately is a real, easy-to-miss mistake.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -105,15 +108,37 @@ export abstract class SqlMcpServerBase extends RealMcpBase {
   protected abstract readonly dialectLabel: string;
   protected abstract buildConnector(credentials: Record<string, string>): SqlConnector;
 
+  /**
+   * Reuses a connector (and, for ssh_tunnel/relay_agent modes, its tunnel)
+   * across calls instead of opening and tearing one down every time --
+   * see session-cache.ts for why. The ScopedSqlConnector wrapper (built
+   * when the connection has an allowed-tables list) is constructed INSIDE
+   * the cached build() closure, not per call: its exploredTables tracking
+   * needs to persist across calls in the same session for the "you haven't
+   * inspected this table yet" advisory nudge to ever actually go quiet --
+   * rebuilding the wrapper per call (an earlier version of this code) reset
+   * exploredTables every time, so the nudge fired on literally every query
+   * forever, never converging. allowedTables is part of `credentials`, so
+   * it's already folded into the session-cache key -- a changed allowlist
+   * naturally builds a new wrapper rather than reusing a stale one.
+   */
+  private getClient(integrationId: string, orgId: string, credentials: SqlCredentials): SqlConnector {
+    return getOrCreateSession(integrationId, orgId, credentials, () => {
+      const raw = this.buildConnector(credentials as Record<string, string>);
+      const allowedTables = parseAllowedTables(credentials.allowedTables);
+      return allowedTables ? new ScopedSqlConnector(raw, allowedTables) : raw;
+    });
+  }
+
   async handleTool(
     toolName: string,
     args: Record<string, unknown>,
     credentials: Record<string, string>,
-    _orgId: string
+    orgId: string
   ): Promise<McpToolResult> {
     let client: SqlConnector;
     try {
-      client = this.buildConnector(credentials);
+      client = this.getClient(this.integrationId, orgId, credentials);
     } catch (e: any) {
       return this.err(e.message);
     }
@@ -129,8 +154,12 @@ export abstract class SqlMcpServerBase extends RealMcpBase {
         case "sql_preview_table":     return await sql_preview_table(client, args);
         default: return this.err(`Unknown ${this.dialectLabel} tool: ${toolName}`);
       }
-    } finally {
-      await client.close().catch(() => {});
+    } catch (e: any) {
+      // The cached connector may be poisoned (dead pool, dropped tunnel) --
+      // evict it so the next call builds a fresh one instead of failing
+      // repeatedly until the idle sweep happens to catch it.
+      evictSession(this.integrationId, orgId, credentials as SqlCredentials);
+      return this.err(e?.message ?? "Unknown error");
     }
   }
 
@@ -140,20 +169,19 @@ export abstract class SqlMcpServerBase extends RealMcpBase {
    * mode) even on failure -- e.g. a fingerprint mismatch needs to show the
    * NEW fingerprint so the user can decide whether to trust and re-pin it.
    */
-  async testConnection(credentials: Record<string, string>): Promise<{ ok: boolean; error?: string; hostFingerprint?: string }> {
+  async testConnection(credentials: Record<string, string>, orgId: string): Promise<{ ok: boolean; error?: string; friendlyError?: string; hostFingerprint?: string }> {
     let client: SqlConnector;
     try {
-      client = this.buildConnector(credentials);
+      client = this.getClient(this.integrationId, orgId, credentials);
     } catch (e: any) {
-      return { ok: false, error: e.message };
+      return { ok: false, error: e.message, friendlyError: explainConnectionError(e.message) };
     }
     try {
       await client.executeQuery("SELECT 1 AS ok", 1);
       return { ok: true, hostFingerprint: client.getTunnelFingerprint?.() };
     } catch (e: any) {
-      return { ok: false, error: e.message, hostFingerprint: client.getTunnelFingerprint?.() };
-    } finally {
-      await client.close().catch(() => {});
+      evictSession(this.integrationId, orgId, credentials as SqlCredentials);
+      return { ok: false, error: e.message, friendlyError: explainConnectionError(e.message), hostFingerprint: client.getTunnelFingerprint?.() };
     }
   }
 }
@@ -185,9 +213,14 @@ export function createSqlRouter(server: SqlMcpServerBase, integrationId: string)
     if (!credentials) {
       return res.json({ connected: false, error: "No credentials configured. Connect this database via the Integrations settings." });
     }
-    const result = await server.testConnection(credentials);
+    const result = await server.testConnection(credentials, orgId);
     if (!result.ok) {
-      return res.json({ connected: false, integration: integrationId, error: result.error ?? "Connection test failed", hostFingerprint: result.hostFingerprint });
+      return res.json({
+        connected: false, integration: integrationId,
+        error: result.error ?? "Connection test failed",
+        friendlyError: result.friendlyError,
+        hostFingerprint: result.hostFingerprint,
+      });
     }
     res.json({ connected: true, integration: integrationId, hostFingerprint: result.hostFingerprint });
   });
