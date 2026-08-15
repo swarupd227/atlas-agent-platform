@@ -20,6 +20,7 @@ function baseConnector(overrides: Partial<SqlConnector> = {}): SqlConnector {
     getColumnStats: vi.fn(async () => emptyResult()),
     previewTable: vi.fn(async () => emptyResult([{ id: 1, risk_tier: "MEDIUM" }])),
     sampleDistinctValues: vi.fn(async () => []),
+    valueExistsInColumn: vi.fn(async () => true),
     close: vi.fn(async () => {}),
     ...overrides,
   };
@@ -74,6 +75,49 @@ describe("sql_execute_query — unexplored-table advisory nudge", () => {
     const note = parseOkResult(result).note;
     expect(note).toMatch(/INCOMPLETE/);
     expect(note).toMatch(/haven't inspected/i);
+  });
+});
+
+describe("sql_execute_query — suspicious-zero-result advisory nudge", () => {
+  it("fires when a zero-row equality-filtered query's literal doesn't exist in the column at all", async () => {
+    const client = baseConnector({
+      executeQuery: vi.fn(async () => emptyResult([])),
+      valueExistsInColumn: vi.fn(async () => false),
+    });
+    const result = await sql_execute_query(client, { sql: "SELECT * FROM agents WHERE risk_tier = 'MEIDUM'" });
+    const note = parseOkResult(result).note;
+    expect(note).toMatch(/SUSPICIOUS ZERO/);
+    expect(note).toMatch(/risk_tier = 'MEIDUM'/);
+    expect(client.valueExistsInColumn).toHaveBeenCalledWith(undefined, "agents", "risk_tier", "MEIDUM");
+  });
+
+  it("does not fire when the literal does exist in the column", async () => {
+    const client = baseConnector({
+      executeQuery: vi.fn(async () => emptyResult([])),
+      valueExistsInColumn: vi.fn(async () => true),
+    });
+    const result = await sql_execute_query(client, { sql: "SELECT * FROM agents WHERE risk_tier = 'MEDIUM'" });
+    expect(parseOkResult(result).note).toBeUndefined();
+  });
+
+  it("does not fire when the query returns rows (not a zero result)", async () => {
+    const client = baseConnector({
+      executeQuery: vi.fn(async () => emptyResult([{ id: 1 }])),
+      valueExistsInColumn: vi.fn(async () => false),
+    });
+    const result = await sql_execute_query(client, { sql: "SELECT * FROM agents WHERE risk_tier = 'MEIDUM'" });
+    expect(parseOkResult(result).note).toBeUndefined();
+    expect(client.valueExistsInColumn).not.toHaveBeenCalled();
+  });
+
+  it("does not fire when the query has no equality predicates", async () => {
+    const client = baseConnector({
+      executeQuery: vi.fn(async () => emptyResult([])),
+      valueExistsInColumn: vi.fn(async () => false),
+    });
+    const result = await sql_execute_query(client, { sql: "SELECT * FROM agents WHERE created_at > '2020-01-01'" });
+    expect(parseOkResult(result).note).toBeUndefined();
+    expect(client.valueExistsInColumn).not.toHaveBeenCalled();
   });
 });
 

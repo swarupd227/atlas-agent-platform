@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractReferencedTables } from "../server/integrations/sql/sql-parse";
+import { extractReferencedTables, extractEqualityPredicates } from "../server/integrations/sql/sql-parse";
 
 describe("extractReferencedTables", () => {
   it("extracts a single table from a plain SELECT", () => {
@@ -58,5 +58,69 @@ describe("extractReferencedTables", () => {
       "postgres"
     );
     expect(r.tables).toEqual(["agents"]);
+  });
+});
+
+describe("extractEqualityPredicates", () => {
+  it("extracts a simple equality predicate", () => {
+    const r = extractEqualityPredicates("SELECT * FROM agents WHERE risk_tier = 'MEDIUM'", "postgres");
+    expect(r).toEqual([{ table: "agents", column: "risk_tier", literal: "MEDIUM" }]);
+  });
+
+  it("extracts each literal in an IN list", () => {
+    const r = extractEqualityPredicates("SELECT * FROM agents WHERE risk_tier IN ('MEDIUM', 'HIGH')", "postgres");
+    expect(r).toEqual([
+      { table: "agents", column: "risk_tier", literal: "MEDIUM" },
+      { table: "agents", column: "risk_tier", literal: "HIGH" },
+    ]);
+  });
+
+  it("extracts both sides of an AND chain", () => {
+    const r = extractEqualityPredicates(
+      "SELECT * FROM agents WHERE risk_tier = 'MEDIUM' AND status = 'active'",
+      "postgres"
+    );
+    expect(r).toEqual([
+      { table: "agents", column: "risk_tier", literal: "MEDIUM" },
+      { table: "agents", column: "status", literal: "active" },
+    ]);
+  });
+
+  it("does not descend into an OR branch", () => {
+    const r = extractEqualityPredicates(
+      "SELECT * FROM agents WHERE risk_tier = 'MEDIUM' OR risk_tier = 'HIGH'",
+      "postgres"
+    );
+    expect(r).toEqual([]);
+  });
+
+  it("resolves a qualified column via its table alias", () => {
+    const r = extractEqualityPredicates(
+      "SELECT a.id, b.name FROM agents a JOIN organizations b ON a.organization_id = b.id WHERE b.name = 'Acme'",
+      "postgres"
+    );
+    expect(r).toEqual([{ table: "organizations", column: "name", literal: "Acme" }]);
+  });
+
+  it("resolves an unqualified column when only one table is in scope", () => {
+    const r = extractEqualityPredicates("SELECT * FROM agents WHERE risk_tier = 'MEDIUM'", "postgres");
+    expect(r).toEqual([{ table: "agents", column: "risk_tier", literal: "MEDIUM" }]);
+  });
+
+  it("skips an unqualified column when multiple tables are in scope (ambiguous)", () => {
+    const r = extractEqualityPredicates(
+      "SELECT a.id FROM agents a JOIN organizations b ON a.organization_id = b.id WHERE status = 'active'",
+      "postgres"
+    );
+    expect(r).toEqual([]);
+  });
+
+  it("returns an empty array for unparseable SQL rather than throwing", () => {
+    expect(extractEqualityPredicates("this is not sql at all !!!", "postgres")).toEqual([]);
+  });
+
+  it("returns an empty array when the WHERE clause has no equality predicates", () => {
+    const r = extractEqualityPredicates("SELECT * FROM agents WHERE created_at > '2020-01-01'", "postgres");
+    expect(r).toEqual([]);
   });
 });

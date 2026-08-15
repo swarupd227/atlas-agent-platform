@@ -30,6 +30,8 @@ function mockConnector(overrides: Partial<SqlConnector> = {}): SqlConnector {
     searchTables: vi.fn().mockResolvedValue(emptyResult()),
     getColumnStats: vi.fn().mockResolvedValue(emptyResult()),
     previewTable: vi.fn().mockResolvedValue(emptyResult()),
+    sampleDistinctValues: vi.fn().mockResolvedValue([]),
+    valueExistsInColumn: vi.fn().mockResolvedValue(true),
     close: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };

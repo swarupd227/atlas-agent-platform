@@ -91,6 +91,16 @@ export interface SqlConnector {
    */
   sampleDistinctValues(schema: string | undefined, table: string, column: string, limit: number): Promise<string[]>;
 
+  /**
+   * Does `literal` exist anywhere in `column`, under any casing? A cheap,
+   * targeted existence check (not a scan) used after a literal-equality
+   * filter returns zero rows, to distinguish a genuine zero from a
+   * wrong-column-or-value guess: a real column named plausibly for what
+   * the agent meant, but whose actual value domain doesn't contain the
+   * literal it filtered on at all.
+   */
+  valueExistsInColumn(schema: string | undefined, table: string, column: string, literal: string): Promise<boolean>;
+
   /** Release the underlying connection/pool (and any tunnel it opened). Always call in a finally block. */
   close(): Promise<void>;
 

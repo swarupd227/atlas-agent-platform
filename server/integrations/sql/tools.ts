@@ -11,13 +11,47 @@
 
 import type { SqlConnector } from "./types";
 import type { McpToolResult } from "../../real-mcp-base";
-import { extractReferencedTables } from "./sql-parse";
+import { extractReferencedTables, extractEqualityPredicates } from "./sql-parse";
 
 function ok(data: unknown): McpToolResult {
   return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] };
 }
 function err(msg: string): McpToolResult {
   return { content: [{ type: "text", text: msg }], isError: true };
+}
+
+// Only the first few equality predicates in a WHERE clause are checked --
+// bounds how many extra round-trips one zero-row query can trigger.
+const MAX_LITERAL_CHECKS = 3;
+
+/**
+ * When a query returns zero rows, a literal-equality filter that doesn't
+ * match anything COULD be a genuine zero, or it could be the "wrong column,
+ * plausible name" failure mode: a syntactically valid filter on a real
+ * column whose value domain never contained the literal at all (wrong
+ * column, or a misspelled/mis-cased value). Runs a targeted existence check
+ * per predicate and surfaces an advisory note -- never blocks, since a real
+ * zero-result answer must still go through untouched.
+ */
+async function checkSuspiciousZeroResult(client: SqlConnector, sql: string): Promise<string | undefined> {
+  const predicates = extractEqualityPredicates(sql, client.dialect).slice(0, MAX_LITERAL_CHECKS);
+  if (predicates.length === 0) return undefined;
+
+  const missing: { column: string; literal: string }[] = [];
+  for (const p of predicates) {
+    try {
+      const exists = await client.valueExistsInColumn(undefined, p.table, p.column, p.literal);
+      if (!exists) missing.push({ column: p.column, literal: p.literal });
+    } catch {
+      // Best-effort -- a failed check just means no signal, not an error for the user.
+    }
+  }
+  if (missing.length === 0) return undefined;
+
+  const parts = missing.map((m) => `${m.column} = '${m.literal}'`).join(", ");
+  return `⚠ SUSPICIOUS ZERO: this query's result was empty, and the filter value(s) in (${parts}) don't appear anywhere in ` +
+    `${missing.length === 1 ? "that column" : "those columns"} at all, under any casing. This may be the wrong column or a ` +
+    `misspelled value -- double-check with sql_describe_table before treating this as a real zero.`;
 }
 
 export async function sql_execute_query(client: SqlConnector, args: Record<string, unknown>): Promise<McpToolResult> {
@@ -48,6 +82,10 @@ export async function sql_execute_query(client: SqlConnector, args: Record<strin
           `quirks (e.g. inconsistent casing in a status column) are easy to guess wrong.`
         );
       }
+    }
+    if (result.row_count === 0) {
+      const suspiciousZeroNote = await checkSuspiciousZeroResult(client, sql);
+      if (suspiciousZeroNote) notes.push(suspiciousZeroNote);
     }
     return ok({ ...result, note: notes.length > 0 ? notes.join(" ") : undefined });
   } catch (e: any) { return err(e.message); }

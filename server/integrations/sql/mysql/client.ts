@@ -161,6 +161,16 @@ export class MySqlClient implements SqlConnector {
     return result.rows.map(r => String(r.v));
   }
 
+  async valueExistsInColumn(schema: string | undefined, table: string, column: string, literal: string): Promise<boolean> {
+    const qualified = `\`${assertSafeIdentifier(schema ?? this.creds.database!, "schema")}\`.\`${assertSafeIdentifier(table, "table")}\``;
+    const col = `\`${assertSafeIdentifier(column, "column")}\``;
+    const result = await this.query(
+      `SELECT EXISTS(SELECT 1 FROM ${qualified} WHERE LOWER(CAST(${col} AS CHAR)) = LOWER(?)) AS found`,
+      [literal]
+    );
+    return Boolean(Number(result.rows[0]?.found));
+  }
+
   async close(): Promise<void> {
     if (this.connPromise) {
       const conn = await this.connPromise;

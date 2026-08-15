@@ -170,6 +170,16 @@ export class SqlServerClient implements SqlConnector {
     return result.rows.map(r => String(r.v));
   }
 
+  async valueExistsInColumn(schema: string | undefined = "dbo", table: string, column: string, literal: string): Promise<boolean> {
+    const qualified = `[${assertSafeIdentifier(schema, "schema")}].[${assertSafeIdentifier(table, "table")}]`;
+    const col = `[${assertSafeIdentifier(column, "column")}]`;
+    const result = await this.query(
+      `SELECT CASE WHEN EXISTS(SELECT 1 FROM ${qualified} WHERE LOWER(CAST(${col} AS NVARCHAR(4000))) = LOWER(@lit)) THEN 1 ELSE 0 END AS found`,
+      { lit: literal }
+    );
+    return Boolean(Number(result.rows[0]?.found));
+  }
+
   async close(): Promise<void> {
     if (this.poolPromise) {
       const pool = await this.poolPromise;

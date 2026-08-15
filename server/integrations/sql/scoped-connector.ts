@@ -106,6 +106,11 @@ export class ScopedSqlConnector implements SqlConnector {
     return this.inner.sampleDistinctValues(schema, table, column, limit);
   }
 
+  async valueExistsInColumn(schema: string | undefined, table: string, column: string, literal: string): Promise<boolean> {
+    this.checkAllowed(table);
+    return this.inner.valueExistsInColumn(schema, table, column, literal);
+  }
+
   async close(): Promise<void> {
     return this.inner.close();
   }

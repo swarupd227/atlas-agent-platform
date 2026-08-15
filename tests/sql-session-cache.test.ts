@@ -15,6 +15,7 @@ function fakeConnector(): SqlConnector {
     getColumnStats: vi.fn(),
     previewTable: vi.fn(),
     sampleDistinctValues: vi.fn(),
+    valueExistsInColumn: vi.fn(),
     close: vi.fn(async () => {}),
   } as unknown as SqlConnector;
 }

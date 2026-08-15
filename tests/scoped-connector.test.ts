@@ -21,6 +21,7 @@ function makeMockConnector(): SqlConnector {
     getColumnStats: vi.fn(async () => emptyResult()),
     previewTable: vi.fn(async () => emptyResult([{ id: 1 }])),
     sampleDistinctValues: vi.fn(async () => ["a", "b"]),
+    valueExistsInColumn: vi.fn(async () => true),
     close: vi.fn(async () => {}),
   };
 }
@@ -91,6 +92,20 @@ describe("ScopedSqlConnector — table allowlist enforcement", () => {
     const scoped = new ScopedSqlConnector(inner, new Set(["agents"]));
     await expect(scoped.executeQuery("not valid sql at all !!!", 10)).rejects.toThrow(/couldn't be parsed/i);
     expect(inner.executeQuery).not.toHaveBeenCalled();
+  });
+
+  it("blocks valueExistsInColumn on a table outside the allowlist", async () => {
+    const inner = makeMockConnector();
+    const scoped = new ScopedSqlConnector(inner, new Set(["agents"]));
+    await expect(scoped.valueExistsInColumn(undefined, "admin_users", "email", "x@y.com")).rejects.toThrow(/allowed-tables/i);
+    expect(inner.valueExistsInColumn).not.toHaveBeenCalled();
+  });
+
+  it("delegates valueExistsInColumn for a table on the allowlist", async () => {
+    const inner = makeMockConnector();
+    const scoped = new ScopedSqlConnector(inner, new Set(["agents"]));
+    await expect(scoped.valueExistsInColumn(undefined, "agents", "risk_tier", "MEDIUM")).resolves.toBe(true);
+    expect(inner.valueExistsInColumn).toHaveBeenCalledWith(undefined, "agents", "risk_tier", "MEDIUM");
   });
 
   it("filters listTables/searchTables results to only allowed tables", async () => {

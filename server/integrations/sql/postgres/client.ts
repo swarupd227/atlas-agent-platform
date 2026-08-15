@@ -173,6 +173,18 @@ export class PostgresClient implements SqlConnector {
     return result.rows.map(r => String(r.v));
   }
 
+  async valueExistsInColumn(schema: string | undefined = "public", table: string, column: string, literal: string): Promise<boolean> {
+    const qualified = `"${assertSafeIdentifier(schema, "schema")}"."${assertSafeIdentifier(table, "table")}"`;
+    const col = `"${assertSafeIdentifier(column, "column")}"`;
+    // ILIKE with no wildcard characters in the pattern is a case-insensitive
+    // EQUALITY comparison, not substring -- exactly what's needed here.
+    const result = await this.query(
+      `SELECT EXISTS(SELECT 1 FROM ${qualified} WHERE ${col}::text ILIKE $1) AS found`,
+      [literal]
+    );
+    return Boolean(result.rows[0]?.found);
+  }
+
   async close(): Promise<void> {
     if (this.clientPromise) {
       const client = await this.clientPromise;
