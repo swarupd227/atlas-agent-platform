@@ -1485,14 +1485,14 @@ function ConnectDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent className="max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Connect {integration.name}</DialogTitle>
           <DialogDescription>
             Credentials are encrypted with AES-256-GCM before storage.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-3 py-1">
+        <div className="flex flex-col gap-3 py-1 overflow-y-auto flex-1 min-h-0 pr-1">
           {fields
             .filter((field) => !field.showWhen || formValues[field.showWhen.field] === field.showWhen.equals)
             .map((field) => (
@@ -1551,7 +1551,7 @@ function ConnectDialog({
             </a>
           )}
         </div>
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t pt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
             data-testid={`button-connect-${integration.id}`}
