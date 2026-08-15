@@ -126,7 +126,14 @@ export const agents = pgTable("agents", {
   ciCdConfig: jsonb("ci_cd_config"),
   maturityScore: real("maturity_score").default(0),
   maturityFactors: jsonb("maturity_factors").notNull().default(sql`'{}'::jsonb`),
-  maxToolIterations: integer("max_tool_iterations").default(5),
+  // 5 was the original default; live testing against a genuinely unfamiliar
+  // 150+ table schema showed it's too low for real multi-table exploration
+  // (search/describe/aggregate easily needs 6-8 turns before a query even
+  // runs) -- an agent hit the cap mid-exploration, spent real LLM cost, and
+  // produced nothing. Raised to 10; see workspace-run.ts's exhaustion
+  // handling for the complementary fix (a partial-progress summary instead
+  // of a bare "ran out of steps" message when even 10 isn't enough).
+  maxToolIterations: integer("max_tool_iterations").default(10),
   blueprintId: varchar("blueprint_id"),
   // Template provenance: which agent template this agent was created from.
   // First-class column so "agents derived from template X" is queryable —

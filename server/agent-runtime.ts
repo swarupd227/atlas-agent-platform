@@ -1665,7 +1665,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       }, "planning").catch(() => { /* non-fatal */ });
     }
 
-    const MAX_TOOL_ITERATIONS = options?.maxToolIterations ?? 5;
+    const MAX_TOOL_ITERATIONS = options?.maxToolIterations ?? 10;
     let iterationsUsed = 0;
     let conversationMessages: LLMMessage[] = [
       { role: "system", content: systemMessage },
@@ -3999,7 +3999,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     blueprintRequirements,
     modelProvider: (agent as any).modelProvider || "openai",
     modelName: (agent as any).modelName || "gpt-4.1",
-    maxToolIterations: agent.maxToolIterations ?? 5,
+    maxToolIterations: agent.maxToolIterations ?? 10,
     orgId: agent.organizationId ?? null,
     costCapUsd: rtConfig.costCapUsd ?? null,
     rateLimitPerHour: rtConfig.rateLimitPerHour ?? null,
@@ -4088,7 +4088,7 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
     blueprintRequirements: undefined,
     modelProvider: (agent as any).modelProvider || "openai",
     modelName: (agent as any).modelName || "gpt-4.1",
-    maxToolIterations: maxIterationsOverride ?? (agent.maxToolIterations ?? 5),
+    maxToolIterations: maxIterationsOverride ?? (agent.maxToolIterations ?? 10),
     orgId: agent.organizationId ?? null,
     triggeredBy: triggeredBy ?? "manual",
   };

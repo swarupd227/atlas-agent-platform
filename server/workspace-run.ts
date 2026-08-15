@@ -33,7 +33,9 @@ import type { RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles } from "./anthropic-code-execution";
 import type { Skill } from "@shared/schema";
 
-const MAX_ITERATIONS_DEFAULT = 5;
+// Fallback for agents created before maxToolIterations existed / with it
+// explicitly null. Kept in sync with shared/schema.ts's column default.
+const MAX_ITERATIONS_DEFAULT = 10;
 
 // The single-agent advance()/finalize() loop below never fed the metering
 // pipeline -- Billing reads entirely off outcomeEvents, and this path only
@@ -676,13 +678,56 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
     return view(fresh);
   };
 
+  // Hitting the iteration cap used to just stop cold with a bare "reached
+  // the maximum number of tool steps" message -- honest, but throws away
+  // everything the agent already found and gives the user nothing to act
+  // on, despite the run having incurred real cost. This makes one final
+  // LLM call with `tools` omitted (so it CANNOT request another tool call,
+  // only produce text) asking it to summarize what it already learned and
+  // give its best partial answer, explicitly flagging what's still
+  // incomplete. Costs one bounded extra call, not an open-ended one.
+  const exhaustedBudget = async (): Promise<WorkspaceRunView> => {
+    onEvent({ type: "planning", iteration: cp.iterationsUsed + 1 });
+    try {
+      const synthesisMessages = [
+        ...cp.messages,
+        {
+          role: "user",
+          content: "You've used all the tool-call steps available for this request -- do not attempt to call any more tools. " +
+            "Based only on what you've already found above, give the best answer you can. If you weren't able to fully " +
+            "complete the task, say so explicitly and summarize what you DID find (partial results, tables/columns you " +
+            "explored) and what's still missing, rather than only stating that you ran out of steps.",
+        } as any,
+      ];
+      const synth = await completeWithFallback(
+        synthesisMessages,
+        { model: cp.modelName, maxTokens: 4096 }, // no `tools` -- forces a text-only reply
+        [provider, fallback],
+      );
+      cp.totalCostUsd += synth.costUsd;
+      cp.totalTokens.prompt += synth.tokensUsed.prompt;
+      cp.totalTokens.completion += synth.tokensUsed.completion;
+      cp.totalTokens.total += synth.tokensUsed.total;
+      const summary = synth.content?.trim();
+      return finalize(
+        summary || "Reached the maximum number of tool steps for this request and couldn't produce a summary of partial progress.",
+        "completed"
+      );
+    } catch (e: any) {
+      // The synthesis call itself failing shouldn't produce a WORSE outcome
+      // than the old bare message -- fall back to it.
+      console.error("[workspace-run] exhausted-budget synthesis failed:", e.message);
+      return finalize("Reached the maximum number of tool steps for this request.", "completed");
+    }
+  };
+
   // Main loop.
   // Guard against runaway loops beyond the agent's iteration budget.
   for (let guard = 0; guard < cp.maxIterations + 2; guard++) {
     // 1. Get (or resume) the current batch of tool calls.
     if (!cp.pendingToolCalls) {
       if (cp.iterationsUsed >= cp.maxIterations) {
-        return finalize("Reached the maximum number of tool steps for this request.", "completed");
+        return exhaustedBudget();
       }
       onEvent({ type: "planning", iteration: cp.iterationsUsed + 1 });
       const llm = await completeWithFallback(
@@ -787,5 +832,8 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
     await persist({ status: "running" });
   }
 
-  return finalize("Reached the maximum number of tool steps for this request.", "completed");
+  // Unreachable in normal operation -- the iterationsUsed check above
+  // always catches the cap first. This is only the guard-counter safety
+  // net against a bug that made the loop spin past it.
+  return exhaustedBudget();
 }
