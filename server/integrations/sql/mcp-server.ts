@@ -9,6 +9,8 @@
 import { Router, Request, Response } from "express";
 import { RealMcpBase, type McpToolResult, type RealMcpToolDef } from "../../real-mcp-base";
 import { getOrgId, getDefaultOrgId } from "../../auth";
+import { createMcpProtocolRouter } from "../../real-mcp-transport";
+import { mcpToolCallRateLimiter } from "../../rate-limits";
 import type { SqlConnector, SqlCredentials } from "./types";
 import { getOrCreateSession, evictSession } from "./session-cache";
 import { ScopedSqlConnector, parseAllowedTables } from "./scoped-connector";
@@ -224,6 +226,13 @@ export function createSqlRouter(server: SqlMcpServerBase, integrationId: string)
     }
     res.json({ connected: true, integration: integrationId, hostFingerprint: result.hostFingerprint });
   });
+
+  // Real Model Context Protocol endpoint (JSON-RPC / streamable-HTTP) --
+  // additive alongside the REST routes above. Auth (agent API key with "mcp"
+  // scope) and the agent_mcp_servers authorization check both live in
+  // authMiddleware / createMcpProtocolRouter; this route only needs its own
+  // rate limit applied.
+  router.use(mcpToolCallRateLimiter, createMcpProtocolRouter(server, integrationId));
 
   return router;
 }

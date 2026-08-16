@@ -455,6 +455,7 @@ export interface IStorage {
 
   getMcpServers(): Promise<McpServer[]>;
   getMcpServer(id: string): Promise<McpServer | undefined>;
+  getMcpServerByIntegrationId(integrationId: string): Promise<McpServer | undefined>;
   createMcpServer(server: InsertMcpServer): Promise<McpServer>;
   updateMcpServer(id: string, data: Partial<McpServer>): Promise<McpServer | undefined>;
   deleteMcpServer(id: string): Promise<boolean>;
@@ -2512,6 +2513,11 @@ export class DatabaseStorage implements IStorage {
 
   async getMcpServer(id: string) {
     const [server] = await db.select().from(mcpServers).where(eq(mcpServers.id, id));
+    return server;
+  }
+
+  async getMcpServerByIntegrationId(integrationId: string) {
+    const [server] = await db.select().from(mcpServers).where(eq(mcpServers.integrationId, integrationId));
     return server;
   }
 

@@ -175,6 +175,7 @@ az webapp config appsettings set \
   --settings \
     NODE_ENV=production \
     SECURITY_MODE=production \
+    PUBLIC_URL="https://${APP_NAME}.azurewebsites.net" \
     DATABASE_URL="$DATABASE_URL" \
     JWT_SECRET="$JWT_SECRET" \
     INTEGRATION_VAULT_KEY="$INTEGRATION_VAULT_KEY" \

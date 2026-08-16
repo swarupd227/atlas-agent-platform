@@ -7881,6 +7881,7 @@ function AgentApiGateway({ agent }: { agent: any }) {
   const [tryItInput, setTryItInput] = useState("");
   const [tryItResult, setTryItResult] = useState<any>(null);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyMcpScope, setNewKeyMcpScope] = useState(false);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [tryItApiKey, setTryItApiKey] = useState("");
 
@@ -7893,14 +7894,16 @@ function AgentApiGateway({ agent }: { agent: any }) {
   });
 
   const createKeyMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const res = await apiRequest("POST", `/api/agents/${agent.id}/api-keys`, { name });
+    mutationFn: async ({ name, mcpScope }: { name: string; mcpScope: boolean }) => {
+      const scopes = mcpScope ? ["invoke", "mcp"] : ["invoke"];
+      const res = await apiRequest("POST", `/api/agents/${agent.id}/api-keys`, { name, scopes });
       return res.json();
     },
     onSuccess: (data) => {
       setCreatedKey(data.key);
       setTryItApiKey(data.key);
       setNewKeyName("");
+      setNewKeyMcpScope(false);
       queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "api-keys"] });
       toast({ title: "API key created", description: "Copy the key now — it won't be shown again." });
     },
@@ -8141,13 +8144,23 @@ print(result["output"])`;
               size="sm"
               className="h-8 text-xs"
               disabled={!newKeyName.trim() || createKeyMutation.isPending}
-              onClick={() => createKeyMutation.mutate(newKeyName.trim())}
+              onClick={() => createKeyMutation.mutate({ name: newKeyName.trim(), mcpScope: newKeyMcpScope })}
               data-testid="btn-create-key"
             >
               {createKeyMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Plus className="w-3.5 h-3.5 mr-1" />}
               Create Key
             </Button>
           </div>
+          <label className="flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer">
+            <Checkbox
+              checked={newKeyMcpScope}
+              onCheckedChange={(v) => setNewKeyMcpScope(v === true)}
+              data-testid="checkbox-key-mcp-scope"
+            />
+            Also grant MCP access — lets this key query the agent's linked MCP servers
+            (e.g. a database connector) directly via the real Model Context Protocol,
+            such as from exported standalone agent code.
+          </label>
           {keysLoading ? (
             <div className="flex flex-col gap-2">
               <Skeleton className="h-10 w-full" />

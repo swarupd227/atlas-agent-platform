@@ -1011,6 +1011,12 @@ export const mcpServers = pgTable("mcp_servers", {
   description: text("description"),
   transportType: text("transport_type").notNull().default("streamable-http"),
   url: text("url"),
+  /** For in-process enterprise connectors (server/integrations/register.ts's
+   *  ENTERPRISE_SERVER_BY_ID) -- lets an authorization check resolve "this
+   *  connector's own mcp_servers row" without brittle name matching. Null for
+   *  rows that aren't backed by one (mock-mcp, demo seeds, external OAuth-
+   *  connected MCP servers). */
+  integrationId: text("integration_id"),
   command: text("command"),
   args: text("args").array().default(sql`'{}'::text[]`),
   expectedProtocolVersion: text("expected_protocol_version").default("2025-03-26"),

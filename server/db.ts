@@ -1258,6 +1258,11 @@ export async function runStartupMigrations() {
       -- MCP server linkage for enterprise integrations (Task #55)
       ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS connection_id VARCHAR;
 
+      -- Reverse-lookup from an in-process enterprise connector's integrationId
+      -- back to its own mcp_servers row, used by the real-MCP-protocol
+      -- authorization check (agent_mcp_servers linkage).
+      ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS integration_id TEXT;
+
       -- Vault-encrypted auth config for mcp_server_auth (Task #55 backward-compat migration)
       ALTER TABLE mcp_server_auth ADD COLUMN IF NOT EXISTS config_encrypted TEXT;
     `);

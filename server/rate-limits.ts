@@ -1,9 +1,13 @@
 /**
- * Rate limiters — bound the two abuse surfaces that matter most:
+ * Rate limiters — bound the abuse surfaces that matter most:
  *   1. Auth endpoints (login/register) — credential stuffing / brute force.
  *   2. LLM-invoking endpoints (runtime/run, workspace runs, run-test,
  *      playground) — a caller can otherwise burn real API spend in a tight
  *      loop with no cost to themselves.
+ *   3. The real-MCP-protocol tool-call route (server/real-mcp-transport.ts)
+ *      — an externally-reachable endpoint that can run real queries against
+ *      a live customer database; the abuse surface is DB load, not $ spend,
+ *      so it's keyed by the authenticated agent/key id rather than IP.
  *
  * Deliberately NOT applied blanket across all 500+ routes in this pass —
  * scope matches the production re-review's specific call-out. Limits are
@@ -48,3 +52,18 @@ const llmInvokeLimiter = rateLimit({
   keyGenerator: (req) => `${ipKeyGenerator(req.ip || "")}:${(req.headers["x-role"] as string) || "anon"}`,
 });
 export const llmInvokeRateLimiter = asMiddleware(llmInvokeLimiter);
+
+const mcpToolCallLimiter = rateLimit({
+  windowMs: 5 * 60_000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many MCP tool calls from this agent. Try again shortly." },
+  // Keyed by the authenticated agent/key id (set by authMiddleware's bearer
+  // branch before this runs), not IP -- callers can share IPs/proxies, and
+  // the thing being protected is DB load per agent, not a per-network budget.
+  // Falls back to IP only in the case this ever ran before auth (shouldn't
+  // happen given mount order, but avoids a keyGenerator crash if it did).
+  keyGenerator: (req) => (req as any).authUser?.apiKeyAgentId || ipKeyGenerator(req.ip || ""),
+});
+export const mcpToolCallRateLimiter = asMiddleware(mcpToolCallLimiter);

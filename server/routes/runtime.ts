@@ -2129,15 +2129,31 @@ function hashCode(str: string): number {
     return lines.join("\n");
   }
 
-  function generateTsMcpClientBlock(mcpServers: Array<{ name: string; url: string | null; transportType: string }>): string {
+  // A server registered from our own enterprise-connector registry
+  // (server/integrations/register.ts) speaks real MCP JSON-RPC at
+  // `${url}/mcp`, authenticated with an agent API key carrying "mcp" scope
+  // (see server/real-mcp-transport.ts + server/auth.ts). A genuinely
+  // external MCP server (added some other way) is assumed to already be a
+  // correct, direct MCP endpoint at its stored url, with its own auth
+  // scheme we can't know -- left as the original TODO-comment guess.
+  function mcpEnvVarName(name: string): string {
+    return `MCP_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN`;
+  }
+
+  function generateTsMcpClientBlock(mcpServers: Array<{ name: string; url: string | null; transportType: string; integrationId?: string | null }>): string {
     if (mcpServers.length === 0) return "";
     const serverInits = mcpServers.map((s, i) => {
       const varName = `mcpClient${i}`;
-      const url = s.url || "http://localhost:3001";
+      const isOwnConnector = !!s.integrationId;
+      const url = (s.url || "http://localhost:3001") + (isOwnConnector ? "/mcp" : "");
+      const envVar = mcpEnvVarName(s.name);
+      const transportLine = isOwnConnector
+        ? `const ${varName}Transport = new StreamableHTTPClientTransport(new URL("${url}"), { requestInit: { headers: { "Authorization": \`Bearer \${process.env.${envVar}}\` } } });`
+        : `// TODO: If ${s.name} requires authentication, pass headers in the transport options:
+// const ${varName}Transport = new StreamableHTTPClientTransport(new URL("${url}"), { requestInit: { headers: { "Authorization": \`Bearer \${process.env.${envVar}}\` } } });
+const ${varName}Transport = new StreamableHTTPClientTransport(new URL("${url}"));`;
       return `
-// TODO: If ${s.name} requires authentication, pass headers in the transport options:
-// const ${varName}Transport = new StreamableHTTPClientTransport(new URL("${url}"), { requestInit: { headers: { "Authorization": \`Bearer \${process.env.MCP_${s.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN}\` } } });
-const ${varName}Transport = new StreamableHTTPClientTransport(new URL("${url}"));
+${transportLine}
 const ${varName} = new Client({ name: "${s.name}-client", version: "1.0.0" });
 await ${varName}.connect(${varName}Transport);
 console.log("[MCP] Connected to ${s.name} at ${url}");
@@ -2155,14 +2171,19 @@ async function initMcpClients() {
 `;
   }
 
-  function generatePyMcpClientBlock(mcpServers: Array<{ name: string; url: string | null; transportType: string }>): string {
+  function generatePyMcpClientBlock(mcpServers: Array<{ name: string; url: string | null; transportType: string; integrationId?: string | null }>): string {
     if (mcpServers.length === 0) return "";
     const serverInits = mcpServers.map((s, i) => {
-      const url = s.url || "http://localhost:3001";
+      const isOwnConnector = !!s.integrationId;
+      const url = (s.url || "http://localhost:3001") + (isOwnConnector ? "/mcp" : "");
+      const envVar = mcpEnvVarName(s.name);
+      const transportLine = isOwnConnector
+        ? `transport_${i} = StreamableHttpTransport("${url}", headers={"Authorization": f"Bearer {os.environ.get('${envVar}', '')}"})`
+        : `# TODO: If ${s.name} requires authentication, pass headers:
+    # transport_${i} = StreamableHttpTransport("${url}", headers={"Authorization": f"Bearer {os.environ.get('${envVar}', '')}"})
+    transport_${i} = StreamableHttpTransport("${url}")`;
       return `
-    # TODO: If ${s.name} requires authentication, pass headers:
-    # transport_${i} = StreamableHttpTransport("${url}", headers={"Authorization": f"Bearer {os.environ.get('MCP_${s.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN', '')}"})
-    transport_${i} = StreamableHttpTransport("${url}")
+    ${transportLine}
     client_${i} = ClientSession(transport_${i})
     await client_${i}.initialize()
     print(f"[MCP] Connected to ${s.name} at ${url}")
@@ -3339,7 +3360,7 @@ ${executeEntrypoint}`;
     agentSlug: string,
     systemPrompt: string,
     tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
-    mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; tools?: Array<{ name: string; description: string }> }>,
+    mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; integrationId?: string | null; tools?: Array<{ name: string; description: string }> }>,
     maxIterations: number,
   ): string {
     const localServerKey = `${agentSlug.replace(/[^a-zA-Z0-9_]/g, "_")}_tools` || "local_tools";
@@ -3353,7 +3374,15 @@ ${executeEntrypoint}`;
       const key = (srv.name.replace(/[^a-zA-Z0-9_]/g, "_") || "mcp_server").toLowerCase();
       const sdkType = srv.transportType === "sse" ? "sse" : (srv.transportType === "http" || srv.transportType === "streamable-http") ? "http" : null;
       if (sdkType && srv.url) {
-        externalServerEntries.push(`  "${key}": { type: "${sdkType}" as const, url: "${srv.url}" }`);
+        const isOwnConnector = !!srv.integrationId;
+        const url = srv.url + (isOwnConnector ? "/mcp" : "");
+        // headers on a declarative http/sse mcpServers entry -- verify the
+        // exact field name against the installed @anthropic-ai/claude-agent-sdk
+        // version before deploying, rather than assuming it's stable across releases.
+        const headersField = isOwnConnector
+          ? `, headers: { "Authorization": \`Bearer \${process.env.${mcpEnvVarName(srv.name)}}\` }`
+          : "";
+        externalServerEntries.push(`  "${key}": { type: "${sdkType}" as const, url: "${url}"${headersField} }`);
         for (const t of srv.tools || []) externalAllowedTools.push(`mcp__${key}__${t.name}`);
       } else {
         skippedServerNotes.push(`// NOTE: MCP server "${srv.name}" uses transport "${srv.transportType}" -- the SDK's declarative mcpServers config needs a plain http/sse URL, which this transport doesn't have here. Wire it manually (e.g. a stdio command) if you need it.`);
@@ -5466,7 +5495,7 @@ ${nodeSetup}
     framework: string;
     blueprintJson?: Record<string, unknown>;
     skills?: Array<{ name: string; domain?: string; description?: string }>;
-    mcpServers?: Array<{ name: string; url: string | null; transportType: string; tools?: Array<{ name: string; description: string }> }>;
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string; integrationId?: string | null; tools?: Array<{ name: string; description: string }> }>;
     singleFile?: string;
   }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; frameworkFiles?: Record<string, string>; aiGenerated: true } | null> {
     try {
@@ -5488,8 +5517,14 @@ ${nodeSetup}
         ? `\nMCP Servers:\n${ctx.mcpServers.map(s => {
             const toolList = (s.tools && s.tools.length > 0)
               ? `\n  Tools:\n${s.tools.map(t => `    - ${t.name}${t.description ? `: ${t.description}` : ""}`).join("\n")}` : "";
-            return `- ${s.name} (${s.transportType}${s.url ? `, ${s.url}` : ""})${toolList}`;
-          }).join("\n")}\nUse the @modelcontextprotocol/sdk Client to connect to each MCP server and call its listed tools.`
+            const isOwnConnector = !!s.integrationId;
+            const url = s.url ? s.url + (isOwnConnector ? "/mcp" : "") : null;
+            const envVar = `MCP_${s.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TOKEN`;
+            const authNote = isOwnConnector
+              ? ` -- connect with an Authorization: Bearer header read from the ${envVar} env var (a required agent API key with "mcp" scope, minted from this agent's API Gateway tab)`
+              : "";
+            return `- ${s.name} (${s.transportType}${url ? `, ${url}` : ""})${authNote}${toolList}`;
+          }).join("\n")}\nUse the @modelcontextprotocol/sdk Client to connect to each MCP server and call its listed tools. For any server with an Authorization header noted above, pass it via the transport's requestInit.headers option -- do not connect without it, the connection will be rejected.`
         : "";
 
       const policiesCtx = ((ctx.policyStopConditions?.length || 0) > 0 || (ctx.policyForbiddenOutputs?.length || 0) > 0 || (ctx.policyBlockedTools?.length || 0) > 0)
@@ -6139,7 +6174,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
 
       emit("progress", { phase: "data", message: `Resolving MCP servers and linked resources...` });
       const mcpLinks = await storage.getAgentMcpServers(agent.id);
-      const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; description?: string | null; tools?: Array<{ name: string; description: string }> }> = [];
+      const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; description?: string | null; integrationId?: string | null; tools?: Array<{ name: string; description: string }> }> = [];
       for (const link of mcpLinks) {
         const srv = await storage.getMcpServer(link.serverId);
         if (srv) {
@@ -6149,6 +6184,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
             url: srv.url,
             transportType: srv.transportType,
             description: srv.description,
+            integrationId: srv.integrationId,
             tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })),
           });
           emit("progress", { phase: "data", message: `Loaded MCP server: ${srv.name} (${srvTools.length} tool${srvTools.length !== 1 ? "s" : ""})` });
@@ -6254,7 +6290,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
           framework,
           blueprintJson,
           skills: matchedSkills.map(s => ({ name: s.name, domain: s.domain, description: s.description })),
-          mcpServers: mcpServerDetails.map(s => ({ name: s.name, url: s.url, transportType: s.transportType, tools: s.tools })),
+          mcpServers: mcpServerDetails.map(s => ({ name: s.name, url: s.url, transportType: s.transportType, integrationId: s.integrationId, tools: s.tools })),
           policyStopConditions: [...policyStopConditions, ...yamlExtras.stopConditions],
           policyForbiddenOutputs: [...policyForbiddenOutputs, ...yamlExtras.forbiddenOutputs],
           policyBlockedTools: blockedToolsFromPolicies,
@@ -6401,6 +6437,16 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
           envLines.push(`# the agent's API Gateway tab (or use an admin ASTRA_PUBLIC_API_KEY).`);
           envLines.push(`ASTRA_API_BASE_URL=${inferredBaseUrl}`);
           envLines.push("ASTRA_API_KEY=astra_your_api_key_here");
+        }
+        const ownConnectorMcpServers = mcpServerDetails.filter(s => !!s.integrationId);
+        if (ownConnectorMcpServers.length > 0) {
+          envLines.push(`# Real MCP protocol tokens for this Astra Agents deployment's own connectors`);
+          envLines.push(`# (e.g. a database MCP server) — mint an agent API key with "mcp" scope from`);
+          envLines.push(`# this agent's API Gateway tab. Each key can only reach servers this agent`);
+          envLines.push(`# is actually linked to (Agent > MCP Servers tab).`);
+          for (const s of ownConnectorMcpServers) {
+            envLines.push(`${mcpEnvVarName(s.name)}=astra_your_mcp_scoped_api_key_here`);
+          }
         }
         files[".env.example"] = envLines.join("\n") + "\n";
 
@@ -8561,6 +8607,22 @@ clean:
           stubLines.push("3. Return top-K results as a list of strings\n");
         }
 
+        // MCP servers backed by this Astra Agents deployment's own connectors
+        // (as opposed to a genuinely external MCP server) -- these need a
+        // real, minted API key before the generated code can connect at all.
+        // Recomputed here (not reusing the env-example section's own copy --
+        // that's a sibling bare block with its own scope) from the same
+        // mcpServerDetails this whole route handler already resolved.
+        const mcpServersNeedingKeys = mcpServerDetails.filter(s => !!s.integrationId);
+        if (mcpServersNeedingKeys.length > 0) {
+          stubLines.push("## MCP Servers (required before this agent can run)\n");
+          stubLines.push("This agent is linked to the following connectors, reached via the real Model Context Protocol:\n");
+          for (const s of mcpServersNeedingKeys) {
+            stubLines.push(`- **${s.name}** — set \`${mcpEnvVarName(s.name)}\` in \`.env\` to an agent API key with **mcp** scope, minted from this agent's **API Gateway** tab in Astra Agents (check the "Also grant MCP access" box when creating it). The key only works for servers this agent is linked to under its **MCP Servers** tab.`);
+          }
+          stubLines.push("");
+        }
+
         const generatedAt = new Date().toISOString();
         // Assign to the route-scoped vars (declared near aiResult) rather than
         // shadowing with const, so the "done" event's metadata below can report
@@ -8735,12 +8797,12 @@ clean:
         }));
 
         const mcpLinks = await storage.getAgentMcpServers(agentRec.id);
-        const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; tools?: Array<{ name: string; description: string }> }> = [];
+        const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; integrationId?: string | null; tools?: Array<{ name: string; description: string }> }> = [];
         for (const link of mcpLinks) {
           const srv = await storage.getMcpServer(link.serverId);
           if (srv) {
             const srvTools = await storage.getMcpServerTools(link.serverId);
-            mcpServerDetails.push({ name: srv.name, url: srv.url, transportType: srv.transportType, tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })) });
+            mcpServerDetails.push({ name: srv.name, url: srv.url, transportType: srv.transportType, integrationId: srv.integrationId, tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })) });
           }
         }
 
@@ -10177,12 +10239,12 @@ clean:
       });
 
       const regenMcpLinks = await storage.getAgentMcpServers(agent.id);
-      const regenMcpServers: Array<{ name: string; url: string | null; transportType: string; tools?: Array<{ name: string; description: string }> }> = [];
+      const regenMcpServers: Array<{ name: string; url: string | null; transportType: string; integrationId?: string | null; tools?: Array<{ name: string; description: string }> }> = [];
       for (const link of regenMcpLinks) {
         const srv = await storage.getMcpServer(link.serverId);
         if (srv) {
           const srvTools = await storage.getMcpServerTools(link.serverId);
-          regenMcpServers.push({ name: srv.name, url: srv.url, transportType: srv.transportType, tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })) });
+          regenMcpServers.push({ name: srv.name, url: srv.url, transportType: srv.transportType, integrationId: srv.integrationId, tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })) });
         }
       }
 

@@ -22,7 +22,12 @@ import { mysqlMcpServer } from "./sql/mysql/mcp-server";
 import { sqlServerMcpServer } from "./sql/sqlserver/mcp-server";
 import type { RealMcpBase } from "../real-mcp-base";
 
-const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
+// PUBLIC_URL is set in production (see deploy/azure/provision.sh) to this
+// app's real, externally-reachable base URL -- required for anything outside
+// this process (a real MCP client, an AI-exported standalone agent) to reach
+// these connectors. Falls back to localhost for local dev, where nothing
+// external needs to reach it.
+const BASE_URL = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 5000}`;
 
 interface EnterpriseServerDef {
   server: RealMcpBase;
@@ -163,10 +168,13 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
     const existing = allServers.find(s => s.name === def.catalogName);
 
     if (existing) {
-      if (existing.url !== baseUrl) {
-        await storage.updateMcpServer(existing.id, { url: baseUrl });
+      const patch: Record<string, unknown> = {};
+      if (existing.url !== baseUrl) patch.url = baseUrl;
+      if (existing.integrationId !== def.server.integrationId) patch.integrationId = def.server.integrationId;
+      if (Object.keys(patch).length > 0) {
+        await storage.updateMcpServer(existing.id, patch);
       }
-      servers.push({ ...existing, url: baseUrl });
+      servers.push({ ...existing, url: baseUrl, integrationId: def.server.integrationId });
 
       const existingTools = await storage.getMcpServerTools(existing.id);
       for (const toolDef of def.server.tools) {
@@ -197,6 +205,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
       name: def.catalogName,
       description: def.description,
       url: baseUrl,
+      integrationId: def.server.integrationId,
       transportType: "streamable-http",
       status: "registered",
       riskTier: def.riskTier,

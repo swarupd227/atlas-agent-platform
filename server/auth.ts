@@ -7,6 +7,14 @@ import { eq, and } from "drizzle-orm";
 
 export type SecurityMode = "demo" | "production";
 
+// A real-MCP-protocol connector route (server/real-mcp-transport.ts, mounted
+// under each enterprise connector's own router, e.g.
+// /api/integrations/postgres/mcp). req.path here is relative to the /api
+// mount (see authMiddleware's pathAllowsBearer below), matching the existing
+// /eval convention. Exported so tests can verify this exact pattern without
+// duplicating/risking drift from the one authMiddleware actually uses.
+export const MCP_BEARER_PATH_RE = /^\/integrations\/[^/]+\/mcp$/;
+
 export function getSecurityMode(): SecurityMode {
   // Secure by default: demo mode must be explicitly opted into.
   const mode = process.env.SECURITY_MODE || "production";
@@ -46,6 +54,10 @@ export interface TokenPayload {
   role: string;
   email: string | null;
   organizationId?: string;
+  /** Set only for a bearer-key-authenticated request (agentApiKeys) -- the
+   *  agent that key belongs to. Used by real-mcp-transport.ts's
+   *  agent_mcp_servers authorization check and per-agent credential lookup. */
+  apiKeyAgentId?: string;
 }
 
 declare global {
@@ -171,11 +183,17 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return next();
   }
 
-  // ── Bearer API key auth (for CI runners and programmatic access) ────────────
-  // Accepts: Authorization: Bearer <api-key> on /eval/* paths only.
-  // Key is hashed with SHA-256 and looked up in agent_api_keys table.
-  // The key must have "invoke" or "eval" scope (least-privilege enforcement).
-  const pathAllowsBearer = req.path === "/eval" || req.path.startsWith("/eval/");
+  // ── Bearer API key auth (for CI runners, programmatic access, and the
+  // real-MCP-protocol connector routes) ────────────────────────────────────
+  // Accepts: Authorization: Bearer <api-key> on /eval/* paths, or on a
+  // connector's real MCP endpoint (/integrations/<id>/mcp -- see
+  // server/real-mcp-transport.ts, mounted under each enterprise connector's
+  // own router). Key is hashed with SHA-256 and looked up in agent_api_keys.
+  // Scope required depends on the path: /eval/* needs "invoke" or "eval";
+  // an MCP route needs "mcp" specifically -- a key minted for one surface
+  // doesn't implicitly grant the other (least-privilege enforcement).
+  const pathIsMcp = MCP_BEARER_PATH_RE.test(req.path);
+  const pathAllowsBearer = req.path === "/eval" || req.path.startsWith("/eval/") || pathIsMcp;
   const authHeader = req.headers["authorization"];
   if (pathAllowsBearer && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     const rawKey = authHeader.slice(7).trim();
@@ -189,9 +207,11 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
         if (apiKey) {
           const isExpired = apiKey.expiresAt && apiKey.expiresAt <= new Date();
-          // Scope enforcement: key must have "invoke" or "eval" scope
+          // Scope enforcement: "invoke"/"eval" for /eval/*, "mcp" for an MCP route.
           const scopes: string[] = (apiKey.scopes as string[] | null) ?? [];
-          const hasRequiredScope = scopes.some(s => s === "invoke" || s === "eval");
+          const hasRequiredScope = pathIsMcp
+            ? scopes.includes("mcp")
+            : scopes.some(s => s === "invoke" || s === "eval");
 
           if (!isExpired && hasRequiredScope) {
             // Resolve org from the owning agent
@@ -206,6 +226,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
               role: "api",
               email: null,
               organizationId: agent?.organizationId ?? undefined,
+              apiKeyAgentId: apiKey.agentId,
             };
 
             // Update lastUsedAt non-blocking
