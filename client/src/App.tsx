@@ -82,6 +82,7 @@ const RunbookAutomation = lazy(() => import("@/pages/runbook-automation"));
 const AuditTrail = lazy(() => import("@/pages/audit-trail"));
 const RunDetail = lazy(() => import("@/pages/run-detail"));
 const McpServers = lazy(() => import("@/pages/mcp-servers"));
+const RelayAgents = lazy(() => import("@/pages/relay-agents"));
 const McpServerDetail = lazy(() => import("@/pages/mcp-server-detail"));
 const ToolCatalog = lazy(() => import("@/pages/tool-catalog"));
 const ToolDetail = lazy(() => import("@/pages/tool-detail"));
@@ -366,6 +367,7 @@ function DashboardRouter() {
       <Route path="/integrations/marketplace" component={Marketplace} />
       <Route path="/integrations/mcp-servers/:id" component={McpServerDetail} />
       <Route path="/integrations/mcp-apps" component={McpApps} />
+      <Route path="/integrations/relay-agents" component={RelayAgents} />
       <Route path="/integrations/mcp-servers" component={McpServers} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/skills/composer/:id" component={SkillComposer} />

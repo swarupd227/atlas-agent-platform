@@ -367,7 +367,7 @@ const SQL_CONNECTION_MODE_FIELDS: FieldDef[] = [
   },
   {
     key: "relayAgentId", label: "Relay Agent", type: "text", required: false,
-    placeholder: "the agent id shown when you generated its token under Relay Agents",
+    placeholder: "Agent ID — create one under Integrations → Relay Agents, then copy its Agent ID here",
     showWhen: { field: "connectionMode", equals: "relay_agent" },
   },
   {
