@@ -1,0 +1,24 @@
+{
+  "name": "astra-relay-agent",
+  "version": "1.0.0",
+  "description": "Outbound-only relay agent for Astra Agents — lets the platform reach a database inside a private network without opening any inbound firewall port.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "astra-relay-agent": "index.js"
+  },
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
