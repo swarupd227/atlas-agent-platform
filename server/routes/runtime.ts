@@ -71,6 +71,7 @@ import {
 import { dispatchToolCall, gatherAvailableTools } from "../tool-dispatcher";
 import { RunSpanCollector, exportSpansOtlp } from "../run-spans";
 import { isRealMcpServer, mcpInitialize, mcpListTools, mcpListResources, mcpListPrompts } from "../mcp-client";
+import { getEnterpriseServerById } from "../integrations/register";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
 import {
   executePromptWithMcp,
@@ -12387,7 +12388,30 @@ async function performMcpServerInitialize(serverId: string): Promise<
   let promptsToStore: InsertMcpServerPrompt[];
   let isRealProtocol = false;
 
-  if (isRealMcpServer(server)) {
+  const ownConnector = server.integrationId ? getEnterpriseServerById(server.integrationId) : undefined;
+
+  if (ownConnector) {
+    // One of our own real-MCP-protocol connectors (server/real-mcp-transport.ts
+    // mounts a genuine JSON-RPC endpoint at .../mcp for these), but that
+    // endpoint requires an agent-scoped bearer key with "mcp" scope -- this
+    // system-level initialize call has no agent context to authenticate as,
+    // so a real HTTP self-handshake would always 401. The tool catalog is
+    // already known in-process (base.tools, same registry the agent runtime
+    // itself dispatches through -- see register.ts's ENTERPRISE_SERVER_BY_ID),
+    // so read it directly instead of round-tripping over the network.
+    negotiatedVersion = "2025-03-26";
+    capabilities = { tools: { listChanged: false } };
+    serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
+    isRealProtocol = true;
+    toolsToStore = ownConnector.tools.map(t => ({
+      serverId: server.id,
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema as object,
+    }));
+    resourcesToStore = [];
+    promptsToStore = [];
+  } else if (isRealMcpServer(server)) {
     try {
       const initResult = await mcpInitialize(server);
       negotiatedVersion = initResult.protocolVersion;
