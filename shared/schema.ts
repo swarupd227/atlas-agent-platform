@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -3478,6 +3478,15 @@ export const integrationConnections = pgTable("integration_connections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   organizationId: varchar("organization_id").notNull(),
   integrationId: varchar("integration_id").notNull(),
+  // An org can hold several connections of the SAME integration type (e.g. a
+  // "Sales DB" and a "Support DB", both postgres). integrationId stays the
+  // *type*; `name` is the user-facing label distinguishing instances, and the
+  // connection id is what credentials, mcp_servers rows, and agent bindings
+  // hang off. Exactly one connection per (org, integrationId) carries
+  // isDefault -- enforced by a partial unique index below -- so every existing
+  // caller that resolves credentials by type alone keeps working unchanged.
+  name: text("name"),
+  isDefault: boolean("is_default").notNull().default(true),
   credentialBlob: text("credential_blob"),
   oauthScopes: text("oauth_scopes").array().default(sql`'{}'::text[]`),
   tokenExpiresAt: timestamp("token_expires_at"),
@@ -3491,6 +3500,11 @@ export const integrationConnections = pgTable("integration_connections", {
 }, (table) => [
   index("idx_int_conn_org").on(table.organizationId),
   index("idx_int_conn_org_integration").on(table.organizationId, table.integrationId),
+  // At most one default per (org, integration type). Partial, so non-default
+  // sibling connections are unconstrained.
+  uniqueIndex("idx_int_conn_one_default")
+    .on(table.organizationId, table.integrationId)
+    .where(sql`is_default`),
 ]);
 export const insertIntegrationConnectionSchema = createInsertSchema(integrationConnections).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertIntegrationConnection = z.infer<typeof insertIntegrationConnectionSchema>;

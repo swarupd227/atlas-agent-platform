@@ -1265,6 +1265,51 @@ export async function runStartupMigrations() {
 
       -- Vault-encrypted auth config for mcp_server_auth (Task #55 backward-compat migration)
       ALTER TABLE mcp_server_auth ADD COLUMN IF NOT EXISTS config_encrypted TEXT;
+
+      -- Multi-connection support, phase 1: an org can hold several connections
+      -- of the same integration type (e.g. two PostgreSQL databases). The name
+      -- column labels the instance; is_default marks the one that type-only
+      -- credential lookups resolve to, so every existing caller is unaffected.
+      ALTER TABLE integration_connections ADD COLUMN IF NOT EXISTS name TEXT;
+      ALTER TABLE integration_connections ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT true;
+
+      -- mcp_servers.connection_id already exists (above); index it, since
+      -- resolving "which connection backs this server" becomes a hot path.
+      CREATE INDEX IF NOT EXISTS idx_mcp_servers_connection ON mcp_servers(connection_id);
+    `);
+
+    // Backfill + integrity for the multi-connection columns. Separated from the
+    // DDL block so the dedupe below is guaranteed to run BEFORE the unique
+    // index is created -- creating it against pre-existing duplicate defaults
+    // would throw and take the whole deployment's startup down with it.
+    await client.query(`
+      UPDATE integration_connections
+      SET name = integration_id
+      WHERE name IS NULL OR name = ''
+    `);
+
+    // Keep the oldest row per (org, integration) as the default and demote any
+    // siblings. Today upsertIntegrationConnection() overwrites in place so
+    // duplicates shouldn't exist, but this must not assume that -- a single
+    // duplicate would otherwise make the index creation below fatal on boot.
+    await client.query(`
+      UPDATE integration_connections c
+      SET is_default = false
+      WHERE c.is_default
+        AND EXISTS (
+          SELECT 1 FROM integration_connections o
+          WHERE o.organization_id = c.organization_id
+            AND o.integration_id = c.integration_id
+            AND o.id <> c.id
+            AND (o.created_at < c.created_at
+                 OR (o.created_at IS NOT DISTINCT FROM c.created_at AND o.id < c.id))
+        )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_int_conn_one_default
+        ON integration_connections(organization_id, integration_id)
+        WHERE is_default
     `);
 
     // Add unique constraint on eval_gates.agent_id (idempotent)
