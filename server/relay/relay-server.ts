@@ -32,7 +32,17 @@ interface ConnectedAgent {
   id: string;
   ws: WebSocket;
   streams: Map<string, StreamEntry>;
+  /** Cleared on each ping, set by the agent's pong -- see the heartbeat below. */
+  isAlive: boolean;
 }
+
+// An idle relay carries no traffic between queries, and hosting front ends
+// (Azure App Service among them) reap idle WebSockets after a few minutes.
+// Pinging keeps the connection from looking idle, and drops entries whose
+// agent has gone away without a clean close -- otherwise connectedAgents
+// keeps reporting an agent as online and requestTunnel() hands work to a
+// socket nothing is listening on.
+const HEARTBEAT_MS = 30_000;
 
 const connectedAgents = new Map<string, ConnectedAgent>();
 
@@ -65,8 +75,9 @@ export function attachRelayServer(httpServer: HttpServer): void {
     const existing = connectedAgents.get(agentId);
     if (existing) existing.ws.terminate();
 
-    const entry: ConnectedAgent = { id: agentId, ws, streams: new Map() };
+    const entry: ConnectedAgent = { id: agentId, ws, streams: new Map(), isAlive: true };
     connectedAgents.set(agentId, entry);
+    ws.on("pong", () => { entry.isAlive = true; });
     await db.update(relayAgents).set({ status: "online", lastSeenAt: new Date() }).where(eq(relayAgents.id, agentId)).catch(() => {});
 
     ws.on("message", (data: Buffer, isBinary: boolean) => {
@@ -98,6 +109,22 @@ export function attachRelayServer(httpServer: HttpServer): void {
     });
     ws.on("error", () => ws.close());
   });
+
+  const heartbeat = setInterval(() => {
+    for (const entry of Array.from(connectedAgents.values())) {
+      if (!entry.isAlive) {
+        // Missed the previous ping: terminate rather than close, so the
+        // 'close' handler above runs immediately and clears the entry instead
+        // of waiting on a handshake the peer will never complete.
+        entry.ws.terminate();
+        continue;
+      }
+      entry.isAlive = false;
+      try { entry.ws.ping(); } catch { /* 'close' will clean this entry up */ }
+    }
+  }, HEARTBEAT_MS);
+
+  wss.on("close", () => clearInterval(heartbeat));
 }
 
 const OPEN_TIMEOUT_MS = 15_000;
