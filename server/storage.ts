@@ -5271,17 +5271,41 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(integrationConnections.createdAt));
   }
 
+  // Resolves the DEFAULT connection for an integration type. An org can hold
+  // several connections of the same type now, so this has to be deterministic:
+  // with no ORDER BY, Postgres may return any matching row, which for a
+  // multi-connection org means a tool could silently hit a different database
+  // between two calls. isDefault is unique per (org, integration); createdAt is
+  // the tiebreaker only for the window before the phase-1 backfill has run.
   async getIntegrationConnection(orgId: string, integrationId: string): Promise<IntegrationConnection | null> {
     const [row] = await db.select().from(integrationConnections)
       .where(and(
         eq(integrationConnections.organizationId, orgId),
         eq(integrationConnections.integrationId, integrationId),
+      ))
+      .orderBy(desc(integrationConnections.isDefault), integrationConnections.createdAt)
+      .limit(1);
+    return row ?? null;
+  }
+
+  // Resolves one specific connection. Org-scoped on purpose: connection ids
+  // reach this from mcp_servers rows, and a stale or cross-tenant id must miss
+  // rather than hand back another org's credentials.
+  async getIntegrationConnectionById(orgId: string, connectionId: string): Promise<IntegrationConnection | null> {
+    const [row] = await db.select().from(integrationConnections)
+      .where(and(
+        eq(integrationConnections.organizationId, orgId),
+        eq(integrationConnections.id, connectionId),
       ));
     return row ?? null;
   }
 
-  async upsertIntegrationConnection(data: InsertIntegrationConnection): Promise<IntegrationConnection> {
-    const existing = await this.getIntegrationConnection(data.organizationId, data.integrationId);
+  // `connectionId` targets one specific connection. Without it this keeps the
+  // historical behaviour of upserting the org's default connection for the type.
+  async upsertIntegrationConnection(data: InsertIntegrationConnection, connectionId?: string): Promise<IntegrationConnection> {
+    const existing = connectionId
+      ? await this.getIntegrationConnectionById(data.organizationId, connectionId)
+      : await this.getIntegrationConnection(data.organizationId, data.integrationId);
     if (existing) {
       const [row] = await db.update(integrationConnections)
         .set({
@@ -5292,23 +5316,43 @@ export class DatabaseStorage implements IStorage {
           lastTestResult: data.lastTestResult,
           lastError: data.lastError,
           mcpServerId: data.mcpServerId,
+          // Only overwrite the instance label when the caller actually supplied
+          // one -- most callers spread an existing row and shouldn't be able to
+          // blank a name the user set.
+          ...(data.name != null ? { name: data.name } : {}),
           updatedAt: new Date(),
         })
         .where(eq(integrationConnections.id, existing.id))
         .returning();
       return row;
     }
-    const [row] = await db.insert(integrationConnections).values(data).returning();
+    // idx_int_conn_one_default is a UNIQUE partial index, so inserting a second
+    // is_default=true row for the same (org, integration) would throw. When a
+    // sibling already holds the default slot the new connection is created
+    // non-default; promoting one is a separate, explicit user action.
+    const siblingDefault = await this.getIntegrationConnection(data.organizationId, data.integrationId);
+    const [row] = await db.insert(integrationConnections)
+      .values(siblingDefault ? { ...data, isDefault: false } : data)
+      .returning();
     return row;
   }
 
-  async disconnectIntegration(orgId: string, integrationId: string): Promise<void> {
+  // Without `connectionId` this disconnects EVERY connection of the type, which
+  // is what the type-level "Disconnect" action means -- but it also takes out
+  // sibling connections once an org has more than one, so callers that know
+  // which instance they mean must pass it.
+  async disconnectIntegration(orgId: string, integrationId: string, connectionId?: string): Promise<void> {
     await db.update(integrationConnections)
       .set({ status: "disconnected", credentialBlob: null, updatedAt: new Date() })
-      .where(and(
-        eq(integrationConnections.organizationId, orgId),
-        eq(integrationConnections.integrationId, integrationId),
-      ));
+      .where(connectionId
+        ? and(
+            eq(integrationConnections.organizationId, orgId),
+            eq(integrationConnections.id, connectionId),
+          )
+        : and(
+            eq(integrationConnections.organizationId, orgId),
+            eq(integrationConnections.integrationId, integrationId),
+          ));
   }
 
   // ── Per-agent outbound identity ──────────────────────────────────────────────

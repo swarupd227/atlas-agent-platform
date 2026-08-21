@@ -40,6 +40,14 @@ export interface AvailableTool {
   toolMethod?: string;
   isRealMcp?: boolean;
   enterpriseIntegration?: string;
+  /**
+   * The integration_connections row backing this tool's MCP server, when the
+   * server was registered by connecting an integration. Pins credential
+   * resolution to one specific connection so an org holding several of the same
+   * type (two PostgreSQL databases, say) reaches the intended one instead of
+   * whichever is marked default.
+   */
+  connectionId?: string;
 }
 
 export async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTool[]> {
@@ -62,6 +70,7 @@ export async function gatherAvailableTools(mcpServerIds: string[]): Promise<Avai
             toolDescription: def.description,
             toolInputSchema: def.inputSchema,
             isRealMcp: true,
+            connectionId: server.connectionId || undefined,
           });
         }
         continue;
@@ -84,6 +93,7 @@ export async function gatherAvailableTools(mcpServerIds: string[]): Promise<Avai
         toolMethod: ann.method || undefined,
         isRealMcp: realServer,
         enterpriseIntegration: (ann.enterpriseIntegration as string | undefined) || undefined,
+        connectionId: server.connectionId || undefined,
       });
     }
   }
@@ -385,9 +395,11 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
       if (!effectiveOrgId) {
         throw new Error(`No organization context to invoke '${tool.toolName}' on integration '${tool.enterpriseIntegration}'`);
       }
-      // agentId lets a per-agent credential (agent_integration_credentials)
-      // take priority over the org-wide connection -- see RealMcpBase.getCredentials.
-      return connector.callTool(tool.toolName, args, effectiveOrgId, agentId);
+      // agentId lets a per-agent credential (agent_integration_credentials) take
+      // priority; connectionId pins the fallback to the specific connection this
+      // server was registered against, rather than the org's default connection
+      // for the type -- see RealMcpBase.getCredentials for the full precedence.
+      return connector.callTool(tool.toolName, args, effectiveOrgId, agentId, tool.connectionId);
     }
   }
 

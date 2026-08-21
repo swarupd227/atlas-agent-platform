@@ -46,11 +46,17 @@ export abstract class RealMcpBase {
 
   // ── Credential retrieval ──────────────────────────────────────────────────
 
-  // When agentId is given, a per-agent credential (agent_integration_credentials)
-  // takes priority over the org-wide connection -- lets one agent authenticate
-  // as itself instead of sharing every other agent's org-level identity. Falls
-  // back to the org-level connection when the agent has no credential of its own.
-  async getCredentials(orgId: string, agentId?: string): Promise<Record<string, string> | null> {
+  // Resolution order, most specific first:
+  //   1. per-agent credential (agent_integration_credentials) when agentId is given
+  //   2. the connection this tool is pinned to, when connectionId is given
+  //   3. the org's default connection for the integration type
+  //
+  // The per-agent credential deliberately still outranks the pin. Every
+  // mcp_servers row written since connect populates connection_id, so letting
+  // the pin win would silently switch off per-agent identity for every org that
+  // already uses it -- and that table is keyed by (agentId, integrationId), so
+  // it has no notion of which connection it belongs to anyway.
+  async getCredentials(orgId: string, agentId?: string, connectionId?: string): Promise<Record<string, string> | null> {
     if (agentId) {
       const agentConn = await storage.getAgentIntegrationCredential(agentId, this.integrationId);
       if (agentConn && agentConn.credentialBlob && agentConn.status !== "disconnected") {
@@ -61,7 +67,14 @@ export abstract class RealMcpBase {
         }
       }
     }
-    const conn = await storage.getIntegrationConnection(orgId, this.integrationId);
+    const conn = connectionId
+      ? await storage.getIntegrationConnectionById(orgId, connectionId)
+      : await storage.getIntegrationConnection(orgId, this.integrationId);
+    // A pinned connection that is missing, cross-tenant, or of a different
+    // integration type resolves to nothing -- it must NOT fall back to the org
+    // default. Falling back would run the call against a different database than
+    // the one the tool was bound to, which is worse than failing the call.
+    if (connectionId && conn && conn.integrationId !== this.integrationId) return null;
     if (!conn || !conn.credentialBlob || conn.status === "disconnected") return null;
     try {
       return decryptCredentialMap(conn.credentialBlob);
@@ -72,12 +85,12 @@ export abstract class RealMcpBase {
 
   // ── Refresh OAuth access token using stored refresh_token ─────────────────
 
-  async refreshOAuthToken(orgId: string): Promise<Record<string, string> | null> {
+  async refreshOAuthToken(orgId: string, connectionId?: string): Promise<Record<string, string> | null> {
     const { getIntegrationDef } = await import("./integrations/registry");
     const def = getIntegrationDef(this.integrationId);
     if (!def?.oauthConfig) return null;
 
-    const credentials = await this.getCredentials(orgId);
+    const credentials = await this.getCredentials(orgId, undefined, connectionId);
     if (!credentials?.refresh_token) return null;
 
     try {
@@ -107,13 +120,19 @@ export abstract class RealMcpBase {
       const credentialBlob = encryptCredentialMap(updated);
       const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null;
 
-      const conn = await storage.getIntegrationConnection(orgId, this.integrationId);
+      const conn = connectionId
+        ? await storage.getIntegrationConnectionById(orgId, connectionId)
+        : await storage.getIntegrationConnection(orgId, this.integrationId);
+      // Write back by id. Spreading the row through the type-level upsert would
+      // re-resolve to the org's DEFAULT connection and stamp the refreshed token
+      // onto it -- corrupting a sibling connection's credentials whenever a
+      // non-default connection refreshed.
       if (conn) {
         await storage.upsertIntegrationConnection({
           ...conn,
           credentialBlob,
           tokenExpiresAt: expiresAt ?? conn.tokenExpiresAt,
-        });
+        }, conn.id);
       }
       return updated;
     } catch {
@@ -127,11 +146,17 @@ export abstract class RealMcpBase {
     toolName: string,
     args: Record<string, unknown>,
     orgId: string,
-    agentId?: string
+    agentId?: string,
+    connectionId?: string
   ): Promise<McpToolResult> {
-    const credentials = await this.getCredentials(orgId, agentId);
+    const credentials = await this.getCredentials(orgId, agentId, connectionId);
     if (!credentials) {
-      return this.err(`Integration '${this.integrationId}' is not connected for this organization.`);
+      // Distinguish the two failures: a pinned connection that resolves to
+      // nothing is a broken binding (deleted or disconnected instance), not an
+      // integration the org never connected -- and the fixes differ.
+      return this.err(connectionId
+        ? `Integration '${this.integrationId}' has no usable connection '${connectionId}' for this organization -- the connection may have been deleted, disconnected, or bound to a different integration.`
+        : `Integration '${this.integrationId}' is not connected for this organization.`);
     }
 
     const startMs = Date.now();

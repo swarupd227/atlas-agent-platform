@@ -74,7 +74,11 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
     return { triggerId: trigger.id, error: err.message };
   }
 
-  const result = await server.callTool(toolName, args, orgId);
+  // Pin the poll to the connection its MCP server was registered against, so a
+  // trigger watching the "Support DB" keeps polling that one rather than the
+  // org's default connection for the type.
+  const mcpServer = await storage.getMcpServer(mcpServerId);
+  const result = await server.callTool(toolName, args, orgId, undefined, mcpServer?.connectionId || undefined);
 
   if (result.isError) {
     const message = result.content[0]?.text ?? "poll failed";
