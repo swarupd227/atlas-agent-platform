@@ -296,22 +296,25 @@ export default function RelayAgentsPage() {
               </div>
 
               <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Start the agent on the machine that can reach your database</Label>
+                <Label className="text-xs text-muted-foreground">Run this on the machine that can reach your database</Label>
                 <div className="flex items-start gap-1">
                   <pre className="text-xs bg-muted px-3 py-2 rounded font-mono flex-1 overflow-x-auto whitespace-pre">
-{`RELAY_PLATFORM_URL=${platformWsUrl} \\
-RELAY_AGENT_TOKEN=${created.token} \\
-node scripts/relay-agent.js`}
+{`astra-relay-agent \\
+  --url ${platformWsUrl} \\
+  --token ${created.token}`}
                   </pre>
                   <CopyButton
-                    value={`RELAY_PLATFORM_URL=${platformWsUrl} RELAY_AGENT_TOKEN=${created.token} node scripts/relay-agent.js`}
+                    value={`astra-relay-agent --url ${platformWsUrl} --token ${created.token}`}
                     label="command"
                     testId="button-copy-command"
                   />
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Run from an <span className="font-mono">atlas-agent-platform</span> checkout (the script uses its <span className="font-mono">ws</span> dependency).
+                  Install the <span className="font-mono">astra-relay-agent</span> package first (Node 18+) — see{" "}
+                  <span className="font-mono">relay-agent/README.md</span> for the tarball install, running from source, and a systemd unit.
                   Leave it running — this row flips to <span className="font-medium">online</span> once it connects.
+                  On an unattended host prefer <span className="font-mono">--token-file</span> over{" "}
+                  <span className="font-mono">--token</span>, so the token stays out of shell history and process listings.
                 </p>
               </div>
             </div>
