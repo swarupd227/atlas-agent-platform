@@ -756,12 +756,17 @@ async function refreshExpiringTokens(aheadMs: number): Promise<void> {
 
       const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : undefined;
 
+      // Write back BY ID. Without it the upsert re-resolves by type and stamps
+      // the refreshed token onto the org's DEFAULT connection -- so a
+      // non-default sibling refreshing its token would overwrite a different
+      // connection's credentials and leave its own stale. Same bug as the one
+      // fixed in RealMcpBase.refreshOAuthToken.
       await storage.upsertIntegrationConnection({
         ...conn,
         credentialBlob: encryptCredentialMap(updated),
         tokenExpiresAt: expiresAt ?? conn.tokenExpiresAt,
         oauthScopes: conn.oauthScopes ?? [],
-      });
+      }, conn.id);
 
       // Credential rotation is a credential change — audit it (was a blind spot).
       storage.createAuditEvent({
@@ -902,7 +907,19 @@ async function upsertIntegrationMcpServer(
       return seeded.id;
     }
 
-    // No seeded catalog row (integration registered without one) — create it.
+    // A sibling connection needs its own server row, but a BARE one is useless:
+    // gatherAvailableTools() skips any server with no url, and the agent runtime
+    // reads tool definitions from mcp_server_tools. A sibling created empty
+    // gives a bound agent zero tools, which looks exactly like a broken
+    // integration. So clone the seeded row's url and tool catalog -- same
+    // integration route, same tools, but pinned to this connection, which is
+    // what makes the connection pin actually usable.
+    const [template] = await db
+      .select()
+      .from(mcpServers)
+      .where(like(mcpServers.url, `%/api/integrations/${integrationId}`))
+      .limit(1);
+
     const [created] = await db
       .insert(mcpServers)
       .values({
@@ -914,14 +931,42 @@ async function upsertIntegrationMcpServer(
         description: connectionName
           ? `Enterprise integration MCP server for ${integrationName} — ${connectionName}`
           : `Enterprise integration MCP server for ${integrationName}`,
-        transportType: "enterprise",
+        url: template?.url ?? undefined,
+        transportType: template?.transportType ?? "enterprise",
+        riskTier: template?.riskTier ?? "MEDIUM",
         status: "registered",
-        riskTier: "MEDIUM",
         connectionId,
         industryId: orgId,
         addedBy: "system",
       })
       .returning({ id: mcpServers.id });
+
+    // Clone the tool catalog. Without this the row exists but exposes nothing,
+    // so a bound agent silently has no tools. usageCount/lastUsedAt are
+    // deliberately not carried over -- those are this server's own history.
+    if (created?.id && template) {
+      const templateTools = await storage.getMcpServerTools(template.id);
+      for (const t of templateTools) {
+        await storage.createMcpServerTool({
+          serverId: created.id,
+          name: t.name,
+          description: t.description,
+          // jsonb columns read back as `unknown` but insert as Json, so these
+          // round-trip casts are the drizzle shape mismatch, not lost typing.
+          inputSchema: t.inputSchema as any,
+          outputSchema: t.outputSchema as any,
+          // Carries `enterpriseIntegration`, which is how the dispatcher knows
+          // to route this tool in-process to the connector.
+          annotations: t.annotations as any,
+          // fingerprintHash is intentionally not copied -- it is omitted from
+          // the insert schema and drift detection recomputes it per server.
+          riskClassification: t.riskClassification,
+          owner: t.owner,
+          enabled: t.enabled,
+          ontologyTags: t.ontologyTags as any,
+        });
+      }
+    }
 
     return created?.id ?? null;
   } catch (err: any) {
