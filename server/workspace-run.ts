@@ -30,7 +30,7 @@ import { canonicalJsonStringify } from "./agent-runtime";
 import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
-import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles } from "./anthropic-code-execution";
+import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import type { Skill } from "@shared/schema";
 
 // Fallback for agents created before maxToolIterations existed / with it
@@ -593,6 +593,22 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   const activeSkills = await resolveActiveSkills(agentRow);
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
   const codeExecConfig = codeExecAccess.enabled ? buildCodeExecutionRequestConfig(activeSkills, cp.containerId) : null;
+  // A code-execution skill on a non-Claude agent is a no-op that only shows up
+  // as the agent saying it can't produce files. Record it on the run so the
+  // misconfiguration is visible in the trace instead of looking like a bug.
+  const codeExecMismatch = describeCodeExecutionModelMismatch(activeSkills, cp.modelName);
+  if (codeExecMismatch) {
+    console.warn(`[workspace-run] Agent ${agentId}: ${codeExecMismatch}`);
+    cp.steps.push({
+      id: `step_${cp.steps.length + 1}`,
+      name: "Code execution unavailable for this model",
+      type: "skill_resolution",
+      status: "failed",
+      outcome: "code_execution_model_mismatch",
+      error: codeExecMismatch,
+      completedAt: new Date().toISOString(),
+    } as any);
+  }
   const provider = getProvider(cp.modelName.startsWith("claude") ? "anthropic" : "openai");
   const fallback = getProvider(provider.providerName === "openai" ? "anthropic" : "openai");
   const spans = new RunSpanCollector();

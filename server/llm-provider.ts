@@ -74,6 +74,12 @@ export interface LLMCompletionResult {
   containerId?: string;
   /** Truncated summary of code-execution commands/file ops run this turn, for audit -- not full stdout. */
   codeExecutionTrace?: Array<{ tool: string; input: unknown; summary: string }>;
+  /**
+   * Why the model stopped (Anthropic: "end_turn"/"tool_use"/"max_tokens"/...).
+   * Never "pause_turn" on a returned result -- AnthropicProvider resolves paused
+   * turns internally before returning (see MAX_PAUSE_TURN_CONTINUATIONS).
+   */
+  stopReason?: string;
 }
 
 export interface LLMEmbeddingResult {
@@ -662,6 +668,16 @@ function extractAnthropicServerToolData(content: Anthropic.ContentBlock[]): {
   return { generatedFiles, codeExecutionTrace };
 }
 
+/**
+ * How many times a single logical completion may be resumed after Anthropic
+ * returns stop_reason "pause_turn". A long-running server tool (code execution
+ * loading a skill, then writing a .pptx/.pdf) pauses the turn and expects the
+ * paused assistant content echoed back to continue. Bounded so a pathological
+ * chain can't run a caller's turn forever; hitting the cap returns whatever the
+ * turn produced so far rather than throwing.
+ */
+const MAX_PAUSE_TURN_CONTINUATIONS = 8;
+
 class AnthropicProvider implements LLMProvider {
   readonly providerName = "anthropic";
   private client: Anthropic | null = null;
@@ -756,55 +772,91 @@ class AnthropicProvider implements LLMProvider {
     cbCheck(this.providerName);
 
     const client = await this.getClient();
-    let response: Anthropic.Message;
-    try {
-      response = await withRetry(
-        () =>
-          client.messages.create(
-            {
-              model,
-              max_tokens: options?.maxTokens || 4096,
-              ...(systemPrompt ? { system: systemPrompt } : {}),
-              messages: anthropicMessages,
-              ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
-              ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-              ...(options?.anthropicContainer ? { container: options.anthropicContainer as any } : {}),
-            },
-            options?.anthropicBetas?.length ? { headers: { "anthropic-beta": options.anthropicBetas.join(",") } } : undefined,
-          ),
-        this.providerName,
-      );
-      cbRecordSuccess(this.providerName);
-    } catch (err) {
-      cbRecordFailure(this.providerName);
-      throw err;
-    }
 
+    // A code-execution turn can pause partway through (stop_reason
+    // "pause_turn") and must be resumed by echoing the paused assistant content
+    // back. These accumulators fold every continuation into one result so
+    // callers see a single completed turn.
     let textContent = "";
     const toolCalls: CanonicalToolCall[] = [];
+    const generatedFiles: Array<{ fileId: string; toolUseId: string }> = [];
+    const codeExecutionTrace: Array<{ tool: string; input: unknown; summary: string }> = [];
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let costUsd = 0;
+    let containerId: string | undefined = options?.anthropicContainer?.id;
+    let stopReason: string | undefined;
 
-    for (const block of response.content) {
-      if (block.type === "text") {
-        textContent += block.text;
-      } else if (block.type === "tool_use") {
-        toolCalls.push({
-          id: block.id,
-          name: block.name,
-          arguments: (block.input as Record<string, any>) || {},
-        });
+    for (let attempt = 0; ; attempt++) {
+      // Reuse the container the previous leg ran in, so files written before the
+      // pause are still there when the model resumes.
+      const container = containerId
+        ? { ...(options?.anthropicContainer ?? {}), id: containerId }
+        : options?.anthropicContainer;
+
+      let response: Anthropic.Message;
+      try {
+        response = await withRetry(
+          () =>
+            client.messages.create(
+              {
+                model,
+                max_tokens: options?.maxTokens || 4096,
+                ...(systemPrompt ? { system: systemPrompt } : {}),
+                messages: anthropicMessages,
+                ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
+                ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+                ...(container ? { container: container as any } : {}),
+              },
+              options?.anthropicBetas?.length ? { headers: { "anthropic-beta": options.anthropicBetas.join(",") } } : undefined,
+            ),
+          this.providerName,
+        );
+        cbRecordSuccess(this.providerName);
+      } catch (err) {
+        cbRecordFailure(this.providerName);
+        throw err;
       }
+
+      for (const block of response.content) {
+        if (block.type === "text") {
+          textContent += block.text;
+        } else if (block.type === "tool_use") {
+          toolCalls.push({
+            id: block.id,
+            name: block.name,
+            arguments: (block.input as Record<string, any>) || {},
+          });
+        }
+      }
+
+      const extracted = extractAnthropicServerToolData(response.content);
+      generatedFiles.push(...extracted.generatedFiles);
+      codeExecutionTrace.push(...extracted.codeExecutionTrace);
+
+      const legPrompt = response.usage?.input_tokens || 0;
+      const legCompletion = response.usage?.output_tokens || 0;
+      promptTokens += legPrompt;
+      completionTokens += legCompletion;
+      costUsd += estimateCost(legPrompt, legCompletion, ANTHROPIC_MODELS, model);
+      if ((response as any).container?.id) containerId = (response as any).container.id;
+      stopReason = response.stop_reason ?? undefined;
+
+      if (stopReason !== "pause_turn") break;
+      if (attempt >= MAX_PAUSE_TURN_CONTINUATIONS) {
+        console.warn(
+          `[llm-provider] Anthropic turn still paused after ${MAX_PAUSE_TURN_CONTINUATIONS} continuations; returning partial result.`,
+        );
+        break;
+      }
+      anthropicMessages.push({ role: "assistant", content: response.content as any });
     }
-
-    const { generatedFiles, codeExecutionTrace } = extractAnthropicServerToolData(response.content);
-
-    const promptTokens = response.usage?.input_tokens || 0;
-    const completionTokens = response.usage?.output_tokens || 0;
 
     return {
       content: textContent,
       toolCalls,
       tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
-      costUsd: estimateCost(promptTokens, completionTokens, ANTHROPIC_MODELS, model),
+      costUsd,
       rawAssistantMessage: {
         content: textContent,
         tool_calls: toolCalls.map((tc) => ({
@@ -815,7 +867,8 @@ class AnthropicProvider implements LLMProvider {
       },
       ...(generatedFiles.length ? { generatedFiles } : {}),
       ...(codeExecutionTrace.length ? { codeExecutionTrace } : {}),
-      ...((response as any).container?.id ? { containerId: (response as any).container.id } : {}),
+      ...(containerId ? { containerId } : {}),
+      ...(stopReason ? { stopReason } : {}),
       ...buildProviderResultFields(this.providerName, options),
     };
   }
@@ -881,54 +934,87 @@ class AnthropicProvider implements LLMProvider {
     cbCheck(this.providerName);
 
     const client = await this.getClient();
+
+    // Mirrors complete()'s pause_turn handling -- see the comment there. Text
+    // from each continuation streams through onChunk as it arrives, so the
+    // caller sees one continuous turn.
     let fullContent = "";
     const toolCalls: CanonicalToolCall[] = [];
+    const generatedFiles: Array<{ fileId: string; toolUseId: string }> = [];
+    const codeExecutionTrace: Array<{ tool: string; input: unknown; summary: string }> = [];
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let costUsd = 0;
+    let containerId: string | undefined = options?.anthropicContainer?.id;
+    let stopReason: string | undefined;
 
     try {
-      // Cast to `any`: passing a second (per-call header) argument to .stream()
-      // resolves to a different SDK overload whose return type isn't the
-      // MessageStream withRetry's generic expects -- this is the same runtime
-      // call shape the Anthropic SDK documents for header overrides, just not
-      // the specific overload this pinned SDK version's .d.ts picks by default.
-      const stream: MessageStream = await withRetry(
-        () =>
-          (client.messages.stream as any)(
-            {
-              model,
-              max_tokens: options?.maxTokens || 4096,
-              ...(systemPrompt ? { system: systemPrompt } : {}),
-              messages: anthropicMessages,
-              ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
-              ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-              ...(options?.anthropicContainer ? { container: options.anthropicContainer as any } : {}),
-            },
-            options?.anthropicBetas?.length ? { headers: { "anthropic-beta": options.anthropicBetas.join(",") } } : undefined,
-          ) as Promise<MessageStream>,
-        this.providerName,
-      );
+      for (let attempt = 0; ; attempt++) {
+        const container = containerId
+          ? { ...(options?.anthropicContainer ?? {}), id: containerId }
+          : options?.anthropicContainer;
 
-      for await (const event of stream) {
-        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-          fullContent += event.delta.text;
-          onChunk(event.delta.text);
+        // Cast to `any`: passing a second (per-call header) argument to .stream()
+        // resolves to a different SDK overload whose return type isn't the
+        // MessageStream withRetry's generic expects -- this is the same runtime
+        // call shape the Anthropic SDK documents for header overrides, just not
+        // the specific overload this pinned SDK version's .d.ts picks by default.
+        const stream: MessageStream = await withRetry(
+          () =>
+            (client.messages.stream as any)(
+              {
+                model,
+                max_tokens: options?.maxTokens || 4096,
+                ...(systemPrompt ? { system: systemPrompt } : {}),
+                messages: anthropicMessages,
+                ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
+                ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+                ...(container ? { container: container as any } : {}),
+              },
+              options?.anthropicBetas?.length ? { headers: { "anthropic-beta": options.anthropicBetas.join(",") } } : undefined,
+            ) as Promise<MessageStream>,
+          this.providerName,
+        );
+
+        for await (const event of stream) {
+          if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+            fullContent += event.delta.text;
+            onChunk(event.delta.text);
+          }
         }
-      }
 
-      const finalMsg = await stream.finalMessage();
-      for (const block of finalMsg.content) {
-        if (block.type === "tool_use") {
-          toolCalls.push({
-            id: block.id,
-            name: block.name,
-            arguments: (block.input as Record<string, any>) || {},
-          });
+        const finalMsg = await stream.finalMessage();
+        for (const block of finalMsg.content) {
+          if (block.type === "tool_use") {
+            toolCalls.push({
+              id: block.id,
+              name: block.name,
+              arguments: (block.input as Record<string, any>) || {},
+            });
+          }
         }
+
+        const extracted = extractAnthropicServerToolData(finalMsg.content);
+        generatedFiles.push(...extracted.generatedFiles);
+        codeExecutionTrace.push(...extracted.codeExecutionTrace);
+
+        const legPrompt = finalMsg.usage.input_tokens || 0;
+        const legCompletion = finalMsg.usage.output_tokens || 0;
+        promptTokens += legPrompt;
+        completionTokens += legCompletion;
+        costUsd += estimateCost(legPrompt, legCompletion, ANTHROPIC_MODELS, model);
+        if ((finalMsg as any).container?.id) containerId = (finalMsg as any).container.id;
+        stopReason = finalMsg.stop_reason ?? undefined;
+
+        if (stopReason !== "pause_turn") break;
+        if (attempt >= MAX_PAUSE_TURN_CONTINUATIONS) {
+          console.warn(
+            `[llm-provider] Anthropic streamed turn still paused after ${MAX_PAUSE_TURN_CONTINUATIONS} continuations; returning partial result.`,
+          );
+          break;
+        }
+        anthropicMessages.push({ role: "assistant", content: finalMsg.content as any });
       }
-
-      const { generatedFiles, codeExecutionTrace } = extractAnthropicServerToolData(finalMsg.content);
-
-      const promptTokens = finalMsg.usage.input_tokens || 0;
-      const completionTokens = finalMsg.usage.output_tokens || 0;
 
       cbRecordSuccess(this.providerName);
 
@@ -936,7 +1022,7 @@ class AnthropicProvider implements LLMProvider {
         content: fullContent,
         toolCalls,
         tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
-        costUsd: estimateCost(promptTokens, completionTokens, ANTHROPIC_MODELS, model),
+        costUsd,
         rawAssistantMessage: {
           content: fullContent,
           tool_calls: toolCalls.map((tc) => ({
@@ -947,7 +1033,8 @@ class AnthropicProvider implements LLMProvider {
         },
         ...(generatedFiles.length ? { generatedFiles } : {}),
         ...(codeExecutionTrace.length ? { codeExecutionTrace } : {}),
-        ...((finalMsg as any).container?.id ? { containerId: (finalMsg as any).container.id } : {}),
+        ...(containerId ? { containerId } : {}),
+        ...(stopReason ? { stopReason } : {}),
         ...buildProviderResultFields(this.providerName, options),
       };
     } catch (err) {

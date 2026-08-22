@@ -55,6 +55,34 @@ export function buildCodeExecutionRequestConfig(
 }
 
 /**
+ * Anthropic's code execution tool and its built-in Skills exist only on the
+ * Anthropic provider -- OpenAIProvider ignores anthropicServerTools/
+ * anthropicContainer/anthropicBetas entirely. Attaching the PDF/PPTX skill to a
+ * GPT-model agent therefore produces no capability at all, and the agent
+ * truthfully answers that it cannot generate files (it returns an outline
+ * instead). Callers use this to refuse or flag the pairing rather than let it
+ * fail silently at run time.
+ */
+export function modelSupportsCodeExecution(modelName: string | null | undefined): boolean {
+  return typeof modelName === "string" && modelName.trim().toLowerCase().startsWith("claude");
+}
+
+/**
+ * Returns a human-readable reason when this agent has an approved
+ * code-execution skill its model cannot run, or null when the pairing is fine.
+ */
+export function describeCodeExecutionModelMismatch(
+  skills: Skill[],
+  modelName: string | null | undefined,
+): string | null {
+  const approved = skills.filter((s) => s.skillKind === "code_execution" && s.codeExecutionApproved);
+  if (approved.length === 0) return null;
+  if (modelSupportsCodeExecution(modelName)) return null;
+  const names = approved.map((s) => s.name).join(", ");
+  return `Skill(s) [${names}] require Anthropic code execution, which model "${modelName ?? "unknown"}" cannot run. Switch the agent to a Claude model to generate real files.`;
+}
+
+/**
  * Governance gate, called before deciding whether to offer code execution
  * this turn. Fails closed: any ambiguity (no approved skill, no AAR config,
  * REQUIRE_APPROVAL) results in code execution simply not being offered,

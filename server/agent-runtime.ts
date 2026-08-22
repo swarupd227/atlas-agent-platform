@@ -7,7 +7,7 @@ import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
-import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles } from "./anthropic-code-execution";
+import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -1311,6 +1311,22 @@ export async function executePromptWithMcp(
 
   const providerName = options?.modelProvider || "openai";
   const modelName = options?.modelName || "gpt-4.1";
+  // A code-execution skill on a non-Claude agent is a no-op that only surfaces
+  // as the agent saying it can't produce files -- record it as a step so the
+  // misconfiguration is visible in the trace instead of looking like a bug.
+  const codeExecMismatch = describeCodeExecutionModelMismatch(resolvedActiveSkills, modelName);
+  if (codeExecMismatch) {
+    console.warn(`[agent-runtime] Agent ${agentId}: ${codeExecMismatch}`);
+    steps.push({
+      id: `step_${steps.length + 1}`,
+      name: "Code execution unavailable for this model",
+      type: "skill_resolution",
+      status: "failed",
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      error: codeExecMismatch,
+    } as any);
+  }
   const llmProvider = getProvider(providerName);
   const fallbackProviderName = llmProvider.providerName === "openai" ? "anthropic" : "openai";
   const fallbackLlmProvider = getProvider(fallbackProviderName);

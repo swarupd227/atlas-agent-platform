@@ -4912,6 +4912,16 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
             const missingServersFor = (skill: Skill) =>
               ((skill.requiredMcpServers as string[] | null) || []).filter(name => !linkedServerNames.has(name.toLowerCase().trim()));
 
+            // Anthropic's code execution tool and its built-in PDF/PPTX/DOCX/XLSX
+            // Skills only exist on Claude models. Attaching such a skill to a
+            // GPT-model agent silently grants nothing -- the agent then answers
+            // that it can't produce files and returns an outline instead. Flag it
+            // here rather than letting it look like a broken skill.
+            const modelSupportsCodeExecution = (agent.modelName || "").trim().toLowerCase().startsWith("claude");
+            const needsClaudeModel = (skill: Skill) =>
+              (skill as any).skillKind === "code_execution" && !modelSupportsCodeExecution;
+            const blockedCodeExecSkills = matchedSkills.filter(needsClaudeModel);
+
             return (
               <>
                 <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -4974,6 +4984,12 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
                                         Needs MCP server{missingServers.length > 1 ? "s" : ""} not yet linked: {missingServers.join(", ")}
                                       </p>
                                     )}
+                                    {needsClaudeModel(skill) && (
+                                      <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1" data-testid={`warning-code-exec-model-${skill.id}`}>
+                                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                                        Needs a Claude model to run — this agent uses "{agent.modelName}", so it won't generate files.
+                                      </p>
+                                    )}
                                   </div>
                                 </button>
                               );
@@ -4989,6 +5005,25 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
                     </Link>
                   </div>
                 </div>
+
+                {blockedCodeExecSkills.length > 0 && (
+                  <div
+                    className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3"
+                    data-testid="banner-code-exec-model-mismatch"
+                  >
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-medium">
+                        {blockedCodeExecSkills.map(s => `"${s.name}"`).join(", ")} cannot run on this agent's model
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        Code execution and the built-in PDF/PPTX/DOCX/XLSX skills are available only on Claude models.
+                        This agent uses "{agent.modelName}", so it will describe or outline the document instead of
+                        generating a real file. Switch the agent to a Claude model to enable file generation.
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {matchedSkills.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
