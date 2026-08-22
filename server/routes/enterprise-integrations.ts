@@ -5,7 +5,7 @@ import { storage } from "../storage";
 import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault";
 import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registry";
 import { callN8nWorkflow } from "../integrations/n8n";
-import { getDefaultOrgId } from "../auth";
+import { getDefaultOrgId, getOrgId } from "../auth";
 import { db } from "../db";
 import { mcpServers, auditEvents, integrationConnections, agentMcpServers } from "@shared/schema";
 import { eq, and, gte, like, isNull } from "drizzle-orm";
@@ -15,7 +15,7 @@ const router = Router();
 // ── GET /api/enterprise-integrations ─────────────────────────────────────────
 router.get("/api/enterprise-integrations", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const connections = await storage.listIntegrationConnections(orgId);
 
     // Group rather than collapse. Keying a Map by integrationId silently dropped
@@ -79,7 +79,7 @@ const connectSchema = z.object({
 
 router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
     const def = getIntegrationDef(integrationId);
     if (!def) {
@@ -114,7 +114,7 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
     let testResult: { ok: boolean; status?: string; latencyMs?: number; error?: string } | null = null;
     try {
       const credentials = decryptCredentialMap(credentialBlob);
-      testResult = await testConnectionHealth(integrationId, credentials, def);
+      testResult = await testConnectionHealth(integrationId, credentials, def, orgId);
       // Only persist test result for verifiable connectors — not_verifiable should not mark as error
       if ((testResult as any).status !== "not_verifiable") {
         await storage.recordIntegrationTestResult(conn.id, testResult.ok, testResult.error ?? null);
@@ -164,7 +164,7 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
 // GET /api/enterprise-integrations/:id/connections — every connection of a type
 router.get("/api/enterprise-integrations/:id/connections", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const conns = await storage.listIntegrationConnectionsByType(orgId, req.params.id);
     res.json(conns.map((c) => ({
       id: c.id,
@@ -189,7 +189,7 @@ const renameSchema = z.object({ name: z.string().trim().min(1).max(120) });
 // PATCH /api/enterprise-integrations/connections/:connectionId — rename
 router.patch("/api/enterprise-integrations/connections/:connectionId", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const parsed = renameSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -215,7 +215,7 @@ router.patch("/api/enterprise-integrations/connections/:connectionId", async (re
 // Makes this the connection that type-only credential lookups resolve to.
 router.post("/api/enterprise-integrations/connections/:connectionId/promote", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const row = await storage.promoteIntegrationConnectionToDefault(orgId, req.params.connectionId);
     if (!row) return res.status(404).json({ error: "Connection not found" });
 
@@ -239,7 +239,7 @@ router.post("/api/enterprise-integrations/connections/:connectionId/promote", as
 // type-level disconnect route below.
 router.post("/api/enterprise-integrations/connections/:connectionId/disconnect", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const connectionId = req.params.connectionId;
     const conn = await storage.getIntegrationConnectionById(orgId, connectionId);
     if (!conn) return res.status(404).json({ error: "Connection not found" });
@@ -275,7 +275,7 @@ router.post("/api/enterprise-integrations/connections/:connectionId/disconnect",
 // tool call. `?force=true` proceeds and reports how many bindings were removed.
 router.delete("/api/enterprise-integrations/connections/:connectionId", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const connectionId = req.params.connectionId;
     const force = req.query.force === "true";
 
@@ -371,7 +371,7 @@ router.delete("/api/enterprise-integrations/connections/:connectionId", async (r
 // ── POST /api/enterprise-integrations/:id/disconnect ─────────────────────────
 router.post("/api/enterprise-integrations/:id/disconnect", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
     const conn = await storage.getIntegrationConnection(orgId, integrationId);
 
@@ -397,7 +397,7 @@ router.post("/api/enterprise-integrations/:id/disconnect", async (req: Request, 
 // ── DELETE /api/enterprise-integrations/:id — alias for disconnect ────────────
 router.delete("/api/enterprise-integrations/:id", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
     const conn = await storage.getIntegrationConnection(orgId, integrationId);
 
@@ -423,7 +423,7 @@ router.delete("/api/enterprise-integrations/:id", async (req: Request, res: Resp
 // ── POST /api/enterprise-integrations/:id/test ───────────────────────────────
 router.post("/api/enterprise-integrations/:id/test", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
     const conn = await storage.getIntegrationConnection(orgId, integrationId);
     if (!conn || !conn.credentialBlob) {
@@ -438,7 +438,7 @@ router.post("/api/enterprise-integrations/:id/test", async (req: Request, res: R
     }
 
     const def = getIntegrationDef(integrationId);
-    const result = await testConnectionHealth(integrationId, credentials, def);
+    const result = await testConnectionHealth(integrationId, credentials, def, orgId);
     await storage.recordIntegrationTestResult(conn.id, result.ok, result.error ?? null);
     res.json(result);
   } catch (err: any) {
@@ -449,7 +449,7 @@ router.post("/api/enterprise-integrations/:id/test", async (req: Request, res: R
 // ── GET /api/enterprise-integrations/:id/status ──────────────────────────────
 router.get("/api/enterprise-integrations/:id/status", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
     const conn = await storage.getIntegrationConnection(orgId, integrationId);
     if (!conn) {
@@ -471,7 +471,7 @@ router.get("/api/enterprise-integrations/:id/status", async (req: Request, res: 
 // ── GET /api/enterprise-integrations/:id/credentials-hint ────────────────────
 router.get("/api/enterprise-integrations/:id/credentials-hint", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
     const conn = await storage.getIntegrationConnection(orgId, integrationId);
     if (!conn || !conn.credentialBlob) {
@@ -526,7 +526,7 @@ router.get("/api/integrations/oauth/start/:provider", async (req: Request, res: 
     if (!def || !def.oauthConfig) {
       return res.status(400).json({ error: `${provider} does not support OAuth2` });
     }
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const state = randomBytes(24).toString("hex");
     const redirectUri = `${req.protocol}://${req.get("host")}/api/integrations/oauth/callback`;
 
@@ -644,7 +644,7 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
     // Auto-test after OAuth callback
     try {
       const credentials = decryptCredentialMap(credentialBlob);
-      const testResult = await testConnectionHealth(pending.integrationId, credentials, def);
+      const testResult = await testConnectionHealth(pending.integrationId, credentials, def, conn.organizationId);
       await storage.recordIntegrationTestResult(conn.id, testResult.ok, testResult.error ?? null);
     } catch { /* non-fatal */ }
 
@@ -785,7 +785,7 @@ async function refreshExpiringTokens(aheadMs: number): Promise<void> {
 // Returns error rate and tool-call counts derived from audit events (last 24 h).
 router.get("/api/enterprise-integrations/:id/health", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
     const def = getIntegrationDef(integrationId);
     if (!def) return res.status(404).json({ error: `Integration '${integrationId}' not found` });
@@ -942,12 +942,68 @@ async function deactivateIntegrationMcpServer(connectionId: string): Promise<voi
   }
 }
 
+/** Integrations whose connector extends SqlMcpServerBase and can self-test. */
+const SQL_INTEGRATION_IDS = new Set(["postgres", "mysql", "sqlserver"]);
+
 async function testConnectionHealth(
   integrationId: string,
   credentials: Record<string, string>,
-  def: ReturnType<typeof getIntegrationDef>
-): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+  def: ReturnType<typeof getIntegrationDef>,
+  orgId?: string
+): Promise<{ ok: boolean; latencyMs?: number; error?: string; status?: string; friendlyError?: string; hostFingerprint?: string }> {
   const start = Date.now();
+
+  // SQL connectors already know how to verify themselves -- SqlMcpServerBase
+  // .testConnection() runs SELECT 1, translates the driver error into
+  // something readable, and surfaces an SSH tunnel's host-key fingerprint.
+  // Without this they fell through to the `default:` branch below and were
+  // recorded as "not_verifiable", so a database connection with entirely wrong
+  // credentials saved and displayed as connected.
+  if (SQL_INTEGRATION_IDS.has(integrationId)) {
+    const { getEnterpriseServerById } = await import("../integrations/register");
+    const connector = getEnterpriseServerById(integrationId) as any;
+
+    if (!connector || typeof connector.testConnection !== "function") {
+      return { ok: true, status: "not_verifiable", latencyMs: Date.now() - start };
+    }
+
+    // Relay mode reaches the database through a customer-side agent holding an
+    // outbound WebSocket. If no agent is currently connected there is nothing
+    // to test THROUGH, and the failure would say nothing about whether the
+    // credentials are right -- so report it honestly instead of marking the
+    // connection broken.
+    if (credentials.connectionMode === "relay_agent") {
+      const { isAgentConnected } = await import("../relay/relay-server");
+      const relayAgentId = credentials.relayAgentId;
+      if (!relayAgentId) {
+        return { ok: true, status: "not_verifiable", error: "Relay mode selected but no relay agent chosen.", latencyMs: Date.now() - start };
+      }
+      if (!isAgentConnected(relayAgentId)) {
+        return {
+          ok: true,
+          status: "not_verifiable",
+          error: `Relay agent '${relayAgentId}' is not currently connected — cannot verify until it comes online.`,
+          latencyMs: Date.now() - start,
+        };
+      }
+    }
+
+    // The session cache is keyed by org, so a missing org would build a
+    // connector under a different cache key than every later call.
+    const effectiveOrgId = orgId ?? getDefaultOrgId();
+    if (!effectiveOrgId) {
+      return { ok: true, status: "not_verifiable", error: "No organization context to test with.", latencyMs: Date.now() - start };
+    }
+
+    const result = await connector.testConnection(credentials, effectiveOrgId);
+    return {
+      ok: result.ok,
+      error: result.error,
+      friendlyError: result.friendlyError,
+      hostFingerprint: result.hostFingerprint,
+      latencyMs: Date.now() - start,
+    };
+  }
 
   try {
     switch (integrationId) {
@@ -1058,7 +1114,7 @@ async function testConnectionHealth(
 // GET /api/integrations — list all integrations with per-org connection status (mirrors /api/enterprise-integrations)
 router.get("/api/integrations", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const connections = await storage.listIntegrationConnections(orgId);
     const connMap = new Map(connections.map((c) => [c.integrationId, c]));
     const result = INTEGRATION_REGISTRY.map((def) => {
@@ -1080,7 +1136,7 @@ router.get("/api/integrations", async (req: Request, res: Response) => {
 
 router.get("/api/integrations/:id/status", async (req, res) => {
   req.url = `/api/enterprise-integrations/${req.params.id}/status`;
-  const orgId = getDefaultOrgId(req);
+  const orgId = getOrgId(req) ?? getDefaultOrgId();
   const conn = await storage.getIntegrationConnection(orgId, req.params.id).catch(() => null);
   if (!conn) return res.json({ integrationId: req.params.id, status: "disconnected", connection: null });
   res.json({ integrationId: req.params.id, status: conn.status, lastTestedAt: conn.lastTestedAt,
@@ -1091,7 +1147,7 @@ router.get("/api/integrations/:id/status", async (req, res) => {
 router.get("/api/integrations/:id/health", async (req, res) => {
   req.params.id = req.params.id;
   // Re-use the enterprise health handler logic
-  const orgId = getDefaultOrgId(req);
+  const orgId = getOrgId(req) ?? getDefaultOrgId();
   const integrationId = req.params.id;
   const def = getIntegrationDef(integrationId);
   if (!def) return res.status(404).json({ error: `Integration '${integrationId}' not found` });
@@ -1112,14 +1168,14 @@ router.get("/api/integrations/:id/health", async (req, res) => {
 });
 
 router.post("/api/integrations/:id/test", async (req, res) => {
-  const orgId = getDefaultOrgId(req);
+  const orgId = getOrgId(req) ?? getDefaultOrgId();
   const integrationId = req.params.id;
   const conn = await storage.getIntegrationConnection(orgId, integrationId).catch(() => null);
   if (!conn || !conn.credentialBlob) return res.status(404).json({ error: "No connection found" });
   try {
     const credentials = decryptCredentialMap(conn.credentialBlob);
     const def = getIntegrationDef(integrationId);
-    const result = await testConnectionHealth(integrationId, credentials, def);
+    const result = await testConnectionHealth(integrationId, credentials, def, orgId);
     await storage.recordIntegrationTestResult(conn.id, result.ok, (result as any).error ?? null);
     res.json(result);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
@@ -1131,7 +1187,7 @@ router.post("/api/integrations/:id/test", async (req, res) => {
 // needing to know the public key.
 router.post("/api/integrations/n8n/call", async (req: Request, res: Response) => {
   try {
-    const orgId = getDefaultOrgId(req);
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
     const conn = await storage.getIntegrationConnection(orgId, "n8n");
     if (!conn || !conn.credentialBlob) {
       return res.status(404).json({ error: "n8n not connected — configure credentials first in Enterprise Connectors" });
