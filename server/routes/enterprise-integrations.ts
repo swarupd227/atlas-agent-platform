@@ -7,7 +7,7 @@ import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registr
 import { callN8nWorkflow } from "../integrations/n8n";
 import { getDefaultOrgId } from "../auth";
 import { db } from "../db";
-import { mcpServers, auditEvents, integrationConnections } from "@shared/schema";
+import { mcpServers, auditEvents, integrationConnections, agentMcpServers } from "@shared/schema";
 import { eq, and, gte, like, isNull } from "drizzle-orm";
 
 const router = Router();
@@ -260,6 +260,109 @@ router.post("/api/enterprise-integrations/connections/:connectionId/disconnect",
     // explicit choice, and silently moving the flag here would repoint every
     // type-only lookup at a different database as a side effect of a disconnect.
     res.json({ ok: true, wasDefault: conn.isDefault });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/enterprise-integrations/connections/:connectionId
+// Permanently removes ONE connection. Disconnect only clears the credentials
+// and leaves the row, so without this a connection could never actually be
+// removed -- dead rows and their catalog entries accumulated forever.
+//
+// Refuses by default when agents are still bound to the connection's MCP
+// server, since silently unbinding them would break those agents at their next
+// tool call. `?force=true` proceeds and reports how many bindings were removed.
+router.delete("/api/enterprise-integrations/connections/:connectionId", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const connectionId = req.params.connectionId;
+    const force = req.query.force === "true";
+
+    const conn = await storage.getIntegrationConnectionById(orgId, connectionId);
+    if (!conn) return res.status(404).json({ error: "Connection not found" });
+
+    // Agent bindings hang off the MCP server, not the connection.
+    const [server] = await db
+      .select({ id: mcpServers.id, url: mcpServers.url })
+      .from(mcpServers)
+      .where(eq(mcpServers.connectionId, connectionId))
+      .limit(1);
+
+    let boundAgents: { agentId: string }[] = [];
+    if (server) {
+      boundAgents = await db
+        .select({ agentId: agentMcpServers.agentId })
+        .from(agentMcpServers)
+        .where(eq(agentMcpServers.serverId, server.id));
+    }
+
+    if (boundAgents.length > 0 && !force) {
+      return res.status(409).json({
+        error: `${boundAgents.length} agent(s) are still bound to this connection's MCP server.`,
+        boundAgentIds: boundAgents.map((b) => b.agentId),
+        hint: "Rebind those agents to another connection, or retry with ?force=true to unbind them.",
+      });
+    }
+
+    if (server) {
+      if (boundAgents.length > 0) {
+        // No FK on agent_mcp_servers, so these would otherwise dangle and point
+        // at a server row that no longer exists.
+        await db.delete(agentMcpServers).where(eq(agentMcpServers.serverId, server.id));
+      }
+
+      // The seeded catalog row (registerEnterpriseIntegrations seeds one per
+      // integration at <BASE_URL>/api/integrations/<id>) carries the tool
+      // catalog and is shared across the type -- release it rather than delete
+      // it, so a later connect can adopt it again. Rows created for sibling
+      // connections have no such URL and are ours to remove.
+      const isSeededCatalogRow = !!server.url && server.url.endsWith(`/api/integrations/${conn.integrationId}`);
+      if (isSeededCatalogRow) {
+        await db.update(mcpServers)
+          .set({ connectionId: null, status: "inactive", updatedAt: new Date() })
+          .where(eq(mcpServers.id, server.id));
+      } else {
+        await db.delete(mcpServers).where(eq(mcpServers.id, server.id));
+      }
+    }
+
+    await storage.deleteIntegrationConnection(orgId, connectionId);
+
+    // Deleting the default would leave the type with no default at all, so
+    // type-only lookups would fall through to the created_at tiebreaker. Unlike
+    // disconnect (where the row survives and keeps its flag), there is nothing
+    // left to hold the flag -- promote the oldest survivor and say so.
+    let newDefaultConnectionId: string | null = null;
+    if (conn.isDefault) {
+      const siblings = await storage.listIntegrationConnectionsByType(orgId, conn.integrationId);
+      if (siblings.length > 0) {
+        const promoted = await storage.promoteIntegrationConnectionToDefault(orgId, siblings[0].id);
+        newDefaultConnectionId = promoted?.id ?? null;
+      }
+    }
+
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "integration_connection_delete",
+      objectType: "integration_connection",
+      objectId: connectionId,
+      details: JSON.stringify({
+        integrationId: conn.integrationId,
+        name: conn.name,
+        wasDefault: conn.isDefault,
+        unboundAgents: boundAgents.length,
+        newDefaultConnectionId,
+      }),
+      organizationId: orgId,
+    }).catch(() => {});
+
+    res.json({
+      ok: true,
+      deletedConnectionId: connectionId,
+      unboundAgents: boundAgents.length,
+      newDefaultConnectionId,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -1901,6 +1901,8 @@ function ConnectionsManagerDialog({
   const { toast } = useToast();
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+  // Remembered across the 409 round-trip so the forced retry knows its target.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const integrationId = integration?.id;
 
@@ -1936,6 +1938,42 @@ function ConnectionsManagerDialog({
       });
     },
     onError: (err: any) => toast({ title: "Promote failed", description: err?.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async ({ id, force }: { id: string; force?: boolean }) => {
+      const res = await apiRequest(
+        "DELETE",
+        `/api/enterprise-integrations/connections/${id}${force ? "?force=true" : ""}`,
+      );
+      return res.json();
+    },
+    onSuccess: (data) => {
+      refresh();
+      toast({
+        title: "Connection deleted",
+        description: [
+          data?.unboundAgents ? `${data.unboundAgents} agent binding(s) removed.` : null,
+          data?.newDefaultConnectionId ? "Another connection was promoted to default." : null,
+        ].filter(Boolean).join(" ") || undefined,
+      });
+    },
+    onError: async (err: any) => {
+      // 409 means agents are still bound. Surface who, and offer the forced
+      // path rather than silently unbinding them.
+      let body: any = null;
+      try { body = JSON.parse(err?.message?.replace(/^\d+:\s*/, "") ?? "null"); } catch { /* not JSON */ }
+      if (body?.boundAgentIds?.length) {
+        const proceed = window.confirm(
+          `${body.boundAgentIds.length} agent(s) are still bound to this connection's MCP server.\n\n` +
+          `Deleting it will unbind them, and those agents will lose these tools at their next run.\n\n` +
+          `Delete anyway?`,
+        );
+        if (proceed) deleteMutation.mutate({ id: pendingDeleteId!, force: true });
+        return;
+      }
+      toast({ title: "Delete failed", description: err?.message, variant: "destructive" });
+    },
   });
 
   const disconnectMutation = useMutation({
@@ -2062,11 +2100,34 @@ function ConnectionsManagerDialog({
                       className="h-7 text-xs text-destructive hover:text-destructive"
                       disabled={disconnectMutation.isPending}
                       onClick={() => disconnectMutation.mutate(c.id)}
+                      title="Disconnect — clears credentials, keeps the connection"
                       data-testid={`button-disconnect-connection-${c.id}`}
                     >
                       <WifiOff className="w-3.5 h-3.5" />
                     </Button>
                   )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-destructive hover:text-destructive"
+                    disabled={deleteMutation.isPending}
+                    title="Delete permanently"
+                    onClick={() => {
+                      // Irreversible and takes the credentials with it, so it
+                      // asks first -- unlike disconnect, which is recoverable.
+                      const label = c.name || integration.name;
+                      if (!window.confirm(
+                        `Permanently delete the connection "${label}"?\n\n` +
+                        `Its stored credentials are destroyed and it cannot be recovered.` +
+                        (c.isDefault ? `\n\nThis is the DEFAULT connection — another one will be promoted in its place.` : ""),
+                      )) return;
+                      setPendingDeleteId(c.id);
+                      deleteMutation.mutate({ id: c.id });
+                    }}
+                    data-testid={`button-delete-connection-${c.id}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
                 </div>
               )}
             </div>

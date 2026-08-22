@@ -76,6 +76,31 @@ class FakeConnectionStore {
     return target;
   }
 
+  deleteIntegrationConnection(orgId: string, connectionId: string): boolean {
+    const i = this.rows.findIndex((r) => r.organizationId === orgId && r.id === connectionId);
+    if (i === -1) return false;
+    this.rows.splice(i, 1);
+    return true;
+  }
+
+  /**
+   * Mirrors the DELETE route's promote-after-delete step: unlike disconnect
+   * (where the row survives holding its flag), deleting the default leaves
+   * nothing to hold it, so the oldest survivor is promoted.
+   */
+  deleteConnectionAsRouteDoes(orgId: string, connectionId: string): { newDefaultConnectionId: string | null } {
+    const conn = this.getIntegrationConnectionById(orgId, connectionId);
+    if (!conn) return { newDefaultConnectionId: null };
+    this.deleteIntegrationConnection(orgId, connectionId);
+    if (!conn.isDefault) return { newDefaultConnectionId: null };
+    const survivors = this.rows
+      .filter((r) => r.organizationId === orgId && r.integrationId === conn.integrationId)
+      .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0));
+    if (!survivors.length) return { newDefaultConnectionId: null };
+    this.promoteIntegrationConnectionToDefault(orgId, survivors[0].id);
+    return { newDefaultConnectionId: survivors[0].id };
+  }
+
   disconnectIntegration(orgId: string, integrationId: string, connectionId?: string): void {
     for (const r of this.rows) {
       if (r.organizationId !== orgId) continue;
@@ -244,6 +269,62 @@ describe("disconnecting", () => {
     // Auto-promoting a sibling here would repoint every unpinned agent at a
     // different database as a side effect of a disconnect.
     expect(store.rows.find((r) => r.id === first.id)?.isDefault).toBe(true);
+  });
+});
+
+describe("deleting a connection", () => {
+  it("removes the row entirely, unlike disconnect which keeps it", () => {
+    const first = seedDefaultPostgres();
+    store.disconnectIntegration(ORG, "postgres", first.id);
+    expect(store.rows).toHaveLength(1);
+
+    store.deleteIntegrationConnection(ORG, first.id);
+    expect(store.rows).toHaveLength(0);
+  });
+
+  it("leaves the default alone when a non-default sibling is deleted", () => {
+    const first = seedDefaultPostgres();
+    const second = store.createIntegrationConnection({
+      organizationId: ORG, integrationId: "postgres", name: "Support DB",
+      credentialBlob: "support", status: "connected",
+    });
+
+    const { newDefaultConnectionId } = store.deleteConnectionAsRouteDoes(ORG, second.id);
+
+    expect(newDefaultConnectionId).toBeNull();
+    expect(store.rows).toHaveLength(1);
+    expect(store.rows[0].id).toBe(first.id);
+    expect(store.rows[0].isDefault).toBe(true);
+  });
+
+  it("promotes the oldest survivor when the DEFAULT is deleted", () => {
+    const first = seedDefaultPostgres();
+    const second = store.createIntegrationConnection({
+      organizationId: ORG, integrationId: "postgres", name: "Support DB",
+      credentialBlob: "support", status: "connected", createdAt: new Date(2026, 5, 1),
+    });
+
+    const { newDefaultConnectionId } = store.deleteConnectionAsRouteDoes(ORG, first.id);
+
+    // Leaving zero defaults would drop type-only lookups onto the created_at
+    // tiebreaker with no row actually marked as the intended one.
+    expect(newDefaultConnectionId).toBe(second.id);
+    expect(store.getIntegrationConnection(ORG, "postgres")?.id).toBe(second.id);
+    expect(store.rows.filter((r) => r.isDefault)).toHaveLength(1);
+  });
+
+  it("leaves no default when the last connection of a type is deleted", () => {
+    const first = seedDefaultPostgres();
+    const { newDefaultConnectionId } = store.deleteConnectionAsRouteDoes(ORG, first.id);
+
+    expect(newDefaultConnectionId).toBeNull();
+    expect(store.getIntegrationConnection(ORG, "postgres")).toBeNull();
+  });
+
+  it("will not delete across organizations", () => {
+    const first = seedDefaultPostgres();
+    expect(store.deleteIntegrationConnection("org-2", first.id)).toBe(false);
+    expect(store.rows).toHaveLength(1);
   });
 });
 

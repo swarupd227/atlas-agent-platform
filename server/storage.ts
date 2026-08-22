@@ -5396,6 +5396,20 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  // Permanently removes one connection, credentials and all. Irreversible --
+  // callers are expected to have dealt with the MCP server row and any agent
+  // bindings first (see the DELETE route in routes/enterprise-integrations.ts).
+  // Returns false when the id matches nothing in this org.
+  async deleteIntegrationConnection(orgId: string, connectionId: string): Promise<boolean> {
+    const deleted = await db.delete(integrationConnections)
+      .where(and(
+        eq(integrationConnections.organizationId, orgId),
+        eq(integrationConnections.id, connectionId),
+      ))
+      .returning({ id: integrationConnections.id });
+    return deleted.length > 0;
+  }
+
   // Without `connectionId` this disconnects EVERY connection of the type, which
   // is what the type-level "Disconnect" action means -- but it also takes out
   // sibling connections once an org has more than one, so callers that know
