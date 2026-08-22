@@ -19,7 +19,7 @@ import {
   Shield, Eye, EyeOff, Zap, RefreshCw, Activity, AlertCircle,
   Tag, Lock, Unlock, Timer, FileText, Download, FileCode, Terminal,
   KeyRound, Building2, GitBranch, LayoutGrid, Snowflake, Link2,
-  CheckCheck, WifiOff, Loader2, ExternalLink, Info,
+  CheckCheck, WifiOff, Loader2, ExternalLink, Info, Star, Layers,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -1355,14 +1355,23 @@ interface IntegrationDef {
   docsUrl?: string;
   wave: 1 | 2 | 3 | 4 | 5;
   capabilities: string[];
-  connection: {
-    id: string;
-    status: string;
-    lastTestedAt: string | null;
-    lastTestResult: string | null;
-    lastError: string | null;
-    tokenExpiresAt: string | null;
-  } | null;
+  // The org's DEFAULT connection for this integration -- the one type-only
+  // credential lookups resolve to. Null when nothing is connected.
+  connection: IntegrationConnectionSummary | null;
+  // Every connection of this type, default first. An org can hold several of
+  // the same type (e.g. a "Sales DB" and a "Support DB", both PostgreSQL).
+  connections?: IntegrationConnectionSummary[];
+}
+
+interface IntegrationConnectionSummary {
+  id: string;
+  name?: string | null;
+  isDefault?: boolean;
+  status: string;
+  lastTestedAt: string | null;
+  lastTestResult: string | null;
+  lastError: string | null;
+  tokenExpiresAt: string | null;
 }
 
 const ENT_CATEGORY_META: Record<IntegrationCategory, { label: string; icon: LucideIcon; color: string }> = {
@@ -1419,23 +1428,42 @@ function ConnectDialog({
   integration,
   open,
   onOpenChange,
+  createNew = false,
 }: {
   integration: IntegrationDef | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Add a NEW connection alongside the existing ones rather than
+   * re-authenticating the org's default. Off by default, so the ordinary
+   * "Connect"/re-auth path cannot accidentally accumulate duplicates.
+   */
+  createNew?: boolean;
 }) {
   const { toast } = useToast();
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
+  const [connectionName, setConnectionName] = useState("");
 
   const connectMutation = useMutation({
     mutationFn: (credentials: Record<string, string>) =>
-      apiRequest("POST", `/api/enterprise-integrations/${integration?.id}/connect`, { credentials }),
+      apiRequest("POST", `/api/enterprise-integrations/${integration?.id}/connect`, {
+        credentials,
+        ...(createNew ? { createNew: true } : {}),
+        ...(connectionName.trim() ? { name: connectionName.trim() } : {}),
+      }),
     onSuccess: () => {
-      toast({ title: `${integration?.name} connected`, description: "Credentials saved securely in the vault." });
+      toast({
+        title: createNew ? `${integration?.name} connection added` : `${integration?.name} connected`,
+        description: createNew
+          ? "Added alongside the existing connections. It is not the default until you promote it."
+          : "Credentials saved securely in the vault.",
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/enterprise-integrations"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/enterprise-integrations/${integration?.id}/connections`] });
       onOpenChange(false);
       setFormValues({});
+      setConnectionName("");
     },
     onError: (err: any) => {
       toast({ title: "Connection failed", description: err.message, variant: "destructive" });
@@ -1502,12 +1530,32 @@ function ConnectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader className="shrink-0">
-          <DialogTitle>Connect {integration.name}</DialogTitle>
+          <DialogTitle>
+            {createNew ? `Add another ${integration.name} connection` : `Connect ${integration.name}`}
+          </DialogTitle>
           <DialogDescription>
-            Credentials are encrypted with AES-256-GCM before storage.
+            {createNew
+              ? "This is added alongside your existing connections and does not become the default."
+              : "Credentials are encrypted with AES-256-GCM before storage."}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3 py-1 overflow-y-auto flex-1 min-h-0 pr-1">
+          {/* Only offered when adding a sibling: with several connections of one
+              type, an unnamed instance is impossible to tell apart later. */}
+          {createNew && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="field-connection-name" className="text-xs">
+                Connection name
+              </Label>
+              <Input
+                id="field-connection-name"
+                data-testid="input-connection-name"
+                placeholder={`e.g. Sales ${integration.name}`}
+                value={connectionName}
+                onChange={(e) => setConnectionName(e.target.value)}
+              />
+            </div>
+          )}
           {fields
             .filter((field) => !field.showWhen || formValues[field.showWhen.field] === field.showWhen.equals)
             .map((field) => (
@@ -1675,12 +1723,14 @@ function EnterpriseIntegrationCard({
   onDisconnect,
   onTest,
   onN8nTestCall,
+  onManageConnections,
 }: {
   integration: IntegrationDef;
   onConnect: () => void;
   onDisconnect: () => void;
   onTest: () => void;
   onN8nTestCall?: () => void;
+  onManageConnections?: () => void;
 }) {
   const catMeta = ENT_CATEGORY_META[integration.category];
   const CatIcon = catMeta.icon;
@@ -1689,6 +1739,7 @@ function EnterpriseIntegrationCard({
   const conn = integration.connection;
   const isConnected = conn?.status === "connected";
   const hasError = conn?.status === "error";
+  const connectionCount = integration.connections?.length ?? (conn ? 1 : 0);
 
   return (
     <Card
@@ -1739,6 +1790,21 @@ function EnterpriseIntegrationCard({
           </p>
         )}
 
+        {/* The card shows only the default connection, so say when others exist
+            -- otherwise a second database looks like it was never connected. */}
+        {connectionCount > 1 && (
+          <button
+            type="button"
+            onClick={onManageConnections}
+            className="text-[10px] text-muted-foreground flex items-center gap-1 hover:text-foreground w-fit"
+            data-testid={`text-connection-count-${integration.id}`}
+          >
+            <Layers className="w-3 h-3" />
+            {connectionCount} connections
+            {conn?.name ? ` — default: ${conn.name}` : ""}
+          </button>
+        )}
+
         <div className="flex flex-wrap gap-1 mt-auto">
           {integration.capabilities.slice(0, 4).map((cap) => (
             <Badge key={cap} variant="outline" className="text-[9px] font-normal">
@@ -1777,6 +1843,18 @@ function EnterpriseIntegrationCard({
                   Test Call
                 </Button>
               )}
+              {onManageConnections && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-xs"
+                  onClick={onManageConnections}
+                  data-testid={`button-manage-connections-${integration.id}`}
+                >
+                  <Layers className="w-3.5 h-3.5 mr-1.5" />
+                  Connections
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
@@ -1805,6 +1883,216 @@ function EnterpriseIntegrationCard({
   );
 }
 
+// ── Multi-connection management ──────────────────────────────────────────────
+// One org can hold several connections of the same integration type. This
+// dialog is where they are named, promoted, and disconnected individually --
+// the integration card itself only ever surfaces the default connection.
+function ConnectionsManagerDialog({
+  integration,
+  open,
+  onOpenChange,
+  onAddConnection,
+}: {
+  integration: IntegrationDef | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAddConnection: (integration: IntegrationDef) => void;
+}) {
+  const { toast } = useToast();
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+
+  const integrationId = integration?.id;
+
+  const { data: connections, isLoading } = useQuery<IntegrationConnectionSummary[]>({
+    queryKey: [`/api/enterprise-integrations/${integrationId}/connections`],
+    enabled: open && !!integrationId,
+  });
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: [`/api/enterprise-integrations/${integrationId}/connections`] });
+    queryClient.invalidateQueries({ queryKey: ["/api/enterprise-integrations"] });
+  };
+
+  const renameMutation = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      apiRequest("PATCH", `/api/enterprise-integrations/connections/${id}`, { name }),
+    onSuccess: () => {
+      setRenamingId(null);
+      refresh();
+      toast({ title: "Connection renamed" });
+    },
+    onError: (err: any) => toast({ title: "Rename failed", description: err?.message, variant: "destructive" }),
+  });
+
+  const promoteMutation = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest("POST", `/api/enterprise-integrations/connections/${id}/promote`),
+    onSuccess: () => {
+      refresh();
+      toast({
+        title: "Default connection changed",
+        description: "Agents that aren't pinned to a specific connection will now use this one.",
+      });
+    },
+    onError: (err: any) => toast({ title: "Promote failed", description: err?.message, variant: "destructive" }),
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: (id: string) =>
+      apiRequest("POST", `/api/enterprise-integrations/connections/${id}/disconnect`),
+    onSuccess: (_data, id) => {
+      const wasDefault = connections?.find((c) => c.id === id)?.isDefault;
+      refresh();
+      toast({
+        title: "Connection disconnected",
+        // Disconnecting does not move the default flag -- say so, because the
+        // remaining connections are NOT silently promoted in its place.
+        description: wasDefault
+          ? "This was the default connection. Promote another one so unpinned agents keep working."
+          : undefined,
+        variant: wasDefault ? "destructive" : undefined,
+      });
+    },
+    onError: (err: any) => toast({ title: "Disconnect failed", description: err?.message, variant: "destructive" }),
+  });
+
+  if (!integration) return null;
+
+  const rows = connections ?? [];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl" data-testid="dialog-manage-connections">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Layers className="w-4 h-4" />
+            {integration.name} connections
+          </DialogTitle>
+          <DialogDescription>
+            An agent can be pinned to a specific connection. Anything not pinned uses the default.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-2 max-h-[50vh] overflow-y-auto">
+          {isLoading && <Skeleton className="h-16 w-full" />}
+
+          {!isLoading && rows.length === 0 && (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              No connections yet.
+            </p>
+          )}
+
+          {rows.map((c) => (
+            <div
+              key={c.id}
+              className="flex items-center gap-3 rounded-md border px-3 py-2.5"
+              data-testid={`row-connection-${c.id}`}
+            >
+              <div className="flex flex-col gap-1 flex-1 min-w-0">
+                {renamingId === c.id ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={draftName}
+                      onChange={(e) => setDraftName(e.target.value)}
+                      className="h-7 text-xs"
+                      placeholder="e.g. Sales DB"
+                      autoFocus
+                      data-testid={`input-rename-${c.id}`}
+                    />
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={!draftName.trim() || renameMutation.isPending}
+                      onClick={() => renameMutation.mutate({ id: c.id, name: draftName.trim() })}
+                      data-testid={`button-save-rename-${c.id}`}
+                    >
+                      Save
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setRenamingId(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium truncate" data-testid={`text-connection-name-${c.id}`}>
+                      {c.name || integration.name}
+                    </span>
+                    {c.isDefault && (
+                      <Badge variant="secondary" className="text-[10px] gap-1" data-testid={`badge-default-${c.id}`}>
+                        <Star className="w-3 h-3" />
+                        Default
+                      </Badge>
+                    )}
+                    <EntStatusBadge status={c.status} />
+                  </div>
+                )}
+                {c.lastError && (
+                  <span className="text-[10px] text-destructive line-clamp-1">{c.lastError}</span>
+                )}
+              </div>
+
+              {renamingId !== c.id && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs"
+                    onClick={() => { setRenamingId(c.id); setDraftName(c.name || ""); }}
+                    data-testid={`button-rename-${c.id}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  {!c.isDefault && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      disabled={promoteMutation.isPending}
+                      onClick={() => promoteMutation.mutate(c.id)}
+                      data-testid={`button-promote-${c.id}`}
+                    >
+                      Make default
+                    </Button>
+                  )}
+                  {c.status !== "disconnected" && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs text-destructive hover:text-destructive"
+                      disabled={disconnectMutation.isPending}
+                      onClick={() => disconnectMutation.mutate(c.id)}
+                      data-testid={`button-disconnect-connection-${c.id}`}
+                    >
+                      <WifiOff className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <DialogFooter className="sm:justify-between">
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs"
+            onClick={() => { onOpenChange(false); onAddConnection(integration); }}
+            data-testid="button-add-connection"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1.5" />
+            Add another connection
+          </Button>
+          <Button size="sm" className="text-xs" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const WAVE_LABELS: Record<number, { label: string; description: string }> = {
   1: { label: "CRM", description: "Customer relationship management systems" },
   2: { label: "ITSM & DevOps", description: "IT service management and developer toolchains" },
@@ -1819,6 +2107,10 @@ function EnterpriseConnectorsSection() {
   const [filterWave, setFilterWave] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [n8nTestCallOpen, setN8nTestCallOpen] = useState(false);
+  const [manageConnectionsTarget, setManageConnectionsTarget] = useState<IntegrationDef | null>(null);
+  // Set when the connect dialog is opened to ADD a sibling rather than
+  // re-authenticate the existing default -- the two post different bodies.
+  const [connectAsNew, setConnectAsNew] = useState(false);
 
   const { data: integrations = [], isLoading } = useQuery<IntegrationDef[]>({
     queryKey: ["/api/enterprise-integrations"],
@@ -1950,6 +2242,7 @@ function EnterpriseConnectorsSection() {
                   onDisconnect={() => disconnectMutation.mutate(integration.id)}
                   onTest={() => testMutation.mutate(integration.id)}
                   onN8nTestCall={integration.id === "n8n" ? () => setN8nTestCallOpen(true) : undefined}
+                  onManageConnections={() => setManageConnectionsTarget(integration)}
                 />
               ))}
             </div>
@@ -1960,7 +2253,14 @@ function EnterpriseConnectorsSection() {
       <ConnectDialog
         integration={connectTarget}
         open={!!connectTarget}
-        onOpenChange={(open) => { if (!open) setConnectTarget(null); }}
+        createNew={connectAsNew}
+        onOpenChange={(open) => { if (!open) { setConnectTarget(null); setConnectAsNew(false); } }}
+      />
+      <ConnectionsManagerDialog
+        integration={manageConnectionsTarget}
+        open={!!manageConnectionsTarget}
+        onOpenChange={(open) => { if (!open) setManageConnectionsTarget(null); }}
+        onAddConnection={(intg) => { setConnectAsNew(true); setConnectTarget(intg); }}
       />
       <N8nTestCallDialog open={n8nTestCallOpen} onOpenChange={setN8nTestCallOpen} />
     </div>

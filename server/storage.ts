@@ -1,4 +1,4 @@
-import { eq, desc, inArray, and, like, or, sql, isNull, lte, gte, asc, lt } from "drizzle-orm";
+import { eq, ne, desc, inArray, and, like, or, sql, isNull, lte, gte, asc, lt } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
@@ -5326,6 +5326,13 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return row;
     }
+    return this.createIntegrationConnection(data);
+  }
+
+  // Always inserts a new connection, never updates one. This is how a sibling
+  // gets created ("add a second PostgreSQL"), as distinct from
+  // upsertIntegrationConnection's re-auth-the-existing-one behaviour.
+  async createIntegrationConnection(data: InsertIntegrationConnection): Promise<IntegrationConnection> {
     // idx_int_conn_one_default is a UNIQUE partial index, so inserting a second
     // is_default=true row for the same (org, integration) would throw. When a
     // sibling already holds the default slot the new connection is created
@@ -5335,6 +5342,58 @@ export class DatabaseStorage implements IStorage {
       .values(siblingDefault ? { ...data, isDefault: false } : data)
       .returning();
     return row;
+  }
+
+  // Every connection of one integration type, default first. This is what the
+  // management UI lists; `listIntegrationConnections` (all types, one row each
+  // in practice) stays as-is for the catalog view.
+  async listIntegrationConnectionsByType(orgId: string, integrationId: string): Promise<IntegrationConnection[]> {
+    return db.select().from(integrationConnections)
+      .where(and(
+        eq(integrationConnections.organizationId, orgId),
+        eq(integrationConnections.integrationId, integrationId),
+      ))
+      .orderBy(desc(integrationConnections.isDefault), integrationConnections.createdAt);
+  }
+
+  async renameIntegrationConnection(orgId: string, connectionId: string, name: string): Promise<IntegrationConnection | null> {
+    const [row] = await db.update(integrationConnections)
+      .set({ name, updatedAt: new Date() })
+      .where(and(
+        eq(integrationConnections.organizationId, orgId),
+        eq(integrationConnections.id, connectionId),
+      ))
+      .returning();
+    return row ?? null;
+  }
+
+  // Moves the default flag to `connectionId` within its integration type.
+  //
+  // Demote-then-promote, and both in one transaction: idx_int_conn_one_default
+  // is a NON-deferrable unique partial index, so promoting first would collide
+  // with the incumbent default mid-statement. Splitting the two updates across
+  // separate transactions would instead leave a window with no default at all,
+  // during which every type-only credential lookup falls through to the
+  // created_at tiebreaker and could resolve to the wrong database.
+  async promoteIntegrationConnectionToDefault(orgId: string, connectionId: string): Promise<IntegrationConnection | null> {
+    const target = await this.getIntegrationConnectionById(orgId, connectionId);
+    if (!target) return null;
+
+    return db.transaction(async (tx) => {
+      await tx.update(integrationConnections)
+        .set({ isDefault: false, updatedAt: new Date() })
+        .where(and(
+          eq(integrationConnections.organizationId, orgId),
+          eq(integrationConnections.integrationId, target.integrationId),
+          ne(integrationConnections.id, connectionId),
+        ));
+
+      const [row] = await tx.update(integrationConnections)
+        .set({ isDefault: true, updatedAt: new Date() })
+        .where(eq(integrationConnections.id, connectionId))
+        .returning();
+      return row ?? null;
+    });
   }
 
   // Without `connectionId` this disconnects EVERY connection of the type, which

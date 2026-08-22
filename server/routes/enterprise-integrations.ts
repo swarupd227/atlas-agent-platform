@@ -8,7 +8,7 @@ import { callN8nWorkflow } from "../integrations/n8n";
 import { getDefaultOrgId } from "../auth";
 import { db } from "../db";
 import { mcpServers, auditEvents, integrationConnections } from "@shared/schema";
-import { eq, and, gte, like } from "drizzle-orm";
+import { eq, and, gte, like, isNull } from "drizzle-orm";
 
 const router = Router();
 
@@ -17,22 +17,39 @@ router.get("/api/enterprise-integrations", async (req: Request, res: Response) =
   try {
     const orgId = getDefaultOrgId(req);
     const connections = await storage.listIntegrationConnections(orgId);
-    const connMap = new Map(connections.map((c) => [c.integrationId, c]));
+
+    // Group rather than collapse. Keying a Map by integrationId silently dropped
+    // every sibling but the last, so an org with two PostgreSQL connections
+    // could only ever see one of them here.
+    const connsByType = new Map<string, typeof connections>();
+    for (const c of connections) {
+      const list = connsByType.get(c.integrationId);
+      if (list) list.push(c);
+      else connsByType.set(c.integrationId, [c]);
+    }
+
+    const shape = (c: (typeof connections)[number]) => ({
+      id: c.id,
+      name: c.name,
+      isDefault: c.isDefault,
+      status: c.status,
+      lastTestedAt: c.lastTestedAt,
+      lastTestResult: c.lastTestResult,
+      lastError: c.lastError,
+      tokenExpiresAt: c.tokenExpiresAt,
+    });
 
     const result = INTEGRATION_REGISTRY.map((def) => {
-      const conn = connMap.get(def.id);
+      const conns = (connsByType.get(def.id) ?? [])
+        .slice()
+        .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
       return {
         ...def,
-        connection: conn
-          ? {
-              id: conn.id,
-              status: conn.status,
-              lastTestedAt: conn.lastTestedAt,
-              lastTestResult: conn.lastTestResult,
-              lastError: conn.lastError,
-              tokenExpiresAt: conn.tokenExpiresAt,
-            }
-          : null,
+        // `connection` stays the DEFAULT connection so existing callers keep
+        // working unchanged; `connections` is the full list for the
+        // multi-connection UI.
+        connection: conns.length ? shape(conns[0]) : null,
+        connections: conns.map(shape),
       };
     });
 
@@ -46,6 +63,18 @@ router.get("/api/enterprise-integrations", async (req: Request, res: Response) =
 const connectSchema = z.object({
   credentials: z.record(z.string()),
   oauthScopes: z.array(z.string()).optional(),
+  /** Instance label, e.g. "Sales DB". Distinguishes sibling connections. */
+  name: z.string().trim().min(1).max(120).optional(),
+  /** Update this specific connection (re-auth of a known instance). */
+  connectionId: z.string().optional(),
+  /**
+   * Add a NEW connection alongside any existing ones of this type. Opt-in on
+   * purpose: the default remains "upsert the org's default connection", because
+   * the existing UI calls this route to re-authenticate, and silently creating
+   * a duplicate every time someone fixed their credentials would be worse than
+   * the multi-connection gap it closes.
+   */
+  createNew: z.boolean().optional(),
 });
 
 router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res: Response) => {
@@ -63,15 +92,23 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
     }
 
     const credentialBlob = encryptCredentialMap(parsed.data.credentials);
-    const conn = await storage.upsertIntegrationConnection({
+
+    const connectionData = {
       organizationId: orgId,
       integrationId,
+      name: parsed.data.name,
       credentialBlob,
       oauthScopes: parsed.data.oauthScopes ?? def.oauthConfig?.defaultScopes ?? [],
       status: "connected",
       lastTestResult: null,
       lastError: null,
-    });
+    };
+
+    // `createNew` always inserts a sibling; anything else keeps the historical
+    // behaviour of upserting the org's default connection for this type.
+    const conn = parsed.data.createNew
+      ? await storage.createIntegrationConnection(connectionData)
+      : await storage.upsertIntegrationConnection(connectionData, parsed.data.connectionId);
 
     // Auto-test immediately after connecting
     let testResult: { ok: boolean; status?: string; latencyMs?: number; error?: string } | null = null;
@@ -87,7 +124,7 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
     }
 
     // MCP server linkage: create/activate the MCP server record tied to this connection
-    const mcpServerId = await upsertIntegrationMcpServer(conn.id, integrationId, def.name, orgId);
+    const mcpServerId = await upsertIntegrationMcpServer(conn.id, integrationId, def.name, orgId, conn.name);
 
     // Persist mcpServerId back onto the connection row
     if (mcpServerId) {
@@ -108,11 +145,121 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
     res.json({
       id: conn.id,
       integrationId: conn.integrationId,
+      name: conn.name,
+      isDefault: conn.isDefault,
       status: conn.status,
       createdAt: conn.createdAt,
       mcpServerId,
       immediateTest: testResult,
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Per-connection management (multi-connection phase 3) ─────────────────────
+// These address one connection by id, unlike the type-level routes above which
+// act on whichever connection is the org's default for that integration.
+
+// GET /api/enterprise-integrations/:id/connections — every connection of a type
+router.get("/api/enterprise-integrations/:id/connections", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const conns = await storage.listIntegrationConnectionsByType(orgId, req.params.id);
+    res.json(conns.map((c) => ({
+      id: c.id,
+      integrationId: c.integrationId,
+      name: c.name,
+      isDefault: c.isDefault,
+      status: c.status,
+      lastTestedAt: c.lastTestedAt,
+      lastTestResult: c.lastTestResult,
+      lastError: c.lastError,
+      tokenExpiresAt: c.tokenExpiresAt,
+      mcpServerId: c.mcpServerId,
+      createdAt: c.createdAt,
+    })));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const renameSchema = z.object({ name: z.string().trim().min(1).max(120) });
+
+// PATCH /api/enterprise-integrations/connections/:connectionId — rename
+router.patch("/api/enterprise-integrations/connections/:connectionId", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const parsed = renameSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const row = await storage.renameIntegrationConnection(orgId, req.params.connectionId, parsed.data.name);
+    if (!row) return res.status(404).json({ error: "Connection not found" });
+
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "integration_connection_rename",
+      objectType: "integration_connection",
+      objectId: row.id,
+      details: JSON.stringify({ integrationId: row.integrationId, name: parsed.data.name }),
+      organizationId: orgId,
+    }).catch(() => {});
+
+    res.json({ id: row.id, name: row.name, isDefault: row.isDefault });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/enterprise-integrations/connections/:connectionId/promote
+// Makes this the connection that type-only credential lookups resolve to.
+router.post("/api/enterprise-integrations/connections/:connectionId/promote", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const row = await storage.promoteIntegrationConnectionToDefault(orgId, req.params.connectionId);
+    if (!row) return res.status(404).json({ error: "Connection not found" });
+
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "integration_connection_promote_default",
+      objectType: "integration_connection",
+      objectId: row.id,
+      details: JSON.stringify({ integrationId: row.integrationId }),
+      organizationId: orgId,
+    }).catch(() => {});
+
+    res.json({ id: row.id, name: row.name, isDefault: row.isDefault });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/enterprise-integrations/connections/:connectionId/disconnect
+// Disconnects ONE connection, leaving its siblings untouched -- unlike the
+// type-level disconnect route below.
+router.post("/api/enterprise-integrations/connections/:connectionId/disconnect", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const connectionId = req.params.connectionId;
+    const conn = await storage.getIntegrationConnectionById(orgId, connectionId);
+    if (!conn) return res.status(404).json({ error: "Connection not found" });
+
+    await storage.disconnectIntegration(orgId, conn.integrationId, connectionId);
+    await deactivateIntegrationMcpServer(connectionId);
+
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "integration_connection_disconnect",
+      objectType: "integration_connection",
+      objectId: connectionId,
+      details: JSON.stringify({ integrationId: conn.integrationId, wasDefault: conn.isDefault }),
+      organizationId: orgId,
+    }).catch(() => {});
+
+    // A disconnected row keeps its default flag: promoting a sibling is an
+    // explicit choice, and silently moving the flag here would repoint every
+    // type-only lookup at a different database as a side effect of a disconnect.
+    res.json({ ok: true, wasDefault: conn.isDefault });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -602,7 +749,8 @@ async function upsertIntegrationMcpServer(
   connectionId: string,
   integrationId: string,
   integrationName: string,
-  orgId: string
+  orgId: string,
+  connectionName?: string | null
 ): Promise<string | null> {
   try {
     // Check for an existing MCP server with this connectionId
@@ -628,10 +776,19 @@ async function upsertIntegrationMcpServer(
     // no tools and no URL — so the catalog showed two rows per integration and
     // the connection pointed at the empty one. Match on the route suffix, which
     // is stable even if the catalog row gets renamed.
+    //
+    // Only an UNCLAIMED seeded row may be adopted. There is exactly one seeded
+    // row per integration type, so once a sibling connection owns it, adopting
+    // it again would re-point that row at the new connection -- silently
+    // hijacking the first connection's MCP server and its agent bindings. A
+    // second connection of the same type gets its own row instead.
     const [seeded] = await db
       .select({ id: mcpServers.id })
       .from(mcpServers)
-      .where(like(mcpServers.url, `%/api/integrations/${integrationId}`))
+      .where(and(
+        like(mcpServers.url, `%/api/integrations/${integrationId}`),
+        isNull(mcpServers.connectionId),
+      ))
       .limit(1);
 
     if (seeded) {
@@ -646,8 +803,14 @@ async function upsertIntegrationMcpServer(
     const [created] = await db
       .insert(mcpServers)
       .values({
-        name: `${integrationName} MCP`,
-        description: `Enterprise integration MCP server for ${integrationName}`,
+        // Sibling connections each get their own row, so the instance label has
+        // to be in the name -- otherwise the catalog shows several
+        // indistinguishable "PostgreSQL MCP" entries and there is no way to tell
+        // which agent is bound to which database.
+        name: connectionName ? `${integrationName} MCP (${connectionName})` : `${integrationName} MCP`,
+        description: connectionName
+          ? `Enterprise integration MCP server for ${integrationName} — ${connectionName}`
+          : `Enterprise integration MCP server for ${integrationName}`,
         transportType: "enterprise",
         status: "registered",
         riskTier: "MEDIUM",
