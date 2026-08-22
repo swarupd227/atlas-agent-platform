@@ -12,6 +12,14 @@ import { eq, and, gte, like, isNull } from "drizzle-orm";
 
 const router = Router();
 
+/**
+ * mcp_servers.addedBy value marking a row that belongs to exactly one
+ * integration connection (a "sibling"), as opposed to the single seeded
+ * catalog row shared by every connection of that integration type. Deleting a
+ * connection deletes its sibling row but only RELEASES the shared one.
+ */
+const SIBLING_SERVER_MARKER = "integration-connection";
+
 // ── GET /api/enterprise-integrations ─────────────────────────────────────────
 router.get("/api/enterprise-integrations", async (req: Request, res: Response) => {
   try {
@@ -284,7 +292,7 @@ router.delete("/api/enterprise-integrations/connections/:connectionId", async (r
 
     // Agent bindings hang off the MCP server, not the connection.
     const [server] = await db
-      .select({ id: mcpServers.id, url: mcpServers.url })
+      .select({ id: mcpServers.id, url: mcpServers.url, addedBy: mcpServers.addedBy })
       .from(mcpServers)
       .where(eq(mcpServers.connectionId, connectionId))
       .limit(1);
@@ -315,10 +323,14 @@ router.delete("/api/enterprise-integrations/connections/:connectionId", async (r
       // The seeded catalog row (registerEnterpriseIntegrations seeds one per
       // integration at <BASE_URL>/api/integrations/<id>) carries the tool
       // catalog and is shared across the type -- release it rather than delete
-      // it, so a later connect can adopt it again. Rows created for sibling
-      // connections have no such URL and are ours to remove.
-      const isSeededCatalogRow = !!server.url && server.url.endsWith(`/api/integrations/${conn.integrationId}`);
-      if (isSeededCatalogRow) {
+      // it, so a later connect can adopt it again.
+      //
+      // Sibling rows are identified by their addedBy marker, NOT by url:
+      // siblings deliberately clone the seeded url so gatherAvailableTools
+      // doesn't skip them, which makes a url check classify every sibling as
+      // the shared catalog row and leave it orphaned rather than deleted.
+      const isSiblingRow = server.addedBy === SIBLING_SERVER_MARKER;
+      if (!isSiblingRow) {
         await db.update(mcpServers)
           .set({ connectionId: null, status: "inactive", updatedAt: new Date() })
           .where(eq(mcpServers.id, server.id));
@@ -937,7 +949,12 @@ async function upsertIntegrationMcpServer(
         status: "registered",
         connectionId,
         industryId: orgId,
-        addedBy: "system",
+        // Marks this row as belonging to ONE connection, so deleting that
+        // connection deletes the row. Identity cannot be inferred from the url
+        // any more -- siblings deliberately copy the seeded row's url, so a
+        // url check would classify every sibling as the shared catalog row and
+        // orphan it instead of removing it.
+        addedBy: SIBLING_SERVER_MARKER,
       })
       .returning({ id: mcpServers.id });
 

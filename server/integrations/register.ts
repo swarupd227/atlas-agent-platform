@@ -179,6 +179,12 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
       const existingTools = await storage.getMcpServerTools(existing.id);
       for (const toolDef of def.server.tools) {
         const existingTool = existingTools.find(t => t.name === toolDef.name);
+        const annotations = {
+          endpoint: `/tools/${toolDef.name}`,
+          method: "POST",
+          enterpriseIntegration: def.server.integrationId,
+          requiresCredentials: true,
+        };
         if (!existingTool) {
           await storage.createMcpServerTool({
             serverId: existing.id,
@@ -187,14 +193,20 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
             inputSchema: toolDef.inputSchema,
             enabled: true,
             riskClassification: "medium",
-            annotations: {
-              endpoint: `/tools/${toolDef.name}`,
-              method: "POST",
-              enterpriseIntegration: def.server.integrationId,
-              requiresCredentials: true,
-            },
+            annotations,
           });
           toolCount++;
+        } else if (!(existingTool.annotations as any)?.enterpriseIntegration) {
+          // Backfill. Tool rows predating this annotation were silently skipped
+          // by the !existingTool guard and kept null annotations forever, which
+          // is not cosmetic: executeTool() routes on tool.enterpriseIntegration.
+          // Without it a connector tool misses the in-process dispatch path and
+          // falls through to an HTTP self-call, which 401s in production (no
+          // session cookie) AND would resolve the org's DEFAULT connection,
+          // bypassing the connection pin the caller asked for.
+          await storage.updateMcpServerTool(existingTool.id, {
+            annotations: { ...(existingTool.annotations as any ?? {}), ...annotations },
+          });
         }
       }
       toolCount += existingTools.length;
