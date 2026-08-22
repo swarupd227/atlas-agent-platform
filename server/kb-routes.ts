@@ -466,34 +466,16 @@ function chunkText(text: string, chunkSize: number = 512, overlap: number = 50):
   return chunks;
 }
 
+// Text extraction lives in server/file-extract.ts so every upload surface
+// (KB, workspace attachments, wizard, process flow) reads a file identically.
+// That module also adds xlsx/pptx and, importantly, REFUSES types it cannot
+// read -- the version that used to live here ended in
+// `return buffer.toString("utf-8")`, so an uploaded spreadsheet or deck was
+// ingested as zip binary, chunked, and embedded into retrieval as garbage.
 async function extractTextFromFile(buffer: Buffer, mimeType: string, filename: string): Promise<string> {
-  if (mimeType === "text/plain" || mimeType === "text/markdown" || mimeType === "text/csv" || filename.endsWith(".md") || filename.endsWith(".txt") || filename.endsWith(".csv")) {
-    return buffer.toString("utf-8");
-  }
-  if (mimeType === "application/pdf" || filename.endsWith(".pdf")) {
-    const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: buffer });
-    try {
-      const result = await parser.getText();
-      return result.text;
-    } finally {
-      await parser.destroy();
-    }
-  }
-  if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || filename.endsWith(".docx")) {
-    const mammoth = await import("mammoth");
-    const htmlResult = await mammoth.convertToHtml({ buffer });
-    if (htmlResult.value && htmlResult.value.includes("<table")) {
-      return await convertHtmlTablesToMarkdown(htmlResult.value);
-    }
-    const textResult = await mammoth.extractRawText({ buffer });
-    return textResult.value;
-  }
-  if (mimeType === "application/json" || filename.endsWith(".json")) {
-    const json = JSON.parse(buffer.toString("utf-8"));
-    return JSON.stringify(json, null, 2);
-  }
-  return buffer.toString("utf-8");
+  const { extractTextFromFile: extract } = await import("./file-extract");
+  const result = await extract(buffer, mimeType, filename);
+  return result.text;
 }
 
 async function fetchWebContent(url: string): Promise<string> {
@@ -843,6 +825,12 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       processSourceInBackground(source.id, req.params.id as string);
       res.status(201).json({ ...source, sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined });
     } catch (error: any) {
+      // An unreadable file is the user's problem to fix (wrong format, a legacy
+      // .xls), not a server fault -- 400 carrying the reader's own message,
+      // which names the supported types or the re-save step.
+      if (error?.name === "UnsupportedFileTypeError" || error?.name === "LegacyOfficeFormatError") {
+        return res.status(400).json({ message: error.message });
+      }
       res.status(500).json({ message: error.message });
     }
   });

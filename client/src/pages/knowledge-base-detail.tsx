@@ -643,7 +643,7 @@ export default function KnowledgeBaseDetail() {
               ref={fileInputRef}
               type="file"
               className="hidden"
-              accept=".pdf,.docx,.txt,.md,.csv,.json"
+              accept=".pdf,.docx,.xlsx,.xlsm,.pptx,.csv,.tsv,.txt,.md,.json"
               onChange={(e) => { if (e.target.files?.[0]) uploadMutation.mutate(e.target.files[0]); }}
             />
             <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploadMutation.isPending} data-testid="button-upload-file">
