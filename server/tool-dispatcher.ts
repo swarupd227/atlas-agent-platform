@@ -373,19 +373,23 @@ function resultErrorMessage(result: any): string | null {
 }
 
 export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
-  if (tool.isRealMcp) {
-    const server = await storage.getMcpServer(tool.serverId);
-    if (server) {
-      return mcpSdkCallTool(server, tool.toolName, args);
-    }
-  }
-
-  // Enterprise connectors (GitHub, Slack, Salesforce, …) are registered under
-  // localhost URLs, so isRealMcp is false and they would otherwise take the HTTP
-  // self-call path below — a credential-less request that resolves to the default
-  // org. Dispatch them in-process instead so the agent's own org context (and thus
-  // the correct encrypted credentials) is used. Falls back to the default org only
-  // when the agent has no org (single-tenant/demo).
+  // Enterprise connectors (GitHub, Slack, Salesforce, the SQL family, …) are
+  // OUR OWN code and must be dispatched in-process, so the agent's org context
+  // and its connection pin select the right encrypted credentials.
+  //
+  // This is checked BEFORE isRealMcp deliberately. isRealMcpServer() is true for
+  // any streamable-http/sse server whose url isn't localhost -- which is exactly
+  // what these become once deployed, since they are registered at
+  // <BASE_URL>/api/integrations/<id>. Locally that url IS localhost, so this
+  // ordering never mattered in dev; in the cloud every connector tool call took
+  // the real-MCP HTTP path instead and 401'd, because that endpoint requires an
+  // agent-scoped bearer with "mcp" scope that the runtime never attaches.
+  //
+  // The HTTP path is also wrong on the merits even when authenticated: it
+  // resolves credentials by integration type, so a tool bound to a specific
+  // connection would silently query the org's DEFAULT connection instead --
+  // bypassing the pin, and with it any allowed-tables scoping on that
+  // connection.
   if (tool.enterpriseIntegration) {
     const { getEnterpriseServerById } = await import("./integrations/register");
     const connector = getEnterpriseServerById(tool.enterpriseIntegration);
@@ -400,6 +404,16 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
       // server was registered against, rather than the org's default connection
       // for the type -- see RealMcpBase.getCredentials for the full precedence.
       return connector.callTool(tool.toolName, args, effectiveOrgId, agentId, tool.connectionId);
+    }
+  }
+
+  // Genuinely external MCP servers (someone else's endpoint) — speak the real
+  // protocol over HTTP. Reached only when the tool is not one of our own
+  // enterprise connectors, which are handled in-process above.
+  if (tool.isRealMcp) {
+    const server = await storage.getMcpServer(tool.serverId);
+    if (server) {
+      return mcpSdkCallTool(server, tool.toolName, args);
     }
   }
 
