@@ -328,7 +328,10 @@ test("DOC-5. Eval Datasets: labelled goldens import from a CSV", async ({ page }
   test.setTimeout(120_000);
   await primePage(page);
   await page.goto("/evals/datasets");
-  await expect(page.getByTestId("heading-eval-datasets")).toBeVisible({ timeout: 20_000 });
+  // 60s, not 20s: these specs are normally run straight after a deploy, and an
+  // App Service cold start makes the first lazy route load several times slower
+  // than steady state (a whole suite run took 7.4m warming up vs 3.5m warm).
+  await expect(page.getByTestId("heading-eval-datasets")).toBeVisible({ timeout: 60_000 });
 
   // Import lives in the goldens toolbar INSIDE a dataset, not on the list page.
   // isVisible() does NOT auto-wait -- calling it straight after navigation

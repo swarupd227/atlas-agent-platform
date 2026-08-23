@@ -100,6 +100,10 @@ router.post("/api/files/upload", checkPermission("view_agents"), (req: Request, 
           extractedText: extracted.text,
           extractMeta: extracted.meta as any,
           context,
+          // Kept so a code-execution agent can receive the real file later.
+          // Extraction is lossy on purpose (a workbook flattens to a markdown
+          // table), and the bytes are the only way back to the actual sheet.
+          content: file.buffer,
         }).returning();
 
         // Uploads bring outside content into agent context, so they belong in

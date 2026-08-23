@@ -1822,6 +1822,21 @@ export const uploadedFiles = pgTable("uploaded_files", {
   /** Set once the file has also been pushed to Anthropic's Files API for
    *  code-execution analysis; null when only the extracted text is used. */
   anthropicFileId: text("anthropic_file_id"),
+  /**
+   * The original bytes, kept so a code-execution agent can be handed the real
+   * file rather than the flattened text. Extraction is lossy by design -- a
+   * workbook becomes a markdown table, which is fine to read and useless to
+   * compute over -- so the bytes are the only way to support pandas on the
+   * actual sheet.
+   *
+   * Kept locally rather than pushed to Anthropic on upload: the file is only
+   * shipped when an agent with approved code execution actually needs it (see
+   * ensureContainerFileIds), so a document attached to the wizard or read by a
+   * text-only agent never leaves this database.
+   */
+  content: customType<{ data: Buffer; notNull: false; default: false }>({
+    dataType: () => "bytea",
+  })("content"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_uploaded_files_org").on(table.organizationId),

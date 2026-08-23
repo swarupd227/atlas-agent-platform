@@ -30,7 +30,7 @@ import { canonicalJsonStringify } from "./agent-runtime";
 import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
-import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
+import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFileIds } from "./anthropic-code-execution";
 import { documentToolsForSkills, GENERATED_FILE_MARKER } from "./builtin-document-tools";
 import type { Skill } from "@shared/schema";
 import { buildAttachmentContext } from "./attachment-context";
@@ -109,6 +109,10 @@ interface Checkpoint {
   // -- mirrors agent-runtime.ts's captureCodeExecResult.
   containerId?: string;
   generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>;
+  /** uploaded_files ids attached to this run, carried so a RESUMED run can
+   *  still put the files in the container -- the checkpoint is the only thing
+   *  that survives an approval pause. */
+  fileIds?: string[];
 }
 
 export interface WorkspaceRunView {
@@ -307,6 +311,7 @@ export async function startWorkspaceRun(params: {
     modelName: agent.modelName || "gpt-4.1",
     maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
     skillAllowlist,
+    fileIds,
   };
 
   const [run] = await db.insert(workspaceRuns).values({
@@ -623,6 +628,22 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   const canonicalTools = buildCanonicalTools(availableTools);
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
   const codeExecConfig = codeExecAccess.enabled ? buildCodeExecutionRequestConfig(activeSkills, cp.containerId) : null;
+
+  // Hand the REAL file to the container, not just the flattened text. This is
+  // resolved here rather than when the run was created because it is only here
+  // that approved code execution is known -- and the upload to Anthropic should
+  // only happen for an agent that can actually use it.
+  //
+  // The inline text stays in the prompt either way: it is the floor that makes
+  // every agent work, and it also tells the model what the file IS before it
+  // opens it. If the upload fails the run continues on text alone.
+  if (codeExecConfig && cp.fileIds?.length) {
+    const containerFileIds = await ensureContainerFileIds(cp.fileIds, orgId);
+    if (containerFileIds.length) {
+      const lastUser = [...cp.messages].reverse().find((m) => m.role === "user");
+      if (lastUser) lastUser.attachmentFileIds = containerFileIds;
+    }
+  }
   // A code-execution skill on a non-Claude agent is a no-op that only shows up
   // as the agent saying it can't produce files. Record it on the run so the
   // misconfiguration is visible in the trace instead of looking like a bug.

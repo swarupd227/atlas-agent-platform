@@ -160,6 +160,66 @@ export async function fetchGeneratedFileMetadata(fileId: string): Promise<{
   };
 }
 
+/**
+ * Turns uploaded_files ids into Anthropic file ids that can be handed to the
+ * code execution container as `container_upload` blocks.
+ *
+ * Lazy and cached, deliberately. The bytes live in our database from the moment
+ * of upload, but they are only pushed to Anthropic when an agent with APPROVED
+ * code execution actually needs to compute over them -- a document attached to
+ * the wizard, or read by a text-only agent, never leaves the platform. The
+ * resulting id is written back to the row, so re-attaching the same file across
+ * turns or runs re-uses one upload instead of paying for another.
+ *
+ * Best-effort per file: a failure here must not kill the turn, because the
+ * extracted text is already in the prompt and the agent can still answer from
+ * it. That is the whole point of the text being the floor -- losing the
+ * container upload degrades the answer, it does not break the run.
+ */
+export async function ensureContainerFileIds(
+  fileIds: string[],
+  orgId: string | undefined,
+): Promise<string[]> {
+  if (!fileIds.length) return [];
+
+  const { db } = await import("./db");
+  const { uploadedFiles } = await import("@shared/schema");
+  const { inArray, and: andOp, eq: eqOp } = await import("drizzle-orm");
+  const { toFile } = await import("@anthropic-ai/sdk");
+
+  const rows = await db.select().from(uploadedFiles).where(
+    orgId
+      ? andOp(inArray(uploadedFiles.id, fileIds), eqOp(uploadedFiles.organizationId, orgId))
+      : inArray(uploadedFiles.id, fileIds),
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ordered = fileIds.map((id) => byId.get(id)).filter(Boolean) as typeof rows;
+
+  const client = await getAnthropicRawClient();
+  const resolved: string[] = [];
+
+  for (const row of ordered) {
+    if (row.anthropicFileId) { resolved.push(row.anthropicFileId); continue; }
+    // Rows uploaded before the bytes were retained have nothing to send; the
+    // text path still works, so skip rather than fail.
+    if (!row.content) continue;
+    try {
+      const uploaded = await client.beta.files.upload({
+        file: await toFile(Buffer.from(row.content), row.filename, {
+          type: row.mimeType ?? "application/octet-stream",
+        }),
+      });
+      const fileId = (uploaded as any).id;
+      if (!fileId) continue;
+      await db.update(uploadedFiles).set({ anthropicFileId: fileId }).where(eqOp(uploadedFiles.id, row.id));
+      resolved.push(fileId);
+    } catch (err: any) {
+      console.error(`[anthropic-code-execution] container upload failed for ${row.filename} (non-fatal, text still attached):`, err?.message);
+    }
+  }
+  return resolved;
+}
+
 /** Persists rows for files a completion produced, best-effort (never throws into the caller's turn loop). Returns the rows actually created. */
 export async function persistGeneratedFiles(
   generatedFiles: Array<{ fileId: string; toolUseId: string }> | undefined,

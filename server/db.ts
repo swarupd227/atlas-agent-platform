@@ -1283,6 +1283,13 @@ export async function runStartupMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_uploaded_files_org ON uploaded_files(organization_id);
 
+      -- Original bytes, so an agent with approved code execution can be handed
+      -- the real file instead of the flattened text (extraction turns a
+      -- workbook into a markdown table -- readable, but nothing pandas can
+      -- compute over). Nullable: rows uploaded before this column existed keep
+      -- working on the text path.
+      ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS content BYTEA;
+
       -- Multi-connection support, phase 1: an org can hold several connections
       -- of the same integration type (e.g. two PostgreSQL databases). The name
       -- column labels the instance; is_default marks the one that type-only

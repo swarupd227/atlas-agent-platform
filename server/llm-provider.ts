@@ -8,6 +8,17 @@ export interface LLMMessage {
   content: string;
   tool_call_id?: string;
   tool_calls?: CanonicalToolCall[];
+  /**
+   * Anthropic Files API ids to place into the code execution container
+   * alongside this turn's text, so the agent can compute over the real file
+   * rather than the flattened extract.
+   *
+   * Only honoured when the request also configures code execution
+   * (anthropicContainer) -- a container_upload block is meaningless without a
+   * container, and OpenAI has no equivalent, so this is ignored there exactly
+   * as anthropicServerTools already is.
+   */
+  attachmentFileIds?: string[];
 }
 
 export interface CanonicalToolDefinition {
@@ -742,6 +753,22 @@ class AnthropicProvider implements LLMProvider {
         continue;
       }
 
+      // A turn carrying attachments becomes a block array: the files first, then
+      // the text. Gated on anthropicContainer because container_upload is only
+      // meaningful when code execution is actually configured for this request;
+      // without that gate an attachment on a text-only agent would be an API
+      // error instead of the graceful text-only answer it gets today.
+      if (m.role === "user" && m.attachmentFileIds?.length && options?.anthropicContainer) {
+        anthropicMessages.push({
+          role: "user",
+          content: [
+            ...m.attachmentFileIds.map((file_id) => ({ type: "container_upload" as const, file_id })),
+            { type: "text" as const, text: m.content },
+          ] as any,
+        });
+        continue;
+      }
+
       anthropicMessages.push({ role: m.role as "user" | "assistant", content: m.content });
     }
 
@@ -904,6 +931,22 @@ class AnthropicProvider implements LLMProvider {
         });
         continue;
       }
+      // A turn carrying attachments becomes a block array: the files first, then
+      // the text. Gated on anthropicContainer because container_upload is only
+      // meaningful when code execution is actually configured for this request;
+      // without that gate an attachment on a text-only agent would be an API
+      // error instead of the graceful text-only answer it gets today.
+      if (m.role === "user" && m.attachmentFileIds?.length && options?.anthropicContainer) {
+        anthropicMessages.push({
+          role: "user",
+          content: [
+            ...m.attachmentFileIds.map((file_id) => ({ type: "container_upload" as const, file_id })),
+            { type: "text" as const, text: m.content },
+          ] as any,
+        });
+        continue;
+      }
+
       anthropicMessages.push({ role: m.role as "user" | "assistant", content: m.content });
     }
 
