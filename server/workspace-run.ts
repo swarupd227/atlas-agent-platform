@@ -240,21 +240,84 @@ function view(run: WorkspaceRun): WorkspaceRunView {
   };
 }
 
+/**
+ * Renders uploaded attachments as a context block prefixed to the user's turn.
+ *
+ * Inlining the extracted text means EVERY agent can work with an attachment,
+ * including one with no code-execution skill approved -- a spreadsheet arrives
+ * as a markdown table rather than being refused. Agents that do have code
+ * execution additionally get the file itself in their container, which is where
+ * real computation over a workbook belongs; this is the floor, not the ceiling.
+ *
+ * Files are read from the DB rather than trusting anything the client sends, so
+ * a caller cannot inject arbitrary "attachment" text into an agent's context by
+ * hand-crafting a request.
+ */
+async function buildAttachmentContext(fileIds: string[], orgId?: string): Promise<{ context: string; names: string[] }> {
+  if (!fileIds.length) return { context: "", names: [] };
+
+  const { uploadedFiles } = await import("@shared/schema");
+  const { inArray, and: andOp, eq: eqOp } = await import("drizzle-orm");
+
+  const rows = await db.select().from(uploadedFiles).where(
+    orgId
+      ? andOp(inArray(uploadedFiles.id, fileIds), eqOp(uploadedFiles.organizationId, orgId))
+      : inArray(uploadedFiles.id, fileIds),
+  );
+
+  // Preserve the order the user attached them in; the DB returns arbitrary order.
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ordered = fileIds.map((id) => byId.get(id)).filter(Boolean) as typeof rows;
+  if (!ordered.length) return { context: "", names: [] };
+
+  const blocks = ordered.map((f) => {
+    const meta = (f.extractMeta as any) ?? {};
+    const detail = [
+      meta.sheets?.length ? `sheets: ${meta.sheets.join(", ")}` : null,
+      typeof meta.slides === "number" ? `${meta.slides} slides` : null,
+      meta.truncated ? "TRUNCATED — this is a partial reading of a large file" : null,
+    ].filter(Boolean).join("; ");
+
+    return [
+      `--- Attached file: ${f.filename}${detail ? ` (${detail})` : ""} ---`,
+      (f.extractedText ?? "").trim() || "(no readable text in this file)",
+      `--- end of ${f.filename} ---`,
+    ].join("\n");
+  });
+
+  return {
+    context: [
+      "The user attached the following file(s). Their contents are reproduced below.",
+      "Base your answer on them; if a file appears truncated or unreadable, say so rather than guessing at what it might contain.",
+      "",
+      ...blocks,
+    ].join("\n"),
+    names: ordered.map((f) => f.filename),
+  };
+}
+
 /** Start a new Workspace run. Runs until completion or the first approval gate. */
 export async function startWorkspaceRun(params: {
   agentId: string;
   input: string;
   orgId?: string;
   actorId?: string;
+  fileIds?: string[];
 }, onEvent: OnWorkspaceEvent = NOOP): Promise<WorkspaceRunView> {
   const { agentId, input, orgId, actorId } = params;
+  const fileIds = params.fileIds ?? [];
   const agent = await storage.getAgent(agentId, orgId);
   if (!agent) throw new Error("Agent not found");
+
+  const { context: attachmentContext, names: attachedNames } = await buildAttachmentContext(fileIds, orgId);
+  // What the model sees. `input` stays the user's own words everywhere else,
+  // so run history and the KB retrieval query aren't swamped by file contents.
+  const modelInput = attachmentContext ? `${attachmentContext}\n\n${input}` : input;
 
   const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
   const isTeamAgent = agent.agentType === "team" && Array.isArray(rtConfig.orchestration?.workerIds) && rtConfig.orchestration.workerIds.length > 0;
   if (isTeamAgent) {
-    return runTeamWorkspaceRun(agent, rtConfig, input, orgId, actorId, onEvent);
+    return runTeamWorkspaceRun(agent, rtConfig, modelInput, orgId, actorId, onEvent);
   }
 
   const mcpLinks = await storage.getAgentMcpServers(agentId);
@@ -276,7 +339,7 @@ export async function startWorkspaceRun(params: {
   const checkpoint: Checkpoint = {
     messages: [
       { role: "system", content: systemMessage },
-      { role: "user", content: input },
+      { role: "user", content: modelInput },
     ],
     iterationsUsed: 0,
     steps: [],
@@ -293,7 +356,12 @@ export async function startWorkspaceRun(params: {
     organizationId: orgId ?? undefined,
     agentId,
     status: "running",
-    requestText: input,
+    // The user's own words, plus a note of what was attached. Storing the
+    // full file text here would make every run-history list unreadable and
+    // duplicate hundreds of KB already held in uploaded_files.
+    requestText: attachedNames.length
+      ? `${input}\n\n[attached: ${attachedNames.join(", ")}]`
+      : input,
     actorId: actorId ?? undefined,
     checkpoint: checkpoint as any,
   }).returning();
@@ -767,7 +835,42 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
         cp.generatedFiles = [...(cp.generatedFiles ?? []), ...records.map(r => ({ id: r.id, filename: r.filename, mimeType: r.mimeType }))];
       }
 
+      // Code execution leaves no trace on the run otherwise: llm.codeExecutionTrace
+      // was computed by the provider and then dropped, so a run that "should have"
+      // produced a .pptx and didn't was undiagnosable from the outside. Record
+      // what the sandbox actually did, plus why the model stopped -- max_tokens
+      // and end_turn both fall through the no-tool-calls branch below and look
+      // identical in the output.
+      if (codeExecConfig || llm.codeExecutionTrace?.length) {
+        cp.steps.push({
+          id: `step_${cp.steps.length + 1}`,
+          name: "Code execution turn",
+          type: "code_execution",
+          status: "completed",
+          stopReason: llm.stopReason ?? null,
+          filesProduced: llm.generatedFiles?.length ?? 0,
+          codeExecutionTrace: llm.codeExecutionTrace ?? [],
+          completedAt: new Date().toISOString(),
+        });
+      }
+
       if (!llm.toolCalls || llm.toolCalls.length === 0) {
+        // max_tokens is not "the agent is done" -- it means the reply was cut
+        // off mid-turn, which for a code-execution run is exactly the turn that
+        // would have written the file. Surface it instead of finalizing on a
+        // truncated narration that reads like a finished answer.
+        if (llm.stopReason === "max_tokens") {
+          console.warn(`[workspace-run] Run ${runId}: turn truncated at the ${4096}-token ceiling (stop_reason=max_tokens).`);
+          cp.steps.push({
+            id: `step_${cp.steps.length + 1}`,
+            name: "Response truncated at token limit",
+            type: "code_execution",
+            status: "failed",
+            outcome: "max_tokens_truncation",
+            error: "The model hit its output token limit mid-turn, so this run ended before it finished. Any file it was about to generate was not produced.",
+            completedAt: new Date().toISOString(),
+          });
+        }
         return finalize(llm.content || "Done.", "completed");
       }
       cp.iterationsUsed++;
