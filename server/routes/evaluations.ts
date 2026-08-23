@@ -4,6 +4,7 @@ import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
 import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError, draftSingleAgent } from "./helpers";
+import { buildSourceDocuments } from "../attachment-context";
 import {
   insertAgentTemplateSchema,
   insertEvalSuiteSchema,
@@ -1619,15 +1620,30 @@ Guidelines:
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
-      const { description, industryId: requestedIndustryId } = req.body;
-      if (!description || typeof description !== "string" || description.trim().length < 10) {
-        return res.status(400).json({ error: "Describe the agent's outcome in at least a sentence." });
+      const { description, industryId: requestedIndustryId, fileIds } = req.body;
+      const ids: string[] = Array.isArray(fileIds) ? fileIds.filter((f: any) => typeof f === "string").slice(0, 5) : [];
+      const text = typeof description === "string" ? description.trim() : "";
+
+      // An uploaded SOP IS the description -- requiring a sentence on top of it
+      // would make the common case ("draft an agent from this document") fail
+      // the validator. Only demand typed text when nothing was attached.
+      if (!ids.length && text.length < 10) {
+        return res.status(400).json({ error: "Describe the agent's outcome in at least a sentence, or attach a document to draft from." });
       }
 
       const orgId = getOrgId(req);
       const industryId = requestedIndustryId || "general";
-      const result = await draftSingleAgent(description, industryId, orgId);
-      res.json(result);
+
+      const sources = ids.length ? await buildSourceDocuments(ids, orgId) : null;
+      // Ids that resolve to nothing mean the upload is gone or belongs to
+      // another org; drafting from silence would produce a confident agent
+      // built on no source at all.
+      if (ids.length && !sources?.names.length) {
+        return res.status(400).json({ error: "The attached document could not be read. Re-upload it and try again." });
+      }
+
+      const result = await draftSingleAgent(text, industryId, orgId, sources?.text);
+      res.json({ ...result, sourceDocuments: sources?.names ?? [], sourceTruncated: sources?.truncated ?? [] });
     } catch (error: any) {
       console.error("[draft-agent] error:", error.message);
       if (/^Agent draft generation failed/.test(error.message)) {

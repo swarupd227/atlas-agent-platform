@@ -33,6 +33,7 @@ import type { RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import { documentToolsForSkills, GENERATED_FILE_MARKER } from "./builtin-document-tools";
 import type { Skill } from "@shared/schema";
+import { buildAttachmentContext } from "./attachment-context";
 
 // Fallback for agents created before maxToolIterations existed / with it
 // explicitly null. Kept in sync with shared/schema.ts's column default.
@@ -242,60 +243,15 @@ function view(run: WorkspaceRun): WorkspaceRunView {
 }
 
 /**
- * Renders uploaded attachments as a context block prefixed to the user's turn.
- *
  * Inlining the extracted text means EVERY agent can work with an attachment,
  * including one with no code-execution skill approved -- a spreadsheet arrives
  * as a markdown table rather than being refused. Agents that do have code
  * execution additionally get the file itself in their container, which is where
  * real computation over a workbook belongs; this is the floor, not the ceiling.
  *
- * Files are read from the DB rather than trusting anything the client sends, so
- * a caller cannot inject arbitrary "attachment" text into an agent's context by
- * hand-crafting a request.
+ * The reader itself lives in ./attachment-context, shared with the authoring
+ * surfaces so org-scoping and ordering are decided once.
  */
-async function buildAttachmentContext(fileIds: string[], orgId?: string): Promise<{ context: string; names: string[] }> {
-  if (!fileIds.length) return { context: "", names: [] };
-
-  const { uploadedFiles } = await import("@shared/schema");
-  const { inArray, and: andOp, eq: eqOp } = await import("drizzle-orm");
-
-  const rows = await db.select().from(uploadedFiles).where(
-    orgId
-      ? andOp(inArray(uploadedFiles.id, fileIds), eqOp(uploadedFiles.organizationId, orgId))
-      : inArray(uploadedFiles.id, fileIds),
-  );
-
-  // Preserve the order the user attached them in; the DB returns arbitrary order.
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  const ordered = fileIds.map((id) => byId.get(id)).filter(Boolean) as typeof rows;
-  if (!ordered.length) return { context: "", names: [] };
-
-  const blocks = ordered.map((f) => {
-    const meta = (f.extractMeta as any) ?? {};
-    const detail = [
-      meta.sheets?.length ? `sheets: ${meta.sheets.join(", ")}` : null,
-      typeof meta.slides === "number" ? `${meta.slides} slides` : null,
-      meta.truncated ? "TRUNCATED — this is a partial reading of a large file" : null,
-    ].filter(Boolean).join("; ");
-
-    return [
-      `--- Attached file: ${f.filename}${detail ? ` (${detail})` : ""} ---`,
-      (f.extractedText ?? "").trim() || "(no readable text in this file)",
-      `--- end of ${f.filename} ---`,
-    ].join("\n");
-  });
-
-  return {
-    context: [
-      "The user attached the following file(s). Their contents are reproduced below.",
-      "Base your answer on them; if a file appears truncated or unreadable, say so rather than guessing at what it might contain.",
-      "",
-      ...blocks,
-    ].join("\n"),
-    names: ordered.map((f) => f.filename),
-  };
-}
 
 /** Start a new Workspace run. Runs until completion or the first approval gate. */
 export async function startWorkspaceRun(params: {

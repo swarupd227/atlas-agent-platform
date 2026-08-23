@@ -2,103 +2,133 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import JSZip from "jszip";
 
 /**
- * Covers the attachment context builder — the step that turns uploaded rows
- * into the text an agent actually sees. The extraction itself is covered by
+ * Covers server/attachment-context.ts — the step that turns uploaded rows into
+ * the text an agent actually sees. The extraction itself is covered by
  * tests/file-extract.test.ts; this is about ordering, scoping and honesty.
+ *
+ * These call the real functions. An earlier version of this file re-implemented
+ * the builder locally and asserted against the copy, which can pass while the
+ * shipped code is broken.
  */
 
-const rows: any[] = [];
+/** Rows the mocked DB will return, regardless of the where-clause — org
+ *  scoping is expressed by what the test puts in here. */
+let rows: any[] = [];
 vi.mock("../server/db", () => ({
   db: {
     select: () => ({ from: () => ({ where: (_w: any) => Promise.resolve(rows) }) }),
-    insert: () => ({ values: () => ({ returning: () => Promise.resolve([{ id: "run-1" }]) }) }),
   },
 }));
 
 import { extractTextFromFile } from "../server/file-extract";
-
-/** Mirrors buildAttachmentContext in server/workspace-run.ts. Kept in step with
- *  it deliberately: the ordering and truncation rules are the contract. */
-function buildContext(fileIds: string[], stored: any[]): { context: string; names: string[] } {
-  const byId = new Map(stored.map((r) => [r.id, r]));
-  const ordered = fileIds.map((id) => byId.get(id)).filter(Boolean);
-  if (!ordered.length) return { context: "", names: [] };
-
-  const blocks = ordered.map((f: any) => {
-    const meta = f.extractMeta ?? {};
-    const detail = [
-      meta.sheets?.length ? `sheets: ${meta.sheets.join(", ")}` : null,
-      typeof meta.slides === "number" ? `${meta.slides} slides` : null,
-      meta.truncated ? "TRUNCATED — this is a partial reading of a large file" : null,
-    ].filter(Boolean).join("; ");
-    return [
-      `--- Attached file: ${f.filename}${detail ? ` (${detail})` : ""} ---`,
-      (f.extractedText ?? "").trim() || "(no readable text in this file)",
-      `--- end of ${f.filename} ---`,
-    ].join("\n");
-  });
-
-  return {
-    context: [
-      "The user attached the following file(s). Their contents are reproduced below.",
-      "Base your answer on them; if a file appears truncated or unreadable, say so rather than guessing at what it might contain.",
-      "",
-      ...blocks,
-    ].join("\n"),
-    names: ordered.map((f: any) => f.filename),
-  };
-}
+import { buildAttachmentContext, buildSourceDocuments, readAttachedFiles } from "../server/attachment-context";
 
 const file = (over: any = {}) => ({
   id: "f1", filename: "a.txt", extractedText: "hello", extractMeta: {}, ...over,
 });
 
-beforeEach(() => { rows.length = 0; });
+beforeEach(() => { rows = []; });
 
-describe("attachment context", () => {
-  it("is empty when nothing is attached", () => {
-    expect(buildContext([], []).context).toBe("");
+describe("attachment context (workspace chat framing)", () => {
+  it("is empty when nothing is attached", async () => {
+    expect((await buildAttachmentContext([], "org")).context).toBe("");
   });
 
-  it("preserves the order the user attached them in, not DB order", () => {
-    const stored = [
+  it("preserves the order the user attached them in, not DB order", async () => {
+    rows = [
       file({ id: "b", filename: "second.txt", extractedText: "SECOND" }),
       file({ id: "a", filename: "first.txt", extractedText: "FIRST" }),
     ];
-    const { context, names } = buildContext(["a", "b"], stored);
+    const { context, names } = await buildAttachmentContext(["a", "b"], "org");
     expect(names).toEqual(["first.txt", "second.txt"]);
     expect(context.indexOf("FIRST")).toBeLessThan(context.indexOf("SECOND"));
   });
 
-  it("drops ids that resolved to nothing rather than inventing a placeholder", () => {
+  it("drops ids that resolved to nothing rather than inventing a placeholder", async () => {
     // Org-scoped lookup means another tenant's id simply isn't returned.
-    const { context, names } = buildContext(["mine", "someone-elses"], [file({ id: "mine", filename: "mine.txt" })]);
+    rows = [file({ id: "mine", filename: "mine.txt" })];
+    const { context, names } = await buildAttachmentContext(["mine", "someone-elses"], "org");
     expect(names).toEqual(["mine.txt"]);
     expect(context).not.toContain("someone-elses");
   });
 
-  it("labels a spreadsheet with its sheet names", () => {
-    const { context } = buildContext(["f1"], [file({
-      filename: "q3.xlsx", extractMeta: { sheets: ["Revenue", "Costs"] }, extractedText: "| a |",
-    })]);
+  it("labels a spreadsheet with its sheet names", async () => {
+    rows = [file({ filename: "q3.xlsx", extractMeta: { sheets: ["Revenue", "Costs"] }, extractedText: "| a |" })];
+    const { context } = await buildAttachmentContext(["f1"], "org");
     expect(context).toContain("q3.xlsx (sheets: Revenue, Costs)");
   });
 
-  it("says a file was truncated, so the agent can flag partial data", () => {
-    const { context } = buildContext(["f1"], [file({ extractMeta: { truncated: true } })]);
-    expect(context).toContain("TRUNCATED");
+  it("says a file was truncated, so the agent can flag partial data", async () => {
+    rows = [file({ extractMeta: { truncated: true } })];
+    expect((await buildAttachmentContext(["f1"], "org")).context).toContain("TRUNCATED");
   });
 
-  it("marks an unreadable file explicitly instead of attaching an empty block", () => {
+  it("marks an unreadable file explicitly instead of attaching an empty block", async () => {
     // A scanned PDF extracts to nothing; silence would read as the agent
     // ignoring the upload.
-    const { context } = buildContext(["f1"], [file({ filename: "scan.pdf", extractedText: "   " })]);
-    expect(context).toContain("(no readable text in this file)");
+    rows = [file({ filename: "scan.pdf", extractedText: "   " })];
+    expect((await buildAttachmentContext(["f1"], "org")).context).toContain("(no readable text in this file)");
   });
 
-  it("tells the agent not to guess at content it cannot see", () => {
-    const { context } = buildContext(["f1"], [file()]);
-    expect(context).toContain("rather than guessing");
+  it("tells the agent not to guess at content it cannot see", async () => {
+    rows = [file()];
+    expect((await buildAttachmentContext(["f1"], "org")).context).toContain("rather than guessing");
+  });
+});
+
+describe("source documents (authoring framing)", () => {
+  it("frames the file as a specification to build from, not a question to answer", async () => {
+    // The wizard drafts an agent FROM an SOP. Chat framing would tell the
+    // drafter to answer the SOP instead of building from it.
+    rows = [file({ filename: "sop.docx", extractedText: "Step 1. Receive claim." })];
+    const { text } = await buildSourceDocuments(["f1"], "org");
+    expect(text).toContain("the source for this request");
+    expect(text).not.toContain("Base your answer on them");
+  });
+
+  it("splits the budget across files so one long document cannot starve the rest", async () => {
+    rows = [
+      file({ id: "a", filename: "long.txt", extractedText: "A".repeat(50_000) }),
+      file({ id: "b", filename: "short.txt", extractedText: "KEEPME" }),
+    ];
+    const { text, truncated } = await buildSourceDocuments(["a", "b"], "org", 10_000);
+    expect(truncated).toEqual(["long.txt"]);
+    // The short file survives intact even though the first one blew the budget.
+    expect(text).toContain("KEEPME");
+  });
+
+  it("declares a truncation in-band so the drafter can admit the gap", async () => {
+    rows = [file({ filename: "big.txt", extractedText: "B".repeat(9_000) })];
+    const { text, truncated } = await buildSourceDocuments(["f1"], "org", 2_000);
+    expect(truncated).toEqual(["big.txt"]);
+    expect(text).toContain("truncated at 2000 characters of 9000");
+  });
+
+  it("leaves a document that fits completely alone", async () => {
+    rows = [file({ filename: "small.txt", extractedText: "short and complete" })];
+    const { text, truncated } = await buildSourceDocuments(["f1"], "org");
+    expect(truncated).toEqual([]);
+    expect(text).not.toContain("truncated at");
+  });
+
+  it("returns nothing when every id is unreadable, so callers can refuse", async () => {
+    // Drafting from silence would produce a confident agent built on no source.
+    rows = [];
+    const { text, names } = await buildSourceDocuments(["gone"], "org");
+    expect(names).toEqual([]);
+    expect(text).toBe("");
+  });
+});
+
+describe("readAttachedFiles", () => {
+  it("returns rows in the caller's order", async () => {
+    rows = [file({ id: "z", filename: "z.txt" }), file({ id: "y", filename: "y.txt" })];
+    expect((await readAttachedFiles(["y", "z"])).map(r => r.filename)).toEqual(["y.txt", "z.txt"]);
+  });
+
+  it("does not query at all for an empty list", async () => {
+    rows = [file()];
+    expect(await readAttachedFiles([], "org")).toEqual([]);
   });
 });
 
@@ -114,10 +144,9 @@ describe("real files flow through extraction into context", () => {
     </sheetData></worksheet>`);
 
     const extracted = await extractTextFromFile(await zip.generateAsync({ type: "nodebuffer" }), undefined, "orders.xlsx");
-    const { context } = buildContext(["f1"], [file({
-      filename: "orders.xlsx", kind: extracted.kind, extractedText: extracted.text, extractMeta: extracted.meta,
-    })]);
+    rows = [file({ filename: "orders.xlsx", kind: extracted.kind, extractedText: extracted.text, extractMeta: extracted.meta })];
 
+    const { context } = await buildAttachmentContext(["f1"], "org");
     expect(context).toContain("orders.xlsx (sheets: Orders)");
     expect(context).toContain("| SKU | Qty |");
     expect(context).toContain("| A-1 | 7 |");

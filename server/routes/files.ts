@@ -4,6 +4,7 @@ import { db } from "../db";
 import { uploadedFiles } from "@shared/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { getOrgId, getDefaultOrgId } from "../auth";
+import { checkPermission } from "../permissions";
 import { storage } from "../storage";
 import {
   extractTextFromFile,
@@ -51,8 +52,16 @@ router.get("/api/files/config", (_req: Request, res: Response) => {
   });
 });
 
-/** POST /api/files/upload — multipart, field name "files" (1–5 files). */
-router.post("/api/files/upload", (req: Request, res: Response) => {
+/**
+ * POST /api/files/upload — multipart, field name "files" (1–5 files).
+ *
+ * Guarded by view_agents rather than a management permission: an upload feeds
+ * an agent's context, so anyone who may USE an agent must be able to attach to
+ * one, or the Workspace loses the feature for exactly the business users it was
+ * built for. The only role denied view_agents is `finance`, a billing-only role
+ * with no reason to push outside content into agent context.
+ */
+router.post("/api/files/upload", checkPermission("view_agents"), (req: Request, res: Response) => {
   upload.array("files", 5)(req, res, async (uploadErr: any) => {
     if (uploadErr) {
       // Size and type rejections are user-fixable; say which, and say the limit.
@@ -154,7 +163,7 @@ router.get("/api/files", async (req: Request, res: Response) => {
   }
 });
 
-router.delete("/api/files/:id", async (req: Request, res: Response) => {
+router.delete("/api/files/:id", checkPermission("view_agents"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const deleted = await db.delete(uploadedFiles)

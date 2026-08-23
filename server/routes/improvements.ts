@@ -25,6 +25,7 @@ import {
   getRequestRole,
 } from "../permissions";
 import { getOrgId } from "../auth";
+import { buildSourceDocuments } from "../attachment-context";
 import {
   resolveOntologyTags,
   handleZodError,
@@ -2792,9 +2793,20 @@ Revenue:
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
-      const { description, outcomeContext } = req.body;
-      if (!description || typeof description !== "string") {
-        return res.status(400).json({ error: "description is required" });
+      const { description, outcomeContext, fileIds } = req.body;
+      const ids: string[] = Array.isArray(fileIds) ? fileIds.filter((f: any) => typeof f === "string").slice(0, 5) : [];
+      const described = typeof description === "string" ? description.trim() : "";
+
+      // A process document IS the description — this is the case the client
+      // actually starts from ("here is our SOP, build the flow"), so requiring
+      // typed text alongside it would reject the primary path.
+      if (!ids.length && !described) {
+        return res.status(400).json({ error: "description is required, or attach a process document" });
+      }
+
+      const sources = ids.length ? await buildSourceDocuments(ids, getOrgId(req)) : null;
+      if (ids.length && !sources?.names.length) {
+        return res.status(400).json({ error: "The attached document could not be read. Re-upload it and try again." });
       }
 
       const validTypes = ["trigger", "get_info", "ai_reasoning", "make_decision", "expert_approval", "take_action", "send_notification", "end"];
@@ -2807,8 +2819,8 @@ Revenue:
       // there was nowhere in the response shape to put one.
       const prompt = `You are a business process design assistant. Convert the following workflow description into a process flow GRAPH using only these step types: ${validTypes.join(", ")}.${contextLine}
 
-Workflow description: "${description}"
-
+Workflow description: "${described || "See the attached process document(s) below — derive the workflow from them."}"
+${sources ? `\n${sources.text}\n` : ""}
 Return a JSON object with:
 - "name": a short name for this process (max 5 words)
 - "nodes": an array of steps, each with: "id" (short unique string like "n1", "n2"), "type" (one of the valid types), "label" (plain English name max 5 words), "description" (1 sentence), "actor" (who does this: "System", "AI", "Customer", "Manager", or a relevant role)
@@ -2817,7 +2829,7 @@ Return a JSON object with:
 Rules:
 - Always start with exactly one "trigger" node (no incoming edges) and end with at least one "end" node (no outgoing edges)
 - Every node must be reachable by following edges from the trigger
-- Include 5-10 nodes total
+- Include ${sources ? "as many nodes as the document actually describes (up to 25) — do not compress a documented process to fit a smaller number, and do not pad it either" : "5-10 nodes total"}
 - Use "expert_approval" for any human sign-off steps, "ai_reasoning" for AI analysis, "make_decision" for branching points
 - If the description mentions a condition, threshold, or "if X then... otherwise..." -- model it literally: a "make_decision" node with TWO OR MORE outgoing edges, each with its own "label" and "condition" describing when that branch is taken. Do not collapse a branch into a single linear path.
 - Every non-branching node has exactly one outgoing edge to the next step

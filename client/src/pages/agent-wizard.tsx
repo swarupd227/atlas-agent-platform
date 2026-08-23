@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { FileAttach, type AttachedFile } from "@/components/file-attach";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -723,6 +724,7 @@ export default function AgentWizard() {
   const [aiInput, setAiInput] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiDraftInput, setAiDraftInput] = useState("");
+  const [aiDraftFiles, setAiDraftFiles] = useState<AttachedFile[]>([]);
   const [aiDrafting, setAiDrafting] = useState(false);
   const [aiDraftConflicts, setAiDraftConflicts] = useState<Array<{ severity: "warn" | "error"; message: string }>>([]);
   const [aiDraftReasoning, setAiDraftReasoning] = useState<string | null>(null);
@@ -1391,7 +1393,9 @@ export default function AgentWizard() {
   }
 
   async function draftAgentFromDescription() {
-    if (!aiDraftInput.trim() || aiDrafting) return;
+    // An attached SOP is a complete request on its own — "draft an agent from
+    // this document" needs no typed sentence to go with it.
+    if ((!aiDraftInput.trim() && !aiDraftFiles.length) || aiDrafting) return;
     setAiDrafting(true);
     setAiDraftConflicts([]);
     setAiDraftReasoning(null);
@@ -1399,12 +1403,24 @@ export default function AgentWizard() {
       const res = await apiRequest("POST", "/api/ai/draft-agent", {
         description: aiDraftInput.trim(),
         industryId: wizardState.industryId || industry || undefined,
+        fileIds: aiDraftFiles.map((f) => f.id),
       });
       const data = await res.json();
       applyAiDraft(data.draft);
       setAiDraftConflicts(data.policyConflicts || []);
       setAiDraftReasoning(data.draft?.reasoning || null);
-      toast({ title: "Draft ready", description: `"${data.draft?.name || "Agent"}" drafted — review every field before creating.` });
+      // A truncated source is the one thing a reviewer cannot see for
+      // themselves on the review step, so it is said out loud rather than left
+      // to be discovered as a gap in the finished agent.
+      const cut: string[] = data.sourceTruncated ?? [];
+      const from = data.sourceDocuments?.length ? ` from ${data.sourceDocuments.join(", ")}` : "";
+      toast({
+        title: "Draft ready",
+        description: cut.length
+          ? `"${data.draft?.name || "Agent"}" drafted${from} — ${cut.join(", ")} was too long to read in full, so check for gaps.`
+          : `"${data.draft?.name || "Agent"}" drafted${from} — review every field before creating.`,
+      });
+      setAiDraftFiles([]);
       setAiPanelOpen(false);
       setCurrentStep(8); // Review & Create — everything is editable from here
     } catch (e: any) {
@@ -2112,9 +2128,17 @@ export default function AgentWizard() {
               className="text-sm resize-none"
               data-testid="input-ai-draft-description"
             />
+            <FileAttach
+              context="wizard"
+              value={aiDraftFiles}
+              onChange={setAiDraftFiles}
+              disabled={aiDrafting}
+              variant="dropzone"
+              label="Or drop an SOP, process doc, or policy to draft from"
+            />
             <Button
               onClick={draftAgentFromDescription}
-              disabled={aiDrafting || !aiDraftInput.trim()}
+              disabled={aiDrafting || (!aiDraftInput.trim() && !aiDraftFiles.length)}
               size="sm"
               className="self-end"
               data-testid="button-draft-agent"

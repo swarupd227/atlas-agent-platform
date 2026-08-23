@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { FileAttach, type AttachedFile } from "@/components/file-attach";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -46,6 +47,7 @@ export default function ProcessFlows() {
   const replaceGraph = (g: { nodes: ProcessNode[]; edges: ProcessEdge[] }) => { setGraph(g); setFlowKey(k => k + 1); };
 
   const [aiDescription, setAiDescription] = useState(() => urlParams.outcomeName || "");
+  const [aiFiles, setAiFiles] = useState<AttachedFile[]>([]);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [flowName, setFlowName] = useState(() => urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "");
 
@@ -57,6 +59,7 @@ export default function ProcessFlows() {
       const res = await apiRequest("POST", "/api/ai/generate-process-flow", {
         description,
         ...(outcomeContext ? { outcomeContext } : {}),
+        fileIds: aiFiles.map(f => f.id),
       });
       return res.json();
     },
@@ -275,11 +278,19 @@ export default function ProcessFlows() {
                 className="text-sm resize-none h-20"
                 data-testid="input-ai-description"
               />
+              <FileAttach
+                context="process_flow"
+                value={aiFiles}
+                onChange={setAiFiles}
+                disabled={generateMutation.isPending}
+                variant="dropzone"
+                label="Or drop the process document — an SOP, runbook, or policy"
+              />
               <div className="flex items-center justify-end gap-2">
                 <Button
                   size="sm"
                   onClick={() => generateMutation.mutate(aiDescription)}
-                  disabled={!aiDescription.trim() || generateMutation.isPending}
+                  disabled={(!aiDescription.trim() && !aiFiles.length) || generateMutation.isPending}
                   data-testid="button-ai-generate"
                 >
                   {generateMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}

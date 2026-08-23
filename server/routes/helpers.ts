@@ -1281,7 +1281,18 @@ export interface DraftedAgentResult {
 // HTTP. Same anti-hallucination discipline as the route it was pulled from:
 // scoped to real, ranked platform resources, re-checked deterministically
 // against active org policies before returning.
-export async function draftSingleAgent(description: string, industryId: string, orgId: string | undefined): Promise<DraftedAgentResult> {
+export async function draftSingleAgent(
+  description: string,
+  industryId: string,
+  orgId: string | undefined,
+  /** Text of any uploaded source documents (an SOP, a process write-up). Kept
+   *  separate from `description` because the two are used differently: the
+   *  description drives keyword ranking of platform resources, while a long
+   *  document would flood that ranking with incidental words and match
+   *  everything. The document is for the model to read; the description is for
+   *  deciding what to put in front of it. */
+  sourceText?: string,
+): Promise<DraftedAgentResult> {
   const [templates, allSkills, allMcpServers, allPolicies, ontologyConcepts] = await Promise.all([
     storage.getAgentTemplates(),
     storage.getSkills(orgId),
@@ -1290,7 +1301,12 @@ export async function draftSingleAgent(description: string, industryId: string, 
     storage.getOntologyConcepts(industryId).catch(() => [] as any[]),
   ]);
 
-  const keywords = description.toLowerCase().split(/\W+/).filter((w: string) => w.length > 3);
+  // Uploading an SOP with no typed description is a legitimate way to use this,
+  // so fall back to the head of the document rather than ranking on nothing --
+  // an empty keyword list scores every resource 0 and makes the ranking
+  // arbitrary, which is exactly when the drafter starts inventing.
+  const keywordSource = description.trim() || (sourceText ?? "").slice(0, 4_000);
+  const keywords = keywordSource.toLowerCase().split(/\W+/).filter((w: string) => w.length > 3);
   const relevanceScore = (obj: any): number => {
     const text = [obj.name || "", obj.label || "", obj.description || "", ...(Array.isArray(obj.tags) ? obj.tags : []), obj.domain || "", obj.category || ""].join(" ").toLowerCase();
     return keywords.filter((k: string) => text.includes(k)).length;
@@ -1362,7 +1378,14 @@ INDUSTRY: ${industryId}
 
 Return ONLY a JSON object with exactly these fields: name, description, riskTier, autonomyMode, systemPrompt, toolsConfig, mcpServerNames, policyBindings, ontologyTags, preloadedSkills, guardrailsConfig, evalSuiteConfig, sourceTemplateId, reasoning.`;
 
-  const raw = await callClaude({ system: systemPrompt, user: description, model: "claude-opus-4-5", maxTokens: 3000, jsonMode: true });
+  // The document goes after the typed description: when a user both attaches an
+  // SOP and types an instruction, the instruction is the narrower signal ("just
+  // the intake half of this") and should not be buried under 40k characters.
+  const userPrompt = sourceText
+    ? [description.trim() || "Draft an agent that carries out the process described in the attached document(s).", "", sourceText].join("\n")
+    : description;
+
+  const raw = await callClaude({ system: systemPrompt, user: userPrompt, model: "claude-opus-4-5", maxTokens: 3000, jsonMode: true });
   let parsed: any;
   try {
     parsed = JSON.parse(stripJsonFences(raw));
