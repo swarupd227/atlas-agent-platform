@@ -25,7 +25,7 @@ export interface AttachedFile {
 
 interface Props {
   /** Where these are being uploaded from; recorded on the row. */
-  context: "workspace" | "wizard" | "process_flow" | "eval" | "other";
+  context: "workspace" | "wizard" | "process_flow" | "eval" | "playground" | "other";
   value: AttachedFile[];
   onChange: (files: AttachedFile[]) => void;
   disabled?: boolean;

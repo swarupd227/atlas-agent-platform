@@ -356,6 +356,32 @@ test("DOC-5. Eval Datasets: labelled goldens import from a CSV", async ({ page }
   console.log("  ✓ DOC-5: csv goldens imported");
 });
 
+// ─── DOC-7 — Playground, .xlsx ───────────────────────────────────────────────
+test("DOC-7. Playground: an attachment reaches the agent mid-conversation", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  const list = await (await request.get("/api/workspace/agents")).json();
+  const agent = Array.isArray(list) ? list[0] : null;
+  test.skip(!agent, "no agent available in this environment");
+
+  await primePage(page);
+  await page.goto(`/agents/${agent.id}/playground`);
+
+  // A session must exist before the composer will send anything.
+  await page.getByTestId("button-new-session").click();
+  const composer = page.getByTestId("input-chat-message").first();
+  await expect(composer).toBeVisible({ timeout: 30_000 });
+
+  await page.getByTestId("input-file-attach-playground").first().setInputFiles(p("disputed-invoices-q3.xlsx"));
+  await expect(page.locator('[data-testid^="chip-file-"]').first()).toBeVisible({ timeout: 60_000 });
+
+  await composer.fill("Which invoice in the attached spreadsheet has the largest variance? Give the InvoiceId and the amount.");
+  await page.getByTestId("button-send-message").first().click();
+
+  await expect(page.locator("body")).toContainText("INV-4473", { timeout: 150_000 });
+  await expect(page.locator("body")).toContainText(/16[,.]?320/);
+  console.log("  ✓ DOC-7: playground attachment answered from the file");
+});
+
 // ─── DOC-6 — Workspace, two files ────────────────────────────────────────────
 test("DOC-6. Workspace: two attachments, and the answer needs both", async ({ page, request }) => {
   test.setTimeout(180_000);

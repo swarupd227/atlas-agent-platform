@@ -39,7 +39,7 @@ const upload = multer({
   },
 });
 
-const CONTEXTS = new Set(["workspace", "wizard", "process_flow", "eval", "other"]);
+const CONTEXTS = new Set(["workspace", "wizard", "process_flow", "eval", "playground", "other"]);
 
 /** GET /api/files/config — the accept string and limits, so the client cannot
  *  drift from what the reader actually supports. */

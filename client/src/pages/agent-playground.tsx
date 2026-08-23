@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { FileAttach, type AttachedFile } from "@/components/file-attach";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
@@ -243,6 +244,7 @@ export default function AgentPlayground() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const genericMessagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [attachments, setAttachments] = useState<AttachedFile[]>([]);
 
   const { data: agent, isLoading: agentLoading } = useQuery<Agent>({
     queryKey: ["/api/agents", agentId],
@@ -449,9 +451,15 @@ export default function AgentPlayground() {
 
   const sendMessage = useCallback(async (overrideContent?: string) => {
     const msgToSend = overrideContent || inputValue.trim();
-    if (!msgToSend || !activeSessionId || isStreaming) return;
-    if (!overrideContent) setInputValue("");
-    setPendingUserMsg(msgToSend);
+    // An attachment on its own is a valid turn -- "summarise this deck" is
+    // often just the file. Suggested-response clicks (overrideContent) never
+    // carry attachments.
+    const sendFileIds = overrideContent ? [] : attachments.map(f => f.id);
+    if ((!msgToSend && !sendFileIds.length) || !activeSessionId || isStreaming) return;
+    if (!overrideContent) { setInputValue(""); setAttachments([]); }
+    // Echo the filenames while the turn is in flight, so an attachment-only
+    // message isn't rendered as an empty bubble.
+    setPendingUserMsg(msgToSend || `[attached: ${attachments.map(f => f.filename).join(", ")}]`);
     setIsStreaming(true);
     setStreamingContent("");
     setGenericStreamingContent("");
@@ -564,7 +572,7 @@ export default function AgentPlayground() {
     try {
       const contextualizedPromise = streamResponse(
         `/api/agents/${agentId}/playground/chat`,
-        { content: msgToSend, sessionId: activeSessionId },
+        { content: msgToSend, sessionId: activeSessionId, fileIds: sendFileIds },
         (acc) => setStreamingContent(acc),
         (event) => {
           collectedProgressEvents.push(event);
@@ -648,7 +656,10 @@ export default function AgentPlayground() {
       setProgressEvents([]);
       setCurrentProgressLabel("");
     }
-  }, [inputValue, activeSessionId, isStreaming, agentId, toast, compareMode, hasWebSearch, agent, nextTraceId]);
+    // `attachments` belongs here: without it this callback closes over the
+    // array as it was on the render that created it, so the first file a user
+    // attaches is silently dropped from the request.
+  }, [inputValue, attachments, activeSessionId, isStreaming, agentId, toast, compareMode, hasWebSearch, agent, nextTraceId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -932,26 +943,34 @@ export default function AgentPlayground() {
               </div>
             </div>
             <div className="border-t px-4 py-3">
-              <div className="max-w-3xl mx-auto flex gap-2">
-                <Textarea
-                  ref={textareaRef}
-                  placeholder={`Message ${agent.name}...`}
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
+              <div className="max-w-3xl mx-auto flex flex-col gap-2">
+                <FileAttach
+                  context="playground"
+                  value={attachments}
+                  onChange={setAttachments}
                   disabled={isStreaming}
-                  className="min-h-[44px] max-h-[120px] resize-none"
-                  rows={1}
-                  data-testid="input-chat-message"
                 />
-                <Button
-                  onClick={() => sendMessage()}
-                  disabled={!inputValue.trim() || isStreaming}
-                  size="icon"
-                  data-testid="button-send-message"
-                >
-                  {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                </Button>
+                <div className="flex gap-2">
+                  <Textarea
+                    ref={textareaRef}
+                    placeholder={`Message ${agent.name}...`}
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={isStreaming}
+                    className="min-h-[44px] max-h-[120px] resize-none"
+                    rows={1}
+                    data-testid="input-chat-message"
+                  />
+                  <Button
+                    onClick={() => sendMessage()}
+                    disabled={(!inputValue.trim() && attachments.length === 0) || isStreaming}
+                    size="icon"
+                    data-testid="button-send-message"
+                  >
+                    {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  </Button>
+                </div>
               </div>
             </div>
           </>
@@ -1019,26 +1038,34 @@ export default function AgentPlayground() {
             </ScrollArea>
 
             <div className="border-t px-4 py-3">
-              <div className="max-w-3xl mx-auto flex gap-2">
-                <Textarea
-                  ref={textareaRef}
-                  placeholder={`Message ${agent.name}...`}
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
+              <div className="max-w-3xl mx-auto flex flex-col gap-2">
+                <FileAttach
+                  context="playground"
+                  value={attachments}
+                  onChange={setAttachments}
                   disabled={isStreaming}
-                  className="min-h-[44px] max-h-[120px] resize-none"
-                  rows={1}
-                  data-testid="input-chat-message"
                 />
-                <Button
-                  onClick={() => sendMessage()}
-                  disabled={!inputValue.trim() || isStreaming}
-                  size="icon"
-                  data-testid="button-send-message"
-                >
-                  {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                </Button>
+                <div className="flex gap-2">
+                  <Textarea
+                    ref={textareaRef}
+                    placeholder={`Message ${agent.name}...`}
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={isStreaming}
+                    className="min-h-[44px] max-h-[120px] resize-none"
+                    rows={1}
+                    data-testid="input-chat-message"
+                  />
+                  <Button
+                    onClick={() => sendMessage()}
+                    disabled={(!inputValue.trim() && attachments.length === 0) || isStreaming}
+                    size="icon"
+                    data-testid="button-send-message"
+                  >
+                    {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  </Button>
+                </div>
               </div>
             </div>
           </>

@@ -6,6 +6,7 @@ import { getOrgId } from "../auth";
 import { getRequestRole } from "../permissions";
 import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt, recomputeOutcomeKpis } from "./helpers";
+import { buildAttachmentContext } from "../attachment-context";
 import { executePromptWithMcp, executeTeamPipeline, type RuntimeProgressEvent, type RuntimeAgent } from "../agent-runtime";
 import { callClaude, stripJsonFences, getAnthropicClient } from "../claude";
 import OpenAI from "openai";
@@ -94,14 +95,36 @@ const router = Router();
     try {
       const playgroundStartTime = Date.now();
       const { agentId } = req.params;
-      const { content, sessionId } = req.body;
+      const { content, sessionId, fileIds } = req.body;
+      const ids: string[] = Array.isArray(fileIds) ? fileIds.filter((f: any) => typeof f === "string").slice(0, 5) : [];
+      const typed = typeof content === "string" ? content : "";
 
-      if (!content || typeof content !== "string" || !sessionId) {
-        return res.status(400).json({ error: "content (string) and sessionId are required" });
+      // A file with no message is a valid turn ("summarise this deck"), so only
+      // demand text when nothing is attached.
+      if ((!typed.trim() && !ids.length) || !sessionId) {
+        return res.status(400).json({ error: "content (string) or fileIds, plus sessionId, are required" });
       }
 
       const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      // Same split as the Workspace: the model sees the file contents, the
+      // stored turn keeps the user's own words plus "[attached: x]". Putting
+      // the extracted text in chat_messages would make session history
+      // unreadable and duplicate hundreds of KB already held in uploaded_files.
+      const { context: attachmentContext, names: attachedNames } =
+        await buildAttachmentContext(ids, getOrgId(req));
+      if (ids.length && !attachedNames.length) {
+        return res.status(400).json({ error: "The attached file could not be read. Re-upload it and try again." });
+      }
+
+      const storedContent = attachedNames.length
+        ? [typed.trim(), `[attached: ${attachedNames.join(", ")}]`].filter(Boolean).join("\n\n")
+        : typed;
+      /** What the model actually receives for this turn. */
+      const modelContent = attachmentContext
+        ? `${attachmentContext}\n\n${typed.trim() || "Use the attached file(s) to answer."}`
+        : typed;
 
       const [session] = await db.select().from(conversations).where(eq(conversations.id, sessionId));
       if (!session || session.agentId !== agentId) return res.status(404).json({ error: "Session not found for this agent" });
@@ -111,19 +134,32 @@ const router = Router();
       // impossible to scan) -- retitle from the first real message so the
       // sidebar shows what each session was actually about.
       if (session.title === `${agent.name} - Playground`) {
-        const retitled = content.length > 60 ? `${content.slice(0, 57)}...` : content;
-        await db.update(conversations).set({ title: retitled }).where(eq(conversations.id, sessionId));
+        // An attachment-only turn has no text to title from; the filename is
+        // what the user would recognise in the sidebar.
+        const basis = typed.trim() || (attachedNames.length ? attachedNames.join(", ") : "");
+        const retitled = basis.length > 60 ? `${basis.slice(0, 57)}...` : basis;
+        if (retitled) await db.update(conversations).set({ title: retitled }).where(eq(conversations.id, sessionId));
       }
 
       await db.insert(chatMessages).values({
         conversationId: sessionId,
         role: "user",
-        content,
+        content: storedContent,
       });
 
       const existingMsgs = await db.select().from(chatMessages)
         .where(eq(chatMessages.conversationId, sessionId))
         .orderBy(chatMessages.createdAt);
+
+      /**
+       * History for the model, with THIS turn carrying the attachment text.
+       * The rows in `existingMsgs` deliberately hold the short form, so the
+       * substitution happens here rather than in the database. Every branch
+       * below builds from this, so an attachment reaches the agent whichever
+       * execution path it takes.
+       */
+      const msgsForModel = existingMsgs.map((m, i) =>
+        i === existingMsgs.length - 1 && m.role === "user" ? { ...m, content: modelContent } : m);
 
       const systemPrompt = buildAgentSystemPrompt(agent);
 
@@ -170,8 +206,8 @@ const router = Router();
             ? existingMsgs.slice(0, -1).map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n\n")
             : "";
           const teamPrompt = conversationHistory
-            ? `## Conversation History\n${conversationHistory}\n\n## Current User Message\n${content}`
-            : content;
+            ? `## Conversation History\n${conversationHistory}\n\n## Current User Message\n${modelContent}`
+            : modelContent;
           const teamOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
           const teamRuntimeAgent: RuntimeAgent = {
             deploymentId: "playground",
@@ -199,7 +235,10 @@ const router = Router();
               agentId,
               environment: "playground",
               status: result.success ? "completed" : "failed",
-              inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
+              // storedContent, not content: an attachment-only turn has no text at
+          // all (content is undefined and .length would throw), and the trace
+          // should name the file the user actually sent.
+          inputSummary: `Playground: ${storedContent.length > 120 ? storedContent.substring(0, 117) + "..." : storedContent}`,
               outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
               stepsJson: result.steps,
               modelId: agent.modelName || "gpt-4.1",
@@ -219,8 +258,8 @@ const router = Router();
           ? existingMsgs.slice(0, -1).map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n\n")
           : "";
         const mcpPrompt = conversationHistory
-          ? `## Conversation History\n${conversationHistory}\n\n## Current User Message\n${content}`
-          : content;
+          ? `## Conversation History\n${conversationHistory}\n\n## Current User Message\n${modelContent}`
+          : modelContent;
 
         try {
           const playgroundOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
@@ -263,7 +302,10 @@ const router = Router();
               environment: "playground",
               status: result.success ? "completed" : "failed",
               latencyMs: result.summary?.latencyMs || 0,
-              inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
+              // storedContent, not content: an attachment-only turn has no text at
+          // all (content is undefined and .length would throw), and the trace
+          // should name the file the user actually sent.
+          inputSummary: `Playground: ${storedContent.length > 120 ? storedContent.substring(0, 117) + "..." : storedContent}`,
               outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
               stepsJson: result.steps,
               modelId: "claude-opus-4-5",
@@ -281,7 +323,7 @@ const router = Router();
       } else if (webSearchEnabled) {
         const inputMessages: Array<{ role: "developer" | "user" | "assistant"; content: string }> = [
           { role: "developer", content: systemPrompt },
-          ...existingMsgs.map(m => ({
+          ...msgsForModel.map(m => ({
             role: m.role as "user" | "assistant",
             content: m.content,
           })),
@@ -336,14 +378,17 @@ const router = Router();
             environment: "playground",
             status: "completed",
             latencyMs: Date.now() - playgroundStartTime,
-            inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
+            // storedContent, not content: an attachment-only turn has no text at
+          // all (content is undefined and .length would throw), and the trace
+          // should name the file the user actually sent.
+          inputSummary: `Playground: ${storedContent.length > 120 ? storedContent.substring(0, 117) + "..." : storedContent}`,
             outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
             modelId: agent.modelName || "gpt-4.1",
           });
           await recordPlaygroundOutcomeEvent(agent);
         } catch {}
       } else {
-        const claudeMsgs = existingMsgs.map(m => ({
+        const claudeMsgs = msgsForModel.map(m => ({
           role: m.role as "user" | "assistant",
           content: m.content,
         }));
@@ -369,7 +414,10 @@ const router = Router();
             environment: "playground",
             status: "completed",
             latencyMs: Date.now() - playgroundStartTime,
-            inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
+            // storedContent, not content: an attachment-only turn has no text at
+          // all (content is undefined and .length would throw), and the trace
+          // should name the file the user actually sent.
+          inputSummary: `Playground: ${storedContent.length > 120 ? storedContent.substring(0, 117) + "..." : storedContent}`,
             outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
             modelId: "claude-opus-4-5",
           });
