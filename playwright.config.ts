@@ -51,6 +51,13 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
     baseURL: process.env.E2E_BASE_URL || "https://atlas-agent-platform.replit.app",
+    // WARNING: this forces Content-Type on EVERY request the page makes, not
+    // just the API ones this was added for. Any spec that uploads a file must
+    // clear it (`test.use({ extraHTTPHeaders: {} })`), or the browser's own
+    // multipart Content-Type is overwritten, the boundary is lost, and the
+    // server hands "------WebKitFormBoundary..." to express.json() -- a 400
+    // "Unexpected token '-' ... is not valid JSON" with no other clue.
+    // See tests/document-upload-scenarios.e2e.ts.
     extraHTTPHeaders: { "Content-Type": "application/json" },
     headless: true,
     screenshot: "only-on-failure",

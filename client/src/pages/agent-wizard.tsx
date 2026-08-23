@@ -105,6 +105,16 @@ const STEPS = [
   { number: 9, label: "Review & Create" },
 ];
 
+/**
+ * Derived, never hardcoded. "Autonomous Agent Mode" was inserted at 8, which
+ * pushed Review & Create from 8 to 9 -- and two call sites kept sending users
+ * to 8, so drafting an agent from a description landed on the autonomy step
+ * with the draft apparently missing (its fields live on Review), and "Back to
+ * Wizard" after a failed create dropped the user somewhere without the Create
+ * button. Deriving the index means the next inserted step cannot repeat this.
+ */
+const REVIEW_STEP = STEPS.findIndex((s) => s.label === "Review & Create");
+
 interface ToolParam {
   name: string;
   description: string;
@@ -1422,7 +1432,7 @@ export default function AgentWizard() {
       });
       setAiDraftFiles([]);
       setAiPanelOpen(false);
-      setCurrentStep(8); // Review & Create — everything is editable from here
+      setCurrentStep(REVIEW_STEP); // everything is editable from here
     } catch (e: any) {
       toast({ title: "Draft failed", description: e?.message || "Could not draft an agent from that description. You can still configure manually.", variant: "destructive" });
     } finally {
@@ -1780,7 +1790,8 @@ export default function AgentWizard() {
                   variant="outline"
                   onClick={() => {
                     setJobProgress(null);
-                    setCurrentStep(8);
+                    // Back to the step that actually has the Create button.
+                    setCurrentStep(REVIEW_STEP);
                   }}
                   data-testid="button-back-to-wizard"
                 >
