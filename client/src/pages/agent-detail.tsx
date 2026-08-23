@@ -6915,16 +6915,16 @@ function BlueprintModelConfig({ agent, hasComputedData }: { agent: Agent; hasCom
                     // The old model id belongs to the old provider; default to the
                     // new provider's first model rather than leaving a mismatch
                     // that only fails at run time.
-                    const next = providers?.find(p => p.name === v)?.models?.[0]?.id;
+                    const next = providerOptions.find(p => p.name === v)?.models?.[0]?.id;
                     setDraftModel(next ?? "");
                   }}
                 >
                   <SelectTrigger data-testid="select-model-provider"><SelectValue placeholder="Select provider" /></SelectTrigger>
                   <SelectContent>
-                    {(providers ?? []).map(p => (
-                      // Single text child on purpose: with two children Radix could
-                      // not resolve this item's label, so the trigger rendered EMPTY
-                      // for the current provider while the list was still loading.
+                    {/* providerOptions, NOT the raw query result -- mapping the raw
+                        result here is what left this Select with zero items, and so
+                        a blank trigger, until the fetch resolved. */}
+                    {providerOptions.map(p => (
                       <SelectItem key={p.name} value={p.name} disabled={!p.configured}>
                         {p.configured ? p.displayName : `${p.displayName} (no API key)`}
                       </SelectItem>
