@@ -1434,9 +1434,9 @@ export async function runStartupMigrations() {
     // skills by id and run in Anthropic's sandboxed container instead of being
     // injected as prompt context. codeExecutionApproved mirrors mcpServers'
     // production-enablement gate -- attaching the skill to an agent isn't the
-    // same as approving it. agent_generated_files stores only a reference to
-    // each created file (Anthropic's Files API retains the bytes), not the
-    // bytes themselves.
+    // same as approving it. agent_generated_files originally stored only a
+    // reference to each created file (Anthropic's Files API retains the bytes);
+    // see the migration just below for the second, inline storage mode.
     await client.query(`
       ALTER TABLE skills ADD COLUMN IF NOT EXISTS skill_kind TEXT NOT NULL DEFAULT 'prompt';
       ALTER TABLE skills ADD COLUMN IF NOT EXISTS anthropic_skill_ids TEXT[] DEFAULT '{}'::text[];
@@ -1454,6 +1454,19 @@ export async function runStartupMigrations() {
         created_at        TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_agent_generated_files_agent_id ON agent_generated_files(agent_id);
+    `);
+
+    // Provider-agnostic document generation (server/document-renderer.ts):
+    // decks and PDFs are rendered in-process for ANY model, not just via
+    // Anthropic's sandbox, so a row's bytes now live in one of two places.
+    // source='anthropic' keeps the original behaviour (bytes in their Files
+    // API, anthropic_file_id set); source='platform' stores them inline in
+    // content. anthropic_file_id therefore has to lose its NOT NULL, since a
+    // platform-rendered file has no Anthropic counterpart.
+    await client.query(`
+      ALTER TABLE agent_generated_files ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'anthropic';
+      ALTER TABLE agent_generated_files ADD COLUMN IF NOT EXISTS content BYTEA;
+      ALTER TABLE agent_generated_files ALTER COLUMN anthropic_file_id DROP NOT NULL;
     `);
 
     // Relay agents (SQL connector "relay_agent" connection mode, Phase 3):
