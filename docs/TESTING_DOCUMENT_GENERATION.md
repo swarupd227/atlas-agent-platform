@@ -62,7 +62,10 @@ model chose (`Q3_Marketing_Campaign.pptx`).
 
 ## 3. Changing an agent's model
 
-1. Agent detail → **Model Configuration** card → **Change model**.
+1. Agent detail → **More** (to the right of the tab strip) → **Blueprint** →
+   **Model Configuration** card → **Change model**.
+   The Blueprint tab is in the overflow menu, not the primary strip — it is not on
+   the Summary tab.
 2. Pick a provider, then a model. Providers with no API key on file are disabled.
    Switching provider resets the model to that provider's first option, so you can't
    save a model belonging to a different provider.
