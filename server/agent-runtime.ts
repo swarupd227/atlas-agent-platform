@@ -8,6 +8,7 @@ import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } fr
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
+import { documentToolsForSkills, GENERATED_FILE_MARKER } from "./builtin-document-tools";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -1221,6 +1222,17 @@ export async function executePromptWithMcp(
         storage.updateSkill(s.id, { activationCount: (s.activationCount ?? 0) + 1 } as any).catch(() => {});
       }
     }
+    // Provider-agnostic document generation: gated on the agent's skills rather
+    // than its model, so it works where Anthropic code execution cannot.
+    // Appended after the allowlist filter -- a skill that grants document
+    // generation is granting these tools, so it must not filter them back out.
+    const docTools = documentToolsForSkills(resolvedActiveSkills);
+    availableTools.push(...docTools);
+    // ...and the dispatcher enforces the same allowlist independently, so grant
+    // them there too or every call would be refused at dispatch.
+    if (dispatchSkillAllowlist) {
+      for (const t of docTools) dispatchSkillAllowlist.add(t.toolName.toLowerCase());
+    }
   } catch (sgErr: any) {
     // Skills grant capability; failure to resolve them degrades to the policy-
     // gated tool set rather than aborting the run.
@@ -1806,7 +1818,18 @@ After receiving tool results, provide a structured analysis with key findings, s
             lastStep.latencyMs = dispatch.durationMs;
             lastStep.executionMs = dispatch.executionMs;
             toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: dispatch.result });
-            emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: true, result: dispatch.result, iteration: iterationsUsed });
+            // A built-in document tool persists its own file; carry it on the
+            // same generatedFiles field the code-execution path uses so the
+            // trace panel renders a download card either way.
+            const producedFile = (dispatch.result as any)?.[GENERATED_FILE_MARKER];
+            emitProgress("tool_call_result", {
+              tool: matchedTool.toolName,
+              server: matchedTool.serverName,
+              success: true,
+              result: dispatch.result,
+              iteration: iterationsUsed,
+              ...(producedFile?.id ? { generatedFiles: [producedFile] } : {}),
+            });
           } else {
             const label =
               dispatch.outcome === "gate_blocked_policy" ? `[POLICY-GATE] BLOCK: ${dispatch.reason}` :
@@ -2872,7 +2895,17 @@ export async function executeWorkerAgent(
       contextualPrompt,
       teamAgent.industry,
       workerContext || workerAgent.systemPrompt || undefined,
-      { runtimeConfig: workerRtConfig, dagToolAllowlist },
+      // The worker's own model, same as the single-agent path does. Without
+      // these, options?.modelName falls back to the "gpt-4.1" default and every
+      // node in a team silently ignores the model configured on its agent --
+      // so a worker deliberately put on Claude (e.g. to run a code-execution
+      // skill) would run on GPT and quietly produce nothing.
+      {
+        runtimeConfig: workerRtConfig,
+        dagToolAllowlist,
+        modelProvider: workerAgent.modelProvider ?? undefined,
+        modelName: workerAgent.modelName ?? undefined,
+      },
       undefined,
       workerRuntimeAgent.orgId ?? undefined,
     );

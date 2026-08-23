@@ -31,6 +31,7 @@ import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine"
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
+import { documentToolsForSkills, GENERATED_FILE_MARKER } from "./builtin-document-tools";
 import type { Skill } from "@shared/schema";
 
 // Fallback for agents created before maxToolIterations existed / with it
@@ -656,9 +657,13 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   const cp = runRow.checkpoint as Checkpoint;
 
   const { availableTools, policyBundle } = await buildContext(agentId, orgId, cp.mcpServerIds, cp.skillAllowlist);
-  const canonicalTools = buildCanonicalTools(availableTools);
   const agentRow = await storage.getAgent(agentId, orgId);
   const activeSkills = await resolveActiveSkills(agentRow);
+  // Provider-agnostic document generation: offered on any model, gated on the
+  // agent's skills rather than the model, so it works where code execution
+  // cannot. Appended before canonicalization so the model actually sees them.
+  availableTools.push(...documentToolsForSkills(activeSkills));
+  const canonicalTools = buildCanonicalTools(availableTools);
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
   const codeExecConfig = codeExecAccess.enabled ? buildCodeExecutionRequestConfig(activeSkills, cp.containerId) : null;
   // A code-execution skill on a non-Claude agent is a no-op that only shows up
@@ -902,7 +907,11 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
         tool: matched,
         args: tc.arguments,
         policyBundle,
-        skillAllowlist: cp.skillAllowlist ? new Set(cp.skillAllowlist) : null,
+        // Document tools are granted BY a skill, so an allowlist that predates
+        // them must not refuse them at dispatch.
+        skillAllowlist: cp.skillAllowlist
+          ? new Set([...cp.skillAllowlist, ...documentToolsForSkills(activeSkills).map(t => t.toolName.toLowerCase())])
+          : null,
         idempotencyScope: runId,
         spanCollector: spans,
         parentSpanId: stepSpan,
@@ -928,6 +937,13 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
         resultPayload = (resultPayload && typeof resultPayload === "object" && !Array.isArray(resultPayload))
           ? { ...(resultPayload as Record<string, unknown>), approverNote: humanNote }
           : { result: resultPayload, approverNote: humanNote };
+      }
+      // A built-in document tool renders and persists the file itself; fold it
+      // into the run's generatedFiles so it reaches the UI through exactly the
+      // same field as a sandbox-produced file.
+      const produced = ok ? (dispatch.result as any)?.[GENERATED_FILE_MARKER] : null;
+      if (produced?.id) {
+        cp.generatedFiles = [...(cp.generatedFiles ?? []), produced];
       }
       onEvent({ type: "tool_result", tool: matched.toolName, outcome: dispatch.outcome, ok, preview: JSON.stringify(resultPayload).slice(0, 200) });
       cp.messages.push({ role: "tool", content: JSON.stringify(resultPayload), tool_call_id: tc.id } as any);

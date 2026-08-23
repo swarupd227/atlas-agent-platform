@@ -373,6 +373,14 @@ function resultErrorMessage(result: any): string | null {
 }
 
 export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
+  // Built-in document generation (server/builtin-document-tools.ts). No server
+  // to call -- the bytes are rendered in-process -- but it still arrives here
+  // via dispatchToolCall, so every gate above has already run.
+  const { isBuiltinDocumentTool, executeBuiltinDocumentTool } = await import("./builtin-document-tools");
+  if (isBuiltinDocumentTool(tool)) {
+    return executeBuiltinDocumentTool(tool.toolName, args, { orgId, agentId });
+  }
+
   // Enterprise connectors (GitHub, Slack, Salesforce, the SQL family, …) are
   // OUR OWN code and must be dispatched in-process, so the agent's org context
   // and its connection pin select the right encrypted credentials.

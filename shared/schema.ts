@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb, index, uniqueIndex, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -1771,7 +1771,20 @@ export const agentGeneratedFiles = pgTable("agent_generated_files", {
   filename: text("filename"),
   mimeType: text("mime_type"),
   sizeBytes: integer("size_bytes"),
-  anthropicFileId: text("anthropic_file_id").notNull(),
+  /**
+   * Where the bytes live. "anthropic": produced by the code execution sandbox
+   * and fetched from their Files API on demand (anthropicFileId set, content
+   * null). "platform": rendered in-process by server/document-renderer.ts on
+   * whatever model the agent runs, and stored inline (content set,
+   * anthropicFileId null).
+   */
+  source: text("source").notNull().default("anthropic"),
+  /** Nullable since a platform-rendered file has no Anthropic counterpart. */
+  anthropicFileId: text("anthropic_file_id"),
+  /** Inline bytes for source="platform". Documents are tens to hundreds of KB. */
+  content: customType<{ data: Buffer; notNull: false; default: false }>({
+    dataType: () => "bytea",
+  })("content"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
