@@ -6922,8 +6922,11 @@ function BlueprintModelConfig({ agent, hasComputedData }: { agent: Agent; hasCom
                   <SelectTrigger data-testid="select-model-provider"><SelectValue placeholder="Select provider" /></SelectTrigger>
                   <SelectContent>
                     {(providers ?? []).map(p => (
+                      // Single text child on purpose: with two children Radix could
+                      // not resolve this item's label, so the trigger rendered EMPTY
+                      // for the current provider while the list was still loading.
                       <SelectItem key={p.name} value={p.name} disabled={!p.configured}>
-                        {p.displayName}{p.configured ? "" : " (no API key)"}
+                        {p.configured ? p.displayName : `${p.displayName} (no API key)`}
                       </SelectItem>
                     ))}
                   </SelectContent>
