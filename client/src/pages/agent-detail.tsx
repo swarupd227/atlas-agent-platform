@@ -6827,18 +6827,122 @@ function OntologyComplianceCard({ agentId, hasOntologyTags }: { agentId: string;
   );
 }
 
+/** Shape of GET /api/llm-providers — see server/routes/llm-providers.ts. */
+interface LlmProviderOption {
+  name: string;
+  displayName: string;
+  configured: boolean;
+  models: Array<{ id: string; name?: string }>;
+}
+
 function BlueprintModelConfig({ agent, hasComputedData }: { agent: Agent; hasComputedData?: boolean }) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draftProvider, setDraftProvider] = useState(agent.modelProvider ?? "openai");
+  const [draftModel, setDraftModel] = useState(agent.modelName ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // Only fetched once the user opts into editing -- this card renders on every
+  // agent page and the provider list is irrelevant until then.
+  const { data: providers } = useQuery<LlmProviderOption[]>({
+    queryKey: ["/api/llm-providers"],
+    enabled: editing,
+  });
+
+  const startEditing = () => {
+    setDraftProvider(agent.modelProvider ?? "openai");
+    setDraftModel(agent.modelName ?? "");
+    setEditing(true);
+  };
+
+  const selectedProvider = providers?.find(p => p.name === draftProvider);
+  const modelOptions = selectedProvider?.models ?? [];
+  const dirty = draftProvider !== (agent.modelProvider ?? "") || draftModel !== (agent.modelName ?? "");
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiRequest("PATCH", `/api/agents/${agent.id}`, { modelProvider: draftProvider, modelName: draftModel });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      toast({ title: "Model updated", description: `${draftProvider} / ${draftModel}` });
+      setEditing(false);
+    } catch (e: any) {
+      toast({ title: "Failed to update model", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Card data-testid="section-model-config">
       <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
-            <Cpu className="w-3.5 h-3.5 text-primary" />
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <Cpu className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium">Model Configuration</CardTitle>
           </div>
-          <CardTitle className="text-sm font-medium">Model Configuration</CardTitle>
+          {!editing && (
+            <Button size="sm" variant="outline" className="text-xs h-7" onClick={startEditing} data-testid="button-edit-model">
+              Change model
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
+        {editing ? (
+          <div className="flex flex-col gap-3" data-testid="editor-model-config">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Provider</span>
+                <Select
+                  value={draftProvider}
+                  onValueChange={(v) => {
+                    setDraftProvider(v);
+                    // The old model id belongs to the old provider; default to the
+                    // new provider's first model rather than leaving a mismatch
+                    // that only fails at run time.
+                    const next = providers?.find(p => p.name === v)?.models?.[0]?.id;
+                    setDraftModel(next ?? "");
+                  }}
+                >
+                  <SelectTrigger data-testid="select-model-provider"><SelectValue placeholder="Select provider" /></SelectTrigger>
+                  <SelectContent>
+                    {(providers ?? []).map(p => (
+                      <SelectItem key={p.name} value={p.name} disabled={!p.configured}>
+                        {p.displayName}{p.configured ? "" : " (no API key)"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Model</span>
+                <Select value={draftModel} onValueChange={setDraftModel}>
+                  <SelectTrigger data-testid="select-model-name"><SelectValue placeholder="Select model" /></SelectTrigger>
+                  <SelectContent>
+                    {modelOptions.map(m => (
+                      <SelectItem key={m.id} value={m.id}>{m.name || m.id}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Changing the model changes how this agent behaves, what it costs and which capabilities it has —
+              Anthropic code execution runs only on Claude models. Document generation is unaffected: it works on every model.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button size="sm" className="text-xs h-7" disabled={!dirty || !draftModel || saving} onClick={save} data-testid="button-save-model">
+                {saving ? "Saving…" : "Save"}
+              </Button>
+              <Button size="sm" variant="ghost" className="text-xs h-7" disabled={saving} onClick={() => setEditing(false)} data-testid="button-cancel-model">
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Provider</span>
@@ -6857,6 +6961,7 @@ function BlueprintModelConfig({ agent, hasComputedData }: { agent: Agent; hasCom
             <span className="text-sm font-medium" data-testid="text-model-env">{agent.environment}</span>
           </div>
         </div>
+        )}
         <Separator className="my-4" />
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div className="flex flex-col gap-0.5">
