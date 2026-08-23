@@ -6855,7 +6855,19 @@ function BlueprintModelConfig({ agent, hasComputedData }: { agent: Agent; hasCom
     setEditing(true);
   };
 
-  const selectedProvider = providers?.find(p => p.name === draftProvider);
+  // Until /api/llm-providers resolves there is no SelectItem matching the current
+  // value, so both triggers render EMPTY for a beat -- which reads as "this agent
+  // has no model" rather than "still loading". Seed the list with the agent's own
+  // pairing so the current value shows immediately and the real options fill in.
+  const providerOptions: LlmProviderOption[] = providers ?? [
+    {
+      name: agent.modelProvider ?? "openai",
+      displayName: agent.modelProvider ?? "openai",
+      configured: true,
+      models: agent.modelName ? [{ id: agent.modelName }] : [],
+    },
+  ];
+  const selectedProvider = providerOptions.find(p => p.name === draftProvider);
   const modelOptions = selectedProvider?.models ?? [];
   const dirty = draftProvider !== (agent.modelProvider ?? "") || draftModel !== (agent.modelName ?? "");
 
