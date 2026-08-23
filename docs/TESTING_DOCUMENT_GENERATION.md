@@ -99,7 +99,21 @@ head -c 4 out.pptx | xxd    # 50 4b 03 04  => a valid zip, i.e. real OOXML
 
 For a PDF, `head -c 5 out.pdf` should print `%PDF-`.
 
-## 5. What "good" looks like
+## 5. Finding a document again later
+
+Two places, both in Workspace:
+
+- **The answer bubble**, immediately after the run. Live only — it comes from the
+  streaming `completed` event and is not restored on reload.
+- **My Work**, the recent-runs list below. Each run that produced a file shows the
+  same download link, and this one survives a reload.
+
+A file's download URL (`/api/agent-files/<id>/download`) is permanent and keeps
+working regardless. There is deliberately no browse-all-files page yet; **My Work
+shows the 10 most recent runs**, so a document older than that is currently only
+reachable by its URL.
+
+## 6. What "good" looks like
 
 | Signal | Expected |
 |---|---|
@@ -111,7 +125,7 @@ For a PDF, `head -c 5 out.pdf` should print `%PDF-`.
 | Slide count | title slide + one per section |
 | Latency / cost (portable path) | ~5–15s, ~$0.01 |
 
-## 6. Automated tests
+## 7. Automated tests
 
 ```bash
 npx vitest run --config vitest.integration.config.ts \
@@ -134,7 +148,7 @@ To render sample documents without running an agent at all:
 npx tsx scripts/sample-document.ts ./out
 ```
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 **The agent returns an outline and no file.** Check the tools were offered: the skill
 must be `active`, attached, and list `pptx`/`pdf`. If the agent's skills declare an
