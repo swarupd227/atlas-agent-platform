@@ -1777,6 +1777,45 @@ export const agentGeneratedFiles = pgTable("agent_generated_files", {
 
 export const insertAgentGeneratedFileSchema = createInsertSchema(agentGeneratedFiles).omit({ id: true, createdAt: true });
 export type InsertAgentGeneratedFile = z.infer<typeof insertAgentGeneratedFileSchema>;
+
+/**
+ * Files a PERSON uploads, the inbound counterpart to agentGeneratedFiles.
+ *
+ * One row per upload, shared by every surface that accepts a file (workspace
+ * attachments, the agent wizard, process flow authoring), so the upload
+ * endpoint, size limits, extraction and audit trail exist once rather than per
+ * surface. `context` records which surface it came from, since a file attached
+ * to a chat turn and a file used to draft an agent have different lifetimes.
+ *
+ * extractedText is stored rather than re-derived per use: extraction is slow
+ * (PDF parsing, unzipping a workbook) and a file is typically read many times
+ * across the turns of one conversation. Capped upstream by MAX_TEXT_CHARS in
+ * server/file-extract.ts.
+ */
+export const uploadedFiles = pgTable("uploaded_files", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  uploadedBy: varchar("uploaded_by"),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type"),
+  sizeBytes: integer("size_bytes"),
+  /** Reader classification from file-extract.ts: pdf | docx | xlsx | pptx | csv | json | text */
+  kind: text("kind"),
+  extractedText: text("extracted_text"),
+  /** Sheet names, slide count, truncation flag — surfaced in the UI chip. */
+  extractMeta: jsonb("extract_meta"),
+  /** Where it was uploaded: workspace | wizard | process_flow | eval. */
+  context: text("context"),
+  /** Set once the file has also been pushed to Anthropic's Files API for
+   *  code-execution analysis; null when only the extracted text is used. */
+  anthropicFileId: text("anthropic_file_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_uploaded_files_org").on(table.organizationId),
+]);
+export const insertUploadedFileSchema = createInsertSchema(uploadedFiles).omit({ id: true, createdAt: true });
+export type InsertUploadedFile = z.infer<typeof insertUploadedFileSchema>;
+export type UploadedFile = typeof uploadedFiles.$inferSelect;
 export type AgentGeneratedFile = typeof agentGeneratedFiles.$inferSelect;
 
 export const skillVersions = pgTable("skill_versions", {

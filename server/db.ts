@@ -1266,6 +1266,23 @@ export async function runStartupMigrations() {
       -- Vault-encrypted auth config for mcp_server_auth (Task #55 backward-compat migration)
       ALTER TABLE mcp_server_auth ADD COLUMN IF NOT EXISTS config_encrypted TEXT;
 
+      -- Inbound file uploads (the counterpart to agent_generated_files).
+      CREATE TABLE IF NOT EXISTS uploaded_files (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        uploaded_by VARCHAR,
+        filename TEXT NOT NULL,
+        mime_type TEXT,
+        size_bytes INTEGER,
+        kind TEXT,
+        extracted_text TEXT,
+        extract_meta JSONB,
+        context TEXT,
+        anthropic_file_id TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_uploaded_files_org ON uploaded_files(organization_id);
+
       -- Multi-connection support, phase 1: an org can hold several connections
       -- of the same integration type (e.g. two PostgreSQL databases). The name
       -- column labels the instance; is_default marks the one that type-only

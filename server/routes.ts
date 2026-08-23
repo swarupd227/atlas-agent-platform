@@ -109,6 +109,7 @@ import outputContractsRouter from "./routes/output-contracts";
 import generationMetadataRouter from "./routes/generation-metadata";
 import evalStudioRouter from "./routes/eval-studio";
 import enterpriseIntegrationsRouter, { startTokenRefreshDaemon } from "./routes/enterprise-integrations";
+import filesRouter from "./routes/files";
 import { registerEnterpriseIntegrations } from "./integrations/register";
 import { createSalesforceRouter } from "./integrations/salesforce/mcp-server";
 import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
@@ -381,6 +382,7 @@ export async function registerRoutes(
   app.use(generationMetadataRouter);
   app.use(evalStudioRouter);
   app.use(enterpriseIntegrationsRouter);
+  app.use(filesRouter);
 
   // ── Enterprise Integration routers (Wave 1: CRM, Wave 2: ITSM + DevOps) ────
   app.use("/api/integrations/salesforce", createSalesforceRouter());

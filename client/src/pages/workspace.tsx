@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { FileAttach, type AttachedFile } from "@/components/file-attach";
 import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -47,6 +48,7 @@ const OUTCOME_STYLE: Record<string, string> = {
 export default function Workspace() {
   const [agentId, setAgentId] = useState<string>("");
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [running, setRunning] = useState(false);
@@ -113,12 +115,15 @@ export default function Workspace() {
   }
 
   async function ask() {
-    if (!agentId || !input.trim() || running) return;
+    // An attachment alone is a valid request -- "summarise this deck" is
+    // often just the file.
+    if (!agentId || (!input.trim() && attachments.length === 0) || running) return;
     setTimeline([]); setPending(null); setRunId(null); setRunning(true);
     const question = input.trim();
-    setInput("");
+    const fileIds = attachments.map(f => f.id);
+    setInput(""); setAttachments([]);
     try {
-      const res = await apiRequest("POST", "/api/workspace/runs/stream", { agentId, input: question });
+      const res = await apiRequest("POST", "/api/workspace/runs/stream", { agentId, input: question, fileIds });
       await consumeStream(res);
     } catch (e: any) {
       handleEvent({ type: "error", message: e.message });
@@ -179,13 +184,14 @@ export default function Workspace() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ask(); }}
-            placeholder="Describe the work you need done…"
+            placeholder="Describe the work you need done, or attach a file and ask about it…"
             className="min-h-[80px] resize-none"
             data-testid="input-workspace-ask"
           />
+          <FileAttach context="workspace" value={attachments} onChange={setAttachments} disabled={running} />
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-muted-foreground">⌘/Ctrl + Enter to send</span>
-            <Button onClick={ask} disabled={!agentId || !input.trim() || running} data-testid="button-workspace-send">
+            <Button onClick={ask} disabled={!agentId || (!input.trim() && attachments.length === 0) || running} data-testid="button-workspace-send">
               {running ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
               {running ? "Working…" : "Send"}
             </Button>

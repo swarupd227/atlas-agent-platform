@@ -33,10 +33,18 @@ const resumeSchema = z.object({
 // POST /api/workspace/runs — ask an agent to do work.
 router.post("/api/workspace/runs", llmInvokeRateLimiter, async (req, res) => {
   try {
-    const { agentId, input } = z.object({ agentId: z.string(), input: z.string().min(1) }).parse(req.body);
+    // input may be empty when files carry the request ("summarise this deck"
+    // is often just an attachment), but a run with neither is meaningless.
+    const { agentId, input, fileIds } = z.object({
+      agentId: z.string(),
+      input: z.string().default(""),
+      fileIds: z.array(z.string()).max(5).optional(),
+    }).refine((v) => v.input.trim().length > 0 || (v.fileIds?.length ?? 0) > 0,
+      { message: "Provide a message or attach a file" }).parse(req.body);
     const result = await startWorkspaceRun({
       agentId,
       input,
+      fileIds,
       orgId: getOrgId(req),
       actorId: getRequestRole(req),
     });
@@ -50,15 +58,20 @@ router.post("/api/workspace/runs", llmInvokeRateLimiter, async (req, res) => {
 
 // POST /api/workspace/runs/stream — ask an agent and watch it work live (SSE).
 router.post("/api/workspace/runs/stream", llmInvokeRateLimiter, async (req, res) => {
-  let agentId: string, input: string;
+  let agentId: string, input: string, fileIds: string[] | undefined;
   try {
-    ({ agentId, input } = z.object({ agentId: z.string(), input: z.string().min(1) }).parse(req.body));
+    ({ agentId, input, fileIds } = z.object({
+      agentId: z.string(),
+      input: z.string().default(""),
+      fileIds: z.array(z.string()).max(5).optional(),
+    }).refine((v) => v.input.trim().length > 0 || (v.fileIds?.length ?? 0) > 0,
+      { message: "Provide a message or attach a file" }).parse(req.body));
   } catch (e: any) {
     return res.status(400).json({ message: "Validation error", errors: e.errors });
   }
   const send = openSse(res);
   try {
-    const run = await startWorkspaceRun({ agentId, input, orgId: getOrgId(req), actorId: getRequestRole(req) }, send);
+    const run = await startWorkspaceRun({ agentId, input, fileIds, orgId: getOrgId(req), actorId: getRequestRole(req) }, send);
     send({ type: "done", run });
   } catch (e: any) {
     send({ type: "error", message: e.message });
