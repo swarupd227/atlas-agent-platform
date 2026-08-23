@@ -24,7 +24,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { EmptyState } from "@/components/ui-vocab";
 
 interface WorkspaceAgent { id: string; name: string; description: string | null; riskTier: string }
-interface MyRun { id: string; agentId: string; status: string; requestText: string; outputSummary: string | null; costUsd: number; traceId: string | null; createdAt: string | null }
+interface MyRun { id: string; agentId: string; status: string; requestText: string; outputSummary: string | null; costUsd: number; traceId: string | null; createdAt: string | null; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }> }
 
 type TimelineItem =
   | { kind: "planning"; iteration: number }
@@ -300,6 +300,26 @@ export default function Workspace() {
                     {r.costUsd > 0 && <span className="flex items-center gap-0.5"><CircleDollarSign className="w-3 h-3" />{r.costUsd.toFixed(4)}</span>}
                     {r.traceId && <Link href={`/runtime/runs/${r.traceId}`} className="text-primary flex items-center gap-0.5">signed trace <ArrowRight className="w-3 h-3" /></Link>}
                   </div>
+                  {/* Without this the only link to a generated document is the live
+                      timeline, which is React state -- one reload and a deck the
+                      agent just produced is unreachable from the UI entirely. */}
+                  {r.generatedFiles && r.generatedFiles.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5" data-testid={`my-work-files-${r.id}`}>
+                      {r.generatedFiles.map(f => (
+                        <a
+                          key={f.id}
+                          href={`/api/agent-files/${f.id}/download`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-[11px] text-primary hover:underline w-fit"
+                          data-testid={`link-my-work-file-${f.id}`}
+                        >
+                          <Download className="h-3 w-3 shrink-0" />
+                          <span className="truncate max-w-[220px]">{f.filename || "Download generated file"}</span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {r.status === "awaiting_approval" && <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 shrink-0">Needs approval</Badge>}
               </div>
