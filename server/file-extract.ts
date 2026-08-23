@@ -189,7 +189,7 @@ function colIndex(ref: string): number {
   return n - 1;
 }
 
-async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: string[] }> {
+async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: string[]; truncated: boolean }> {
   const JSZip = (await import("jszip")).default;
   const zip = await JSZip.loadAsync(buffer);
 
@@ -234,6 +234,11 @@ async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: stri
 
   const parts: string[] = [];
   const names: string[] = [];
+  /** Set when any sheet hit the row cap, so the caller can say so. A silently
+   *  halved sheet is worse than a declared one: the agent answers confidently
+   *  from data it was never shown. */
+  let rowsDropped = false;
+
   for (const sheet of sheets) {
     const $s = await loadXml(zip, sheet.path);
     if (!$s) continue;
@@ -242,7 +247,7 @@ async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: stri
     const rows: string[][] = [];
     $s("*").each((_i: number, el: any) => {
       if (!el.tagName || localName(el.tagName) !== "row") return;
-      if (rows.length >= MAX_ROWS_PER_SHEET) return;
+      if (rows.length >= MAX_ROWS_PER_SHEET) { rowsDropped = true; return; }
       const cells: string[] = [];
       $s(el).find("*").each((_j: number, c: any) => {
         if (!c.tagName || localName(c.tagName) !== "c") return;
@@ -265,11 +270,14 @@ async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: stri
     });
 
     parts.push(rows.length
-      ? `## Sheet: ${sheet.name}\n\n${toMarkdownTable(rows)}`
+      ? `## Sheet: ${sheet.name}\n\n${toMarkdownTable(rows)}${
+          rows.length >= MAX_ROWS_PER_SHEET
+            ? `\n\n[only the first ${MAX_ROWS_PER_SHEET} rows of this sheet are shown]`
+            : ""}`
       : `## Sheet: ${sheet.name}\n\n(empty)`);
   }
 
-  return { text: parts.join("\n\n"), sheets: names };
+  return { text: parts.join("\n\n"), sheets: names, truncated: rowsDropped };
 }
 
 // ── PPTX ─────────────────────────────────────────────────────────────────────
@@ -345,7 +353,10 @@ export async function extractTextFromFile(
   if (ext === "xlsx" || ext === "xlsm" || mime.includes("spreadsheetml")) {
     const r = await extractXlsx(buffer);
     const { text, truncated } = clamp(r.text);
-    return { text, kind: "xlsx", meta: { sheets: r.sheets, truncated, empty: !text.trim() } };
+    // Either ceiling counts as truncation: the 500k character clamp, or a sheet
+    // that ran past the row cap. Reporting only the former would let a
+    // 10,000-row sheet look complete.
+    return { text, kind: "xlsx", meta: { sheets: r.sheets, truncated: truncated || r.truncated, empty: !text.trim() } };
   }
 
   if (ext === "pptx" || mime.includes("presentationml")) {

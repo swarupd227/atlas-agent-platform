@@ -141,6 +141,52 @@ async function buildPptx(): Promise<Buffer> {
   return zip.generateAsync({ type: "nodebuffer" });
 }
 
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+/**
+ * A workbook deliberately larger than the extractor's 5,000-row ceiling, with a
+ * unique marker past the cutoff.
+ *
+ * Written as a COMPLETE OOXML package -- [Content_Types].xml and the package
+ * rels included -- unlike the minimal fixtures elsewhere in these tests. Our own
+ * reader is lenient enough to skip them; openpyxl inside the container is not,
+ * and calls such a file corrupt. The point of this fixture is a file of the kind
+ * a person actually exports from Excel.
+ */
+async function buildBigLedgerXlsx(marker: number, markerRow: number): Promise<Buffer> {
+  const NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">`
+    + `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>`
+    + `<Default Extension="xml" ContentType="application/xml"/>`
+    + `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>`
+    + `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+    + `<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>`
+    + `</Types>`);
+  zip.file("_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+    + `<Relationship Id="rId1" Type="${NS}/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
+  zip.file("xl/workbook.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${MAIN}" xmlns:r="${NS}">`
+    + `<sheets><sheet name="Ledger" sheetId="1" r:id="rId1"/></sheets></workbook>`);
+  zip.file("xl/_rels/workbook.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+    + `<Relationship Id="rId1" Type="${NS}/worksheet" Target="worksheets/sheet1.xml"/>`
+    + `<Relationship Id="rId2" Type="${NS}/sharedStrings" Target="sharedStrings.xml"/></Relationships>`);
+  zip.file("xl/sharedStrings.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="${MAIN}" count="2" uniqueCount="2"><si><t>RowId</t></si><si><t>Amount</t></si></sst>`);
+
+  const rows = [`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>`];
+  for (let i = 2; i <= 5201; i++) {
+    rows.push(`<row r="${i}"><c r="A${i}"><v>${i}</v></c><c r="B${i}"><v>${i === markerRow ? marker : (i % 97) + 1}</v></c></row>`);
+  }
+  zip.file("xl/worksheets/sheet1.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${MAIN}"><sheetData>${rows.join("")}</sheetData></worksheet>`);
+  return zip.generateAsync({ type: "nodebuffer" });
+}
+
 const POLICY_MD = `# Freight Billing Policy — FBP-12
 
 ## Variance tolerance
@@ -357,6 +403,77 @@ test("DOC-5. Eval Datasets: labelled goldens import from a CSV", async ({ page }
   await expect(page.getByTestId("button-import-goldens")).toBeEnabled();
   await expect(page.getByTestId("button-import-goldens")).toContainText("Import 5 Goldens");
   console.log("  ✓ DOC-5: csv goldens imported");
+});
+
+// ─── DOC-8 — code execution container, .xlsx ─────────────────────────────────
+/**
+ * The one scenario the extracted text CANNOT pass.
+ *
+ * The workbook holds 5,200 data rows against a 5,000-row extraction cap, and
+ * the marker value sits at row 5,150 -- past the cutoff, so it is physically
+ * absent from the text in the prompt. Only an agent that received the real file
+ * in its code execution container can report it.
+ *
+ * Needs an agent with an APPROVED code-execution skill on a Claude model;
+ * skips loudly rather than passing vacuously when the environment has none.
+ */
+test("DOC-8. Code execution: the real file reaches the container, not just the extract", async ({ request }) => {
+  test.setTimeout(300_000);
+
+  const agents = await (await request.get("/api/agents")).json();
+  const candidates = (Array.isArray(agents) ? agents : []).filter(
+    (a: any) => a.modelProvider === "anthropic"
+      && typeof a.modelName === "string" && a.modelName.startsWith("claude")
+      && Array.isArray(a.preloadedSkills) && a.preloadedSkills.length > 0
+      && a.status === "active");
+
+  let agent: any = null;
+  for (const c of candidates) {
+    const skills = await (await request.get(`/api/skills`)).json();
+    const ids = new Set((c.preloadedSkills as any[]).map((p) => p.skillId));
+    const hasCodeExec = (Array.isArray(skills) ? skills : []).some(
+      (s: any) => ids.has(s.id) && s.skillKind === "code_execution" && s.codeExecutionApproved);
+    if (hasCodeExec) { agent = c; break; }
+  }
+  test.skip(!agent, "no agent with an approved code-execution skill on a Claude model");
+
+  const MARKER = 987654, MARKER_ROW = 5150;
+  const buf = await buildBigLedgerXlsx(MARKER, MARKER_ROW);
+  const bigPath = p("ledger-big.xlsx");
+  writeFileSync(bigPath, buf);
+
+  const upload = await request.post("/api/files/upload", {
+    multipart: { files: { name: "ledger-big.xlsx", mimeType: XLSX_MIME, buffer: buf }, context: "workspace" },
+  });
+  expect(upload.status()).toBe(201);
+  const fileId = (await upload.json()).files[0].id;
+
+  // The premise: the text genuinely cannot answer this.
+  const meta = await (await request.get(`/api/files/${fileId}`)).json();
+  expect(meta.meta?.truncated, "a sheet past the row cap must declare truncation").toBe(true);
+  expect(String(meta.preview ?? ""), "the marker must be absent from the extract").not.toContain(String(MARKER));
+
+  const run = await request.post("/api/workspace/runs", {
+    data: {
+      agentId: agent.id,
+      input: `The attached workbook has 5200 data rows. Using code execution, load it with pandas and report the SINGLE LARGEST value in the Amount column and the RowId it is on. The answer is past row 5000, so read the actual file rather than any truncated preview.`,
+      fileIds: [fileId],
+    },
+  });
+  const runId = (await run.json()).id;
+
+  let final: any = null;
+  for (let i = 0; i < 55; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const body = await (await request.get(`/api/workspace/runs/${runId}`)).json();
+    if (["completed", "completed_with_skips", "failed", "error", "cancelled"].includes(body.status)) { final = body; break; }
+  }
+  expect(final, "the run should reach a terminal state").toBeTruthy();
+
+  const answer = String(final.outputSummary ?? "").replace(/(\d),(?=\d{3}\b)/g, "$1");
+  expect(answer, "only a container that got the real file can see past the cutoff").toContain(String(MARKER));
+  expect(answer).toContain(String(MARKER_ROW));
+  console.log("  ✓ DOC-8: container computed a value the extract could not contain");
 });
 
 // ─── DOC-7 — Playground, .xlsx ───────────────────────────────────────────────
