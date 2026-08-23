@@ -51,8 +51,13 @@ describe("built-in document tools", () => {
 
     expect(result.ok).toBe(true);
     expect(result.filename).toBe("q3-marketing-campaign.pptx");
-    expect(result.downloadUrl).toBe("/api/agent-files/file-1/download");
     expect(result[GENERATED_FILE_MARKER]).toEqual({ id: "file-1", filename: "q3-marketing-campaign.pptx", mimeType: expect.any(String) });
+    // No URL or path anywhere the model can see it: given one, gpt-4o rendered
+    // "sandbox:/api/agent-files/..." into its reply as a dead link.
+    const modelVisible = JSON.stringify({ ...result, [GENERATED_FILE_MARKER]: undefined });
+    expect(modelVisible).not.toContain("/api/agent-files");
+    expect(modelVisible).not.toContain("file-1");
+    expect(result.message).toMatch(/do not include a link/i);
 
     const row = createAgentGeneratedFile.mock.calls[0][0];
     expect(row.source).toBe("platform");

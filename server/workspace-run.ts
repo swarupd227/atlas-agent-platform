@@ -618,23 +618,25 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   // Provider-agnostic document generation: offered on any model, gated on the
   // agent's skills rather than the model, so it works where code execution
   // cannot. Appended before canonicalization so the model actually sees them.
-  availableTools.push(...documentToolsForSkills(activeSkills));
+  const documentTools = documentToolsForSkills(activeSkills);
+  availableTools.push(...documentTools);
   const canonicalTools = buildCanonicalTools(availableTools);
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
   const codeExecConfig = codeExecAccess.enabled ? buildCodeExecutionRequestConfig(activeSkills, cp.containerId) : null;
   // A code-execution skill on a non-Claude agent is a no-op that only shows up
   // as the agent saying it can't produce files. Record it on the run so the
   // misconfiguration is visible in the trace instead of looking like a bug.
-  const codeExecMismatch = describeCodeExecutionModelMismatch(activeSkills, cp.modelName);
+  const codeExecMismatch = describeCodeExecutionModelMismatch(activeSkills, cp.modelName, documentTools.length > 0);
   if (codeExecMismatch) {
-    console.warn(`[workspace-run] Agent ${agentId}: ${codeExecMismatch}`);
+    const informational = codeExecMismatch.severity === "info";
+    console[informational ? "info" : "warn"](`[workspace-run] Agent ${agentId}: ${codeExecMismatch.message}`);
     cp.steps.push({
       id: `step_${cp.steps.length + 1}`,
-      name: "Code execution unavailable for this model",
+      name: informational ? "Using the platform document renderer" : "Code execution unavailable for this model",
       type: "skill_resolution",
-      status: "failed",
-      outcome: "code_execution_model_mismatch",
-      error: codeExecMismatch,
+      status: informational ? "completed" : "failed",
+      outcome: informational ? "code_execution_substituted" : "code_execution_model_mismatch",
+      ...(informational ? { output: { note: codeExecMismatch.message } } : { error: codeExecMismatch.message }),
       completedAt: new Date().toISOString(),
     } as any);
   }

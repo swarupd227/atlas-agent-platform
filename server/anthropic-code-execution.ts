@@ -68,18 +68,28 @@ export function modelSupportsCodeExecution(modelName: string | null | undefined)
 }
 
 /**
- * Returns a human-readable reason when this agent has an approved
- * code-execution skill its model cannot run, or null when the pairing is fine.
+ * Describes an agent holding a code-execution skill its model cannot run.
+ * Returns null when the pairing is fine.
+ *
+ * `coveredByPortableTools` says whether the same capability is still delivered
+ * another way (server/builtin-document-tools.ts renders documents on any
+ * model). When it is, this is a note about which path ran -- not a problem --
+ * and must not tell anyone to switch models: they would be switching away from
+ * a path that already works.
  */
 export function describeCodeExecutionModelMismatch(
   skills: Skill[],
   modelName: string | null | undefined,
-): string | null {
+  coveredByPortableTools = false,
+): { severity: "warning" | "info"; message: string } | null {
   const approved = skills.filter((s) => s.skillKind === "code_execution" && s.codeExecutionApproved);
   if (approved.length === 0) return null;
   if (modelSupportsCodeExecution(modelName)) return null;
   const names = approved.map((s) => s.name).join(", ");
-  return `Skill(s) [${names}] require Anthropic code execution, which model "${modelName ?? "unknown"}" cannot run. Switch the agent to a Claude model to generate real files.`;
+  const cannot = `Skill(s) [${names}] include Anthropic code execution, which model "${modelName ?? "unknown"}" cannot run.`;
+  return coveredByPortableTools
+    ? { severity: "info", message: `${cannot} Document generation is handled by the platform renderer instead, which works on any model.` }
+    : { severity: "warning", message: `${cannot} Switch the agent to a Claude model to generate real files.` };
 }
 
 /**

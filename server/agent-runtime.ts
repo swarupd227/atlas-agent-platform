@@ -1323,20 +1323,26 @@ export async function executePromptWithMcp(
 
   const providerName = options?.modelProvider || "openai";
   const modelName = options?.modelName || "gpt-4.1";
-  // A code-execution skill on a non-Claude agent is a no-op that only surfaces
-  // as the agent saying it can't produce files -- record it as a step so the
-  // misconfiguration is visible in the trace instead of looking like a bug.
-  const codeExecMismatch = describeCodeExecutionModelMismatch(resolvedActiveSkills, modelName);
+  // A code-execution skill on a non-Claude agent is recorded as a step so the
+  // pairing is visible in the trace rather than looking like a bug. It is only
+  // a WARNING when nothing else covers the capability -- once the portable
+  // document tools are offered, this is just a note about which path ran.
+  const codeExecMismatch = describeCodeExecutionModelMismatch(
+    resolvedActiveSkills,
+    modelName,
+    documentToolsForSkills(resolvedActiveSkills).length > 0,
+  );
   if (codeExecMismatch) {
-    console.warn(`[agent-runtime] Agent ${agentId}: ${codeExecMismatch}`);
+    const informational = codeExecMismatch.severity === "info";
+    console[informational ? "info" : "warn"](`[agent-runtime] Agent ${agentId}: ${codeExecMismatch.message}`);
     steps.push({
       id: `step_${steps.length + 1}`,
-      name: "Code execution unavailable for this model",
+      name: informational ? "Using the platform document renderer" : "Code execution unavailable for this model",
       type: "skill_resolution",
-      status: "failed",
+      status: informational ? "completed" : "failed",
       startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
-      error: codeExecMismatch,
+      ...(informational ? { output: { note: codeExecMismatch.message } } : { error: codeExecMismatch.message }),
     } as any);
   }
   const llmProvider = getProvider(providerName);

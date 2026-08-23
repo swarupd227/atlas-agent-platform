@@ -151,14 +151,21 @@ export async function executeBuiltinDocumentTool(
     content,
   } as any);
 
+  // Deliberately no URL in the model-visible result. The run surfaces the file
+  // as a download card of its own, and given a path a model will helpfully
+  // render it as a link -- gpt-4o emitted "sandbox:/api/agent-files/..." , a
+  // dead link the user would click first. The id travels on the marker instead,
+  // which the engines read and the model never sees.
   return {
     ok: true,
     filename,
     mimeType,
     sizeBytes: content.length,
     sections: spec.sections.length,
-    downloadUrl: `/api/agent-files/${row.id}/download`,
-    message: `Generated ${filename} (${spec.sections.length} ${format === "pptx" ? "slides" : "sections"}). It is attached to this run and available to download.`,
+    message:
+      `Generated ${filename} (${spec.sections.length} ${format === "pptx" ? "slides" : "sections"}). ` +
+      `It is already attached to this run and shown to the user as a download. ` +
+      `Do not include a link, URL or file path in your reply, and do not repeat the document's contents.`,
     [GENERATED_FILE_MARKER]: { id: row.id, filename: row.filename, mimeType: row.mimeType },
   };
 }
