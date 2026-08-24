@@ -225,11 +225,35 @@ test.beforeAll(async () => {
   writeFileSync(p("support-tickets-eval.csv"), TICKETS_CSV);
 });
 
+/**
+ * A single agent that will actually answer the question it is asked.
+ *
+ * Taking list[0] is not stable: the first entry drifts as agents are created,
+ * and it landed on a TEAM orchestrator, which ran its own fixed pipeline and
+ * replied with a marketing campaign plan to a question about invoices. That is
+ * a fair thing for an orchestrator to do and a useless vehicle for testing
+ * whether an attachment reached the model, so team agents are excluded.
+ */
+async function firstSingleAgent(request: APIRequestContext): Promise<any | null> {
+  // Two calls, deliberately. /api/workspace/agents says which agents the picker
+  // will offer, but returns only id/name/description/riskTier -- no agentType.
+  // Defaulting the missing field to "single" is what let the orchestrator
+  // through in the first place, so the type is read from the full records and
+  // an agent that cannot be confirmed single is not used.
+  const [selectable, full] = await Promise.all([
+    (await request.get("/api/workspace/agents")).json(),
+    (await request.get("/api/agents")).json(),
+  ]);
+  if (!Array.isArray(selectable) || !Array.isArray(full)) return null;
+
+  const typeById = new Map(full.map((a: any) => [a.id, a.agentType]));
+  return selectable.find((a: any) => typeById.get(a.id) === "single") ?? null;
+}
+
 /** The Workspace agent picker is a Radix Select; options carry the agent id. */
 async function pickFirstAgent(page: Page, request: APIRequestContext): Promise<any> {
-  const list = await (await request.get("/api/workspace/agents")).json();
-  const agent = Array.isArray(list) ? list[0] : null;
-  test.skip(!agent, "no runnable agent in this environment");
+  const agent = await firstSingleAgent(request);
+  test.skip(!agent, "no single (non-team) agent in this environment");
   await page.getByTestId("select-workspace-agent").click();
   await page.getByTestId(`option-agent-${agent.id}`).click();
   return agent;
@@ -479,9 +503,8 @@ test("DOC-8. Code execution: the real file reaches the container, not just the e
 // ─── DOC-7 — Playground, .xlsx ───────────────────────────────────────────────
 test("DOC-7. Playground: an attachment reaches the agent mid-conversation", async ({ page, request }) => {
   test.setTimeout(180_000);
-  const list = await (await request.get("/api/workspace/agents")).json();
-  const agent = Array.isArray(list) ? list[0] : null;
-  test.skip(!agent, "no agent available in this environment");
+  const agent = await firstSingleAgent(request);
+  test.skip(!agent, "no single (non-team) agent in this environment");
 
   await primePage(page);
   await page.goto(`/agents/${agent.id}/playground`);
