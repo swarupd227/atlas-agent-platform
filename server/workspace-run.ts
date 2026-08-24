@@ -31,7 +31,7 @@ import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine"
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFileIds } from "./anthropic-code-execution";
-import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER } from "./builtin-document-tools";
+import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import type { Skill } from "@shared/schema";
 import { buildAttachmentContext } from "./attachment-context";
 
@@ -938,20 +938,22 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
       }
 
       const ok = dispatch.ok || dispatch.outcome === "shadow_skipped";
+      // A built-in document tool renders and persists the file itself; fold it
+      // into the run's generatedFiles so it reaches the UI through exactly the
+      // same field as a sandbox-produced file. Read from dispatch.result (the
+      // engine-only copy) BEFORE building resultPayload (the model-visible
+      // copy) below, which strips this marker back out.
+      const produced = ok ? (dispatch.result as any)?.[GENERATED_FILE_MARKER] : null;
+      if (produced?.id) {
+        cp.generatedFiles = [...(cp.generatedFiles ?? []), produced];
+      }
       // Surface the approver's note to the agent alongside the result of the
       // tool they approved, so downstream reasoning accounts for it.
-      let resultPayload: unknown = ok ? dispatch.result : { error: dispatch.error, outcome: dispatch.outcome };
+      let resultPayload: unknown = ok ? stripGeneratedFileMarker(dispatch.result) : { error: dispatch.error, outcome: dispatch.outcome };
       if (humanNote && i === overrideIndex) {
         resultPayload = (resultPayload && typeof resultPayload === "object" && !Array.isArray(resultPayload))
           ? { ...(resultPayload as Record<string, unknown>), approverNote: humanNote }
           : { result: resultPayload, approverNote: humanNote };
-      }
-      // A built-in document tool renders and persists the file itself; fold it
-      // into the run's generatedFiles so it reaches the UI through exactly the
-      // same field as a sandbox-produced file.
-      const produced = ok ? (dispatch.result as any)?.[GENERATED_FILE_MARKER] : null;
-      if (produced?.id) {
-        cp.generatedFiles = [...(cp.generatedFiles ?? []), produced];
       }
       onEvent({ type: "tool_result", tool: matched.toolName, outcome: dispatch.outcome, ok, preview: JSON.stringify(resultPayload).slice(0, 200) });
       cp.messages.push({ role: "tool", content: JSON.stringify(resultPayload), tool_call_id: tc.id } as any);

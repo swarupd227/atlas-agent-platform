@@ -13,6 +13,7 @@ const {
   GENERATE_PPTX_TOOL,
   GENERATE_PDF_TOOL,
   GENERATED_FILE_MARKER,
+  stripGeneratedFileMarker,
 } = await import("../server/builtin-document-tools");
 
 const skill = (over: Record<string, any> = {}) =>
@@ -52,12 +53,17 @@ describe("built-in document tools", () => {
     expect(result.ok).toBe(true);
     expect(result.filename).toBe("q3-marketing-campaign.pptx");
     expect(result[GENERATED_FILE_MARKER]).toEqual({ id: "file-1", filename: "q3-marketing-campaign.pptx", mimeType: expect.any(String) });
-    // No URL or path anywhere the model can see it: given one, gpt-4o rendered
+    // No URL anywhere the model can see -- given one, gpt-4o rendered
     // "sandbox:/api/agent-files/..." into its reply as a dead link.
-    const modelVisible = JSON.stringify({ ...result, [GENERATED_FILE_MARKER]: undefined });
-    expect(modelVisible).not.toContain("/api/agent-files");
-    expect(modelVisible).not.toContain("file-1");
+    expect(JSON.stringify(result)).not.toContain("/api/agent-files");
     expect(result.message).toMatch(/do not include a link/i);
+
+    // The raw id is still present at this layer (engines extract it from HERE
+    // via GENERATED_FILE_MARKER before stripping it for the model -- see
+    // stripGeneratedFileMarker below). Confirming that is deliberate: this
+    // function's job is to hand the id to the ENGINE, not to hide it from
+    // everyone. Hiding it from the MODEL is the engines' job, tested next.
+    expect(JSON.stringify(result)).toContain("file-1");
 
     const row = createAgentGeneratedFile.mock.calls[0][0];
     expect(row.source).toBe("platform");
@@ -84,5 +90,40 @@ describe("built-in document tools", () => {
 
   it("refuses without an agent context rather than orphaning a file row", async () => {
     await expect(executeBuiltinDocumentTool(GENERATE_PPTX_TOOL, SPEC, {})).rejects.toThrow(/agent context/i);
+  });
+
+  describe("stripGeneratedFileMarker", () => {
+    /**
+     * Caught live in the UI (Workspace, real deploy, real gpt-4o run): even
+     * with the message field saying "do not include a link", the model
+     * fabricated `[Download](sandbox:/<raw-file-id>)` in its reply once the
+     * raw id was sitting in the tool-result JSON it read back on its next
+     * turn. The message text is not enforcement; not exposing the id is.
+     * Both engines (workspace-run.ts, agent-runtime.ts) call this on
+     * dispatch.result -- AFTER pulling the marker out for their own
+     * generatedFiles bookkeeping -- and use only the stripped copy to build
+     * the "tool" role message the model reads.
+     */
+    it("removes the marker key so the model never sees the raw file id", async () => {
+      const toolResult = await executeBuiltinDocumentTool(GENERATE_PPTX_TOOL, SPEC, { agentId: "agent-1" });
+      expect(toolResult[GENERATED_FILE_MARKER]).toBeTruthy(); // sanity: it's really there pre-strip
+
+      const modelVisible = stripGeneratedFileMarker(toolResult) as Record<string, unknown>;
+      expect(GENERATED_FILE_MARKER in modelVisible).toBe(false);
+      expect(JSON.stringify(modelVisible)).not.toContain("file-1");
+      // Nothing else about the result changes -- only the marker is gone.
+      expect(modelVisible.ok).toBe(true);
+      expect(modelVisible.filename).toBe(toolResult.filename);
+      expect(modelVisible.message).toBe(toolResult.message);
+    });
+
+    it("passes through results with no marker unchanged (every non-document tool)", () => {
+      const plain = { ok: true, rows: [1, 2, 3] };
+      expect(stripGeneratedFileMarker(plain)).toEqual(plain);
+      expect(stripGeneratedFileMarker(null)).toBeNull();
+      expect(stripGeneratedFileMarker(undefined)).toBeUndefined();
+      expect(stripGeneratedFileMarker("a string result")).toBe("a string result");
+      expect(stripGeneratedFileMarker([1, 2, 3])).toEqual([1, 2, 3]);
+    });
   });
 });

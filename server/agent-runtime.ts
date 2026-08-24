@@ -8,7 +8,7 @@ import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } fr
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
-import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER } from "./builtin-document-tools";
+import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -1827,11 +1827,16 @@ After receiving tool results, provide a structured analysis with key findings, s
             lastStep.output = { source: "mcp_integration", mcpServer: matchedTool.serverName, mcpTool: matchedTool.toolName, data: dispatch.result, ...(dispatch.deduplicated ? { deduplicated: true } : {}) };
             lastStep.latencyMs = dispatch.durationMs;
             lastStep.executionMs = dispatch.executionMs;
-            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: dispatch.result });
             // A built-in document tool persists its own file; carry it on the
             // same generatedFiles field the code-execution path uses so the
-            // trace panel renders a download card either way.
+            // trace panel renders a download card either way. Extracted from
+            // the raw dispatch.result BEFORE toolCallResults strips the marker
+            // -- toolCallResults' .result is what re-enters the LLM's own
+            // conversation on the next turn (see conversationMessages below),
+            // and a model handed the raw file id there will invent its own
+            // "sandbox:/<id>" link even when told explicitly not to.
             const producedFile = (dispatch.result as any)?.[GENERATED_FILE_MARKER];
+            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: stripGeneratedFileMarker(dispatch.result) });
             emitProgress("tool_call_result", {
               tool: matchedTool.toolName,
               server: matchedTool.serverName,
@@ -1859,7 +1864,10 @@ After receiving tool results, provide a structured analysis with key findings, s
             // itself returned {isError: true, ...} rather than throwing) --
             // keep it so the trace's Result panel still shows what the tool
             // actually said, not just the derived error label.
-            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: dispatch.result ?? null, error: resultError });
+            // Failure-path results never carry the marker today (only a
+            // successful generate sets it), but stripping unconditionally
+            // means no future failure branch has to reason about it either.
+            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: stripGeneratedFileMarker(dispatch.result) ?? null, error: resultError });
             emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: label, result: dispatch.result ?? undefined, approvalId: dispatch.approvalId, iteration: iterationsUsed });
 
             if (dispatch.outcome === "gate_blocked_policy") {

@@ -34,8 +34,25 @@ export const GENERATE_PDF_TOOL = "generate_pdf";
 /**
  * Marker the engines look for on a tool result to fold the new file into the
  * run's generatedFiles, the same list Anthropic-produced files land in.
+ *
+ * ENGINE-INTERNAL ONLY. Every call site must read it and then strip it with
+ * stripGeneratedFileMarker() before the result reaches the model -- it
+ * carries the raw file id, and a model handed an id with no link will
+ * happily invent one ("sandbox:/<id>") rather than leave it alone. Verified
+ * live: the message field alone ("do not include a link...") was not
+ * sufficient to stop this once the id was sitting right there in the JSON.
  */
 export const GENERATED_FILE_MARKER = "__generatedFile";
+
+/** Strips GENERATED_FILE_MARKER from a tool result before it becomes the
+ *  content of a "tool" role message -- i.e. before the model reads it back. */
+export function stripGeneratedFileMarker(result: unknown): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result) || !(GENERATED_FILE_MARKER in (result as any))) {
+    return result;
+  }
+  const { [GENERATED_FILE_MARKER]: _omit, ...rest } = result as Record<string, unknown>;
+  return rest;
+}
 
 const SPEC_JSON_SCHEMA = {
   type: "object",
