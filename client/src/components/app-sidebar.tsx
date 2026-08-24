@@ -115,6 +115,7 @@ function FullAppSidebar() {
   const primaryNav: NavItem[] = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
     { title: "Workspace", url: "/workspace", icon: Sparkles },
+    { title: "Files", url: "/files", icon: FileText },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "Agents", url: "/agents", icon: Bot },
     { title: "Teams", url: "/agents/teams", icon: Users },

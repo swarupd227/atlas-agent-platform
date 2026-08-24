@@ -10,21 +10,38 @@ import { Link } from "wouter";
 import {
   Sparkles, Send, Brain, Wrench, CheckCircle2, ShieldQuestion, XCircle,
   Ban, Loader2, Clock, Receipt, ArrowRight, CircleDollarSign, Download,
+  FileText, Pencil, Info,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { FileAttach, type AttachedFile } from "@/components/file-attach";
+import { PENDING_ATTACHMENT_KEY } from "@/lib/pending-attachment";
 import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { EmptyState } from "@/components/ui-vocab";
+import { useToast } from "@/hooks/use-toast";
 
-interface WorkspaceAgent { id: string; name: string; description: string | null; riskTier: string }
-interface MyRun { id: string; agentId: string; status: string; requestText: string; outputSummary: string | null; costUsd: number; traceId: string | null; createdAt: string | null; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }> }
+interface WorkspaceAgent {
+  id: string; name: string; description: string | null; riskTier: string;
+  canGenerateDocuments: boolean;
+  documentGenerationMode: "auto" | "platform" | "sandbox";
+}
+interface GeneratedFileRef { id: string; filename: string | null; mimeType: string | null }
+interface MyRun { id: string; agentId: string; status: string; requestText: string; outputSummary: string | null; costUsd: number; traceId: string | null; createdAt: string | null; generatedFiles?: GeneratedFileRef[] }
+
+/** Rough, honest-order-of-magnitude cost, from live measurements during this
+ *  feature's build -- not a billing guarantee, just enough to stop "edit this
+ *  file" from being a surprise on the invoice. */
+const DOC_MODE_COST_HINT: Record<WorkspaceAgent["documentGenerationMode"], string> = {
+  auto: "Documents here typically cost ~$0.01–0.10. Editing an existing file costs more (~$1+) and needs a Claude model.",
+  platform: "Documents here are server-rendered: ~$0.01 each, works on any model. This agent cannot edit an existing file.",
+  sandbox: "This agent generates and edits documents via the Anthropic sandbox: ~$0.10 to generate, ~$1+ to edit an existing file.",
+};
 
 type TimelineItem =
   | { kind: "planning"; iteration: number }
@@ -56,12 +73,33 @@ export default function Workspace() {
   const [agentName, setAgentName] = useState<string>("");
   const [editArgs, setEditArgs] = useState<Record<string, unknown>>({});
   const [note, setNote] = useState("");
+  const [attachingFileId, setAttachingFileId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const askBoxRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
   // When a new approval arrives, seed the editable form from its args.
   useEffect(() => {
     if (pending) { setEditArgs({ ...(pending.args || {}) }); setNote(""); }
   }, [pending]);
+
+  // Pick up a file attached from the Files page (client/src/pages/files.tsx),
+  // handed off via sessionStorage since that's a separately mounted page --
+  // React state and a URL param carrying the whole object don't survive the
+  // navigation as cleanly. Runs once on mount; the entry is consumed either way
+  // so a stale one never reappears on a later visit.
+  useEffect(() => {
+    const raw = sessionStorage.getItem(PENDING_ATTACHMENT_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(PENDING_ATTACHMENT_KEY);
+    try {
+      const file: AttachedFile = JSON.parse(raw);
+      setAttachments(prev => (prev.some(f => f.id === file.id) ? prev : [...prev, file]));
+      setInput(prev => prev.trim() ? prev : `Edit the attached "${file.filename}": `);
+      toast({ title: "Attached for editing", description: `${file.filename} — describe the change below and send.` });
+    } catch { /* malformed/stale payload -- ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { data: agents = [] } = useQuery<WorkspaceAgent[]>({ queryKey: ["/api/workspace/agents"] });
   const { data: recentRuns = [] } = useQuery<MyRun[]>({ queryKey: ["/api/workspace/runs"] });
@@ -111,6 +149,34 @@ export default function Workspace() {
         break;
       case "completed": setTimeline(t => [...t, { kind: "answer", text: evt.output, costUsd: evt.costUsd, traceId: evt.traceId, generatedFiles: evt.generatedFiles }]); break;
       case "error": setTimeline(t => [...t, { kind: "answer", text: `Something went wrong: ${evt.message}`, costUsd: 0, traceId: null }]); break;
+    }
+  }
+
+  /**
+   * "Edit this file" — the manual round-trip (download, then re-upload as an
+   * attachment) verified to work but is genuinely clunky; this collapses it to
+   * one click. Server-side, POST /api/agent-files/:id/attach copies the
+   * generated file's bytes into uploaded_files so it flows through the exact
+   * same attachment path a manual upload would.
+   */
+  async function editFile(file: GeneratedFileRef) {
+    setAttachingFileId(file.id);
+    try {
+      const res = await apiRequest("POST", `/api/agent-files/${file.id}/attach`, {});
+      const attached = await res.json();
+      setAttachments(prev => (prev.some(f => f.id === attached.id) ? prev : [...prev, {
+        id: attached.id, filename: attached.filename, kind: attached.kind,
+        sizeBytes: attached.sizeBytes, summary: attached.summary, charCount: attached.charCount,
+      }]));
+      // Only seed the prompt if the box is empty -- never clobber something the
+      // user was already typing.
+      setInput(prev => prev.trim() ? prev : `Edit the attached "${attached.filename}": `);
+      toast({ title: "Attached for editing", description: `${attached.filename} — describe the change below and send.` });
+      askBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (e: any) {
+      toast({ title: "Failed to attach file", description: e.message, variant: "destructive" });
+    } finally {
+      setAttachingFileId(null);
     }
   }
 
@@ -165,7 +231,7 @@ export default function Workspace() {
       </div>
 
       {/* Ask box */}
-      <Card>
+      <Card ref={askBoxRef}>
         <CardContent className="flex flex-col gap-3 pt-5">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-muted-foreground">Ask</span>
@@ -175,11 +241,30 @@ export default function Workspace() {
               </SelectTrigger>
               <SelectContent>
                 {agents.map(a => (
-                  <SelectItem key={a.id} value={a.id} data-testid={`option-agent-${a.id}`}>{a.name}</SelectItem>
+                  <SelectItem key={a.id} value={a.id} data-testid={`option-agent-${a.id}`}>
+                    {/* Plain-text suffix, not a nested Badge: Radix projects a
+                        SelectItem's children into the closed trigger too, and a
+                        component there renders oddly cramped at this width. */}
+                    {a.name}{a.canGenerateDocuments ? "  ·  📄 Documents" : ""}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
+          {/* Cost hint: a user picking an agent that can generate or edit
+              documents should see roughly what that costs BEFORE sending,
+              not discover it on the invoice -- editing an existing file runs
+              ~100x a plain generate. */}
+          {(() => {
+            const selected = agents.find(a => a.id === agentId);
+            if (!selected?.canGenerateDocuments) return null;
+            return (
+              <div className="flex items-start gap-1.5 text-[11px] text-muted-foreground" data-testid="text-document-cost-hint">
+                <Info className="w-3 h-3 shrink-0 mt-0.5" />
+                <span>{DOC_MODE_COST_HINT[selected.documentGenerationMode]}</span>
+              </div>
+            );
+          })()}
           <Textarea
             value={input}
             onChange={e => setInput(e.target.value)}
@@ -211,7 +296,9 @@ export default function Workspace() {
               </div>
             )}
             <div ref={scrollRef} className="flex flex-col gap-2.5 max-h-[440px] overflow-y-auto pr-1" data-testid="workspace-timeline">
-              {timeline.map((item, i) => <TimelineRow key={i} item={item} />)}
+              {timeline.map((item, i) => (
+                <TimelineRow key={i} item={item} onEditFile={editFile} attachingFileId={attachingFileId} />
+              ))}
 
               {pending && (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 flex flex-col gap-3" data-testid="workspace-approval-card">
@@ -306,17 +393,29 @@ export default function Workspace() {
                   {r.generatedFiles && r.generatedFiles.length > 0 && (
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5" data-testid={`my-work-files-${r.id}`}>
                       {r.generatedFiles.map(f => (
-                        <a
-                          key={f.id}
-                          href={`/api/agent-files/${f.id}/download`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-[11px] text-primary hover:underline w-fit"
-                          data-testid={`link-my-work-file-${f.id}`}
-                        >
-                          <Download className="h-3 w-3 shrink-0" />
-                          <span className="truncate max-w-[220px]">{f.filename || "Download generated file"}</span>
-                        </a>
+                        <span key={f.id} className="flex items-center gap-2">
+                          <a
+                            href={`/api/agent-files/${f.id}/download`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-[11px] text-primary hover:underline w-fit"
+                            data-testid={`link-my-work-file-${f.id}`}
+                          >
+                            <Download className="h-3 w-3 shrink-0" />
+                            <span className="truncate max-w-[220px]">{f.filename || "Download generated file"}</span>
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => editFile(f)}
+                            disabled={attachingFileId === f.id}
+                            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50"
+                            data-testid={`button-my-work-edit-file-${f.id}`}
+                            title="Attach this file to a new request so you can ask an agent to change it"
+                          >
+                            {attachingFileId === f.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pencil className="h-3 w-3" />}
+                            Edit
+                          </button>
+                        </span>
                       ))}
                     </div>
                   )}
@@ -341,7 +440,11 @@ function relTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function TimelineRow({ item }: { item: TimelineItem }) {
+function TimelineRow({ item, onEditFile, attachingFileId }: {
+  item: TimelineItem;
+  onEditFile: (file: GeneratedFileRef) => void;
+  attachingFileId: string | null;
+}) {
   if (item.kind === "planning") {
     return (
       <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
@@ -409,17 +512,29 @@ function TimelineRow({ item }: { item: TimelineItem }) {
       {item.generatedFiles && item.generatedFiles.length > 0 && (
         <div className="flex flex-col gap-1" data-testid="workspace-generated-files">
           {item.generatedFiles.map(f => (
-            <a
-              key={f.id}
-              href={`/api/agent-files/${f.id}/download`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 text-xs text-primary hover:underline w-fit"
-              data-testid={`link-download-file-${f.id}`}
-            >
-              <Download className="h-3 w-3 shrink-0" />
-              <span>{f.filename || "Download generated file"}</span>
-            </a>
+            <div key={f.id} className="flex items-center gap-3">
+              <a
+                href={`/api/agent-files/${f.id}/download`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-xs text-primary hover:underline w-fit"
+                data-testid={`link-download-file-${f.id}`}
+              >
+                <Download className="h-3 w-3 shrink-0" />
+                <span>{f.filename || "Download generated file"}</span>
+              </a>
+              <button
+                type="button"
+                onClick={() => onEditFile(f)}
+                disabled={attachingFileId === f.id}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50"
+                data-testid={`button-edit-file-${f.id}`}
+                title="Attach this file to a new request so you can ask an agent to change it"
+              >
+                {attachingFileId === f.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pencil className="h-3 w-3" />}
+                Edit
+              </button>
+            </div>
           ))}
         </div>
       )}

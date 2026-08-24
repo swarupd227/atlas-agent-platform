@@ -102,6 +102,16 @@ export const agents = pgTable("agents", {
   totalRuns: integer("total_runs").default(0),
   modelProvider: text("model_provider").default("openai"),
   modelName: text("model_name").default("gpt-4.1"),
+  /**
+   * Which route this agent takes to produce a .pptx/.pdf, when a skill grants
+   * document generation:
+   *   "auto"     — offer both; the model picks (default, preserves prior behaviour)
+   *   "platform" — server-rendered only: deterministic, ~10x cheaper, any model
+   *   "sandbox"  — Anthropic Skill only: freeform layout, can edit files, Claude only
+   * Steering this by prompt wording is unreliable, so it is a setting rather
+   * than something the user has to phrase correctly each time.
+   */
+  documentGenerationMode: text("document_generation_mode").default("auto"),
   blueprintJson: jsonb("blueprint_json"),
   toolsConfig: jsonb("tools_config"),
   permissionsConfig: jsonb("permissions_config"),

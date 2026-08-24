@@ -198,7 +198,9 @@ function shape(row: any, meta: any) {
   };
 }
 
-function describe(kind: string | null, meta: any): string {
+/** Exported for server/routes/agent-files.ts's /attach, which builds the same
+ *  shape from a generated file so both attachment sources render identically. */
+export function describe(kind: string | null, meta: any): string {
   if (!meta) return kind ?? "file";
   if (meta.empty) return "no readable text";
   if (kind === "xlsx" && Array.isArray(meta.sheets)) {

@@ -83,8 +83,22 @@ export function skillGrantsDocumentGeneration(skill: Skill): boolean {
   return ids.includes("pptx") || ids.includes("pdf");
 }
 
+/**
+ * Which route an agent takes to produce a document. Mirrors
+ * agents.documentGenerationMode; anything unrecognised (including null on rows
+ * predating the column) means "auto", the behaviour that existed before.
+ */
+export type DocumentGenerationMode = "auto" | "platform" | "sandbox";
+
+export function resolveDocumentMode(raw: string | null | undefined): DocumentGenerationMode {
+  return raw === "platform" || raw === "sandbox" ? raw : "auto";
+}
+
 /** The built-in document tools this agent's skills grant; empty for everyone else. */
-export function documentToolsForSkills(skills: Skill[]): AvailableTool[] {
+export function documentToolsForSkills(skills: Skill[], mode: DocumentGenerationMode = "auto"): AvailableTool[] {
+  // Sandbox-only agents must not see the portable tools, or the model will
+  // reach for the cheaper one and the setting becomes advisory.
+  if (mode === "sandbox") return [];
   if (!skills.some(skillGrantsDocumentGeneration)) return [];
   return [
     toolDef(

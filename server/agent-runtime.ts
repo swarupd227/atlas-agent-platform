@@ -8,7 +8,7 @@ import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } fr
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
-import { documentToolsForSkills, GENERATED_FILE_MARKER } from "./builtin-document-tools";
+import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER } from "./builtin-document-tools";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -1182,8 +1182,10 @@ export async function executePromptWithMcp(
   // Also records skill attribution on the trace and bumps activation telemetry.
   let dispatchSkillAllowlist: Set<string> | null = null;
   let resolvedActiveSkills: Awaited<ReturnType<typeof storage.getSkillsByIds>> = [];
+  let docGenerationMode = resolveDocumentMode(null);
   try {
     const agentRec = await storage.getAgent(agentId);
+    docGenerationMode = resolveDocumentMode((agentRec as any)?.documentGenerationMode);
     const rawPre = (agentRec as any)?.preloadedSkills;
     const skillIds: string[] = Array.isArray(rawPre)
       ? rawPre.map((p: any) => p?.skillId).filter(Boolean)
@@ -1226,7 +1228,7 @@ export async function executePromptWithMcp(
     // than its model, so it works where Anthropic code execution cannot.
     // Appended after the allowlist filter -- a skill that grants document
     // generation is granting these tools, so it must not filter them back out.
-    const docTools = documentToolsForSkills(resolvedActiveSkills);
+    const docTools = documentToolsForSkills(resolvedActiveSkills, docGenerationMode);
     availableTools.push(...docTools);
     // ...and the dispatcher enforces the same allowlist independently, so grant
     // them there too or every call would be refused at dispatch.
@@ -1245,7 +1247,9 @@ export async function executePromptWithMcp(
   // REPL state alive turn to turn, then discarded when the run ends.
   let codeExecContainerId: string | undefined;
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, resolvedActiveSkills);
-  const getCodeExecConfig = () => (codeExecAccess.enabled ? buildCodeExecutionRequestConfig(resolvedActiveSkills, codeExecContainerId) : null);
+  const getCodeExecConfig = () => (codeExecAccess.enabled
+    ? buildCodeExecutionRequestConfig(resolvedActiveSkills, codeExecContainerId, docGenerationMode === "platform")
+    : null);
   /** Fold a completion result's generatedFiles/containerId into this run -- call after every completeWithFallback/streamCompleteWithFallback. */
   const captureCodeExecResult = async (llmResult: { generatedFiles?: Array<{ fileId: string; toolUseId: string }>; containerId?: string }) => {
     if (llmResult.containerId) codeExecContainerId = llmResult.containerId;
@@ -1330,7 +1334,7 @@ export async function executePromptWithMcp(
   const codeExecMismatch = describeCodeExecutionModelMismatch(
     resolvedActiveSkills,
     modelName,
-    documentToolsForSkills(resolvedActiveSkills).length > 0,
+    documentToolsForSkills(resolvedActiveSkills, docGenerationMode).length > 0,
   );
   if (codeExecMismatch) {
     const informational = codeExecMismatch.severity === "info";

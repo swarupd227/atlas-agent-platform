@@ -39,6 +39,7 @@ const AgentDetail = lazy(() => import("@/pages/agent-detail"));
 const Deployments = lazy(() => import("@/pages/deployments"));
 const Monitor = lazy(() => import("@/pages/monitor"));
 const Workspace = lazy(() => import("@/pages/workspace"));
+const Files = lazy(() => import("@/pages/files"));
 const Governance = lazy(() => import("@/pages/governance"));
 const Approvals = lazy(() => import("@/pages/approvals"));
 const Billing = lazy(() => import("@/pages/billing"));
@@ -345,6 +346,7 @@ function DashboardRouter() {
       <Route path="/agents/:agentId/runs/:id" component={RunDetail} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/workspace" component={Workspace} />
+      <Route path="/files" component={Files} />
       <Route path="/observability" component={ObservabilityPage} />
       <Route path="/governance/policy-engine" component={PolicyEngine} />
       <Route path="/governance" component={Governance} />

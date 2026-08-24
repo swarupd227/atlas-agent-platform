@@ -610,6 +610,7 @@ export interface IStorage {
   deleteSkill(id: string, orgId?: string): Promise<boolean>;
 
   createAgentGeneratedFile(data: InsertAgentGeneratedFile): Promise<AgentGeneratedFile>;
+  listAgentGeneratedFiles(orgId?: string, limit?: number): Promise<Array<Record<string, any>>>;
   getAgentGeneratedFile(id: string, orgId?: string): Promise<AgentGeneratedFile | undefined>;
 
   getSkillVersions(skillId: string): Promise<SkillVersion[]>;
@@ -3072,6 +3073,29 @@ export class DatabaseStorage implements IStorage {
   async createAgentGeneratedFile(data: InsertAgentGeneratedFile) {
     const [created] = await db.insert(agentGeneratedFiles).values(data).returning();
     return created;
+  }
+  async listAgentGeneratedFiles(orgId?: string, limit = 100) {
+    // Explicit column list on purpose: `content` holds the whole document, and
+    // select() would drag every file's bytes into memory to render a list.
+    const rows = await db
+      .select({
+        id: agentGeneratedFiles.id,
+        agentId: agentGeneratedFiles.agentId,
+        workspaceRunId: agentGeneratedFiles.workspaceRunId,
+        filename: agentGeneratedFiles.filename,
+        mimeType: agentGeneratedFiles.mimeType,
+        sizeBytes: agentGeneratedFiles.sizeBytes,
+        source: agentGeneratedFiles.source,
+        createdAt: agentGeneratedFiles.createdAt,
+        agentName: agents.name,
+        agentModel: agents.modelName,
+      })
+      .from(agentGeneratedFiles)
+      .leftJoin(agents, eq(agents.id, agentGeneratedFiles.agentId))
+      .where(orgId ? eq(agentGeneratedFiles.organizationId, orgId) : sql`true`)
+      .orderBy(desc(agentGeneratedFiles.createdAt))
+      .limit(limit);
+    return rows;
   }
   async getAgentGeneratedFile(id: string, orgId?: string) {
     const clause = orgId ? and(eq(agentGeneratedFiles.id, id), eq(agentGeneratedFiles.organizationId, orgId)) : eq(agentGeneratedFiles.id, id);

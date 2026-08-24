@@ -31,7 +31,7 @@ import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine"
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFileIds } from "./anthropic-code-execution";
-import { documentToolsForSkills, GENERATED_FILE_MARKER } from "./builtin-document-tools";
+import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER } from "./builtin-document-tools";
 import type { Skill } from "@shared/schema";
 import { buildAttachmentContext } from "./attachment-context";
 
@@ -581,7 +581,7 @@ const WORKSPACE_RUNNABLE_STATUSES = new Set(["active", "deployed"]);
  *    should address the team's orchestrator, not its implementation-detail
  *    sub-agents (UX audit F-4).
  */
-export async function getWorkspaceAgents(orgId: string | undefined, role: string): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string }>> {
+export async function getWorkspaceAgents(orgId: string | undefined, role: string): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string; canGenerateDocuments: boolean; documentGenerationMode: "auto" | "platform" | "sandbox" }>> {
   const all = await storage.getAgents(orgId);
   const isFullAccess = role === "admin";
 
@@ -594,15 +594,41 @@ export async function getWorkspaceAgents(orgId: string | undefined, role: string
     }
   }
 
-  return all
+  const visible = all
     .filter(a => WORKSPACE_RUNNABLE_STATUSES.has(a.status))
     .filter(a => !subWorkerIds.has(a.id))
     .filter(a => {
       if (isFullAccess) return true;
       const audience = ((a as any).workspaceAudience as string[] | null) ?? [];
       return audience.length === 0 || audience.includes(role);
-    })
-    .map(a => ({ id: a.id, name: a.name, description: a.description ?? null, riskTier: a.riskTier }));
+    });
+
+  // One bulk skills lookup for the whole list, rather than one per agent --
+  // this powers the "can generate documents" chip so a user knows before
+  // asking, instead of only after the agent tries and can't.
+  const allSkillIds = Array.from(new Set(
+    visible.flatMap(a => {
+      const raw = (a as any).preloadedSkills;
+      return Array.isArray(raw) ? raw.map((p: any) => p?.skillId).filter(Boolean) : [];
+    }),
+  ));
+  const skillsById = new Map(
+    (allSkillIds.length ? await storage.getSkillsByIds(allSkillIds) : []).map(s => [s.id, s]),
+  );
+
+  return visible.map(a => {
+    const raw = (a as any).preloadedSkills;
+    const skillIds: string[] = Array.isArray(raw) ? raw.map((p: any) => p?.skillId).filter(Boolean) : [];
+    const agentSkills = skillIds.map(id => skillsById.get(id)).filter((s): s is Skill => !!s);
+    return {
+      id: a.id,
+      name: a.name,
+      description: a.description ?? null,
+      riskTier: a.riskTier,
+      canGenerateDocuments: agentSkills.some(skillGrantsDocumentGeneration),
+      documentGenerationMode: resolveDocumentMode((a as any).documentGenerationMode),
+    };
+  });
 }
 
 /**
@@ -623,11 +649,14 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   // Provider-agnostic document generation: offered on any model, gated on the
   // agent's skills rather than the model, so it works where code execution
   // cannot. Appended before canonicalization so the model actually sees them.
-  const documentTools = documentToolsForSkills(activeSkills);
+  const docMode = resolveDocumentMode((agentRow as any)?.documentGenerationMode);
+  const documentTools = documentToolsForSkills(activeSkills, docMode);
   availableTools.push(...documentTools);
   const canonicalTools = buildCanonicalTools(availableTools);
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
-  const codeExecConfig = codeExecAccess.enabled ? buildCodeExecutionRequestConfig(activeSkills, cp.containerId) : null;
+  const codeExecConfig = codeExecAccess.enabled
+    ? buildCodeExecutionRequestConfig(activeSkills, cp.containerId, docMode === "platform")
+    : null;
 
   // Hand the REAL file to the container, not just the flattened text. This is
   // resolved here rather than when the run was created because it is only here
@@ -889,7 +918,7 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
         // Document tools are granted BY a skill, so an allowlist that predates
         // them must not refuse them at dispatch.
         skillAllowlist: cp.skillAllowlist
-          ? new Set([...cp.skillAllowlist, ...documentToolsForSkills(activeSkills).map(t => t.toolName.toLowerCase())])
+          ? new Set([...cp.skillAllowlist, ...documentTools.map(t => t.toolName.toLowerCase())])
           : null,
         idempotencyScope: runId,
         spanCollector: spans,

@@ -30,16 +30,29 @@ export interface CodeExecutionRequestConfig {
  * this run has an approved code-execution skill attached. Returns null when
  * there's nothing to add (no code-execution skill, or not yet approved).
  */
+/** Anthropic's built-in document skills, i.e. the ones the platform renderer can replace. */
+const DOCUMENT_SKILL_IDS = new Set(["pptx", "pdf", "docx", "xlsx"]);
+
 export function buildCodeExecutionRequestConfig(
   skills: Skill[],
   containerId?: string,
+  /**
+   * "platform" mode keeps code execution available (an agent may hold other
+   * code-execution skills) but withholds the document skills, so document
+   * generation deterministically goes through the platform renderer instead of
+   * whichever route the model felt like taking.
+   */
+  excludeDocumentSkills = false,
 ): CodeExecutionRequestConfig | null {
   const approved = skills.filter((s) => s.skillKind === "code_execution" && s.codeExecutionApproved);
   if (approved.length === 0) return null;
 
   const skillIds = new Set<string>();
   for (const s of approved) {
-    for (const id of s.anthropicSkillIds ?? []) skillIds.add(id);
+    for (const id of s.anthropicSkillIds ?? []) {
+      if (excludeDocumentSkills && DOCUMENT_SKILL_IDS.has(id.toLowerCase())) continue;
+      skillIds.add(id);
+    }
   }
   if (skillIds.size === 0) return null;
 

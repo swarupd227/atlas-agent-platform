@@ -1474,6 +1474,11 @@ export async function runStartupMigrations() {
       ALTER TABLE agent_generated_files ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'anthropic';
       ALTER TABLE agent_generated_files ADD COLUMN IF NOT EXISTS content BYTEA;
       ALTER TABLE agent_generated_files ALTER COLUMN anthropic_file_id DROP NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_agent_generated_files_org_created
+        ON agent_generated_files(organization_id, created_at DESC);
+      -- Which document route an agent takes; "auto" keeps the prior behaviour
+      -- of offering both and letting the model choose.
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS document_generation_mode TEXT DEFAULT 'auto';
     `);
 
     // Relay agents (SQL connector "relay_agent" connection mode, Phase 3):

@@ -105,6 +105,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger, Runbook } from "@shared/schema";
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp, HeartPulse, MoreHorizontal, UserPlus } from "lucide-react";
@@ -4912,15 +4913,29 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
             const missingServersFor = (skill: Skill) =>
               ((skill.requiredMcpServers as string[] | null) || []).filter(name => !linkedServerNames.has(name.toLowerCase().trim()));
 
-            // Anthropic's code execution tool and its built-in PDF/PPTX/DOCX/XLSX
-            // Skills only exist on Claude models. Attaching such a skill to a
-            // GPT-model agent silently grants nothing -- the agent then answers
-            // that it can't produce files and returns an outline instead. Flag it
-            // here rather than letting it look like a broken skill.
+            // Anthropic's code execution tool exists only on Claude models, so a
+            // code_execution skill with no document ids (pptx/pdf) has no
+            // fallback on a GPT agent -- that pairing is a real dead end.
+            // Document generation is different: server/builtin-document-tools.ts
+            // renders pptx/pdf on ANY model, so a document skill on a GPT agent
+            // is fine as long as "sandbox" mode (which withholds that renderer)
+            // isn't forced. Conflating the two used to tell every GPT agent to
+            // switch models even after the portable renderer made that false.
             const modelSupportsCodeExecution = (agent.modelName || "").trim().toLowerCase().startsWith("claude");
+            const isDocumentSkill = (skill: Skill) => {
+              const ids = ((skill as any).anthropicSkillIds as string[] | null)?.map(s => s.toLowerCase()) ?? [];
+              return ids.includes("pptx") || ids.includes("pdf");
+            };
+            const docMode: "auto" | "platform" | "sandbox" =
+              (agent as any).documentGenerationMode === "platform" || (agent as any).documentGenerationMode === "sandbox"
+                ? (agent as any).documentGenerationMode
+                : "auto";
             const needsClaudeModel = (skill: Skill) =>
-              (skill as any).skillKind === "code_execution" && !modelSupportsCodeExecution;
+              (skill as any).skillKind === "code_execution" &&
+              !modelSupportsCodeExecution &&
+              (!isDocumentSkill(skill) || docMode === "sandbox");
             const blockedCodeExecSkills = matchedSkills.filter(needsClaudeModel);
+            const hasDocumentSkill = matchedSkills.some(isDocumentSkill);
 
             return (
               <>
@@ -5017,12 +5032,19 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
                         {blockedCodeExecSkills.map(s => `"${s.name}"`).join(", ")} cannot run on this agent's model
                       </span>
                       <span className="text-[11px] text-muted-foreground">
-                        Code execution and the built-in PDF/PPTX/DOCX/XLSX skills are available only on Claude models.
-                        This agent uses "{agent.modelName}", so it will describe or outline the document instead of
-                        generating a real file. Switch the agent to a Claude model to enable file generation.
+                        {blockedCodeExecSkills.every(isDocumentSkill)
+                          ? <>Document Generation Mode is set to "Anthropic Skill only" below, which needs a Claude model.
+                             This agent uses "{agent.modelName}". Switch the mode to "Automatic" or "Platform renderer",
+                             or switch the agent to a Claude model.</>
+                          : <>Anthropic code execution runs only on Claude models, and this skill has no platform-rendered
+                             fallback. This agent uses "{agent.modelName}", so it won't run. Switch the agent to a Claude model.</>}
                       </span>
                     </div>
                   </div>
+                )}
+
+                {hasDocumentSkill && (
+                  <DocumentGenerationModeCard agent={agent} />
                 )}
 
                 {matchedSkills.length > 0 ? (
@@ -6833,6 +6855,113 @@ interface LlmProviderOption {
   displayName: string;
   configured: boolean;
   models: Array<{ id: string; name?: string }>;
+}
+
+type DocumentGenerationMode = "auto" | "platform" | "sandbox";
+
+const DOCUMENT_MODE_OPTIONS: Array<{
+  value: DocumentGenerationMode;
+  label: string;
+  description: string;
+  cost: string;
+}> = [
+  {
+    value: "auto",
+    label: "Automatic (recommended)",
+    description: "The model picks. In practice this is the platform renderer for a plain generate, and the Anthropic Skill when the request needs it to edit an existing file.",
+    cost: "~$0.01–0.10 typical",
+  },
+  {
+    value: "platform",
+    label: "Platform renderer only",
+    description: "Server-rendered from a structured outline. Deterministic, fastest, works on any model — including non-Claude agents. Cannot edit an existing file.",
+    cost: "~$0.01 per document",
+  },
+  {
+    value: "sandbox",
+    label: "Anthropic Skill only",
+    description: "Runs in Anthropic's code-execution sandbox with python-pptx/pdf. Freeform layout, can open and edit an existing attached file. Requires a Claude model.",
+    cost: "~$0.10 to generate, ~$1+ to edit an existing file",
+  },
+];
+
+/**
+ * Lets a user pin which route this agent takes to produce a document, instead
+ * of the only lever being prompt wording ("do not use the generate_pptx
+ * tool") -- which is not something a real feature can depend on being phrased
+ * correctly every time. Shown only when the agent has a document-generating
+ * skill attached (server/builtin-document-tools.ts's skillGrantsDocumentGeneration).
+ */
+function DocumentGenerationModeCard({ agent }: { agent: Agent }) {
+  const { toast } = useToast();
+  const current: DocumentGenerationMode =
+    (agent as any).documentGenerationMode === "platform" || (agent as any).documentGenerationMode === "sandbox"
+      ? (agent as any).documentGenerationMode
+      : "auto";
+  const [saving, setSaving] = useState(false);
+
+  const setMode = async (mode: DocumentGenerationMode) => {
+    if (mode === current) return;
+    setSaving(true);
+    try {
+      await apiRequest("PATCH", `/api/agents/${agent.id}`, { documentGenerationMode: mode });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      toast({ title: "Document generation mode updated", description: DOCUMENT_MODE_OPTIONS.find(o => o.value === mode)?.label });
+    } catch (e: any) {
+      toast({ title: "Failed to update", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card data-testid="section-document-generation-mode">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+            <FileCheck className="w-3.5 h-3.5 text-primary" />
+          </div>
+          <div>
+            <CardTitle className="text-sm font-medium">Document Generation</CardTitle>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Which route this agent takes to produce a .pptx/.pdf, since both are available whenever a document skill is attached.
+            </p>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <RadioGroup
+          value={current}
+          onValueChange={(v) => setMode(v as DocumentGenerationMode)}
+          className="flex flex-col gap-3"
+          data-testid="radiogroup-document-mode"
+        >
+          {DOCUMENT_MODE_OPTIONS.map(opt => (
+            <label
+              key={opt.value}
+              htmlFor={`document-mode-${opt.value}`}
+              className={`flex items-start gap-2.5 rounded-md border p-2.5 cursor-pointer hover-elevate ${current === opt.value ? "border-primary/50 bg-primary/5" : ""}`}
+            >
+              <RadioGroupItem
+                value={opt.value}
+                id={`document-mode-${opt.value}`}
+                disabled={saving}
+                data-testid={`radio-document-mode-${opt.value}`}
+                className="mt-0.5"
+              />
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-medium">{opt.label}</span>
+                  <Badge variant="outline" className="text-[9px] font-normal">{opt.cost}</Badge>
+                </div>
+                <span className="text-[11px] text-muted-foreground">{opt.description}</span>
+              </div>
+            </label>
+          ))}
+        </RadioGroup>
+      </CardContent>
+    </Card>
+  );
 }
 
 function BlueprintModelConfig({ agent, hasComputedData }: { agent: Agent; hasComputedData?: boolean }) {
