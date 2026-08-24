@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, Network, Clock, Coins, Layers, CheckCircle2, XCircle,
   Loader2, ShieldQuestion, ArrowRight, MinusCircle, AlertTriangle,
-  Play, Radio,
+  Play, Radio, ChevronRight, ChevronDown, Copy, Check,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -136,6 +136,27 @@ export default function DagRunMonitor() {
   // persisted output instead (see server/magentic-engine.ts).
   function labelForNode(node: DagWaveNodeResult): string {
     return nodeLabels[node.nodeId] || node.output?.selectedAgentName || node.nodeId;
+  }
+
+  /**
+   * What THIS agent produced, as readable text.
+   *
+   * A node's output is a bag of state keys, and the run's final answer is those
+   * bags merged -- so the individual contributions are all still here, they just
+   * had nowhere to be read. Bookkeeping keys the pipeline adds for its own use
+   * are dropped: they are noise to someone asking "what did this agent say?".
+   */
+  const OUTPUT_NOISE_KEYS = new Set(["selectedAgentName", "managerReasoning", "__meta"]);
+
+  function outputEntries(node: DagWaveNodeResult): Array<{ key: string; text: string }> {
+    const out = node.output;
+    if (!out || typeof out !== "object") return [];
+    return Object.entries(out)
+      .filter(([k, v]) => !OUTPUT_NOISE_KEYS.has(k) && v != null && v !== "")
+      .map(([key, value]) => ({
+        key,
+        text: typeof value === "string" ? value : JSON.stringify(value, null, 2),
+      }));
   }
 
   const pendingApproval = (approvals || [])
@@ -440,6 +461,7 @@ export default function DagRunMonitor() {
                     {isMagentic && node.output?.managerReasoning && (
                       <span className="text-[11px] text-muted-foreground pl-5.5 truncate">Manager: {node.output.managerReasoning}</span>
                     )}
+                    <NodeOutput node={node} label={labelForNode(node)} entries={outputEntries(node)} />
                   </div>
                 ))}
               </div>
@@ -496,6 +518,96 @@ export default function DagRunMonitor() {
               {JSON.stringify(run.finalState, null, 2)}
             </pre>
           </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One agent's own output, collapsed by default.
+ *
+ * The run already merged every agent's output into a single final state, which
+ * answers "what did the team produce" but not "what did THIS agent contribute".
+ * Both questions get asked, and until now only the first had an answer on
+ * screen -- the per-node output was persisted and returned by the API, but the
+ * view showed a single truncated line of it.
+ *
+ * Collapsed by default because a finished run has many of these and the
+ * wave-by-wave list is a status view first; opening one is a deliberate act.
+ */
+function NodeOutput({
+  node,
+  label,
+  entries,
+}: {
+  node: DagWaveNodeResult;
+  label: string;
+  entries: Array<{ key: string; text: string }>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // A skipped node genuinely produced nothing; a failed one has its error shown
+  // on the row already. Offering an empty panel in either case is worse than
+  // offering nothing.
+  if (!entries.length) return null;
+
+  const plain = entries.map((e) => (entries.length > 1 ? `## ${e.key}\n\n${e.text}` : e.text)).join("\n\n");
+
+  async function copyOutput() {
+    try {
+      await navigator.clipboard.writeText(plain);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard can be blocked by permissions; the text is on screen and
+      // selectable either way, so this needs no error of its own.
+    }
+  }
+
+  return (
+    <div className="pl-5.5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+        aria-expanded={open}
+        data-testid={`button-node-output-${node.nodeId}`}
+      >
+        {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        {open ? "Hide output" : `View output from ${label}`}
+      </button>
+
+      {open && (
+        <div className="mt-1.5 border rounded-md bg-muted/30" data-testid={`panel-node-output-${node.nodeId}`}>
+          <div className="flex items-center justify-between px-3 py-1.5 border-b">
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+              {label}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={copyOutput}
+              data-testid={`button-copy-output-${node.nodeId}`}
+            >
+              {copied ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <div className="p-3 flex flex-col gap-3 max-h-96 overflow-y-auto">
+            {entries.map((e) => (
+              <div key={e.key} className="flex flex-col gap-1">
+                {/* The key is only worth showing when there is more than one --
+                    a single-output agent would just get a redundant heading. */}
+                {entries.length > 1 && (
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">{e.key}</span>
+                )}
+                <pre className="text-xs whitespace-pre-wrap break-words font-mono text-foreground m-0">{e.text}</pre>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
