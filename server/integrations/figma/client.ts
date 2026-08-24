@@ -87,8 +87,11 @@ export class FigmaClient {
         msg = errJson?.message ?? errorText;
       } catch { /* not JSON */ }
 
-      if (res.status === 401 || res.status === 403) {
-        throw new FigmaAuthError("Figma authentication failed — check Personal Access Token");
+      if (res.status === 401) {
+        throw new FigmaAuthError(`Figma authentication failed — check Personal Access Token (${msg})`);
+      }
+      if (res.status === 403) {
+        throw new FigmaAuthError(`Figma denied this request (403): ${msg} — the token is valid but may be missing a required scope, or the account isn't a member of this resource`);
       }
       if (res.status === 429) {
         const retryAfter = res.headers.get("Retry-After");
