@@ -238,6 +238,13 @@ export function RoleProvider({ children }: { children: ReactNode }) {
     // The Agent Workspace is the universal consumption surface — every role can
     // use it. (Which agents a person sees inside it is gated separately.)
     if (route === "/workspace" || route.startsWith("/workspace")) return true;
+    // Files (client/src/pages/files.tsx) is Workspace's document history --
+    // every generated .pptx/.pdf across every run, not a new capability. It
+    // was added to the sidebar's primaryNav after every role's allowedRoutes
+    // list already existed, so without this it was silently filtered from
+    // the nav for every role (confirmed live: missing from the sidebar even
+    // for admin). Same universal-access reasoning as /workspace above.
+    if (route === "/files" || route.startsWith("/files")) return true;
     const currentRole = ROLES.find((r) => r.id === roleId) || ROLES[0];
     return currentRole.allowedRoutes.some((allowed) => {
       if (allowed === "/") return route === "/";
