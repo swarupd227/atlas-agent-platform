@@ -1500,6 +1500,25 @@ export async function runStartupMigrations() {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_agents_token_hash ON relay_agents(token_hash);
     `);
 
+    // Backfill: upsertIntegrationMcpServer's sibling-connection insert
+    // (enterprise-integrations.ts) never set integration_id, so a second
+    // connection of the same enterprise type (e.g. a 2nd Postgres database)
+    // got a catalog row performMcpServerInitialize couldn't recognize as its
+    // own connector. Lacking integration_id, it fell through to the
+    // real-remote-MCP branch and tried a genuine network handshake against
+    // this app's own /api/integrations/<id> route, which requires an
+    // agent-scoped bearer token -- producing "502 Real MCP handshake failed:
+    // ... Authentication required" even though the underlying database
+    // connection itself was healthy. The insert now sets integration_id;
+    // this repairs rows created before that fix.
+    await client.query(`
+      UPDATE mcp_servers m
+      SET integration_id = c.integration_id
+      FROM integration_connections c
+      WHERE m.connection_id = c.id
+        AND m.integration_id IS NULL;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

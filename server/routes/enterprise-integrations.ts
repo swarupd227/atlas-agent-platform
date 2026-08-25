@@ -945,6 +945,7 @@ async function upsertIntegrationMcpServer(
           : `Enterprise integration MCP server for ${integrationName}`,
         url: template?.url ?? undefined,
         transportType: template?.transportType ?? "enterprise",
+        integrationId,
         riskTier: template?.riskTier ?? "MEDIUM",
         status: "registered",
         connectionId,
