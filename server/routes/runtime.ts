@@ -12383,7 +12383,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
   let negotiatedVersion: string;
   let capabilities: Record<string, unknown>;
   let serverInfo: { name: string; version: string; protocolVersion?: string };
-  let toolsToStore: Array<{ serverId: string; name: string; description?: string; inputSchema?: object }>;
+  let toolsToStore: Array<{ serverId: string; name: string; description?: string; inputSchema?: object; annotations?: object }>;
   let resourcesToStore: Array<{ serverId: string; uri: string; name: string; description?: string; mimeType?: string; sensitivityLevel?: string; approvalStatus?: string; freshnessStatus?: string; subscribed?: boolean; contentType?: string }>;
   let promptsToStore: InsertMcpServerPrompt[];
   let isRealProtocol = false;
@@ -12408,6 +12408,11 @@ async function performMcpServerInitialize(serverId: string): Promise<
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema as object,
+      // Without this, gatherAvailableTools() can't see tool.enterpriseIntegration
+      // and the runtime falls through to a real HTTP self-call instead of
+      // dispatching in-process -- which 401s (no session/agent context) even
+      // though this same Initialize call just reported success. See MCP-004.
+      annotations: { endpoint: `/tools/${t.name}`, method: "POST", enterpriseIntegration: server.integrationId, requiresCredentials: true },
     }));
     resourcesToStore = [];
     promptsToStore = [];
@@ -13197,7 +13202,14 @@ async function performMcpServerInitialize(serverId: string): Promise<
       if (ownConnector) {
         await storage.deleteMcpServerToolsByServer(server.id);
         for (const t of ownConnector.tools) {
-          await storage.createMcpServerTool({ serverId: server.id, name: t.name, description: t.description, inputSchema: t.inputSchema as object, enabled: true, riskClassification: "low" });
+          await storage.createMcpServerTool({
+            serverId: server.id, name: t.name, description: t.description, inputSchema: t.inputSchema as object,
+            enabled: true, riskClassification: "low",
+            // Same fix as performMcpServerInitialize's ownConnector branch --
+            // without this, gatherAvailableTools() can't route calls in-process
+            // and the runtime falls through to a real HTTP self-call. MCP-004.
+            annotations: { endpoint: `/tools/${t.name}`, method: "POST", enterpriseIntegration: server.integrationId, requiresCredentials: true },
+          });
         }
         await storage.updateMcpServer(server.id, { lastHealthCheck: new Date(), healthStatus: "healthy" });
         const tools = await storage.getMcpServerTools(server.id);
