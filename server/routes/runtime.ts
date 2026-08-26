@@ -13186,6 +13186,34 @@ async function performMcpServerInitialize(serverId: string): Promise<
       const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
+      // One of our own real-MCP-protocol connectors (Postgres/MySQL/SQL
+      // Server/Figma/Jira/etc). Same reasoning as performMcpServerInitialize
+      // above: its /mcp endpoint requires an agent-scoped bearer key that this
+      // system-level sync call doesn't have, so a live HTTP self-handshake
+      // would always 401/502 even though the connector itself is healthy.
+      // Read the tool catalog in-process instead, from the same registry the
+      // agent runtime dispatches through.
+      const ownConnector = server.integrationId ? getEnterpriseServerById(server.integrationId) : undefined;
+      if (ownConnector) {
+        await storage.deleteMcpServerToolsByServer(server.id);
+        for (const t of ownConnector.tools) {
+          await storage.createMcpServerTool({ serverId: server.id, name: t.name, description: t.description, inputSchema: t.inputSchema as object, enabled: true, riskClassification: "low" });
+        }
+        await storage.updateMcpServer(server.id, { lastHealthCheck: new Date(), healthStatus: "healthy" });
+        const tools = await storage.getMcpServerTools(server.id);
+        const resources = await storage.getMcpServerResources(server.id);
+        const prompts = await storage.getMcpServerPrompts(server.id);
+        return res.json({
+          synced: true,
+          isRealProtocol: true,
+          catalogs: { tools: tools.length, resources: resources.length, prompts: prompts.length },
+          driftDetected: false,
+          driftTools: [],
+          behavioralChecks: [],
+          assuranceLoop: { driftedTools: [], reMatchedCount: 0, alignmentChanges: [], affectedBlueprints: [] },
+        });
+      }
+
       if (isRealMcpServer(server)) {
         try {
           const [liveTools, liveResources, livePrompts] = await Promise.allSettled([
