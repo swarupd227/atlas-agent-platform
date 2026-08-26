@@ -881,9 +881,16 @@ async function upsertIntegrationMcpServer(
       .limit(1);
 
     if (existing) {
+      // Self-heals a row that was previously mis-adopted under the generic
+      // seeded name before the fix above existed -- re-testing/reconnecting
+      // now corrects the label without needing a manual rename.
       await db
         .update(mcpServers)
-        .set({ status: "registered", updatedAt: new Date() })
+        .set({
+          status: "registered",
+          updatedAt: new Date(),
+          ...(connectionName ? { name: `${integrationName} MCP (${connectionName})` } : {}),
+        })
         .where(eq(mcpServers.id, existing.id));
       return existing.id;
     }
@@ -912,9 +919,23 @@ async function upsertIntegrationMcpServer(
       .limit(1);
 
     if (seeded) {
+      // Whichever connection happens to be the first to find this row
+      // unclaimed adopts it -- timing-dependent, not necessarily the org's
+      // "default" connection. Previously this left the row under its generic
+      // seeded name (e.g. "MySQL / MariaDB (Database)") regardless of which
+      // named connection actually claimed it, so a named connection like
+      // "Marketing Campaign Analytics" could silently end up represented by
+      // an MCP server that gives no visual indication it belongs to that
+      // connection. Rename on adopt, same convention the sibling-clone path
+      // below already uses, so the catalog always reflects reality.
       await db
         .update(mcpServers)
-        .set({ connectionId, status: "registered", updatedAt: new Date() })
+        .set({
+          connectionId,
+          status: "registered",
+          updatedAt: new Date(),
+          ...(connectionName ? { name: `${integrationName} MCP (${connectionName})` } : {}),
+        })
         .where(eq(mcpServers.id, seeded.id));
       return seeded.id;
     }
