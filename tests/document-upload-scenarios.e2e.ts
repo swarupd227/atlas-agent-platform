@@ -234,20 +234,49 @@ test.beforeAll(async () => {
  * a fair thing for an orchestrator to do and a useless vehicle for testing
  * whether an attachment reached the model, so team agents are excluded.
  */
-async function firstSingleAgent(request: APIRequestContext): Promise<any | null> {
-  // Two calls, deliberately. /api/workspace/agents says which agents the picker
-  // will offer, but returns only id/name/description/riskTier -- no agentType.
-  // Defaulting the missing field to "single" is what let the orchestrator
-  // through in the first place, so the type is read from the full records and
-  // an agent that cannot be confirmed single is not used.
-  const [selectable, full] = await Promise.all([
-    (await request.get("/api/workspace/agents")).json(),
-    (await request.get("/api/agents")).json(),
-  ]);
-  if (!Array.isArray(selectable) || !Array.isArray(full)) return null;
+/**
+ * Resolved once per run and shared by every test that needs it.
+ *
+ * /api/agents returns every full agent record on the shared environment --
+ * ~270 rows, ~1.9MB -- and under real load took longer than even a 60s
+ * override to answer. Fetching it once and sharing the result is not just an
+ * optimisation here: a second test issuing its own full fetch is what turned
+ * one slow call into two, and pushed DOC-8's copy over its own timeout.
+ */
+let fullAgentsPromise: Promise<any[]> | null = null;
 
-  const typeById = new Map(full.map((a: any) => [a.id, a.agentType]));
-  return selectable.find((a: any) => typeById.get(a.id) === "single") ?? null;
+async function fullAgents(request: APIRequestContext): Promise<any[]> {
+  if (!fullAgentsPromise) {
+    fullAgentsPromise = (async () => {
+      const res = await request.get("/api/agents", { timeout: 90_000 });
+      const body = await res.json();
+      return Array.isArray(body) ? body : [];
+    })();
+  }
+  return fullAgentsPromise;
+}
+
+let singleAgentPromise: Promise<any | null> | null = null;
+
+async function firstSingleAgent(request: APIRequestContext): Promise<any | null> {
+  if (!singleAgentPromise) {
+    singleAgentPromise = (async () => {
+      // Two sources, deliberately. /api/workspace/agents says which agents the
+      // picker will offer, but returns only id/name/description/riskTier -- no
+      // agentType. Defaulting the missing field to "single" is what let a TEAM
+      // orchestrator through in the first place, so the type is read from the
+      // full records and an agent that cannot be confirmed single is not used.
+      const [selectable, full] = await Promise.all([
+        (await request.get("/api/workspace/agents", { timeout: 60_000 })).json(),
+        fullAgents(request),
+      ]);
+      if (!Array.isArray(selectable)) return null;
+
+      const typeById = new Map(full.map((a: any) => [a.id, a.agentType]));
+      return selectable.find((a: any) => typeById.get(a.id) === "single") ?? null;
+    })();
+  }
+  return singleAgentPromise;
 }
 
 /** The Workspace agent picker is a Radix Select; options carry the agent id. */
@@ -444,21 +473,25 @@ test("DOC-5. Eval Datasets: labelled goldens import from a CSV", async ({ page }
 test("DOC-8. Code execution: the real file reaches the container, not just the extract", async ({ request }) => {
   test.setTimeout(300_000);
 
-  const agents = await (await request.get("/api/agents")).json();
-  const candidates = (Array.isArray(agents) ? agents : []).filter(
+  // Shared with firstSingleAgent's cache -- a second full fetch of this same
+  // ~1.9MB endpoint is what pushed this test's own timeout over the edge.
+  const agents = await fullAgents(request);
+  const candidates = agents.filter(
     (a: any) => a.modelProvider === "anthropic"
       && typeof a.modelName === "string" && a.modelName.startsWith("claude")
       && Array.isArray(a.preloadedSkills) && a.preloadedSkills.length > 0
       && a.status === "active");
 
-  let agent: any = null;
-  for (const c of candidates) {
-    const skills = await (await request.get(`/api/skills`)).json();
-    const ids = new Set((c.preloadedSkills as any[]).map((p) => p.skillId));
-    const hasCodeExec = (Array.isArray(skills) ? skills : []).some(
-      (s: any) => ids.has(s.id) && s.skillKind === "code_execution" && s.codeExecutionApproved);
-    if (hasCodeExec) { agent = c; break; }
-  }
+  // Fetched once, outside the loop -- skills do not vary per candidate agent,
+  // so re-fetching them on every iteration was pure waste.
+  const skills = await (await request.get("/api/skills", { timeout: 60_000 })).json();
+  const codeExecSkillIds = new Set(
+    (Array.isArray(skills) ? skills : [])
+      .filter((s: any) => s.skillKind === "code_execution" && s.codeExecutionApproved)
+      .map((s: any) => s.id));
+
+  const agent = candidates.find((c: any) =>
+    (c.preloadedSkills as any[]).some((p) => codeExecSkillIds.has(p.skillId))) ?? null;
   test.skip(!agent, "no agent with an approved code-execution skill on a Claude model");
 
   const MARKER = 987654, MARKER_ROW = 5150;
