@@ -84,7 +84,7 @@ const router = Router();
       const bodySchema = z.object({
         id: z.string().min(1),
         industryId: z.string().min(1),
-        subVertical: z.string().min(1).optional(),
+        subVerticals: z.array(z.string().min(1)).optional(),
         ontologyName: z.string().optional(),
         label: z.string().min(1),
         category: z.string().min(1),
@@ -104,7 +104,7 @@ const router = Router();
       const concept = await storage.createOntologyConcept({
         id: data.id,
         industryId: data.industryId,
-        subVertical: data.subVertical,
+        subVerticals: data.subVerticals,
         ontologyName: data.ontologyName || "Custom",
         label: data.label,
         category: data.category,
@@ -128,7 +128,7 @@ const router = Router();
         concepts: z.array(z.object({
           id: z.string().min(1),
           industryId: z.string().min(1),
-          subVertical: z.string().min(1).optional(),
+          subVerticals: z.array(z.string().min(1)).optional(),
           ontologyName: z.string().optional(),
           label: z.string().min(1),
           category: z.string().min(1),
@@ -155,7 +155,7 @@ const router = Router();
           const concept = await storage.createOntologyConcept({
             id: data.id,
             industryId: data.industryId,
-            subVertical: data.subVertical,
+            subVerticals: data.subVerticals,
             ontologyName: data.ontologyName || "Custom",
             label: data.label,
             category: data.category,

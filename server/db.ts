@@ -1481,6 +1481,51 @@ export async function runStartupMigrations() {
       ALTER TABLE agents ADD COLUMN IF NOT EXISTS document_generation_mode TEXT DEFAULT 'auto';
     `);
 
+    // MANDATE.md as data (server/routes/mandates.ts): the written job
+    // description an agent's accountable owner authors, and the task classes
+    // derived from it -- the join key later work (warrants, review routing)
+    // will scope to instead of the whole agent. One mandate per agent for now
+    // (UNIQUE on agent_id); status/approved_by model a lightweight approval
+    // against the existing approve_changes permission, not the full PR-diff
+    // workflow, which is later work once a warrant exists to bind it to.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agent_mandates (
+        id                          VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id             VARCHAR,
+        agent_id                    VARCHAR NOT NULL UNIQUE REFERENCES agents(id),
+        accountable_owner_user_id   VARCHAR,
+        what_it_does                TEXT,
+        must_never                  TEXT,
+        when_to_ask_a_human         TEXT,
+        when_to_stop                TEXT,
+        fallback_behavior           TEXT,
+        how_we_know_its_working     TEXT,
+        status                      TEXT NOT NULL DEFAULT 'draft',
+        version                     INTEGER NOT NULL DEFAULT 1,
+        created_by                  VARCHAR REFERENCES users(id),
+        approved_by                 VARCHAR REFERENCES users(id),
+        approved_at                 TIMESTAMP,
+        created_at                  TIMESTAMP DEFAULT NOW(),
+        updated_at                  TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_mandates_org ON agent_mandates(organization_id);
+
+      CREATE TABLE IF NOT EXISTS agent_task_classes (
+        id                       VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id          VARCHAR,
+        agent_id                 VARCHAR NOT NULL REFERENCES agents(id),
+        mandate_id               VARCHAR REFERENCES agent_mandates(id),
+        name                     TEXT NOT NULL,
+        description              TEXT,
+        required_reviewer_role   TEXT,
+        derived_from             TEXT NOT NULL DEFAULT 'manual',
+        source_ref               TEXT,
+        sort_order               INTEGER DEFAULT 0,
+        created_at               TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_task_classes_agent ON agent_task_classes(agent_id);
+    `);
+
     // Relay agents (SQL connector "relay_agent" connection mode, Phase 3):
     // outbound-only tunnel agents a client deploys inside their own network.
     // Only a sha256 hash of the bearer token is stored -- the raw token is
@@ -1520,11 +1565,17 @@ export async function runStartupMigrations() {
     `);
 
     // Optional finer scoping within an industry's ontology (e.g. insurance's
-    // "Property & Casualty" vs "Workers Compensation" vs "Life & Annuities").
-    // Null means industry-wide, matching every pre-existing row.
+    // "Property & Casualty" / "Workers Compensation" / "Life & Annuities").
+    // Superseded sub_vertical (singular) with sub_verticals (array) before any
+    // real content was tagged with it -- a single value can't represent a
+    // concept like "Medical Provider Entity" that genuinely applies to two
+    // sub-verticals (Workers Comp, Health) but not the other four. Null/empty
+    // means industry-wide, matching every pre-existing row.
     await client.query(`
-      ALTER TABLE ontology_concepts ADD COLUMN IF NOT EXISTS sub_vertical TEXT;
-      CREATE INDEX IF NOT EXISTS idx_ontology_concepts_sub_vertical ON ontology_concepts(sub_vertical);
+      DROP INDEX IF EXISTS idx_ontology_concepts_sub_vertical;
+      ALTER TABLE ontology_concepts DROP COLUMN IF EXISTS sub_vertical;
+      ALTER TABLE ontology_concepts ADD COLUMN IF NOT EXISTS sub_verticals TEXT[];
+      CREATE INDEX IF NOT EXISTS idx_ontology_concepts_sub_verticals ON ontology_concepts USING GIN(sub_verticals);
     `);
 
     console.log("[db] Startup migrations complete");

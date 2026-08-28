@@ -197,10 +197,15 @@ export const agentMandates = pgTable("agent_mandates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   organizationId: varchar("organization_id").references(() => organizations.id),
   agentId: varchar("agent_id").notNull().unique().references(() => agents.id),
-  // Defaults to whoever authors it -- outcomeContracts has no stored owner
-  // column today (outcome_owner is a role, not a person recorded per outcome),
-  // so there is nothing real to inherit from yet. Editable afterward.
-  accountableOwnerUserId: varchar("accountable_owner_user_id").references(() => users.id),
+  // Free text, not a hard FK, deliberately: every other "who did this" column
+  // in this schema (approvals.decidedBy, deployments.createdBy's siblings
+  // elsewhere) is loosely typed for the same reason -- authMiddleware skips
+  // entirely in demo mode (server/auth.ts), so req.authUser is often absent,
+  // and a hard FK to users.id would reject the write outright rather than
+  // degrade. Defaults to whoever authors it -- outcomeContracts has no stored
+  // owner column today (outcome_owner is a role, not a person recorded per
+  // outcome), so there is nothing real to inherit from yet. Editable after.
+  accountableOwnerUserId: varchar("accountable_owner_user_id"),
   whatItDoes: text("what_it_does"),
   mustNever: text("must_never"),
   whenToAskAHuman: text("when_to_ask_a_human"),
@@ -209,8 +214,8 @@ export const agentMandates = pgTable("agent_mandates", {
   howWeKnowItsWorking: text("how_we_know_its_working"),
   status: text("status").notNull().default("draft"), // draft | active
   version: integer("version").notNull().default(1),
-  createdBy: varchar("created_by").references(() => users.id),
-  approvedBy: varchar("approved_by").references(() => users.id),
+  createdBy: varchar("created_by"),
+  approvedBy: varchar("approved_by"),
   approvedAt: timestamp("approved_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -1734,11 +1739,13 @@ export const ontologyConcepts = pgTable("ontology_concepts", {
   id: varchar("id").primaryKey(),
   industryId: text("industry_id").notNull(),
   // Optional finer scoping within an industry (e.g. insurance's "Property &
-  // Casualty" vs "Workers Compensation" vs "Life & Annuities"). Null means the
-  // concept applies to the whole industry -- every pre-existing row stays
-  // null and keeps matching industry-wide queries; only concepts curated for
-  // a specific sub-vertical set this.
-  subVertical: text("sub_vertical"),
+  // Casualty" / "Workers Compensation" / "Life & Annuities"). An array, not a
+  // single value -- a concept like "Medical Provider Entity" genuinely
+  // applies to Workers Comp AND Health Insurance but not the other four
+  // Insurance sub-verticals, so a single-value column can't represent it.
+  // Null or empty means the concept applies industry-wide; every
+  // pre-existing row stays that way and keeps matching every sub-vertical.
+  subVerticals: text("sub_verticals").array(),
   ontologyName: text("ontology_name").notNull(),
   label: text("label").notNull(),
   category: text("category").notNull(),
@@ -3064,6 +3071,12 @@ export const outputContracts = pgTable("output_contracts", {
   normalizers: jsonb("normalizers").default(sql`'[]'::jsonb`),
   fallbackOutput: jsonb("fallback_output"),
   enforcementMode: varchar("enforcement_mode").notNull().default("strict"),
+  // Opt-out escape hatch for vendor-native structured-output decoding (OpenAI
+  // json_schema strict mode / Anthropic forced tool_choice), applied at the
+  // generating LLM call before this contract's enforce()/repair loop ever
+  // runs. Defaults on since it only reduces how often repair triggers -- the
+  // Ajv path below is unchanged either way.
+  strictDecodingEnabled: boolean("strict_decoding_enabled").notNull().default(true),
   repairEnabled: boolean("repair_enabled").notNull().default(true),
   maxRepairAttempts: integer("max_repair_attempts").notNull().default(1),
   repairTemperature: real("repair_temperature").default(0.0),
@@ -3095,6 +3108,13 @@ export const generationMetadataRecords = pgTable("generation_metadata_records", 
   completionTokens: integer("completion_tokens").notNull().default(0),
   totalTokens: integer("total_tokens").notNull().default(0),
   validationStatus: varchar("validation_status").notNull().default("passed"),
+  // Which decode path served this generation -- "strict_native" (OpenAI
+  // json_schema strict mode / Anthropic forced tool_choice) vs
+  // "legacy_prompted" (json_object/prompt-instructed JSON). Without this,
+  // validationStatus:"passed" can't distinguish "strict-decoded, zero repairs
+  // needed" from "legacy-decoded, happened to validate" -- the actual metric
+  // this decode path is meant to move.
+  decodePath: varchar("decode_path").notNull().default("legacy_prompted"),
   repairAttempts: integer("repair_attempts").default(0),
   validationErrors: jsonb("validation_errors").default(sql`'[]'::jsonb`),
   qualityScore: real("quality_score"),

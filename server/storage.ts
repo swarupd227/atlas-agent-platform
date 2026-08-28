@@ -10,7 +10,7 @@ import {
   type AgentIntegrationCredential, type InsertAgentIntegrationCredential,
   llmProviderKeys,
   type LlmProviderKey, type InsertLlmProviderKey,
-  users, agents, outcomeContracts, kpiDefinitions, deployments,
+  users, agents, agentMandates, agentTaskClasses, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
   improvementRecommendations, autonomousActionLogs, agentVersions,
@@ -19,6 +19,8 @@ import {
   billingDisputes,
   type User, type InsertUser,
   type Agent, type InsertAgent,
+  type AgentMandate, type InsertAgentMandate,
+  type AgentTaskClass, type InsertAgentTaskClass,
   type OutcomeContract, type InsertOutcomeContract,
   type KpiDefinition, type InsertKpiDefinition,
   type Deployment, type InsertDeployment,
@@ -612,6 +614,15 @@ export interface IStorage {
   createAgentGeneratedFile(data: InsertAgentGeneratedFile): Promise<AgentGeneratedFile>;
   listAgentGeneratedFiles(orgId?: string, limit?: number): Promise<Array<Record<string, any>>>;
   getAgentGeneratedFile(id: string, orgId?: string): Promise<AgentGeneratedFile | undefined>;
+
+  getAgentMandate(agentId: string, orgId?: string): Promise<AgentMandate | undefined>;
+  upsertAgentMandate(agentId: string, data: Partial<InsertAgentMandate>, orgId?: string): Promise<AgentMandate>;
+  approveAgentMandate(agentId: string, approvedByUserId: string, orgId?: string): Promise<AgentMandate | undefined>;
+
+  listAgentTaskClasses(agentId: string, orgId?: string): Promise<AgentTaskClass[]>;
+  createAgentTaskClass(data: InsertAgentTaskClass): Promise<AgentTaskClass>;
+  updateAgentTaskClass(id: string, data: Partial<InsertAgentTaskClass>, orgId?: string): Promise<AgentTaskClass | undefined>;
+  deleteAgentTaskClass(id: string, orgId?: string): Promise<boolean>;
 
   getSkillVersions(skillId: string): Promise<SkillVersion[]>;
   getSkillVersion(id: string): Promise<SkillVersion | undefined>;
@@ -3002,12 +3013,20 @@ export class DatabaseStorage implements IStorage {
   }
   async getOntologyConcepts(industryId: string, subVertical?: string) {
     if (subVertical) {
-      // Sub-vertical-specific concepts plus industry-wide ones (subVertical
-      // null), so e.g. a Workers Compensation agent still gets any concept
-      // that applies across all of Insurance, not just WC-tagged ones.
+      // Sub-vertical-specific concepts (subVerticals array contains this one)
+      // plus industry-wide ones (subVerticals null/empty), so e.g. a Workers
+      // Compensation agent still gets any concept that applies across all of
+      // Insurance, not just WC-tagged ones. A concept can be tagged to
+      // several sub-verticals at once (e.g. "Medical Provider Entity" under
+      // both Workers Comp and Health Insurance), hence the array + ANY check
+      // rather than an equality match.
       return db.select().from(ontologyConcepts).where(and(
         eq(ontologyConcepts.industryId, industryId),
-        or(eq(ontologyConcepts.subVertical, subVertical), isNull(ontologyConcepts.subVertical)),
+        or(
+          isNull(ontologyConcepts.subVerticals),
+          sql`cardinality(${ontologyConcepts.subVerticals}) = 0`,
+          sql`${subVertical} = ANY(${ontologyConcepts.subVerticals})`,
+        ),
       ));
     }
     return db.select().from(ontologyConcepts).where(eq(ontologyConcepts.industryId, industryId));
@@ -3110,6 +3129,72 @@ export class DatabaseStorage implements IStorage {
     const clause = orgId ? and(eq(agentGeneratedFiles.id, id), eq(agentGeneratedFiles.organizationId, orgId)) : eq(agentGeneratedFiles.id, id);
     const [file] = await db.select().from(agentGeneratedFiles).where(clause);
     return file;
+  }
+
+  async getAgentMandate(agentId: string, orgId?: string) {
+    const clause = orgId
+      ? and(eq(agentMandates.agentId, agentId), eq(agentMandates.organizationId, orgId))
+      : eq(agentMandates.agentId, agentId);
+    const [row] = await db.select().from(agentMandates).where(clause);
+    return row;
+  }
+  async upsertAgentMandate(agentId: string, data: Partial<InsertAgentMandate>, orgId?: string) {
+    const existing = await this.getAgentMandate(agentId, orgId);
+    if (existing) {
+      // Editing an already-approved mandate reopens it as draft: an approval
+      // signs a specific set of answers, and letting the content change
+      // silently underneath a prior approval is exactly the drift the whole
+      // design exists to prevent.
+      const reopened = existing.status === "active" ? { status: "draft" as const, approvedBy: null, approvedAt: null } : {};
+      const [updated] = await db
+        .update(agentMandates)
+        .set({ ...data, ...reopened, version: existing.version + 1, updatedAt: new Date() })
+        .where(eq(agentMandates.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db
+      .insert(agentMandates)
+      .values({ ...data, agentId, organizationId: orgId ?? (data as any).organizationId } as InsertAgentMandate)
+      .returning();
+    return created;
+  }
+  async approveAgentMandate(agentId: string, approvedByUserId: string, orgId?: string) {
+    const existing = await this.getAgentMandate(agentId, orgId);
+    if (!existing) return undefined;
+    // Matches S1.1.3's "reject vague mandates before deployment" -- a cheap
+    // required-field check, not the full linter the design describes, but
+    // enough that "active" means someone actually filled the thing in.
+    if (!existing.whatItDoes?.trim() || !existing.mustNever?.trim()) {
+      throw new Error("Mandate needs both \"what it does\" and \"must never\" filled in before it can be approved");
+    }
+    const [approved] = await db
+      .update(agentMandates)
+      .set({ status: "active", approvedBy: approvedByUserId, approvedAt: new Date(), updatedAt: new Date() })
+      .where(eq(agentMandates.id, existing.id))
+      .returning();
+    return approved;
+  }
+
+  async listAgentTaskClasses(agentId: string, orgId?: string) {
+    const clause = orgId
+      ? and(eq(agentTaskClasses.agentId, agentId), eq(agentTaskClasses.organizationId, orgId))
+      : eq(agentTaskClasses.agentId, agentId);
+    return db.select().from(agentTaskClasses).where(clause).orderBy(asc(agentTaskClasses.sortOrder), asc(agentTaskClasses.createdAt));
+  }
+  async createAgentTaskClass(data: InsertAgentTaskClass) {
+    const [created] = await db.insert(agentTaskClasses).values(data).returning();
+    return created;
+  }
+  async updateAgentTaskClass(id: string, data: Partial<InsertAgentTaskClass>, orgId?: string) {
+    const clause = orgId ? and(eq(agentTaskClasses.id, id), eq(agentTaskClasses.organizationId, orgId)) : eq(agentTaskClasses.id, id);
+    const [updated] = await db.update(agentTaskClasses).set(data).where(clause).returning();
+    return updated;
+  }
+  async deleteAgentTaskClass(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(agentTaskClasses.id, id), eq(agentTaskClasses.organizationId, orgId)) : eq(agentTaskClasses.id, id);
+    const result = await db.delete(agentTaskClasses).where(clause).returning({ id: agentTaskClasses.id });
+    return result.length > 0;
   }
 
   async getSkillVersions(skillId: string) {
