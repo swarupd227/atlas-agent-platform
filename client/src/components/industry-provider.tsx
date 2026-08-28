@@ -104,7 +104,7 @@ export const INDUSTRIES: IndustryProfile[] = [
     ontology: "ACORD (Association for Cooperative Operations Research and Development)",
     agentSkills: 86,
     regulatoryFrameworks: ["Solvency II", "IFRS 17", "NAIC Model Laws", "GDPR", "EU AI Act", "ORSA"],
-    subVerticals: ["Property & Casualty", "Life & Annuities", "Health Insurance", "Reinsurance", "InsurTech"],
+    subVerticals: ["Property & Casualty", "Workers Compensation", "Life & Annuities", "Health Insurance", "Reinsurance", "InsurTech"],
     jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
     integrationSystems: [
       { id: "guidewire", name: "Guidewire", category: "Core Insurance", description: "Insurance core system platform for policy, billing, and claims" },
@@ -725,6 +725,9 @@ interface IndustryContextType {
   industry: IndustryProfile | null;
   setIndustry: (id: IndustryId) => void;
   clearIndustry: () => void;
+  /** Sub-vertical within the current industry (e.g. "Workers Compensation" within Insurance). Null = industry-wide. */
+  subVertical: string | null;
+  setSubVertical: (name: string | null) => void;
   isSelected: boolean;
   term: (key: TermKey) => string;
   allIndustries: IndustryProfile[];
@@ -846,6 +849,13 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
     return null;
   });
 
+  const [subVertical, setSubVerticalState] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("almp-sub-vertical") || null;
+    }
+    return null;
+  });
+
   const [workspaceConfig, setWorkspaceConfigState] = useState<WorkspaceConfig>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("almp-workspace-config");
@@ -861,9 +871,24 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
     [industryId],
   );
 
+  const setSubVertical = useCallback((name: string | null) => {
+    setSubVerticalState(name);
+    if (name) {
+      localStorage.setItem("almp-sub-vertical", name);
+    } else {
+      localStorage.removeItem("almp-sub-vertical");
+    }
+  }, []);
+
   const setIndustry = useCallback((id: IndustryId) => {
     setIndustryId(id);
     localStorage.setItem("almp-industry", id);
+    // A sub-vertical belongs to whichever industry was active when it was
+    // picked (e.g. "Workers Compensation" only makes sense under Insurance)
+    // -- switching industries invalidates it rather than silently carrying
+    // it over to a different industry where it has no meaning.
+    setSubVerticalState(null);
+    localStorage.removeItem("almp-sub-vertical");
   }, []);
 
   const clearIndustry = useCallback(() => {
@@ -871,6 +896,8 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("almp-industry");
     localStorage.removeItem("almp-workspace-config");
     setWorkspaceConfigState(DEFAULT_WORKSPACE_CONFIG);
+    setSubVerticalState(null);
+    localStorage.removeItem("almp-sub-vertical");
   }, []);
 
   const setWorkspaceConfig = useCallback((config: WorkspaceConfig) => {
@@ -917,6 +944,8 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
         industry,
         setIndustry,
         clearIndustry,
+        subVertical,
+        setSubVertical,
         isSelected: industryId !== null,
         term,
         allIndustries: INDUSTRIES,

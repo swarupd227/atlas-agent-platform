@@ -3000,7 +3000,16 @@ export class DatabaseStorage implements IStorage {
   async getAllOntologyConcepts() {
     return db.select().from(ontologyConcepts);
   }
-  async getOntologyConcepts(industryId: string) {
+  async getOntologyConcepts(industryId: string, subVertical?: string) {
+    if (subVertical) {
+      // Sub-vertical-specific concepts plus industry-wide ones (subVertical
+      // null), so e.g. a Workers Compensation agent still gets any concept
+      // that applies across all of Insurance, not just WC-tagged ones.
+      return db.select().from(ontologyConcepts).where(and(
+        eq(ontologyConcepts.industryId, industryId),
+        or(eq(ontologyConcepts.subVertical, subVertical), isNull(ontologyConcepts.subVertical)),
+      ));
+    }
     return db.select().from(ontologyConcepts).where(eq(ontologyConcepts.industryId, industryId));
   }
   async getOntologyConcept(id: string) {

@@ -61,7 +61,8 @@ const router = Router();
       if (!industryId) {
         return res.status(400).json({ message: "industryId query parameter is required" });
       }
-      const concepts = await storage.getOntologyConcepts(industryId);
+      const subVertical = (req.query.subVertical as string) || undefined;
+      const concepts = await storage.getOntologyConcepts(industryId, subVertical);
       res.json(concepts);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -83,6 +84,7 @@ const router = Router();
       const bodySchema = z.object({
         id: z.string().min(1),
         industryId: z.string().min(1),
+        subVertical: z.string().min(1).optional(),
         ontologyName: z.string().optional(),
         label: z.string().min(1),
         category: z.string().min(1),
@@ -102,6 +104,7 @@ const router = Router();
       const concept = await storage.createOntologyConcept({
         id: data.id,
         industryId: data.industryId,
+        subVertical: data.subVertical,
         ontologyName: data.ontologyName || "Custom",
         label: data.label,
         category: data.category,
@@ -125,6 +128,7 @@ const router = Router();
         concepts: z.array(z.object({
           id: z.string().min(1),
           industryId: z.string().min(1),
+          subVertical: z.string().min(1).optional(),
           ontologyName: z.string().optional(),
           label: z.string().min(1),
           category: z.string().min(1),
@@ -151,6 +155,7 @@ const router = Router();
           const concept = await storage.createOntologyConcept({
             id: data.id,
             industryId: data.industryId,
+            subVertical: data.subVertical,
             ontologyName: data.ontologyName || "Custom",
             label: data.label,
             category: data.category,

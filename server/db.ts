@@ -1519,6 +1519,14 @@ export async function runStartupMigrations() {
         AND m.integration_id IS NULL;
     `);
 
+    // Optional finer scoping within an industry's ontology (e.g. insurance's
+    // "Property & Casualty" vs "Workers Compensation" vs "Life & Annuities").
+    // Null means industry-wide, matching every pre-existing row.
+    await client.query(`
+      ALTER TABLE ontology_concepts ADD COLUMN IF NOT EXISTS sub_vertical TEXT;
+      CREATE INDEX IF NOT EXISTS idx_ontology_concepts_sub_vertical ON ontology_concepts(sub_vertical);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

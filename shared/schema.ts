@@ -183,6 +183,71 @@ export const updateAgentSchema = insertAgentSchema
   })
   .partial();
 
+/**
+ * MANDATE.md, as data: the written job description an agent's accountable
+ * owner authors, in business language, from which task classes are derived.
+ * One per agent (v1 keeps this 1:1, matching how F1.1's file model is scoped).
+ *
+ * `status`/`approvedBy`/`approvedAt` model a lightweight approve action against
+ * the existing `approve_changes` permission -- not the full PR-diff workflow
+ * the design discusses; that governance-as-PR layer is a later increment, once
+ * a warrant exists downstream to actually bind an approval to.
+ */
+export const agentMandates = pgTable("agent_mandates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").references(() => organizations.id),
+  agentId: varchar("agent_id").notNull().unique().references(() => agents.id),
+  // Defaults to whoever authors it -- outcomeContracts has no stored owner
+  // column today (outcome_owner is a role, not a person recorded per outcome),
+  // so there is nothing real to inherit from yet. Editable afterward.
+  accountableOwnerUserId: varchar("accountable_owner_user_id").references(() => users.id),
+  whatItDoes: text("what_it_does"),
+  mustNever: text("must_never"),
+  whenToAskAHuman: text("when_to_ask_a_human"),
+  whenToStop: text("when_to_stop"),
+  fallbackBehavior: text("fallback_behavior"),
+  howWeKnowItsWorking: text("how_we_know_its_working"),
+  status: text("status").notNull().default("draft"), // draft | active
+  version: integer("version").notNull().default(1),
+  createdBy: varchar("created_by").references(() => users.id),
+  approvedBy: varchar("approved_by").references(() => users.id),
+  approvedAt: timestamp("approved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAgentMandateSchema = createInsertSchema(agentMandates).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertAgentMandate = z.infer<typeof insertAgentMandateSchema>;
+export type AgentMandate = typeof agentMandates.$inferSelect;
+
+/**
+ * A discrete kind of decision one agent makes, with its own review
+ * requirement -- the unit a warrant will eventually scope to, once that
+ * primitive exists. `derivedFrom`/`sourceRef` keep provenance: a task class
+ * seeded from a Process Flow node's description should be traceable back to
+ * it, not indistinguishable from one typed in by hand.
+ */
+export const agentTaskClasses = pgTable("agent_task_classes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").references(() => organizations.id),
+  agentId: varchar("agent_id").notNull().references(() => agents.id),
+  mandateId: varchar("mandate_id").references(() => agentMandates.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  // A RoleId from server/permissions.ts, or null when the class needs no
+  // human review at all. Enforcement (blocking on an unqualified reviewer)
+  // is later work -- this column exists so that work has something to read.
+  requiredReviewerRole: text("required_reviewer_role"),
+  derivedFrom: text("derived_from").notNull().default("manual"), // manual | wizard | process_flow
+  sourceRef: text("source_ref"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentTaskClassSchema = createInsertSchema(agentTaskClasses).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertAgentTaskClass = z.infer<typeof insertAgentTaskClassSchema>;
+export type AgentTaskClass = typeof agentTaskClasses.$inferSelect;
+
 export const agentVersions = pgTable("agent_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   agentId: varchar("agent_id").notNull(),
@@ -1668,6 +1733,12 @@ export type RegulatoryChange = typeof regulatoryChanges.$inferSelect;
 export const ontologyConcepts = pgTable("ontology_concepts", {
   id: varchar("id").primaryKey(),
   industryId: text("industry_id").notNull(),
+  // Optional finer scoping within an industry (e.g. insurance's "Property &
+  // Casualty" vs "Workers Compensation" vs "Life & Annuities"). Null means the
+  // concept applies to the whole industry -- every pre-existing row stays
+  // null and keeps matching industry-wide queries; only concepts curated for
+  // a specific sub-vertical set this.
+  subVertical: text("sub_vertical"),
   ontologyName: text("ontology_name").notNull(),
   label: text("label").notNull(),
   category: text("category").notNull(),

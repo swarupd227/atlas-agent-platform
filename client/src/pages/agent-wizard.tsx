@@ -725,7 +725,7 @@ const INDUSTRY_CONTEXT_CONFIG: Record<string, {
 };
 
 export default function AgentWizard() {
-  const { industry } = useIndustry();
+  const { industry, subVertical } = useIndustry();
   const [currentStep, setCurrentStep] = useState(0);
   const [wizardState, setWizardState] = useState<WizardState>({ ...defaultWizardState });
   const [creationPath, setCreationPath] = useState<CreationPath>(null);
@@ -919,7 +919,7 @@ export default function AgentWizard() {
 
 
   const { data: ontologyConcepts } = useQuery<Array<{ id: string; label: string; category: string; description: string; synonyms: string[] | null }>>({
-    queryKey: [`/api/ontology/concepts?industryId=${encodeURIComponent(wizardState.industryId || "")}`],
+    queryKey: [`/api/ontology/concepts?industryId=${encodeURIComponent(wizardState.industryId || "")}${subVertical ? `&subVertical=${encodeURIComponent(subVertical)}` : ""}`],
     enabled: !!wizardState.industryId,
   });
 
@@ -930,7 +930,9 @@ export default function AgentWizard() {
       if (!grouped[c.category]) grouped[c.category] = [];
       grouped[c.category].push({ label: c.label, description: c.description, synonyms: c.synonyms });
     }
-    let text = "## Domain Terminology\n\nYou MUST use the following industry-standard terminology when reasoning about and responding to tasks in this domain. These terms define the precise meaning of concepts in your operating context.\n";
+    let text = subVertical
+      ? `## Domain Terminology (${subVertical})\n\nYou MUST use the following industry-standard terminology when reasoning about and responding to tasks in this domain. These terms define the precise meaning of concepts in your operating context, scoped to the ${subVertical} sub-vertical.\n`
+      : "## Domain Terminology\n\nYou MUST use the following industry-standard terminology when reasoning about and responding to tasks in this domain. These terms define the precise meaning of concepts in your operating context.\n";
     for (const [category, concepts] of Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0]))) {
       text += `\n### ${category}\n`;
       for (const c of concepts.sort((a, b) => a.label.localeCompare(b.label))) {
@@ -942,7 +944,7 @@ export default function AgentWizard() {
       }
     }
     return text.trim();
-  }, [ontologyConcepts]);
+  }, [ontologyConcepts, subVertical]);
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, unknown>) => {
