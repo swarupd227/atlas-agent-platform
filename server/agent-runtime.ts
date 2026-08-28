@@ -9,13 +9,13 @@ import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
-import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
+import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { RunSpanCollector } from "./run-spans";
 import { evaluateRule } from "./rule-evaluator";
 import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES } from "./services/pii/pii-masking-engine";
-import type { RuleGroup } from "@shared/schema";
+import type { RuleGroup, OutputContract } from "@shared/schema";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -1514,6 +1514,27 @@ After receiving tool results, provide a structured analysis with key findings, s
   // Hoisted conversational response — replaces (steps as any).__conversationalResponse pattern
   let conversationalResponseHoisted: string | undefined;
 
+  // The planning call below is dual-purpose: its tool_choice is left at the
+  // provider default "auto" so the model can freely dispatch a real MCP tool
+  // instead of answering directly. A forced structured-output schema can't
+  // coexist with that on the same request (both providers accept exactly one
+  // tool_choice target), so vendor-native strict decoding is only safe to
+  // attach here when no tools are on offer at all -- in that case this call
+  // is guaranteed to land on the "no tools needed" branch below anyway, since
+  // nothing was offered for it to call. When tools ARE bound, this call keeps
+  // today's legacy behavior; the "no tools needed" branch re-fetches the
+  // contract itself for that case (tools were available but unused this turn).
+  let earlyNoToolsContract: OutputContract | undefined;
+  if (canonicalTools.length === 0 && options?.conversational !== true) {
+    const noToolsContractId = runtimeConfig?.outputContractId as string | undefined;
+    earlyNoToolsContract = noToolsContractId
+      ? await storage.getOutputContract(noToolsContractId)
+      : (await storage.getOutputContracts(agentId))[0];
+  }
+  const earlyJsonSchemaOption = earlyNoToolsContract
+    ? buildStrictJsonSchemaOption(earlyNoToolsContract, llmProvider.providerName)
+    : undefined;
+
   try {
     const planCallStartMs = performance.now();
     const planResult = await (onProgress
@@ -1527,6 +1548,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             tools: canonicalTools.length > 0 ? canonicalTools : undefined,
             maxTokens: 4096,
             requestedProvider: providerName,
+            ...(earlyJsonSchemaOption ? { jsonSchema: earlyJsonSchemaOption } : {}),
             ...(getCodeExecConfig() ?? {}),
           },
           (chunk) => {
@@ -1544,6 +1566,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             tools: canonicalTools.length > 0 ? canonicalTools : undefined,
             maxTokens: 4096,
             requestedProvider: providerName,
+            ...(earlyJsonSchemaOption ? { jsonSchema: earlyJsonSchemaOption } : {}),
             ...(getCodeExecConfig() ?? {}),
           },
           [llmProvider, fallbackLlmProvider],
@@ -1569,6 +1592,19 @@ After receiving tool results, provide a structured analysis with key findings, s
     let currentContent = planResult.content;
     let currentToolCalls: CanonicalToolCall[] = planResult.toolCalls;
     let currentRawMessage = planResult.rawAssistantMessage;
+
+    // Anthropic's forced-schema tool_choice (see earlyJsonSchemaOption above)
+    // returns its JSON as a tool_use block -- already surfaced via
+    // planResult.content -- but that block is still present in .toolCalls
+    // like any other tool call. Strip it here so it isn't mistaken for a real
+    // MCP tool request: left in place, currentToolCalls.length > 0 would
+    // route this turn into the tool-dispatch loop below, which can't resolve
+    // "contract_<id>" against availableTools and would fail the step, pollute
+    // toolsSelected/declaredScope, and skip the contract-enforcement branch
+    // this was meant to feed.
+    if (earlyJsonSchemaOption && currentToolCalls.length > 0 && currentToolCalls[0].name === earlyJsonSchemaOption.name) {
+      currentToolCalls = [];
+    }
 
     // Intent-based authorization: when enabled, the tools the agent's OWN
     // initial planning call names become the declared scope for the rest of
@@ -1621,9 +1657,9 @@ After receiving tool results, provide a structured analysis with key findings, s
         const isConversationalNoTools = options?.conversational === true;
         if (!isConversationalNoTools) {
           const noToolsContractId = runtimeConfig?.outputContractId as string | undefined;
-          const noToolsContract = noToolsContractId
+          const noToolsContract = earlyNoToolsContract ?? (noToolsContractId
             ? await storage.getOutputContract(noToolsContractId)
-            : (await storage.getOutputContracts(agentId))[0];
+            : (await storage.getOutputContracts(agentId))[0]);
           if (noToolsContract) {
             // Contract found: enforce() handles metadata recording — do NOT also call recordLlmCallMetadata
             const noToolsEnforced = await outputContractEnforcer.enforce(noToolsContract, currentContent, {
@@ -1640,6 +1676,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
               provider: options?.modelProvider ?? "openai",
               model: modelName,
+              decodePath: planResult.decodePath,
             });
             noToolsOutput = { ...noToolsEnforced.output };
             noToolsOutput.contractValidationStatus = noToolsEnforced.validationStatus;
@@ -2064,6 +2101,22 @@ After receiving tool results, provide a structured analysis with key findings, s
           ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),
           { role: "user" as const, content: analysisPrompt },
         ];
+
+        // Fetched here (before the generating call) rather than after, so its
+        // schema can be attached as vendor-native strict decoding on the call
+        // itself -- this call carries no `tools`, so unlike the planning call
+        // there's no tool_choice contention to worry about. Reused below by
+        // the enforcement block instead of re-fetching.
+        const outputContractId = runtimeConfig?.outputContractId as string | undefined;
+        const analysisContract: OutputContract | undefined = !isConversational
+          ? (outputContractId
+              ? await storage.getOutputContract(outputContractId)
+              : (await storage.getOutputContracts(agentId))[0])
+          : undefined;
+        const analysisJsonSchemaOption = analysisContract
+          ? buildStrictJsonSchemaOption(analysisContract, llmProvider.providerName)
+          : undefined;
+
         const llmCallStartMs = performance.now();
         const analysisResult = await (onProgress && isConversational
           ? streamCompleteWithFallback(
@@ -2083,6 +2136,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                 model: modelName,
                 maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
                 ...(isConversational ? {} : { responseFormat: "json" as const }),
+                ...(analysisJsonSchemaOption ? { jsonSchema: analysisJsonSchemaOption } : {}),
               },
               [llmProvider, fallbackLlmProvider],
             ));
@@ -2098,17 +2152,15 @@ After receiving tool results, provide a structured analysis with key findings, s
         // GAP5: Output Contract Enforcement
         // Resolution order: explicit runtimeConfig.outputContractId → most-recent contract for agentId
         // Enforcement scope: final analysis LLM call only (planning/continuation tracked via recordLlmCallMetadata)
-        const outputContractId = runtimeConfig?.outputContractId as string | undefined;
         let generationMetadataId: string | undefined;
         let contractEnforced = false;
 
         let analysis: Record<string, unknown> = {};
         if (!isConversational) {
           try {
-            // Resolve the active contract: explicit ID first, then agent's most-recent
-            const contract = outputContractId
-              ? await storage.getOutputContract(outputContractId)
-              : (await storage.getOutputContracts(agentId))[0];
+            // Already resolved above (before the generating call), so its schema
+            // could be attached as vendor-native strict decoding on that call.
+            const contract = analysisContract;
             if (contract) {
               const enforcedResult = await outputContractEnforcer.enforce(contract, rawContent, {
                 agentId,
@@ -2127,6 +2179,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                 },
                 provider: options?.modelProvider ?? "openai",
                 model: modelName,
+                decodePath: analysisResult.decodePath,
               });
               analysis = { ...enforcedResult.output };
               generationMetadataId = enforcedResult.generationMetadataId;

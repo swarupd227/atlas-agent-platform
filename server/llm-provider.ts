@@ -60,6 +60,21 @@ export interface LLMCompletionOptions {
   anthropicContainer?: { skills?: Array<{ type: string; skill_id: string; version?: string }>; id?: string };
   /** anthropic-beta header value(s) required by anthropicServerTools/anthropicContainer, e.g. ["code-execution-2025-08-25","skills-2025-10-02"]. */
   anthropicBetas?: string[];
+  /**
+   * Requests vendor-native structured-output enforcement instead of the
+   * legacy responseFormat:"json" (OpenAI json_object mode / Anthropic
+   * prompt-instructed JSON). OpenAI: sent as response_format:{type:"json_schema",
+   * strict:true}, which grammar-constrains decoding. Anthropic: translated into
+   * a single forced tool_choice (a weaker guarantee -- it forces *a* call to
+   * the tool, not token-level constrained decoding -- so the Ajv repair loop
+   * downstream stays meaningfully load-bearing there). Ignored when
+   * anthropicContainer is set (untested combination with code execution).
+   * Callers should pre-check schema compatibility for OpenAI via
+   * checkStrictModeCompatible() -- an incompatible schema still triggers a
+   * one-time fallback to legacy json_object mode at the OpenAI call site, but
+   * paying for that round trip isn't necessary if checked up front.
+   */
+  jsonSchema?: { name: string; schema: Record<string, any> };
 }
 
 export interface LLMCompletionResult {
@@ -91,6 +106,17 @@ export interface LLMCompletionResult {
    * turns internally before returning (see MAX_PAUSE_TURN_CONTINUATIONS).
    */
   stopReason?: string;
+  /**
+   * Only set when the caller passed LLMCompletionOptions.jsonSchema. Reports
+   * which decode path actually served the request -- "strict_native" (OpenAI
+   * json_schema strict mode, or Anthropic forced tool_choice) vs
+   * "legacy_prompted" (fell back to json_object/prompt-instructed JSON, e.g.
+   * because the schema was rejected as strict-incompatible, or
+   * anthropicContainer was set). Lets callers distinguish "strict-decoded,
+   * zero repairs needed" from "legacy-decoded, happened to validate" in
+   * generation_metadata_records.
+   */
+  decodePath?: "strict_native" | "legacy_prompted";
 }
 
 export interface LLMEmbeddingResult {
@@ -346,6 +372,20 @@ function buildProviderResultFields(
   };
 }
 
+/**
+ * True when OpenAI rejected the request itself (schema shape, param
+ * combination, etc.) rather than a transient/auth/network failure. Used to
+ * decide whether a json_schema strict-mode request is worth retrying once as
+ * legacy json_object -- a compat-checked schema should rarely hit this, but
+ * OpenAI's strict-mode keyword restrictions aren't fully enumerable, so this
+ * is the last-resort safety net for schemas the compat checker missed.
+ */
+function isSchemaRejectionError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const status = (err as Error & { status?: number }).status;
+  return status === 400;
+}
+
 // ---------------------------------------------------------------------------
 // Provider interface
 // ---------------------------------------------------------------------------
@@ -418,10 +458,18 @@ class OpenAIProvider implements LLMProvider {
           }))
         : undefined;
 
+    const buildResponseFormat = (useStrictSchema: boolean) =>
+      useStrictSchema && options?.jsonSchema
+        ? { response_format: { type: "json_schema" as const, json_schema: { name: options.jsonSchema.name, schema: options.jsonSchema.schema, strict: true } } }
+        : options?.responseFormat === "json"
+          ? { response_format: { type: "json_object" as const } }
+          : {};
+
     cbCheck(this.providerName);
 
     const client = await this.getClient();
     let response: OpenAI.ChatCompletion;
+    let usedStrictSchema = !!options?.jsonSchema;
     try {
       response = await withRetry(
         () =>
@@ -431,14 +479,37 @@ class OpenAIProvider implements LLMProvider {
             tools: openaiTools,
             max_completion_tokens: options?.maxTokens || 4096,
             ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-            ...(options?.responseFormat === "json" ? { response_format: { type: "json_object" as const } } : {}),
+            ...buildResponseFormat(true),
           }),
         this.providerName,
       );
       cbRecordSuccess(this.providerName);
     } catch (err) {
-      cbRecordFailure(this.providerName);
-      throw err;
+      if (usedStrictSchema && isSchemaRejectionError(err)) {
+        console.warn(`[llm-provider] OpenAI rejected json_schema strict mode for "${options?.jsonSchema?.name}", falling back to json_object: ${err instanceof Error ? err.message : String(err)}`);
+        usedStrictSchema = false;
+        try {
+          response = await withRetry(
+            () =>
+              client.chat.completions.create({
+                model,
+                messages: openaiMessages,
+                tools: openaiTools,
+                max_completion_tokens: options?.maxTokens || 4096,
+                ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+                ...buildResponseFormat(false),
+              }),
+            this.providerName,
+          );
+          cbRecordSuccess(this.providerName);
+        } catch (err2) {
+          cbRecordFailure(this.providerName);
+          throw err2;
+        }
+      } else {
+        cbRecordFailure(this.providerName);
+        throw err;
+      }
     }
 
     const choice = response.choices[0];
@@ -466,6 +537,7 @@ class OpenAIProvider implements LLMProvider {
       tokensUsed: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
       costUsd: estimateCost(promptTokens, completionTokens, OPENAI_MODELS, model),
       rawAssistantMessage: choice?.message,
+      ...(options?.jsonSchema ? { decodePath: usedStrictSchema ? "strict_native" as const : "legacy_prompted" as const } : {}),
       ...buildProviderResultFields(this.providerName, options),
     };
   }
@@ -510,6 +582,13 @@ class OpenAIProvider implements LLMProvider {
           }))
         : undefined;
 
+    const buildResponseFormat = (useStrictSchema: boolean) =>
+      useStrictSchema && options?.jsonSchema
+        ? { response_format: { type: "json_schema" as const, json_schema: { name: options.jsonSchema.name, schema: options.jsonSchema.schema, strict: true } } }
+        : options?.responseFormat === "json"
+          ? { response_format: { type: "json_object" as const } }
+          : {};
+
     cbCheck(this.providerName);
 
     const client = await this.getClient();
@@ -518,22 +597,44 @@ class OpenAIProvider implements LLMProvider {
     let promptTokens = 0;
     let completionTokens = 0;
     let totalTokens = 0;
+    let usedStrictSchema = !!options?.jsonSchema;
 
     try {
-      const stream = await withRetry(
-        () =>
-          client.chat.completions.create({
-            model,
-            messages: openaiMessages,
-            tools: openaiTools,
-            max_completion_tokens: options?.maxTokens || 4096,
-            stream: true,
-            stream_options: { include_usage: true },
-            ...(options?.responseFormat === "json" ? { response_format: { type: "json_object" as const } } : {}),
-            ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-          }),
-        this.providerName,
-      );
+      let stream;
+      try {
+        stream = await withRetry(
+          () =>
+            client.chat.completions.create({
+              model,
+              messages: openaiMessages,
+              tools: openaiTools,
+              max_completion_tokens: options?.maxTokens || 4096,
+              stream: true,
+              stream_options: { include_usage: true },
+              ...buildResponseFormat(true),
+              ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+            }),
+          this.providerName,
+        );
+      } catch (err) {
+        if (!(usedStrictSchema && isSchemaRejectionError(err))) throw err;
+        console.warn(`[llm-provider] OpenAI rejected json_schema strict mode for "${options?.jsonSchema?.name}", falling back to json_object: ${err instanceof Error ? err.message : String(err)}`);
+        usedStrictSchema = false;
+        stream = await withRetry(
+          () =>
+            client.chat.completions.create({
+              model,
+              messages: openaiMessages,
+              tools: openaiTools,
+              max_completion_tokens: options?.maxTokens || 4096,
+              stream: true,
+              stream_options: { include_usage: true },
+              ...buildResponseFormat(false),
+              ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+            }),
+          this.providerName,
+        );
+      }
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
@@ -589,6 +690,7 @@ class OpenAIProvider implements LLMProvider {
           function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
         })),
       },
+      ...(options?.jsonSchema ? { decodePath: usedStrictSchema ? "strict_native" as const : "legacy_prompted" as const } : {}),
       ...buildProviderResultFields(this.providerName, options),
     };
   }
@@ -776,23 +878,40 @@ class AnthropicProvider implements LLMProvider {
       anthropicMessages.push({ role: "user", content: "Hello" });
     }
 
-    const anthropicTools: Array<Anthropic.Tool | Record<string, unknown>> | undefined = (() => {
-      const custom = options?.tools && options.tools.length > 0
-        ? options.tools.map((t) => ({
-            name: t.name,
-            description: t.description,
-            input_schema: {
-              type: "object" as const,
-              ...(t.parameters && typeof t.parameters === "object" ? t.parameters : {}),
-            },
-          }))
-        : [];
-      const server = options?.anthropicServerTools ?? [];
-      const all = [...custom, ...server];
-      return all.length > 0 ? all : undefined;
-    })();
+    // A forced schema tool_choice is a single-target mechanism -- it can't
+    // coexist with real tool dispatch or code-execution server tools in the
+    // same request, so it takes over the tools list entirely rather than
+    // merging. Callers are expected to only pass jsonSchema at call sites with
+    // no other tools active (see agent-runtime.ts scoping); this guard is the
+    // defensive backstop. anthropicContainer is excluded outright (untested
+    // combination with code execution).
+    const forcedSchemaTool = options?.jsonSchema && !options?.anthropicContainer
+      ? {
+          name: options.jsonSchema.name,
+          description: `Return the final output matching the ${options.jsonSchema.name} schema.`,
+          input_schema: { type: "object" as const, ...options.jsonSchema.schema },
+        }
+      : undefined;
 
-    if (options?.responseFormat === "json" && systemPrompt) {
+    const anthropicTools: Array<Anthropic.Tool | Record<string, unknown>> | undefined = forcedSchemaTool
+      ? [forcedSchemaTool]
+      : (() => {
+          const custom = options?.tools && options.tools.length > 0
+            ? options.tools.map((t) => ({
+                name: t.name,
+                description: t.description,
+                input_schema: {
+                  type: "object" as const,
+                  ...(t.parameters && typeof t.parameters === "object" ? t.parameters : {}),
+                },
+              }))
+            : [];
+          const server = options?.anthropicServerTools ?? [];
+          const all = [...custom, ...server];
+          return all.length > 0 ? all : undefined;
+        })();
+
+    if (options?.responseFormat === "json" && systemPrompt && !forcedSchemaTool) {
       systemPrompt += "\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text outside the JSON object.";
     }
 
@@ -832,6 +951,7 @@ class AnthropicProvider implements LLMProvider {
                 ...(systemPrompt ? { system: systemPrompt } : {}),
                 messages: anthropicMessages,
                 ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
+                ...(forcedSchemaTool ? { tool_choice: { type: "tool" as const, name: forcedSchemaTool.name } } : {}),
                 ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...(container ? { container: container as any } : {}),
               },
@@ -879,8 +999,14 @@ class AnthropicProvider implements LLMProvider {
       anthropicMessages.push({ role: "assistant", content: response.content as any });
     }
 
+    // A forced tool_choice returns the JSON as a tool_use input block, not
+    // text -- surface it via .content so callers (OutputContractEnforcer,
+    // agent-runtime) keep treating .content as the JSON string regardless of
+    // which decode path served the request.
+    const forcedToolCall = forcedSchemaTool ? toolCalls.find((tc) => tc.name === forcedSchemaTool.name) : undefined;
+
     return {
-      content: textContent,
+      content: forcedToolCall ? JSON.stringify(forcedToolCall.arguments) : textContent,
       toolCalls,
       tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
       costUsd,
@@ -896,6 +1022,7 @@ class AnthropicProvider implements LLMProvider {
       ...(codeExecutionTrace.length ? { codeExecutionTrace } : {}),
       ...(containerId ? { containerId } : {}),
       ...(stopReason ? { stopReason } : {}),
+      ...(options?.jsonSchema ? { decodePath: forcedToolCall ? "strict_native" as const : "legacy_prompted" as const } : {}),
       ...buildProviderResultFields(this.providerName, options),
     };
   }
@@ -954,23 +1081,35 @@ class AnthropicProvider implements LLMProvider {
       anthropicMessages.push({ role: "user", content: "Hello" });
     }
 
-    const anthropicTools: Array<Anthropic.Tool | Record<string, unknown>> | undefined = (() => {
-      const custom = options?.tools && options.tools.length > 0
-        ? options.tools.map((t) => ({
-            name: t.name,
-            description: t.description,
-            input_schema: {
-              type: "object" as const,
-              ...(t.parameters && typeof t.parameters === "object" ? t.parameters : {}),
-            },
-          }))
-        : [];
-      const server = options?.anthropicServerTools ?? [];
-      const all = [...custom, ...server];
-      return all.length > 0 ? all : undefined;
-    })();
+    // See complete()'s identical comment -- forced schema tool_choice takes
+    // over the tools list rather than merging with real tool dispatch.
+    const forcedSchemaTool = options?.jsonSchema && !options?.anthropicContainer
+      ? {
+          name: options.jsonSchema.name,
+          description: `Return the final output matching the ${options.jsonSchema.name} schema.`,
+          input_schema: { type: "object" as const, ...options.jsonSchema.schema },
+        }
+      : undefined;
 
-    if (options?.responseFormat === "json" && systemPrompt) {
+    const anthropicTools: Array<Anthropic.Tool | Record<string, unknown>> | undefined = forcedSchemaTool
+      ? [forcedSchemaTool]
+      : (() => {
+          const custom = options?.tools && options.tools.length > 0
+            ? options.tools.map((t) => ({
+                name: t.name,
+                description: t.description,
+                input_schema: {
+                  type: "object" as const,
+                  ...(t.parameters && typeof t.parameters === "object" ? t.parameters : {}),
+                },
+              }))
+            : [];
+          const server = options?.anthropicServerTools ?? [];
+          const all = [...custom, ...server];
+          return all.length > 0 ? all : undefined;
+        })();
+
+    if (options?.responseFormat === "json" && systemPrompt && !forcedSchemaTool) {
       systemPrompt += "\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text outside the JSON object.";
     }
 
@@ -1011,6 +1150,7 @@ class AnthropicProvider implements LLMProvider {
                 ...(systemPrompt ? { system: systemPrompt } : {}),
                 messages: anthropicMessages,
                 ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
+                ...(forcedSchemaTool ? { tool_choice: { type: "tool" as const, name: forcedSchemaTool.name } } : {}),
                 ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...(container ? { container: container as any } : {}),
               },
@@ -1061,8 +1201,12 @@ class AnthropicProvider implements LLMProvider {
 
       cbRecordSuccess(this.providerName);
 
+      // See complete()'s identical comment -- a forced tool_choice returns the
+      // JSON as a tool_use input block, not streamed text.
+      const forcedToolCall = forcedSchemaTool ? toolCalls.find((tc) => tc.name === forcedSchemaTool.name) : undefined;
+
       return {
-        content: fullContent,
+        content: forcedToolCall ? JSON.stringify(forcedToolCall.arguments) : fullContent,
         toolCalls,
         tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
         costUsd,
@@ -1078,6 +1222,7 @@ class AnthropicProvider implements LLMProvider {
         ...(codeExecutionTrace.length ? { codeExecutionTrace } : {}),
         ...(containerId ? { containerId } : {}),
         ...(stopReason ? { stopReason } : {}),
+        ...(options?.jsonSchema ? { decodePath: forcedToolCall ? "strict_native" as const : "legacy_prompted" as const } : {}),
         ...buildProviderResultFields(this.providerName, options),
       };
     } catch (err) {

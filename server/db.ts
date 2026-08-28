@@ -1578,6 +1578,21 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_ontology_concepts_sub_verticals ON ontology_concepts USING GIN(sub_verticals);
     `);
 
+    // Vendor-native structured-output decoding (OpenAI json_schema strict mode /
+    // Anthropic forced tool_choice) as a first line of defense in front of the
+    // existing Ajv repair loop -- see server/llm-provider.ts LLMCompletionOptions
+    // .jsonSchema and server/services/output-contract-enforcer.ts
+    // buildStrictJsonSchemaOption(). Defaults to FALSE (opt-in), not the `true`
+    // default in shared/schema.ts's Drizzle definition (that default only governs
+    // local dev via `db:push`, which must never be run against this database --
+    // see migrate.sh) -- flipping every existing contract to a new decode path
+    // the moment this column appears would be a blast-radius surprise. Enable it
+    // per-contract via UPDATE once validated, not via a global default.
+    await client.query(`
+      ALTER TABLE output_contracts ADD COLUMN IF NOT EXISTS strict_decoding_enabled BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE generation_metadata_records ADD COLUMN IF NOT EXISTS decode_path VARCHAR NOT NULL DEFAULT 'legacy_prompted';
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

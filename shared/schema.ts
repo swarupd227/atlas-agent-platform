@@ -3071,12 +3071,13 @@ export const outputContracts = pgTable("output_contracts", {
   normalizers: jsonb("normalizers").default(sql`'[]'::jsonb`),
   fallbackOutput: jsonb("fallback_output"),
   enforcementMode: varchar("enforcement_mode").notNull().default("strict"),
-  // Opt-out escape hatch for vendor-native structured-output decoding (OpenAI
-  // json_schema strict mode / Anthropic forced tool_choice), applied at the
-  // generating LLM call before this contract's enforce()/repair loop ever
-  // runs. Defaults on since it only reduces how often repair triggers -- the
-  // Ajv path below is unchanged either way.
-  strictDecodingEnabled: boolean("strict_decoding_enabled").notNull().default(true),
+  // Opt-in for vendor-native structured-output decoding (OpenAI json_schema
+  // strict mode / Anthropic forced tool_choice), applied at the generating LLM
+  // call before this contract's enforce()/repair loop ever runs. Defaults off:
+  // every existing contract keeps today's behavior until explicitly flipped
+  // per-contract, rather than all of production switching decode paths the
+  // moment this column exists. The Ajv path below is unchanged either way.
+  strictDecodingEnabled: boolean("strict_decoding_enabled").notNull().default(false),
   repairEnabled: boolean("repair_enabled").notNull().default(true),
   maxRepairAttempts: integer("max_repair_attempts").notNull().default(1),
   repairTemperature: real("repair_temperature").default(0.0),

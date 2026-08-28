@@ -3,6 +3,7 @@ import Ajv2020 from "ajv/dist/2020";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { completeWithFallback, getProvider } from "../llm-provider";
+import { checkStrictModeCompatible } from "./json-schema-strict-compat";
 import type { OutputContract } from "../../shared/schema";
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
@@ -38,6 +39,13 @@ export interface EnforcementContext {
   model?: string;
   traceId?: string;
   spanId?: string;
+  /**
+   * Which decode path the generating LLM call actually used --
+   * LLMCompletionResult.decodePath from that call. Purely observational: the
+   * Ajv validation/repair loop below runs identically either way. Defaults to
+   * "legacy_prompted" in recorded metadata when omitted.
+   */
+  decodePath?: "strict_native" | "legacy_prompted";
 }
 
 export interface SectionScore {
@@ -87,6 +95,42 @@ export interface EnforcementResult {
   /** True only for strict_with_interrupt mode — caller must mark step as failed for human review.
    *  Monitor mode also produces validationStatus="failed" but sets shouldInterrupt=false (logging only). */
   shouldInterrupt?: boolean;
+  /** Echoes EnforcementContext.decodePath, defaulted -- see there for what it means. */
+  decodePath: "strict_native" | "legacy_prompted";
+}
+
+/**
+ * Builds the LLMCompletionOptions.jsonSchema value for a contract, or
+ * undefined when strict decoding shouldn't be attempted -- the contract hasn't
+ * opted in (strictDecodingEnabled:true), isn't a json_schema contract, has no
+ * schema, or (OpenAI only) the schema fails the strict-mode structural check.
+ * Opt-in, not opt-out: strictDecodingEnabled defaults to false at the DB level
+ * (see runStartupMigrations() in server/db.ts) precisely so every existing
+ * contract keeps today's decode path until flipped per-contract, rather than
+ * every production agent switching at once the moment this column exists.
+ * Anthropic has no equivalent structural restriction on tool input_schema, so
+ * the compat check only gates the OpenAI path. Shared by agent-runtime.ts
+ * (the generating call) and attemptRepair() below (the repair call), so both
+ * apply the same eligibility rule.
+ */
+export function buildStrictJsonSchemaOption(
+  contract: OutputContract,
+  providerName: string,
+): { name: string; schema: Record<string, any> } | undefined {
+  if (contract.schemaType !== "json_schema") return undefined;
+  if (contract.strictDecodingEnabled !== true) return undefined;
+  const schema = contract.schemaDefinition as Record<string, any> | null;
+  if (!schema || Object.keys(schema).length === 0) return undefined;
+
+  if (providerName === "openai") {
+    const compat = checkStrictModeCompatible(schema);
+    if (!compat.compatible) {
+      console.info(`[output-contract-enforcer] Contract ${contract.id} schema is not OpenAI strict-mode compatible (${compat.reason}); using legacy json_object mode.`);
+      return undefined;
+    }
+  }
+
+  return { name: `contract_${contract.id}`.replace(/[^a-zA-Z0-9_-]/g, "_"), schema };
 }
 
 export class StructuredOutputValidationError extends Error {
@@ -219,6 +263,7 @@ export class OutputContractEnforcer {
       qualityDetails,
       generationMetadataId: metadataId,
       tokenUsage: context.tokenUsage,
+      decodePath: context.decodePath ?? "legacy_prompted",
     };
   }
 
@@ -258,6 +303,7 @@ export class OutputContractEnforcer {
         validationStatus: "failed",
         repairAttempts: 0,
         validationErrors: [`JSON parse error: ${msg}`],
+        decodePath: "legacy_prompted",
       };
     }
 
@@ -272,6 +318,7 @@ export class OutputContractEnforcer {
         validationStatus: "failed",
         repairAttempts: 0,
         validationErrors: schemaErrors,
+        decodePath: "legacy_prompted",
       };
     }
 
@@ -296,6 +343,7 @@ export class OutputContractEnforcer {
       validationErrors,
       qualityScore,
       qualityDetails,
+      decodePath: "legacy_prompted",
     };
   }
 
@@ -453,6 +501,7 @@ export class OutputContractEnforcer {
       const fallback = llmProvider.providerName === "openai" ? getProvider("anthropic") : getProvider("openai");
 
       const systemPrompt = `${context.promptSpec.text}\n\n${repairSuffix}`;
+      const jsonSchemaOption = buildStrictJsonSchemaOption(contract, llmProvider.providerName);
       const repairResponse = await completeWithFallback(
         [
           { role: "system", content: systemPrompt },
@@ -463,6 +512,7 @@ export class OutputContractEnforcer {
           temperature: contract.repairTemperature ?? 0.0,
           responseFormat: "json",
           maxTokens: 4096,
+          ...(jsonSchemaOption ? { jsonSchema: jsonSchemaOption } : {}),
         },
         [llmProvider, fallback],
       );
@@ -514,6 +564,7 @@ export class OutputContractEnforcer {
           validationErrors,
           generationMetadataId: metadataId,
           tokenUsage,
+          decodePath: context.decodePath ?? "legacy_prompted",
         };
 
       case "lenient": {
@@ -525,6 +576,7 @@ export class OutputContractEnforcer {
           validationErrors,
           generationMetadataId: metadataId,
           tokenUsage,
+          decodePath: context.decodePath ?? "legacy_prompted",
         };
       }
 
@@ -540,6 +592,7 @@ export class OutputContractEnforcer {
           validationErrors,
           generationMetadataId: metadataId,
           tokenUsage,
+          decodePath: context.decodePath ?? "legacy_prompted",
         };
 
       default:
@@ -664,6 +717,7 @@ export class OutputContractEnforcer {
       const { context, validationStatus, repairAttempts, validationErrors, qualityScore, qualityDetails, validationLatencyMs } = args;
       const promptSha256 = createHash("sha256").update(context.promptSpec.text).digest("hex");
       const totalLatencyMs = context.llmLatencyMs + validationLatencyMs;
+      const decodePath = context.decodePath ?? "legacy_prompted";
 
       const result = await db.execute(sql`
         INSERT INTO generation_metadata_records (
@@ -671,7 +725,7 @@ export class OutputContractEnforcer {
           provider, model,
           prompt_id, prompt_version, prompt_sha256,
           prompt_tokens, completion_tokens, total_tokens,
-          validation_status, repair_attempts, validation_errors,
+          validation_status, decode_path, repair_attempts, validation_errors,
           quality_score, quality_details,
           trace_id, span_id,
           llm_latency_ms, validation_latency_ms, total_latency_ms
@@ -688,6 +742,7 @@ export class OutputContractEnforcer {
           ${context.tokenUsage.completionTokens},
           ${context.tokenUsage.promptTokens + context.tokenUsage.completionTokens},
           ${validationStatus},
+          ${decodePath},
           ${repairAttempts},
           ${JSON.stringify(validationErrors)}::jsonb,
           ${qualityScore ?? null},
