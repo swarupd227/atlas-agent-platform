@@ -2073,6 +2073,7 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
             { value: "traces", label: "Runs & Traces" },
             { value: "knowledge-base", label: "Knowledge Base" },
             { value: "skills", label: "Skills" },
+            { value: "mandate", label: "Mandate" },
             { value: "mcp-servers", label: "MCP Servers" },
             { value: "releases", label: "Releases" },
           ];
@@ -5529,6 +5530,10 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
           </TabsContent>
         )}
 
+        <TabsContent value="mandate" className="flex flex-col gap-4 mt-0" data-testid="tab-content-mandate">
+          <MandateTab agent={agent} />
+        </TabsContent>
+
         <TabsContent value="mcp-servers" className="flex flex-col gap-4 mt-0" data-testid="tab-content-mcp-servers">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-2">
@@ -6884,6 +6889,305 @@ const DOCUMENT_MODE_OPTIONS: Array<{
     cost: "~$0.10 to generate, ~$1+ to edit an existing file",
   },
 ];
+
+/** Matches the real RoleId union in server/permissions.ts (minus "admin",
+ *  which can always act and so is never something a task class needs to name
+ *  specifically) -- same list client/src/components/workspace-access-card.tsx
+ *  already uses, kept local rather than shared since neither is exported. */
+const MANDATE_ROLE_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: "outcome_owner", label: "Outcome Owner" },
+  { id: "agent_engineer", label: "Agent Engineer" },
+  { id: "ops_sre", label: "Ops / SRE" },
+  { id: "compliance_security", label: "Compliance / Security" },
+  { id: "expert_validator", label: "Expert Validator" },
+  { id: "finance", label: "Finance" },
+  { id: "domain_expert", label: "Domain Expert" },
+];
+
+const MANDATE_SECTIONS: Array<{ key: string; label: string; placeholder: string }> = [
+  { key: "whatItDoes", label: "What it does", placeholder: "In plain business language — what work does this agent actually perform?" },
+  { key: "mustNever", label: "What it must never do", placeholder: "The hard limits. If this agent has no boundary here, it isn't ready to be approved." },
+  { key: "whenToAskAHuman", label: "When it must ask a person", placeholder: "The situations where it should stop and get a human decision before continuing." },
+  { key: "whenToStop", label: "When it should stop", placeholder: "Conditions under which it should halt entirely, rather than keep trying." },
+  { key: "fallbackBehavior", label: "If it can't finish", placeholder: "What happens to the work left in progress — does it roll back, hand off, flag for review?" },
+  { key: "howWeKnowItsWorking", label: "How we know it's working", placeholder: "The signal that tells its owner this agent is doing its job correctly." },
+];
+
+interface MandateRow {
+  id: string; agentId: string; accountableOwnerUserId: string | null;
+  whatItDoes: string | null; mustNever: string | null; whenToAskAHuman: string | null;
+  whenToStop: string | null; fallbackBehavior: string | null; howWeKnowItsWorking: string | null;
+  status: "draft" | "active"; version: number; approvedBy: string | null; approvedAt: string | null;
+  updatedAt: string | null;
+}
+interface TaskClassRow {
+  id: string; agentId: string; mandateId: string | null; name: string; description: string | null;
+  requiredReviewerRole: string | null; derivedFrom: string; sourceRef: string | null;
+}
+
+/**
+ * MANDATE.md as UI (server/routes/mandates.ts): the written job description
+ * an agent's accountable owner authors, from which task classes are derived.
+ * First build increment of the Path A roadmap -- this makes the primitive
+ * itself real. Nothing downstream (a warrant, a gate-pipeline check) reads it
+ * yet; see the Mandate Lifecycle Design artifact for what plugs in next.
+ */
+function MandateTab({ agent }: { agent: Agent }) {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<{ mandate: MandateRow | null; taskClasses: TaskClassRow[] }>({
+    queryKey: ["/api/agents", agent.id, "mandate"],
+  });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "mandate"] });
+
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [owner, setOwner] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [approving, setApproving] = useState(false);
+
+  const mandate = data?.mandate ?? null;
+  const taskClasses = data?.taskClasses ?? [];
+
+  useEffect(() => {
+    setDraft({
+      whatItDoes: mandate?.whatItDoes ?? "",
+      mustNever: mandate?.mustNever ?? "",
+      whenToAskAHuman: mandate?.whenToAskAHuman ?? "",
+      whenToStop: mandate?.whenToStop ?? "",
+      fallbackBehavior: mandate?.fallbackBehavior ?? "",
+      howWeKnowItsWorking: mandate?.howWeKnowItsWorking ?? "",
+    });
+    setOwner(mandate?.accountableOwnerUserId ?? "");
+    setDirty(false);
+    // Re-seed only when a different mandate record arrives (e.g. after save) --
+    // not on every render, or typing would be overwritten by its own echo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mandate?.id, mandate?.updatedAt]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiRequest("PUT", `/api/agents/${agent.id}/mandate`, { ...draft, accountableOwnerUserId: owner || null });
+      invalidate();
+      toast({ title: "Mandate saved" });
+      setDirty(false);
+    } catch (e: any) {
+      toast({ title: "Failed to save mandate", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const approve = async () => {
+    setApproving(true);
+    try {
+      await apiRequest("POST", `/api/agents/${agent.id}/mandate/approve`, {});
+      invalidate();
+      toast({ title: "Mandate approved" });
+    } catch (e: any) {
+      toast({ title: "Could not approve", description: e.message, variant: "destructive" });
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const [newTaskClass, setNewTaskClass] = useState({ name: "", description: "", requiredReviewerRole: "" });
+  const [addingTaskClass, setAddingTaskClass] = useState(false);
+
+  const addTaskClass = async () => {
+    if (!newTaskClass.name.trim()) return;
+    setAddingTaskClass(true);
+    try {
+      await apiRequest("POST", `/api/agents/${agent.id}/task-classes`, {
+        name: newTaskClass.name.trim(),
+        description: newTaskClass.description.trim() || null,
+        requiredReviewerRole: newTaskClass.requiredReviewerRole || null,
+      });
+      invalidate();
+      setNewTaskClass({ name: "", description: "", requiredReviewerRole: "" });
+    } catch (e: any) {
+      toast({ title: "Failed to add task class", description: e.message, variant: "destructive" });
+    } finally {
+      setAddingTaskClass(false);
+    }
+  };
+
+  const removeTaskClass = async (id: string) => {
+    try {
+      await apiRequest("DELETE", `/api/task-classes/${id}`, undefined);
+      invalidate();
+    } catch (e: any) {
+      toast({ title: "Failed to remove task class", description: e.message, variant: "destructive" });
+    }
+  };
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center py-16 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+  }
+
+  const canApprove = !!draft.whatItDoes?.trim() && !!draft.mustNever?.trim() && !dirty;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card data-testid="section-mandate">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <CardTitle className="text-sm font-medium">Mandate</CardTitle>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                What this agent is for, written in plain language by whoever owns the work — not configured, described.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {mandate && (
+                <Badge
+                  variant="outline"
+                  className={mandate.status === "active" ? "text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"}
+                  data-testid="badge-mandate-status"
+                >
+                  {mandate.status === "active" ? "Active" : "Draft"}
+                </Badge>
+              )}
+              {mandate?.status === "active" && (
+                <span className="text-[11px] text-muted-foreground">approved by {mandate.approvedBy}</span>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Accountable owner</span>
+            <Input
+              value={owner}
+              onChange={e => { setOwner(e.target.value); setDirty(true); }}
+              placeholder="Who is accountable for this agent's work"
+              className="h-8 max-w-sm"
+              data-testid="input-mandate-owner"
+            />
+          </div>
+
+          {MANDATE_SECTIONS.map(section => (
+            <div key={section.key} className="flex flex-col gap-1">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{section.label}</span>
+              <Textarea
+                value={draft[section.key] ?? ""}
+                onChange={e => { setDraft(d => ({ ...d, [section.key]: e.target.value })); setDirty(true); }}
+                placeholder={section.placeholder}
+                className="min-h-[70px] text-sm resize-none"
+                data-testid={`textarea-mandate-${section.key}`}
+              />
+            </div>
+          ))}
+
+          <div className="flex items-center gap-2">
+            <Button size="sm" className="text-xs h-7" disabled={!dirty || saving} onClick={save} data-testid="button-save-mandate">
+              {saving ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs h-7"
+              disabled={!canApprove || approving || mandate?.status === "active"}
+              onClick={approve}
+              title={!canApprove && !mandate?.status ? "Fill in \"what it does\" and \"must never\" first" : undefined}
+              data-testid="button-approve-mandate"
+            >
+              {approving ? "Approving…" : mandate?.status === "active" ? "Approved" : "Approve"}
+            </Button>
+            {dirty && <span className="text-[11px] text-muted-foreground">Unsaved changes — save before approving.</span>}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card data-testid="section-task-classes">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-medium">Task classes</CardTitle>
+            <Badge variant="outline" className="text-[10px]">{taskClasses.length}</Badge>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            The discrete kinds of decisions this agent makes — each can eventually carry its own autonomy and review requirement, instead of one setting for the whole agent.
+          </p>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {taskClasses.map(tc => (
+            <div key={tc.id} className="flex items-start justify-between gap-3 p-2.5 rounded-md border" data-testid={`row-task-class-${tc.id}`}>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium">{tc.name}</span>
+                  {tc.requiredReviewerRole && (
+                    <Badge variant="outline" className="text-[9px]">
+                      {MANDATE_ROLE_OPTIONS.find(r => r.id === tc.requiredReviewerRole)?.label ?? tc.requiredReviewerRole}
+                    </Badge>
+                  )}
+                  {tc.derivedFrom !== "manual" && (
+                    <Badge variant="outline" className="text-[9px] text-muted-foreground">via {tc.derivedFrom.replace("_", " ")}</Badge>
+                  )}
+                </div>
+                {tc.description && <p className="text-[12px] text-muted-foreground">{tc.description}</p>}
+              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 shrink-0"
+                onClick={() => removeTaskClass(tc.id)}
+                data-testid={`button-remove-task-class-${tc.id}`}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+          {taskClasses.length === 0 && (
+            <p className="text-[12px] text-muted-foreground text-center py-2">No task classes yet — add the different kinds of decisions this agent makes below.</p>
+          )}
+
+          <div className="flex flex-col gap-2 pt-2 border-t">
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+              <Input
+                value={newTaskClass.name}
+                onChange={e => setNewTaskClass(t => ({ ...t, name: e.target.value }))}
+                placeholder="Task class name, e.g. Release large wire"
+                className="h-8 text-xs"
+                data-testid="input-new-task-class-name"
+              />
+              <Input
+                value={newTaskClass.description}
+                onChange={e => setNewTaskClass(t => ({ ...t, description: e.target.value }))}
+                placeholder="Short description (optional)"
+                className="h-8 text-xs"
+                data-testid="input-new-task-class-description"
+              />
+              <Select
+                value={newTaskClass.requiredReviewerRole || "none"}
+                onValueChange={v => setNewTaskClass(t => ({ ...t, requiredReviewerRole: v === "none" ? "" : v }))}
+              >
+                <SelectTrigger className="h-8 text-xs w-[180px]" data-testid="select-new-task-class-role">
+                  <SelectValue placeholder="No review required" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No review required</SelectItem>
+                  {MANDATE_ROLE_OPTIONS.map(r => (
+                    <SelectItem key={r.id} value={r.id}>{r.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs h-7 w-fit"
+              disabled={!newTaskClass.name.trim() || addingTaskClass}
+              onClick={addTaskClass}
+              data-testid="button-add-task-class"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add task class
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 /**
  * Lets a user pin which route this agent takes to produce a document, instead

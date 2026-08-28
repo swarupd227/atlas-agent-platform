@@ -1502,8 +1502,8 @@ export async function runStartupMigrations() {
         how_we_know_its_working     TEXT,
         status                      TEXT NOT NULL DEFAULT 'draft',
         version                     INTEGER NOT NULL DEFAULT 1,
-        created_by                  VARCHAR REFERENCES users(id),
-        approved_by                 VARCHAR REFERENCES users(id),
+        created_by                  VARCHAR,
+        approved_by                 VARCHAR,
         approved_at                 TIMESTAMP,
         created_at                  TIMESTAMP DEFAULT NOW(),
         updated_at                  TIMESTAMP DEFAULT NOW()

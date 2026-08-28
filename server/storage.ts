@@ -3141,6 +3141,9 @@ export class DatabaseStorage implements IStorage {
   async upsertAgentMandate(agentId: string, data: Partial<InsertAgentMandate>, orgId?: string) {
     const existing = await this.getAgentMandate(agentId, orgId);
     if (existing) {
+      // createdBy is who originally authored it -- an edit must never
+      // silently rewrite that to whoever happens to be editing today.
+      const { createdBy: _ignoredOnEdit, ...editable } = data;
       // Editing an already-approved mandate reopens it as draft: an approval
       // signs a specific set of answers, and letting the content change
       // silently underneath a prior approval is exactly the drift the whole
@@ -3148,14 +3151,17 @@ export class DatabaseStorage implements IStorage {
       const reopened = existing.status === "active" ? { status: "draft" as const, approvedBy: null, approvedAt: null } : {};
       const [updated] = await db
         .update(agentMandates)
-        .set({ ...data, ...reopened, version: existing.version + 1, updatedAt: new Date() })
+        .set({ ...editable, ...reopened, version: existing.version + 1, updatedAt: new Date() })
         .where(eq(agentMandates.id, existing.id))
         .returning();
       return updated;
     }
     const [created] = await db
       .insert(agentMandates)
-      .values({ ...data, agentId, organizationId: orgId ?? (data as any).organizationId } as InsertAgentMandate)
+      // Accountable owner defaults to whoever authors it -- there is nothing
+      // real to inherit from an outcome yet (see the schema comment). Data's
+      // own accountableOwnerUserId (spread after) wins if the caller set one.
+      .values({ accountableOwnerUserId: data.createdBy, ...data, agentId, organizationId: orgId ?? (data as any).organizationId } as InsertAgentMandate)
       .returning();
     return created;
   }
