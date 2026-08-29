@@ -28,6 +28,19 @@ const STATUS_STYLE: Record<string, string> = {
   failed: "bg-red-500/15 text-red-600 border-red-500/20",
 };
 
+// Which decode path actually served the call: vendor-native strict decoding
+// (OpenAI json_schema strict mode / Anthropic forced tool_choice) vs the
+// older prompt-instructed json_object path. See server/llm-provider.ts's
+// LLMCompletionOptions.jsonSchema and EnforcementContext.decodePath.
+const DECODE_PATH_STYLE: Record<string, string> = {
+  strict_native: "bg-emerald-500/15 text-emerald-600 border-emerald-500/20",
+  legacy_prompted: "bg-slate-500/15 text-slate-500 border-slate-500/20",
+};
+const DECODE_PATH_LABEL: Record<string, string> = {
+  strict_native: "Strict",
+  legacy_prompted: "Legacy",
+};
+
 // Rough cost estimate: gpt-4o pricing
 function estimateCostUsd(promptTokens: number, completionTokens: number): number {
   return (promptTokens / 1000) * 0.005 + (completionTokens / 1000) * 0.015;
@@ -133,6 +146,7 @@ function PipelineRunTable({ records }: { records: GenerationMetadataRecord[] }) 
             <th className="text-left px-3 py-2"><SortHeader label="Status" sortKey="validationStatus" current={sortKey} dir={sortDir} onSort={handleSort} /></th>
             <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Prompt</th>
             <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Model</th>
+            <th className="text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Decode</th>
             <th className="text-right px-3 py-2"><SortHeader label="Tokens" sortKey="totalTokens" current={sortKey} dir={sortDir} onSort={handleSort} /></th>
             <th className="text-right px-3 py-2"><SortHeader label="Latency" sortKey="llmLatencyMs" current={sortKey} dir={sortDir} onSort={handleSort} /></th>
             <th className="text-right px-3 py-2"><SortHeader label="Quality" sortKey="qualityScore" current={sortKey} dir={sortDir} onSort={handleSort} /></th>
@@ -170,6 +184,11 @@ function PipelineRunTable({ records }: { records: GenerationMetadataRecord[] }) 
                   {record.promptVersion && <span className="text-[9px] ml-1 opacity-60">@{record.promptVersion}</span>}
                 </td>
                 <td className="px-3 py-2 text-[10px] text-muted-foreground">{record.model ?? "—"}</td>
+                <td className="px-3 py-2">
+                  <Badge variant="outline" className={`text-[10px] whitespace-nowrap ${DECODE_PATH_STYLE[record.decodePath] ?? ""}`}>
+                    {DECODE_PATH_LABEL[record.decodePath] ?? record.decodePath}
+                  </Badge>
+                </td>
                 <td className="px-3 py-2 text-right text-[10px]">
                   {record.totalTokens != null ? record.totalTokens.toLocaleString() : "—"}
                 </td>
@@ -209,6 +228,9 @@ function AgentRecordCard({ record }: { record: GenerationMetadataRecord }) {
         </Badge>
         <span className="text-xs font-mono text-muted-foreground">{record.promptId}@{record.promptVersion}</span>
         {record.model && <span className="text-[11px] text-muted-foreground">{record.model}</span>}
+        <Badge variant="outline" className={`text-[10px] shrink-0 ${DECODE_PATH_STYLE[record.decodePath] ?? ""}`}>
+          {DECODE_PATH_LABEL[record.decodePath] ?? record.decodePath}
+        </Badge>
         {(record.repairAttempts ?? 0) > 0 && (
           <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/20">
             <RefreshCw className="w-3 h-3 mr-1" />{record.repairAttempts}× repair

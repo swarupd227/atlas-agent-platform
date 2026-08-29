@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -391,6 +391,38 @@ function ContractForm({
   );
   const [qualityScorerEnabled, setQualityScorerEnabled] = useState(initial?.qualityScorerEnabled ?? false);
   const [qualityThreshold, setQualityThreshold] = useState(String(initial?.qualityFailureThreshold ?? 0.68));
+  const [strictDecodingEnabled, setStrictDecodingEnabled] = useState(initial?.strictDecodingEnabled ?? false);
+
+  // The provider (and thus whether OpenAI's strict-mode schema rules apply)
+  // is resolved server-side from agentId -- see check-strict-compat's
+  // response.provider -- so no separate agent fetch is needed here.
+  const [strictCompat, setStrictCompat] = useState<{ status: "idle" | "checking" | "ok" | "warn" | "error"; message?: string }>({ status: "idle" });
+
+  useEffect(() => {
+    if (!strictDecodingEnabled) { setStrictCompat({ status: "idle" }); return; }
+    let cancelled = false;
+    setStrictCompat({ status: "checking" });
+    const handle = setTimeout(async () => {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(schemaJson);
+      } catch {
+        if (!cancelled) setStrictCompat({ status: "error", message: "Fix the JSON schema above first." });
+        return;
+      }
+      try {
+        const res = await apiRequest("POST", "/api/output-contracts/check-strict-compat", { agentId, schemaDefinition: parsed });
+        const data = await res.json();
+        if (cancelled) return;
+        setStrictCompat(data.compatible
+          ? { status: "ok", message: data.provider === "openai" ? "Compatible with OpenAI's strict mode." : `No schema restrictions for ${data.provider}.` }
+          : { status: "warn", message: data.reason || "This schema isn't compatible with strict mode yet." });
+      } catch {
+        if (!cancelled) setStrictCompat({ status: "error", message: "Couldn't check compatibility right now." });
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [strictDecodingEnabled, schemaJson, agentId]);
 
   const typedInitial = initial as TypedOutputContract | undefined;
 
@@ -435,6 +467,7 @@ function ContractForm({
         schemaType: "json_schema",
         schemaDefinition: parsedSchema,
         enforcementMode,
+        strictDecodingEnabled,
         repairEnabled,
         maxRepairAttempts: parseInt(maxRepairAttempts) || 1,
         repairTemperature: parseFloat(repairTemperature) || 0.0,
@@ -538,6 +571,30 @@ function ContractForm({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <Separator />
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-xs font-semibold">Strict Decoding</Label>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Ask the model's own decoding to guarantee this shape (OpenAI strict schema mode / Anthropic forced tool call), instead of only repairing bad output after the fact.</p>
+              </div>
+              <Switch checked={strictDecodingEnabled} onCheckedChange={setStrictDecodingEnabled} data-testid="switch-strict-decoding" />
+            </div>
+            {strictDecodingEnabled && strictCompat.status !== "idle" && (
+              <div className={`text-[11px] rounded-md border px-2.5 py-2 flex items-start gap-1.5 ${
+                strictCompat.status === "ok" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                : strictCompat.status === "warn" ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                : strictCompat.status === "error" ? "bg-destructive/10 text-destructive border-destructive/20"
+                : "text-muted-foreground border-border"
+              }`} data-testid="strict-decoding-compat-message">
+                {strictCompat.status === "checking" ? <Loader2 className="w-3 h-3 mt-0.5 animate-spin shrink-0" />
+                  : strictCompat.status === "ok" ? <CheckCircle2 className="w-3 h-3 mt-0.5 shrink-0" />
+                  : <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />}
+                <span>{strictCompat.status === "checking" ? "Checking schema compatibility..." : strictCompat.message}</span>
+              </div>
+            )}
           </div>
 
           <Separator />

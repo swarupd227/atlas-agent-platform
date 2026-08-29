@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { outputContractEnforcer } from "../services/output-contract-enforcer";
+import { checkStrictModeCompatible } from "../services/json-schema-strict-compat";
 import { insertOutputContractSchema } from "../../shared/schema";
+import { getOrgId } from "../auth";
 import { z } from "zod";
 
 const router = Router();
@@ -63,6 +65,32 @@ router.delete("/api/output-contracts/:id", async (req, res) => {
     const deleted = await storage.deleteOutputContract(req.params.id);
     if (!deleted) return res.status(404).json({ error: "Not found" });
     res.json({ success: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// POST /api/output-contracts/check-strict-compat — live preview for the editor's
+// Strict Decoding toggle: does this schema draft (not yet saved) actually get
+// OpenAI's json_schema strict mode, or will it silently fall back to legacy
+// json_object mode? Anthropic has no equivalent structural restriction, so any
+// non-openai agent is always reported compatible.
+const strictCompatSchema = z.object({
+  agentId: z.string(),
+  schemaDefinition: z.record(z.any()),
+});
+
+router.post("/api/output-contracts/check-strict-compat", async (req, res) => {
+  try {
+    const body = strictCompatSchema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+    const agent = await storage.getAgent(body.data.agentId, getOrgId(req));
+    const provider = agent?.modelProvider || "openai";
+    if (provider !== "openai") {
+      return res.json({ compatible: true, provider });
+    }
+    res.json({ ...checkStrictModeCompatible(body.data.schemaDefinition), provider });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });
