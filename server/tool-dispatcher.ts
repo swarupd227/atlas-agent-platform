@@ -11,7 +11,8 @@
  *   1. skill allowlist        → gate_blocked_skill
  *   2. policy bundle          → gate_blocked_policy (strict/block), monitor-mode logs and proceeds
  *   3. AAR constraint list    → gate_blocked_aar | gate_requires_approval
- *   3.5. declared scope       → gate_blocked_scope_drift (opt-in; intent-based authorization)
+ *   3.6. warrant              → gate_blocked_warrant | gate_requires_approval (opt-in; see evaluateWarrantCondition)
+ *   3.7. declared scope       → gate_blocked_scope_drift (opt-in; intent-based authorization)
  *   4. rate limit             → rate_limited
  *   5. shadow environment     → shadow_skipped (no execution)
  *   6. idempotency            → deduplicated (cached result, no re-execution)
@@ -106,6 +107,7 @@ export type DispatchOutcome =
   | "gate_blocked_skill"
   | "gate_blocked_policy"
   | "gate_blocked_aar"
+  | "gate_blocked_warrant"
   | "gate_blocked_scope_drift"
   | "gate_requires_approval"
   | "rate_limited"
@@ -167,6 +169,9 @@ export interface DispatchResult {
   policyIds?: string[];
   approvalId?: string;
   aarDecision?: string;
+  /** Set only when the warrant gate actually engaged (some task class covers
+   *  this tool). Absent for every call the gate treated as a no-op. */
+  warrantDecision?: string;
   /** A monitor-mode policy flagged this tool; dispatch proceeded and a violation was logged. */
   monitorFlagged?: boolean;
   /** Set on outcome "deduplicated": the prior identical call's result was reused. */
@@ -357,6 +362,57 @@ export async function evaluateActionPolicy(
   }
 
   return { decision, reason, approvalId };
+}
+
+// ── Warrant gate ─────────────────────────────────────────────────────────────
+// Opt-in, additive-only: a task class only participates once its author lists
+// this tool in coveredTools (an explicit, hand-set mapping — never inferred).
+// Every task class ships with coveredTools defaulting to [], so for the
+// entire existing fleet this function's first check always matches nothing
+// and returns ALLOW immediately -- a provable no-op, not "usually a no-op".
+// Only an agent with a task class that explicitly names this tool reaches the
+// warrant lookup below.
+export async function evaluateWarrantCondition(
+  agentId: string,
+  tool: AvailableTool,
+): Promise<{ decision: string; reason: string; approvalId?: string }> {
+  const toolName = tool.toolName;
+  const taskClasses = await storage.listAgentTaskClasses(agentId);
+  const covering = taskClasses.filter(tc => Array.isArray(tc.coveredTools) && tc.coveredTools.includes(toolName));
+  if (covering.length === 0) {
+    return { decision: "ALLOW", reason: "No task class covers this tool — warrant gate not engaged" };
+  }
+
+  const agent = await storage.getAgent(agentId);
+  for (const tc of covering) {
+    const warrant = await storage.getActiveWarrant(tc.id, agent?.organizationId ?? undefined);
+    if (!warrant || warrant.grants === "denied") {
+      return {
+        decision: "BLOCK",
+        reason: warrant
+          ? `Task class "${tc.name}" warrant denies tool "${toolName}"`
+          : `No active warrant grants task class "${tc.name}" (tool "${toolName}") -- authority has expired or was never issued`,
+      };
+    }
+    if (warrant.grants === "requires_approval") {
+      const approval = await storage.createApproval({
+        organizationId: agent?.organizationId ?? undefined,
+        type: "tool-invocation",
+        objectType: "mcp-tool",
+        objectId: tool.serverId ?? agentId,
+        objectName: toolName,
+        riskScore: computeApprovalRiskScore(agent?.riskTier ?? "MEDIUM", isSideEffectful(tool)),
+        status: "pending",
+        requestedBy: agentId,
+        requesterType: "agent",
+        description: `Warrant gate: agent '${agent?.name ?? agentId}' requires approval to call tool '${toolName}' under task class "${tc.name}" (warrant grants=requires_approval)`,
+      });
+      return { decision: "REQUIRE_APPROVAL", reason: `Task class "${tc.name}" warrant requires approval for tool "${toolName}"`, approvalId: approval.id };
+    }
+    // grants === "autonomous" for this task class -- keep checking any other
+    // covering task class before allowing.
+  }
+  return { decision: "ALLOW", reason: "Active warrant(s) grant autonomous authority for this tool" };
 }
 
 // ── Execution ────────────────────────────────────────────────────────────────
@@ -611,7 +667,31 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
     }
   }
 
-  // 3.5. Declared-scope gate (intent-based authorization). When the run
+  // 3.6. Warrant gate. A no-op for every agent whose task classes don't
+  // explicitly list this tool in coveredTools (the default for the entire
+  // existing fleet) -- see evaluateWarrantCondition for why that's provable,
+  // not assumed. Only ever ADDS restriction on top of what AAR already
+  // decided; it can never loosen an AAR block or approval requirement above.
+  const warrant = await evaluateWarrantCondition(agentId, tool);
+  if (warrant.decision === "BLOCK") {
+    return finish({ outcome: "gate_blocked_warrant", ok: false, result: null, error: warrant.reason, reason: warrant.reason, warrantDecision: warrant.decision, monitorFlagged });
+  }
+  if (warrant.decision === "REQUIRE_APPROVAL") {
+    if (req.humanApprovedApprovalId) {
+      storage.createAuditEvent({
+        actorType: "system",
+        actorId: "workspace-approval",
+        action: "tool_human_approved",
+        objectType: "tool",
+        objectId: tool.toolName,
+        details: `Tool "${tool.toolName}" required warrant approval and was human-approved (approvalId=${req.humanApprovedApprovalId}) for agent ${agentId}.`,
+      }).catch(() => {});
+    } else {
+      return finish({ outcome: "gate_requires_approval", ok: false, result: null, error: warrant.reason, reason: warrant.reason, warrantDecision: warrant.decision, approvalId: warrant.approvalId, monitorFlagged });
+    }
+  }
+
+  // 3.7. Declared-scope gate (intent-based authorization). When the run
   // declared an upfront tool scope, a call outside it is blocked as drift —
   // even though skill/policy/AAR already allowed it — because the agent
   // itself never planned to make this call.

@@ -17,6 +17,10 @@ vi.mock("../server/storage", () => ({
     createApproval: vi.fn().mockResolvedValue({ id: "approval-1" }),
     getMcpServer: vi.fn().mockResolvedValue(null),
     getMcpServerTools: vi.fn().mockResolvedValue([]),
+    // Warrant gate: no task classes means the gate is a no-op, same as the
+    // real default for every agent that hasn't defined coveredTools.
+    listAgentTaskClasses: vi.fn().mockResolvedValue([]),
+    getActiveWarrant: vi.fn().mockResolvedValue(undefined),
   },
 }));
 vi.mock("../server/mcp-client", () => ({
@@ -160,6 +164,92 @@ describe("dispatchToolCall gates", () => {
     expect(res.outcome).toBe("tool_error");
     expect(res.ok).toBe(false);
     expect(res.error).toContain("502");
+  });
+});
+
+describe("warrant gate", () => {
+  it("is a no-op when no task class covers this tool (the default for every existing agent)", async () => {
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: { title: "x" }, policyBundle: emptyBundle() });
+
+    expect(res.outcome).toBe("success");
+    expect(res.warrantDecision).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("AAR block short-circuits before the warrant gate is ever reached", async () => {
+    vi.mocked(storage.getAarConfig).mockResolvedValueOnce({ deniedTools: ["create_ticket"], allowedTools: [], requireApprovalTools: [] } as any);
+    vi.mocked(storage.listAgentTaskClasses).mockClear();
+
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: {}, policyBundle: emptyBundle() });
+
+    expect(res.outcome).toBe("gate_blocked_aar");
+    expect(storage.listAgentTaskClasses).not.toHaveBeenCalled();
+  });
+
+  it("blocks when a covering task class has no active warrant (expired or never issued)", async () => {
+    vi.mocked(storage.listAgentTaskClasses).mockResolvedValueOnce([
+      { id: "tc-1", name: "Wire Release", coveredTools: ["create_ticket"] } as any,
+    ]);
+
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: {}, policyBundle: emptyBundle() });
+
+    expect(res.outcome).toBe("gate_blocked_warrant");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks when the active warrant explicitly denies", async () => {
+    vi.mocked(storage.listAgentTaskClasses).mockResolvedValueOnce([
+      { id: "tc-1", name: "Wire Release", coveredTools: ["create_ticket"] } as any,
+    ]);
+    vi.mocked(storage.getActiveWarrant).mockResolvedValueOnce({ id: "w-1", grants: "denied" } as any);
+
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: {}, policyBundle: emptyBundle() });
+
+    expect(res.outcome).toBe("gate_blocked_warrant");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("requires approval when the active warrant grants requires_approval, without executing", async () => {
+    vi.mocked(storage.listAgentTaskClasses).mockResolvedValueOnce([
+      { id: "tc-1", name: "Wire Release", coveredTools: ["create_ticket"] } as any,
+    ]);
+    vi.mocked(storage.getActiveWarrant).mockResolvedValueOnce({ id: "w-1", grants: "requires_approval" } as any);
+
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: {}, policyBundle: emptyBundle() });
+
+    expect(res.outcome).toBe("gate_requires_approval");
+    expect(res.approvalId).toBe("approval-1");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows and executes when the active warrant grants autonomous", async () => {
+    vi.mocked(storage.listAgentTaskClasses).mockResolvedValueOnce([
+      { id: "tc-1", name: "Wire Release", coveredTools: ["create_ticket"] } as any,
+    ]);
+    vi.mocked(storage.getActiveWarrant).mockResolvedValueOnce({ id: "w-1", grants: "autonomous" } as any);
+
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: { title: "x" }, policyBundle: emptyBundle() });
+
+    expect(res.outcome).toBe("success");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a human-approved call proceeds past a requires_approval warrant, same bypass as AAR", async () => {
+    vi.mocked(storage.listAgentTaskClasses).mockResolvedValueOnce([
+      { id: "tc-1", name: "Wire Release", coveredTools: ["create_ticket"] } as any,
+    ]);
+    vi.mocked(storage.getActiveWarrant).mockResolvedValueOnce({ id: "w-1", grants: "requires_approval" } as any);
+
+    const res = await dispatchToolCall({
+      agentId: "agent-1",
+      tool: TOOL,
+      args: { title: "x" },
+      policyBundle: emptyBundle(),
+      humanApprovedApprovalId: "approval-99",
+    });
+
+    expect(res.outcome).toBe("success");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

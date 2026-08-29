@@ -10,7 +10,7 @@ import {
   type AgentIntegrationCredential, type InsertAgentIntegrationCredential,
   llmProviderKeys,
   type LlmProviderKey, type InsertLlmProviderKey,
-  users, agents, agentMandates, agentTaskClasses, outcomeContracts, kpiDefinitions, deployments,
+  users, agents, agentMandates, agentTaskClasses, agentWarrants, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
   improvementRecommendations, autonomousActionLogs, agentVersions,
@@ -21,6 +21,7 @@ import {
   type Agent, type InsertAgent,
   type AgentMandate, type InsertAgentMandate,
   type AgentTaskClass, type InsertAgentTaskClass,
+  type AgentWarrant, type InsertAgentWarrant,
   type OutcomeContract, type InsertOutcomeContract,
   type KpiDefinition, type InsertKpiDefinition,
   type Deployment, type InsertDeployment,
@@ -619,10 +620,16 @@ export interface IStorage {
   upsertAgentMandate(agentId: string, data: Partial<InsertAgentMandate>, orgId?: string): Promise<AgentMandate>;
   approveAgentMandate(agentId: string, approvedByUserId: string, orgId?: string): Promise<AgentMandate | undefined>;
 
+  getAgentTaskClass(id: string, orgId?: string): Promise<AgentTaskClass | undefined>;
   listAgentTaskClasses(agentId: string, orgId?: string): Promise<AgentTaskClass[]>;
   createAgentTaskClass(data: InsertAgentTaskClass): Promise<AgentTaskClass>;
   updateAgentTaskClass(id: string, data: Partial<InsertAgentTaskClass>, orgId?: string): Promise<AgentTaskClass | undefined>;
   deleteAgentTaskClass(id: string, orgId?: string): Promise<boolean>;
+
+  issueWarrant(data: InsertAgentWarrant): Promise<AgentWarrant>;
+  revokeWarrant(id: string, revokedBy: string, reason?: string, orgId?: string): Promise<AgentWarrant | undefined>;
+  getActiveWarrant(taskClassId: string, orgId?: string): Promise<AgentWarrant | undefined>;
+  listWarrantsForTaskClass(taskClassId: string, orgId?: string): Promise<AgentWarrant[]>;
 
   getSkillVersions(skillId: string): Promise<SkillVersion[]>;
   getSkillVersion(id: string): Promise<SkillVersion | undefined>;
@@ -3182,6 +3189,11 @@ export class DatabaseStorage implements IStorage {
     return approved;
   }
 
+  async getAgentTaskClass(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(agentTaskClasses.id, id), eq(agentTaskClasses.organizationId, orgId)) : eq(agentTaskClasses.id, id);
+    const [row] = await db.select().from(agentTaskClasses).where(clause);
+    return row;
+  }
   async listAgentTaskClasses(agentId: string, orgId?: string) {
     const clause = orgId
       ? and(eq(agentTaskClasses.agentId, agentId), eq(agentTaskClasses.organizationId, orgId))
@@ -3201,6 +3213,46 @@ export class DatabaseStorage implements IStorage {
     const clause = orgId ? and(eq(agentTaskClasses.id, id), eq(agentTaskClasses.organizationId, orgId)) : eq(agentTaskClasses.id, id);
     const result = await db.delete(agentTaskClasses).where(clause).returning({ id: agentTaskClasses.id });
     return result.length > 0;
+  }
+
+  async getActiveWarrant(taskClassId: string, orgId?: string): Promise<AgentWarrant | undefined> {
+    const clause = orgId
+      ? and(eq(agentWarrants.taskClassId, taskClassId), eq(agentWarrants.organizationId, orgId), isNull(agentWarrants.revokedAt), sql`${agentWarrants.expiresAt} > now()`)
+      : and(eq(agentWarrants.taskClassId, taskClassId), isNull(agentWarrants.revokedAt), sql`${agentWarrants.expiresAt} > now()`);
+    const [row] = await db.select().from(agentWarrants).where(clause).orderBy(desc(agentWarrants.issuedAt)).limit(1);
+    return row;
+  }
+  async issueWarrant(data: InsertAgentWarrant): Promise<AgentWarrant> {
+    // A task class holds at most one active warrant at a time -- issuing a
+    // new one supersedes whatever was active, so "what authority does this
+    // task class have right now" is always a single unambiguous row.
+    const prior = await this.getActiveWarrant(data.taskClassId, data.organizationId ?? undefined);
+    const [created] = await db
+      .insert(agentWarrants)
+      .values({ ...data, supersedesWarrantId: prior?.id ?? data.supersedesWarrantId ?? null })
+      .returning();
+    if (prior) {
+      await db
+        .update(agentWarrants)
+        .set({ revokedAt: new Date(), revokedBy: data.issuedBy ?? "system", revokedReason: "superseded by renewal" })
+        .where(eq(agentWarrants.id, prior.id));
+    }
+    return created;
+  }
+  async revokeWarrant(id: string, revokedBy: string, reason?: string, orgId?: string): Promise<AgentWarrant | undefined> {
+    const clause = orgId ? and(eq(agentWarrants.id, id), eq(agentWarrants.organizationId, orgId)) : eq(agentWarrants.id, id);
+    const [revoked] = await db
+      .update(agentWarrants)
+      .set({ revokedAt: new Date(), revokedBy, revokedReason: reason ?? null })
+      .where(clause)
+      .returning();
+    return revoked;
+  }
+  async listWarrantsForTaskClass(taskClassId: string, orgId?: string): Promise<AgentWarrant[]> {
+    const clause = orgId
+      ? and(eq(agentWarrants.taskClassId, taskClassId), eq(agentWarrants.organizationId, orgId))
+      : eq(agentWarrants.taskClassId, taskClassId);
+    return db.select().from(agentWarrants).where(clause).orderBy(desc(agentWarrants.issuedAt));
   }
 
   async getSkillVersions(skillId: string) {

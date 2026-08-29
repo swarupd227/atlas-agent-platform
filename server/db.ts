@@ -1526,6 +1526,38 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_agent_task_classes_agent ON agent_task_classes(agent_id);
     `);
 
+    // Warrant primitive (Path A phase 0, second increment; server/tool-dispatcher.ts's
+    // warrant gate). agent_task_classes.covered_tools is the explicit, author-set
+    // mapping the gate matches on -- deliberately not inferred, and defaulting
+    // to '{}' means every task class that predates this column (i.e. all of
+    // them, as of this migration) governs nothing yet, making the gate a
+    // no-op for the entire existing fleet by construction, not by a runtime
+    // check that could itself be wrong.
+    await client.query(`
+      ALTER TABLE agent_task_classes ADD COLUMN IF NOT EXISTS covered_tools TEXT[] DEFAULT '{}'::text[];
+
+      CREATE TABLE IF NOT EXISTS agent_warrants (
+        id                        VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id           VARCHAR,
+        agent_id                  VARCHAR NOT NULL REFERENCES agents(id),
+        task_class_id             VARCHAR NOT NULL REFERENCES agent_task_classes(id),
+        grants                    TEXT NOT NULL DEFAULT 'requires_approval',
+        basis                     TEXT,
+        issued_by                 VARCHAR,
+        issued_at                 TIMESTAMP DEFAULT NOW(),
+        expires_at                TIMESTAMP NOT NULL,
+        revoked_at                TIMESTAMP,
+        revoked_by                VARCHAR,
+        revoked_reason            TEXT,
+        supersedes_warrant_id     VARCHAR,
+        created_at                TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_warrants_task_class ON agent_warrants(task_class_id);
+      -- The gate's hot-path query: "the currently active warrant for this
+      -- task class" filters on exactly these three columns.
+      CREATE INDEX IF NOT EXISTS idx_agent_warrants_active ON agent_warrants(task_class_id, revoked_at, expires_at);
+    `);
+
     // Relay agents (SQL connector "relay_agent" connection mode, Phase 3):
     // outbound-only tunnel agents a client deploys inside their own network.
     // Only a sha256 hash of the bearer token is stored -- the raw token is

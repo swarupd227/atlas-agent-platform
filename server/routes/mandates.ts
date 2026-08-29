@@ -8,13 +8,14 @@ import { insertAgentTaskClassSchema } from "@shared/schema";
 const router = Router();
 
 /**
- * Mandate + task class (server/db.ts's agent_mandates / agent_task_classes):
- * the written job description an agent's accountable owner authors, and the
- * discrete kinds of decisions derived from it. First increment of the
- * Path A roadmap's phase 0 -- nothing here yet reads a warrant or gates a
- * tool call; this only makes the primitive itself real and correct. See
- * docs discussed in-session (Mandate Lifecycle Design artifact) for how this
- * is meant to connect to the Wizard, Process Flow, and eventually a warrant.
+ * Mandate + task class + warrant (server/db.ts's agent_mandates /
+ * agent_task_classes / agent_warrants): the written job description an
+ * agent's accountable owner authors, the discrete kinds of decisions derived
+ * from it, and the time-boxed grants of authority scoped to one of those task
+ * classes. A task class only participates in the tool-dispatcher warrant gate
+ * (server/tool-dispatcher.ts's evaluateWarrantCondition) once its author
+ * explicitly lists a tool in coveredTools -- empty by default, so issuing a
+ * warrant here has zero effect on any agent that hasn't opted in.
  */
 
 // Body for PUT /api/agents/:id/mandate -- every section optional so a draft
@@ -139,6 +140,63 @@ router.delete("/api/task-classes/:id", checkPermission("create_modify_blueprints
     res.status(204).end();
   } catch (e: any) {
     res.status(500).json({ message: e.message || "Failed to delete task class" });
+  }
+});
+
+const warrantIssueSchema = z.object({
+  grants: z.enum(["autonomous", "requires_approval", "denied"]),
+  basis: z.string().max(4000).nullable().optional(),
+  expiresAt: z.coerce.date(),
+});
+
+router.get("/api/task-classes/:id/warrants", async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const warrants = await storage.listWarrantsForTaskClass(req.params.id, getOrgId(req));
+    res.json(warrants);
+  } catch (e: any) {
+    res.status(500).json({ message: e.message || "Failed to list warrants" });
+  }
+});
+
+// Same permission as anything else that grants or withdraws an agent's
+// standing autonomy -- issuing a warrant IS a manage_autonomy action, not a
+// new capability of its own.
+router.post("/api/task-classes/:id/warrants", checkPermission("manage_autonomy"), async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const orgId = getOrgId(req);
+    const taskClass = await storage.getAgentTaskClass(req.params.id, orgId);
+    if (!taskClass) return res.status(404).json({ message: "Task class not found" });
+
+    const body = warrantIssueSchema.parse(req.body);
+    if (body.expiresAt.getTime() <= Date.now()) {
+      return res.status(400).json({ message: "expiresAt must be in the future -- a warrant that starts already expired grants nothing" });
+    }
+    const issuedBy = (req as any).authUser?.userId ?? "system";
+    const warrant = await storage.issueWarrant({
+      organizationId: orgId,
+      agentId: taskClass.agentId,
+      taskClassId: taskClass.id,
+      grants: body.grants,
+      basis: body.basis ?? null,
+      issuedBy,
+      expiresAt: body.expiresAt,
+    } as any);
+    res.status(201).json(warrant);
+  } catch (e: any) {
+    if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+    res.status(500).json({ message: e.message || "Failed to issue warrant" });
+  }
+});
+
+router.post("/api/warrants/:id/revoke", checkPermission("manage_autonomy"), async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const revokedBy = (req as any).authUser?.userId ?? "system";
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 2000) : undefined;
+    const revoked = await storage.revokeWarrant(req.params.id, revokedBy, reason, getOrgId(req));
+    if (!revoked) return res.status(404).json({ message: "Warrant not found" });
+    res.json(revoked);
+  } catch (e: any) {
+    res.status(500).json({ message: e.message || "Failed to revoke warrant" });
   }
 });
 

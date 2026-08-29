@@ -246,12 +246,53 @@ export const agentTaskClasses = pgTable("agent_task_classes", {
   derivedFrom: text("derived_from").notNull().default("manual"), // manual | wizard | process_flow
   sourceRef: text("source_ref"),
   sortOrder: integer("sort_order").default(0),
+  // Exact tool names this task class governs -- the explicit, author-set
+  // mapping the warrant gate reads (server/tool-dispatcher.ts). Deliberately
+  // NOT inferred: an empty array (the default, and the state of every task
+  // class that predates this column) means the gate has nothing to match
+  // against and is a complete no-op for it, by construction.
+  coveredTools: text("covered_tools").array().default(sql`'{}'::text[]`),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertAgentTaskClassSchema = createInsertSchema(agentTaskClasses).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
 export type InsertAgentTaskClass = z.infer<typeof insertAgentTaskClassSchema>;
 export type AgentTaskClass = typeof agentTaskClasses.$inferSelect;
+
+/**
+ * A signed, time-boxed grant scoped to ONE task class (never the whole
+ * agent) -- what the warrant gate in server/tool-dispatcher.ts actually
+ * checks. No six-tier ladder yet (that is separate, later work); `grants` is
+ * a deliberately small tri-state, enough to prove the mechanism: an agent is
+ * either trusted to act alone for this task class, needs a human's sign-off
+ * per call, or is refused outright. `expiresAt` is NOT NULL -- no perpetual
+ * warrants can be issued, matching the PRD's central bet on authority that
+ * expires by default.
+ */
+export const agentWarrants = pgTable("agent_warrants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").references(() => organizations.id),
+  agentId: varchar("agent_id").notNull().references(() => agents.id),
+  taskClassId: varchar("task_class_id").notNull().references(() => agentTaskClasses.id),
+  grants: text("grants").notNull().default("requires_approval"), // autonomous | requires_approval | denied
+  basis: text("basis"),
+  issuedBy: text("issued_by"),
+  issuedAt: timestamp("issued_at").defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  revokedBy: text("revoked_by"),
+  revokedReason: text("revoked_reason"),
+  // Renewal lineage: issuing a new warrant for a task class that already has
+  // one auto-revokes the prior warrant and links here, so "what was this
+  // agent permitted on date X" (a historical query, not just "what is it
+  // permitted now") has an unbroken chain to walk.
+  supersedesWarrantId: varchar("supersedes_warrant_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAgentWarrantSchema = createInsertSchema(agentWarrants).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertAgentWarrant = z.infer<typeof insertAgentWarrantSchema>;
+export type AgentWarrant = typeof agentWarrants.$inferSelect;
 
 export const agentVersions = pgTable("agent_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
