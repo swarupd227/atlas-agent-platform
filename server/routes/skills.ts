@@ -528,9 +528,44 @@ const router = Router();
     try {
       const concept = await storage.getOntologyConcept(req.params.id as string);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
+
+      // Unlike the update route just above, deletion previously had zero propagation --
+      // every agent referencing this concept silently kept a dead conceptId in its
+      // ontologyTags with no warning. Mirror the update route's pattern: find affected
+      // agents BEFORE the row is gone (getAgentsByOntologyConcept needs the id to still
+      // resolve), strip the now-dead tag entry, and flag for revalidation same as an edit.
+      const affectedAgents = await storage.getAgentsByOntologyConcept(req.params.id as string, getOrgId(req));
+
       const deleted = await storage.deleteOntologyConcept(req.params.id as string);
       if (!deleted) return res.status(404).json({ message: "Concept not found" });
-      res.json({ message: "Concept deleted" });
+
+      if (affectedAgents.length > 0) {
+        const reason = `Ontology concept "${concept.label}" was deleted -- review your agent's domain grounding`;
+        for (const agent of affectedAgents) {
+          const remainingTags = (Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [])
+            .filter(t => t.conceptId !== concept.id);
+          await storage.updateAgent(agent.id, {
+            ontologyTags: remainingTags,
+            requiresRevalidation: true,
+            revalidationReason: reason,
+          });
+          await storage.createAuditEvent({
+            actorType: "system",
+            actorId: "ontology_propagation",
+            action: "ontology.concept_deleted",
+            objectType: "agent",
+            objectId: agent.id,
+            details: JSON.stringify({
+              conceptId: concept.id,
+              conceptLabel: concept.label,
+              agentName: agent.name,
+            }),
+            ontologyTags: resolveOntologyTags("agent", "ontology.concept_deleted"),
+          });
+        }
+      }
+
+      res.json({ message: "Concept deleted", affectedAgentsCount: affectedAgents.length });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
