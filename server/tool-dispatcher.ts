@@ -24,7 +24,7 @@
  */
 import { createHash } from "crypto";
 import { storage } from "./storage";
-import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
+import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpAuthHeaders } from "./mcp-client";
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
 
@@ -519,18 +519,30 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
     }
   }
 
+  // Server-level auth (Auth Type / Key Name / Key Value configured on the MCP
+  // server record) — buildMcpAuthHeaders() already implements this correctly,
+  // but until now it was only ever called for telemetry (see aar.ts
+  // invokeViaMcp's credentialInjected flag) and never actually merged into the
+  // REST-proxy request below, so every OpenAPI-imported connector's configured
+  // credentials were silently dropped and every call went out unauthenticated.
+  const authServer = await storage.getMcpServer(tool.serverId);
+  const authRecord = authServer ? await storage.getMcpServerAuth(tool.serverId) : null;
+  const authHeaders = authServer ? await buildMcpAuthHeaders(authServer, authRecord) : {};
+
   let fetchUrl = `${baseUrl}${endpointPath}`;
   const fetchOpts: RequestInit = { method };
 
   if (method === "POST" || method === "PUT" || method === "PATCH") {
-    fetchOpts.headers = { "Content-Type": "application/json", ...headerParams };
+    fetchOpts.headers = { "Content-Type": "application/json", ...authHeaders, ...headerParams };
     fetchOpts.body = JSON.stringify(remainingArgs);
   } else {
     const qs = new URLSearchParams(
       Object.fromEntries(Object.entries(remainingArgs).map(([k, v]) => [k, String(v)]))
     ).toString();
     if (qs) fetchUrl += `?${qs}`;
-    if (Object.keys(headerParams).length > 0) fetchOpts.headers = { ...headerParams };
+    if (Object.keys(authHeaders).length > 0 || Object.keys(headerParams).length > 0) {
+      fetchOpts.headers = { ...authHeaders, ...headerParams };
+    }
   }
 
   const res = await fetch(fetchUrl, fetchOpts);
