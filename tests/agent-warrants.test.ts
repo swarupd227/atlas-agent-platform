@@ -15,6 +15,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 let insertedValues: any[] = [];
 let updateCalls: Array<{ set: any; targetId?: string }> = [];
 let selectRows: any[] = [];
+let deleteAttempted = 0;
+let deleteRows: any[] = [];
 
 vi.mock("../server/db", () => ({
   db: {
@@ -37,10 +39,19 @@ vi.mock("../server/db", () => ({
     select: () => ({
       from: () => ({
         where: () => ({
-          orderBy: () => ({
-            limit: () => Promise.resolve(selectRows),
-          }),
+          // getActiveWarrant chains .orderBy().limit(); deleteAgentTaskClass's
+          // warrant-history check chains .limit() directly -- support both.
+          orderBy: () => ({ limit: () => Promise.resolve(selectRows) }),
+          limit: () => Promise.resolve(selectRows),
         }),
+      }),
+    }),
+    delete: () => ({
+      where: () => ({
+        returning: () => {
+          deleteAttempted++;
+          return Promise.resolve(deleteRows);
+        },
       }),
     }),
   },
@@ -52,6 +63,8 @@ beforeEach(() => {
   insertedValues = [];
   updateCalls = [];
   selectRows = [];
+  deleteAttempted = 0;
+  deleteRows = [];
 });
 
 describe("getActiveWarrant", () => {
@@ -104,5 +117,26 @@ describe("revokeWarrant", () => {
     expect(updateCalls[0].set.revokedBy).toBe("user-3");
     expect(updateCalls[0].set.revokedReason).toBe("manually revoked");
     expect(revoked?.id).toBe("w-prior"); // mock always returns this id shape
+  });
+});
+
+describe("deleteAgentTaskClass", () => {
+  // Regression test for a real bug found during live-Azure verification: a
+  // task class with any warrant history (agent_warrants.task_class_id is a
+  // hard FK) used to hit a raw Postgres FK-violation 500 on delete. It must
+  // now refuse with a readable error instead, and must never even attempt
+  // the delete once warrant history is found.
+  it("refuses with a readable error when warrant history exists, without attempting the delete", async () => {
+    selectRows = [{ id: "w-1" }];
+    await expect(storage.deleteAgentTaskClass("tc-1")).rejects.toThrow(/warrant history/i);
+    expect(deleteAttempted).toBe(0);
+  });
+
+  it("deletes cleanly when no warrant history exists (the default for every task class before this increment)", async () => {
+    selectRows = [];
+    deleteRows = [{ id: "tc-1" }];
+    const ok = await storage.deleteAgentTaskClass("tc-1");
+    expect(ok).toBe(true);
+    expect(deleteAttempted).toBe(1);
   });
 });

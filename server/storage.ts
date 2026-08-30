@@ -3210,6 +3210,15 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
   async deleteAgentTaskClass(id: string, orgId?: string) {
+    // Warrants are a permanent audit trail (agent_warrants.task_class_id is a
+    // hard FK) -- once any warrant, even a revoked one, has been issued
+    // against this task class, deleting it would either fail on the FK or
+    // silently orphan history. Surface that as a clean, readable refusal
+    // instead of letting the raw Postgres constraint error reach the API.
+    const [priorWarrant] = await db.select({ id: agentWarrants.id }).from(agentWarrants).where(eq(agentWarrants.taskClassId, id)).limit(1);
+    if (priorWarrant) {
+      throw new Error("This task class has warrant history and can't be deleted -- warrants are a permanent audit trail. Revoke its active warrant instead if you want it to stop granting authority.");
+    }
     const clause = orgId ? and(eq(agentTaskClasses.id, id), eq(agentTaskClasses.organizationId, orgId)) : eq(agentTaskClasses.id, id);
     const result = await db.delete(agentTaskClasses).where(clause).returning({ id: agentTaskClasses.id });
     return result.length > 0;

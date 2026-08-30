@@ -139,6 +139,7 @@ router.delete("/api/task-classes/:id", checkPermission("create_modify_blueprints
     if (!ok) return res.status(404).json({ message: "Task class not found" });
     res.status(204).end();
   } catch (e: any) {
+    if (/warrant history/.test(e.message || "")) return res.status(409).json({ message: e.message });
     res.status(500).json({ message: e.message || "Failed to delete task class" });
   }
 });
