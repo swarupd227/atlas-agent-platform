@@ -1,9 +1,11 @@
+import { createHash } from "crypto";
 import { storage } from "./storage";
-import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineState, extractStructuredOutput } from "./agent-runtime";
+import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineState, extractStructuredOutput, canonicalJsonStringify } from "./agent-runtime";
 import { publishDagRunEvent, previewOutput } from "./dag-run-events";
 import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { recomputeOutcomeKpis } from "./routes/helpers";
+import { PRICE_TABLE_VERSION } from "./llm-provider";
 import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 
@@ -1742,10 +1744,79 @@ export async function startTeamAgentDagRun(
   opts?: RunTeamAgentDagOptions,
 ): Promise<{ dagRunId: string; wavePlan: ComputedWavePlan }> {
   const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request);
-  executeTeamAgentDagRun(setup, teamAgentId, opts).catch((err) => {
-    console.error(`[dag-run] ${setup.dagRun.id} failed:`, err.message);
-  });
+  const startMs = Date.now();
+  executeTeamAgentDagRun(setup, teamAgentId, opts)
+    .then((result) => {
+      const output = extractFinalOutputText(result, setup.wavePlan);
+      writeDagRunTrace(teamAgentId, setup.dagRun.id, request, output, result.success, result.totalCostUsd, result.waveResults, startMs, setup.wavePlan);
+    })
+    .catch((err) => {
+      console.error(`[dag-run] ${setup.dagRun.id} failed:`, err.message);
+      const waveResults = err instanceof DAGExecutionError ? err.context.waveResults : [];
+      writeDagRunTrace(teamAgentId, setup.dagRun.id, request, `Team pipeline failed: ${err.message}`, false, 0, waveResults, startMs, setup.wavePlan);
+    });
   return { dagRunId: setup.dagRun.id, wavePlan: setup.wavePlan };
+}
+
+// "Run Team Graph" (the Blueprint editor's own test-run button) drove its
+// executions through this function's fire-and-forget path only, which never
+// wrote a run_traces row -- so unlike Playground/Workspace-triggered team
+// runs (workspace-run.ts, which does write one), these never appeared in an
+// agent's Run Traces list or had a "View Full Trace" link, no matter how many
+// times the graph was run. Mirrors workspace-run.ts's trace-write block so
+// both entry points produce the same observability record. Best-effort: a
+// failure here must never be allowed to affect the run itself, which has
+// already completed (successfully or not) by the time this is called.
+async function writeDagRunTrace(
+  teamAgentId: string,
+  dagRunId: string,
+  request: string,
+  output: string,
+  success: boolean,
+  costUsd: number,
+  waveResults: unknown,
+  startMs: number,
+  wavePlan: ComputedWavePlan,
+): Promise<void> {
+  try {
+    const agent = await storage.getAgent(teamAgentId);
+    const provenanceSnapshot = {
+      engine: "dag-run-team-graph",
+      priceTableVersion: PRICE_TABLE_VERSION,
+      dagRunId,
+      totalNodes: wavePlan.totalNodes,
+      totalWaves: wavePlan.totalWaves,
+      capturedAt: new Date().toISOString(),
+    };
+    const provenanceHash = createHash("sha256").update(canonicalJsonStringify(provenanceSnapshot)).digest("hex");
+    const trace = await storage.createTrace({
+      agentId: teamAgentId,
+      environment: "blueprint",
+      status: success ? "completed" : "failed",
+      inputSummary: request.slice(0, 500),
+      outputSummary: output.slice(0, 500),
+      costUsd,
+      latencyMs: Date.now() - startMs,
+      modelId: agent?.modelName || "gpt-4.1",
+      stepsJson: waveResults as any,
+      provenanceSnapshot: provenanceSnapshot as any,
+      provenanceHash,
+      triggeredBy: "blueprint_run",
+      organizationId: agent?.organizationId ?? undefined,
+    } as any);
+    const auditEvent = await storage.createAuditEvent({
+      actorType: "system",
+      actorId: "provenance_engine",
+      action: "provenance.captured",
+      objectType: "run_trace",
+      objectId: trace.id,
+      organizationId: agent?.organizationId ?? undefined,
+      details: JSON.stringify({ provenanceHash, agentId: teamAgentId, engine: "dag-run-team-graph" }),
+    });
+    if (auditEvent && auditEvent.id) await storage.updateTrace(trace.id, { auditEventId: auditEvent.id });
+  } catch (e: any) {
+    console.error("[dag-run] trace write failed (non-fatal):", e.message);
+  }
 }
 
 // Rebuilds a DagRunSetup for a run that's sitting at "waiting_approval" --
