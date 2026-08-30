@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const updateAgentCalls: any[] = [];
 const auditEventCalls: any[] = [];
 let mockUser: { username?: string; email?: string } | undefined;
+let mockGithubCredentials: Record<string, string> | null = null;
 
 vi.mock("../server/storage", () => ({
   storage: {
@@ -20,6 +21,11 @@ vi.mock("../server/storage", () => ({
     updateAgent: vi.fn(async (id: string, data: any) => { updateAgentCalls.push({ id, data }); return { id, ...data }; }),
     createAuditEvent: vi.fn(async (data: any) => { auditEventCalls.push(data); return {}; }),
   },
+}));
+
+const getCredentialsMock = vi.fn(async () => mockGithubCredentials);
+vi.mock("../server/integrations/github/mcp-server", () => ({
+  githubMcpServer: { getCredentials: (...args: any[]) => getCredentialsMock(...args) },
 }));
 
 const { generateMandateMarkdown, syncMandateToGit } = await import("../server/mandate-git-sync");
@@ -43,6 +49,8 @@ beforeEach(() => {
   updateAgentCalls.length = 0;
   auditEventCalls.length = 0;
   mockUser = { username: "priya" };
+  mockGithubCredentials = null;
+  getCredentialsMock.mockClear();
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   originalEnv = { GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GH_TOKEN };
@@ -107,6 +115,52 @@ describe("syncMandateToGit: no-op paths (the default for essentially every agent
 
   it("never throws, even on a totally malformed gitConfig", async () => {
     await expect(syncMandateToGit({ ...baseAgent, gitConfig: { repoUrl: 123 } }, baseMandate)).resolves.toMatchObject({ pushed: false });
+  });
+});
+
+describe("syncMandateToGit: token resolution prefers the platform's connected GitHub integration", () => {
+  const agentWithRepo = { ...baseAgent, organizationId: "org-1", gitConfig: { repoUrl: "https://github.com/acme/agents", branch: "main" } };
+
+  it("uses the org's connected GitHub credential (client's own PAT via /integrations) over any env var", async () => {
+    process.env.GITHUB_TOKEN = "admin-env-token";
+    mockGithubCredentials = { token: "customers-own-pat" };
+    fetchMock
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ content: { sha: "x" } }) });
+
+    await syncMandateToGit(agentWithRepo, baseMandate);
+
+    expect(getCredentialsMock).toHaveBeenCalledWith("org-1", "agent-1");
+    const getCall = fetchMock.mock.calls[0];
+    expect(getCall[1].headers.Authorization).toBe("Bearer customers-own-pat");
+  });
+
+  it("falls back to the GITHUB_TOKEN env var when no integration is connected for this org", async () => {
+    process.env.GITHUB_TOKEN = "admin-env-token";
+    mockGithubCredentials = null;
+    fetchMock
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ content: { sha: "x" } }) });
+
+    await syncMandateToGit(agentWithRepo, baseMandate);
+
+    const getCall = fetchMock.mock.calls[0];
+    expect(getCall[1].headers.Authorization).toBe("Bearer admin-env-token");
+  });
+
+  it("reports a clear, actionable reason (pointing at /integrations) when neither is available", async () => {
+    mockGithubCredentials = null;
+    const result = await syncMandateToGit(agentWithRepo, baseMandate);
+    expect(result.pushed).toBe(false);
+    expect(result.reason).toContain("/integrations");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never queries the integration credential system for an agent with no organizationId", async () => {
+    mockGithubCredentials = { token: "should-not-be-reachable-without-orgid" };
+    const result = await syncMandateToGit({ ...baseAgent, organizationId: undefined, gitConfig: agentWithRepo.gitConfig }, baseMandate);
+    expect(getCredentialsMock).not.toHaveBeenCalled();
+    expect(result.pushed).toBe(false); // no env token in this test's default state either
   });
 });
 

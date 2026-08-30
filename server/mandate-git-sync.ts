@@ -10,13 +10,39 @@
  * Deliberately silent-no-op, never throws: the overwhelming majority of
  * agents have no gitConfig.repoUrl set today, and a mandate save/approve
  * must keep working identically for every one of them, exactly as it did
- * before this file existed. A configured repo that's unreachable (bad
- * token, network error, GitHub API error) degrades the same way -- the
- * mandate save still succeeds; only the git mirror is skipped, and it's
- * recorded in an audit event either way.
+ * before this file existed. A configured repo that's unreachable (no
+ * connected credential, network error, GitHub API error) degrades the same
+ * way -- the mandate save still succeeds; only the git mirror is skipped,
+ * and it's recorded in an audit event either way.
+ *
+ * The GitHub token itself comes from the platform's real, UI-driven
+ * credential system (see resolveGithubToken below), not a server-operator-
+ * only environment variable -- a real customer connects their own token
+ * through the Integrations page, same as any other connector.
  */
 import type { Agent, AgentMandate } from "@shared/schema";
 import { storage } from "./storage";
+import { githubMcpServer } from "./integrations/github/mcp-server";
+
+/**
+ * Resolves a real GitHub token through the platform's own credential system
+ * (client/src/pages/integrations.tsx's "Integrations" page -> GitHub card,
+ * backed by the encrypted integrationConnections/agentIntegrationCredentials
+ * vault -- server/real-mcp-base.ts's getCredentials) instead of a shared
+ * process.env.GITHUB_TOKEN that only whoever controls the Azure App Settings
+ * could ever set. A real customer connects their own PAT through that page;
+ * no platform-operator access to infrastructure is required. The env var is
+ * kept only as a fallback for local/admin testing, never the primary path.
+ */
+async function resolveGithubToken(agent: Agent): Promise<string | undefined> {
+  const orgId = (agent as any).organizationId as string | null | undefined;
+  if (orgId) {
+    const credentials = await githubMcpServer.getCredentials(orgId, agent.id).catch(() => null);
+    const token = credentials?.access_token ?? credentials?.api_token ?? credentials?.token;
+    if (token) return token;
+  }
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || undefined;
+}
 
 const MANDATE_SECTIONS: Array<{ key: keyof AgentMandate; heading: string }> = [
   { key: "whatItDoes", heading: "What it does" },
@@ -92,8 +118,8 @@ export async function syncMandateToGit(agent: Agent, mandate: AgentMandate): Pro
     const gitConfig = (agent.gitConfig || {}) as Record<string, any>;
     if (!gitConfig.repoUrl) return { pushed: false, reason: "no gitConfig.repoUrl set for this agent" };
 
-    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-    if (!token) return { pushed: false, reason: "GITHUB_TOKEN not configured" };
+    const token = await resolveGithubToken(agent);
+    if (!token) return { pushed: false, reason: "No GitHub credentials connected -- connect one at /integrations (GitHub card), or set GITHUB_TOKEN for local/admin testing" };
 
     const repoUrl = gitConfig.repoUrl as string;
     const branch = (gitConfig.branch as string) || "main";
