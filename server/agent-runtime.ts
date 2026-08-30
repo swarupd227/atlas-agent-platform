@@ -4050,7 +4050,7 @@ async function resolveBlueprint(
   };
 }
 
-export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?: string, skipInitialCycle?: boolean, allowLowAlignment?: boolean): Promise<{ started: boolean; message: string }> {
+export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?: string, skipInitialCycle?: boolean, allowLowAlignment?: boolean, allowRevalidationOverride?: boolean): Promise<{ started: boolean; message: string }> {
   if (activeAgents.has(deploymentId)) {
     return { started: false, message: "Agent runtime already running for this deployment" };
   }
@@ -4060,6 +4060,18 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
 
   const agent = await storage.getAgent(deployment.agentId);
   if (!agent) return { started: false, message: "Agent not found" };
+
+  // requiresRevalidation used to be a purely decorative banner -- set when a linked
+  // ontology concept changed or a KB source went stale, but never checked anywhere in
+  // the actual runtime-start path. Block here, mirroring the real ontology
+  // alignment-score gate below (same shape: hard block + explicit override param),
+  // so "flagged for revalidation" means something operationally, not just visually.
+  if ((agent as any).requiresRevalidation && !allowRevalidationOverride) {
+    return {
+      started: false,
+      message: `Cannot start runtime: ${agent.name} requires ontology revalidation — ${(agent as any).revalidationReason || "a linked ontology concept or knowledge source has changed"}. Acknowledge & clear it on the agent's detail page first, or pass allowRevalidationOverride to bypass.`,
+    };
+  }
 
   const mcpLinks = await storage.getAgentMcpServers(deployment.agentId);
   const mcpServerIds = mcpLinks.map(l => l.serverId);
