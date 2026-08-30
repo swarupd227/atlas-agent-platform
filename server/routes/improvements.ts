@@ -2108,6 +2108,34 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           .map(s => ({ skillId: s.id, skillName: s.name }));
       };
 
+      // Same problem as skills above, but this one shipped broken: "matchedOntologyConcepts"
+      // is exact ontology concept LABELS per the propose-agents prompt schema, but this route
+      // (a separate request from propose-agents, with no access to that request's ranked
+      // concept list) was previously writing them straight onto ontologyTags as
+      // { concepts: [...labels] } -- a plain object of unresolved label strings, not the
+      // Array<{conceptId, conceptLabel}> shape agent-runtime.ts's live prompt injection,
+      // eval generation, compliance scoring, and skill matching all expect. Every one of
+      // those silently no-ops on a non-array. Resolve against the real table instead, the
+      // same "generate then post-validate" pattern already proven in draftSingleAgent
+      // (helpers.ts) -- exact label match first, then a loose substring fallback for minor
+      // drift, dropping anything that still doesn't resolve rather than inventing an id.
+      const industryConcepts = reqIndustry ? await storage.getOntologyConcepts(reqIndustry) : [];
+      const conceptsByLowerLabel = new Map(industryConcepts.map(c => [c.label.toLowerCase().trim(), c]));
+      const resolveOntologyTags = function(labels?: string[]): { conceptId: string; conceptLabel: string }[] {
+        if (!labels?.length || industryConcepts.length === 0) return [];
+        const resolved: { conceptId: string; conceptLabel: string }[] = [];
+        for (const raw of labels) {
+          const needle = raw.toLowerCase().trim();
+          const exact = conceptsByLowerLabel.get(needle);
+          const match = exact ?? industryConcepts.find(c => {
+            const label = c.label.toLowerCase();
+            return label.includes(needle) || needle.includes(label);
+          });
+          if (match) resolved.push({ conceptId: match.id, conceptLabel: match.label });
+        }
+        return resolved;
+      };
+
       const linkMcpBindings = async function(agentId: string, bindings?: Array<{ server: string; tool: string }>) {
         if (!bindings?.length) return;
         const serverNames = Array.from(new Set(bindings.map(b => b.server)));
@@ -2215,7 +2243,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         toolsConfig: orchestrator.tools || [],
         systemPrompt: composeSystemPrompt(orchestrator, true),
         complianceTags: orchestrator.complianceTags || [],
-        ontologyTags: orchestrator.matchedOntologyConcepts?.length ? { concepts: orchestrator.matchedOntologyConcepts } : {},
+        ontologyTags: resolveOntologyTags(orchestrator.matchedOntologyConcepts),
         policyBindings: orchestrator.policyConstraints?.length ? { policies: orchestrator.policyConstraints } : {},
         preloadedSkills: resolveMatchedSkills(orchestrator.matchedSkills),
         runtimeConfig: {
@@ -2255,7 +2283,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           toolsConfig: worker.tools || [],
           systemPrompt: composeSystemPrompt(worker, false),
           complianceTags: worker.complianceTags || [],
-          ontologyTags: worker.matchedOntologyConcepts?.length ? { concepts: worker.matchedOntologyConcepts } : {},
+          ontologyTags: resolveOntologyTags(worker.matchedOntologyConcepts),
           policyBindings: worker.policyConstraints?.length ? { policies: worker.policyConstraints } : {},
           preloadedSkills: resolveMatchedSkills(worker.matchedSkills),
           blueprintId: worker.suggestedBlueprintId || undefined,
