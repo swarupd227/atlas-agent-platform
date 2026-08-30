@@ -4,6 +4,7 @@ import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
 import { insertAgentTaskClassSchema } from "@shared/schema";
+import { syncMandateToGit } from "../mandate-git-sync";
 
 const router = Router();
 
@@ -58,7 +59,12 @@ router.put("/api/agents/:id/mandate", checkPermission("create_modify_blueprints"
       { ...body, createdBy: authorId },
       orgId,
     );
-    res.json(mandate);
+    // Best-effort mirror to the client's own repo (server/mandate-git-sync.ts)
+    // -- never throws, no-ops silently when the agent has no gitConfig.repoUrl
+    // set (true for essentially every agent today), so this never changes
+    // whether a mandate save succeeds.
+    const gitSync = await syncMandateToGit(agent, mandate);
+    res.json({ ...mandate, gitSync });
   } catch (e: any) {
     if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
     res.status(500).json({ message: e.message || "Failed to save mandate" });
@@ -77,7 +83,9 @@ router.post("/api/agents/:id/mandate/approve", checkPermission("approve_changes"
     const approverId = (req as any).authUser?.userId ?? "system";
     const approved = await storage.approveAgentMandate(req.params.id, approverId, orgId);
     if (!approved) return res.status(404).json({ message: "No mandate to approve for this agent -- save one first" });
-    res.json(approved);
+    const agent = await storage.getAgent(req.params.id, orgId);
+    const gitSync = agent ? await syncMandateToGit(agent, approved) : { pushed: false, reason: "agent not found" };
+    res.json({ ...approved, gitSync });
   } catch (e: any) {
     // approveAgentMandate throws a readable message for the missing-fields
     // case (S1.1.3's lint) -- surface it as a 400, not a 500.
