@@ -71,7 +71,7 @@ import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
   CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server, Network,
-  Scale, BookMarked, Diff, Globe2, Lock, Crown, Copy, Eye, Code2, SendHorizontal,
+  Scale, BookMarked, Diff, Crown, Copy, Eye, Code2, SendHorizontal,
 } from "lucide-react";
 
 import {
@@ -86,7 +86,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import TeamGraphEditor from "./team-graph-editor";
 
 type BpNode = { id: string; type: string; label: string; [key: string]: any };
@@ -174,8 +173,6 @@ export default function BlueprintDetail() {
   const [contextPlan, setContextPlan] = useState<ContextPlanEntry[]>([]);
   const [depsOpen, setDepsOpen] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState<BpNode[]>([]);
-  const [kgBindings, setKgBindings] = useState<string[]>([]);
-  const [kgBindingsOpen, setKgBindingsOpen] = useState(false);
   const [ontologyReadinessOpen, setOntologyReadinessOpen] = useState(false);
   const [businessView, setBusinessView] = useState(false);
 
@@ -208,7 +205,6 @@ export default function BlueprintDetail() {
       setBlueprintName(blueprint.name);
       setDirty(false);
       setSavedSnapshot(bj?.nodes || []);
-      setKgBindings(bj?.kgBindings || []);
       if (blueprint.validationResults) setLocalValidation(blueprint.validationResults as ValidationResults);
       if (bj?.contextSources) setAttachedResourceIds(new Set(bj.contextSources));
       if (bj?.promptBindings) setPromptBindings(bj.promptBindings);
@@ -284,7 +280,7 @@ export default function BlueprintDetail() {
       // the Process Flow handoff, used for Business View labels) that a plain
       // replace would silently destroy.
       await apiRequest("PATCH", `/api/blueprints/${id}`, {
-        blueprintJson: { ...((blueprint?.blueprintJson as Record<string, unknown>) || {}), nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings, mcpDependencies, contextPlan, kgBindings },
+        blueprintJson: { ...((blueprint?.blueprintJson as Record<string, unknown>) || {}), nodes, edges, contextSources: Array.from(attachedResourceIds), promptBindings, mcpDependencies, contextPlan },
         name: blueprintName,
       });
     },
@@ -1311,76 +1307,6 @@ export default function BlueprintDetail() {
                   ) : (
                     <p className="text-xs text-muted-foreground text-center py-3" data-testid="text-no-context-sources">No MCP resources available</p>
                   )}
-                </div>
-              )}
-            </div>
-
-            <div className="border-t mx-4">
-              <button
-                className="flex items-center gap-2 py-3 w-full text-left"
-                onClick={() => setKgBindingsOpen(!kgBindingsOpen)}
-                data-testid="button-toggle-kg-bindings"
-              >
-                {kgBindingsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                <Globe2 className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground">Knowledge Graph Scope ({kgBindings.length})</span>
-              </button>
-              {kgBindingsOpen && (
-                <div className="flex flex-col gap-2 pb-4">
-                  {(() => {
-                    const KG_DOMAINS = [
-                      "Financial Services - Lending",
-                      "Financial Services - Trading",
-                      "Healthcare - Clinical",
-                      "Healthcare - Administrative",
-                      "Travel & Transportation",
-                      "Insurance - Claims",
-                      "Insurance - Underwriting",
-                      "Manufacturing - Quality",
-                      "Retail - Commerce",
-                      "Custom Domain...",
-                    ];
-                    const ontologyTags = (linkedAgent?.ontologyTags as any) || {};
-                    const suggestedDomain = ontologyTags?.domain as string | undefined;
-                    return (
-                      <>
-                        {KG_DOMAINS.map(domain => {
-                          const isChecked = kgBindings.includes(domain);
-                          const isSuggested = suggestedDomain && domain.toLowerCase().includes(suggestedDomain.toLowerCase());
-                          return (
-                            <div
-                              key={domain}
-                              className="flex items-center gap-2 px-1"
-                              data-testid={`kg-domain-${domain.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}`}
-                            >
-                              <Checkbox
-                                checked={isChecked}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setKgBindings(prev => [...prev, domain]);
-                                  } else {
-                                    setKgBindings(prev => prev.filter(d => d !== domain));
-                                  }
-                                  setDirty(true);
-                                }}
-                                data-testid={`checkbox-kg-${domain.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}`}
-                              />
-                              <span className="text-xs flex-1">{domain}</span>
-                              {isSuggested && (
-                                <Badge variant="outline" className="text-[9px]">suggested</Badge>
-                              )}
-                            </div>
-                          );
-                        })}
-                        <div className="flex items-center gap-1.5 px-1 mt-1">
-                          <Lock className="w-3 h-3 text-muted-foreground shrink-0" />
-                          <span className="text-[10px] text-muted-foreground" data-testid="text-kg-scope-note">
-                            Runtime will enforce that this agent only accesses knowledge graph nodes within declared scope.
-                          </span>
-                        </div>
-                      </>
-                    );
-                  })()}
                 </div>
               )}
             </div>
