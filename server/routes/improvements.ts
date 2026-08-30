@@ -826,7 +826,12 @@ const router = Router();
       let ontologyConcepts: any[] = [];
       let ontologyEnhancements: any[] = [];
       try {
-        ontologyConcepts = await storage.getOntologyConcepts(industryId);
+        // Sub-vertical-scoped when the caller passed one (e.g. "Workers Compensation"
+        // within Insurance) -- storage.getOntologyConcepts already unions industry-wide
+        // concepts (subVerticals null/empty) with ones tagged to this specific
+        // sub-vertical, and falls back to the plain industry-wide fetch when
+        // subVertical is absent, so this is safe for callers that never set it.
+        ontologyConcepts = await storage.getOntologyConcepts(industryId, industryContext?.subVertical);
       } catch {}
 
       // Build relevance scorer first so it can filter MCP servers and all other slices
