@@ -1558,6 +1558,17 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_agent_warrants_active ON agent_warrants(task_class_id, revoked_at, expires_at);
     `);
 
+    // Review routing (Path A phase 0, third increment): an approval created
+    // for a warrant-gated tool call can carry the task class's
+    // required_reviewer_role, so PATCH /api/approvals/:id can route the
+    // decision to that specific role instead of anyone with the general
+    // approve_changes permission. NULL for every approval that predates this
+    // (and every approval type that doesn't set it), which keeps them on
+    // today's approve_changes-only path unchanged.
+    await client.query(`
+      ALTER TABLE approvals ADD COLUMN IF NOT EXISTS required_reviewer_role TEXT;
+    `);
+
     // Relay agents (SQL connector "relay_agent" connection mode, Phase 3):
     // outbound-only tunnel agents a client deploys inside their own network.
     // Only a sha256 hash of the bearer token is stored -- the raw token is

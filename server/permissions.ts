@@ -196,6 +196,33 @@ export function hasPermission(role: RoleId, action: PermissionAction): boolean {
   return access !== "denied" && access !== undefined;
 }
 
+/**
+ * Authorization for deciding (approve/reject) one approval. Used by PATCH
+ * /api/approvals/:id (server/routes/governance.ts).
+ *
+ * When the approval carries a requiredReviewerRole (set by a task class's
+ * required_reviewer_role -- server/tool-dispatcher.ts's warrant gate stamps
+ * it onto the approval it creates), only that role or admin may decide it.
+ * This is deliberately NOT the general approve_changes permission: routing
+ * means "the right reviewer for this specific decision," so a role with
+ * blanket approve_changes ("full", e.g. expert_validator) is still refused
+ * if it doesn't match, and a role that's normally denied approve_changes
+ * entirely (e.g. ops_sre) is let through for this one approval because it
+ * was explicitly routed to them.
+ *
+ * Every approval without a required reviewer role -- all of them before this
+ * feature existed, and every approval type that hasn't opted in -- falls
+ * through to the exact approve_changes check this route always used.
+ */
+export function canDecideApproval(role: RoleId, requiredReviewerRole: string | null | undefined): { allowed: boolean; reason: string } {
+  if (requiredReviewerRole) {
+    if (role === "admin" || role === requiredReviewerRole) return { allowed: true, reason: "" };
+    return { allowed: false, reason: `This approval is routed to the "${requiredReviewerRole}" role` };
+  }
+  if (hasPermission(role, "approve_changes")) return { allowed: true, reason: "" };
+  return { allowed: false, reason: "Permission denied" };
+}
+
 export type RedactionLevel = "R0" | "R1" | "R2";
 
 export function getRedactionLevel(role: RoleId): RedactionLevel {

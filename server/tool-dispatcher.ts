@@ -406,6 +406,7 @@ export async function evaluateWarrantCondition(
         requestedBy: agentId,
         requesterType: "agent",
         description: `Warrant gate: agent '${agent?.name ?? agentId}' requires approval to call tool '${toolName}' under task class "${tc.name}" (warrant grants=requires_approval)`,
+        requiredReviewerRole: tc.requiredReviewerRole ?? undefined,
       });
       return { decision: "REQUIRE_APPROVAL", reason: `Task class "${tc.name}" warrant requires approval for tool "${toolName}"`, approvalId: approval.id };
     }

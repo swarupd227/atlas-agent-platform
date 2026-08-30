@@ -454,6 +454,13 @@ export const approvals = pgTable("approvals", {
   recommendedAction: text("recommended_action"),
   diffSummary: text("diff_summary"),
   decidedAt: timestamp("decided_at"),
+  // Review routing (agent_task_classes.required_reviewer_role): when set,
+  // only that role (or admin) may decide this approval -- see the PATCH
+  // /api/approvals/:id handler in server/routes/governance.ts. Null for
+  // every approval before this feature and every approval type that doesn't
+  // opt in, so the general approve_changes permission keeps deciding those
+  // exactly as before.
+  requiredReviewerRole: text("required_reviewer_role"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

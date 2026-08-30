@@ -222,6 +222,30 @@ describe("warrant gate", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("stamps the task class's requiredReviewerRole onto the approval it creates", async () => {
+    vi.mocked(storage.listAgentTaskClasses).mockResolvedValueOnce([
+      { id: "tc-1", name: "Wire Release", coveredTools: ["create_ticket"], requiredReviewerRole: "ops_sre" } as any,
+    ]);
+    vi.mocked(storage.getActiveWarrant).mockResolvedValueOnce({ id: "w-1", grants: "requires_approval" } as any);
+    vi.mocked(storage.createApproval).mockClear();
+
+    await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: {}, policyBundle: emptyBundle() });
+
+    expect(vi.mocked(storage.createApproval).mock.calls[0][0]).toMatchObject({ requiredReviewerRole: "ops_sre" });
+  });
+
+  it("leaves requiredReviewerRole undefined when the task class doesn't set one", async () => {
+    vi.mocked(storage.listAgentTaskClasses).mockResolvedValueOnce([
+      { id: "tc-1", name: "Wire Release", coveredTools: ["create_ticket"], requiredReviewerRole: null } as any,
+    ]);
+    vi.mocked(storage.getActiveWarrant).mockResolvedValueOnce({ id: "w-1", grants: "requires_approval" } as any);
+    vi.mocked(storage.createApproval).mockClear();
+
+    await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: {}, policyBundle: emptyBundle() });
+
+    expect(vi.mocked(storage.createApproval).mock.calls[0][0].requiredReviewerRole).toBeUndefined();
+  });
+
   it("allows and executes when the active warrant grants autonomous", async () => {
     vi.mocked(storage.listAgentTaskClasses).mockResolvedValueOnce([
       { id: "tc-1", name: "Wire Release", coveredTools: ["create_ticket"] } as any,
