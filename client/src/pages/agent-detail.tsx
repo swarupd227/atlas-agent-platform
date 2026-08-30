@@ -6923,6 +6923,221 @@ interface MandateRow {
 interface TaskClassRow {
   id: string; agentId: string; mandateId: string | null; name: string; description: string | null;
   requiredReviewerRole: string | null; derivedFrom: string; sourceRef: string | null;
+  coveredTools: string[] | null;
+}
+interface WarrantRow {
+  id: string; taskClassId: string; grants: "autonomous" | "requires_approval" | "denied";
+  basis: string | null; issuedBy: string | null; issuedAt: string | null; expiresAt: string;
+  revokedAt: string | null; revokedBy: string | null; revokedReason: string | null;
+}
+
+const WARRANT_GRANT_OPTIONS: Array<{ id: "autonomous" | "requires_approval" | "denied"; label: string }> = [
+  { id: "autonomous", label: "Autonomous" },
+  { id: "requires_approval", label: "Requires approval" },
+  { id: "denied", label: "Denied" },
+];
+const WARRANT_DURATION_OPTIONS = [
+  { label: "24 hours", ms: 24 * 60 * 60 * 1000 },
+  { label: "7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+  { label: "30 days", ms: 30 * 24 * 60 * 60 * 1000 },
+  { label: "90 days", ms: 90 * 24 * 60 * 60 * 1000 },
+];
+function isWarrantActive(w: WarrantRow): boolean {
+  return !w.revokedAt && new Date(w.expiresAt).getTime() > Date.now();
+}
+
+/**
+ * Per-task-class warrant panel: authoring coveredTools (the explicit,
+ * author-set list the gate in tool-dispatcher.ts's evaluateWarrantCondition
+ * matches on -- empty means this task class governs nothing) and the
+ * issue/revoke/history lifecycle for its warrant. Mounted only while the
+ * task class row is expanded, so its query never fires for a collapsed row.
+ */
+function TaskClassWarrants({ taskClass, agentId }: { taskClass: TaskClassRow; agentId: string }) {
+  const { toast } = useToast();
+  const { data: warrants, isLoading } = useQuery<WarrantRow[]>({
+    queryKey: ["/api/task-classes", taskClass.id, "warrants"],
+  });
+  const invalidateWarrants = () => queryClient.invalidateQueries({ queryKey: ["/api/task-classes", taskClass.id, "warrants"] });
+  const invalidateMandate = () => queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "mandate"] });
+
+  const [tools, setTools] = useState<string[]>(taskClass.coveredTools ?? []);
+  const [newTool, setNewTool] = useState("");
+  const [savingTools, setSavingTools] = useState(false);
+  const toolsDirty = JSON.stringify(tools) !== JSON.stringify(taskClass.coveredTools ?? []);
+
+  const addTool = () => {
+    const t = newTool.trim();
+    if (!t || tools.includes(t)) return;
+    setTools(ts => [...ts, t]);
+    setNewTool("");
+  };
+  const removeTool = (t: string) => setTools(ts => ts.filter(x => x !== t));
+  const saveTools = async () => {
+    setSavingTools(true);
+    try {
+      await apiRequest("PATCH", `/api/task-classes/${taskClass.id}`, { coveredTools: tools });
+      invalidateMandate();
+      toast({ title: "Covered tools updated" });
+    } catch (e: any) {
+      toast({ title: "Failed to update covered tools", description: e.message, variant: "destructive" });
+    } finally {
+      setSavingTools(false);
+    }
+  };
+
+  const [grants, setGrants] = useState<"autonomous" | "requires_approval" | "denied">("requires_approval");
+  const [basis, setBasis] = useState("");
+  const [durationMs, setDurationMs] = useState(WARRANT_DURATION_OPTIONS[1].ms);
+  const [issuing, setIssuing] = useState(false);
+
+  const activeWarrant = (warrants ?? []).find(isWarrantActive) ?? null;
+  const history = (warrants ?? []).filter(w => w.id !== activeWarrant?.id);
+
+  const issueWarrant = async () => {
+    setIssuing(true);
+    try {
+      await apiRequest("POST", `/api/task-classes/${taskClass.id}/warrants`, {
+        grants, basis: basis.trim() || null, expiresAt: new Date(Date.now() + durationMs).toISOString(),
+      });
+      invalidateWarrants();
+      setBasis("");
+      toast({ title: activeWarrant ? "Warrant renewed" : "Warrant issued" });
+    } catch (e: any) {
+      toast({ title: "Failed to issue warrant", description: e.message, variant: "destructive" });
+    } finally {
+      setIssuing(false);
+    }
+  };
+
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const revoke = async (id: string) => {
+    setRevokingId(id);
+    try {
+      await apiRequest("POST", `/api/warrants/${id}/revoke`, { reason: "Revoked from Agent Detail" });
+      invalidateWarrants();
+      toast({ title: "Warrant revoked" });
+    } catch (e: any) {
+      toast({ title: "Failed to revoke warrant", description: e.message, variant: "destructive" });
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3 mt-2 pt-3 border-t" data-testid={`warrants-${taskClass.id}`}>
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Covered tools</span>
+        <p className="text-[11px] text-muted-foreground">
+          Only tools listed here are governed by a warrant — everything else this agent calls is unaffected.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {tools.map(t => (
+            <Badge key={t} variant="outline" className="text-[10px] gap-1 pr-1">
+              {t}
+              <button type="button" onClick={() => removeTool(t)} className="hover:text-destructive" data-testid={`button-remove-tool-${t}`}>
+                <X className="h-2.5 w-2.5" />
+              </button>
+            </Badge>
+          ))}
+          {tools.length === 0 && <span className="text-[11px] text-muted-foreground italic">No tools covered — this task class's warrant gate is a no-op.</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            value={newTool}
+            onChange={e => setNewTool(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addTool(); } }}
+            placeholder="Exact tool name, e.g. release_wire_transfer"
+            className="h-7 text-xs max-w-xs"
+            data-testid="input-new-covered-tool"
+          />
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={addTool} disabled={!newTool.trim()}>Add</Button>
+          {toolsDirty && (
+            <Button size="sm" className="h-7 text-xs" onClick={saveTools} disabled={savingTools} data-testid="button-save-covered-tools">
+              {savingTools ? "Saving…" : "Save"}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Warrant</span>
+        {isLoading ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+        ) : activeWarrant ? (
+          <div className="flex items-center justify-between gap-2 p-2 rounded-md border bg-muted/30" data-testid={`active-warrant-${taskClass.id}`}>
+            <div className="flex items-center gap-2 flex-wrap text-[11px]">
+              <Badge
+                variant="outline"
+                className={
+                  activeWarrant.grants === "autonomous" ? "text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" :
+                  activeWarrant.grants === "denied" ? "text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" :
+                  "text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                }
+              >
+                {WARRANT_GRANT_OPTIONS.find(g => g.id === activeWarrant.grants)?.label}
+              </Badge>
+              <span className="text-muted-foreground">expires {formatDate(activeWarrant.expiresAt)}</span>
+              {activeWarrant.basis && <span className="text-muted-foreground">— {activeWarrant.basis}</span>}
+            </div>
+            <Button
+              size="sm" variant="ghost" className="h-6 text-[11px] text-destructive"
+              onClick={() => revoke(activeWarrant.id)} disabled={revokingId === activeWarrant.id}
+              data-testid={`button-revoke-warrant-${activeWarrant.id}`}
+            >
+              {revokingId === activeWarrant.id ? "Revoking…" : "Revoke"}
+            </Button>
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            No active warrant{tools.length > 0 ? " — any call to a covered tool is blocked until one is issued." : "."}
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr_110px_auto] gap-2 items-center">
+          <Select value={grants} onValueChange={v => setGrants(v as any)}>
+            <SelectTrigger className="h-7 text-xs" data-testid="select-warrant-grants">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {WARRANT_GRANT_OPTIONS.map(g => <SelectItem key={g.id} value={g.id}>{g.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input
+            value={basis}
+            onChange={e => setBasis(e.target.value)}
+            placeholder="Basis (optional) — why this authority is warranted"
+            className="h-7 text-xs"
+            data-testid="input-warrant-basis"
+          />
+          <Select value={String(durationMs)} onValueChange={v => setDurationMs(Number(v))}>
+            <SelectTrigger className="h-7 text-xs" data-testid="select-warrant-duration">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {WARRANT_DURATION_OPTIONS.map(d => <SelectItem key={d.ms} value={String(d.ms)}>{d.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Button size="sm" className="h-7 text-xs" onClick={issueWarrant} disabled={issuing} data-testid="button-issue-warrant">
+            {issuing ? "Issuing…" : activeWarrant ? "Renew" : "Issue"}
+          </Button>
+        </div>
+      </div>
+
+      {history.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">History</span>
+          {history.slice(0, 5).map(w => (
+            <div key={w.id} className="text-[11px] text-muted-foreground flex items-center gap-2">
+              <Badge variant="outline" className="text-[9px]">{WARRANT_GRANT_OPTIONS.find(g => g.id === w.grants)?.label}</Badge>
+              <span>{w.revokedAt ? `revoked ${formatDate(w.revokedAt)}` : `expired ${formatDate(w.expiresAt)}`}</span>
+              {w.basis && <span>— {w.basis}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -6993,6 +7208,7 @@ function MandateTab({ agent }: { agent: Agent }) {
 
   const [newTaskClass, setNewTaskClass] = useState({ name: "", description: "", requiredReviewerRole: "" });
   const [addingTaskClass, setAddingTaskClass] = useState(false);
+  const [expandedTaskClassId, setExpandedTaskClassId] = useState<string | null>(null);
 
   const addTaskClass = async () => {
     if (!newTaskClass.name.trim()) return;
@@ -7111,30 +7327,44 @@ function MandateTab({ agent }: { agent: Agent }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {taskClasses.map(tc => (
-            <div key={tc.id} className="flex items-start justify-between gap-3 p-2.5 rounded-md border" data-testid={`row-task-class-${tc.id}`}>
-              <div className="flex flex-col gap-0.5 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium">{tc.name}</span>
-                  {tc.requiredReviewerRole && (
-                    <Badge variant="outline" className="text-[9px]">
-                      {MANDATE_ROLE_OPTIONS.find(r => r.id === tc.requiredReviewerRole)?.label ?? tc.requiredReviewerRole}
-                    </Badge>
-                  )}
-                  {tc.derivedFrom !== "manual" && (
-                    <Badge variant="outline" className="text-[9px] text-muted-foreground">via {tc.derivedFrom.replace("_", " ")}</Badge>
-                  )}
-                </div>
-                {tc.description && <p className="text-[12px] text-muted-foreground">{tc.description}</p>}
+            <div key={tc.id} className="rounded-md border p-2.5" data-testid={`row-task-class-${tc.id}`}>
+              <div className="flex items-start justify-between gap-3">
+                <button
+                  type="button"
+                  className="flex flex-col gap-0.5 min-w-0 text-left flex-1"
+                  onClick={() => setExpandedTaskClassId(id => id === tc.id ? null : tc.id)}
+                  data-testid={`button-expand-task-class-${tc.id}`}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {expandedTaskClassId === tc.id ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                    <span className="text-sm font-medium">{tc.name}</span>
+                    {tc.requiredReviewerRole && (
+                      <Badge variant="outline" className="text-[9px]">
+                        {MANDATE_ROLE_OPTIONS.find(r => r.id === tc.requiredReviewerRole)?.label ?? tc.requiredReviewerRole}
+                      </Badge>
+                    )}
+                    {tc.derivedFrom !== "manual" && (
+                      <Badge variant="outline" className="text-[9px] text-muted-foreground">via {tc.derivedFrom.replace("_", " ")}</Badge>
+                    )}
+                    {(tc.coveredTools?.length ?? 0) > 0 && (
+                      <Badge variant="outline" className="text-[9px] gap-1 bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" data-testid={`badge-warranted-${tc.id}`}>
+                        <ShieldCheck className="h-2.5 w-2.5" /> {tc.coveredTools!.length} tool{tc.coveredTools!.length === 1 ? "" : "s"} warranted
+                      </Badge>
+                    )}
+                  </div>
+                  {tc.description && <p className="text-[12px] text-muted-foreground">{tc.description}</p>}
+                </button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-6 w-6 shrink-0"
+                  onClick={() => removeTaskClass(tc.id)}
+                  data-testid={`button-remove-task-class-${tc.id}`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
               </div>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-6 w-6 shrink-0"
-                onClick={() => removeTaskClass(tc.id)}
-                data-testid={`button-remove-task-class-${tc.id}`}
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
+              {expandedTaskClassId === tc.id && <TaskClassWarrants taskClass={tc} agentId={agent.id} />}
             </div>
           ))}
           {taskClasses.length === 0 && (
