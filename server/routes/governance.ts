@@ -602,17 +602,55 @@ Key Requirements: ${JSON.stringify(requirements || [])}`,
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
-      const { agentName, agentDescription, agentSkills, industry, ontologyName } = req.body;
+      const { agentName, agentDescription, agentSkills, industry, industryId, subVertical, ontologyName } = req.body;
       if (!agentName || !agentDescription || !industry) {
         return res.status(400).json({ error: "agentName, agentDescription, and industry are required" });
       }
 
+      // This used to let the LLM invent both conceptId and conceptLabel from thin air --
+      // the one write path into agent.ontologyTags with zero grounding against the real
+      // ontology_concepts table (every other path, including propose-agents/
+      // create-team-from-proposals and draftSingleAgent, supplies a real ranked candidate
+      // list and post-validates against it). Fetch the real candidates for this industry
+      // (sub-vertical-scoped when known) and require the LLM choose only from that list,
+      // same pattern as draftSingleAgent (server/routes/helpers.ts).
+      let candidates: any[] = [];
+      try {
+        candidates = await storage.getOntologyConcepts(industryId || industry, subVertical);
+      } catch {}
+
+      const keywords = [
+        ...(agentName || "").toLowerCase().split(/\W+/),
+        ...(agentDescription || "").toLowerCase().split(/\W+/),
+        ...((agentSkills || []) as string[]).map((s: string) => (s || "").toLowerCase()),
+      ].filter((w: string) => w.length > 3);
+      const relevanceScore = (c: any): number => {
+        const text = [c.label, c.description, c.category, ...(Array.isArray(c.tags) ? c.tags : [])].join(" ").toLowerCase();
+        return keywords.filter((k) => text.includes(k)).length;
+      };
+      const rankedCandidates = candidates
+        .map((c) => ({ concept: c, score: relevanceScore(c) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 20)
+        .map((x) => x.concept);
+      const candidatesById = new Map(rankedCandidates.map((c) => [c.id, c]));
+      const candidatesByLowerLabel = new Map(rankedCandidates.map((c) => [c.label.toLowerCase().trim(), c]));
+
+      if (rankedCandidates.length === 0) {
+        return res.json({ suggestedTags: [], enrichedSkills: [] });
+      }
+
+      const candidateSummary = rankedCandidates.map((c) => ({ id: c.id, label: c.label, category: c.category, description: c.description }));
+
       const tagsRaw = await callClaude({
-        system: `You are a domain expert in ${ontologyName || "industry"} ontology for ${industry} operations. Given an AI agent's description and skills, suggest relevant ontology concepts to tag it with.
+        system: `You are a domain expert in ${ontologyName || "industry"} ontology for ${industry} operations. Given an AI agent's description and skills, and a real list of ontology concepts that exist in this platform, choose which of THOSE concepts (only) this agent should be tagged with.
+
+CANDIDATE CONCEPTS (choose only from this list -- do not invent new ones):
+${JSON.stringify(candidateSummary)}
 
 Return a JSON object with:
-- "suggestedTags": Array of objects with { "conceptId": string, "conceptLabel": string, "relevanceScore": number (0-1), "reasoning": string }
-- "enrichedSkills": Array of objects with { "originalSkill": string, "enrichedDescription": string, "ontologyConcepts": string[] }
+- "suggestedTags": Array of objects with { "conceptId": string - MUST be an exact "id" from the candidate list above, "conceptLabel": string - the matching "label", "relevanceScore": number (0-1), "reasoning": string }
+- "enrichedSkills": Array of objects with { "originalSkill": string, "enrichedDescription": string, "ontologyConcepts": string[] - labels drawn from the candidate list above }
 
 Suggest 5-8 relevant ontology tags and enrich 3-5 skills with domain terminology.`,
         user: `Suggest ontology tags for this AI agent:
@@ -632,6 +670,24 @@ Ontology: ${ontologyName || "industry standard"}`,
       }
 
       const result = JSON.parse(content);
+
+      // Post-validate: drop any suggested tag that doesn't resolve to a real candidate
+      // (by id first, falling back to an exact label match for minor LLM drift), and
+      // normalize conceptLabel to the real stored label rather than trusting the LLM's copy.
+      const rawTags = Array.isArray(result.suggestedTags) ? result.suggestedTags : [];
+      result.suggestedTags = rawTags
+        .map((t: any) => {
+          const match = candidatesById.get(t?.conceptId) || candidatesByLowerLabel.get((t?.conceptLabel || "").toLowerCase().trim());
+          if (!match) return null;
+          return {
+            conceptId: match.id,
+            conceptLabel: match.label,
+            relevanceScore: typeof t.relevanceScore === "number" ? t.relevanceScore : undefined,
+            reasoning: t.reasoning,
+          };
+        })
+        .filter(Boolean);
+
       res.json(result);
     } catch (e: any) {
       console.error("AI suggest ontology tags error:", e);

@@ -2398,7 +2398,7 @@ function OntologyTagSection({
   state: WizardState;
   updateState: (partial: Partial<WizardState>) => void;
 }) {
-  const { industry } = useIndustry();
+  const { industry, subVertical } = useIndustry();
   const { toast } = useToast();
   const [suggestedTags, setSuggestedTags] = useState<OntologyTag[]>([]);
   const [enrichedSkills, setEnrichedSkills] = useState<Array<{ originalSkill: string; enrichedDescription: string; ontologyConcepts: string[] }>>([]);
@@ -2409,7 +2409,9 @@ function OntologyTagSection({
         agentName: state.name,
         agentDescription: state.description,
         agentSkills: state.toolsConfig.map((t) => t.name),
+        industryId: industry?.id || "general",
         industry: industry?.label || "General",
+        subVertical: subVertical || undefined,
         ontologyName: industry?.ontology || "industry standard",
       });
       return res.json();
