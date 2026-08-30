@@ -2124,15 +2124,23 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       // same "generate then post-validate" pattern already proven in draftSingleAgent
       // (helpers.ts) -- exact label match first, then a loose substring fallback for minor
       // drift, dropping anything that still doesn't resolve rather than inventing an id.
+      //
+      // Live data from generating the Phase 2 journey library caught a gap in that: this
+      // ontology's concept ids aren't all UUIDs -- some are human-readable slugs (e.g.
+      // "insurance-la-cash-value"), and propose-agents' own prompt shows the LLM both id
+      // and label per candidate. The LLM sometimes echoes the id instead of the label
+      // despite the schema asking for labels -- label-only matching then correctly (by
+      // design) dropped those as unresolved, but that silently lost real grounding rather
+      // than recovering it, e.g. one worker ended up with zero ontology tags. Try id first.
       const industryConcepts = reqIndustry ? await storage.getOntologyConcepts(reqIndustry) : [];
+      const conceptsById = new Map(industryConcepts.map(c => [c.id, c]));
       const conceptsByLowerLabel = new Map(industryConcepts.map(c => [c.label.toLowerCase().trim(), c]));
       const resolveOntologyTags = function(labels?: string[]): { conceptId: string; conceptLabel: string }[] {
         if (!labels?.length || industryConcepts.length === 0) return [];
         const resolved: { conceptId: string; conceptLabel: string }[] = [];
         for (const raw of labels) {
           const needle = raw.toLowerCase().trim();
-          const exact = conceptsByLowerLabel.get(needle);
-          const match = exact ?? industryConcepts.find(c => {
+          const match = conceptsById.get(raw?.trim()) ?? conceptsByLowerLabel.get(needle) ?? industryConcepts.find(c => {
             const label = c.label.toLowerCase();
             return label.includes(needle) || needle.includes(label);
           });
