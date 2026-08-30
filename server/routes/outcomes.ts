@@ -2177,7 +2177,7 @@ async function createOutcomeVersion(
             systemPrompt: draft.systemPrompt || "",
             toolsConfig: draft.toolsConfig || [],
             policyBindings: draft.policyBindings?.length ? { policies: draft.policyBindings.map((b: any) => b.policyName) } : {},
-            ontologyTags: draft.ontologyTags?.length ? { concepts: draft.ontologyTags } : {},
+            ontologyTags: draft.ontologyTags || [],
             preloadedSkills: draft.preloadedSkills || [],
             runtimeConfig: { prompt: description, guardrailsConfig: draft.guardrailsConfig, evalSuiteConfig: draft.evalSuiteConfig },
           } as any);
