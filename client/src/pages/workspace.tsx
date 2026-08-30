@@ -4,13 +4,13 @@
  * outcome. Streams from POST /api/workspace/runs/stream; resumes at approval
  * gates via /resume/stream. Every run is governed and produces a signed trace.
  */
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Sparkles, Send, Brain, Wrench, CheckCircle2, ShieldQuestion, XCircle,
   Ban, Loader2, Clock, Receipt, ArrowRight, CircleDollarSign, Download,
-  FileText, Pencil, Info,
+  FileText, Pencil, Info, BookOpen,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,109 @@ interface WorkspaceAgent {
   id: string; name: string; description: string | null; riskTier: string;
   canGenerateDocuments: boolean;
   documentGenerationMode: "auto" | "platform" | "sandbox";
+  ontologyTags: Array<{ conceptId: string; conceptLabel: string }>;
+  toolsConfig: Array<{ name?: string; parameters?: Array<{ name: string; enrichedFrom?: string }> }>;
+}
+
+/** Maps a raw tool name (as it appears in item.tool / a tool-call mention) to
+ *  the ontology concept label it's grounded in. Mirrors agent-playground.tsx's
+ *  ontologyLabelMap so the same "[Concept Label]" badge that already exists in
+ *  Playground also appears in Workspace -- both surfaces inject the identical
+ *  DOMAIN ONTOLOGY glossary into the system prompt, but only Playground showed
+ *  the reader that grounding was real. */
+function buildOntologyLabelMap(agent: WorkspaceAgent | undefined): Record<string, { displayLabel: string; conceptLabel: string }> {
+  const labelMap: Record<string, { displayLabel: string; conceptLabel: string }> = {};
+  const tags = Array.isArray(agent?.ontologyTags) ? agent.ontologyTags : [];
+  if (tags.length === 0) return labelMap;
+
+  const conceptsByLabel: Record<string, { label: string }> = {};
+  for (const tag of tags) {
+    const label = tag?.conceptLabel;
+    if (typeof label !== "string" || label.trim() === "") continue;
+    conceptsByLabel[label.toLowerCase()] = { label };
+  }
+
+  const verbMap: Record<string, string> = {
+    search: "searched", query: "queried", read: "retrieved data from", write: "updated",
+    update: "updated", create: "created record in", send: "sent via", execute: "executed on",
+    deploy: "deployed to", process: "processed via", extract: "extracted from", get: "retrieved from",
+    fetch: "fetched from", delete: "removed from", validate: "validated against", check: "checked via",
+  };
+
+  for (const tool of Array.isArray(agent?.toolsConfig) ? agent!.toolsConfig : []) {
+    if (!tool.name) continue;
+    const rawName = tool.name;
+    const nameParts = rawName.toLowerCase().split("_");
+
+    let bestMatch: { label: string } | null = null;
+    const enrichedConcepts = (tool.parameters || []).filter(p => p.enrichedFrom).map(p => p.enrichedFrom!);
+    if (enrichedConcepts.length > 0) {
+      const found = conceptsByLabel[enrichedConcepts[0].toLowerCase()];
+      if (found) bestMatch = found;
+    }
+    if (!bestMatch) {
+      for (const part of nameParts) {
+        if (conceptsByLabel[part]) { bestMatch = conceptsByLabel[part]; break; }
+      }
+    }
+    if (!bestMatch) {
+      const fullNoVerb = nameParts.slice(1).join(" ");
+      if (conceptsByLabel[fullNoVerb]) bestMatch = conceptsByLabel[fullNoVerb];
+    }
+    if (!bestMatch) {
+      for (const part of nameParts) {
+        for (const [conceptKey, concept] of Object.entries(conceptsByLabel)) {
+          if (part.length > 3 && (conceptKey.includes(part) || part.includes(conceptKey))) { bestMatch = concept; break; }
+        }
+        if (bestMatch) break;
+      }
+    }
+    if (bestMatch) {
+      let matchedVerb = "";
+      for (const part of nameParts) {
+        if (verbMap[part]) { matchedVerb = verbMap[part]; break; }
+      }
+      const displayLabel = matchedVerb ? `${matchedVerb} ${bestMatch.label}` : bestMatch.label;
+      labelMap[rawName] = { displayLabel, conceptLabel: bestMatch.label };
+    }
+  }
+
+  return labelMap;
+}
+
+function applyOntologyLabels(text: string, labelMap: Record<string, { displayLabel: string; conceptLabel: string }>): string {
+  if (Object.keys(labelMap).length === 0) return text;
+  let result = text;
+  const sortedKeys = Object.keys(labelMap).sort((a, b) => b.length - a.length);
+  for (const rawName of sortedKeys) {
+    const { displayLabel, conceptLabel } = labelMap[rawName];
+    const escaped = rawName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`\\b${escaped}\\b`, 'g');
+    result = result.replace(pattern, `${displayLabel} [${conceptLabel}]`);
+  }
+  return result;
+}
+
+/** Renders text with any "[Concept Label]" markers (from applyOntologyLabels)
+ *  as inline badges -- same visual treatment as Playground's RenderTextWithLinks. */
+function renderWithOntologyBadges(text: string): ReactNode {
+  const regex = /\[([^\]]+)\]/g;
+  const nodes: ReactNode[] = [];
+  let lastIdx = 0;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const before = text.slice(lastIdx, match.index);
+    if (before) nodes.push(before);
+    nodes.push(
+      <Badge key={`concept-${match.index}`} variant="secondary" className="text-[9px] text-emerald-600 dark:text-emerald-400 no-default-hover-elevate no-default-active-elevate inline-flex" data-testid="badge-ontology-concept">
+        <BookOpen className="w-2.5 h-2.5 mr-0.5" />
+        {match[1]}
+      </Badge>,
+    );
+    lastIdx = match.index + match[0].length;
+  }
+  if (lastIdx < text.length) nodes.push(text.slice(lastIdx));
+  return nodes;
 }
 interface GeneratedFileRef { id: string; filename: string | null; mimeType: string | null }
 interface MyRun { id: string; agentId: string; status: string; requestText: string; outputSummary: string | null; costUsd: number; traceId: string | null; createdAt: string | null; generatedFiles?: GeneratedFileRef[] }
@@ -103,6 +206,10 @@ export default function Workspace() {
 
   const { data: agents = [] } = useQuery<WorkspaceAgent[]>({ queryKey: ["/api/workspace/agents"] });
   const { data: recentRuns = [] } = useQuery<MyRun[]>({ queryKey: ["/api/workspace/runs"] });
+  const ontologyLabelMap = useMemo(
+    () => buildOntologyLabelMap(agents.find(a => a.id === agentId)),
+    [agents, agentId],
+  );
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -297,7 +404,7 @@ export default function Workspace() {
             )}
             <div ref={scrollRef} className="flex flex-col gap-2.5 max-h-[440px] overflow-y-auto pr-1" data-testid="workspace-timeline">
               {timeline.map((item, i) => (
-                <TimelineRow key={i} item={item} onEditFile={editFile} attachingFileId={attachingFileId} />
+                <TimelineRow key={i} item={item} onEditFile={editFile} attachingFileId={attachingFileId} ontologyLabelMap={ontologyLabelMap} />
               ))}
 
               {pending && (
@@ -440,10 +547,11 @@ function relTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function TimelineRow({ item, onEditFile, attachingFileId }: {
+function TimelineRow({ item, onEditFile, attachingFileId, ontologyLabelMap }: {
   item: TimelineItem;
   onEditFile: (file: GeneratedFileRef) => void;
   attachingFileId: string | null;
+  ontologyLabelMap: Record<string, { displayLabel: string; conceptLabel: string }>;
 }) {
   if (item.kind === "planning") {
     return (
@@ -508,7 +616,7 @@ function TimelineRow({ item, onEditFile, attachingFileId }: {
   // answer
   return (
     <div className="rounded-lg border bg-muted/30 p-4 mt-1 flex flex-col gap-2" data-testid="workspace-answer">
-      <div className="text-sm whitespace-pre-wrap">{item.text}</div>
+      <div className="text-sm whitespace-pre-wrap">{renderWithOntologyBadges(applyOntologyLabels(item.text, ontologyLabelMap))}</div>
       {item.generatedFiles && item.generatedFiles.length > 0 && (
         <div className="flex flex-col gap-1" data-testid="workspace-generated-files">
           {item.generatedFiles.map(f => (

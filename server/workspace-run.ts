@@ -581,7 +581,7 @@ const WORKSPACE_RUNNABLE_STATUSES = new Set(["active", "deployed"]);
  *    should address the team's orchestrator, not its implementation-detail
  *    sub-agents (UX audit F-4).
  */
-export async function getWorkspaceAgents(orgId: string | undefined, role: string): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string; canGenerateDocuments: boolean; documentGenerationMode: "auto" | "platform" | "sandbox" }>> {
+export async function getWorkspaceAgents(orgId: string | undefined, role: string): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string; canGenerateDocuments: boolean; documentGenerationMode: "auto" | "platform" | "sandbox"; ontologyTags: Array<{ conceptId: string; conceptLabel: string }>; toolsConfig: any[] }>> {
   const all = await storage.getAgents(orgId);
   const isFullAccess = role === "admin";
 
@@ -620,6 +620,15 @@ export async function getWorkspaceAgents(orgId: string | undefined, role: string
     const raw = (a as any).preloadedSkills;
     const skillIds: string[] = Array.isArray(raw) ? raw.map((p: any) => p?.skillId).filter(Boolean) : [];
     const agentSkills = skillIds.map(id => skillsById.get(id)).filter((s): s is Skill => !!s);
+    // Playground shows an inline "[Concept Label]" badge wherever an assistant
+    // message mentions a tool whose name maps to one of the agent's ontology
+    // concepts -- purely a client-side text transform over these two static
+    // fields (see agent-playground.tsx's applyOntologyLabels). Workspace never
+    // had them, so it silently never had the badge either, despite injecting
+    // the identical DOMAIN ONTOLOGY glossary into the system prompt
+    // (buildAgentSystemPrompt, shared by both surfaces). Expose them here so
+    // Workspace can run the same transform.
+    const rawOntologyTags = (a as any).ontologyTags;
     return {
       id: a.id,
       name: a.name,
@@ -627,6 +636,8 @@ export async function getWorkspaceAgents(orgId: string | undefined, role: string
       riskTier: a.riskTier,
       canGenerateDocuments: agentSkills.some(skillGrantsDocumentGeneration),
       documentGenerationMode: resolveDocumentMode((a as any).documentGenerationMode),
+      ontologyTags: Array.isArray(rawOntologyTags) ? rawOntologyTags : [],
+      toolsConfig: Array.isArray((a as any).toolsConfig) ? (a as any).toolsConfig : [],
     };
   });
 }
