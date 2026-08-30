@@ -10908,6 +10908,35 @@ clean:
         unchanged: [],
       };
 
+      // manifest.ontologyBindings round-trips from this platform's own export, so it's
+      // usually already real {conceptId, conceptLabel} pairs -- but a manifest is a plain
+      // JSON file a user can hand-edit before re-importing, which is exactly the kind of
+      // edit path that can re-introduce fabricated concept ids/labels with no grounding.
+      // Re-resolve against the real ontology_concepts table when we know the agent's
+      // industry; fall back to a shape-only guard (both fields present) when we don't,
+      // rather than silently trusting arbitrary JSON.
+      const resolveManifestOntologyBindings = async (bindings: any): Promise<{ conceptId: string; conceptLabel: string }[]> => {
+        if (!Array.isArray(bindings) || bindings.length === 0) return [];
+        const industryId = (manifest.agent as any).industry;
+        let realConcepts: any[] = [];
+        if (industryId) {
+          try {
+            realConcepts = await storage.getOntologyConcepts(industryId);
+          } catch {}
+        }
+        if (realConcepts.length === 0) {
+          return bindings.filter((b: any) => typeof b?.conceptId === "string" && typeof b?.conceptLabel === "string");
+        }
+        const byId = new Map(realConcepts.map((c: any) => [c.id, c]));
+        const byLowerLabel = new Map(realConcepts.map((c: any) => [c.label.toLowerCase().trim(), c]));
+        const resolved: { conceptId: string; conceptLabel: string }[] = [];
+        for (const b of bindings) {
+          const match = byId.get(b?.conceptId) || byLowerLabel.get((b?.conceptLabel || "").toLowerCase().trim());
+          if (match) resolved.push({ conceptId: match.id, conceptLabel: match.label });
+        }
+        return resolved;
+      };
+
       if (mode === "update") {
         const existingAgent = await storage.getAgent(agentId, getOrgId(req));
         if (!existingAgent) return res.status(404).json({ message: "Agent not found" });
@@ -11091,7 +11120,8 @@ clean:
         }
 
         if (manifest.ontologyBindings && Array.isArray(manifest.ontologyBindings)) {
-          await storage.updateAgent(agentId, { ontologyTags: manifest.ontologyBindings });
+          const resolvedBindings = await resolveManifestOntologyBindings(manifest.ontologyBindings);
+          await storage.updateAgent(agentId, { ontologyTags: resolvedBindings });
           changeReport.updated.push("ontologyBindings");
         }
 
@@ -11178,7 +11208,8 @@ clean:
         }
 
         if (manifest.ontologyBindings && Array.isArray(manifest.ontologyBindings)) {
-          await storage.updateAgent(newAgent.id, { ontologyTags: manifest.ontologyBindings });
+          const resolvedBindings = await resolveManifestOntologyBindings(manifest.ontologyBindings);
+          await storage.updateAgent(newAgent.id, { ontologyTags: resolvedBindings });
           changeReport.created.push("ontologyBindings");
         }
 
