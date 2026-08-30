@@ -205,6 +205,11 @@ interface WizardState {
   modelName: string;
   maxToolIterations: number;
   toolsConfig: ToolConfig[];
+  // Real MCP server ids to link once the agent exists (POST /api/agents/:id/mcp-servers
+  // per id, same call agent-detail.tsx's "Assign MCP Server" dialog makes) --
+  // separate from toolsConfig above, which is a documentation-only declaration
+  // of expected tool permissions and was never wired to real tool access.
+  selectedMcpServerIds: string[];
   permissionsConfig: {
     dataAccess: string[];
     apiAccess: string[];
@@ -317,6 +322,7 @@ const defaultWizardState: WizardState = {
   modelName: "gpt-4.1",
   maxToolIterations: 5,
   toolsConfig: [],
+  selectedMcpServerIds: [],
   permissionsConfig: { dataAccess: [], apiAccess: [], writeAccess: [] },
   memoryRagEnabled: false,
   memoryRagConfig: {
@@ -960,6 +966,19 @@ export default function AgentWizard() {
           enabled: true,
         }).catch(() => {
           toast({ title: "Trigger not created", description: `The ${trigger.triggerType} trigger could not be set up — add it from the agent's Triggers tab.`, variant: "destructive" });
+        });
+      }
+      // Real connector links picked in "Linked MCP Servers" (Configure Tools step)
+      // -- same POST the agent's own "Assign MCP Server" dialog makes, just fired
+      // once per selection now that the agent id exists. Best-effort per server,
+      // same failure handling as the triggers loop above: don't let one bad link
+      // block the others or the agent's creation, which already succeeded.
+      for (const serverId of wizardState.selectedMcpServerIds) {
+        apiRequest("POST", `/api/agents/${data.id}/mcp-servers`, {
+          serverId,
+          acknowledgeWarnings: false,
+        }).catch(() => {
+          toast({ title: "MCP server not linked", description: "One of the selected connectors could not be linked — add it from the agent's MCP Servers tab.", variant: "destructive" });
         });
       }
       if (data.jobId && data.suiteId) {
@@ -3339,6 +3358,18 @@ function Step2IndustryTools({
   const { data: llmProviders } = useQuery<Array<{ name: string; displayName: string; configured: boolean; models: Array<{ id: string; name: string; costPer1kInput: number; costPer1kOutput: number; contextWindow: number }> }>>({
     queryKey: ["/api/llm-providers"],
   });
+  // Same query the agent's own "Assign MCP Server" dialog uses (agent-detail.tsx)
+  // -- real registered connectors, not the hardcoded TOOL_CATALOG below. Shares
+  // its cache via the identical queryKey rather than issuing a second fetch.
+  const { data: realMcpServers } = useQuery<McpServer[]>({
+    queryKey: ["/api/mcp-servers"],
+  });
+  function toggleMcpServer(id: string) {
+    const selected = state.selectedMcpServerIds.includes(id)
+      ? state.selectedMcpServerIds.filter((s) => s !== id)
+      : [...state.selectedMcpServerIds, id];
+    updateState({ selectedMcpServerIds: selected });
+  }
   const [catalogFilter, setCatalogFilter] = useState<string>("all");
   const [showCatalog, setShowCatalog] = useState(false);
   const [expandedParams, setExpandedParams] = useState<Record<number, boolean>>({});
@@ -3487,6 +3518,13 @@ function Step2IndustryTools({
     STANDARD: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
     RESTRICTED: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
     CRITICAL: "bg-red-500/10 text-red-700 dark:text-red-400",
+  };
+  // mcp_servers.riskTier is LOW/MEDIUM/HIGH, a different scale from the fake
+  // TOOL_CATALOG's OPEN/STANDARD/RESTRICTED/CRITICAL accessTier above.
+  const riskTierColors: Record<string, string> = {
+    LOW: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    MEDIUM: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    HIGH: "bg-red-500/10 text-red-700 dark:text-red-400",
   };
 
   const scopeColors: Record<string, string> = {
@@ -3647,7 +3685,54 @@ function Step2IndustryTools({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-sm font-medium">MCP Tool Registry</CardTitle>
+            <CardTitle className="text-sm font-medium">Linked MCP Servers</CardTitle>
+            {state.selectedMcpServerIds.length > 0 && <Badge variant="outline" className="text-[10px]">{state.selectedMcpServerIds.length} selected</Badge>}
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground">
+            Real, registered connectors -- selecting one here actually links it to this agent on creation
+            (same effect as the "Assign MCP Server" action on an agent's own page), giving it working access
+            to that server's tools.
+          </p>
+          {!realMcpServers && <p className="text-sm text-muted-foreground text-center py-4">Loading connectors…</p>}
+          {realMcpServers && realMcpServers.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No MCP servers registered yet. Add one from Integrations → MCP Servers first.
+            </p>
+          )}
+          {realMcpServers && realMcpServers.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-80 overflow-y-auto">
+              {realMcpServers.map((server) => {
+                const isSelected = state.selectedMcpServerIds.includes(server.id);
+                return (
+                  <div
+                    key={server.id}
+                    className={`flex flex-col gap-1.5 p-3 rounded-md border cursor-pointer transition-colors ${isSelected ? "border-primary bg-primary/5" : "hover-elevate"}`}
+                    onClick={() => toggleMcpServer(server.id)}
+                    data-testid={`real-mcp-server-${server.id}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium truncate">{server.name}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {server.status === "verified" && <Badge variant="outline" className="text-[9px]">verified</Badge>}
+                        <Badge variant="outline" className={`text-[9px] ${riskTierColors[server.riskTier] || ""}`}>{server.riskTier}</Badge>
+                      </div>
+                    </div>
+                    {server.description && <p className="text-[11px] text-muted-foreground line-clamp-2">{server.description}</p>}
+                    {isSelected && <Badge variant="default" className="text-[9px] w-fit">Selected</Badge>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-medium">Declared Tool Permissions</CardTitle>
             {state.toolsConfig.length > 0 && <Badge variant="outline" className="text-[10px]">{state.toolsConfig.length} selected</Badge>}
           </div>
           <div className="flex items-center gap-2">
@@ -3660,6 +3745,10 @@ function Step2IndustryTools({
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          <p className="text-xs text-muted-foreground -mt-1">
+            Governance documentation only -- records what tool access this agent is expected to need, for
+            review and audit. It does not grant real tool access; use "Linked MCP Servers" above for that.
+          </p>
           {showCatalog && (
             <div className="flex flex-col gap-3 pb-4 border-b">
               <div className="flex items-center gap-1.5 flex-wrap">
