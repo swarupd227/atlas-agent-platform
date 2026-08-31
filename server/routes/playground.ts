@@ -280,7 +280,7 @@ const router = Router();
             systemPrompt,
             { conversational: true, ontologyLabels: playgroundOntologyTags.map(t => t.conceptLabel), maxToolIterations: agent.maxToolIterations ?? 5 },
             onProgress,
-            undefined,
+            getOrgId(req),
             getRequestRole(req),
           );
 
