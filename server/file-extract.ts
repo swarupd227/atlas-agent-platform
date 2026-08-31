@@ -18,7 +18,7 @@
  * flattened transcription of it.
  */
 
-export type ExtractedKind = "text" | "csv" | "json" | "pdf" | "docx" | "xlsx" | "pptx";
+export type ExtractedKind = "text" | "csv" | "json" | "pdf" | "docx" | "xlsx" | "pptx" | "image";
 
 export interface ExtractedFile {
   text: string;
@@ -30,6 +30,9 @@ export interface ExtractedFile {
     truncated?: boolean;
     /** Set when a format was read but genuinely contained no text. */
     empty?: boolean;
+    /** Image pixel dimensions, when the header could be read. */
+    width?: number;
+    height?: number;
   };
 }
 
@@ -84,12 +87,28 @@ export function isSupportedFile(filename: string): boolean {
   return SUPPORTED_EXTS.has(EXT(filename));
 }
 
+/**
+ * Deliberately NOT part of SUPPORTED_EXTS: images have no extractable text, so
+ * they are only meaningful on surfaces that retain the bytes and can hand them
+ * to the code-execution container (chat attachments). Knowledge Base ingestion
+ * chunks and embeds extracted text, and must keep refusing them.
+ *
+ * SVG (needs rasterizing) and HEIC (needs conversion) are excluded until the
+ * platform has an image-preprocessing step; accepting them now would produce
+ * files python-pptx cannot place.
+ */
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
+
+export function isImageFile(filename: string): boolean {
+  return IMAGE_EXTS.has(EXT(filename));
+}
+
 /** Client-side `accept` string, kept next to the reader so the two cannot drift. */
 export const UPLOAD_ACCEPT_ATTR =
-  ".pdf,.docx,.xlsx,.xlsm,.pptx,.csv,.tsv,.txt,.md,.json";
+  ".pdf,.docx,.xlsx,.xlsm,.pptx,.csv,.tsv,.txt,.md,.json,.png,.jpg,.jpeg,.gif,.webp";
 
 export const SUPPORTED_TYPES_LABEL =
-  "PDF, Word, Excel, PowerPoint, CSV, JSON, or text";
+  "PDF, Word, Excel, PowerPoint, CSV, JSON, text, or images (PNG, JPG, GIF, WebP)";
 
 function clamp(text: string): { text: string; truncated: boolean } {
   if (text.length <= MAX_TEXT_CHARS) return { text, truncated: false };
@@ -105,6 +124,41 @@ function clamp(text: string): { text: string; truncated: boolean } {
 function looksBinary(buffer: Buffer): boolean {
   const head = buffer.subarray(0, 8_000);
   return head.includes(0);
+}
+
+/**
+ * Best-effort header sniff, dependency-free like the rest of this file. The
+ * dimensions feed the attachment stub so the model can reason about aspect
+ * ratio ("1920×640 is a banner, not a headshot") without seeing the pixels.
+ * Returns undefined rather than guessing when a header is unfamiliar — the
+ * stub is still useful without them. WebP is deliberately unparsed: its three
+ * container variants (VP8/VP8L/VP8X) are not worth hand-rolling for a hint.
+ */
+function imageDimensions(buffer: Buffer, ext: string): { width: number; height: number } | undefined {
+  try {
+    if (ext === "png" && buffer.length >= 24 && buffer.readUInt32BE(0) === 0x89504e47) {
+      return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+    if (ext === "gif" && buffer.length >= 10) {
+      return { width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) };
+    }
+    if ((ext === "jpg" || ext === "jpeg") && buffer.length >= 4 && buffer.readUInt16BE(0) === 0xffd8) {
+      let off = 2;
+      while (off + 9 < buffer.length) {
+        if (buffer[off] !== 0xff) { off++; continue; }
+        const marker = buffer[off + 1];
+        // SOF0..SOF15 excluding DHT(C4)/JPG(C8)/DAC(CC) — the frame headers
+        // that actually carry the image dimensions.
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: buffer.readUInt16BE(off + 5), width: buffer.readUInt16BE(off + 7) };
+        }
+        const len = buffer.readUInt16BE(off + 2);
+        if (len < 2) break;
+        off += 2 + len;
+      }
+    }
+  } catch { /* dimensions are a nicety, not a requirement */ }
+  return undefined;
 }
 
 /** Local tag name, ignoring any XML namespace prefix (`a:t` -> `t`). */
@@ -334,11 +388,30 @@ export async function extractTextFromFile(
   buffer: Buffer,
   mimeType: string | undefined,
   filename: string,
+  opts?: { acceptImages?: boolean },
 ): Promise<ExtractedFile> {
   const ext = EXT(filename);
   const mime = (mimeType ?? "").toLowerCase();
 
   if (LEGACY_OFFICE.has(ext)) throw new LegacyOfficeFormatError(filename, ext);
+
+  // Opt-in per caller, defaulting to the old refusal: chat attachments pass
+  // acceptImages because the retained bytes travel on to the code-execution
+  // container where python-pptx can actually place the pixels; Knowledge Base
+  // ingestion must NOT pass it, or this stub would be chunked and embedded as
+  // if it were document content. The stub is the image's "text floor" — it
+  // tells the model what the attachment is and how to use it.
+  if (opts?.acceptImages && IMAGE_EXTS.has(ext)) {
+    const dims = imageDimensions(buffer, ext);
+    const mb = buffer.length / (1024 * 1024);
+    const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(buffer.length / 1024))} KB`;
+    const text =
+      `[Image attachment: ${filename} — ${ext.toUpperCase()}${dims ? `, ${dims.width}×${dims.height}px` : ""}, ${size}. ` +
+      `The pixels are not readable in this text context. When this run has code execution, the original image file ` +
+      `is available in the container under this filename and can be placed into generated or edited documents ` +
+      `(for a .pptx: python-pptx add_picture). Choose its placement from the user's instructions and the filename.]`;
+    return { text, kind: "image", meta: { width: dims?.width, height: dims?.height } };
+  }
 
   if (ext === "pdf" || mime === "application/pdf") {
     const { text, truncated } = clamp(await extractPdf(buffer));

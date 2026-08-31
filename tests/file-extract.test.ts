@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import {
   extractTextFromFile,
   isSupportedFile,
+  isImageFile,
   UnsupportedFileTypeError,
   LegacyOfficeFormatError,
 } from "../server/file-extract";
@@ -164,6 +165,44 @@ describe("refusing what it cannot read", () => {
       expect(err).toBeInstanceOf(LegacyOfficeFormatError);
       expect(err.message).toContain(ext);
     }
+  });
+});
+
+describe("image attachments (acceptImages)", () => {
+  // 8-byte PNG signature + IHDR length/type + 1920×1080 big-endian.
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([0x00, 0x00, 0x00, 0x0d]),
+    Buffer.from("IHDR"),
+    Buffer.from([0x00, 0x00, 0x07, 0x80]), // 1920
+    Buffer.from([0x00, 0x00, 0x04, 0x38]), // 1080
+  ]);
+
+  it("still rejects images by default — Knowledge Base ingestion relies on this", async () => {
+    await expect(extractTextFromFile(png, "image/png", "hero.png"))
+      .rejects.toBeInstanceOf(UnsupportedFileTypeError);
+  });
+
+  it("returns a self-describing stub with dimensions when opted in", async () => {
+    const r = await extractTextFromFile(png, "image/png", "hero.png", { acceptImages: true });
+    expect(r.kind).toBe("image");
+    expect(r.meta.width).toBe(1920);
+    expect(r.meta.height).toBe(1080);
+    // The stub is the model's only view of the file: it must name the file,
+    // say the pixels aren't readable here, and point at container placement.
+    expect(r.text).toContain("hero.png");
+    expect(r.text).toContain("1920×1080");
+    expect(r.text).toContain("add_picture");
+  });
+
+  it("opting in does not admit non-image binaries", async () => {
+    await expect(extractTextFromFile(Buffer.from([0x00, 0x01]), undefined, "installer.exe", { acceptImages: true }))
+      .rejects.toBeInstanceOf(UnsupportedFileTypeError);
+  });
+
+  it("isImageFile matches exactly the admitted extensions", () => {
+    for (const f of ["a.png", "a.jpg", "a.jpeg", "a.gif", "a.webp"]) expect(isImageFile(f), f).toBe(true);
+    for (const f of ["a.svg", "a.heic", "a.mp4", "a.pptx", "noext"]) expect(isImageFile(f), f).toBe(false);
   });
 });
 

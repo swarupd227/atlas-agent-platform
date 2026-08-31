@@ -9,6 +9,7 @@ import { storage } from "../storage";
 import {
   extractTextFromFile,
   isSupportedFile,
+  isImageFile,
   UPLOAD_ACCEPT_ATTR,
   SUPPORTED_TYPES_LABEL,
 } from "../file-extract";
@@ -33,8 +34,11 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES, files: 5 },
   // Reject by extension BEFORE buffering 25MB of something unreadable.
+  // Images are admitted here (chat attachments feed the code-execution
+  // container, which can place them into documents) but NOT in Knowledge Base
+  // ingestion, which admits by extraction success and must keep refusing them.
   fileFilter: (_req, file, cb) => {
-    if (isSupportedFile(file.originalname)) return cb(null, true);
+    if (isSupportedFile(file.originalname) || isImageFile(file.originalname)) return cb(null, true);
     cb(new Error(`Unsupported file type. Accepted: ${SUPPORTED_TYPES_LABEL}.`));
   },
 });
@@ -82,7 +86,7 @@ router.post("/api/files/upload", checkPermission("view_agents"), (req: Request, 
       for (const file of files) {
         let extracted;
         try {
-          extracted = await extractTextFromFile(file.buffer, file.mimetype, file.originalname);
+          extracted = await extractTextFromFile(file.buffer, file.mimetype, file.originalname, { acceptImages: true });
         } catch (err: any) {
           // One unreadable file shouldn't discard the others — report it in
           // place so the user can see exactly which one failed and why.
@@ -202,6 +206,9 @@ function shape(row: any, meta: any) {
  *  shape from a generated file so both attachment sources render identically. */
 export function describe(kind: string | null, meta: any): string {
   if (!meta) return kind ?? "file";
+  if (kind === "image") {
+    return meta.width && meta.height ? `${meta.width}×${meta.height} image` : "image";
+  }
   if (meta.empty) return "no readable text";
   if (kind === "xlsx" && Array.isArray(meta.sheets)) {
     return `${meta.sheets.length} sheet${meta.sheets.length === 1 ? "" : "s"}: ${meta.sheets.slice(0, 3).join(", ")}${meta.sheets.length > 3 ? "…" : ""}`;

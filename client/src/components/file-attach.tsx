@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Paperclip, X, Loader2, FileText, FileSpreadsheet, Presentation, AlertCircle } from "lucide-react";
+import { Paperclip, X, Loader2, FileText, FileSpreadsheet, Presentation, AlertCircle, Image as ImageIcon } from "lucide-react";
 
 /**
  * Shared attachment control for every surface that takes a file — the Workspace
@@ -39,6 +39,7 @@ interface Props {
 function iconFor(kind: string) {
   if (kind === "xlsx") return FileSpreadsheet;
   if (kind === "pptx") return Presentation;
+  if (kind === "image") return ImageIcon;
   return FileText;
 }
 
