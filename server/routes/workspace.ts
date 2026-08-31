@@ -21,6 +21,14 @@ function openSse(res: any): (e: WorkspaceEvent | { type: "done"; run: unknown } 
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders?.();
+  // Heartbeat: an SSE comment every 15s keeps intermediaries from cutting the
+  // stream during long quiet stretches — Azure's front end drops connections
+  // idle for ~230s, and a long tool call (an async Figma job ran 244s) emits
+  // no events while it works, so the browser saw "network error" even though
+  // the run completed fine server-side. Comment lines are invisible to SSE
+  // parsers (the client only reads "data: " lines), so no client change.
+  const heartbeat = setInterval(() => { try { res.write(`:hb\n\n`); } catch { /* client gone */ } }, 15_000);
+  res.on?.("close", () => clearInterval(heartbeat));
   return (e) => { try { res.write(`data: ${JSON.stringify(e)}\n\n`); } catch { /* client gone */ } };
 }
 
