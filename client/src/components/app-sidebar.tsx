@@ -113,20 +113,50 @@ function FullAppSidebar() {
   });
   const pendingApprovalsCount = Array.isArray(approvalsData) ? approvalsData.length : 0;
 
+  // Always-visible tier: the handful of pages used every day. Everything else
+  // that used to sit flat alongside these (Files, Knowledge, Deployments,
+  // Monitor, Fleet Health, Governance, Integrations) moved into primaryGroups
+  // below -- 13 flat top-level items made the nav feel like one long list with
+  // no structure, on top of the 33 already inside Advanced.
   const primaryNav: NavItem[] = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
     { title: "Workspace", url: "/workspace", icon: Sparkles },
-    { title: "Files", url: "/files", icon: FileText },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "Agents", url: "/agents", icon: Bot },
     { title: "Teams", url: "/agents/teams", icon: Users },
     { title: "Journeys", url: "/journeys", icon: Compass },
-    { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
-    { title: "Deployments", url: "/deployments", icon: Rocket },
-    { title: "Monitor", url: "/monitor", icon: Activity },
-    { title: "Fleet Health", url: "/observability", icon: MonitorCheck },
-    { title: "Governance", url: "/governance", icon: Shield },
-    { title: "Integrations", url: "/integrations", icon: Plug },
+  ];
+
+  // Named, collapsible groups at the primary level (same CollapsibleNavGroup
+  // component Advanced's sub-groups already use) -- visible and one click
+  // away, just organized, unlike Advanced which is hidden behind an extra
+  // "Advanced" toggle first.
+  const primaryGroups: NavGroup[] = [
+    {
+      label: "Content",
+      icon: FileText,
+      items: [
+        { title: "Files", url: "/files", icon: FileText },
+        { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
+      ],
+    },
+    {
+      label: "Operations",
+      icon: Rocket,
+      items: [
+        { title: "Deployments", url: "/deployments", icon: Rocket },
+        { title: "Monitor", url: "/monitor", icon: Activity },
+        { title: "Fleet Health", url: "/observability", icon: MonitorCheck, badge: unacknowledgedAlerts > 0 ? unacknowledgedAlerts : undefined },
+      ],
+    },
+    {
+      label: "Compliance",
+      icon: Shield,
+      items: [
+        { title: "Governance", url: "/governance", icon: Shield },
+        { title: "Integrations", url: "/integrations", icon: Plug },
+      ],
+    },
   ];
 
   const advancedGroups: NavGroup[] = [
@@ -219,6 +249,13 @@ function FullAppSidebar() {
 
   const filteredPrimaryNav = primaryNav.filter((item) => isRouteAllowed(item.url));
 
+  const filteredPrimaryGroups = primaryGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => isRouteAllowed(item.url)),
+    }))
+    .filter((group) => group.items.length > 0);
+
   const filteredAdvancedGroups = advancedGroups
     .map((group) => ({
       ...group,
@@ -252,14 +289,6 @@ function FullAppSidebar() {
                       <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
                         <item.icon className="w-4 h-4" />
                         <span className="flex-1">{item.title}</span>
-                        {item.url === "/observability" && unacknowledgedAlerts > 0 && (
-                          <span
-                            className="ml-auto text-[10px] font-bold bg-red-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none"
-                            data-testid="badge-alert-count"
-                          >
-                            {unacknowledgedAlerts > 99 ? "99+" : unacknowledgedAlerts}
-                          </span>
-                        )}
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -267,6 +296,19 @@ function FullAppSidebar() {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
+        )}
+
+        {filteredPrimaryGroups.length > 0 && (
+          <div className="flex flex-col gap-0.5">
+            {filteredPrimaryGroups.map((group) => (
+              <CollapsibleNavGroup
+                key={group.label}
+                group={group}
+                isActive={isActive}
+                isGroupActive={isGroupActive(group)}
+              />
+            ))}
+          </div>
         )}
 
         {filteredAdvancedGroups.length > 0 && (
