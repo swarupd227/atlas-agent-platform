@@ -1011,6 +1011,7 @@ export default function AgentPlayground() {
                           messageKey={String(msg.id || `generic-${idx}`)}
                           approvalDecisions={approvalDecisions}
                         />
+                        {trace && <InlineGeneratedFileLinks trace={trace} />}
                         {trace && <ExecutionTracePanel trace={trace} />}
                       </div>
                     );
@@ -1306,6 +1307,36 @@ function StepIoBlock({ label, value }: { label: string; value: unknown }) {
       <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-muted/50 p-1.5 text-[10px] font-mono whitespace-pre-wrap break-words" data-testid={`step-io-${label.toLowerCase()}`}>
         {text}
       </pre>
+    </div>
+  );
+}
+
+// Surfaces generated-file download links right under the response, same as
+// Workspace does -- without this, a user has to know to expand the collapsed
+// Execution Trace panel below to find them, which read as a broken/missing
+// file link during a live demo (SC-file-download-playground finding).
+function InlineGeneratedFileLinks({ trace }: { trace: ExecutionTraceData }) {
+  const generatedFileEvents = trace.events.filter(
+    e => e.type === "tool_call_result" && Array.isArray(e.generatedFiles) && (e.generatedFiles as any[]).length > 0
+  );
+  if (generatedFileEvents.length === 0) return null;
+  return (
+    <div className="ml-11 mt-1 flex flex-col gap-1" data-testid="inline-generated-files">
+      {generatedFileEvents.flatMap((event, ei) =>
+        (event.generatedFiles as Array<{ id: string; filename: string | null; mimeType: string | null }>).map((f, fi) => (
+          <a
+            key={`${ei}-${fi}`}
+            href={`/api/agent-files/${f.id}/download`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-xs text-primary hover:underline w-fit"
+            data-testid={`link-inline-download-file-${f.id}`}
+          >
+            <Download className="h-3 w-3 shrink-0" />
+            <span>{f.filename || "Download generated file"}</span>
+          </a>
+        ))
+      )}
     </div>
   );
 }
