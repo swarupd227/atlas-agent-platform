@@ -150,6 +150,13 @@ export const agents = pgTable("agents", {
   // previously this only lived inside runtimeConfig and was lost on most paths.
   sourceTemplateId: varchar("source_template_id"),
   preloadedSkills: jsonb("preloaded_skills").default(sql`'[]'::jsonb`),
+  // Journey Library: marks a team orchestrator as a curated, pre-built starting
+  // journey (e.g. "P&C Claims Intake to Settlement") rather than one-off
+  // scaffolding, so it's discoverable on its own browsing surface instead of
+  // only by name-search in the flat Teams list. Only set on orchestrators.
+  isCuratedJourney: boolean("is_curated_journey").notNull().default(false),
+  journeyIndustryId: text("journey_industry_id"),
+  journeySubVertical: text("journey_sub_vertical"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -20,6 +20,7 @@ import autonomyRouter from "./routes/autonomy";
 import shadowCanaryRouter from "./routes/shadow-canary";
 import outcomesRouter from "./routes/outcomes";
 import agentsRouter from "./routes/agents";
+import journeysRouter from "./routes/journeys";
 import governanceRouter from "./routes/governance";
 import improvementsRouter from "./routes/improvements";
 import runtimeRouter from "./routes/runtime";
@@ -357,6 +358,7 @@ export async function registerRoutes(
   // ── Phase 3 router modules ───────────────────────────────────
   app.use(outcomesRouter);
   app.use(agentsRouter);
+  app.use(journeysRouter);
   app.use(governanceRouter);    // includes billingRouter + governance domain routes
   app.use(improvementsRouter);
   app.use(runtimeRouter);

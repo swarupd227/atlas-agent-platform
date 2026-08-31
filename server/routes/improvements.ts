@@ -2062,6 +2062,12 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         // and status updates are skipped -- everything else works standalone.
         outcomeId: z.string().optional(),
         industry: z.string().optional(),
+        // Journey Library: when set, the created orchestrator is marked as a
+        // curated, pre-built starting journey (see agents.isCuratedJourney)
+        // instead of one-off scaffolding, so it shows up on the Journey
+        // Library page. Left unset for ordinary chat-proposal team creation.
+        markAsCuratedJourney: z.boolean().optional(),
+        journeySubVertical: z.string().optional(),
         orchestrator: agentProposalSchema,
         workers: z.array(agentProposalSchema).min(1),
         pipeline: z.object({
@@ -2092,7 +2098,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         processFlowSteps: z.array(z.any()).optional(),
       });
 
-      const { outcomeId, industry: reqIndustry, orchestrator, workers, pipeline, processFlowSteps } = bodySchema.parse(req.body);
+      const { outcomeId, industry: reqIndustry, markAsCuratedJourney, journeySubVertical, orchestrator, workers, pipeline, processFlowSteps } = bodySchema.parse(req.body);
 
       const outcome = outcomeId ? await storage.getOutcome(outcomeId, getOrgId(req)) : null;
       if (outcomeId && !outcome) return res.status(404).json({ error: "Outcome not found" });
@@ -2259,6 +2265,9 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         ontologyTags: resolveOntologyTags(orchestrator.matchedOntologyConcepts),
         policyBindings: orchestrator.policyConstraints?.length ? { policies: orchestrator.policyConstraints } : {},
         preloadedSkills: resolveMatchedSkills(orchestrator.matchedSkills),
+        isCuratedJourney: !!markAsCuratedJourney,
+        journeyIndustryId: markAsCuratedJourney ? (reqIndustry || null) : null,
+        journeySubVertical: markAsCuratedJourney ? (journeySubVertical || null) : null,
         runtimeConfig: {
           prompt: composeTaskPrompt(orchestrator, true),
           kpiBindings: orchestrator.kpiBindings || [],

@@ -67,6 +67,7 @@ const EvalDatasets = lazy(() => import("@/pages/eval-datasets"));
 const EvalTraceInspector = lazy(() => import("@/pages/eval-trace-inspector"));
 const Templates = lazy(() => import("@/pages/templates"));
 const TemplateDetail = lazy(() => import("@/pages/template-detail"));
+const Journeys = lazy(() => import("@/pages/journeys"));
 const Improvements = lazy(() => import("@/pages/improvements"));
 const ImprovementLoop = lazy(() => import("@/pages/improvement-loop"));
 const OutcomeDiscover = lazy(() => import("@/pages/outcome-discover"));
@@ -309,6 +310,7 @@ function DashboardRouter() {
       <Route path="/agents" component={Agents} />
       <Route path="/templates" component={Templates} />
       <Route path="/templates/:id" component={TemplateDetail} />
+      <Route path="/journeys" component={Journeys} />
       <Route path="/agents/wizard" component={AgentWizard} />
       <Route path="/agents/teams" component={AgentTeams} />
       <Route path="/agents/remote" component={RemoteAgents} />

@@ -222,6 +222,7 @@ export interface IStorage {
   getAgents(orgId?: string): Promise<Agent[]>;
   getAgent(id: string, orgId?: string): Promise<Agent | undefined>;
   getAgentsByOntologyConcept(conceptId: string, orgId?: string): Promise<Agent[]>;
+  getCuratedJourneys(orgId?: string): Promise<Agent[]>;
   createAgent(agent: InsertAgent): Promise<Agent>;
 
   getOutcomes(orgId?: string): Promise<OutcomeContract[]>;
@@ -1110,6 +1111,14 @@ export class DatabaseStorage implements IStorage {
     const clause = orgId
       ? and(eq(agents.organizationId, orgId), containsClause)
       : containsClause;
+    return db.select().from(agents).where(clause).orderBy(desc(agents.updatedAt));
+  }
+
+  async getCuratedJourneys(orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const clause = scopedOrgId
+      ? and(eq(agents.isCuratedJourney, true), eq(agents.organizationId, scopedOrgId))
+      : eq(agents.isCuratedJourney, true);
     return db.select().from(agents).where(clause).orderBy(desc(agents.updatedAt));
   }
 

@@ -1636,6 +1636,18 @@ export async function runStartupMigrations() {
       ALTER TABLE generation_metadata_records ADD COLUMN IF NOT EXISTS decode_path VARCHAR NOT NULL DEFAULT 'legacy_prompted';
     `);
 
+    // Journey Library (ontology roadmap Phase 3): marks a team orchestrator agent
+    // as a curated, pre-built starting journey rather than one-off scaffolding, so
+    // it can be found on its own browsing surface instead of only by name-search
+    // in the flat Teams list. Only ever set on orchestrators (agentType "team");
+    // workers are reached through team membership, not directly listed.
+    await client.query(`
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS is_curated_journey BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS journey_industry_id TEXT;
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS journey_sub_vertical TEXT;
+      CREATE INDEX IF NOT EXISTS idx_agents_curated_journey ON agents(is_curated_journey) WHERE is_curated_journey = true;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);
