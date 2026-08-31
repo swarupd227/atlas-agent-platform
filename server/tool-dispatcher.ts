@@ -548,8 +548,87 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
   const res = await fetch(fetchUrl, fetchOpts);
   if (!res.ok) throw new Error(`MCP API ${tool.serverName}/${tool.toolName} returned ${res.status}`);
   const contentType = res.headers.get("content-type") || "";
+
+  // Long-running tool convention: 202 Accepted with a job pointer in the body
+  // ({job_id} or {status_url}) means "submitted — poll me until terminal".
+  // The polling happens HERE, inside dispatch, so the model sees one tool call
+  // that returns the finished result: no connector re-registration, no model-
+  // driven polling (which maxToolIterations would cut short), and each HTTP
+  // hop stays seconds long instead of pinning a connection open for minutes —
+  // which is what let Azure's ~230s front-end timeout kill long generations.
+  // A 202 without a job pointer is returned as-is; not every API means the
+  // same thing by it.
+  if (res.status === 202 && contentType.includes("application/json")) {
+    const accepted: any = await res.json().catch(() => null);
+    const statusPath: string | null =
+      typeof accepted?.status_url === "string" && accepted.status_url
+        ? accepted.status_url
+        : accepted?.job_id != null
+          ? `/jobs/${accepted.job_id}`
+          : null;
+    if (statusPath) {
+      const pollUrl = /^https?:\/\//i.test(statusPath)
+        ? statusPath
+        : `${baseUrl}/${statusPath.replace(/^\//, "")}`;
+      return pollAsyncJob(pollUrl, { ...authHeaders, ...headerParams }, `${tool.serverName}/${tool.toolName}`, accepted?.poll_seconds);
+    }
+    return accepted;
+  }
+
   if (contentType.includes("application/json")) return res.json();
   return { status: res.status, message: await res.text() };
+}
+
+/** Ceiling for one async tool job — generous because the whole point of the
+ *  202 pattern is outlasting per-request infrastructure timeouts, but finite
+ *  so an abandoned job cannot pin a run open forever. */
+const ASYNC_JOB_MAX_MS = 15 * 60 * 1000;
+const ASYNC_JOB_MAX_POLL_FAILURES = 5;
+
+async function pollAsyncJob(
+  pollUrl: string,
+  headers: Record<string, string>,
+  toolLabel: string,
+  pollSeconds?: number,
+): Promise<any> {
+  const intervalMs = Math.min(Math.max((typeof pollSeconds === "number" ? pollSeconds : 5) * 1000, 2_000), 30_000);
+  const deadline = Date.now() + ASYNC_JOB_MAX_MS;
+  const startMs = Date.now();
+  console.log(`[tool-dispatcher] ${toolLabel}: async job accepted, polling ${pollUrl} every ${intervalMs / 1000}s`);
+  let consecutiveFailures = 0;
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    let payload: any;
+    try {
+      const res = await fetch(pollUrl, Object.keys(headers).length ? { headers } : undefined);
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      payload = await res.json();
+      consecutiveFailures = 0;
+    } catch (err: any) {
+      // Transient poll failures (a blip, a service restart) shouldn't abandon
+      // a job that is still running server-side; persistent ones mean the job
+      // is unreachable and waiting longer won't change that.
+      consecutiveFailures++;
+      if (consecutiveFailures >= ASYNC_JOB_MAX_POLL_FAILURES) {
+        throw new Error(`${toolLabel}: async job status became unreachable (${err?.message ?? "poll failed"})`);
+      }
+      continue;
+    }
+
+    const status = String(payload?.status ?? "").toLowerCase();
+    if (["done", "completed", "succeeded", "success"].includes(status)) {
+      console.log(`[tool-dispatcher] ${toolLabel}: async job finished in ${Math.round((Date.now() - startMs) / 1000)}s`);
+      // Unwrap {result} so the model sees the same shape a synchronous call
+      // would have returned; fall back to the whole payload when there isn't one.
+      return payload.result !== undefined ? payload.result : payload;
+    }
+    if (["failed", "error", "cancelled"].includes(status)) {
+      throw new Error(`${toolLabel}: async job failed: ${typeof payload?.error === "string" ? payload.error.slice(0, 500) : "unknown error"}`);
+    }
+    // queued / running / pending — keep polling.
+  }
+  throw new Error(`${toolLabel}: async job did not finish within ${ASYNC_JOB_MAX_MS / 60_000} minutes`);
 }
 
 function redactArgs(args: Record<string, any>, patterns: string[]): Record<string, any> {
