@@ -30,7 +30,7 @@ import { canonicalJsonStringify } from "./agent-runtime";
 import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
-import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFileIds } from "./anthropic-code-execution";
+import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import type { Skill } from "@shared/schema";
 import { buildAttachmentContext } from "./attachment-context";
@@ -678,10 +678,20 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   // every agent work, and it also tells the model what the file IS before it
   // opens it. If the upload fails the run continues on text alone.
   if (codeExecConfig && cp.fileIds?.length) {
-    const containerFileIds = await ensureContainerFileIds(cp.fileIds, orgId);
-    if (containerFileIds.length) {
+    const containerFiles = await ensureContainerFiles(cp.fileIds, orgId);
+    if (containerFiles.length) {
       const lastUser = [...cp.messages].reverse().find((m) => m.role === "user");
-      if (lastUser) lastUser.attachmentFileIds = containerFileIds;
+      if (lastUser) {
+        lastUser.attachmentFileIds = containerFiles.map((f) => f.fileId);
+        // Images additionally ride as vision blocks so the model can SEE them
+        // and place them by content rather than filename. Capped at the vision
+        // API's per-image size limit; an oversized image quietly stays
+        // container-only (still placeable) instead of failing the request.
+        const imageIds = containerFiles
+          .filter((f) => (f.mimeType ?? "").startsWith("image/") && (f.sizeBytes ?? 0) <= 4_500_000)
+          .map((f) => f.fileId);
+        if (imageIds.length) lastUser.attachmentImageFileIds = imageIds;
+      }
     }
   }
   // A code-execution skill on a non-Claude agent is a no-op that only shows up

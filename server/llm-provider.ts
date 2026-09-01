@@ -19,6 +19,15 @@ export interface LLMMessage {
    * as anthropicServerTools already is.
    */
   attachmentFileIds?: string[];
+  /**
+   * The subset of attachmentFileIds that are images small enough for vision.
+   * These are ALSO sent as image content blocks (source type "file"), so the
+   * model sees the actual pixels — placement decisions can then be made from
+   * content ("this is the team photo") instead of guessed from the filename.
+   * Same anthropicContainer gate and same OpenAI-ignored behaviour as
+   * attachmentFileIds.
+   */
+  attachmentImageFileIds?: string[];
 }
 
 export interface CanonicalToolDefinition {
@@ -861,15 +870,18 @@ class AnthropicProvider implements LLMProvider {
         continue;
       }
 
-      // A turn carrying attachments becomes a block array: the files first, then
-      // the text. Gated on anthropicContainer because container_upload is only
-      // meaningful when code execution is actually configured for this request;
-      // without that gate an attachment on a text-only agent would be an API
-      // error instead of the graceful text-only answer it gets today.
+      // A turn carrying attachments becomes a block array: image attachments
+      // as vision blocks first (the model sees the pixels), then every file as
+      // a container_upload, then the text. Gated on anthropicContainer because
+      // container_upload is only meaningful when code execution is actually
+      // configured for this request; without that gate an attachment on a
+      // text-only agent would be an API error instead of the graceful
+      // text-only answer it gets today.
       if (m.role === "user" && m.attachmentFileIds?.length && options?.anthropicContainer) {
         anthropicMessages.push({
           role: "user",
           content: [
+            ...(m.attachmentImageFileIds ?? []).map((file_id) => ({ type: "image" as const, source: { type: "file" as const, file_id } })),
             ...m.attachmentFileIds.map((file_id) => ({ type: "container_upload" as const, file_id })),
             { type: "text" as const, text: m.content },
           ] as any,
@@ -1064,15 +1076,14 @@ class AnthropicProvider implements LLMProvider {
         });
         continue;
       }
-      // A turn carrying attachments becomes a block array: the files first, then
-      // the text. Gated on anthropicContainer because container_upload is only
-      // meaningful when code execution is actually configured for this request;
-      // without that gate an attachment on a text-only agent would be an API
-      // error instead of the graceful text-only answer it gets today.
+      // Mirrors complete()'s attachment branch — vision blocks for images,
+      // container_upload for every file, then the text. Same gate, same
+      // reasoning; see the comment there.
       if (m.role === "user" && m.attachmentFileIds?.length && options?.anthropicContainer) {
         anthropicMessages.push({
           role: "user",
           content: [
+            ...(m.attachmentImageFileIds ?? []).map((file_id) => ({ type: "image" as const, source: { type: "file" as const, file_id } })),
             ...m.attachmentFileIds.map((file_id) => ({ type: "container_upload" as const, file_id })),
             { type: "text" as const, text: m.content },
           ] as any,

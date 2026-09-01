@@ -407,9 +407,10 @@ export async function extractTextFromFile(
     const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(buffer.length / 1024))} KB`;
     const text =
       `[Image attachment: ${filename} — ${ext.toUpperCase()}${dims ? `, ${dims.width}×${dims.height}px` : ""}, ${size}. ` +
-      `The pixels are not readable in this text context. When this run has code execution, the original image file ` +
-      `is available in the container under this filename and can be placed into generated or edited documents ` +
-      `(for a .pptx: python-pptx add_picture). Choose its placement from the user's instructions and the filename.]`;
+      `If this image is also attached visually, look at it to decide placement from its content; otherwise rely on ` +
+      `this description and the filename. When this run has code execution, the original image file is available in ` +
+      `the container under this filename and can be placed into generated or edited documents ` +
+      `(for a .pptx: python-pptx add_picture).]`;
     return { text, kind: "image", meta: { width: dims?.width, height: dims?.height } };
   }
 

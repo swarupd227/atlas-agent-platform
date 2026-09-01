@@ -193,6 +193,21 @@ export async function ensureContainerFileIds(
   fileIds: string[],
   orgId: string | undefined,
 ): Promise<string[]> {
+  return (await ensureContainerFiles(fileIds, orgId)).map((f) => f.fileId);
+}
+
+/**
+ * Same upload/caching behaviour as ensureContainerFileIds, but returns what the
+ * caller needs to decide HOW each file should ride along on the request: an
+ * image can additionally be attached as a vision block (the model sees the
+ * pixels and can place it by content), where a spreadsheet only makes sense as
+ * a container upload. Kept as a sibling rather than a signature change so the
+ * id-only contract (and its tests) stay stable.
+ */
+export async function ensureContainerFiles(
+  fileIds: string[],
+  orgId: string | undefined,
+): Promise<Array<{ fileId: string; mimeType: string | null; sizeBytes: number | null }>> {
   if (!fileIds.length) return [];
 
   const { db } = await import("./db");
@@ -209,10 +224,13 @@ export async function ensureContainerFileIds(
   const ordered = fileIds.map((id) => byId.get(id)).filter(Boolean) as typeof rows;
 
   const client = await getAnthropicRawClient();
-  const resolved: string[] = [];
+  const resolved: Array<{ fileId: string; mimeType: string | null; sizeBytes: number | null }> = [];
 
   for (const row of ordered) {
-    if (row.anthropicFileId) { resolved.push(row.anthropicFileId); continue; }
+    if (row.anthropicFileId) {
+      resolved.push({ fileId: row.anthropicFileId, mimeType: row.mimeType ?? null, sizeBytes: row.sizeBytes ?? null });
+      continue;
+    }
     // Rows uploaded before the bytes were retained have nothing to send; the
     // text path still works, so skip rather than fail.
     if (!row.content) continue;
@@ -225,7 +243,7 @@ export async function ensureContainerFileIds(
       const fileId = (uploaded as any).id;
       if (!fileId) continue;
       await db.update(uploadedFiles).set({ anthropicFileId: fileId }).where(eqOp(uploadedFiles.id, row.id));
-      resolved.push(fileId);
+      resolved.push({ fileId, mimeType: row.mimeType ?? null, sizeBytes: row.sizeBytes ?? null });
     } catch (err: any) {
       console.error(`[anthropic-code-execution] container upload failed for ${row.filename} (non-fatal, text still attached):`, err?.message);
     }
