@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Compass, Users, BookOpen, Copy, ArrowRight, Loader2 } from "lucide-react";
+import { Compass, Users, BookOpen, Copy, ArrowRight, Loader2, Activity, CheckCircle2, AlertTriangle } from "lucide-react";
 
 interface JourneyWorker {
   id: string;
@@ -35,6 +35,49 @@ interface Journey {
   workers: JourneyWorker[];
   ontologyConcepts: Array<{ conceptId: string; conceptLabel: string }>;
   createdAt: string | null;
+}
+
+interface JourneyHealth {
+  runCount: number;
+  successRate: number | null;
+  status: "not_yet_run" | "needs_attention" | "healthy";
+  flagReasons: string[];
+}
+
+/** Ontology roadmap Phase 4: real per-journey signal (run history + ontology
+ *  alignment), not a fabricated "healthy" -- see GET /api/journeys/:id/health. */
+function JourneyHealthBadge({ teamAgentId }: { teamAgentId: string }) {
+  const { data: health } = useQuery<JourneyHealth>({
+    queryKey: [`/api/journeys/${teamAgentId}/health`],
+  });
+  if (!health) return null;
+
+  if (health.status === "not_yet_run") {
+    return (
+      <Badge variant="outline" className="text-[9px] text-muted-foreground" data-testid={`badge-health-${teamAgentId}`}>
+        <Activity className="w-2.5 h-2.5 mr-1" /> Not yet run
+      </Badge>
+    );
+  }
+  if (health.status === "needs_attention") {
+    return (
+      <Badge
+        variant="outline"
+        className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-500/30"
+        title={health.flagReasons.join("; ")}
+        data-testid={`badge-health-${teamAgentId}`}
+      >
+        <AlertTriangle className="w-2.5 h-2.5 mr-1" /> Needs attention
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-[9px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30" data-testid={`badge-health-${teamAgentId}`}>
+      <CheckCircle2 className="w-2.5 h-2.5 mr-1" />
+      {health.runCount} run{health.runCount === 1 ? "" : "s"}
+      {health.successRate !== null ? ` · ${Math.round(health.successRate * 100)}% success` : ""}
+    </Badge>
+  );
 }
 
 export default function Journeys() {
@@ -180,6 +223,8 @@ export default function Journeys() {
                     </div>
                   </div>
                 )}
+
+                <JourneyHealthBadge teamAgentId={journey.teamAgentId} />
 
                 <div className="flex items-center gap-2 mt-auto pt-2">
                   <Button
