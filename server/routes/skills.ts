@@ -21,6 +21,7 @@ import {
 } from "@shared/schema";
 
 import { callClaude, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
+import yaml from "js-yaml";
 
 const router = Router();
 
@@ -1188,6 +1189,82 @@ Return ONLY a valid JSON object with a "skills" array.`,
     } catch (e: any) {
       if (e instanceof ZodError) return res.status(400).json({ error: e.errors });
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/skills/import-github -- fetch-and-parse only, does not write to
+  // the database. Returns content into the same review-before-save flow the
+  // AI instruction builder uses (client applies it into the editor, the
+  // existing Save Skill button persists it as a draft) -- an imported skill
+  // is untrusted third-party text that will become a live system-prompt
+  // injection once activated, so it must go through human review either way.
+  const importGithubSchema = z.object({
+    owner: z.string().min(1),
+    repo: z.string().min(1),
+    ref: z.string().optional(),
+  });
+  const MAX_REFERENCE_FILES = 15;
+  const MAX_TOTAL_CHARS = 60_000;
+
+  router.post("/api/skills/import-github", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const body = importGithubSchema.safeParse(req.body);
+      if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+      const { owner, repo } = body.data;
+
+      const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
+      if (!repoRes.ok) return res.status(404).json({ error: `GitHub repo ${owner}/${repo} not found or not public` });
+      const repoMeta = await repoRes.json();
+      const ref = body.data.ref || repoMeta.default_branch;
+
+      const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${ref}?recursive=true`);
+      if (!treeRes.ok) return res.status(502).json({ error: "Could not read repo file tree" });
+      const tree = ((await treeRes.json()).tree || []) as Array<{ path: string; type: string }>;
+
+      const skillMdEntry = tree.find(t => t.path === "SKILL.md" && t.type === "blob");
+      if (!skillMdEntry) return res.status(404).json({ error: `No SKILL.md found at the root of ${owner}/${repo}` });
+
+      const rawBase = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/`;
+      const fetchRaw = (path: string) => fetch(rawBase + path).then(r => r.text());
+
+      const skillMdRaw = await fetchRaw("SKILL.md");
+      const fmMatch = skillMdRaw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+      const yamlFrontmatter = (fmMatch ? yaml.load(fmMatch[1]) : {}) as Record<string, any>;
+      let markdownBody = (fmMatch ? fmMatch[2] : skillMdRaw).trim();
+
+      // Pull in every other markdown file so mode-specific "read
+      // references/x.md" instructions resolve against content already in
+      // the same prompt -- Astra has no per-skill filesystem to resolve
+      // them against otherwise.
+      const mdFiles = tree.filter(t => t.type === "blob" && t.path.endsWith(".md") && t.path !== "SKILL.md" && !t.path.startsWith("site/"));
+      const warnings: string[] = [];
+      let totalChars = markdownBody.length;
+      for (const f of mdFiles.slice(0, MAX_REFERENCE_FILES)) {
+        if (totalChars >= MAX_TOTAL_CHARS) { warnings.push(`${f.path} skipped -- import size limit reached`); continue; }
+        const content = await fetchRaw(f.path);
+        totalChars += content.length;
+        markdownBody += `\n\n## ${f.path}\n\n${content.trim()}`;
+      }
+      if (mdFiles.length > MAX_REFERENCE_FILES) {
+        warnings.push(`${mdFiles.length - MAX_REFERENCE_FILES} additional markdown file(s) not imported (limit ${MAX_REFERENCE_FILES})`);
+      }
+
+      const nonMdBundled = tree.filter(t => t.type === "blob" && !t.path.endsWith(".md") && (t.path.startsWith("scripts/") || t.path.startsWith("commands/")));
+      if (nonMdBundled.length > 0) {
+        warnings.push(`Not imported: ${nonMdBundled.map(f => f.path).join(", ")} -- Astra has no sandbox for arbitrary imported code, so any instructions describing script-driven modes will not function.`);
+      }
+
+      res.json({
+        name: yamlFrontmatter.name || repo,
+        description: yamlFrontmatter.description || "",
+        markdownBody,
+        yamlFrontmatter,
+        sourceRepo: `${owner}/${repo}`,
+        warnings,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
     }
   });
 

@@ -49,6 +49,8 @@ import {
   XOctagon,
   Clock,
   Unlink,
+  Github,
+  Download,
 } from "lucide-react";
 
 const SECTION_TEMPLATES: Record<string, string> = {
@@ -324,6 +326,10 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
   const [builderDomain, setBuilderDomain] = useState("");
   const [builderLoading, setBuilderLoading] = useState(false);
   const [builderResult, setBuilderResult] = useState<any>(null);
+
+  const [importOwnerRepo, setImportOwnerRepo] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
+  const [importResult, setImportResult] = useState<any>(null);
 
   const [testScenario, setTestScenario] = useState("");
   const [testLoading, setTestLoading] = useState(false);
@@ -627,6 +633,33 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     }
     setActiveTab("editor");
     toast({ title: "Applied generated content to editor" });
+  };
+
+  const handleImportGithub = async () => {
+    const [owner, repo] = importOwnerRepo.split("/").map(s => s.trim());
+    if (!owner || !repo) { toast({ title: "Enter as owner/repo", variant: "destructive" }); return; }
+    setImportLoading(true);
+    setImportResult(null);
+    try {
+      const res = await apiRequest("POST", "/api/skills/import-github", { owner, repo });
+      setImportResult(await res.json());
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const applyImportResult = () => {
+    if (!importResult) return;
+    setName(importResult.name);
+    setDescription(importResult.description);
+    setMarkdownBody(importResult.markdownBody);
+    setActiveTab("editor");
+    toast({
+      title: "Imported -- review and Save Skill to persist",
+      description: importResult.warnings?.length ? `${importResult.warnings.length} warning(s) -- see below` : undefined,
+    });
   };
 
   const handleRunTest = async () => {
@@ -1476,6 +1509,62 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
         <TabsContent value="builder" className="flex-1 min-h-0 mt-0">
           <ScrollArea className="h-full">
             <div className="p-5 space-y-4 max-w-3xl">
+              <Card data-testid="card-import-github">
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-2"><Github className="w-4 h-4" /> Import from GitHub</CardTitle>
+                  <p className="text-xs text-muted-foreground">Pull in a public Claude Agent Skill repo (a SKILL.md file at its root, e.g. from `npx skills add owner/repo`). Fetched content is reviewed here before anything is saved.</p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex gap-2">
+                    <Input
+                      value={importOwnerRepo}
+                      onChange={e => setImportOwnerRepo(e.target.value)}
+                      placeholder="owner/repo, e.g. addyosmani/clarity"
+                      data-testid="input-import-github-repo"
+                    />
+                    <Button onClick={handleImportGithub} disabled={importLoading || !importOwnerRepo} data-testid="button-import-github">
+                      {importLoading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Download className="w-4 h-4 mr-1.5" />}
+                      {importLoading ? "Importing..." : "Import"}
+                    </Button>
+                  </div>
+
+                  {importResult && (
+                    <Card data-testid="card-import-result">
+                      <CardHeader>
+                        <CardTitle className="text-sm">Imported: {importResult.sourceRepo}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {importResult.name && (
+                          <div>
+                            <span className="text-xs font-medium text-muted-foreground">Name:</span>
+                            <p className="text-sm font-medium" data-testid="text-imported-name">{importResult.name}</p>
+                          </div>
+                        )}
+                        {importResult.description && (
+                          <div>
+                            <span className="text-xs font-medium text-muted-foreground">Description:</span>
+                            <p className="text-sm">{importResult.description}</p>
+                          </div>
+                        )}
+                        {Array.isArray(importResult.warnings) && importResult.warnings.length > 0 && (
+                          <div className="flex flex-col gap-1.5">
+                            {importResult.warnings.map((w: string, i: number) => (
+                              <div key={i} className="text-[11px] rounded-md border border-amber-500/20 bg-amber-500/10 text-amber-600 px-2.5 py-2 flex items-start gap-1.5" data-testid={`text-import-warning-${i}`}>
+                                <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                                <span>{w}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <Button size="sm" onClick={applyImportResult} data-testid="button-apply-import">
+                          Apply to Editor
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+                </CardContent>
+              </Card>
+
               <h3 className="text-sm font-semibold flex items-center gap-2">
                 <Sparkles className="w-4 h-4" /> AI Instruction Builder
               </h3>
