@@ -24,7 +24,7 @@ import {
   checkPermission,
   getRequestRole,
 } from "../permissions";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
 import { buildSourceDocuments } from "../attachment-context";
 import {
   resolveOntologyTags,
@@ -2155,23 +2155,70 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         return resolved;
       };
 
+      // The LLM only ever names knowledge bases; the id it returns alongside is
+      // NOT trustworthy -- unlike skills and ontology concepts above, this path
+      // previously passed kb.id straight into createAgentKnowledgeBase, so a
+      // hallucinated id either violated the FK or silently pointed at nothing
+      // (the surrounding try/catch swallowed both). Resolve against the real
+      // table, same generate-then-post-validate discipline as everything else.
+      const orgKnowledgeBases = await storage.getKnowledgeBases(getOrgId(req));
+      const kbById = new Map(orgKnowledgeBases.map(k => [k.id, k]));
+      const kbByLowerName = new Map(orgKnowledgeBases.map(k => [k.name.toLowerCase().trim(), k]));
+      const resolveKnowledgeBases = function(suggested?: Array<{ id: string; name: string }>): string[] {
+        if (!suggested?.length) return [];
+        const ids: string[] = [];
+        for (const s of suggested) {
+          const match = kbById.get(s?.id) ?? kbByLowerName.get((s?.name || "").toLowerCase().trim());
+          if (match && !ids.includes(match.id)) ids.push(match.id);
+        }
+        return ids;
+      };
+
+      // What actually decides whether a tool call works at run time is whether
+      // the server's enterprise integration has a usable connection for this
+      // org -- see RealMcpBase.callTool ("Integration 'x' is not connected"),
+      // which fails on missing credentials, NOT on mcp_servers.status. Servers
+      // with no integrationId (mock/demo routers) aren't gated this way.
+      const connectionsOrgId = getOrgId(req) ?? getDefaultOrgId();
+      const connectedIntegrationIds = new Set(
+        (connectionsOrgId
+          ? await storage.listIntegrationConnections(connectionsOrgId).catch(() => [])
+          : []
+        ).filter(c => c.status === "connected").map(c => c.integrationId),
+      );
+
+      // Reports what it actually linked so the caller can surface honestly-unmet
+      // bindings instead of silently leaving a gap. propose-agents can name a
+      // server for an integration nobody has connected (a known, pre-existing
+      // behaviour), and linking to one regardless produced an MCP Servers tab
+      // that looked populated while the node would fail at run time.
       const linkMcpBindings = async function(agentId: string, bindings?: Array<{ server: string; tool: string }>) {
-        if (!bindings?.length) return;
+        const linked: string[] = [];
+        const unresolved: string[] = [];
+        const unconnected: string[] = [];
+        if (!bindings?.length) return { linked, unresolved, unconnected };
         const serverNames = Array.from(new Set(bindings.map(b => b.server)));
         for (const serverName of serverNames) {
           const matched = allMcpServers.find(s =>
             s.name.toLowerCase().includes(serverName.toLowerCase()) ||
             serverName.toLowerCase().includes(s.name.toLowerCase().split(" ")[0])
           );
-          if (matched) {
-            try {
-              const existing = await storage.getAgentMcpServerByIds(agentId, matched.id);
-              if (!existing) {
-                await storage.createAgentMcpServer({ agentId, serverId: matched.id });
-              }
-            } catch {}
+          if (!matched) { unresolved.push(serverName); continue; }
+          // Still linked (the binding is a real, intentional part of the plan and
+          // the integration may be connected later) -- but recorded separately so
+          // it can be shown as needing connection rather than passing as ready.
+          if (matched.integrationId && !connectedIntegrationIds.has(matched.integrationId)) {
+            unconnected.push(matched.name);
           }
+          try {
+            const existing = await storage.getAgentMcpServerByIds(agentId, matched.id);
+            if (!existing) {
+              await storage.createAgentMcpServer({ agentId, serverId: matched.id });
+            }
+            linked.push(matched.name);
+          } catch {}
         }
+        return { linked, unresolved, unconnected };
       }
 
       const composeTaskPrompt = function(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
@@ -2288,22 +2335,42 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         },
       });
 
-      await linkMcpBindings(teamAgent.id, orchestrator.mcpToolBindings);
+      const orchestratorLinkResult = await linkMcpBindings(teamAgent.id, orchestrator.mcpToolBindings);
 
-      // Seed a draft mandate from what the proposal already has -- description
-      // is already plain-language "what it does," and policyConstraints (the
-      // things it must comply with) map naturally onto "must never." No real
-      // human owner exists yet at this point (owner: "system" above is an
-      // internal placeholder, not a person), so accountableOwnerUserId is left
-      // unset for whoever reviews the mandate to fill in. Best-effort: a
-      // seeding failure must never block team creation, which already
-      // succeeded by this point.
-      storage.upsertAgentMandate(teamAgent.id, {
-        whatItDoes: orchestrator.description || null,
-        mustNever: orchestrator.policyConstraints?.length ? orchestrator.policyConstraints.join("\n") : null,
-      }, getOrgId(req)).catch(() => {});
+      // Seed a draft mandate from what the proposal already has. No real human
+      // owner exists yet at this point (owner: "system" above is an internal
+      // placeholder, not a person), so accountableOwnerUserId is left unset for
+      // whoever reviews the mandate to fill in. Best-effort: a seeding failure
+      // must never block team creation, which already succeeded by this point.
+      //
+      // Only fields with REAL backing data are populated -- a mandate is a
+      // governance document a human signs off on, so an invented "when to stop"
+      // is worse than a blank one the reviewer is prompted to fill in.
+      const buildMandate = function(a: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean) {
+        const humanCheckpoint = (pipeline?.humanCheckpoints || []).find(h => h.agentName === a.name);
+        const kpis = a.kpiBindings || [];
+        return {
+          whatItDoes: a.description || null,
+          mustNever: a.policyConstraints?.length ? a.policyConstraints.join("\n") : null,
+          whenToAskAHuman: humanCheckpoint
+            ? `${humanCheckpoint.description || humanCheckpoint.type || "Human decision point"} (defined as a checkpoint in this team's flow)`
+            : a.isHumanCheckpoint
+              ? "This step IS the human decision point in the flow -- it always requires a person."
+              : a.autonomyMode === "assisted"
+                ? "Autonomy mode is 'assisted': surface the proposed action for approval before acting."
+                : null,
+          whenToStop: isOrchestrator && pipeline?.errorHandling ? pipeline.errorHandling : null,
+          fallbackBehavior: isOrchestrator && pipeline?.handoffRules ? pipeline.handoffRules : null,
+          howWeKnowItsWorking: kpis.length
+            ? `Bound KPIs: ${kpis.join(", ")}${a.estimatedImpact ? `. Expected impact: ${a.estimatedImpact}` : ""}`
+            : a.estimatedImpact || null,
+        };
+      };
+
+      storage.upsertAgentMandate(teamAgent.id, buildMandate(orchestrator, true), getOrgId(req)).catch(() => {});
 
       const createdWorkers: any[] = [];
+      const workerLinkResults: Array<{ linked: string[]; unresolved: string[]; unconnected: string[] }> = [];
       for (const worker of workers) {
         const workerAgent = await storage.createAgent({
           name: worker.name,
@@ -2335,12 +2402,9 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         });
         createdWorkers.push(workerAgent);
 
-        storage.upsertAgentMandate(workerAgent.id, {
-          whatItDoes: worker.description || null,
-          mustNever: worker.policyConstraints?.length ? worker.policyConstraints.join("\n") : null,
-        }, getOrgId(req)).catch(() => {});
+        storage.upsertAgentMandate(workerAgent.id, buildMandate(worker, false), getOrgId(req)).catch(() => {});
 
-        await linkMcpBindings(workerAgent.id, worker.mcpToolBindings);
+        workerLinkResults.push(await linkMcpBindings(workerAgent.id, worker.mcpToolBindings));
 
         await storage.createAgentTeamMember({
           teamAgentId: teamAgent.id,
@@ -2348,12 +2412,10 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           role: "member",
         });
 
-        if (worker.suggestedKnowledgeBases?.length) {
-          for (const kb of worker.suggestedKnowledgeBases) {
-            try {
-              await storage.createAgentKnowledgeBase({ agentId: workerAgent.id, knowledgeBaseId: kb.id });
-            } catch {}
-          }
+        for (const kbId of resolveKnowledgeBases(worker.suggestedKnowledgeBases)) {
+          try {
+            await storage.createAgentKnowledgeBase({ agentId: workerAgent.id, knowledgeBaseId: kbId });
+          } catch {}
         }
       }
 
@@ -2367,12 +2429,10 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         createdWorkers.filter((_, i) => workers[i]?.isHumanCheckpoint).map(w => w.id),
       );
 
-      if (orchestrator.suggestedKnowledgeBases?.length) {
-        for (const kb of orchestrator.suggestedKnowledgeBases) {
-          try {
-            await storage.createAgentKnowledgeBase({ agentId: teamAgent.id, knowledgeBaseId: kb.id });
-          } catch {}
-        }
+      for (const kbId of resolveKnowledgeBases(orchestrator.suggestedKnowledgeBases)) {
+        try {
+          await storage.createAgentKnowledgeBase({ agentId: teamAgent.id, knowledgeBaseId: kbId });
+        } catch {}
       }
 
       // Inherit outcome-scoped policies into all created agents so bound governance flows into execution
@@ -2775,11 +2835,61 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         } catch {}
       }
 
+      // Every agent created here gets a real eval suite, matching the bar the
+      // single-agent path (POST /api/agents) has always enforced -- it
+      // unconditionally auto-scaffolds a suite on creation, while this route
+      // created none at all, so a team-built agent shipped with an empty Eval
+      // tab and no baseline to regress against. generateKpiAlignedEvalSuite was
+      // even imported in this file but never called.
+      //
+      // The suite rows are created synchronously (DB-only, fast) so the Eval tab
+      // is never empty; the ontology-grounded CASES are generated fire-and-forget
+      // because that is a real LLM call per agent and must not hold the response
+      // open. generateOntologyEvalCases draws on each agent's real ontologyTags
+      // plus those concepts' agentUseCases/riskFactors, so a journey agent gets
+      // domain-specific cases rather than generic latency probes -- and it
+      // no-ops safely (returns 0 cases) for any agent whose tags didn't resolve.
+      const evalSuiteIds: Record<string, string> = {};
+      for (const created of [teamAgent, ...createdWorkers]) {
+        try {
+          const suite = await storage.createEvalSuite({
+            agentId: created.id,
+            name: `${created.name} - Baseline Suite`,
+            type: "regression",
+            totalCases: 0,
+          });
+          evalSuiteIds[created.id] = suite.id;
+          generateOntologyEvalCases(suite.id, getOrgId(req))
+            .then(r => {
+              if (r.count > 0) storage.updateEvalSuite(suite.id, { totalCases: r.count }).catch(() => {});
+            })
+            .catch(err => console.warn(`[create-team] ontology eval generation failed for ${created.name}:`, err?.message));
+        } catch (evalErr: any) {
+          console.error(`[create-team] eval suite creation failed for ${created.name}:`, evalErr?.message);
+        }
+      }
+
+      // Bindings the LLM named that resolve to an integration nobody has
+      // connected. Returned rather than swallowed so the caller can show a
+      // journey as needing setup instead of silently shipping a team whose
+      // nodes will fail at run time with "Integration 'x' is not connected".
+      const unconnectedBindings = Array.from(new Set([
+        ...orchestratorLinkResult.unconnected,
+        ...workerLinkResults.flatMap(r => r.unconnected),
+      ]));
+      const unresolvedBindings = Array.from(new Set([
+        ...orchestratorLinkResult.unresolved,
+        ...workerLinkResults.flatMap(r => r.unresolved),
+      ]));
+
       res.status(201).json({
         teamAgent,
         workers: createdWorkers,
         blueprint,
         membershipCount: createdWorkers.length,
+        evalSuiteIds,
+        unconnectedBindings,
+        unresolvedBindings,
       });
     } catch (error) {
       if (error instanceof ZodError) return res.status(400).json({ error: error.errors });
