@@ -59,18 +59,25 @@ function renderBlock(file: UploadedFileRow, text: string): string {
 
 /**
  * Workspace-chat framing: the files are evidence for the user's question.
+ * `framing` overrides the preface for callers whose files are NOT a user's
+ * per-message attachments — standing brand assets, for instance, need to be
+ * introduced as what they are, or the model treats a logo as the subject of
+ * the question instead of a resource for the answer.
  */
 export async function buildAttachmentContext(
   fileIds: string[],
   orgId?: string,
+  framing?: string[],
 ): Promise<{ context: string; names: string[] }> {
   const ordered = await readAttachedFiles(fileIds, orgId);
   if (!ordered.length) return { context: "", names: [] };
 
   return {
     context: [
-      "The user attached the following file(s). Their contents are reproduced below.",
-      "Base your answer on them; if a file appears truncated or unreadable, say so rather than guessing at what it might contain.",
+      ...(framing ?? [
+        "The user attached the following file(s). Their contents are reproduced below.",
+        "Base your answer on them; if a file appears truncated or unreadable, say so rather than guessing at what it might contain.",
+      ]),
       "",
       ...ordered.map((f) => renderBlock(f, f.extractedText ?? "")),
     ].join("\n"),

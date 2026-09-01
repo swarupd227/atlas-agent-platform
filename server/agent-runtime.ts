@@ -1462,6 +1462,25 @@ export async function executePromptWithMcp(
 
   const kbOnlyMode = availableTools.length === 0 && hasKnowledgeBases;
 
+  // SQL tools (server/integrations/sql/mcp-server.ts) all register under the
+  // "sql_" prefix. Text-to-SQL has a well-known failure class the generic
+  // tool-calling instructions below don't cover: a plain INNER JOIN or an
+  // aggregate keyed off a related table silently drops every record with
+  // ZERO matching rows there, even though those are exactly the records a
+  // "no activity" / "never" / "haven't done X" question is asking about.
+  // Scoped to agents that actually have SQL tools so this doesn't bloat the
+  // prompt for every other agent.
+  const hasSqlTools = availableTools.some(t => t.toolName.startsWith("sql_"));
+  const sqlGuidance = hasSqlTools
+    ? `
+
+## SQL QUERY GUIDANCE
+For questions about an absence of activity ("haven't ordered in N days", "no activity since", "never purchased", "inactive customers"): a plain INNER JOIN, or an aggregate keyed off the related table (e.g. MAX(order_date) grouped by customer), silently excludes every record with ZERO matching rows in that related table -- they have no row to join or aggregate over, so they vanish from the result even though they are the most extreme case of "no activity." Use a LEFT JOIN (or NOT EXISTS) and treat a NULL/missing related row as qualifying for "never"/"no activity," not as a reason to exclude it.
+Before writing an analytical query, run sql_describe_table on every table involved to confirm nullability and foreign-key shape -- do not guess the join from table/column names alone.
+If asked for a list of records, return the actual row-level list (names/IDs), not just a count or a summary paragraph.
+Treat a zero-row result as suspicious when the question implies some records should qualify: re-check your join type and NULL handling before reporting "none" as the answer.`
+    : "";
+
   const baseInstructions = kbOnlyMode
     ? `You are a knowledge-based assistant. Use the knowledge base context provided to answer the user's question accurately and helpfully.
 If the knowledge base context contains relevant information, use it to provide a detailed, well-structured response.
@@ -1471,7 +1490,7 @@ Provide a structured analysis with key findings and recommended actions where ap
 Your job is to fulfill the user's prompt by calling the appropriate tools and then analyzing the results.
 Think step-by-step about what data you need and which tools to call.
 Always call at least one tool if relevant tools are available.
-After receiving tool results, provide a structured analysis with key findings, severity/risk assessment if applicable, and recommended actions.`;
+After receiving tool results, provide a structured analysis with key findings, severity/risk assessment if applicable, and recommended actions.${sqlGuidance}`;
 
   const instructionHeader = kbOnlyMode ? "## KNOWLEDGE-BASED ASSISTANT INSTRUCTIONS" : "## MCP TOOL EXECUTION INSTRUCTIONS";
 
@@ -2093,9 +2112,16 @@ After receiving tool results, provide a structured analysis with key findings, s
           structuredOutputInstructions = ` If the tool results contain multiple data records (e.g. leads, items, transactions), also include a "processedRecords" field as a JSON array where each element has: id, name (string identifier), score (number 0-100 if applicable), decision (string classification/action), reasoning (1-2 sentence explanation). Process every record from the data.`;
         }
 
+        // Guards against a fact noticed at one tool-calling step (e.g. "some
+        // records have no matching related data") going unreconciled against
+        // a contradictory conclusion drawn at another step (e.g. "none
+        // qualify") -- without this, nothing prompts the model to notice the
+        // two can't both be true before it answers.
+        const reconciliationNote = ` Before finalizing your answer, check it against everything observed earlier in this conversation -- if an earlier step noted a fact (e.g. some records have no matching related data) that would contradict your conclusion (e.g. "none qualify"), resolve the contradiction or explain it rather than reporting a conclusion that contradicts an earlier observation.`;
+
         const analysisPrompt = isConversational
-          ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.`
-          : `Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).${structuredOutputInstructions}`;
+          ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.${reconciliationNote}`
+          : `Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).${structuredOutputInstructions}${reconciliationNote}`;
         const analysisMessages: LLMMessage[] = [
           ...conversationMessages,
           ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),

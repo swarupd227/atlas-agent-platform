@@ -8,16 +8,16 @@
  * so this list doesn't drag every document's content into memory).
  */
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { FileText, Presentation, Download, Pencil, Search, Loader2 } from "lucide-react";
+import { FileText, Presentation, Download, Pencil, Search, Loader2, Palette, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { EmptyState } from "@/components/ui-vocab";
-import type { AttachedFile } from "@/components/file-attach";
+import { FileAttach, type AttachedFile } from "@/components/file-attach";
 import { PENDING_ATTACHMENT_KEY } from "@/lib/pending-attachment";
 
 interface AgentFileRow {
@@ -54,6 +54,98 @@ function relTime(iso: string | null): string {
 function FileIcon({ mimeType }: { mimeType: string | null }) {
   if (mimeType?.includes("presentation")) return <Presentation className="w-4 h-4 text-orange-500 shrink-0" />;
   return <FileText className="w-4 h-4 text-red-500 shrink-0" />;
+}
+
+interface BrandAssetRow {
+  id: string;
+  filename: string;
+  kind: string;
+  sizeBytes: number | null;
+  summary?: string;
+  createdAt: string | null;
+}
+
+/**
+ * The org's standing brand assets — logo, deck templates, approved imagery.
+ * Anything uploaded here is auto-attached to every document-capable Workspace
+ * run (workspace-run.ts resolveBrandAssetIds), so agents apply the brand
+ * without the user re-attaching files per conversation. The five most recent
+ * assets ride along; deleting one here stops it immediately.
+ */
+function BrandAssetsCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const { data: assets = [], isLoading } = useQuery<BrandAssetRow[]>({
+    queryKey: ["/api/files?context=brand"],
+  });
+
+  async function remove(asset: BrandAssetRow) {
+    setDeletingId(asset.id);
+    try {
+      await apiRequest("DELETE", `/api/files/${asset.id}`, {});
+      queryClient.invalidateQueries({ queryKey: ["/api/files?context=brand"] });
+    } catch (e: any) {
+      toast({ title: "Could not remove asset", description: e.message, variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <Card data-testid="card-brand-assets">
+      <CardContent className="p-4 flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <Palette className="w-4 h-4 text-primary" /> Brand Assets
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Logo, templates, and approved imagery. The five most recent are automatically available to every
+            document-generating agent run — no need to attach them each time.
+          </p>
+        </div>
+
+        <FileAttach
+          context="brand"
+          value={[]}
+          onChange={() => queryClient.invalidateQueries({ queryKey: ["/api/files?context=brand"] })}
+          variant="dropzone"
+          label="Add a brand asset"
+        />
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-4 text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" />
+          </div>
+        ) : assets.length > 0 && (
+          <div className="flex flex-col divide-y" data-testid="brand-assets-list">
+            {assets.map(a => (
+              <div key={a.id} className="flex items-center gap-3 py-2 text-sm" data-testid={`brand-asset-${a.id}`}>
+                <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0 flex flex-col">
+                  <span className="truncate font-medium">{a.filename}</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {[a.summary, formatBytes(a.sizeBytes), relTime(a.createdAt)].filter(Boolean).join(" · ")}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => remove(a)}
+                  disabled={deletingId === a.id}
+                  className="text-muted-foreground hover:text-destructive shrink-0 disabled:opacity-50"
+                  title="Remove this brand asset"
+                  data-testid={`button-brand-asset-remove-${a.id}`}
+                >
+                  {deletingId === a.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function Files() {
@@ -106,6 +198,8 @@ export default function Files() {
           Every document an agent has generated — decks, reports, spreadsheets. Workspace's My Work only shows your 10 most recent runs; this shows all of them.
         </p>
       </div>
+
+      <BrandAssetsCard />
 
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />

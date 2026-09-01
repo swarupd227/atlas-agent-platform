@@ -11,7 +11,7 @@
 
 import type { SqlConnector } from "./types";
 import type { McpToolResult } from "../../real-mcp-base";
-import { extractReferencedTables, extractEqualityPredicates } from "./sql-parse";
+import { extractReferencedTables, extractEqualityPredicates, detectJoinExclusionRisk } from "./sql-parse";
 
 function ok(data: unknown): McpToolResult {
   return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] };
@@ -86,6 +86,8 @@ export async function sql_execute_query(client: SqlConnector, args: Record<strin
     if (result.row_count === 0) {
       const suspiciousZeroNote = await checkSuspiciousZeroResult(client, sql);
       if (suspiciousZeroNote) notes.push(suspiciousZeroNote);
+      const joinRisk = detectJoinExclusionRisk(sql, client.dialect);
+      if (joinRisk.risky && joinRisk.reason) notes.push(`⚠ ${joinRisk.reason}`);
     }
     return ok({ ...result, note: notes.length > 0 ? notes.join(" ") : undefined });
   } catch (e: any) { return err(e.message); }

@@ -44,7 +44,11 @@ const upload = multer({
   },
 });
 
-const CONTEXTS = new Set(["workspace", "wizard", "process_flow", "eval", "playground", "other"]);
+// "brand" is the standing brand-asset library (logo, templates, approved
+// imagery): uploads with this context are auto-attached to every
+// document-capable Workspace run (see workspace-run.ts resolveBrandAssetIds)
+// instead of belonging to one conversation.
+const CONTEXTS = new Set(["workspace", "wizard", "process_flow", "eval", "playground", "brand", "other"]);
 
 /** GET /api/files/config — the accept string and limits, so the client cannot
  *  drift from what the reader actually supports. */

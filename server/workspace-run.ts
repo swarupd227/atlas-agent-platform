@@ -18,9 +18,9 @@
  * Week 2+. Spans are captured per resume-segment.
  */
 import { randomUUID, createHash } from "crypto";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { db } from "./db";
-import { workspaceRuns, type WorkspaceRun } from "@shared/schema";
+import { workspaceRuns, uploadedFiles, type WorkspaceRun } from "@shared/schema";
 import { storage } from "./storage";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { resolvePolicyBundle, buildAgentSystemPrompt, recomputeOutcomeKpis } from "./routes/helpers";
@@ -206,6 +206,37 @@ async function resolveSkillAllowlist(agent: any): Promise<string[] | null> {
   }
 }
 
+/** How many standing brand assets ride along on a document-capable run. A
+ *  small cap keeps a hoarded asset library from swamping the prompt; the most
+ *  recently uploaded win, which is also the natural "replace the old logo"
+ *  behaviour. */
+const BRAND_ASSET_LIMIT = 5;
+
+/**
+ * The org's standing brand assets, for agents that can generate documents.
+ * Document capability is the gate: a Q&A agent has no use for a logo file,
+ * and injecting one would only add noise to every answer. Best-effort — a
+ * lookup failure means the run proceeds without brand assets, not that it
+ * fails.
+ */
+async function resolveBrandAssetIds(agent: any, orgId: string | undefined, alreadyAttached: string[]): Promise<string[]> {
+  try {
+    if (!orgId) return [];
+    const activeSkills = await resolveActiveSkills(agent);
+    const docMode = resolveDocumentMode((agent as any)?.documentGenerationMode);
+    if (documentToolsForSkills(activeSkills, docMode).length === 0) return [];
+    const rows = await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+      .where(and(eq(uploadedFiles.organizationId, orgId), eq(uploadedFiles.context, "brand")))
+      .orderBy(desc(uploadedFiles.createdAt))
+      .limit(BRAND_ASSET_LIMIT);
+    const attached = new Set(alreadyAttached);
+    return rows.map((r) => r.id).filter((id) => !attached.has(id));
+  } catch (e: any) {
+    console.error("[workspace-run] brand asset lookup failed (non-fatal):", e?.message);
+    return [];
+  }
+}
+
 /** Full Skill rows for an agent's active preloaded skills (needed for skillKind/anthropicSkillIds, not just allowedTools). */
 async function resolveActiveSkills(agent: any): Promise<Skill[]> {
   try {
@@ -270,10 +301,22 @@ export async function startWorkspaceRun(params: {
   const agent = await storage.getAgent(agentId, orgId);
   if (!agent) throw new Error("Agent not found");
 
+  // Standing brand assets (Files page → uploads with context "brand") ride
+  // along on every document-capable run so a logo or template does not have to
+  // be re-attached per conversation. They join fileIds — the same path that
+  // gives ordinary attachments their stub, container upload, and (for images)
+  // vision block — but carry their own framing below.
+  const brandIds = await resolveBrandAssetIds(agent, orgId, fileIds);
+  const allFileIds = [...fileIds, ...brandIds];
+
   const { context: attachmentContext, names: attachedNames } = await buildAttachmentContext(fileIds, orgId);
+  const { context: brandContext } = await buildAttachmentContext(brandIds, orgId, [
+    "The organization keeps the following standing brand assets (logo, templates, approved imagery).",
+    "They are available to every document you generate in this run — apply them where appropriate (e.g. place the logo, match the template's style) unless the user says otherwise.",
+  ]);
   // What the model sees. `input` stays the user's own words everywhere else,
   // so run history and the KB retrieval query aren't swamped by file contents.
-  const modelInput = attachmentContext ? `${attachmentContext}\n\n${input}` : input;
+  const modelInput = [attachmentContext, brandContext, input].filter(Boolean).join("\n\n");
 
   const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
   const isTeamAgent = agent.agentType === "team" && Array.isArray(rtConfig.orchestration?.workerIds) && rtConfig.orchestration.workerIds.length > 0;
@@ -311,7 +354,7 @@ export async function startWorkspaceRun(params: {
     modelName: agent.modelName || "gpt-4.1",
     maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
     skillAllowlist,
-    fileIds,
+    fileIds: allFileIds,
   };
 
   const [run] = await db.insert(workspaceRuns).values({

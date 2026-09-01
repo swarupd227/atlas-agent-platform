@@ -208,3 +208,58 @@ export function extractReferencedTables(sql: string, dialect: string): TableExtr
   }
   return { tables: Array.from(tables), parsedOk: true };
 }
+
+export interface JoinExclusionRisk {
+  risky: boolean;
+  reason?: string;
+}
+
+// Advisory-only signal (see the reason string), so a plain text scan is fine
+// here even though join-type detection above uses a real AST -- join syntax
+// genuinely varies per dialect and needed that precision, but "does this
+// look like a date-cutoff calculation" doesn't need to be exact to be useful.
+const DATE_CUTOFF_RE = /\b(interval|now\s*\(|current_date|current_timestamp|getdate\s*\(|dateadd|date_sub|datediff)\b/i;
+
+/**
+ * Flags the exact SQL shape behind a well-known text-to-SQL failure mode: a
+ * plain/INNER JOIN combined with a date-cutoff comparison or an aggregate
+ * (MAX/MIN) silently excludes every row with ZERO matching rows in the
+ * joined table -- there's nothing to join or aggregate over -- even though
+ * those are exactly the rows a "no activity since"/"never happened"/
+ * "haven't done X" question is asking about. Never blocks; sql_execute_query
+ * (tools.ts) surfaces the reason as an advisory note only when the query
+ * actually returned nothing, mirroring checkSuspiciousZeroResult's shape.
+ */
+export function detectJoinExclusionRisk(sql: string, dialect: string): JoinExclusionRisk {
+  const parser = new Parser();
+  const opt = { database: DIALECT_MAP[dialect] ?? "postgresql" };
+
+  let ast: unknown;
+  try {
+    ast = parser.astify(sql, opt);
+  } catch {
+    return { risky: false };
+  }
+
+  let hasNonLeftJoin = false;
+  for (const stmt of Array.isArray(ast) ? ast : [ast]) {
+    const from = (stmt as { from?: unknown } | null)?.from;
+    if (!Array.isArray(from)) continue;
+    for (const entry of from) {
+      const joinType = (entry as { join?: unknown })?.join;
+      if (typeof joinType === "string" && !/left|full/i.test(joinType)) {
+        hasNonLeftJoin = true;
+      }
+    }
+  }
+  if (!hasNonLeftJoin) return { risky: false };
+
+  const hasAggregate = /\b(max|min)\s*\(/i.test(sql);
+  const hasDateCutoff = DATE_CUTOFF_RE.test(sql) || /\bhaving\b/i.test(sql);
+  if (!hasAggregate && !hasDateCutoff) return { risky: false };
+
+  return {
+    risky: true,
+    reason: `This query uses a JOIN (not LEFT JOIN) combined with a date cutoff or MAX/MIN aggregate. If the question is about records with NO matching activity at all (e.g. "haven't ordered", "never purchased"), this join silently excludes them -- they have zero rows to join against. Consider a LEFT JOIN with the missing side treated as "never happened," or re-verify with sql_describe_table.`,
+  };
+}
