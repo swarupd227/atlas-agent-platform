@@ -3,7 +3,8 @@ import * as nodeCrypto from "node:crypto";
 import { storage } from "../storage";
 import { db } from "../db";
 import { resumeTeamAgentDagRun } from "../dag-execution-engine";
-import { desc, eq, sql } from "drizzle-orm";
+import { resumeWorkspaceRun } from "../workspace-run";
+import { desc, eq, and, sql } from "drizzle-orm";
 import { z, ZodError } from "zod";
 import {
   insertPolicySchema,
@@ -14,6 +15,7 @@ import {
   insertComplianceReportSchema,
   insertIncidentSchema,
   pipelineRuns,
+  workspaceRuns,
   type InsertAuditEvent,
 } from "@shared/schema";
 import { getOrgId, getDefaultOrgId } from "../auth";
@@ -1328,6 +1330,34 @@ Ontology: ${ontologyName || "industry standard"}`,
         .then(runs => {
           const match = runs.find(r => r.pendingApprovalId === approval.id);
           if (match) resumeTeamAgentDagRun(match.id).catch(err => console.error(`[dag-resume] fast-path resume of ${match.id} failed:`, err.message));
+        })
+        .catch(() => {});
+    }
+
+    // Mirrors the pipeline_gate branch above -- a warrant/AAR-gated tool call
+    // (server/tool-dispatcher.ts's dispatchToolCall, `gate_requires_approval`)
+    // creates a `type: "tool-invocation"` approval and pauses the Workspace
+    // run that made it (server/workspace-run.ts's Checkpoint/pendingToolIndex
+    // mechanism -- already working correctly on its own). Nothing previously
+    // told THIS route to resume that run once a human decides here; it only
+    // ever updated the approval row, leaving the paused run stuck forever.
+    // Finds the run by pendingApprovalId, same reasoning as the DAG branch:
+    // the client only ever sees the approval id, not the paused run's id.
+    // A no-op for any tool-invocation approval that isn't a paused Workspace
+    // run (e.g. one from a DAG worker node) -- it simply won't match.
+    if (approval.type === "tool-invocation" && (status === "approved" || status === "rejected")) {
+      db.select().from(workspaceRuns)
+        .where(and(eq(workspaceRuns.pendingApprovalId, approval.id), eq(workspaceRuns.status, "awaiting_approval")))
+        .limit(1)
+        .then(([match]) => {
+          if (match) {
+            resumeWorkspaceRun({
+              runId: match.id,
+              decision: status === "approved" ? "approve" : "deny",
+              actorId: decidedBy,
+              orgId: getOrgId(req),
+            }).catch(err => console.error(`[workspace-resume] fast-path resume of ${match.id} failed:`, err.message));
+          }
         })
         .catch(() => {});
     }
