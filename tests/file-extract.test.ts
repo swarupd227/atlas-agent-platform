@@ -4,6 +4,7 @@ import {
   extractTextFromFile,
   isSupportedFile,
   isImageFile,
+  isVideoFile,
   UnsupportedFileTypeError,
   LegacyOfficeFormatError,
 } from "../server/file-extract";
@@ -203,6 +204,44 @@ describe("image attachments (acceptImages)", () => {
   it("isImageFile matches exactly the admitted extensions", () => {
     for (const f of ["a.png", "a.jpg", "a.jpeg", "a.gif", "a.webp"]) expect(isImageFile(f), f).toBe(true);
     for (const f of ["a.svg", "a.heic", "a.mp4", "a.pptx", "noext"]) expect(isImageFile(f), f).toBe(false);
+  });
+});
+
+describe("video attachments (acceptVideos)", () => {
+  // A fabricated buffer carrying just the boxes the sniffer reads: mvhd v0
+  // (timescale 1000, duration 12000 => 12s) and tkhd v0 (1280×720 as 16.16
+  // fixed-point at the box-relative offset the parser uses).
+  const mp4 = (() => {
+    const mvhd = Buffer.alloc(4 + 4 + 16);
+    mvhd.write("mvhd", 0);
+    mvhd.writeUInt32BE(1000, 4 + 12);   // timescale at fourcc+16
+    mvhd.writeUInt32BE(12000, 4 + 16);  // duration at fourcc+20
+    const tkhd = Buffer.alloc(4 + 4 + 76 + 8);
+    tkhd.write("tkhd", 0);
+    tkhd.writeUInt32BE(1280 << 16, 4 + 76);
+    tkhd.writeUInt32BE(720 << 16, 4 + 80);
+    return Buffer.concat([Buffer.from("....ftypisom"), mvhd, tkhd]);
+  })();
+
+  it("still rejects video by default — Knowledge Base ingestion relies on this", async () => {
+    await expect(extractTextFromFile(mp4, "video/mp4", "promo.mp4"))
+      .rejects.toBeInstanceOf(UnsupportedFileTypeError);
+  });
+
+  it("returns a stub with duration, dimensions, and embedding guidance when opted in", async () => {
+    const r = await extractTextFromFile(mp4, "video/mp4", "promo.mp4", { acceptVideos: true });
+    expect(r.kind).toBe("video");
+    expect(r.meta.durationSeconds).toBe(12);
+    expect(r.meta.width).toBe(1280);
+    expect(r.meta.height).toBe(720);
+    expect(r.text).toContain("promo.mp4");
+    expect(r.text).toContain("promo-poster.png");
+    expect(r.text).toContain("add_movie");
+  });
+
+  it("isVideoFile admits mp4 only", () => {
+    expect(isVideoFile("a.mp4")).toBe(true);
+    for (const f of ["a.mov", "a.avi", "a.webm", "a.png", "a.pptx"]) expect(isVideoFile(f), f).toBe(false);
   });
 });
 

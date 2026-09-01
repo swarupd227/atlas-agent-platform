@@ -10,6 +10,7 @@ import {
   extractTextFromFile,
   isSupportedFile,
   isImageFile,
+  isVideoFile,
   UPLOAD_ACCEPT_ATTR,
   SUPPORTED_TYPES_LABEL,
 } from "../file-extract";
@@ -38,7 +39,7 @@ const upload = multer({
   // container, which can place them into documents) but NOT in Knowledge Base
   // ingestion, which admits by extraction success and must keep refusing them.
   fileFilter: (_req, file, cb) => {
-    if (isSupportedFile(file.originalname) || isImageFile(file.originalname)) return cb(null, true);
+    if (isSupportedFile(file.originalname) || isImageFile(file.originalname) || isVideoFile(file.originalname)) return cb(null, true);
     cb(new Error(`Unsupported file type. Accepted: ${SUPPORTED_TYPES_LABEL}.`));
   },
 });
@@ -86,7 +87,7 @@ router.post("/api/files/upload", checkPermission("view_agents"), (req: Request, 
       for (const file of files) {
         let extracted;
         try {
-          extracted = await extractTextFromFile(file.buffer, file.mimetype, file.originalname, { acceptImages: true });
+          extracted = await extractTextFromFile(file.buffer, file.mimetype, file.originalname, { acceptImages: true, acceptVideos: true });
         } catch (err: any) {
           // One unreadable file shouldn't discard the others — report it in
           // place so the user can see exactly which one failed and why.
@@ -208,6 +209,9 @@ export function describe(kind: string | null, meta: any): string {
   if (!meta) return kind ?? "file";
   if (kind === "image") {
     return meta.width && meta.height ? `${meta.width}×${meta.height} image` : "image";
+  }
+  if (kind === "video") {
+    return [meta.durationSeconds ? `${meta.durationSeconds}s` : null, "video"].filter(Boolean).join(" ");
   }
   if (meta.empty) return "no readable text";
   if (kind === "xlsx" && Array.isArray(meta.sheets)) {

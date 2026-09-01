@@ -18,7 +18,7 @@
  * flattened transcription of it.
  */
 
-export type ExtractedKind = "text" | "csv" | "json" | "pdf" | "docx" | "xlsx" | "pptx" | "image";
+export type ExtractedKind = "text" | "csv" | "json" | "pdf" | "docx" | "xlsx" | "pptx" | "image" | "video";
 
 export interface ExtractedFile {
   text: string;
@@ -30,9 +30,11 @@ export interface ExtractedFile {
     truncated?: boolean;
     /** Set when a format was read but genuinely contained no text. */
     empty?: boolean;
-    /** Image pixel dimensions, when the header could be read. */
+    /** Image/video pixel dimensions, when the header could be read. */
     width?: number;
     height?: number;
+    /** Video duration, when the mp4 header could be read. */
+    durationSeconds?: number;
   };
 }
 
@@ -103,12 +105,26 @@ export function isImageFile(filename: string): boolean {
   return IMAGE_EXTS.has(EXT(filename));
 }
 
+/**
+ * mp4 only, deliberately: it is the one container PowerPoint plays reliably
+ * across platforms (H.264/AAC), python-pptx's add_movie expects it, and
+ * accepting .mov/.avi/.webm would produce decks whose videos silently fail on
+ * the client's machine. Transcoding other formats is blob-storage-era work.
+ * The 25 MB upload ceiling applies — a short promo clip fits; long-form video
+ * waits for object storage.
+ */
+const VIDEO_EXTS = new Set(["mp4"]);
+
+export function isVideoFile(filename: string): boolean {
+  return VIDEO_EXTS.has(EXT(filename));
+}
+
 /** Client-side `accept` string, kept next to the reader so the two cannot drift. */
 export const UPLOAD_ACCEPT_ATTR =
-  ".pdf,.docx,.xlsx,.xlsm,.pptx,.csv,.tsv,.txt,.md,.json,.png,.jpg,.jpeg,.gif,.webp";
+  ".pdf,.docx,.xlsx,.xlsm,.pptx,.csv,.tsv,.txt,.md,.json,.png,.jpg,.jpeg,.gif,.webp,.mp4";
 
 export const SUPPORTED_TYPES_LABEL =
-  "PDF, Word, Excel, PowerPoint, CSV, JSON, text, or images (PNG, JPG, GIF, WebP)";
+  "PDF, Word, Excel, PowerPoint, CSV, JSON, text, images (PNG, JPG, GIF, WebP), or MP4 video";
 
 function clamp(text: string): { text: string; truncated: boolean } {
   if (text.length <= MAX_TEXT_CHARS) return { text, truncated: false };
@@ -159,6 +175,46 @@ function imageDimensions(buffer: Buffer, ext: string): { width: number; height: 
     }
   } catch { /* dimensions are a nicety, not a requirement */ }
   return undefined;
+}
+
+/**
+ * Best-effort mp4 header sniff, same spirit as imageDimensions(): duration and
+ * frame size feed the attachment stub ("12s, 1280×720") so the model can
+ * reason about a video it cannot watch. A linear scan for the mvhd/tkhd
+ * FourCCs with fixed offsets covers ordinary encoder output; anything odd
+ * just yields no hint.
+ */
+function mp4Info(buffer: Buffer): { durationSeconds?: number; width?: number; height?: number } {
+  const out: { durationSeconds?: number; width?: number; height?: number } = {};
+  try {
+    const mvhd = buffer.indexOf("mvhd");
+    if (mvhd !== -1) {
+      const version = buffer[mvhd + 4];
+      if (version === 0 && mvhd + 24 <= buffer.length) {
+        const timescale = buffer.readUInt32BE(mvhd + 16);
+        const duration = buffer.readUInt32BE(mvhd + 20);
+        if (timescale > 0) out.durationSeconds = Math.round(duration / timescale);
+      } else if (version === 1 && mvhd + 36 <= buffer.length) {
+        const timescale = buffer.readUInt32BE(mvhd + 24);
+        const duration = Number(buffer.readBigUInt64BE(mvhd + 28));
+        if (timescale > 0) out.durationSeconds = Math.round(duration / timescale);
+      }
+    }
+    const tkhd = buffer.indexOf("tkhd");
+    if (tkhd !== -1) {
+      const version = buffer[tkhd + 4];
+      // Width/height are 16.16 fixed-point at the end of the box: after
+      // version+flags come the times/ids (20 bytes in v0, 32 in v1), then
+      // 16 reserved/layer/volume bytes and a 36-byte matrix.
+      const off = tkhd + 4 + (version === 1 ? 84 : 76);
+      if (off + 8 <= buffer.length) {
+        const w = buffer.readUInt32BE(off) >>> 16;
+        const h = buffer.readUInt32BE(off + 4) >>> 16;
+        if (w > 0 && w < 10_000 && h > 0 && h < 10_000) { out.width = w; out.height = h; }
+      }
+    }
+  } catch { /* hints only */ }
+  return out;
 }
 
 /** Local tag name, ignoring any XML namespace prefix (`a:t` -> `t`). */
@@ -388,7 +444,7 @@ export async function extractTextFromFile(
   buffer: Buffer,
   mimeType: string | undefined,
   filename: string,
-  opts?: { acceptImages?: boolean },
+  opts?: { acceptImages?: boolean; acceptVideos?: boolean },
 ): Promise<ExtractedFile> {
   const ext = EXT(filename);
   const mime = (mimeType ?? "").toLowerCase();
@@ -412,6 +468,29 @@ export async function extractTextFromFile(
       `the container under this filename and can be placed into generated or edited documents ` +
       `(for a .pptx: python-pptx add_picture).]`;
     return { text, kind: "image", meta: { width: dims?.width, height: dims?.height } };
+  }
+
+  // Videos cannot be watched by any model; the stub plus the poster-frame
+  // image the client uploads alongside (see file-attach.tsx) are the model's
+  // whole view of the clip. Same opt-in rationale as images: chat attachments
+  // only, Knowledge Base keeps refusing.
+  if (opts?.acceptVideos && VIDEO_EXTS.has(ext)) {
+    const info = mp4Info(buffer);
+    const mb = buffer.length / (1024 * 1024);
+    const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(buffer.length / 1024))} KB`;
+    const base = filename.replace(/\.[^.]+$/, "");
+    const facts = [
+      info.durationSeconds ? `${info.durationSeconds}s` : null,
+      info.width && info.height ? `${info.width}×${info.height}px` : null,
+      size,
+    ].filter(Boolean).join(", ");
+    const text =
+      `[Video attachment: ${filename} — MP4, ${facts}. Videos cannot be watched; a poster-frame image named ` +
+      `"${base}-poster.png" may be attached alongside — look at it to understand the clip's content. When this run ` +
+      `has code execution, the original video file is available in the container under this filename and can be ` +
+      `embedded into a generated .pptx with python-pptx add_movie(path, left, top, width, height, ` +
+      `poster_frame_image=..., mime_type="video/mp4"), using the poster image as the poster frame.]`;
+    return { text, kind: "video", meta: { width: info.width, height: info.height, durationSeconds: info.durationSeconds } };
   }
 
   if (ext === "pdf" || mime === "application/pdf") {

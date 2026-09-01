@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Paperclip, X, Loader2, FileText, FileSpreadsheet, Presentation, AlertCircle, Image as ImageIcon } from "lucide-react";
+import { Paperclip, X, Loader2, FileText, FileSpreadsheet, Presentation, AlertCircle, Image as ImageIcon, Film } from "lucide-react";
 
 /**
  * Shared attachment control for every surface that takes a file — the Workspace
@@ -40,7 +40,50 @@ function iconFor(kind: string) {
   if (kind === "xlsx") return FileSpreadsheet;
   if (kind === "pptx") return Presentation;
   if (kind === "image") return ImageIcon;
+  if (kind === "video") return Film;
   return FileText;
+}
+
+/**
+ * Grab a single frame from an attached video as a PNG, in the browser. This is
+ * the video's "eyes": models cannot watch video, so the poster frame is
+ * uploaded alongside the clip (named "<base>-poster.png", which the server's
+ * video stub references) and rides into the model as a vision attachment.
+ * Doing it client-side means no ffmpeg or server media dependency at all.
+ * Best-effort: an undecodable codec just means the video uploads alone.
+ */
+async function extractVideoPoster(file: File): Promise<File | null> {
+  const url = URL.createObjectURL(file);
+  try {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.preload = "auto";
+    video.src = url;
+    await new Promise<void>((res, rej) => {
+      video.onloadeddata = () => res();
+      video.onerror = () => rej(new Error("decode failed"));
+      setTimeout(() => rej(new Error("decode timeout")), 8000);
+    });
+    // ~1s in (or the midpoint of a shorter clip) — frame 0 is often black.
+    video.currentTime = Math.min(1, (video.duration || 2) / 2);
+    await new Promise<void>((res, rej) => {
+      video.onseeked = () => res();
+      setTimeout(() => rej(new Error("seek timeout")), 5000);
+    });
+    if (!video.videoWidth || !video.videoHeight) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")!.drawImage(video, 0, 0);
+    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, "image/png"));
+    if (!blob) return null;
+    const base = file.name.replace(/\.[^.]+$/, "");
+    return new File([blob], `${base}-poster.png`, { type: "image/png" });
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function prettySize(bytes: number): string {
@@ -70,8 +113,18 @@ export function FileAttach({ context, value, onChange, disabled, maxFiles = 5, v
       return;
     }
 
+    // A video expands into [clip, poster frame] — see extractVideoPoster().
+    const expanded: File[] = [];
+    for (const f of files) {
+      expanded.push(f);
+      if (f.type === "video/mp4" || /\.mp4$/i.test(f.name)) {
+        const poster = await extractVideoPoster(f);
+        if (poster) expanded.push(poster);
+      }
+    }
+
     const form = new FormData();
-    for (const f of files.slice(0, room)) form.append("files", f);
+    for (const f of expanded.slice(0, room)) form.append("files", f);
     form.append("context", context);
 
     setBusy(true);
