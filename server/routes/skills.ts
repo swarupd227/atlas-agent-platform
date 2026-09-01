@@ -379,6 +379,67 @@ const router = Router();
     }
   });
 
+  /**
+   * Ontology roadmap Phase 4 ("close the loop"): which real concepts are
+   * never referenced by any agent's ontologyTags -- i.e. where the ontology
+   * itself is thin. Unlike a run-history signal (which needs production
+   * usage to accumulate), this is computable immediately from data that
+   * already exists: every agent ever created, against the real concept table.
+   */
+  router.get("/api/ontology/coverage", async (req, res) => {
+    try {
+      const industryId = req.query.industryId as string | undefined;
+      if (!industryId) return res.status(400).json({ message: "industryId query parameter is required" });
+      const subVertical = req.query.subVertical as string | undefined;
+
+      const concepts = await storage.getOntologyConcepts(industryId, subVertical);
+      const allAgents = await storage.getAgents(getOrgId(req));
+
+      const usedConceptIds = new Set<string>();
+      for (const a of allAgents) {
+        const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId?: string }>) : [];
+        for (const t of tags) {
+          if (t?.conceptId) usedConceptIds.add(t.conceptId);
+        }
+      }
+
+      const unused = concepts
+        .filter((c) => !usedConceptIds.has(c.id))
+        .map((c) => ({ id: c.id, label: c.label, category: c.category, subVerticals: c.subVerticals || [] }));
+
+      // Sub-vertical breakdown only makes sense on the unscoped (industry-wide)
+      // view -- a concept counts toward every sub-vertical it's tagged with,
+      // and industry-wide concepts (no subVerticals) count toward none.
+      let bySubVertical: Array<{ subVertical: string; total: number; unused: number }> | undefined;
+      if (!subVertical) {
+        const counts = new Map<string, { total: number; unused: number }>();
+        for (const c of concepts) {
+          for (const sv of c.subVerticals || []) {
+            const entry = counts.get(sv) || { total: 0, unused: 0 };
+            entry.total += 1;
+            if (!usedConceptIds.has(c.id)) entry.unused += 1;
+            counts.set(sv, entry);
+          }
+        }
+        bySubVertical = Array.from(counts.entries())
+          .map(([sv, v]) => ({ subVertical: sv, total: v.total, unused: v.unused }))
+          .sort((a, b) => b.unused / b.total - a.unused / a.total);
+      }
+
+      res.json({
+        industryId,
+        subVertical: subVertical || null,
+        totalConcepts: concepts.length,
+        usedCount: concepts.length - unused.length,
+        unusedCount: unused.length,
+        unused,
+        bySubVertical,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   router.get("/api/ontology/concepts/:id/versions", async (req, res) => {
     try {
       const concept = await storage.getOntologyConcept(req.params.id as string);

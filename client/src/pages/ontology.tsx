@@ -319,7 +319,7 @@ function buildCsvExport(concepts: ConceptView[]): string {
 
 const CSV_TEMPLATE = `label,category,description,industryId,tags,synonyms,linkedRegulations,sensitivityLevel\n"Order to Cash","Financial Processes","End-to-end process from customer order to payment receipt","financial-services","ar;revenue;billing","O2C;OTC","","internal"`;
 
-type SourceFilter = "all" | "standard" | "custom";
+type SourceFilter = "all" | "standard" | "custom" | "unused";
 type ViewMode = "list" | "graph";
 
 export default function OntologyExplorer() {
@@ -377,6 +377,26 @@ export default function OntologyExplorer() {
 
   const concepts: ConceptView[] = useMemo(() => rawConcepts.map(toConceptView), [rawConcepts]);
 
+  // Ontology roadmap Phase 4: "where is the ontology thin" -- real data,
+  // computed from every agent that actually exists, not a one-time audit.
+  const { data: coverage } = useQuery<{
+    totalConcepts: number;
+    usedCount: number;
+    unusedCount: number;
+    unused: Array<{ id: string; label: string; category: string; subVerticals: string[] }>;
+    bySubVertical?: Array<{ subVertical: string; total: number; unused: number }>;
+  } | null>({
+    queryKey: ["/api/ontology/coverage", industryId],
+    queryFn: async () => {
+      if (!industryId) return null;
+      const res = await fetch(`/api/ontology/coverage?industryId=${industryId}`);
+      if (!res.ok) throw new Error("Failed to load coverage");
+      return res.json();
+    },
+    enabled: !!industryId,
+  });
+  const unusedConceptIds = useMemo(() => new Set((coverage?.unused || []).map((c) => c.id)), [coverage]);
+
   const conceptIds = useMemo(() => concepts.map((c) => c.id), [concepts]);
   const { data: enhancements = [] } = useQuery<OntologyEnhancement[]>({
     queryKey: ["/api/ontology/enhancements", conceptIds.join(",")],
@@ -400,8 +420,9 @@ export default function OntologyExplorer() {
   const filteredBySource = useMemo(() => {
     if (sourceFilter === "all") return concepts;
     if (sourceFilter === "standard") return concepts.filter((c) => c.source !== "custom-extension");
+    if (sourceFilter === "unused") return concepts.filter((c) => unusedConceptIds.has(c.id));
     return concepts.filter((c) => c.source === "custom-extension");
-  }, [concepts, sourceFilter]);
+  }, [concepts, sourceFilter, unusedConceptIds]);
 
   const categories = useMemo(() => {
     const cats: Record<string, ConceptView[]> = {};
@@ -1259,8 +1280,16 @@ export default function OntologyExplorer() {
                 <TabsTrigger value="all" className="flex-1 text-xs" data-testid="filter-all">All</TabsTrigger>
                 <TabsTrigger value="standard" className="flex-1 text-xs" data-testid="filter-standard">Standard</TabsTrigger>
                 <TabsTrigger value="custom" className="flex-1 text-xs" data-testid="filter-custom">Custom</TabsTrigger>
+                <TabsTrigger value="unused" className="flex-1 text-xs" data-testid="filter-unused">
+                  Unused{coverage ? ` (${coverage.unusedCount})` : ""}
+                </TabsTrigger>
               </TabsList>
             </Tabs>
+            {coverage && coverage.unusedCount > 0 && (
+              <p className="text-[11px] text-muted-foreground" data-testid="text-coverage-summary">
+                {coverage.usedCount} of {coverage.totalConcepts} concepts are referenced by at least one agent -- {coverage.unusedCount} never used.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-1">
             <Button

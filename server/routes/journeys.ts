@@ -195,4 +195,84 @@ router.post("/api/journeys/:id/clone", checkPermission("create_modify_blueprints
   }
 });
 
+/**
+ * Ontology roadmap Phase 4 ("close the loop"): real per-journey signal for
+ * curation decisions, instead of a one-time audit. Two real sources, both
+ * read-only and already used elsewhere for the same purpose:
+ *  - run history from the orchestrator's own trace records (the same source
+ *    the Agent Detail "Runs & Traces" tab reads -- team pipeline executions
+ *    are recorded under the orchestrator's agentId, see shadow-canary.ts)
+ *  - ontology alignment scores from mcp_parameter_matches, the same real
+ *    50%-threshold computation that actually gates runtime start in
+ *    agent-runtime.ts's resolveBlueprint, recomputed here read-only per MCP
+ *    server this journey's agents reference.
+ * With zero runs so far (true for a freshly generated journey) this reports
+ * "not_yet_run" rather than a fabricated "healthy" -- the whole point is to
+ * only ever say what's actually known.
+ */
+router.get("/api/journeys/:id/health", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const orchestrator = await storage.getAgent(req.params.id as string, orgId);
+    if (!orchestrator || !orchestrator.isCuratedJourney) {
+      return res.status(404).json({ error: "Curated journey not found" });
+    }
+
+    const members = await storage.getAgentTeamMembers(orchestrator.id);
+    const workers = (
+      await Promise.all(members.map((m) => storage.getAgent(m.memberAgentId, orgId)))
+    ).filter((a): a is NonNullable<typeof a> => !!a);
+    const allAgents = [orchestrator, ...workers];
+
+    const traces = await storage.getTracesByAgent(orchestrator.id, orgId);
+    const runCount = traces.length;
+    const completedCount = traces.filter((t) => t.status === "completed").length;
+    const successRate = runCount > 0 ? completedCount / runCount : null;
+    const lastRunAt = traces[0]?.startedAt || null; // getTracesByAgent orders desc by startedAt
+
+    const allServers = await storage.getMcpServers();
+    const serverNames = new Set<string>();
+    for (const a of allAgents) {
+      const rtConfig = (a.runtimeConfig as any) || {};
+      for (const b of rtConfig.mcpToolBindings || []) {
+        if (b?.server) serverNames.add(b.server);
+      }
+    }
+    const alignment: Array<{ server: string; connected: boolean; score: number | null; matched: number; total: number }> = [];
+    for (const name of Array.from(serverNames)) {
+      const server = allServers.find((s) => s.name === name);
+      if (!server) {
+        alignment.push({ server: name, connected: false, score: null, matched: 0, total: 0 });
+        continue;
+      }
+      const matches = await storage.getMcpParameterMatches(server.id);
+      const matched = matches.filter((m) => m.matchStatus === "matched" || m.matchStatus === "partial").length;
+      const total = matches.length;
+      alignment.push({ server: name, connected: true, score: total > 0 ? matched / total : null, matched, total });
+    }
+
+    const lowAlignment = alignment.filter((a) => a.score !== null && a.score < 0.5);
+    const flagReasons: string[] = [];
+    if (runCount > 0 && successRate !== null && successRate < 0.5) {
+      flagReasons.push(`Only ${Math.round(successRate * 100)}% of ${runCount} run(s) completed successfully`);
+    }
+    if (lowAlignment.length > 0) {
+      flagReasons.push(`${lowAlignment.length} MCP server(s) below 50% ontology alignment: ${lowAlignment.map((a) => a.server).join(", ")}`);
+    }
+
+    res.json({
+      teamAgentId: orchestrator.id,
+      runCount,
+      successRate,
+      lastRunAt,
+      alignment,
+      flagged: flagReasons.length > 0,
+      flagReasons,
+      status: runCount === 0 ? "not_yet_run" : flagReasons.length > 0 ? "needs_attention" : "healthy",
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
