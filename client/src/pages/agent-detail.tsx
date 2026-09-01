@@ -6988,7 +6988,7 @@ function isWarrantActive(w: WarrantRow): boolean {
  * issue/revoke/history lifecycle for its warrant. Mounted only while the
  * task class row is expanded, so its query never fires for a collapsed row.
  */
-function TaskClassWarrants({ taskClass, agentId }: { taskClass: TaskClassRow; agentId: string }) {
+function TaskClassWarrants({ taskClass, agentId, mandateLintOk }: { taskClass: TaskClassRow; agentId: string; mandateLintOk: boolean }) {
   const { toast } = useToast();
   const { data: warrants, isLoading } = useQuery<WarrantRow[]>({
     queryKey: ["/api/task-classes", taskClass.id, "warrants"],
@@ -7153,10 +7153,18 @@ function TaskClassWarrants({ taskClass, agentId }: { taskClass: TaskClassRow; ag
               {WARRANT_DURATION_OPTIONS.map(d => <SelectItem key={d.ms} value={String(d.ms)}>{d.label}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Button size="sm" className="h-7 text-xs" onClick={issueWarrant} disabled={issuing} data-testid="button-issue-warrant">
+          <Button
+            size="sm" className="h-7 text-xs" onClick={issueWarrant}
+            disabled={issuing || (grants !== "denied" && !mandateLintOk)}
+            title={grants !== "denied" && !mandateLintOk ? "Mandate fails lint — fix it above before issuing autonomous or approval-gated authority. Denied warrants are unaffected." : undefined}
+            data-testid="button-issue-warrant"
+          >
             {issuing ? "Issuing…" : activeWarrant ? "Renew" : "Issue"}
           </Button>
         </div>
+        {grants !== "denied" && !mandateLintOk && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">Mandate fails lint — see the Lint section above. Fix it, or choose "Denied" to withhold authority anyway.</p>
+        )}
       </div>
 
       {history.length > 0 && (
@@ -7182,9 +7190,12 @@ function TaskClassWarrants({ taskClass, agentId }: { taskClass: TaskClassRow; ag
  * itself real. Nothing downstream (a warrant, a gate-pipeline check) reads it
  * yet; see the Mandate Lifecycle Design artifact for what plugs in next.
  */
+interface MandateLintCheck { id: string; severity: "error" | "warning"; ok: boolean; reason: string; }
+interface MandateLintReport { ok: boolean; checks: MandateLintCheck[]; }
+
 function MandateTab({ agent }: { agent: Agent }) {
   const { toast } = useToast();
-  const { data, isLoading } = useQuery<{ mandate: MandateRow | null; taskClasses: TaskClassRow[] }>({
+  const { data, isLoading } = useQuery<{ mandate: MandateRow | null; taskClasses: TaskClassRow[]; lint: MandateLintReport }>({
     queryKey: ["/api/agents", agent.id, "mandate"],
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "mandate"] });
@@ -7330,6 +7341,24 @@ function MandateTab({ agent }: { agent: Agent }) {
             </div>
           ))}
 
+          {data?.lint && (
+            <div className="flex flex-col gap-1 pt-1 border-t" data-testid="section-mandate-lint">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                Lint {data.lint.ok ? "— passes" : "— must pass before a warrant can be issued"}
+              </span>
+              <div className="flex flex-col gap-0.5">
+                {data.lint.checks.map(check => (
+                  <div key={check.id} className="flex items-start gap-1.5 text-[11px]" data-testid={`lint-check-${check.id}`}>
+                    <span className={check.ok ? "text-emerald-600 dark:text-emerald-400" : check.severity === "error" ? "text-destructive" : "text-amber-600 dark:text-amber-400"}>
+                      {check.ok ? "✓" : "⚠"}
+                    </span>
+                    <span className={check.ok ? "text-muted-foreground" : "text-foreground"}>{check.reason}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-2">
             <Button size="sm" className="text-xs h-7" disabled={!dirty || saving} onClick={save} data-testid="button-save-mandate">
               {saving ? "Saving…" : "Save"}
@@ -7399,7 +7428,7 @@ function MandateTab({ agent }: { agent: Agent }) {
                   <X className="h-3.5 w-3.5" />
                 </Button>
               </div>
-              {expandedTaskClassId === tc.id && <TaskClassWarrants taskClass={tc} agentId={agent.id} />}
+              {expandedTaskClassId === tc.id && <TaskClassWarrants taskClass={tc} agentId={agent.id} mandateLintOk={data?.lint?.ok ?? false} />}
             </div>
           ))}
           {taskClasses.length === 0 && (

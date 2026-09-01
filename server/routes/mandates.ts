@@ -7,6 +7,7 @@ import { insertAgentTaskClassSchema } from "@shared/schema";
 import { syncMandateToGit } from "../mandate-git-sync";
 import { deriveFromMandate } from "../mandate-derivation";
 import { gatherAvailableTools } from "../tool-dispatcher";
+import { lintMandate } from "../mandate-lint";
 
 const router = Router();
 
@@ -40,7 +41,10 @@ router.get("/api/agents/:id/mandate", async (req: Request<{ id: string }>, res: 
     if (!agent) return res.status(404).json({ message: "Agent not found" });
     const mandate = await storage.getAgentMandate(req.params.id, orgId);
     const taskClasses = await storage.listAgentTaskClasses(req.params.id, orgId);
-    res.json({ mandate: mandate ?? null, taskClasses });
+    // Preview only -- read-only, never blocks this GET. The actual gate is
+    // on warrant issuance below (POST /api/task-classes/:id/warrants).
+    const lint = await lintMandate(mandate ?? undefined);
+    res.json({ mandate: mandate ?? null, taskClasses, lint });
   } catch (e: any) {
     res.status(500).json({ message: e.message || "Failed to load mandate" });
   }
@@ -187,6 +191,23 @@ router.post("/api/task-classes/:id/warrants", checkPermission("manage_autonomy")
     if (body.expiresAt.getTime() <= Date.now()) {
       return res.status(400).json({ message: "expiresAt must be in the future -- a warrant that starts already expired grants nothing" });
     }
+
+    // S1.1.3: a vague or unapproved mandate cannot back real authority.
+    // Skipped only for grants:"denied" -- withholding authority is itself
+    // the safe, restrictive action this story exists to protect, so a lint
+    // failure should never block someone from making a task class MORE
+    // restrictive, only from granting it real autonomy or approval-gated access.
+    if (body.grants !== "denied") {
+      const mandate = await storage.getAgentMandate(taskClass.agentId, orgId);
+      const lint = await lintMandate(mandate ?? undefined);
+      if (!lint.ok) {
+        return res.status(409).json({
+          message: "Mandate fails lint -- fix these before a warrant can be issued for this task class.",
+          lint,
+        });
+      }
+    }
+
     const issuedBy = (req as any).authUser?.userId ?? "system";
     const warrant = await storage.issueWarrant({
       organizationId: orgId,
