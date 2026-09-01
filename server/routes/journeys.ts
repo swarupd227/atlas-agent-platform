@@ -268,7 +268,12 @@ router.get("/api/journeys/:id/health", async (req, res) => {
       alignment,
       flagged: flagReasons.length > 0,
       flagReasons,
-      status: runCount === 0 ? "not_yet_run" : flagReasons.length > 0 ? "needs_attention" : "healthy",
+      // Alignment is a blueprint-time check, not a run-time one (mirrors
+      // resolveBlueprint, which blocks runtime start before any run exists)
+      // -- a low-alignment MCP binding is real signal the moment the journey
+      // is generated. Caught live: "not_yet_run" was masking exactly that
+      // for a journey with zero runs but a genuinely low-alignment server.
+      status: flagReasons.length > 0 ? "needs_attention" : runCount === 0 ? "not_yet_run" : "healthy",
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
