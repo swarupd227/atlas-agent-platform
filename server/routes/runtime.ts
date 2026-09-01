@@ -15564,9 +15564,18 @@ async function performMcpServerInitialize(serverId: string): Promise<
     res.json(reg);
   });
 
+  // drizzle-zod types effectiveDate as a Date instance, which JSON can't carry
+  // -- so every JSON client got "Expected date, received string" and the field
+  // was effectively unsettable over HTTP (the only writer was the in-process
+  // /seed route, which passes real Date objects). Coerce ISO strings, matching
+  // the z.coerce.date() pattern already used for mandates and warrants.
+  const regulationBodySchema = insertRegulationSchema.extend({
+    effectiveDate: z.coerce.date().nullable().optional(),
+  });
+
   router.post("/api/regulations", async (req, res) => {
     try {
-      const data = insertRegulationSchema.parse(req.body);
+      const data = regulationBodySchema.parse(req.body);
       const reg = await storage.createRegulation(data);
       res.status(201).json(reg);
     } catch (e) { handleZodError(res, e); }
@@ -15575,7 +15584,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
   router.patch("/api/regulations/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const patchSchema = insertRegulationSchema.partial();
+      const patchSchema = regulationBodySchema.partial();
       const data = patchSchema.parse(req.body);
       const updated = await storage.updateRegulation(id, data);
       if (!updated) return res.status(404).json({ error: "Regulation not found" });
