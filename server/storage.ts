@@ -627,6 +627,7 @@ export interface IStorage {
   getAgentGeneratedFile(id: string, orgId?: string): Promise<AgentGeneratedFile | undefined>;
 
   getAgentMandate(agentId: string, orgId?: string): Promise<AgentMandate | undefined>;
+  getAgentMandatesForAgents(agentIds: string[], orgId?: string): Promise<AgentMandate[]>;
   upsertAgentMandate(agentId: string, data: Partial<InsertAgentMandate>, orgId?: string): Promise<AgentMandate>;
   approveAgentMandate(agentId: string, approvedByUserId: string, orgId?: string): Promise<AgentMandate | undefined>;
 
@@ -3200,6 +3201,16 @@ export class DatabaseStorage implements IStorage {
       : eq(agentMandates.agentId, agentId);
     const [row] = await db.select().from(agentMandates).where(clause);
     return row;
+  }
+  // Bulk lookup for the Agents-list Mandate column (mandate-lint.ts's
+  // lintMandatesForAgents) -- one query for the whole fleet instead of one
+  // per agent.
+  async getAgentMandatesForAgents(agentIds: string[], orgId?: string) {
+    if (!agentIds.length) return [];
+    const clause = orgId
+      ? and(inArray(agentMandates.agentId, agentIds), eq(agentMandates.organizationId, orgId))
+      : inArray(agentMandates.agentId, agentIds);
+    return db.select().from(agentMandates).where(clause);
   }
   async upsertAgentMandate(agentId: string, data: Partial<InsertAgentMandate>, orgId?: string) {
     const existing = await this.getAgentMandate(agentId, orgId);

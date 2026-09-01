@@ -182,6 +182,7 @@ export default function Agents() {
   const [filterToolAccess, setFilterToolAccess] = useState<string>("all");
   const [filterCompliance, setFilterCompliance] = useState<string>("all");
   const [filterProvider, setFilterProvider] = useState<string>("all");
+  const [filterMandate, setFilterMandate] = useState<string>("all");
 
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -203,6 +204,11 @@ export default function Agents() {
   const { data: approvals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
   });
+  // S1.1.4: fleet-wide mandate lint status (server/mandate-lint.ts's
+  // lintMandatesForAgents) -- one batched query, not one per agent.
+  const { data: mandateLintSummary } = useQuery<Record<string, { agentId: string; ok: boolean; hasMandate: boolean }>>({
+    queryKey: ["/api/agents/mandate-lint-summary"],
+  });
 
   const bulkActionMutation = useMutation({
     mutationFn: async ({ action, agentIds }: { action: BulkAction; agentIds: string[] }) => {
@@ -219,7 +225,7 @@ export default function Agents() {
     },
   });
 
-  const hasActiveFilters = filterOutcome !== "all" || filterEnv !== "all" || filterRisk !== "all" || filterAutonomy !== "all" || filterToolAccess !== "all" || filterCompliance !== "all" || filterProvider !== "all";
+  const hasActiveFilters = filterOutcome !== "all" || filterEnv !== "all" || filterRisk !== "all" || filterAutonomy !== "all" || filterToolAccess !== "all" || filterCompliance !== "all" || filterProvider !== "all" || filterMandate !== "all";
 
   const allComplianceTags = agents
     ? Array.from(new Set(agents.flatMap(a => (a.complianceTags as string[]) || []))).sort()
@@ -240,6 +246,12 @@ export default function Agents() {
       if (!tags.includes(filterCompliance)) return false;
     }
     if (filterProvider !== "all" && a.modelProvider !== filterProvider) return false;
+    if (filterMandate !== "all") {
+      const summary = mandateLintSummary?.[a.id];
+      const passes = !!summary?.ok;
+      if (filterMandate === "pass" && !passes) return false;
+      if (filterMandate === "fail" && passes) return false;
+    }
     return true;
   });
 
@@ -304,6 +316,7 @@ export default function Agents() {
     setFilterToolAccess("all");
     setFilterCompliance("all");
     setFilterProvider("all");
+    setFilterMandate("all");
   }
 
   function toggleSelectAll() {
@@ -544,6 +557,17 @@ export default function Agents() {
           </SelectContent>
         </Select>
 
+        <Select value={filterMandate} onValueChange={setFilterMandate}>
+          <SelectTrigger className="w-[140px]" aria-label="Filter by mandate" data-testid="filter-mandate">
+            <SelectValue placeholder="Mandate" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Mandates</SelectItem>
+            <SelectItem value="pass">Mandate: Passes</SelectItem>
+            <SelectItem value="fail">Mandate: Fails lint</SelectItem>
+          </SelectContent>
+        </Select>
+
         {hasActiveFilters && (
           <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-clear-filters">
             <X className="w-3.5 h-3.5 mr-1" /> Clear
@@ -593,6 +617,7 @@ export default function Agents() {
                 <TableHead>Industry Profile</TableHead>
                 <TableHead>Outcome</TableHead>
                 <TableHead>Version</TableHead>
+                <TableHead>Mandate</TableHead>
                 {canSeeHealth && <TableHead>Health</TableHead>}
                 {canSeeHealth && <TableHead>Safety</TableHead>}
                 <TableHead>Mode</TableHead>
@@ -689,6 +714,31 @@ export default function Agents() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="text-[11px]">v{agent.currentVersion}</Badge>
+                    </TableCell>
+                    <TableCell data-testid={`mandate-status-${agent.id}`}>
+                      {(() => {
+                        const summary = mandateLintSummary?.[agent.id];
+                        if (!summary) return <span className="text-xs text-muted-foreground/60">—</span>;
+                        if (!summary.hasMandate) {
+                          return (
+                            <Link href={`/agents/${agent.id}?tab=mandate`}>
+                              <Badge variant="outline" className="text-[10px] cursor-pointer bg-muted text-muted-foreground border-muted-foreground/20">No mandate</Badge>
+                            </Link>
+                          );
+                        }
+                        return (
+                          <Link href={`/agents/${agent.id}?tab=mandate&view=document`}>
+                            <Badge
+                              variant="outline"
+                              className={summary.ok
+                                ? "text-[10px] cursor-pointer bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                : "text-[10px] cursor-pointer bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"}
+                            >
+                              {summary.ok ? "Passes" : "Fails lint"}
+                            </Badge>
+                          </Link>
+                        );
+                      })()}
                     </TableCell>
                     {canSeeHealth && (
                       <TableCell>

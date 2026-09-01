@@ -7193,9 +7193,101 @@ function TaskClassWarrants({ taskClass, agentId, mandateLintOk }: { taskClass: T
 interface MandateLintCheck { id: string; severity: "error" | "warning"; ok: boolean; reason: string; }
 interface MandateLintReport { ok: boolean; checks: MandateLintCheck[]; }
 
+// S1.1.4: examiner-readable document + version history.
+interface RegulatoryCeiling {
+  description: string; articleRef: string; sourceRegulation: string;
+  regulationFullName: string | null; jurisdiction: string | null; severity: string;
+}
+interface MandateHistoryEntry {
+  version: number; action: string; actorId: string | null; createdAt: string;
+  diff: Array<{ field: string; from: unknown; to: unknown }>; eventHash: string | null;
+}
+
+// S1.1.4 criterion 1: renders directly from structured mandate data as real
+// React elements -- deliberately no markdown parsing (the repo has no
+// markdown-rendering library, and outcome-detail.tsx's hand-rolled one uses
+// dangerouslySetInnerHTML, not worth extending for examiner-facing content).
+function MandateDocumentView({ agent, mandate, regulatoryCeilings }: { agent: Agent; mandate: MandateRow; regulatoryCeilings: RegulatoryCeiling[] }) {
+  const byline = mandate.status === "active"
+    ? `Approved by ${mandate.approvedBy || "unknown"}${mandate.approvedAt ? ` on ${new Date(mandate.approvedAt).toLocaleDateString()}` : ""} — version ${mandate.version}`
+    : `Not yet approved — draft, version ${mandate.version}`;
+  return (
+    <div className="flex flex-col gap-5" data-testid="mandate-document-view">
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-base font-semibold">{agent.name}</h2>
+        <p className="text-[12px] text-muted-foreground">{byline}</p>
+        {mandate.accountableOwnerUserId && (
+          <p className="text-[12px] text-muted-foreground">Accountable owner: {mandate.accountableOwnerUserId}</p>
+        )}
+      </div>
+      {MANDATE_SECTIONS.map(section => (
+        <div key={section.key} className="flex flex-col gap-1">
+          <h3 className="text-[13px] font-medium">{section.label}</h3>
+          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+            {(mandate as any)[section.key]?.trim() || "Not yet described."}
+          </p>
+        </div>
+      ))}
+      <div className="flex flex-col gap-1.5">
+        <h3 className="text-[13px] font-medium">Regulatory ceilings</h3>
+        {regulatoryCeilings.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No regulation-sourced policies are bound to this agent.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {regulatoryCeilings.map((c, idx) => (
+              <li key={idx} className="text-sm" data-testid={`regulatory-ceiling-${idx}`}>
+                <span className="italic">&ldquo;{c.description}&rdquo;</span>
+                <span className="text-muted-foreground"> — {c.sourceRegulation} {c.articleRef}{c.jurisdiction ? ` (${c.jurisdiction})` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// S1.1.4 criterion 2: fetches the signed, hash-chained audit trail for this
+// mandate and renders each entry's diff via the same InlineDiff component
+// agent version history already uses (config-diff.tsx).
+function MandateVersionHistory({ agentId }: { agentId: string }) {
+  const { data, isLoading } = useQuery<{ entries: MandateHistoryEntry[]; currentVersion: number }>({
+    queryKey: ["/api/agents", agentId, "mandate-history"],
+  });
+  if (isLoading) {
+    return <div className="flex items-center justify-center py-6 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /></div>;
+  }
+  const entries = data?.entries ?? [];
+  const missingEarlier = !!data && data.currentVersion > entries.length;
+  return (
+    <div className="flex flex-col gap-3">
+      {missingEarlier && (
+        <p className="text-[11px] text-muted-foreground">
+          History is tracked from when this feature shipped — this mandate is on version {data!.currentVersion}, but earlier versions weren't recorded and can't be shown.
+        </p>
+      )}
+      {entries.length === 0 ? (
+        <p className="text-[12px] text-muted-foreground">No recorded changes yet.</p>
+      ) : (
+        entries.slice().reverse().map((entry, idx) => (
+          <div key={idx} className="rounded-md border p-2.5" data-testid={`mandate-history-entry-${idx}`}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-[12px] font-medium">
+                {entry.action === "mandate_approved" ? "Approved" : "Saved"} by {entry.actorId || "system"}
+              </span>
+              <span className="text-[11px] text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</span>
+            </div>
+            <InlineDiff diffs={entry.diff} testIdPrefix={`mandate-history-diff-${idx}`} />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function MandateTab({ agent }: { agent: Agent }) {
   const { toast } = useToast();
-  const { data, isLoading } = useQuery<{ mandate: MandateRow | null; taskClasses: TaskClassRow[]; lint: MandateLintReport }>({
+  const { data, isLoading } = useQuery<{ mandate: MandateRow | null; taskClasses: TaskClassRow[]; lint: MandateLintReport; regulatoryCeilings: RegulatoryCeiling[] }>({
     queryKey: ["/api/agents", agent.id, "mandate"],
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id, "mandate"] });
@@ -7205,6 +7297,20 @@ function MandateTab({ agent }: { agent: Agent }) {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [documentView, setDocumentView] = useState(false);
+
+  // Deep link from the Agents-list Mandate column (?tab=mandate&view=document)
+  // -- "tab" is already consumed and stripped by the page-level effect before
+  // this component mounts, so "view" is still on the URL here.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") === "document") {
+      setDocumentView(true);
+      params.delete("view");
+      const remaining = params.toString();
+      window.history.replaceState({}, "", window.location.pathname + (remaining ? `?${remaining}` : ""));
+    }
+  }, []);
 
   const mandate = data?.mandate ?? null;
   const taskClasses = data?.taskClasses ?? [];
@@ -7313,71 +7419,102 @@ function MandateTab({ agent }: { agent: Agent }) {
               {mandate?.status === "active" && (
                 <span className="text-[11px] text-muted-foreground">approved by {mandate.approvedBy}</span>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs h-7"
+                disabled={!mandate}
+                onClick={() => setDocumentView(v => !v)}
+                title={!mandate ? "Save a mandate first" : undefined}
+                data-testid="button-toggle-mandate-document-view"
+              >
+                {documentView ? "Edit" : "View as document"}
+              </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Accountable owner</span>
-            <Input
-              value={owner}
-              onChange={e => { setOwner(e.target.value); setDirty(true); }}
-              placeholder="Who is accountable for this agent's work"
-              className="h-8 max-w-sm"
-              data-testid="input-mandate-owner"
-            />
-          </div>
-
-          {MANDATE_SECTIONS.map(section => (
-            <div key={section.key} className="flex flex-col gap-1">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{section.label}</span>
-              <Textarea
-                value={draft[section.key] ?? ""}
-                onChange={e => { setDraft(d => ({ ...d, [section.key]: e.target.value })); setDirty(true); }}
-                placeholder={section.placeholder}
-                className="min-h-[70px] text-sm resize-none"
-                data-testid={`textarea-mandate-${section.key}`}
-              />
-            </div>
-          ))}
-
-          {data?.lint && (
-            <div className="flex flex-col gap-1 pt-1 border-t" data-testid="section-mandate-lint">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                Lint {data.lint.ok ? "— passes" : "— must pass before a warrant can be issued"}
-              </span>
-              <div className="flex flex-col gap-0.5">
-                {data.lint.checks.map(check => (
-                  <div key={check.id} className="flex items-start gap-1.5 text-[11px]" data-testid={`lint-check-${check.id}`}>
-                    <span className={check.ok ? "text-emerald-600 dark:text-emerald-400" : check.severity === "error" ? "text-destructive" : "text-amber-600 dark:text-amber-400"}>
-                      {check.ok ? "✓" : "⚠"}
-                    </span>
-                    <span className={check.ok ? "text-muted-foreground" : "text-foreground"}>{check.reason}</span>
-                  </div>
-                ))}
+          {documentView && mandate ? (
+            <MandateDocumentView agent={agent} mandate={mandate} regulatoryCeilings={data?.regulatoryCeilings ?? []} />
+          ) : (
+            <>
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Accountable owner</span>
+                <Input
+                  value={owner}
+                  onChange={e => { setOwner(e.target.value); setDirty(true); }}
+                  placeholder="Who is accountable for this agent's work"
+                  className="h-8 max-w-sm"
+                  data-testid="input-mandate-owner"
+                />
               </div>
-            </div>
-          )}
 
-          <div className="flex items-center gap-2">
-            <Button size="sm" className="text-xs h-7" disabled={!dirty || saving} onClick={save} data-testid="button-save-mandate">
-              {saving ? "Saving…" : "Save"}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-xs h-7"
-              disabled={!canApprove || approving || mandate?.status === "active"}
-              onClick={approve}
-              title={!canApprove && !mandate?.status ? "Fill in \"what it does\" and \"must never\" first" : undefined}
-              data-testid="button-approve-mandate"
-            >
-              {approving ? "Approving…" : mandate?.status === "active" ? "Approved" : "Approve"}
-            </Button>
-            {dirty && <span className="text-[11px] text-muted-foreground">Unsaved changes — save before approving.</span>}
-          </div>
+              {MANDATE_SECTIONS.map(section => (
+                <div key={section.key} className="flex flex-col gap-1">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{section.label}</span>
+                  <Textarea
+                    value={draft[section.key] ?? ""}
+                    onChange={e => { setDraft(d => ({ ...d, [section.key]: e.target.value })); setDirty(true); }}
+                    placeholder={section.placeholder}
+                    className="min-h-[70px] text-sm resize-none"
+                    data-testid={`textarea-mandate-${section.key}`}
+                  />
+                </div>
+              ))}
+
+              {data?.lint && (
+                <div className="flex flex-col gap-1 pt-1 border-t" data-testid="section-mandate-lint">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                    Lint {data.lint.ok ? "— passes" : "— must pass before a warrant can be issued"}
+                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    {data.lint.checks.map(check => (
+                      <div key={check.id} className="flex items-start gap-1.5 text-[11px]" data-testid={`lint-check-${check.id}`}>
+                        <span className={check.ok ? "text-emerald-600 dark:text-emerald-400" : check.severity === "error" ? "text-destructive" : "text-amber-600 dark:text-amber-400"}>
+                          {check.ok ? "✓" : "⚠"}
+                        </span>
+                        <span className={check.ok ? "text-muted-foreground" : "text-foreground"}>{check.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <Button size="sm" className="text-xs h-7" disabled={!dirty || saving} onClick={save} data-testid="button-save-mandate">
+                  {saving ? "Saving…" : "Save"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7"
+                  disabled={!canApprove || approving || mandate?.status === "active"}
+                  onClick={approve}
+                  title={!canApprove && !mandate?.status ? "Fill in \"what it does\" and \"must never\" first" : undefined}
+                  data-testid="button-approve-mandate"
+                >
+                  {approving ? "Approving…" : mandate?.status === "active" ? "Approved" : "Approve"}
+                </Button>
+                {dirty && <span className="text-[11px] text-muted-foreground">Unsaved changes — save before approving.</span>}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
+
+      {mandate && (
+        <Card data-testid="section-mandate-history">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium">Version history</CardTitle>
+            <p className="text-[11px] text-muted-foreground">
+              What changed, when, and who approved it — signed and hash-chained, from the platform's audit ledger.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <MandateVersionHistory agentId={agent.id} />
+          </CardContent>
+        </Card>
+      )}
 
       <Card data-testid="section-task-classes">
         <CardHeader className="pb-3">

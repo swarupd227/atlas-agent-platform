@@ -378,6 +378,7 @@ export default function AuditTrail() {
               <SelectContent>
                 <SelectItem value="all">All Objects</SelectItem>
                 <SelectItem value="agent">Agent</SelectItem>
+                <SelectItem value="agent_mandate">Agent Mandate</SelectItem>
                 <SelectItem value="policy">Policy</SelectItem>
                 <SelectItem value="deployment">Deployment</SelectItem>
                 <SelectItem value="outcome">Outcome</SelectItem>

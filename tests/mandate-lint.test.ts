@@ -8,14 +8,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  */
 
 let mockConcepts: Array<{ label: string; synonyms: string[] | null }> = [];
+let mockMandatesByAgent: Record<string, any> = {};
 
 vi.mock("../server/storage", () => ({
   storage: {
     getAllOntologyConcepts: vi.fn(async () => mockConcepts),
+    getAgentMandatesForAgents: vi.fn(async (agentIds: string[]) =>
+      agentIds.map(id => mockMandatesByAgent[id]).filter(Boolean)
+    ),
   },
 }));
 
-const { lintMandate, invalidateMandateLintOntologyCache } = await import("../server/mandate-lint");
+const { lintMandate, lintMandatesForAgents, invalidateMandateLintOntologyCache } = await import("../server/mandate-lint");
 
 const approvedFullMandate = {
   status: "active",
@@ -27,6 +31,7 @@ const approvedFullMandate = {
 
 beforeEach(() => {
   mockConcepts = [{ label: "wire transfer", synonyms: ["wire", "funds transfer"] }];
+  mockMandatesByAgent = {};
   invalidateMandateLintOntologyCache();
 });
 
@@ -127,5 +132,24 @@ describe("lintMandate: overall report", () => {
     expect(report.ok).toBe(false);
     expect(report.checks.find(c => c.id === "mandate_approved")!.ok).toBe(false);
     expect(report.checks.find(c => c.id === "must_never_present")!.ok).toBe(false);
+  });
+});
+
+describe("lintMandatesForAgents", () => {
+  it("returns an empty object for an empty agent list without querying storage", async () => {
+    const result = await lintMandatesForAgents([]);
+    expect(result).toEqual({});
+  });
+
+  it("returns a correct per-agent summary in one batched pass", async () => {
+    mockMandatesByAgent = {
+      "agent-good": { agentId: "agent-good", ...approvedFullMandate },
+      "agent-bad": { agentId: "agent-bad", status: "draft", whatItDoes: "", mustNever: "", whenToStop: null, fallbackBehavior: null },
+      // "agent-none" has no mandate at all -- absent from mockMandatesByAgent.
+    };
+    const result = await lintMandatesForAgents(["agent-good", "agent-bad", "agent-none"]);
+    expect(result["agent-good"]).toEqual({ agentId: "agent-good", ok: true, hasMandate: true });
+    expect(result["agent-bad"]).toEqual({ agentId: "agent-bad", ok: false, hasMandate: true });
+    expect(result["agent-none"]).toEqual({ agentId: "agent-none", ok: false, hasMandate: false });
   });
 });

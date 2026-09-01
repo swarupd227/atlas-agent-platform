@@ -7,7 +7,8 @@ import { insertAgentTaskClassSchema } from "@shared/schema";
 import { syncMandateToGit } from "../mandate-git-sync";
 import { deriveFromMandate } from "../mandate-derivation";
 import { gatherAvailableTools } from "../tool-dispatcher";
-import { lintMandate } from "../mandate-lint";
+import { lintMandate, lintMandatesForAgents } from "../mandate-lint";
+import { getRegulatoryCeilings, snapshotMandateForAudit, computeMandateHistoryDiff } from "../mandate-document";
 
 const router = Router();
 
@@ -44,9 +45,41 @@ router.get("/api/agents/:id/mandate", async (req: Request<{ id: string }>, res: 
     // Preview only -- read-only, never blocks this GET. The actual gate is
     // on warrant issuance below (POST /api/task-classes/:id/warrants).
     const lint = await lintMandate(mandate ?? undefined);
-    res.json({ mandate: mandate ?? null, taskClasses, lint });
+    // S1.1.4: read-only regulatory ceilings for the document view.
+    const regulatoryCeilings = await getRegulatoryCeilings(agent, orgId);
+    res.json({ mandate: mandate ?? null, taskClasses, lint, regulatoryCeilings });
   } catch (e: any) {
     res.status(500).json({ message: e.message || "Failed to load mandate" });
+  }
+});
+
+// S1.1.4: fleet-wide mandate lint status for the Agents-list Mandate column
+// -- registered before the ":id/mandate" routes only for readability, no
+// path collision (different segment count).
+router.get("/api/agents/mandate-lint-summary", async (req: Request, res: Response) => {
+  try {
+    const orgId = getOrgId(req);
+    const agentsList = await storage.getAgents(orgId);
+    const summary = await lintMandatesForAgents(agentsList.map(a => a.id), orgId);
+    res.json(summary);
+  } catch (e: any) {
+    res.status(500).json({ message: e.message || "Failed to load mandate lint summary" });
+  }
+});
+
+// S1.1.4: version history -- every save/approve audit event for this
+// mandate, diffed at read time (mirrors improvements.ts's timeline route).
+router.get("/api/agents/:id/mandate-history", async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const orgId = getOrgId(req);
+    const mandate = await storage.getAgentMandate(req.params.id, orgId);
+    if (!mandate) return res.json({ entries: [], currentVersion: 0 });
+    const allEvents = await storage.getAuditEvents(orgId);
+    const mandateEvents = allEvents.filter(e => e.objectType === "agent_mandate" && e.objectId === mandate.id);
+    const entries = computeMandateHistoryDiff(mandateEvents);
+    res.json({ entries, currentVersion: mandate.version });
+  } catch (e: any) {
+    res.status(500).json({ message: e.message || "Failed to load mandate history" });
   }
 });
 
@@ -74,6 +107,19 @@ router.put("/api/agents/:id/mandate", checkPermission("create_modify_blueprints"
     // multi-second and must never slow this response. The review UI polls
     // the derivations list separately -- see GET .../mandate-derivations.
     deriveFromMandate(agent, mandate, "save").catch(() => {});
+    // S1.1.4: version history. objectId is the mandate row's id, stable
+    // across edits (upsertAgentMandate updates in place), so every save for
+    // this mandate chains under the same object. Best-effort -- a logging
+    // failure must never block a save that already succeeded.
+    storage.createAuditEvent({
+      organizationId: orgId,
+      actorType: "user",
+      actorId: authorId,
+      action: "mandate_saved",
+      objectType: "agent_mandate",
+      objectId: mandate.id,
+      details: JSON.stringify(snapshotMandateForAudit(mandate)),
+    } as any).catch(() => {});
     res.json({ ...mandate, gitSync });
   } catch (e: any) {
     if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
@@ -96,6 +142,15 @@ router.post("/api/agents/:id/mandate/approve", checkPermission("approve_changes"
     const agent = await storage.getAgent(req.params.id, orgId);
     const gitSync = agent ? await syncMandateToGit(agent, approved) : { pushed: false, reason: "agent not found" };
     if (agent) deriveFromMandate(agent, approved, "approve").catch(() => {});
+    storage.createAuditEvent({
+      organizationId: orgId,
+      actorType: "user",
+      actorId: approverId,
+      action: "mandate_approved",
+      objectType: "agent_mandate",
+      objectId: approved.id,
+      details: JSON.stringify(snapshotMandateForAudit(approved)),
+    } as any).catch(() => {});
     res.json({ ...approved, gitSync });
   } catch (e: any) {
     // approveAgentMandate throws a readable message for the missing-fields

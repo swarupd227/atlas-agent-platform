@@ -107,3 +107,26 @@ export async function lintMandate(mandate: AgentMandate | undefined): Promise<Ma
 
   return { ok: checks.every(c => c.ok), checks };
 }
+
+export interface MandateLintSummary {
+  agentId: string;
+  ok: boolean;
+  hasMandate: boolean;
+}
+
+// Fleet-wide summary for the Agents-list Mandate column (S1.1.4). One bulk
+// mandate query, then per-agent lintMandate() calls reuse the same
+// process-wide ontology cache above -- so this is one DB round trip for
+// mandates plus at most one for concepts, not N sequential lint passes.
+export async function lintMandatesForAgents(agentIds: string[], orgId?: string): Promise<Record<string, MandateLintSummary>> {
+  const results: Record<string, MandateLintSummary> = {};
+  if (!agentIds.length) return results;
+  const mandates = await storage.getAgentMandatesForAgents(agentIds, orgId);
+  const byAgentId = new Map(mandates.map(m => [m.agentId, m]));
+  for (const agentId of agentIds) {
+    const mandate = byAgentId.get(agentId);
+    const report = await lintMandate(mandate);
+    results[agentId] = { agentId, ok: report.ok, hasMandate: !!mandate };
+  }
+  return results;
+}
