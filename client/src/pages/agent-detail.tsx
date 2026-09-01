@@ -665,6 +665,13 @@ function AgentDetailInner() {
   const { data: agentExceptions } = useQuery<PolicyException[]>({
     queryKey: ["/api/policy-exceptions/agent", agentId],
   });
+  const { data: latestMandateDerivation } = useQuery<{
+    id: string; summary: string | null; stale: boolean;
+    items: Array<{ id: string; kind: string; status: string; proposedContent: any }>;
+  } | null>({
+    queryKey: ["/api/agents", agentId, "mandate-derivations", "latest"],
+    enabled: !!agentId,
+  });
   const { data: allToolConnectors } = useQuery<ToolConnector[]>({
     queryKey: ["/api/tool-connectors"],
   });
@@ -2515,7 +2522,7 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
                   <CardTitle className="text-sm font-medium">Open Items</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="flex flex-col gap-2" data-testid="section-pending-approvals">
                       <div className="flex items-center gap-2">
                         <Shield className="w-4 h-4 text-amber-500" />
@@ -2569,6 +2576,34 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
                       }) : (
                         <p className="text-[11px] text-muted-foreground py-3 text-center">No expiring exceptions</p>
                       )}
+                    </div>
+
+                    <div className="flex flex-col gap-2" data-testid="section-pending-derivations">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-amber-500" />
+                        <span className="text-xs font-medium">Pending Governance</span>
+                        {(() => {
+                          const pending = (latestMandateDerivation?.items || []).filter(i => i.status === "pending");
+                          return pending.length > 0 ? <Badge variant="outline" className="text-[10px] ml-auto">{pending.length}</Badge> : null;
+                        })()}
+                      </div>
+                      {(() => {
+                        const pending = (latestMandateDerivation?.items || []).filter(i => i.status === "pending");
+                        if (!latestMandateDerivation || pending.length === 0) {
+                          return <p className="text-[11px] text-muted-foreground py-3 text-center">No pending derivations</p>;
+                        }
+                        return (
+                          <button
+                            type="button"
+                            className="p-2 rounded-md bg-muted/30 hover-elevate cursor-pointer text-left"
+                            onClick={() => setActiveTab("mandate")}
+                            data-testid="link-pending-derivations"
+                          >
+                            <span className="text-xs font-medium block">{latestMandateDerivation.summary || `${pending.length} proposal${pending.length === 1 ? "" : "s"} to review`}</span>
+                            <span className="text-[11px] text-muted-foreground block">{latestMandateDerivation.stale ? "Based on an earlier mandate version" : "Review on the Mandate tab"}</span>
+                          </button>
+                        );
+                      })()}
                     </div>
                   </div>
                 </CardContent>
@@ -7415,7 +7450,165 @@ function MandateTab({ agent }: { agent: Agent }) {
           </div>
         </CardContent>
       </Card>
+
+      <MandateDerivationReview agentId={agent.id} />
     </div>
+  );
+}
+
+/**
+ * Pending proposals from server/mandate-derivation.ts (PRD S1.1.2): task
+ * classes and policy bindings the platform derived from this mandate's text.
+ * Nothing here is ever real until Accept is clicked -- accepting creates the
+ * actual agent_task_classes row (or binds the policy); editing a field
+ * before accepting sends that edit as correctedContent, which is what
+ * actually gets applied. Renders nothing once there's nothing pending.
+ */
+function MandateDerivationReview({ agentId }: { agentId: string }) {
+  const { toast } = useToast();
+  const { data: latest, isLoading } = useQuery<{
+    id: string; summary: string | null; stale: boolean;
+    overlapWarnings: Record<string, string[]>;
+    items: Array<{
+      id: string; kind: string; status: string;
+      citations: Array<{ mandateField: string; text: string }>;
+      proposedContent: any; correctedContent: any;
+    }>;
+  } | null>({
+    queryKey: ["/api/agents", agentId, "mandate-derivations", "latest"],
+  });
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "mandate-derivations", "latest"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "mandate"] });
+  };
+
+  const [editing, setEditing] = useState<Record<string, any>>({});
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+
+  const decide = async (itemId: string, decision: "accept" | "reject", corrected?: any) => {
+    setDecidingId(itemId);
+    try {
+      await apiRequest("POST", `/api/mandate-derived-items/${itemId}/decide`, { decision, correctedContent: corrected });
+      invalidate();
+      toast({ title: decision === "accept" ? "Accepted" : "Rejected" });
+    } catch (e: any) {
+      toast({ title: "Failed to decide", description: e.message, variant: "destructive" });
+    } finally {
+      setDecidingId(null);
+    }
+  };
+
+  if (isLoading || !latest) return null;
+  const pending = latest.items.filter(i => i.status === "pending");
+  if (!pending.length) return null;
+
+  return (
+    <Card data-testid="section-mandate-derivation">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <CardTitle className="text-sm font-medium">Derived from this mandate</CardTitle>
+          <Badge variant="outline" className="text-[10px]">{pending.length} pending</Badge>
+          {latest.stale && (
+            <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+              based on an earlier mandate version
+            </Badge>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          {latest.summary || "Proposed governance controls — nothing below takes effect until you accept it."}
+        </p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {pending.map(item => {
+          const content = editing[item.id] ?? item.proposedContent;
+          const setField = (k: string, v: any) => setEditing(e => ({ ...e, [item.id]: { ...content, [k]: v } }));
+          const warnings = latest.overlapWarnings?.[item.id] || [];
+          const isCorrected = item.id in editing;
+          const citations: Array<{ mandateField: string; text: string }> = item.citations || [];
+
+          return (
+            <div key={item.id} className="flex flex-col gap-2 p-3 rounded-md border" data-testid={`derived-item-${item.id}`}>
+              {item.kind === "task_class" ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[9px]">task class</Badge>
+                    <Input
+                      value={content.name}
+                      onChange={e => setField("name", e.target.value)}
+                      className="h-7 text-xs font-medium flex-1"
+                      data-testid={`input-derived-name-${item.id}`}
+                    />
+                  </div>
+                  <Textarea
+                    value={content.description || ""}
+                    onChange={e => setField("description", e.target.value)}
+                    className="min-h-[50px] text-xs resize-none"
+                    placeholder="Description"
+                    data-testid={`textarea-derived-description-${item.id}`}
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {(content.suggestedCoveredTools || []).map((t: string) => (
+                      <Badge key={t} variant="outline" className="text-[10px]">{t}</Badge>
+                    ))}
+                    {(content.suggestedCoveredTools || []).length === 0 && (
+                      <span className="text-[11px] text-muted-foreground italic">No matching real tools found for this agent</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                    <span>Suggested grant: <span className="text-foreground">{content.suggestedGrants}</span></span>
+                    <span>Reviewer: <span className="text-foreground">{content.suggestedRequiredReviewerRole || "none"}</span></span>
+                  </div>
+                  {content.suggestedWarrantBasis && <p className="text-[11px] text-muted-foreground">Basis: {content.suggestedWarrantBasis}</p>}
+                  {content.suggestedEvidenceNote && <p className="text-[11px] text-muted-foreground">Evidence: {content.suggestedEvidenceNote}</p>}
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[9px]">policy</Badge>
+                    <span className="text-xs font-medium">{content.policyName || "No matching policy — gap noted"}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{content.policyId ? content.reason : (content.gapNote || content.reason)}</p>
+                </>
+              )}
+
+              {citations.length > 0 && (
+                <div className="flex flex-col gap-0.5">
+                  {citations.map((c, i) => (
+                    <p key={i} className="text-[10px] text-muted-foreground italic">"{c.text}" — {c.mandateField}</p>
+                  ))}
+                </div>
+              )}
+
+              {warnings.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  {warnings.map((w, i) => (
+                    <p key={i} className="text-[11px] text-amber-600 dark:text-amber-400">⚠ {w}</p>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <Button
+                  size="sm" className="h-7 text-xs" disabled={decidingId === item.id}
+                  onClick={() => decide(item.id, "accept", isCorrected ? content : undefined)}
+                  data-testid={`button-accept-${item.id}`}
+                >
+                  {decidingId === item.id ? "Working…" : item.kind === "policy_binding" && !content.policyId
+                    ? "Acknowledge gap" : isCorrected ? "Accept edited" : "Accept"}
+                </Button>
+                <Button
+                  size="sm" variant="ghost" className="h-7 text-xs text-destructive" disabled={decidingId === item.id}
+                  onClick={() => decide(item.id, "reject")}
+                  data-testid={`button-reject-${item.id}`}
+                >
+                  Reject
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -2290,6 +2290,19 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
       await linkMcpBindings(teamAgent.id, orchestrator.mcpToolBindings);
 
+      // Seed a draft mandate from what the proposal already has -- description
+      // is already plain-language "what it does," and policyConstraints (the
+      // things it must comply with) map naturally onto "must never." No real
+      // human owner exists yet at this point (owner: "system" above is an
+      // internal placeholder, not a person), so accountableOwnerUserId is left
+      // unset for whoever reviews the mandate to fill in. Best-effort: a
+      // seeding failure must never block team creation, which already
+      // succeeded by this point.
+      storage.upsertAgentMandate(teamAgent.id, {
+        whatItDoes: orchestrator.description || null,
+        mustNever: orchestrator.policyConstraints?.length ? orchestrator.policyConstraints.join("\n") : null,
+      }, getOrgId(req)).catch(() => {});
+
       const createdWorkers: any[] = [];
       for (const worker of workers) {
         const workerAgent = await storage.createAgent({
@@ -2321,6 +2334,11 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           },
         });
         createdWorkers.push(workerAgent);
+
+        storage.upsertAgentMandate(workerAgent.id, {
+          whatItDoes: worker.description || null,
+          mustNever: worker.policyConstraints?.length ? worker.policyConstraints.join("\n") : null,
+        }, getOrgId(req)).catch(() => {});
 
         await linkMcpBindings(workerAgent.id, worker.mcpToolBindings);
 

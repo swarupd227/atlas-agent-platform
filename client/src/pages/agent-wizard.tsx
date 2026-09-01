@@ -981,6 +981,27 @@ export default function AgentWizard() {
           toast({ title: "MCP server not linked", description: "One of the selected connectors could not be linked — add it from the agent's MCP Servers tab.", variant: "destructive" });
         });
       }
+      // Seed a draft mandate from what the wizard already collected -- the
+      // Governance step's Stop Conditions / Escalation Triggers / Forbidden
+      // Outputs are conceptually mandate content (whenToStop /
+      // whenToAskAHuman / mustNever), so this avoids asking the same
+      // questions twice and gives the Mandate tab real content on first
+      // visit instead of a blank form. Draft only -- "approved" still means
+      // a human explicitly signs off, same as editing it directly.
+      const gc = wizardState.guardrailsConfig;
+      const hasSeedContent = !!wizardState.description?.trim()
+        || gc.stopConditions.length > 0 || gc.escalationTriggers.length > 0 || gc.forbiddenOutputs.length > 0;
+      if (hasSeedContent) {
+        apiRequest("PUT", `/api/agents/${data.id}/mandate`, {
+          accountableOwnerUserId: wizardState.owner || null,
+          whatItDoes: wizardState.description || null,
+          whenToStop: gc.stopConditions.length ? gc.stopConditions.join("\n") : null,
+          whenToAskAHuman: gc.escalationTriggers.length ? gc.escalationTriggers.join("\n") : null,
+          mustNever: gc.forbiddenOutputs.length ? gc.forbiddenOutputs.join("\n") : null,
+        }).catch(() => {
+          toast({ title: "Mandate not pre-filled", description: "Add it from the agent's Mandate tab.", variant: "destructive" });
+        });
+      }
       if (data.jobId && data.suiteId) {
         startJobTracking(data.id, data.jobId, data.suiteId, data.name || wizardState.name);
       } else if (creationPath === "template") {
@@ -1856,6 +1877,13 @@ export default function AgentWizard() {
         description: "Open the agent playground to run a test prompt and verify the agent responds correctly.",
         href: `/agents/${postCreationAgent.id}/playground`,
         testId: "link-next-playground",
+      },
+      {
+        icon: ShieldCheck,
+        title: "Review the mandate",
+        description: "Confirm the plain-language job description this agent starts with -- pre-filled from what you entered in Governance -- then approve it.",
+        href: `/agents/${postCreationAgent.id}?tab=mandate`,
+        testId: "link-next-mandate",
       },
     ];
 

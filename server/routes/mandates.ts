@@ -5,6 +5,8 @@ import { getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
 import { insertAgentTaskClassSchema } from "@shared/schema";
 import { syncMandateToGit } from "../mandate-git-sync";
+import { deriveFromMandate } from "../mandate-derivation";
+import { gatherAvailableTools } from "../tool-dispatcher";
 
 const router = Router();
 
@@ -64,6 +66,10 @@ router.put("/api/agents/:id/mandate", checkPermission("create_modify_blueprints"
     // set (true for essentially every agent today), so this never changes
     // whether a mandate save succeeds.
     const gitSync = await syncMandateToGit(agent, mandate);
+    // Fire-and-forget (server/mandate-derivation.ts): an LLM call is
+    // multi-second and must never slow this response. The review UI polls
+    // the derivations list separately -- see GET .../mandate-derivations.
+    deriveFromMandate(agent, mandate, "save").catch(() => {});
     res.json({ ...mandate, gitSync });
   } catch (e: any) {
     if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
@@ -85,6 +91,7 @@ router.post("/api/agents/:id/mandate/approve", checkPermission("approve_changes"
     if (!approved) return res.status(404).json({ message: "No mandate to approve for this agent -- save one first" });
     const agent = await storage.getAgent(req.params.id, orgId);
     const gitSync = agent ? await syncMandateToGit(agent, approved) : { pushed: false, reason: "agent not found" };
+    if (agent) deriveFromMandate(agent, approved, "approve").catch(() => {});
     res.json({ ...approved, gitSync });
   } catch (e: any) {
     // approveAgentMandate throws a readable message for the missing-fields
@@ -206,6 +213,155 @@ router.post("/api/warrants/:id/revoke", checkPermission("manage_autonomy"), asyn
     res.json(revoked);
   } catch (e: any) {
     res.status(500).json({ message: e.message || "Failed to revoke warrant" });
+  }
+});
+
+// ── Mandate derivation review (S1.1.2) ───────────────────────────────────────
+// Nothing here ever applies a proposal automatically. GET routes are
+// read-only; the only route that writes to a real agent_task_classes row or
+// agents.policyBindings is /decide, and only on an explicit accept.
+
+async function computeOverlapWarnings(agentId: string, orgId: string | undefined, pendingTaskClassItems: Array<{ id: string; proposedContent: any; correctedContent: any }>) {
+  if (!pendingTaskClassItems.length) return {} as Record<string, string[]>;
+  const existing = await storage.listAgentTaskClasses(agentId, orgId);
+  const warnings: Record<string, string[]> = {};
+  for (const item of pendingTaskClassItems) {
+    const content = item.correctedContent ?? item.proposedContent;
+    const suggested: string[] = Array.isArray(content?.suggestedCoveredTools) ? content.suggestedCoveredTools : [];
+    if (!suggested.length) continue;
+    const itemWarnings: string[] = [];
+    for (const tc of existing) {
+      const overlap = (tc.coveredTools || []).filter(t => suggested.includes(t));
+      if (!overlap.length) continue;
+      const activeWarrant = await storage.getActiveWarrant(tc.id, orgId);
+      if (activeWarrant?.grants === "autonomous") {
+        itemWarnings.push(`Tool${overlap.length > 1 ? "s" : ""} ${overlap.join(", ")} also covered by task class "${tc.name}", which has an autonomous warrant -- accepting this will additionally require a warrant here. This also affects Playground and Run Test calls, not just production.`);
+      }
+    }
+    if (itemWarnings.length) warnings[item.id] = itemWarnings;
+  }
+  return warnings;
+}
+
+router.get("/api/agents/:id/mandate-derivations", async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const runs = await storage.listMandateDerivationsForAgent(req.params.id, getOrgId(req));
+    res.json(runs);
+  } catch (e: any) {
+    res.status(500).json({ message: e.message || "Failed to list mandate derivations" });
+  }
+});
+
+router.get("/api/agents/:id/mandate-derivations/latest", async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const orgId = getOrgId(req);
+    const runs = await storage.listMandateDerivationsForAgent(req.params.id, orgId);
+    const latest = runs[0];
+    if (!latest) return res.json(null);
+    const mandate = await storage.getAgentMandate(req.params.id, orgId);
+    const stale = !!mandate && mandate.version > latest.mandateVersion;
+    const pendingTaskClassItems = latest.items.filter(i => i.kind === "task_class" && i.status === "pending");
+    const overlapWarnings = await computeOverlapWarnings(req.params.id, orgId, pendingTaskClassItems);
+    res.json({ ...latest, stale, overlapWarnings });
+  } catch (e: any) {
+    res.status(500).json({ message: e.message || "Failed to load the latest mandate derivation" });
+  }
+});
+
+const decideSchema = z.object({
+  decision: z.enum(["accept", "reject"]),
+  correctedContent: z.record(z.any()).optional(),
+});
+
+router.post("/api/mandate-derived-items/:id/decide", checkPermission("create_modify_blueprints"), async (req: Request<{ id: string }>, res: Response) => {
+  try {
+    const item = await storage.getMandateDerivedItem(req.params.id);
+    if (!item) return res.status(404).json({ message: "Derived item not found" });
+    if (item.status !== "pending") return res.status(409).json({ message: `Already decided (${item.status})` });
+
+    const { decision, correctedContent } = decideSchema.parse(req.body);
+    const decidedBy = (req as any).authUser?.userId ?? "system";
+
+    if (decision === "reject") {
+      const updated = await storage.updateMandateDerivedItem(item.id, { status: "rejected", decidedBy, decidedAt: new Date() });
+      return res.json(updated);
+    }
+
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(item.agentId, orgId);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    const content: any = correctedContent ?? item.proposedContent;
+    const wasCorrected = !!correctedContent;
+
+    if (item.kind === "task_class") {
+      // Re-validate against REAL current data -- a human correction isn't
+      // hallucination risk, but a typo'd tool name silently means "covers
+      // nothing," so it gets the exact same check the original proposal did.
+      const links = await storage.getAgentMcpServers(agent.id);
+      const tools = await gatherAvailableTools(links.map(l => l.serverId));
+      const realToolNames = new Set(tools.map(t => t.toolName));
+      const validatedTools: string[] = (Array.isArray(content.suggestedCoveredTools) ? content.suggestedCoveredTools : [])
+        .filter((t: unknown) => typeof t === "string" && realToolNames.has(t));
+
+      const taskClass = await storage.createAgentTaskClass({
+        agentId: agent.id,
+        organizationId: orgId,
+        mandateId: null,
+        name: content.name,
+        description: content.description || null,
+        requiredReviewerRole: content.suggestedRequiredReviewerRole || null,
+        coveredTools: validatedTools,
+        evidenceNote: content.suggestedEvidenceNote || null,
+        derivedFrom: "mandate_derivation",
+        sourceRef: `mandate_derived_items:${item.id}`,
+      } as any);
+
+      const updated = await storage.updateMandateDerivedItem(item.id, {
+        status: wasCorrected ? "corrected" : "accepted",
+        correctedContent: wasCorrected ? correctedContent : item.correctedContent,
+        appliedRefId: taskClass.id,
+        decidedBy,
+        decidedAt: new Date(),
+      });
+      return res.json({ item: updated, taskClass });
+    }
+
+    if (item.kind === "policy_binding") {
+      if (!content.policyId) {
+        // Acknowledged gap -- nothing to bind, nothing to create.
+        const updated = await storage.updateMandateDerivedItem(item.id, {
+          status: "noted",
+          correctedContent: wasCorrected ? correctedContent : item.correctedContent,
+          decidedBy,
+          decidedAt: new Date(),
+        });
+        return res.json({ item: updated });
+      }
+      const orgPolicies = orgId ? await storage.getPolicies(orgId) : [];
+      const policy = orgPolicies.find(p => p.id === content.policyId);
+      if (!policy) return res.status(400).json({ message: "That policy no longer exists -- refresh and try again." });
+
+      const currentBindings: Array<{ policyId?: string; enforcement?: string }> = Array.isArray(agent.policyBindings) ? agent.policyBindings as any[] : [];
+      if (!currentBindings.some(b => b.policyId === policy.id)) {
+        await storage.updateAgent(agent.id, {
+          policyBindings: [...currentBindings, { policyId: policy.id, enforcement: "monitor" }],
+        } as any);
+      }
+
+      const updated = await storage.updateMandateDerivedItem(item.id, {
+        status: wasCorrected ? "corrected" : "accepted",
+        correctedContent: wasCorrected ? correctedContent : item.correctedContent,
+        appliedRefId: policy.id,
+        decidedBy,
+        decidedAt: new Date(),
+      });
+      return res.json({ item: updated });
+    }
+
+    res.status(400).json({ message: `Unknown item kind "${item.kind}"` });
+  } catch (e: any) {
+    if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+    res.status(500).json({ message: e.message || "Failed to decide on derived item" });
   }
 });
 

@@ -1569,6 +1569,44 @@ export async function runStartupMigrations() {
       ALTER TABLE approvals ADD COLUMN IF NOT EXISTS required_reviewer_role TEXT;
     `);
 
+    // Mandate derivation engine (Path A phase 0, S1.1.2): the platform reading
+    // a mandate's text and proposing task classes / policy bindings for a
+    // human to review -- never applied silently. Both new tables are wholly
+    // additive; nothing existing reads them. evidence_note is a plain note
+    // field on task classes, not read by the warrant gate.
+    await client.query(`
+      ALTER TABLE agent_task_classes ADD COLUMN IF NOT EXISTS evidence_note TEXT;
+
+      CREATE TABLE IF NOT EXISTS mandate_derivations (
+        id                 VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id    VARCHAR,
+        agent_id           VARCHAR NOT NULL REFERENCES agents(id),
+        mandate_id         VARCHAR NOT NULL REFERENCES agent_mandates(id),
+        mandate_version    INTEGER NOT NULL,
+        content_hash       TEXT NOT NULL,
+        triggered_by       TEXT NOT NULL,
+        summary            TEXT,
+        created_at         TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_mandate_derivations_agent ON mandate_derivations(agent_id, mandate_version DESC, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS mandate_derived_items (
+        id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        derivation_id       VARCHAR NOT NULL REFERENCES mandate_derivations(id),
+        agent_id            VARCHAR NOT NULL REFERENCES agents(id),
+        kind                TEXT NOT NULL,
+        citations           JSONB NOT NULL,
+        proposed_content    JSONB NOT NULL,
+        corrected_content   JSONB,
+        status              TEXT NOT NULL DEFAULT 'pending',
+        applied_ref_id      VARCHAR,
+        decided_by          VARCHAR,
+        decided_at          TIMESTAMP,
+        created_at          TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_mandate_derived_items_derivation ON mandate_derived_items(derivation_id);
+    `);
+
     // Relay agents (SQL connector "relay_agent" connection mode, Phase 3):
     // outbound-only tunnel agents a client deploys inside their own network.
     // Only a sha256 hash of the bearer token is stored -- the raw token is

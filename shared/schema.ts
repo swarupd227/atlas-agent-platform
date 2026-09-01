@@ -259,6 +259,10 @@ export const agentTaskClasses = pgTable("agent_task_classes", {
   // class that predates this column) means the gate has nothing to match
   // against and is a complete no-op for it, by construction.
   coveredTools: text("covered_tools").array().default(sql`'{}'::text[]`),
+  // What would prove this task class is behaving correctly -- plain-language,
+  // set by a human (directly, or by accepting a mandate-derivation
+  // suggestion via sourceRef). Not read by any gate; a record for reviewers.
+  evidenceNote: text("evidence_note"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -300,6 +304,57 @@ export const agentWarrants = pgTable("agent_warrants", {
 export const insertAgentWarrantSchema = createInsertSchema(agentWarrants).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
 export type InsertAgentWarrant = z.infer<typeof insertAgentWarrantSchema>;
 export type AgentWarrant = typeof agentWarrants.$inferSelect;
+
+/**
+ * One derivation run: the platform reading a mandate's text and proposing
+ * task classes / policy bindings (server/mandate-derivation.ts) -- never
+ * applying anything itself. `mandateVersion`/`contentHash` let a later query
+ * know whether this run is stale relative to the current mandate, and skip
+ * re-deriving when only an unrelated field (e.g. owner) changed.
+ */
+export const mandateDerivations = pgTable("mandate_derivations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").references(() => organizations.id),
+  agentId: varchar("agent_id").notNull().references(() => agents.id),
+  mandateId: varchar("mandate_id").notNull().references(() => agentMandates.id),
+  mandateVersion: integer("mandate_version").notNull(),
+  contentHash: text("content_hash").notNull(),
+  triggeredBy: text("triggered_by").notNull(), // save | approve
+  summary: text("summary"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMandateDerivationSchema = createInsertSchema(mandateDerivations).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertMandateDerivation = z.infer<typeof insertMandateDerivationSchema>;
+export type MandateDerivation = typeof mandateDerivations.$inferSelect;
+
+/**
+ * One proposed control within a derivation run -- always starts `pending`,
+ * never auto-applied. `citations` ties every proposal back to the mandate
+ * text it came from (field + quoted excerpt, not character-offset
+ * precision -- matches this codebase's existing articleRef citation
+ * convention for regulatory-policy generation). `appliedRefId` is the real
+ * agent_task_classes.id once accepted; `correctedContent`, when set, is
+ * what actually gets applied instead of `proposedContent`.
+ */
+export const mandateDerivedItems = pgTable("mandate_derived_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  derivationId: varchar("derivation_id").notNull().references(() => mandateDerivations.id),
+  agentId: varchar("agent_id").notNull().references(() => agents.id),
+  kind: text("kind").notNull(), // task_class | policy_binding
+  citations: jsonb("citations").notNull(), // [{mandateField, text}]
+  proposedContent: jsonb("proposed_content").notNull(),
+  correctedContent: jsonb("corrected_content"),
+  status: text("status").notNull().default("pending"), // pending | accepted | corrected | rejected | noted
+  appliedRefId: varchar("applied_ref_id"),
+  decidedBy: varchar("decided_by"),
+  decidedAt: timestamp("decided_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMandateDerivedItemSchema = createInsertSchema(mandateDerivedItems).omit({ id: true, createdAt: true });
+export type InsertMandateDerivedItem = z.infer<typeof insertMandateDerivedItemSchema>;
+export type MandateDerivedItem = typeof mandateDerivedItems.$inferSelect;
 
 export const agentVersions = pgTable("agent_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

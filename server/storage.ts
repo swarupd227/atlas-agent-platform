@@ -10,7 +10,7 @@ import {
   type AgentIntegrationCredential, type InsertAgentIntegrationCredential,
   llmProviderKeys,
   type LlmProviderKey, type InsertLlmProviderKey,
-  users, agents, agentMandates, agentTaskClasses, agentWarrants, outcomeContracts, kpiDefinitions, deployments,
+  users, agents, agentMandates, agentTaskClasses, agentWarrants, mandateDerivations, mandateDerivedItems, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
   improvementRecommendations, autonomousActionLogs, agentVersions,
@@ -22,6 +22,8 @@ import {
   type AgentMandate, type InsertAgentMandate,
   type AgentTaskClass, type InsertAgentTaskClass,
   type AgentWarrant, type InsertAgentWarrant,
+  type MandateDerivation, type InsertMandateDerivation,
+  type MandateDerivedItem, type InsertMandateDerivedItem,
   type OutcomeContract, type InsertOutcomeContract,
   type KpiDefinition, type InsertKpiDefinition,
   type Deployment, type InsertDeployment,
@@ -631,6 +633,11 @@ export interface IStorage {
   revokeWarrant(id: string, revokedBy: string, reason?: string, orgId?: string): Promise<AgentWarrant | undefined>;
   getActiveWarrant(taskClassId: string, orgId?: string): Promise<AgentWarrant | undefined>;
   listWarrantsForTaskClass(taskClassId: string, orgId?: string): Promise<AgentWarrant[]>;
+
+  createMandateDerivation(data: InsertMandateDerivation, items: Array<Omit<InsertMandateDerivedItem, "derivationId">>): Promise<MandateDerivation>;
+  listMandateDerivationsForAgent(agentId: string, orgId?: string): Promise<Array<MandateDerivation & { items: MandateDerivedItem[] }>>;
+  getMandateDerivedItem(id: string): Promise<MandateDerivedItem | undefined>;
+  updateMandateDerivedItem(id: string, data: Partial<MandateDerivedItem>): Promise<MandateDerivedItem | undefined>;
 
   getSkillVersions(skillId: string): Promise<SkillVersion[]>;
   getSkillVersion(id: string): Promise<SkillVersion | undefined>;
@@ -3271,6 +3278,35 @@ export class DatabaseStorage implements IStorage {
       ? and(eq(agentWarrants.taskClassId, taskClassId), eq(agentWarrants.organizationId, orgId))
       : eq(agentWarrants.taskClassId, taskClassId);
     return db.select().from(agentWarrants).where(clause).orderBy(desc(agentWarrants.issuedAt));
+  }
+
+  async createMandateDerivation(data: InsertMandateDerivation, items: Array<Omit<InsertMandateDerivedItem, "derivationId">>): Promise<MandateDerivation> {
+    const [derivation] = await db.insert(mandateDerivations).values(data).returning();
+    if (items.length) {
+      await db.insert(mandateDerivedItems).values(items.map(item => ({ ...item, derivationId: derivation.id })));
+    }
+    return derivation;
+  }
+  async listMandateDerivationsForAgent(agentId: string, orgId?: string): Promise<Array<MandateDerivation & { items: MandateDerivedItem[] }>> {
+    const clause = orgId
+      ? and(eq(mandateDerivations.agentId, agentId), eq(mandateDerivations.organizationId, orgId))
+      : eq(mandateDerivations.agentId, agentId);
+    const derivations = await db.select().from(mandateDerivations).where(clause)
+      .orderBy(desc(mandateDerivations.mandateVersion), desc(mandateDerivations.createdAt));
+    const results: Array<MandateDerivation & { items: MandateDerivedItem[] }> = [];
+    for (const d of derivations) {
+      const items = await db.select().from(mandateDerivedItems).where(eq(mandateDerivedItems.derivationId, d.id));
+      results.push({ ...d, items });
+    }
+    return results;
+  }
+  async getMandateDerivedItem(id: string): Promise<MandateDerivedItem | undefined> {
+    const [item] = await db.select().from(mandateDerivedItems).where(eq(mandateDerivedItems.id, id));
+    return item;
+  }
+  async updateMandateDerivedItem(id: string, data: Partial<MandateDerivedItem>): Promise<MandateDerivedItem | undefined> {
+    const [updated] = await db.update(mandateDerivedItems).set(data).where(eq(mandateDerivedItems.id, id)).returning();
+    return updated;
   }
 
   async getSkillVersions(skillId: string) {
