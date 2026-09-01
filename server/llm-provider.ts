@@ -64,11 +64,17 @@ export interface LLMCompletionOptions {
    * Requests vendor-native structured-output enforcement instead of the
    * legacy responseFormat:"json" (OpenAI json_object mode / Anthropic
    * prompt-instructed JSON). OpenAI: sent as response_format:{type:"json_schema",
-   * strict:true}, which grammar-constrains decoding. Anthropic: translated into
-   * a single forced tool_choice (a weaker guarantee -- it forces *a* call to
-   * the tool, not token-level constrained decoding -- so the Ajv repair loop
-   * downstream stays meaningfully load-bearing there). Ignored when
-   * anthropicContainer is set (untested combination with code execution).
+   * strict:true}, its purpose-built non-tool structured-output mode. Anthropic
+   * has no non-tool equivalent, so this is translated into a single forced
+   * tool_choice on a tool that's never actually dispatched -- "tool use
+   * without tools", the standard pattern for reliable extraction on Claude,
+   * since tool parameters and structured output share the same underlying
+   * schema-enforced-via-constrained-decoding mechanism. The Ajv repair loop
+   * downstream still runs regardless of provider -- as a safety net for
+   * schemas that fall back to the legacy path (see checkStrictModeCompatible
+   * below), not because either provider's decode guarantee is presumed
+   * weaker. Ignored when anthropicContainer is set (untested combination
+   * with code execution).
    * Callers should pre-check schema compatibility for OpenAI via
    * checkStrictModeCompatible() -- an incompatible schema still triggers a
    * one-time fallback to legacy json_object mode at the OpenAI call site, but
