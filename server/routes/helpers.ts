@@ -1236,9 +1236,31 @@ Return a JSON array where every element has exactly:
   let rawCases: any[] = [];
   try {
     const parsed = JSON.parse(stripJsonFences(raw));
-    rawCases = Array.isArray(parsed) ? parsed : parsed.cases || [];
-  } catch {
+    if (Array.isArray(parsed)) {
+      rawCases = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      // The prompt asks for a bare JSON array, but jsonMode makes providers wrap
+      // it in an object under a key they choose -- "cases", "testCases",
+      // "test_cases", whatever. Only "cases" was accepted before, so a run that
+      // picked any other key silently produced an empty suite (observed live:
+      // 3 of 36 journey agents got zero cases despite valid ontology grounding,
+      // one of which then succeeded on a plain retry). Take the first
+      // array-valued property instead of guessing the key.
+      const arrayProp = Object.values(parsed).find(v => Array.isArray(v));
+      rawCases = (arrayProp as any[]) || [];
+      if (!arrayProp) {
+        console.warn(`[generateOntologyEvalCases] suite ${suiteId}: response had no array property, keys=${Object.keys(parsed).join(",")}`);
+      }
+    }
+  } catch (err: any) {
+    // Was a silent `return` -- an unparseable response looked identical to
+    // "agent has no concepts", so a failed generation left an empty Eval tab
+    // with nothing anywhere explaining why.
+    console.warn(`[generateOntologyEvalCases] suite ${suiteId}: unparseable LLM response (${err?.message}); first 200 chars: ${String(raw).slice(0, 200)}`);
     return { count: 0, cases: [] };
+  }
+  if (rawCases.length === 0) {
+    console.warn(`[generateOntologyEvalCases] suite ${suiteId}: parsed response yielded 0 cases`);
   }
 
   const created: any[] = [];
