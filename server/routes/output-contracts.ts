@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { outputContractEnforcer } from "../services/output-contract-enforcer";
-import { checkStrictModeCompatible } from "../services/json-schema-strict-compat";
+import { checkStrictModeCompatible, checkSchemaComplexity } from "../services/json-schema-strict-compat";
 import { insertOutputContractSchema } from "../../shared/schema";
 import { getOrgId } from "../auth";
 import { z } from "zod";
@@ -87,10 +87,16 @@ router.post("/api/output-contracts/check-strict-compat", async (req, res) => {
     if (!body.success) return res.status(400).json({ error: body.error.flatten() });
     const agent = await storage.getAgent(body.data.agentId, getOrgId(req));
     const provider = agent?.modelProvider || "openai";
+    // Complexity is advisory and provider-independent -- large/deep schemas
+    // strain constrained decoding on any provider that actually honors the
+    // schema (Anthropic's forced tool_choice has no hard cap like OpenAI's
+    // structural rules do), so it's computed regardless of the compatibility
+    // verdict below.
+    const complexity = checkSchemaComplexity(body.data.schemaDefinition);
     if (provider !== "openai") {
-      return res.json({ compatible: true, provider });
+      return res.json({ compatible: true, provider, complexity });
     }
-    res.json({ ...checkStrictModeCompatible(body.data.schemaDefinition), provider });
+    res.json({ ...checkStrictModeCompatible(body.data.schemaDefinition), provider, complexity });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });

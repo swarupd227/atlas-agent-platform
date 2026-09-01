@@ -396,7 +396,7 @@ function ContractForm({
   // The provider (and thus whether OpenAI's strict-mode schema rules apply)
   // is resolved server-side from agentId -- see check-strict-compat's
   // response.provider -- so no separate agent fetch is needed here.
-  const [strictCompat, setStrictCompat] = useState<{ status: "idle" | "checking" | "ok" | "warn" | "error"; message?: string }>({ status: "idle" });
+  const [strictCompat, setStrictCompat] = useState<{ status: "idle" | "checking" | "ok" | "complex" | "warn" | "error"; message?: string }>({ status: "idle" });
 
   useEffect(() => {
     if (!strictDecodingEnabled) { setStrictCompat({ status: "idle" }); return; }
@@ -414,9 +414,13 @@ function ContractForm({
         const res = await apiRequest("POST", "/api/output-contracts/check-strict-compat", { agentId, schemaDefinition: parsed });
         const data = await res.json();
         if (cancelled) return;
-        setStrictCompat(data.compatible
-          ? { status: "ok", message: data.provider === "openai" ? "Compatible with OpenAI's strict mode." : `No schema restrictions for ${data.provider}.` }
-          : { status: "warn", message: data.reason || "This schema isn't compatible with strict mode yet." });
+        if (!data.compatible) {
+          setStrictCompat({ status: "warn", message: data.reason || "This schema isn't compatible with strict mode yet." });
+        } else if (data.complexity && !data.complexity.withinRecommendedLimits) {
+          setStrictCompat({ status: "complex", message: data.complexity.reason });
+        } else {
+          setStrictCompat({ status: "ok", message: data.provider === "openai" ? "Compatible with OpenAI's strict mode." : `No schema restrictions for ${data.provider}.` });
+        }
       } catch {
         if (!cancelled) setStrictCompat({ status: "error", message: "Couldn't check compatibility right now." });
       }
@@ -585,6 +589,7 @@ function ContractForm({
             {strictDecodingEnabled && strictCompat.status !== "idle" && (
               <div className={`text-[11px] rounded-md border px-2.5 py-2 flex items-start gap-1.5 ${
                 strictCompat.status === "ok" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                : strictCompat.status === "complex" ? "bg-blue-500/10 text-blue-600 border-blue-500/20"
                 : strictCompat.status === "warn" ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
                 : strictCompat.status === "error" ? "bg-destructive/10 text-destructive border-destructive/20"
                 : "text-muted-foreground border-border"

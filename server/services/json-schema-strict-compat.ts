@@ -85,3 +85,86 @@ export function checkStrictModeCompatible(schema: unknown): StrictModeCompatResu
   }
   return checkNode(schema, "$");
 }
+
+/**
+ * Advisory (not a hard gate, unlike checkStrictModeCompatible): a schema can
+ * be perfectly valid for strict mode and still cause a real quality/latency
+ * regression. Constrained decoding tracks schema state at every generated
+ * token and filters the vocabulary against it -- a wide, deep schema spends
+ * attention and compute on that bookkeeping instead of on understanding the
+ * source document, which measurably slows generation and degrades quality on
+ * any free-form narrative fields in the same response. This effect starts to
+ * show past roughly 30-40 fields or 4 levels of nesting. The fix is
+ * architectural, not a schema tweak: split the extraction into multiple
+ * smaller-schema passes (e.g. separate DAG worker nodes each producing part
+ * of the result) rather than one monolithic schema.
+ */
+const RECOMMENDED_MAX_FIELDS = 40;
+const RECOMMENDED_MAX_DEPTH = 4;
+
+export interface SchemaComplexityResult {
+  fieldCount: number;
+  maxDepth: number;
+  withinRecommendedLimits: boolean;
+  reason?: string;
+}
+
+function walkComplexity(node: unknown, depth: number): { fields: number; maxDepth: number } {
+  if (!node || typeof node !== "object") return { fields: 0, maxDepth: depth };
+  const schema = node as Record<string, any>;
+  let fields = 0;
+  let maxDepth = depth;
+
+  if (schema.properties && typeof schema.properties === "object") {
+    for (const key of Object.keys(schema.properties)) {
+      fields += 1;
+      const child = walkComplexity(schema.properties[key], depth + 1);
+      fields += child.fields;
+      maxDepth = Math.max(maxDepth, child.maxDepth);
+    }
+  }
+
+  if (schema.items) {
+    const itemSchemas = Array.isArray(schema.items) ? schema.items : [schema.items];
+    for (const item of itemSchemas) {
+      const child = walkComplexity(item, depth + 1);
+      fields += child.fields;
+      maxDepth = Math.max(maxDepth, child.maxDepth);
+    }
+  }
+
+  if (Array.isArray(schema.anyOf)) {
+    for (const sub of schema.anyOf) {
+      const child = walkComplexity(sub, depth);
+      fields += child.fields;
+      maxDepth = Math.max(maxDepth, child.maxDepth);
+    }
+  }
+
+  const defs = schema.$defs || schema.definitions;
+  if (defs && typeof defs === "object") {
+    for (const key of Object.keys(defs)) {
+      const child = walkComplexity(defs[key], depth);
+      fields += child.fields;
+      maxDepth = Math.max(maxDepth, child.maxDepth);
+    }
+  }
+
+  return { fields, maxDepth };
+}
+
+/** Field-count/nesting-depth heuristic -- independent of provider and of strict-mode structural compatibility. */
+export function checkSchemaComplexity(schema: unknown): SchemaComplexityResult {
+  if (!schema || typeof schema !== "object") {
+    return { fieldCount: 0, maxDepth: 0, withinRecommendedLimits: true };
+  }
+  const { fields, maxDepth } = walkComplexity(schema, 1);
+  const withinRecommendedLimits = fields <= RECOMMENDED_MAX_FIELDS && maxDepth <= RECOMMENDED_MAX_DEPTH;
+  return {
+    fieldCount: fields,
+    maxDepth,
+    withinRecommendedLimits,
+    reason: withinRecommendedLimits ? undefined
+      : `${fields} field${fields === 1 ? "" : "s"} nested ${maxDepth} level${maxDepth === 1 ? "" : "s"} deep -- past ~${RECOMMENDED_MAX_FIELDS} fields or ${RECOMMENDED_MAX_DEPTH} levels, constrained decoding can measurably slow generation and reduce quality on free-form fields. Consider splitting into multiple smaller-schema passes (e.g. separate DAG worker nodes) instead of one large schema.`,
+  };
+}
