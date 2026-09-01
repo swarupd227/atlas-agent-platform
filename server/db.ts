@@ -1300,6 +1300,21 @@ export async function runStartupMigrations() {
       -- mcp_servers.connection_id already exists (above); index it, since
       -- resolving "which connection backs this server" becomes a hot path.
       CREATE INDEX IF NOT EXISTS idx_mcp_servers_connection ON mcp_servers(connection_id);
+
+      -- Standalone Process Flow Studio drafts (save/load library). Previously a
+      -- flow authored without an ?outcomeId lived only in React state and was
+      -- lost on navigation; this gives Studio a first-class library. The graph
+      -- column holds the canonical { version, name, nodes, edges }.
+      CREATE TABLE IF NOT EXISTS process_flows (
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id  VARCHAR,
+        name             TEXT NOT NULL,
+        description      TEXT,
+        graph            JSONB NOT NULL,
+        created_at       TIMESTAMP DEFAULT NOW(),
+        updated_at       TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_process_flows_org ON process_flows(organization_id);
     `);
 
     // Backfill + integrity for the multi-connection columns. Separated from the

@@ -1519,6 +1519,25 @@ export const insertTeamBlueprintEdgeSchema = createInsertSchema(teamBlueprintEdg
 export type InsertTeamBlueprintEdge = z.infer<typeof insertTeamBlueprintEdgeSchema>;
 export type TeamBlueprintEdge = typeof teamBlueprintEdges.$inferSelect;
 
+// Standalone, reusable process-flow drafts authored in Process Flow Studio.
+// Previously a flow opened from Studio without an ?outcomeId lived only in
+// React state (+ a one-shot sessionStorage handoff), so navigating away lost
+// the work. This gives Studio a first-class save/load library independent of
+// any outcome. `graph` holds the canonical { version, name, nodes, edges }.
+export const processFlows = pgTable("process_flows", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").references(() => organizations.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  graph: jsonb("graph").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertProcessFlowSchema = createInsertSchema(processFlows).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertProcessFlow = z.infer<typeof insertProcessFlowSchema>;
+export type ProcessFlowRecord = typeof processFlows.$inferSelect;
+
 // A single field/operator/value comparison, or a nested AND/OR group of them
 // -- lets the rule builder UI express compound logic like
 // "(amount > 10000 AND NOT vendorApproved) OR duplicateInvoice == true"

@@ -1964,6 +1964,75 @@ async function createOutcomeVersion(
     }
   });
 
+  // ---- Standalone Process Flow library (Studio save/load, no outcome required) ----
+  const processFlowBodySchema = z.object({
+    name: z.string().trim().min(1, "A flow name is required").max(200),
+    description: z.string().max(2000).optional(),
+    nodes: z.array(z.any()).max(100).optional(),
+    edges: z.array(z.any()).max(300).optional(),
+    steps: z.array(z.any()).max(100).optional(),
+  });
+
+  router.get("/api/process-flows", async (req, res) => {
+    const flows = await storage.getProcessFlows(getOrgId(req));
+    // Return a light list shape (name + counts + timestamps), not every node,
+    // so the library picker stays cheap even with many saved flows.
+    res.json(flows.map(f => {
+      const g = f.graph as any;
+      return {
+        id: f.id, name: f.name, description: f.description,
+        nodeCount: Array.isArray(g?.nodes) ? g.nodes.length : 0,
+        edgeCount: Array.isArray(g?.edges) ? g.edges.length : 0,
+        createdAt: f.createdAt, updatedAt: f.updatedAt,
+      };
+    }));
+  });
+
+  router.get("/api/process-flows/:id", async (req, res) => {
+    const flow = await storage.getProcessFlow(String(req.params.id), getOrgId(req));
+    if (!flow) return res.status(404).json({ message: "Process flow not found" });
+    res.json(flow);
+  });
+
+  router.post("/api/process-flows", checkPermission("create_modify_outcomes"), async (req, res) => {
+    try {
+      const parsed = processFlowBodySchema.parse(req.body);
+      const graph = normalizeToGraph(parsed, parsed.name);
+      if (!graph) return res.status(400).json({ message: "Flow has no steps to save. Add at least one step first." });
+      const created = await storage.createProcessFlow({
+        name: parsed.name,
+        description: parsed.description,
+        graph: { ...graph, name: parsed.name },
+      } as any);
+      res.status(201).json(created);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  router.put("/api/process-flows/:id", checkPermission("create_modify_outcomes"), async (req, res) => {
+    try {
+      const parsed = processFlowBodySchema.parse(req.body);
+      const graph = normalizeToGraph(parsed, parsed.name);
+      if (!graph) return res.status(400).json({ message: "Flow has no steps to save." });
+      const updated = await storage.updateProcessFlow(String(req.params.id), {
+        name: parsed.name,
+        description: parsed.description,
+        graph: { ...graph, name: parsed.name },
+      } as any, getOrgId(req));
+      if (!updated) return res.status(404).json({ message: "Process flow not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  router.delete("/api/process-flows/:id", checkPermission("create_modify_outcomes"), async (req, res) => {
+    const ok = await storage.deleteProcessFlow(String(req.params.id), getOrgId(req));
+    if (!ok) return res.status(404).json({ message: "Process flow not found" });
+    res.status(204).send();
+  });
+
   // Process-flow node types that never get their own blueprint node: "trigger"
   // is the kickoff signal (the orchestrator's own dispatch already plays that
   // role) and "end" is a terminal marker with no work to do.

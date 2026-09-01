@@ -214,6 +214,7 @@ import {
   marketplaceAssets, type MarketplaceAsset, type InsertMarketplaceAsset,
   marketplaceInstallations, type MarketplaceInstallation, type InsertMarketplaceInstallation,
   evalPersonas, type EvalPersona, type InsertEvalPersona,
+  processFlows, type ProcessFlowRecord, type InsertProcessFlow,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -614,6 +615,12 @@ export interface IStorage {
   createSkill(skill: InsertSkill): Promise<Skill>;
   updateSkill(id: string, data: Partial<Skill>, orgId?: string): Promise<Skill | undefined>;
   deleteSkill(id: string, orgId?: string): Promise<boolean>;
+
+  getProcessFlows(orgId?: string): Promise<ProcessFlowRecord[]>;
+  getProcessFlow(id: string, orgId?: string): Promise<ProcessFlowRecord | undefined>;
+  createProcessFlow(flow: InsertProcessFlow): Promise<ProcessFlowRecord>;
+  updateProcessFlow(id: string, data: Partial<ProcessFlowRecord>, orgId?: string): Promise<ProcessFlowRecord | undefined>;
+  deleteProcessFlow(id: string, orgId?: string): Promise<boolean>;
 
   createAgentGeneratedFile(data: InsertAgentGeneratedFile): Promise<AgentGeneratedFile>;
   listAgentGeneratedFiles(orgId?: string, limit?: number): Promise<Array<Record<string, any>>>;
@@ -3118,6 +3125,39 @@ export class DatabaseStorage implements IStorage {
     const owned = await this.getSkill(id, orgId);
     if (!owned) return false;
     await db.delete(skills).where(eq(skills.id, id));
+    return true;
+  }
+
+  async getProcessFlows(orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const rows = scopedOrgId
+      ? await db.select().from(processFlows).where(eq(processFlows.organizationId, scopedOrgId))
+      : await db.select().from(processFlows);
+    return rows.sort((a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0));
+  }
+  async getProcessFlow(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(processFlows.id, id), eq(processFlows.organizationId, orgId)) : eq(processFlows.id, id);
+    const [flow] = await db.select().from(processFlows).where(clause);
+    return flow;
+  }
+  async createProcessFlow(flow: InsertProcessFlow) {
+    const orgId = resolveOrgId(flow.organizationId);
+    const [created] = await db.insert(processFlows).values({ ...flow, organizationId: orgId }).returning();
+    return created;
+  }
+  async updateProcessFlow(id: string, data: Partial<ProcessFlowRecord>, orgId?: string) {
+    const owned = await this.getProcessFlow(id, orgId);
+    if (!owned) return undefined;
+    const [updated] = await db.update(processFlows)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(processFlows.id, id))
+      .returning();
+    return updated;
+  }
+  async deleteProcessFlow(id: string, orgId?: string) {
+    const owned = await this.getProcessFlow(id, orgId);
+    if (!owned) return false;
+    await db.delete(processFlows).where(eq(processFlows.id, id));
     return true;
   }
 

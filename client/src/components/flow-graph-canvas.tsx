@@ -1,15 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap,
-  useNodesState, useEdgesState, addEdge, Handle, Position,
+  useNodesState, useEdgesState, addEdge, Handle, Position, useReactFlow,
   type Node as RFNode, type Edge as RFEdge, type Connection, type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   Play, Database, Brain, GitBranch, UserCheck, Zap, Bell, GitFork, RotateCcw, Square,
-  Trash2, X, Workflow, Sparkles, Network, SquareFunction,
+  Trash2, X, Workflow, Sparkles, Network, SquareFunction, AlertTriangle, Undo2, Redo2,
 } from "lucide-react";
+
+/** A node/edge-anchored validation finding from the server compiler, mirrored
+ *  client-side so the canvas can badge the exact offending step. Kept in sync
+ *  with CompiledIssue in server/process-flow-compile.ts. */
+export interface FlowIssue {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  nodeId?: string;
+  edgeId?: string;
+}
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -38,14 +49,22 @@ export const PALETTE_TYPES: ProcessNodeType[] = [
   "expert_approval", "take_action", "send_notification", "parallel", "loop", "n8n", "sub_flow", "expression", "end",
 ];
 
-type RFData = { ntype: ProcessNodeType; label: string; description?: string; actor?: string; config?: Record<string, unknown> };
+type RFData = { ntype: ProcessNodeType; label: string; description?: string; actor?: string; config?: Record<string, unknown>; _issue?: string };
 
 function ProcessFlowNode({ data, selected }: NodeProps) {
   const d = data as RFData;
   const meta = NODE_META[d.ntype] || NODE_META.take_action;
   const Icon = meta.icon;
   return (
-    <div className={`rounded-xl border ${meta.border} ${meta.bg} px-3 py-2 w-44 shadow-sm ${selected ? "ring-2 ring-primary" : ""}`}>
+    <div
+      className={`relative rounded-xl border ${meta.border} ${meta.bg} px-3 py-2 w-44 shadow-sm ${selected ? "ring-2 ring-primary" : d._issue ? "ring-2 ring-amber-500/70" : ""}`}
+      title={d._issue || undefined}
+    >
+      {d._issue && (
+        <div className="absolute -top-2 -right-2 z-10" data-testid="node-issue-badge">
+          <AlertTriangle className="w-4 h-4 text-amber-500 fill-amber-100 dark:fill-amber-950" />
+        </div>
+      )}
       <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-muted-foreground" />
       <div className={`flex items-center gap-1.5 mb-1 ${meta.color}`}>
         <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -299,13 +318,61 @@ interface Props {
   initialNodes: ProcessNode[];
   initialEdges: ProcessEdge[];
   onChange: (nodes: ProcessNode[], edges: ProcessEdge[]) => void;
+  /** Validation findings from the last compile, badged onto the offending steps. */
+  issues?: FlowIssue[];
 }
 
-function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">) {
+function Canvas({ initialNodes, initialEdges, onChange, issues }: Omit<Props, "flowKey">) {
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode>(toRFNodes(initialNodes));
   const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdge>(toRFEdges(initialEdges));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const { screenToFlowPosition } = useReactFlow();
+
+  // ---- Undo / redo ----------------------------------------------------------
+  // Snapshot the graph before each discrete mutation (add / delete / connect /
+  // drop / a settled field edit). Drag *frames* are excluded — only the final
+  // dropped position is snapshotted — so a single drag is one undo step, not
+  // hundreds. An undo/redo flows up through onChange to the parent, which
+  // clears any stale validation badges (correct -- the graph changed).
+  const pastRef = useRef<Array<{ nodes: RFNode[]; edges: RFEdge[] }>>([]);
+  const futureRef = useRef<Array<{ nodes: RFNode[]; edges: RFEdge[] }>>([]);
+  const lastEditKeyRef = useRef<{ key: string; t: number } | null>(null);
+  const [histVersion, setHistVersion] = useState(0);
+
+  const snapshot = useCallback((editKey?: string) => {
+    // Coalesce rapid keystroke edits to the same field into one undo step.
+    if (editKey) {
+      const now = Date.now();
+      const last = lastEditKeyRef.current;
+      if (last && last.key === editKey && now - last.t < 700) { lastEditKeyRef.current = { key: editKey, t: now }; return; }
+      lastEditKeyRef.current = { key: editKey, t: now };
+    } else {
+      lastEditKeyRef.current = null;
+    }
+    pastRef.current.push({ nodes: nodes.map(n => ({ ...n, data: { ...(n.data as RFData) } })), edges: edges.map(e => ({ ...e })) });
+    if (pastRef.current.length > 100) pastRef.current.shift();
+    futureRef.current = [];
+    setHistVersion(v => v + 1);
+  }, [nodes, edges]);
+
+  const undo = useCallback(() => {
+    const prev = pastRef.current.pop();
+    if (!prev) return;
+    futureRef.current.push({ nodes, edges });
+    setNodes(prev.nodes); setEdges(prev.edges);
+    setSelectedNodeId(null); setSelectedEdgeId(null);
+    setHistVersion(v => v + 1);
+  }, [nodes, edges, setNodes, setEdges]);
+
+  const redo = useCallback(() => {
+    const next = futureRef.current.pop();
+    if (!next) return;
+    pastRef.current.push({ nodes, edges });
+    setNodes(next.nodes); setEdges(next.edges);
+    setSelectedNodeId(null); setSelectedEdgeId(null);
+    setHistVersion(v => v + 1);
+  }, [nodes, edges, setNodes, setEdges]);
 
   // Propagate any change up to the parent (graph is the source of truth there).
   useEffect(() => {
@@ -315,11 +382,13 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
   }, [nodes, edges]);
 
   const onConnect = useCallback((c: Connection) => {
+    snapshot();
     setEdges(eds => addEdge({ ...c, id: `e_${newId()}` }, eds));
-  }, [setEdges]);
+  }, [setEdges, snapshot]);
 
-  const addNode = useCallback((ntype: ProcessNodeType) => {
+  const placeNode = useCallback((ntype: ProcessNodeType, position?: { x: number; y: number }) => {
     const id = newId();
+    snapshot();
     // Compute the grid slot from the functional-update's own `nds`, not the
     // `nodes` closed over at render time -- two palette clicks fired before
     // React commits the first click's state update (e.g. a fast double-click)
@@ -327,30 +396,50 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
     // coordinates, silently stacking the second node exactly under the first.
     setNodes(nds => {
       const count = nds.length;
+      const pos = position || { x: (count % 5) * 240, y: Math.floor(count / 5) * 140 + 40 };
       return nds.concat({
         id, type: "process",
-        position: { x: (count % 5) * 240, y: Math.floor(count / 5) * 140 + 40 },
+        position: pos,
         data: { ntype, label: NODE_META[ntype].label, description: "", actor: "" } as RFData,
         initialWidth: 176,
         initialHeight: 64,
       });
     });
     setSelectedNodeId(id);
-  }, [setNodes]);
+  }, [setNodes, snapshot]);
 
-  const patchNode = useCallback((id: string, patch: Partial<RFData>) => {
+  const addNode = useCallback((ntype: ProcessNodeType) => placeNode(ntype), [placeNode]);
+
+  // Drop a palette item at the cursor -- real drag-and-drop placement, versus
+  // the click-to-append-at-next-grid-slot fallback that addNode still provides.
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }, []);
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const ntype = e.dataTransfer.getData("application/reactflow") as ProcessNodeType;
+    if (!ntype || !NODE_META[ntype]) return;
+    const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    placeNode(ntype, position);
+  }, [screenToFlowPosition, placeNode]);
+
+  const patchNode = useCallback((id: string, patch: Partial<RFData>, editKey?: string) => {
+    snapshot(editKey ?? `node:${id}:${Object.keys(patch)[0]}`);
     setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...(n.data as RFData), ...patch } } : n));
-  }, [setNodes]);
+  }, [setNodes, snapshot]);
   const patchEdge = useCallback((id: string, patch: { label?: string; condition?: string }) => {
+    snapshot(`edge:${id}:${Object.keys(patch)[0]}`);
     setEdges(eds => eds.map(e => e.id === id ? {
       ...e,
       label: patch.label !== undefined ? patch.label : e.label,
       data: { ...(e.data as any), ...(patch.condition !== undefined ? { condition: patch.condition } : {}) },
       animated: patch.condition !== undefined ? !!patch.condition : e.animated,
     } : e));
-  }, [setEdges]);
+  }, [setEdges, snapshot]);
 
   const removeSelected = useCallback(() => {
+    snapshot();
     if (selectedNodeId) {
       setNodes(nds => nds.filter(n => n.id !== selectedNodeId));
       setEdges(eds => eds.filter(e => e.source !== selectedNodeId && e.target !== selectedNodeId));
@@ -359,7 +448,53 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
       setEdges(eds => eds.filter(e => e.id !== selectedEdgeId));
       setSelectedEdgeId(null);
     }
-  }, [selectedNodeId, selectedEdgeId, setNodes, setEdges]);
+  }, [selectedNodeId, selectedEdgeId, setNodes, setEdges, snapshot]);
+
+  // Keyboard: undo/redo. Ignore when typing in an input/textarea/select.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && /^(INPUT|TEXTAREA|SELECT)$/.test(tgt.tagName)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      if (e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if ((e.key.toLowerCase() === "z" && e.shiftKey) || e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+
+  // Snapshot a settled drag (final position only) so a reposition is undoable.
+  const onNodeDragStop = useCallback(() => { snapshot(); }, [snapshot]);
+
+  // Index the last compile's findings by node/edge so we can badge them.
+  const issuesByNode = useMemo(() => {
+    const m: Record<string, FlowIssue[]> = {};
+    for (const it of issues || []) if (it.nodeId) (m[it.nodeId] ||= []).push(it);
+    return m;
+  }, [issues]);
+  const issuesByEdge = useMemo(() => {
+    const m: Record<string, FlowIssue[]> = {};
+    for (const it of issues || []) if (it.edgeId) (m[it.edgeId] ||= []).push(it);
+    return m;
+  }, [issues]);
+
+  // Render-only merge of issue data into nodes/edges -- never written to state,
+  // so it can't collide with user edits or the parent round-trip.
+  const displayNodes = useMemo(() => nodes.map(n => {
+    const nodeIssues = issuesByNode[n.id];
+    return nodeIssues?.length ? { ...n, data: { ...(n.data as RFData), _issue: nodeIssues[0].message } } : n;
+  }), [nodes, issuesByNode]);
+  const displayEdges = useMemo(() => edges.map(e => {
+    const edgeIssues = issuesByEdge[e.id];
+    return edgeIssues?.length
+      ? { ...e, style: { ...(e.style || {}), stroke: "#f59e0b", strokeWidth: 2 }, label: e.label || "no condition" }
+      : e;
+  }), [edges, issuesByEdge]);
+
+  const canUndo = pastRef.current.length > 0;
+  const canRedo = futureRef.current.length > 0;
+  void histVersion; // re-render trigger for canUndo/canRedo
 
   const selNode = useMemo(() => nodes.find(n => n.id === selectedNodeId), [nodes, selectedNodeId]);
   const selEdge = useMemo(() => edges.find(e => e.id === selectedEdgeId), [edges, selectedEdgeId]);
@@ -368,12 +503,27 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
     <div className="flex h-full min-h-0">
       {/* Palette */}
       <div className="w-40 border-r shrink-0 p-2 flex flex-col gap-1.5 overflow-y-auto">
+        <div className="flex items-center gap-1 px-1 pb-1">
+          <button
+            type="button" onClick={undo} disabled={!canUndo}
+            className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:pointer-events-none"
+            title="Undo (Ctrl+Z)" data-testid="button-flow-undo"
+          ><Undo2 className="w-3.5 h-3.5" /></button>
+          <button
+            type="button" onClick={redo} disabled={!canRedo}
+            className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:pointer-events-none"
+            title="Redo (Ctrl+Shift+Z)" data-testid="button-flow-redo"
+          ><Redo2 className="w-3.5 h-3.5" /></button>
+        </div>
         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-1">Add node</p>
+        <p className="text-[9px] text-muted-foreground px-1 -mt-1">Drag onto the canvas, or click to append.</p>
         {PALETTE_TYPES.map(t => {
           const m = NODE_META[t]; const Icon = m.icon;
           return (
             <button key={t} type="button" onClick={() => addNode(t)}
-              className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${m.border} ${m.bg} ${m.color} text-[11px] font-medium hover:shadow-sm transition-all text-left`}
+              draggable
+              onDragStart={e => { e.dataTransfer.setData("application/reactflow", t); e.dataTransfer.effectAllowed = "move"; }}
+              className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md border ${m.border} ${m.bg} ${m.color} text-[11px] font-medium hover:shadow-sm transition-all text-left cursor-grab active:cursor-grabbing`}
               data-testid={`palette-add-${t}`}>
               <Icon className="w-3 h-3 shrink-0" /> {m.label}
             </button>
@@ -382,13 +532,14 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
       </div>
 
       {/* Canvas */}
-      <div className="flex-1 min-w-0 relative">
+      <div className="flex-1 min-w-0 relative" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
-          nodes={nodes}
-          edges={edges}
+          nodes={displayNodes}
+          edges={displayEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onNodeDragStop={onNodeDragStop}
           nodeTypes={nodeTypes}
           onNodeClick={(_, n) => { setSelectedNodeId(n.id); setSelectedEdgeId(null); }}
           onEdgeClick={(_, e) => { setSelectedEdgeId(e.id); setSelectedNodeId(null); }}
@@ -460,6 +611,24 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
                     }}
                   />
                 </div>
+                {d.ntype === "loop" && (
+                  <div className="flex flex-col gap-1 rounded-md border border-orange-500/30 bg-orange-500/5 p-2">
+                    <label className="text-[10px] text-orange-600 dark:text-orange-400 uppercase tracking-wide font-medium">Max iterations</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={String((d.config?.maxIterations as number) ?? "")}
+                      onChange={e => {
+                        const v = e.target.value ? Math.max(1, parseInt(e.target.value)) : undefined;
+                        patchNode(selNode.id, { config: { ...(d.config || {}), maxIterations: v } }, `node:${selNode.id}:maxIterations`);
+                      }}
+                      placeholder="3"
+                      className="h-7 text-xs"
+                      data-testid="input-node-max-iterations"
+                    />
+                    <span className="text-[10px] text-muted-foreground">Caps how many times this loop retries before it gives up (compiled to a bounded retry).</span>
+                  </div>
+                )}
                 {d.ntype === "n8n" && (
                   <div className="flex flex-col gap-1 rounded-md border border-pink-500/30 bg-pink-500/5 p-2">
                     <label className="text-[10px] text-pink-600 dark:text-pink-400 uppercase tracking-wide font-medium">n8n workflow path</label>
@@ -526,10 +695,10 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
   );
 }
 
-export default function FlowGraphCanvas({ flowKey, initialNodes, initialEdges, onChange }: Props) {
+export default function FlowGraphCanvas({ flowKey, initialNodes, initialEdges, onChange, issues }: Props) {
   return (
     <ReactFlowProvider>
-      <Canvas key={flowKey} initialNodes={initialNodes} initialEdges={initialEdges} onChange={onChange} />
+      <Canvas key={flowKey} initialNodes={initialNodes} initialEdges={initialEdges} onChange={onChange} issues={issues} />
     </ReactFlowProvider>
   );
 }

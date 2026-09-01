@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Workflow, Zap, Users, Brain, Bell, Square,
   Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
-  Play, Database, GitBranch, Save,
+  Play, Database, GitBranch, Save, Mic, FolderOpen, AlertTriangle, CheckCircle2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeToGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
-import FlowGraphCanvas from "@/components/flow-graph-canvas";
+import FlowGraphCanvas, { type FlowIssue } from "@/components/flow-graph-canvas";
 import { TeamProposalDialog } from "@/components/team-proposal-flow";
 
 
@@ -158,14 +158,103 @@ export default function ProcessFlows() {
 
   const [compiled, setCompiled] = useState<any | null>(null);
   const [compileOpen, setCompileOpen] = useState(false);
+  // The last validation's node/edge-anchored findings, badged onto the canvas.
+  // Cleared the moment the graph is edited, so a badge never lingers on a step
+  // the user has since fixed.
+  const [validationIssues, setValidationIssues] = useState<FlowIssue[]>([]);
   const compileMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/process-flow/compile", { name: flowName, nodes: graph.nodes, edges: graph.edges });
       return res.json();
     },
-    onSuccess: (data) => { setCompiled(data); setCompileOpen(true); },
+    onSuccess: (data) => {
+      setCompiled(data);
+      setValidationIssues(Array.isArray(data.issues) ? data.issues : []);
+      setCompileOpen(true);
+    },
     onError: () => toast({ title: "Could not compile flow", variant: "destructive" }),
   });
+
+  // ---- Standalone flow library (save/load, no outcome required) ----
+  const [savedFlowId, setSavedFlowId] = useState<string | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const { data: savedFlows } = useQuery<any[]>({ queryKey: ["/api/process-flows"], enabled: libraryOpen });
+
+  const saveToLibraryMutation = useMutation({
+    mutationFn: async () => {
+      const name = flowName.trim() || "Untitled flow";
+      const body = { name, nodes: graph.nodes, edges: graph.edges };
+      if (savedFlowId) {
+        const res = await apiRequest("PUT", `/api/process-flows/${savedFlowId}`, body);
+        return res.json();
+      }
+      const res = await apiRequest("POST", "/api/process-flows", body);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setSavedFlowId(data.id);
+      if (!flowName.trim() && data.name) setFlowName(data.name);
+      queryClient.invalidateQueries({ queryKey: ["/api/process-flows"] });
+      toast({ title: "Flow saved to library", description: "You can reload it any time from Open." });
+    },
+    onError: (err: Error) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
+  });
+
+  const loadFlowMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("GET", `/api/process-flows/${id}`);
+      return res.json();
+    },
+    onSuccess: (rec) => {
+      const g = normalizeToGraph(rec.graph, rec.name || "Process Flow");
+      if (g && g.nodes.length > 0) {
+        replaceGraph({ nodes: g.nodes, edges: g.edges });
+        setFlowName(rec.name || g.name || "Process Flow");
+        setSavedFlowId(rec.id);
+        setValidationIssues([]);
+        setLibraryOpen(false);
+        toast({ title: "Flow loaded" });
+      }
+    },
+    onError: () => toast({ title: "Could not load that flow", variant: "destructive" }),
+  });
+
+  const deleteFlowMutation = useMutation({
+    mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/process-flows/${id}`); return id; },
+    onSuccess: (id) => {
+      if (savedFlowId === id) setSavedFlowId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/process-flows"] });
+      toast({ title: "Flow deleted" });
+    },
+    onError: () => toast({ title: "Could not delete that flow", variant: "destructive" }),
+  });
+
+  // ---- Voice dictation for the "Describe Workflow" panel ----
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const voiceSupported = typeof window !== "undefined" && (("SpeechRecognition" in window) || ("webkitSpeechRecognition" in window));
+
+  const toggleVoice = useCallback(() => {
+    if (!voiceSupported) return;
+    if (listening) { recognitionRef.current?.stop(); return; }
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    rec.continuous = true;
+    rec.onresult = (e: any) => {
+      let chunk = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) chunk += e.results[i][0].transcript;
+      }
+      if (chunk) setAiDescription(prev => (prev ? prev.trimEnd() + " " : "") + chunk.trim());
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    rec.start();
+    setListening(true);
+  }, [voiceSupported, listening]);
 
   const totalMins = graph.nodes.reduce((s, n) => s + (n.estimatedMins || 0), 0);
   const nodeCount = graph.nodes.length;
@@ -207,6 +296,27 @@ export default function ProcessFlows() {
           <Sparkles className="w-3.5 h-3.5 mr-1.5 text-purple-500" />
           {aiPanelOpen ? "Close AI" : "Describe Workflow"}
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setLibraryOpen(true)}
+          data-testid="button-open-flow-library"
+        >
+          <FolderOpen className="w-3.5 h-3.5 mr-1.5" />
+          Open
+        </Button>
+        {nodeCount > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => saveToLibraryMutation.mutate()}
+            disabled={saveToLibraryMutation.isPending}
+            data-testid="button-save-flow-to-library"
+          >
+            {saveToLibraryMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+            {savedFlowId ? "Save" : "Save to Library"}
+          </Button>
+        )}
         {urlParams.outcomeId && nodeCount > 0 && (
           <Button
             size="sm"
@@ -267,10 +377,24 @@ export default function ProcessFlows() {
           {/* AI Panel */}
           {aiPanelOpen && (
             <div className="border-b p-4 bg-muted/20 flex flex-col gap-2">
-              <p className="text-xs font-semibold flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-purple-500" />
-                Describe your workflow in plain English
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+                  Describe your workflow in plain English
+                </p>
+                {voiceSupported && (
+                  <Button
+                    size="sm"
+                    variant={listening ? "default" : "outline"}
+                    className={`h-7 ${listening ? "animate-pulse" : ""}`}
+                    onClick={toggleVoice}
+                    data-testid="button-voice-dictate"
+                  >
+                    <Mic className="w-3.5 h-3.5 mr-1.5" />
+                    {listening ? "Listening… tap to stop" : "Dictate"}
+                  </Button>
+                )}
+              </div>
               <Textarea
                 value={aiDescription}
                 onChange={e => setAiDescription(e.target.value)}
@@ -349,7 +473,8 @@ export default function ProcessFlows() {
               flowKey={`flow-${flowKey}`}
               initialNodes={graph.nodes}
               initialEdges={graph.edges}
-              onChange={(nodes, edges) => setGraph({ nodes, edges })}
+              issues={validationIssues}
+              onChange={(nodes, edges) => { setGraph({ nodes, edges }); if (validationIssues.length) setValidationIssues([]); }}
             />
           </div>
         </div>
@@ -357,9 +482,32 @@ export default function ProcessFlows() {
 
       <Dialog open={compileOpen} onOpenChange={setCompileOpen}>
         <DialogContent className="max-w-lg" data-testid="dialog-execution-plan">
-          <DialogHeader><DialogTitle>Execution Plan</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Validation &amp; Execution Plan</DialogTitle></DialogHeader>
           {compiled && (compiled.valid ? (
             <div className="flex flex-col gap-3">
+              {/* Validation verdict first: an honest go/no-go, not just a plan. */}
+              {(compiled.issues?.length ?? 0) === 0 ? (
+                <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2" data-testid="validation-clean">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span className="text-xs text-emerald-700 dark:text-emerald-300">No issues found — this flow is well-formed.</span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 p-2" data-testid="validation-issues">
+                  <div className="flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                      {compiled.issues.length} issue{compiled.issues.length !== 1 ? "s" : ""} to review — the highlighted steps on the canvas
+                    </span>
+                  </div>
+                  <ul className="flex flex-col gap-1 pl-1">
+                    {compiled.issues.map((it: FlowIssue, i: number) => (
+                      <li key={i} className="text-[11px] text-amber-700 dark:text-amber-300 flex items-start gap-1.5" data-testid={`validation-issue-${it.code}`}>
+                        <span className="mt-0.5">•</span><span>{it.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Badge variant="secondary" className="text-[10px]">{compiled.totalNodes} steps</Badge>
                 <Badge variant="outline" className="text-[10px]">{compiled.totalWaves} stages</Badge>
@@ -391,9 +539,6 @@ export default function ProcessFlows() {
               {compiled.loops.length > 0 && (
                 <p className="text-[11px] text-muted-foreground">Loops run as bounded retries: {compiled.loops.map((l: any) => `${l.from}→${l.to}`).join(", ")}</p>
               )}
-              {compiled.warnings?.length > 0 && (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400">{compiled.warnings.join(" ")}</p>
-              )}
             </div>
           ) : (
             <p className="text-sm text-destructive">{compiled.message || "This flow can't be compiled into an execution plan."}</p>
@@ -407,6 +552,31 @@ export default function ProcessFlows() {
         initialDescription={proposalDescription}
         processFlowSteps={proposalSteps}
       />
+
+      <Dialog open={libraryOpen} onOpenChange={setLibraryOpen}>
+        <DialogContent className="max-w-lg" data-testid="dialog-flow-library">
+          <DialogHeader><DialogTitle>Saved process flows</DialogTitle></DialogHeader>
+          {!savedFlows ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+          ) : savedFlows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">No saved flows yet. Build a flow and use “Save to Library”.</p>
+          ) : (
+            <div className="flex flex-col gap-1.5 max-h-80 overflow-y-auto">
+              {savedFlows.map((f: any) => (
+                <div key={f.id} className="flex items-center gap-2 rounded-md border p-2 hover-elevate" data-testid={`saved-flow-${f.id}`}>
+                  <Workflow className="w-4 h-4 text-primary shrink-0" />
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="text-sm font-medium truncate">{f.name}</span>
+                    <span className="text-[10px] text-muted-foreground">{f.nodeCount} steps · {f.edgeCount} connections · {f.updatedAt ? new Date(f.updatedAt).toLocaleDateString() : ""}</span>
+                  </div>
+                  <Button size="sm" variant="outline" className="h-7" onClick={() => loadFlowMutation.mutate(f.id)} disabled={loadFlowMutation.isPending} data-testid={`button-load-flow-${f.id}`}>Load</Button>
+                  <button type="button" onClick={() => deleteFlowMutation.mutate(f.id)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive shrink-0" data-testid={`button-delete-flow-${f.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={syncLegacyChoiceOpen} onOpenChange={setSyncLegacyChoiceOpen}>
         <DialogContent className="max-w-md" data-testid="dialog-sync-legacy-choice">
