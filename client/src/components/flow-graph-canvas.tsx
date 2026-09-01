@@ -8,7 +8,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   Play, Database, Brain, GitBranch, UserCheck, Zap, Bell, GitFork, RotateCcw, Square,
-  Trash2, X, Workflow, Sparkles, Network, SquareFunction, AlertTriangle, Undo2, Redo2,
+  Trash2, X, Workflow, Sparkles, Network, SquareFunction, AlertTriangle, Undo2, Redo2, LayoutGrid,
 } from "lucide-react";
 
 /** A node/edge-anchored validation finding from the server compiler, mirrored
@@ -24,7 +24,7 @@ export interface FlowIssue {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import type { ProcessNode, ProcessEdge, ProcessNodeType } from "@shared/process-flow";
+import { layoutGraph, type ProcessNode, type ProcessEdge, type ProcessNodeType } from "@shared/process-flow";
 import type { Skill, KnowledgeBase, Agent } from "@shared/schema";
 
 type NodeMeta = { label: string; icon: any; color: string; bg: string; border: string };
@@ -327,7 +327,7 @@ function Canvas({ initialNodes, initialEdges, onChange, issues }: Omit<Props, "f
   const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdge>(toRFEdges(initialEdges));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
 
   // ---- Undo / redo ----------------------------------------------------------
   // Snapshot the graph before each discrete mutation (add / delete / connect /
@@ -450,6 +450,18 @@ function Canvas({ initialNodes, initialEdges, onChange, issues }: Omit<Props, "f
     }
   }, [selectedNodeId, selectedEdgeId, setNodes, setEdges, snapshot]);
 
+  // Re-run the auto-layout on the current graph (manual "Tidy up") — a settled,
+  // undoable snapshot, then fit the view to the freshly arranged nodes.
+  const tidy = useCallback(() => {
+    if (nodes.length === 0) return;
+    snapshot();
+    const pn = nodes.map(n => ({ id: n.id, type: (n.data as RFData).ntype, label: (n.data as RFData).label })) as ProcessNode[];
+    const pe = edges.map(e => ({ id: e.id, from: e.source, to: e.target })) as ProcessEdge[];
+    const posById = new Map(layoutGraph(pn, pe).map(n => [n.id, n.position!]));
+    setNodes(nds => nds.map(n => (posById.get(n.id) ? { ...n, position: posById.get(n.id)! } : n)));
+    setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 60);
+  }, [nodes, edges, snapshot, setNodes, fitView]);
+
   // Keyboard: undo/redo. Ignore when typing in an input/textarea/select.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -514,6 +526,12 @@ function Canvas({ initialNodes, initialEdges, onChange, issues }: Omit<Props, "f
             className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:pointer-events-none"
             title="Redo (Ctrl+Shift+Z)" data-testid="button-flow-redo"
           ><Redo2 className="w-3.5 h-3.5" /></button>
+          <div className="flex-1" />
+          <button
+            type="button" onClick={tidy} disabled={nodes.length === 0}
+            className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:pointer-events-none"
+            title="Tidy up — auto-arrange the layout" data-testid="button-flow-tidy"
+          ><LayoutGrid className="w-3.5 h-3.5" /></button>
         </div>
         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-1">Add node</p>
         <p className="text-[9px] text-muted-foreground px-1 -mt-1">Drag onto the canvas, or click to append.</p>

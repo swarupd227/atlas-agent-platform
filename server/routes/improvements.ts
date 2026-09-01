@@ -877,7 +877,14 @@ const router = Router();
         } catch {}
       }
 
+      // Must match resolveMatchedSkills' status filter in
+      // create-team-from-proposals, which only binds active skills. Without the
+      // status check here the prompt advertised draft and deprecated skills the
+      // LLM would then dutifully name in matchedSkills, and every one of them
+      // was silently dropped at bind time -- the agent shipped with an empty
+      // Skills tab and nothing anywhere saying why. Offer only what can bind.
       const industrySkills = allSkills
+        .filter(s => s.status === "active")
         .filter(s => s.industry === industryId || s.industry === "cross_industry")
         .sort((a, b) => relevanceScore(b) - relevanceScore(a))
         .slice(0, 6);

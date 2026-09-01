@@ -16,10 +16,93 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeToGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
+import { normalizeToGraph, layoutGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
 import FlowGraphCanvas, { type FlowIssue } from "@/components/flow-graph-canvas";
 import { TeamProposalDialog } from "@/components/team-proposal-flow";
 
+
+// Small, well-formed starter flows for the empty state — so "pick a template"
+// is a real one-click path to a good-looking flow, not a dead reference. Each
+// is intentionally complete (trigger -> ... -> end, with a conditioned
+// decision) so it validates clean and demos well immediately.
+const STARTER_TEMPLATES: Array<{ key: string; name: string; blurb: string; nodes: ProcessNode[]; edges: ProcessEdge[] }> = [
+  {
+    key: "invoice",
+    name: "Invoice Approval",
+    blurb: "Approve & pay supplier invoices, with a manager gate over a threshold.",
+    nodes: [
+      { id: "t", type: "trigger", label: "Invoice received" },
+      { id: "x", type: "get_info", label: "Match to purchase order" },
+      { id: "d", type: "make_decision", label: "Over $10K?" },
+      { id: "a", type: "expert_approval", label: "Manager approval" },
+      { id: "p", type: "take_action", label: "Schedule payment" },
+      { id: "n", type: "send_notification", label: "Notify supplier" },
+      { id: "e", type: "end", label: "Done" },
+    ],
+    edges: [
+      { id: "e1", from: "t", to: "x" },
+      { id: "e2", from: "x", to: "d" },
+      { id: "e3", from: "d", to: "a", label: "Over $10K", condition: "amount > 10000" },
+      { id: "e4", from: "d", to: "p", label: "$10K or under", condition: "amount <= 10000" },
+      { id: "e5", from: "a", to: "p" },
+      { id: "e6", from: "p", to: "n" },
+      { id: "e7", from: "n", to: "e" },
+    ],
+  },
+  {
+    key: "triage",
+    name: "Support Ticket Triage",
+    blurb: "Classify a ticket, escalate the urgent ones, auto-reply the rest.",
+    nodes: [
+      { id: "t", type: "trigger", label: "Ticket submitted" },
+      { id: "c", type: "ai_reasoning", label: "Classify urgency" },
+      { id: "d", type: "make_decision", label: "Urgent?" },
+      { id: "esc", type: "take_action", label: "Escalate & page on-call" },
+      { id: "ai", type: "take_action", label: "AI drafts reply" },
+      { id: "close", type: "take_action", label: "Close ticket" },
+      { id: "e", type: "end", label: "Resolved" },
+    ],
+    edges: [
+      { id: "e1", from: "t", to: "c" },
+      { id: "e2", from: "c", to: "d" },
+      { id: "e3", from: "d", to: "esc", label: "Urgent", condition: "urgency is high" },
+      { id: "e4", from: "d", to: "ai", label: "Not urgent", condition: "urgency is not high" },
+      { id: "e5", from: "esc", to: "close" },
+      { id: "e6", from: "ai", to: "close" },
+      { id: "e7", from: "close", to: "e" },
+    ],
+  },
+  {
+    key: "returns",
+    name: "Returns & Refunds",
+    blurb: "Validate a return window, inspect the item, refund or offer credit.",
+    nodes: [
+      { id: "t", type: "trigger", label: "Return requested" },
+      { id: "w", type: "make_decision", label: "Within 30 days?" },
+      { id: "rej", type: "send_notification", label: "Reject with reason" },
+      { id: "insp", type: "get_info", label: "Inspect returned item" },
+      { id: "cond", type: "make_decision", label: "Resellable?" },
+      { id: "refund", type: "take_action", label: "Full refund" },
+      { id: "credit", type: "take_action", label: "Store credit" },
+      { id: "e", type: "end", label: "Case closed" },
+    ],
+    edges: [
+      { id: "e1", from: "t", to: "w" },
+      { id: "e2", from: "w", to: "rej", label: "Outside window", condition: "days_since_order > 30" },
+      { id: "e3", from: "w", to: "insp", label: "Within window", condition: "days_since_order <= 30" },
+      { id: "e4", from: "insp", to: "cond" },
+      { id: "e5", from: "cond", to: "refund", label: "Resellable", condition: "item is resellable" },
+      { id: "e6", from: "cond", to: "credit", label: "Damaged", condition: "item is damaged" },
+      { id: "e7", from: "rej", to: "e" },
+      { id: "e8", from: "refund", to: "e" },
+      { id: "e9", from: "credit", to: "e" },
+    ],
+  },
+];
+
+// Staged status lines shown while the AI drafts a flow, so the ~6s round-trip
+// reads as visible progress instead of a blank canvas.
+const GEN_MESSAGES = ["Reading your description…", "Drafting the steps…", "Wiring up the branches…", "Laying it out cleanly…"];
 
 export default function ProcessFlows() {
   const [, navigate] = useLocation();
@@ -45,11 +128,18 @@ export default function ProcessFlows() {
   // Bump to remount the canvas when the whole graph is replaced (AI / template / load).
   const [flowKey, setFlowKey] = useState(0);
   const replaceGraph = (g: { nodes: ProcessNode[]; edges: ProcessEdge[] }) => { setGraph(g); setFlowKey(k => k + 1); };
+  // Replace with a clean auto-laid-out graph — used for every "fresh graph"
+  // moment (AI generate, template, library load) so the flow lands as a tidy
+  // left-to-right diagram instead of an index-based grid.
+  const replaceLaidOut = (g: { nodes: ProcessNode[]; edges: ProcessEdge[] }) =>
+    replaceGraph({ nodes: layoutGraph(g.nodes, g.edges), edges: g.edges });
 
   const [aiDescription, setAiDescription] = useState(() => urlParams.outcomeName || "");
   const [aiFiles, setAiFiles] = useState<AttachedFile[]>([]);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [flowName, setFlowName] = useState(() => urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "");
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [genMsgIdx, setGenMsgIdx] = useState(0);
 
   const generateMutation = useMutation({
     mutationFn: async (description: string) => {
@@ -69,7 +159,7 @@ export default function ProcessFlows() {
       // so this also stays compatible if an older cached response ever shows up.
       const g = normalizeToGraph(data, data.name || "Generated Flow");
       if (g && g.nodes.length > 0) {
-        replaceGraph({ nodes: g.nodes, edges: g.edges });
+        replaceLaidOut({ nodes: g.nodes, edges: g.edges });
         setFlowName(data.name || "Generated Flow");
         toast({ title: "Process flow generated" });
       } else {
@@ -84,6 +174,13 @@ export default function ProcessFlows() {
       toast({ title: "Generation failed", description: "Could not generate flow. Please try again.", variant: "destructive" });
     },
   });
+
+  // Advance the generation status line while the draft is in flight.
+  useEffect(() => {
+    if (!generateMutation.isPending) { setGenMsgIdx(0); return; }
+    const t = setInterval(() => setGenMsgIdx(i => Math.min(i + 1, GEN_MESSAGES.length - 1)), 1500);
+    return () => clearInterval(t);
+  }, [generateMutation.isPending]);
 
   const queryClient = useQueryClient();
 
@@ -208,7 +305,7 @@ export default function ProcessFlows() {
     onSuccess: (rec) => {
       const g = normalizeToGraph(rec.graph, rec.name || "Process Flow");
       if (g && g.nodes.length > 0) {
-        replaceGraph({ nodes: g.nodes, edges: g.edges });
+        replaceLaidOut({ nodes: g.nodes, edges: g.edges });
         setFlowName(rec.name || g.name || "Process Flow");
         setSavedFlowId(rec.id);
         setValidationIssues([]);
@@ -455,7 +552,7 @@ export default function ProcessFlows() {
                 <span className="text-[11px] text-muted-foreground hidden lg:inline">Drag from a node's right dot to connect · click a connection to add a branch condition</span>
                 <button
                   type="button"
-                  onClick={() => { replaceGraph({ nodes: [], edges: [] }); setFlowName(""); }}
+                  onClick={() => setClearConfirmOpen(true)}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   data-testid="button-clear-flow"
                 >
@@ -468,7 +565,7 @@ export default function ProcessFlows() {
           </div>
 
           {/* Canvas — React Flow graph editor (branch / parallel / loop) */}
-          <div className="flex-1 min-h-0" data-testid="flow-canvas-container">
+          <div className="flex-1 min-h-0 relative" data-testid="flow-canvas-container">
             <FlowGraphCanvas
               flowKey={`flow-${flowKey}`}
               initialNodes={graph.nodes}
@@ -476,6 +573,53 @@ export default function ProcessFlows() {
               issues={validationIssues}
               onChange={(nodes, edges) => { setGraph({ nodes, edges }); if (validationIssues.length) setValidationIssues([]); }}
             />
+
+            {/* Generation reveal — staged status over the canvas, so the AI
+                round-trip feels like progress rather than a frozen blank. */}
+            {generateMutation.isPending && (
+              <div className="absolute inset-0 left-40 flex flex-col items-center justify-center gap-3 bg-background/70 backdrop-blur-sm z-20" data-testid="generation-overlay">
+                <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                <p className="text-sm font-medium" data-testid="text-generation-status">{GEN_MESSAGES[genMsgIdx]}</p>
+                <p className="text-xs text-muted-foreground">Designing your flow from the description…</p>
+              </div>
+            )}
+
+            {/* Empty state — a real starting point (describe or pick a template)
+                instead of a bare grid. Offset past the palette so it stays usable. */}
+            {nodeCount === 0 && !generateMutation.isPending && (
+              <div className="absolute inset-0 left-40 flex items-center justify-center p-6 pointer-events-none z-10" data-testid="empty-state">
+                <div className="flex flex-col items-center gap-4 max-w-xl pointer-events-auto">
+                  <div className="flex flex-col items-center gap-2 text-center">
+                    <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                      <Workflow className="w-6 h-6 text-primary" />
+                    </div>
+                    <h2 className="text-base font-semibold">Start building your process flow</h2>
+                    <p className="text-sm text-muted-foreground">Describe it in plain English and let AI draft it, pick a starter below, or drag nodes from the palette.</p>
+                  </div>
+                  <Button size="sm" onClick={() => setAiPanelOpen(true)} data-testid="button-empty-describe">
+                    <Sparkles className="w-3.5 h-3.5 mr-1.5 text-purple-200" />
+                    Describe your workflow
+                  </Button>
+                  <div className="flex flex-col items-center gap-2 w-full">
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">or start from a template</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full">
+                      {STARTER_TEMPLATES.map(tpl => (
+                        <button
+                          key={tpl.key}
+                          type="button"
+                          onClick={() => { replaceLaidOut({ nodes: tpl.nodes, edges: tpl.edges }); setFlowName(tpl.name); setSavedFlowId(null); setValidationIssues([]); }}
+                          className="flex flex-col gap-1 rounded-lg border p-3 text-left hover-elevate transition-all"
+                          data-testid={`template-${tpl.key}`}
+                        >
+                          <span className="text-xs font-medium">{tpl.name}</span>
+                          <span className="text-[10px] text-muted-foreground leading-snug">{tpl.blurb}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -552,6 +696,26 @@ export default function ProcessFlows() {
         initialDescription={proposalDescription}
         processFlowSteps={proposalSteps}
       />
+
+      <Dialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+        <DialogContent className="max-w-sm" data-testid="dialog-clear-confirm">
+          <DialogHeader><DialogTitle>Clear this flow?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This removes all {nodeCount} step{nodeCount !== 1 ? "s" : ""} and starts over. This can't be undone.
+            {savedFlowId ? " Your saved copy in the library is not affected." : ""}
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClearConfirmOpen(false)} data-testid="button-clear-cancel">Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => { replaceGraph({ nodes: [], edges: [] }); setFlowName(""); setSavedFlowId(null); setValidationIssues([]); setClearConfirmOpen(false); }}
+              data-testid="button-clear-confirm"
+            >
+              Clear flow
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={libraryOpen} onOpenChange={setLibraryOpen}>
         <DialogContent className="max-w-lg" data-testid="dialog-flow-library">
