@@ -313,7 +313,11 @@ async function main() {
           externalId: a.externalId,
           name: a.name,
           description: a.description,
-          type: isOrchestrator ? "team" : "single",
+          // The column is agent_type / agentType. A plain `type` key is not on
+          // the agents table, so Zod strips it silently and every agent lands
+          // as the default "single" — which then makes agent-teams/members
+          // reject the orchestrator with "Agent is not a team type".
+          agentType: isOrchestrator ? "team" : "single",
           status: "active",
           industry: DEALER_INDUSTRY_ID,
           department: a.department,
@@ -331,16 +335,37 @@ async function main() {
           maxToolIterations: 12,
         },
       );
-      if (id) agentIds.set(a.externalId, id);
+      if (!id) continue;
+      agentIds.set(a.externalId, id);
+
+      // `ensure` skips records that already exist, so a re-run after a partial
+      // or wrong-payload provision would leave them as they were. Patch the
+      // fields that must be right for the journey to work — this is what makes
+      // re-running actually repair rather than merely not-duplicate.
+      const repair: Record<string, unknown> = {
+        agentType: isOrchestrator ? "team" : "single",
+        isCuratedJourney: isOrchestrator,
+      };
+      if (isOrchestrator) {
+        repair.journeyIndustryId = DEALER_INDUSTRY_ID;
+        repair.journeySubVertical = j.subVertical;
+      }
+      await api("PATCH", `/api/agents/${id}`, repair);
     }
 
     // Wire workers to their orchestrator so the journey renders as a team.
     const orch = j.agents.find((a) => a.role === "orchestrator");
     const orchId = orch ? agentIds.get(orch.externalId) : null;
     if (orchId) {
+      // The members route has no duplicate guard — it inserts unconditionally —
+      // so read the current roster first or a re-run doubles every worker.
+      const current = await api<any[]>("GET", `/api/agent-teams/${orchId}/members`);
+      const already = new Set(
+        Array.isArray(current) ? current.map((m: any) => m.memberAgentId ?? m.member_agent_id) : []
+      );
       for (const w of j.agents.filter((a) => a.role === "worker")) {
         const wid = agentIds.get(w.externalId);
-        if (!wid) continue;
+        if (!wid || already.has(wid)) continue;
         await api("POST", "/api/agent-teams/members", { teamAgentId: orchId, memberAgentId: wid, role: "worker" });
       }
       ok(`    team wired: ${j.agents.filter((a) => a.role === "worker").length} workers under ${orch!.externalId}`);
@@ -404,7 +429,16 @@ async function main() {
       "/api/process-flows",
       (r) => r.name === flow.name,
       "/api/process-flows",
-      { name: flow.name, industry: DEALER_INDUSTRY_ID, graph: flow },
+      // nodes/edges must be TOP LEVEL: the route runs normalizeToGraph over the
+      // body itself, and isProcessFlowGraph checks body.nodes / body.edges.
+      // Nesting them under `graph` makes it return null, which surfaces as
+      // "Flow has no steps to save".
+      {
+        name: flow.name,
+        description: `${j.name} — ${flow.nodes.length} steps, ${flow.nodes.filter((n) => n.type === "expert_approval").length} human approval gates.`,
+        nodes: flow.nodes,
+        edges: flow.edges,
+      },
     );
   }
 
