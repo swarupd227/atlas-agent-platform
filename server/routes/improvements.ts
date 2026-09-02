@@ -887,7 +887,15 @@ const router = Router();
         .filter(s => s.status === "active")
         .filter(s => s.industry === industryId || s.industry === "cross_industry")
         .sort((a, b) => relevanceScore(b) - relevanceScore(a))
-        .slice(0, 6);
+        // Ranked once per OUTCOME, not per agent, so every agent on the team
+        // sees the same candidates. 6 was fine when an industry had a handful
+        // of skills; with a real library (Insurance now has 19) it means the
+        // right skill for a given worker is often simply not offered -- a
+        // Coverage Verification agent was handed straight-through-underwriting
+        // because coverage-verification ranked 7th on overall outcome keywords.
+        // Widening the window is the cheap mitigation; per-agent ranking is the
+        // real fix and is a larger change.
+        .slice(0, 14);
       const activePolicies = allPolicies.filter(p => p.status === "active")
         .sort((a, b) => relevanceScore(b) - relevanceScore(a))
         .slice(0, 8);
@@ -1430,7 +1438,7 @@ CRITICAL GUIDELINES
 3. POLICY COMPLIANCE: If active policies restrict tool usage, data handling, or autonomy levels, agents must respect these. Include relevant policy names in policyConstraints.
 4. ONTOLOGY GROUNDING: Agent roles and descriptions should use industry domain vocabulary from ontology concepts. Reference concept labels to ensure domain accuracy.
 5. TEMPLATE MATCHING: When a template closely matches a worker's role, set templateMatch to the template name and inherit its toolsConfig, policyBindings, and preloadedSkills.
-6. SKILL BINDING: Assign real skills from the Skills Library. Skills with higher performance scores and matching industry/domain should be preferred.
+6. SKILL BINDING: Assign real skills from the Skills Library, matching each agent's specific job to the skill's description and domain -- do not give every agent the same skill. performanceScore is a measured eval pass rate where one exists; 0 means NOT YET EVALUATED, not "poor", so never prefer a scored skill over a better-matching unscored one on that basis alone.
 7. RISK CALIBRATION: Use outcome riskTier, KPI breach levels, and policy constraints to determine each agent's riskTier and autonomyMode. High-risk outcome + critical KPI SLA = manual/assisted mode.
 8. NO DUPLICATES: Do not propose agents that overlap with existing agents already created for this outcome.
 9. REGULATORY AWARENESS: Include applicable regulatory frameworks as complianceTags. Reference linkedRegulations from ontology concepts.

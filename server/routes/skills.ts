@@ -1113,7 +1113,7 @@ Generate a JSON object with a "skills" array. Each skill MUST have:
 - "author": "AI Generated"
 - "trustTier": "customer-created"
 - "activationCount": 0
-- "performanceScore": a realistic score between 75 and 95
+- "performanceScore": 0 (this skill has never been evaluated; a real score is only ever written by an actual eval run)
 - "dependencies": array of 2-4 tool/connector names the skill requires (use realistic names like "erp-connector", "ml-engine", etc.)
 - "tags": array of 3-5 relevant tags
 - "agentTypeCompatibility": array from ["single", "team", "remote"] (at least 1-2 types)
