@@ -53,10 +53,13 @@ router.get("/api/agents/:id/mandate", async (req: Request<{ id: string }>, res: 
   }
 });
 
-// S1.1.4: fleet-wide mandate lint status for the Agents-list Mandate column
-// -- registered before the ":id/mandate" routes only for readability, no
-// path collision (different segment count).
-router.get("/api/agents/mandate-lint-summary", async (req: Request, res: Response) => {
+// S1.1.4: fleet-wide mandate lint status for the Agents-list Mandate column.
+// Deliberately NOT under /api/agents/... -- server/routes/agents.ts registers
+// GET /api/agents/:id BEFORE this router mounts (server/routes.ts), and
+// Express matches route order, not specificity, so "/api/agents/<anything>"
+// would be swallowed by that :id handler (404 "Agent not found") and never
+// reach here. Confirmed live: this exact collision 404'd before the rename.
+router.get("/api/mandate-lint-summary", async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req);
     const agentsList = await storage.getAgents(orgId);

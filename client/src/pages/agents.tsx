@@ -207,7 +207,7 @@ export default function Agents() {
   // S1.1.4: fleet-wide mandate lint status (server/mandate-lint.ts's
   // lintMandatesForAgents) -- one batched query, not one per agent.
   const { data: mandateLintSummary } = useQuery<Record<string, { agentId: string; ok: boolean; hasMandate: boolean }>>({
-    queryKey: ["/api/agents/mandate-lint-summary"],
+    queryKey: ["/api/mandate-lint-summary"],
   });
 
   const bulkActionMutation = useMutation({
