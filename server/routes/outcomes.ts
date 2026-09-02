@@ -1971,6 +1971,8 @@ async function createOutcomeVersion(
     nodes: z.array(z.any()).max(100).optional(),
     edges: z.array(z.any()).max(300).optional(),
     steps: z.array(z.any()).max(100).optional(),
+    // Owning journey, when the flow is authored from one.
+    teamAgentId: z.string().trim().min(1).max(64).optional(),
   });
 
   router.get("/api/process-flows", async (req, res) => {
@@ -1981,6 +1983,7 @@ async function createOutcomeVersion(
       const g = f.graph as any;
       return {
         id: f.id, name: f.name, description: f.description,
+        teamAgentId: f.teamAgentId ?? null,
         nodeCount: Array.isArray(g?.nodes) ? g.nodes.length : 0,
         edgeCount: Array.isArray(g?.edges) ? g.edges.length : 0,
         createdAt: f.createdAt, updatedAt: f.updatedAt,
@@ -2002,6 +2005,7 @@ async function createOutcomeVersion(
       const created = await storage.createProcessFlow({
         name: parsed.name,
         description: parsed.description,
+        teamAgentId: parsed.teamAgentId,
         graph: { ...graph, name: parsed.name },
       } as any);
       res.status(201).json(created);
@@ -2018,6 +2022,9 @@ async function createOutcomeVersion(
       const updated = await storage.updateProcessFlow(String(req.params.id), {
         name: parsed.name,
         description: parsed.description,
+        // Only overwrite the owning journey when one was supplied, so saving a
+        // flow from the library does not silently orphan it.
+        ...(parsed.teamAgentId ? { teamAgentId: parsed.teamAgentId } : {}),
         graph: { ...graph, name: parsed.name },
       } as any, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Process flow not found" });

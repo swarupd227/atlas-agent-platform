@@ -72,6 +72,7 @@ let kbLinked = 0;
 let kbAlready = 0;
 let mcpLinked = 0;
 let mcpAlready = 0;
+let flowsLinked = 0;
 const failures: string[] = [];
 
 function log(msg: string) { console.log(msg); }
@@ -85,7 +86,7 @@ function fail(msg: string) { console.log("  ✗ " + msg); failures.push(msg); }
  * success on a re-run and should not be counted against the summary.
  */
 async function api<T = any>(
-  method: "GET" | "POST" | "PATCH",
+  method: "GET" | "POST" | "PATCH" | "PUT",
   path: string,
   body?: unknown,
   tolerate: number[] = [],
@@ -483,22 +484,38 @@ async function main() {
   for (const j of DEALER_JOURNEYS) {
     const flow = DEALER_PROCESS_FLOWS[j.id];
     if (!flow) continue;
-    await ensure(
+    const orch = j.agents.find((a) => a.role === "orchestrator");
+    const teamAgentId = orch ? agentIds.get(orch.externalId) : undefined;
+    // nodes/edges must be TOP LEVEL: the route runs normalizeToGraph over the
+    // body itself, and isProcessFlowGraph checks body.nodes / body.edges.
+    // Nesting them under `graph` makes it return null, which surfaces as
+    // "Flow has no steps to save".
+    const body = {
+      name: flow.name,
+      description: `${j.name} — ${flow.nodes.length} steps, ${flow.nodes.filter((n) => n.type === "expert_approval").length} human approval gates.`,
+      nodes: flow.nodes,
+      edges: flow.edges,
+      // Owning journey, so the Journey Library can show this flow on the
+      // journey rather than only listing it in the standalone library.
+      ...(teamAgentId ? { teamAgentId } : {}),
+    };
+    const flowId = await ensure(
       `${j.id} flow (${flow.nodes.length} nodes, ${flow.nodes.filter((n) => n.type === "expert_approval").length} human gates)`,
       "/api/process-flows",
       (r) => r.name === flow.name,
       "/api/process-flows",
-      // nodes/edges must be TOP LEVEL: the route runs normalizeToGraph over the
-      // body itself, and isProcessFlowGraph checks body.nodes / body.edges.
-      // Nesting them under `graph` makes it return null, which surfaces as
-      // "Flow has no steps to save".
-      {
-        name: flow.name,
-        description: `${j.name} — ${flow.nodes.length} steps, ${flow.nodes.filter((n) => n.type === "expert_approval").length} human approval gates.`,
-        nodes: flow.nodes,
-        edges: flow.edges,
-      },
+      body,
     );
+    // A flow created before the journey link existed is found by `ensure` and
+    // skipped, so PUT the link onto it explicitly — otherwise the Journey
+    // Library would keep showing "Add a process flow" for a journey that has
+    // one sitting in the library.
+    if (flowId && teamAgentId) {
+      const res = await api("PUT", `/api/process-flows/${flowId}`, body);
+      if (res !== null) flowsLinked++;
+    } else if (!teamAgentId) {
+      fail(`${j.id}: orchestrator id unavailable, process flow left unlinked`);
+    }
   }
 
   // ── Summary ───────────────────────────────────────────────────────────────
@@ -507,6 +524,7 @@ async function main() {
   log(`  Created: ${created}   Reused: ${reused}   Failed: ${failures.length}`);
   log(`  Connector links: ${mcpLinked} new, ${mcpAlready} already present`);
   log(`  Knowledge base links: ${kbLinked} new, ${kbAlready} already present, ${kbAttempted} agents expected one`);
+  log(`  Process flows linked to journeys: ${flowsLinked} of ${DEALER_JOURNEYS.length}`);
   log("═══════════════════════════════════════════════════════════════");
   if (failures.length) {
     log("\nFailures (re-run is safe and will retry only what is missing):");

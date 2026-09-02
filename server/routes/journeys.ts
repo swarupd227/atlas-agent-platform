@@ -34,6 +34,10 @@ router.get("/api/journeys", async (req, res) => {
         );
         const ontologyConcepts = Array.from(new Map(allTags.map((t) => [t.conceptId, t])).values());
 
+        // The journey's own process design, when one has been authored.
+        const flows = await storage.getProcessFlows(getOrgId(req));
+        const ownFlow = flows.find((fl: any) => fl.teamAgentId === orchestrator.id);
+
         return {
           teamAgentId: orchestrator.id,
           name: orchestrator.name,
@@ -45,6 +49,16 @@ router.get("/api/journeys", async (req, res) => {
           orchestrator: { id: orchestrator.id, name: orchestrator.name },
           workers: workers.map((w) => ({ id: w.id, name: w.name, description: w.description })),
           ontologyConcepts,
+          processFlow: ownFlow
+            ? {
+                id: ownFlow.id,
+                name: ownFlow.name,
+                nodeCount: Array.isArray((ownFlow.graph as any)?.nodes) ? (ownFlow.graph as any).nodes.length : 0,
+                approvalGates: Array.isArray((ownFlow.graph as any)?.nodes)
+                  ? (ownFlow.graph as any).nodes.filter((n: any) => n.type === "expert_approval").length
+                  : 0,
+              }
+            : null,
           createdAt: orchestrator.createdAt,
         };
       }),

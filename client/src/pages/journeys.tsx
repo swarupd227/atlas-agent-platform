@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Compass, Users, BookOpen, Copy, ArrowRight, Loader2, Activity, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Compass, Users, BookOpen, Copy, ArrowRight, Loader2, Activity, CheckCircle2, AlertTriangle, Workflow, ShieldCheck, Plus } from "lucide-react";
 
 interface JourneyWorker {
   id: string;
@@ -34,6 +34,8 @@ interface Journey {
   orchestrator: { id: string; name: string };
   workers: JourneyWorker[];
   ontologyConcepts: Array<{ conceptId: string; conceptLabel: string }>;
+  /** The journey's own process design, when one has been authored. */
+  processFlow: { id: string; name: string; nodeCount: number; approvalGates: number } | null;
   createdAt: string | null;
 }
 
@@ -222,6 +224,39 @@ export default function Journeys() {
                       )}
                     </div>
                   </div>
+                )}
+
+                {journey.processFlow ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/process-flows?flowId=${journey.processFlow!.id}&teamAgentId=${journey.teamAgentId}`)}
+                    className="flex items-center gap-1.5 text-left rounded px-1.5 py-1 -mx-1.5 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    data-testid={`button-view-flow-${journey.teamAgentId}`}
+                    title="Open this journey's process flow"
+                  >
+                    <Workflow className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span className="text-[11px] text-muted-foreground">
+                      {journey.processFlow.nodeCount} steps
+                    </span>
+                    {journey.processFlow.approvalGates > 0 && (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400">
+                        <ShieldCheck className="w-3 h-3" />
+                        {journey.processFlow.approvalGates} approval gate{journey.processFlow.approvalGates === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    <ArrowRight className="w-3 h-3 text-muted-foreground ml-auto shrink-0" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/process-flows?teamAgentId=${journey.teamAgentId}&outcomeName=${encodeURIComponent(journey.name)}`)}
+                    className="flex items-center gap-1.5 text-left rounded px-1.5 py-1 -mx-1.5 text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    data-testid={`button-create-flow-${journey.teamAgentId}`}
+                    title="Design a process flow for this journey"
+                  >
+                    <Plus className="w-3.5 h-3.5 shrink-0" />
+                    <span className="text-[11px]">Add a process flow</span>
+                  </button>
                 )}
 
                 <JourneyHealthBadge teamAgentId={journey.teamAgentId} />

@@ -111,7 +111,15 @@ export default function ProcessFlows() {
 
   const urlParams = useMemo(() => {
     const p = new URLSearchParams(searchString);
-    return { outcomeId: p.get("outcomeId") || "", outcomeName: p.get("outcomeName") || "", kpis: p.get("kpis") || "" };
+    return {
+      outcomeId: p.get("outcomeId") || "",
+      outcomeName: p.get("outcomeName") || "",
+      kpis: p.get("kpis") || "",
+      // Deep link from the Journey Library: open this saved flow, and keep the
+      // journey it belongs to so a save preserves the link.
+      flowId: p.get("flowId") || "",
+      teamAgentId: p.get("teamAgentId") || "",
+    };
   }, [searchString]);
 
   const [graph, setGraph] = useState<{ nodes: ProcessNode[]; edges: ProcessEdge[] }>(() => {
@@ -280,7 +288,14 @@ export default function ProcessFlows() {
   const saveToLibraryMutation = useMutation({
     mutationFn: async () => {
       const name = flowName.trim() || "Untitled flow";
-      const body = { name, nodes: graph.nodes, edges: graph.edges };
+      const body = {
+        name,
+        nodes: graph.nodes,
+        edges: graph.edges,
+        // Preserve the journey this flow belongs to when the studio was opened
+        // from the Journey Library, so saving does not orphan it.
+        ...(urlParams.teamAgentId ? { teamAgentId: urlParams.teamAgentId } : {}),
+      };
       if (savedFlowId) {
         const res = await apiRequest("PUT", `/api/process-flows/${savedFlowId}`, body);
         return res.json();
@@ -296,6 +311,9 @@ export default function ProcessFlows() {
     },
     onError: (err: Error) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
   });
+
+  // Deep link from the Journey Library: load the journey own flow on open.
+  const deepLinkLoadedRef = useRef<string | null>(null);
 
   const loadFlowMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -315,6 +333,19 @@ export default function ProcessFlows() {
     },
     onError: () => toast({ title: "Could not load that flow", variant: "destructive" }),
   });
+
+  // Opened from the Journey Library with ?flowId= — load that flow once, so a
+  // journey can show its own process design rather than sending the user to
+  // hunt for it in the library.
+  useEffect(() => {
+    const id = urlParams.flowId;
+    if (!id || deepLinkLoadedRef.current === id) return;
+    deepLinkLoadedRef.current = id;
+    loadFlowMutation.mutate(id);
+    // loadFlowMutation is stable for the component's lifetime; re-running on
+    // its identity would reload the flow and discard in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlParams.flowId]);
 
   const deleteFlowMutation = useMutation({
     mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/process-flows/${id}`); return id; },

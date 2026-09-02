@@ -1698,6 +1698,11 @@ export async function runStartupMigrations() {
       ALTER TABLE agents ADD COLUMN IF NOT EXISTS is_curated_journey BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE agents ADD COLUMN IF NOT EXISTS journey_industry_id TEXT;
       ALTER TABLE agents ADD COLUMN IF NOT EXISTS journey_sub_vertical TEXT;
+      -- Lets a saved process flow belong to a journey, so the Journey Library
+      -- can surface a journey's own process design instead of only listing it
+      -- in the standalone flow library.
+      ALTER TABLE process_flows ADD COLUMN IF NOT EXISTS team_agent_id VARCHAR;
+      CREATE INDEX IF NOT EXISTS idx_process_flows_team_agent ON process_flows(team_agent_id);
       CREATE INDEX IF NOT EXISTS idx_agents_curated_journey ON agents(is_curated_journey) WHERE is_curated_journey = true;
     `);
 

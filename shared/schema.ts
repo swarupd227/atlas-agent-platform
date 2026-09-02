@@ -1530,6 +1530,11 @@ export const processFlows = pgTable("process_flows", {
   name: text("name").notNull(),
   description: text("description"),
   graph: jsonb("graph").notNull(),
+  // Optional owning journey (the team agent that orchestrates it). Null for a
+  // standalone flow in the library. Without this a flow could only ever be
+  // found by browsing the library, so a journey had no way to show its own
+  // process design.
+  teamAgentId: varchar("team_agent_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
