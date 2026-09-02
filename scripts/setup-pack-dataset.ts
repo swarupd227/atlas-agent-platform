@@ -282,18 +282,21 @@ async function main() {
     const host = new URL(url).hostname;
     const database = new URL(url).pathname.replace(/^\//, "");
     log("\n═══════════════════════════════════════════════════════════════");
-    log("  Loaded. Configure the two connections with:");
+    log("  Loaded. Now connect it, then provision:");
     log("═══════════════════════════════════════════════════════════════");
-    log(`\n  Read-only analyst connection (integration: postgres, createNew: true)`);
-    log(`    host=${host}  database=${database}  user=summit_reader  ssl=require`);
-    // Every table, not just the seeded ones: the agent-written tables
-    // (journal_entries, credit_memos, credit_holds, research_queue,
-    // warranty_claims) are the audit trail, and the analyst connection must be
-    // able to read them.
-    log(`    allowedTables=${SUMMIT_TABLES.join(",")}`);
-    log(`\n  Dealer action connection (integration: dealer-operations)`);
-    log(`    host=${host}  database=${database}  user=summit_writer  schema=${SUMMIT_SCHEMA}  ssl=require`);
-    log(`\n  Then: npx tsx scripts/provision-pack.ts`);
+    // The role passwords were just rotated, so any previously stored
+    // connection credentials are now stale. connect-pack-dataset.ts repairs
+    // them in place rather than creating duplicate sibling connections.
+    log(`
+  export DB_HOST=${host} DB_NAME=${database}
+  npx tsx scripts/connect-pack-dataset.ts
+  npx tsx scripts/provision-pack.ts
+
+  (BASE_URL, ADMIN_PASSWORD, SUMMIT_READER_PASSWORD and SUMMIT_WRITER_PASSWORD
+   must already be exported — they are the values used above.)`);
+    log(`\n  Read connection scope: ${SUMMIT_TABLES.length} tables, including the`);
+    log(`  agent-written audit trail (journal_entries, credit_memos, credit_holds,`);
+    log(`  research_queue, warranty_claims).`);
   } finally {
     client.release();
     await pool.end();
