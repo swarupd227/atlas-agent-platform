@@ -53,10 +53,20 @@ fi
 
 if az network vnet subnet show --resource-group "$RG" --vnet-name "$MCP_VNET" --name "$MCP_SUBNET_INFRA" --output none 2>/dev/null; then
   echo "  $MCP_SUBNET_INFRA already exists — skipping create."
+  # Still make sure the delegation is present even if the subnet was created
+  # by an earlier, buggy run of this script (before this delegation was added).
+  az network vnet subnet update \
+    --resource-group "$RG" --vnet-name "$MCP_VNET" --name "$MCP_SUBNET_INFRA" \
+    --delegations Microsoft.App/environments \
+    --output none
 else
+  # A Container Apps environment built on a custom VNet requires its
+  # infrastructure subnet delegated to Microsoft.App/environments -- without
+  # this, environment creation fails with ManagedEnvironmentSubnetDelegationError.
   az network vnet subnet create \
     --resource-group "$RG" --vnet-name "$MCP_VNET" --name "$MCP_SUBNET_INFRA" \
     --address-prefixes 10.10.0.0/23 \
+    --delegations Microsoft.App/environments \
     --output none
 fi
 
