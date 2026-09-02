@@ -376,11 +376,28 @@ async function main() {
           if (res !== null) ok(`      ${a.name} → Dealer Operations connector`);
         }
       }
-      const kbId = a.kbName ? kbIds.get(a.kbName) : undefined;
-      if (kbId) {
-        const links = await api<any[]>("GET", `/api/agents/${id}/knowledge-bases`);
-        const has = Array.isArray(links) && links.some((l: any) => (l.knowledgeBaseId ?? l.knowledge_base_id) === kbId);
-        if (!has) await api("POST", `/api/agents/${id}/knowledge-bases`, { knowledgeBaseId: kbId, priority: 1 });
+      if (a.kbName) {
+        const kbId = kbIds.get(a.kbName);
+        if (!kbId) {
+          // Never skip a binding in silence — that is how ten agents ended up
+          // with no knowledge base and nothing said so.
+          fail(`${a.name}: knowledge base "${a.kbName}" did not resolve to an id; binding skipped`);
+        } else {
+          const links = await api<any[]>("GET", `/api/agents/${id}/knowledge-bases`);
+          const has = Array.isArray(links) && links.some((l: any) => (l.knowledgeBaseId ?? l.knowledge_base_id) === kbId);
+          if (!has) {
+            // priority and retrievalConfig carry database defaults, but
+            // drizzle-zod still marks notNull-with-default columns as required
+            // on insert in some versions, so send them explicitly rather than
+            // relying on the default surviving the schema parse.
+            const res = await api("POST", `/api/agents/${id}/knowledge-bases`, {
+              knowledgeBaseId: kbId,
+              priority: 1,
+              retrievalConfig: { topK: 5, scoreThreshold: 0.3 },
+            });
+            if (res !== null) ok(`      ${a.name} → KB "${a.kbName}"`);
+          }
+        }
       }
     }
 
