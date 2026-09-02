@@ -131,10 +131,12 @@ import { createSqlServerRouter } from "./integrations/sql/sqlserver/mcp-server";
 import { relayAgentsRouter } from "./relay/routes";
 import { attachRelayServer } from "./relay/relay-server";
 
+import { packEvalFrameworks } from "@shared/industry-packs";
+
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
 
-export const industryEvalFrameworks: Record<string, {
+const builtInEvalFrameworks: Record<string, {
   id: string;
   label: string;
   description: string;
@@ -211,19 +213,15 @@ export const industryEvalFrameworks: Record<string, {
       { id: "security_practices", name: "Security Best Practices", description: "Authentication, authorization, input sanitization, and secret management", weight: 3, scoringCriteria: ["Input sanitized", "Auth tokens validated", "Secrets not exposed", "OWASP Top 10 addressed"] },
     ],
   },
-  equipment_dealer: {
-    id: "equipment_dealer",
-    label: "Equipment Dealers & Distribution",
-    description: "Financial posting accuracy, OEM warranty program compliance, revenue recognition, equipment identity integrity, and collections conduct for heavy equipment dealerships",
-    dimensions: [
-      { id: "financial_accuracy", name: "Financial Accuracy", description: "Correctness of cash application, invoice, credit-memo, and settlement-discount arithmetic across parts, service, rental, and whole-goods billing", weight: 3, scoringCriteria: ["Payment applied to correct customer and invoice", "Short-pay variance classified correctly", "Settlement discount within contract terms", "Tax, freight, and environmental fees calculated correctly"] },
-      { id: "warranty_program_compliance", name: "OEM Warranty Program Compliance", description: "Conformance of warranty claims to manufacturer coverage windows, labour-time standards, and documentation requirements", weight: 2.5, scoringCriteria: ["Within calendar and meter-hour coverage window", "Labour claimed at published standard time", "Failure narrative and causal part present", "Correct program code and claim type applied"] },
-      { id: "revenue_recognition", name: "Revenue Recognition Correctness", description: "Correct period, category, and performance-obligation treatment under ASC 606 and ASC 842", weight: 2.5, scoringCriteria: ["Revenue recognised in the period the obligation was satisfied", "Rental versus lease classification assessed", "Multi-obligation contracts split correctly", "Cross-period postings flagged rather than forced"] },
-      { id: "equipment_data_integrity", name: "Equipment Identity Integrity", description: "Correct binding of serial number, model, meter hours, and branch to the right fleet asset before any financial posting", weight: 2, scoringCriteria: ["Serial or PIN resolves to exactly one asset", "Make and model corroborate the serial", "Meter hours plausible against service history", "Ambiguous identity escalated, never guessed"] },
-      { id: "collections_conduct", name: "Collections Conduct", description: "Credit holds, dunning language, and escalation are justified, proportionate, and use approved customer-facing wording", weight: 1.5, scoringCriteria: ["Credit hold supported by documented ageing evidence", "Approved dunning language used", "Escalation proportionate to exposure", "Disputed balances excluded from hold calculation"] },
-    ],
-  },
 };
+
+/** Built-in eval frameworks plus every industry pack's. */
+export const industryEvalFrameworks: Record<string, {
+  id: string;
+  label: string;
+  description: string;
+  dimensions: Array<{ id: string; name: string; description: string; weight: number; scoringCriteria: string[] }>;
+}> = { ...builtInEvalFrameworks, ...packEvalFrameworks };
 
 export async function registerRoutes(
   httpServer: Server,

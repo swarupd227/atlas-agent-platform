@@ -465,7 +465,7 @@ export async function post_warranty_receivable(c: DealerClient, args: Record<str
         amount_usd, accounting_period, source_document, posted_by_agent)
      VALUES ($1,$2,$3,'warranty_receivable','1250-Warranty Receivable','4200-Warranty Revenue',$4,$5,$6,$7)`,
     [entryId, wo.branch_id, wo.account_id ?? null, money(N(claim.approved_amount_usd)), period,
-     `Warranty claim ${claimId} / work order ${claim.work_order_id}`, A(args.agent_id) || "ED-AGT-302"]
+     `Warranty claim ${claimId} / work order ${claim.work_order_id}`, A(args.agent_id) || null]
   );
   return ok({
     posted: true, entry_id: entryId, claim_id: claimId,

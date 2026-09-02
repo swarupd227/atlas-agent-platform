@@ -52,19 +52,37 @@ import {
   Info,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { INDUSTRY_PACKS } from "@shared/industry-packs";
 
-const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
+/** Icons a pack may name, resolved here so shared/ stays free of React. */
+const PACK_SKILL_ICONS: Record<string, typeof Building2> = { Truck, Factory, Briefcase, Heart, Shield, ShoppingCart, Scale, Cpu };
+
+const BUILT_IN_INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
   financial_services: { label: "Financial Services", icon: Briefcase, color: "text-blue-600 dark:text-blue-400" },
   healthcare: { label: "Healthcare", icon: Heart, color: "text-rose-600 dark:text-rose-400" },
   manufacturing: { label: "Manufacturing", icon: Factory, color: "text-amber-600 dark:text-amber-400" },
   insurance: { label: "Insurance", icon: Shield, color: "text-indigo-600 dark:text-indigo-400" },
   retail: { label: "Retail", icon: ShoppingCart, color: "text-emerald-600 dark:text-emerald-400" },
   legal_services: { label: "Legal Services", icon: Scale, color: "text-violet-600 dark:text-violet-400" },
-  equipment_dealer: { label: "Equipment Dealers & Distribution", icon: Truck, color: "text-yellow-600 dark:text-yellow-400" },
   technology_saas: { label: "Technology / SaaS", icon: Cpu, color: "text-cyan-600 dark:text-cyan-400" },
   supply_chain: { label: "Supply Chain", icon: GitBranch, color: "text-orange-600 dark:text-orange-400" },
   enterprise: { label: "Enterprise", icon: Building2, color: "text-slate-600 dark:text-slate-400" },
   cross_industry: { label: "Cross-Industry", icon: Layers, color: "text-gray-600 dark:text-gray-400" },
+};
+
+/** Built-ins plus every industry pack, so a new vertical needs no edit here. */
+const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
+  ...BUILT_IN_INDUSTRY_CONFIG,
+  ...Object.fromEntries(
+    INDUSTRY_PACKS.map((p) => [
+      p.id,
+      {
+        label: p.profile.label,
+        icon: PACK_SKILL_ICONS[p.profile.iconName] ?? Building2,
+        color: "text-yellow-600 dark:text-yellow-400",
+      },
+    ])
+  ),
 };
 
 const TRUST_TIER_STYLES: Record<string, string> = {

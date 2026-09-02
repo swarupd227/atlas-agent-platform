@@ -52,6 +52,7 @@ import {
   Info,
   RefreshCw,
 } from "lucide-react";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 const TRAFFIC_STAGES = [1, 5, 25, 50, 100];
 
@@ -1262,7 +1263,9 @@ export default function CanaryDeploymentPage() {
                   <SelectItem value="retail">Retail</SelectItem>
                   <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                   <SelectItem value="legal_services">Legal Services</SelectItem>
-                  <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
+                  {packIndustryOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
                   <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                 </SelectContent>
               </Select>

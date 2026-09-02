@@ -81,6 +81,7 @@ import {
   Globe,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { packWizardPresets, packWizardContexts } from "@shared/industry-packs";
 
 const iconMap: Record<string, LucideIcon> = {
   headphones: Headphones,
@@ -375,7 +376,7 @@ const defaultWizardState: WizardState = {
   autonomousTriggers: [],
 };
 
-const INDUSTRY_PRESETS: Record<string, {
+const BUILT_IN_PRESETS: Record<string, {
   label: string;
   riskTier: string;
   autonomyMode: string;
@@ -438,15 +439,6 @@ const INDUSTRY_PRESETS: Record<string, {
     forbiddenOutputs: ["Raw API keys or tokens", "Internal infrastructure details", "Customer data without consent"],
     allowedActions: ["Read application metrics", "Query user analytics", "Generate usage reports"],
   },
-  equipment_dealer: {
-    label: "Equipment Dealer Defaults",
-    riskTier: "HIGH",
-    autonomyMode: "assisted",
-    stopConditions: ["Credit memo above branch authority limit", "Serial number resolves to more than one fleet asset", "Revenue posting would cross an accounting period", "Warranty claim falls outside OEM coverage window"],
-    escalationTriggers: ["Payment cannot be matched to an invoice above confidence floor", "Customer disputes a balance under active credit hold", "Strategic or OEM-affiliated account flagged for credit hold", "Rental off-rent date contradicted by telematics"],
-    forbiddenOutputs: ["Self-approved credit memos above authority limit", "Repossession or legal threats in customer correspondence", "Warranty submissions with unverified equipment identity", "Ledger postings without a linked source document"],
-    allowedActions: ["Read customer AR ageing", "Query invoice and work-order history", "Match remittances to open invoices", "Assemble draft warranty claims", "Query fleet and telematics records"],
-  },
   cross_industry: {
     label: "Cross-Industry Defaults",
     riskTier: "MEDIUM",
@@ -458,7 +450,7 @@ const INDUSTRY_PRESETS: Record<string, {
   },
 };
 
-const INDUSTRY_CONTEXT_CONFIG: Record<string, {
+const BUILT_IN_CONTEXT_CONFIG: Record<string, {
   defaultSkills: string[];
   recommendedModel: { provider: string; model: string; reasoning: string };
   modelBenchmarks: Array<{ model: string; provider: string; score: number; reasoning: string }>;
@@ -737,46 +729,11 @@ const INDUSTRY_CONTEXT_CONFIG: Record<string, {
       workflow_execution: { label: "Workflow Execution", low: 0.05, high: 0.20, unit: "per execution" },
     },
   },
-  equipment_dealer: {
-    defaultSkills: ["Remittance Parsing", "Invoice Matching", "Warranty Claim Assembly", "Rental Billing Reconciliation", "Credit Risk Triage"],
-    recommendedModel: { provider: "anthropic", model: "claude-sonnet-4-5", reasoning: "Strong extraction from messy remittance advices and scanned work orders, with reliable arithmetic on multi-line invoice matching" },
-    modelBenchmarks: [
-      { model: "claude-sonnet-4-5", provider: "anthropic", score: 93, reasoning: "Best document extraction accuracy on unstructured remittance and work-order text" },
-      { model: "gpt-4.1", provider: "openai", score: 90, reasoning: "Strong structured reasoning for coverage-window and authority-limit checks" },
-      { model: "gpt-4o", provider: "openai", score: 84, reasoning: "Cost-effective for high-volume routine invoice matching" },
-    ],
-    compliancePrerequisites: ["SOX Control Walkthrough", "ASC 606 / ASC 842 Revenue Policy Review", "OEM Warranty Program Terms Attestation", "Dealer Credit Policy Sign-off"],
-    mcpTools: [
-      { name: "dealer_erp_ar", description: "Customer AR ageing, open invoices, credit limits, and payment history from the dealer ERP", permissionScope: "READ", dataClasses: ["financial_data", "customer_pii"], failureModes: ["erp_offline", "branch_scope_missing"], rateLimit: "120/min", costPerCall: 0.002, accessTier: "STANDARD" },
-      { name: "cash_application_post", description: "Apply a matched payment to one or more invoices and post to the branch ledger", permissionScope: "WRITE", dataClasses: ["financial_data"], failureModes: ["posting_period_closed", "approval_pending"], rateLimit: "30/min", costPerCall: 0.01, accessTier: "RESTRICTED", writeAccess: true },
-      { name: "fleet_asset_registry", description: "Resolve serial number or PIN to a fleet asset with make, model, meter hours, and branch", permissionScope: "READ", dataClasses: ["asset_data"], failureModes: ["ambiguous_serial", "asset_not_found"], rateLimit: "200/min", costPerCall: 0.001, accessTier: "STANDARD" },
-      { name: "oem_warranty_portal", description: "Validate coverage and submit warranty claims to manufacturer portals", permissionScope: "WRITE", dataClasses: ["warranty_data", "financial_data"], failureModes: ["portal_timeout", "program_terms_changed"], rateLimit: "20/min", costPerCall: 0.02, accessTier: "RESTRICTED", writeAccess: true },
-      { name: "rental_contract_telematics", description: "Rental contract terms alongside AEMP telematics utilisation and meter readings", permissionScope: "READ", dataClasses: ["contract_data", "telemetry_data"], failureModes: ["telematics_lag", "unit_not_reporting"], rateLimit: "100/min", costPerCall: 0.002, accessTier: "STANDARD" },
-    ],
-    dataSensitivityClasses: ["Customer PII", "Financial Data", "Contract Terms", "OEM Program Data"],
-    contentFilters: ["Block repossession or legal threats in customer-facing text", "Detect credit memos above authority limit", "Flag ledger postings lacking a source document", "Block warranty submissions with unresolved equipment identity"],
-    memoryGovernance: [
-      { rule: "Customer bank and remittance detail must never persist in conversation memory", regulation: "SOX", type: "exclusion" },
-      { rule: "Financial posting decisions retained for seven years for audit", regulation: "SOX", type: "retention" },
-      { rule: "OEM program terms cached no longer than 24 hours before revalidation", regulation: "OEM Warranty Program Terms", type: "retention" },
-    ],
-    contextBudgetPreset: [
-      { category: "System Instructions", pct: 16, tokens: 1311 },
-      { category: "Industry Ontology", pct: 18, tokens: 1475 },
-      { category: "Regulatory Context", pct: 12, tokens: 983 },
-      { category: "Skill Instructions", pct: 17, tokens: 1393 },
-      { category: "Conversation History", pct: 12, tokens: 983 },
-      { category: "Retrieved Knowledge", pct: 17, tokens: 1393 },
-      { category: "Tool Descriptions", pct: 8, tokens: 655 },
-    ],
-    costBenchmarks: {
-      cash_application: { label: "Cash Application", low: 0.04, high: 0.18, unit: "per remittance" },
-      warranty_claim: { label: "Warranty Claim Assembly", low: 0.20, high: 0.65, unit: "per claim" },
-      collections_outreach: { label: "Collections Triage", low: 0.08, high: 0.30, unit: "per account" },
-      rental_billing_review: { label: "Rental Billing Review", low: 0.06, high: 0.22, unit: "per contract" },
-    },
-  },
 };
+
+/** Built-in wizard defaults merged with every industry pack's. */
+const INDUSTRY_PRESETS = { ...BUILT_IN_PRESETS, ...packWizardPresets } as typeof BUILT_IN_PRESETS;
+const INDUSTRY_CONTEXT_CONFIG = { ...BUILT_IN_CONTEXT_CONFIG, ...packWizardContexts } as typeof BUILT_IN_CONTEXT_CONFIG;
 
 export default function AgentWizard() {
   const { industry, subVertical } = useIndustry();

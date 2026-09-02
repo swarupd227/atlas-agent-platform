@@ -69,6 +69,8 @@ import { useSpeechToText } from "@/hooks/use-speech-to-text";
 import type { IndustryId } from "@/components/industry-provider";
 import type { LucideIcon } from "lucide-react";
 import { useRole } from "@/components/role-provider";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
+import { packStarterPrompts } from "@shared/industry-packs";
 
 interface PlatformIntelTool {
   proposedName: string;
@@ -201,13 +203,7 @@ interface StarterPrompt {
   prompt: string;
 }
 
-const INDUSTRY_STARTER_PROMPTS: Record<IndustryId | "null", StarterPrompt[]> = {
-  equipment_dealer: [
-    { icon: Zap, label: "Cut DSO and Unapplied Cash", prompt: "We receive about 1,400 customer payments a month across ACH, cheque, and lockbox, and 22% of them need manual research because the remittance advice is unstructured or covers several branches. DSO sits at 52 days and unapplied cash averages $1.8M. We want touchless cash application above 85% with DSO under 40 days and zero misapplied payments." },
-    { icon: Target, label: "Recover Lost Warranty Dollars", prompt: "Our OEM warranty claims are denied at a 19% rate, mostly for coverage-window errors, labour hours above published standard time, and missing failure narratives. We estimate $2.4M of eligible warranty spend goes unrecovered each year. We want the denial rate below 6% and days-to-reimbursement under 15." },
-    { icon: BarChart3, label: "Close Rental Billing Leakage", prompt: "Rental cycle billing is reconciled by hand against contract terms and telematics. We are losing revenue to unbilled extra hours, disputed off-rent dates, and uncharged damage and fuel. We believe leakage is 3-5% of rental revenue and want it under 1% with every adjustment evidenced by hour-meter data." },
-    { icon: Shield, label: "Make Credit Holds Defensible", prompt: "Credit holds are applied inconsistently across 14 branches, sometimes on accounts with legitimate open disputes, which damages relationships with our largest fleet customers. We want every hold backed by documented ageing evidence, disputed balances excluded automatically, and strategic accounts always routed to a human." },
-  ],
+const BUILT_IN_STARTER_PROMPTS: Record<string, StarterPrompt[]> = {
   financial_services: [
     { icon: Target, label: "Accelerate KYC Onboarding", prompt: "Our KYC onboarding process takes an average of 5 business days. We want to reduce it to under 24 hours while maintaining full regulatory compliance with BSA/AML requirements." },
     { icon: Shield, label: "Reduce False Positive Alert Rate", prompt: "Our transaction monitoring system generates over 95% false positives. We need to reduce the false positive rate to under 30% while ensuring zero missed true positives for SAR filing." },
@@ -263,6 +259,21 @@ interface IndustryKpi {
   target: string;
   benchmark: string;
 }
+
+/** Icons a pack may name for a starter prompt. Packs carry names, not
+ *  components, so shared/ stays free of React. */
+const PROMPT_ICONS: Record<string, typeof Target> = { Target, Shield, BarChart3, Zap };
+
+/** Built-in starter prompts merged with every industry pack's. */
+const INDUSTRY_STARTER_PROMPTS: Record<string, StarterPrompt[]> = {
+  ...BUILT_IN_STARTER_PROMPTS,
+  ...Object.fromEntries(
+    Object.entries(packStarterPrompts).map(([id, prompts]) => [
+      id,
+      prompts.map((p) => ({ icon: PROMPT_ICONS[p.iconName] ?? Target, label: p.label, prompt: p.prompt })),
+    ])
+  ),
+};
 
 const INDUSTRY_KPI_LIBRARY: Record<string, IndustryKpi[]> = {
   financial_services: [
@@ -496,7 +507,7 @@ export default function OutcomeDiscover() {
       manufacturing: "Manufacturing",
       retail: "Retail",
       technology_saas: "Technology / SaaS",
-      equipment_dealer: "Equipment Dealers & Distribution",
+      ...packIndustryLabels,
       custom: "Custom",
     };
     return labels[id] || id;

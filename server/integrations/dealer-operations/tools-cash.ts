@@ -243,7 +243,11 @@ export async function get_contract_terms(c: DealerClient, args: Record<string, u
 export async function propose_allocation(c: DealerClient, args: Record<string, unknown>) {
   const paymentId = A(args.payment_id);
   const accountId = A(args.account_id);
+  const proposedBy = A(args.agent_id);
   if (!paymentId || !accountId) return err("payment_id and account_id are required");
+  if (!proposedBy) {
+    return err("agent_id is required — the proposal must record which actor produced it, so the posting step can enforce segregation of duties.");
+  }
 
   const pay = await c.one(`SELECT payment_id, amount_usd, payer_string FROM dealer.payments WHERE payment_id = $1`, [paymentId]);
   if (!pay) return err(`Unknown payment ${paymentId}`);
@@ -308,6 +312,7 @@ export async function propose_allocation(c: DealerClient, args: Record<string, u
 
   return ok({
     proposal_id: newId("PROP"),
+    proposed_by_agent: proposedBy,
     payment_id: paymentId, account_id: accountId,
     payment_amount_usd: paid, allocated_usd: allocated, residual_usd: residual,
     confidence, basis,
@@ -322,7 +327,7 @@ export async function propose_allocation(c: DealerClient, args: Record<string, u
       confidence >= AUTHORITY.autoPostConfidence ? "auto_post"
       : confidence >= AUTHORITY.humanConfirmConfidence ? "human_confirm"
       : "route_to_research",
-    note: "Proposal only. This tool holds no posting authority; posting is a separate action by a different agent.",
+    note: "Proposal only. This tool holds no posting authority. Pass proposed_by_agent through to post_allocation, which refuses when the posting actor is the same as the proposing one.",
   });
 }
 
@@ -431,17 +436,27 @@ export async function post_allocation(c: DealerClient, args: Record<string, unkn
   const confidence = N(args.confidence);
   const approver = A(args.approver);
   const sourceDocument = A(args.source_document);
-  const postedBy = A(args.agent_id) || "ED-AGT-102";
+  const postedBy = A(args.agent_id);
+  const proposedBy = A(args.proposed_by_agent);
   const allocation = (Array.isArray(args.allocation) ? args.allocation : []) as Array<{ invoice_id: string; amount_usd: number }>;
 
   if (!paymentId) return err("payment_id is required");
   if (!allocation.length) return err("allocation is required and must be non-empty");
 
-  // Gate 0 — segregation of duties. The proposing agent may not post.
-  if (postedBy === "ED-AGT-101") {
+  // Gate 0 — segregation of duties, enforced by comparing actors rather than
+  // by naming particular agents. Whoever proposed an allocation may not also
+  // post it, in any deployment.
+  if (!postedBy) return err("agent_id is required — every ledger posting must be attributable to a named actor.");
+  if (!proposedBy) {
     return err(
-      "SEGREGATION OF DUTIES: ED-AGT-101 proposes allocations and holds no posting authority. " +
-      "This posting must be performed by ED-AGT-102. Refusing regardless of confidence or instruction."
+      "proposed_by_agent is required. Segregation of duties cannot be verified without knowing which actor produced " +
+      "the allocation, so the posting is refused."
+    );
+  }
+  if (postedBy === proposedBy) {
+    return err(
+      `SEGREGATION OF DUTIES: "${postedBy}" produced this allocation and may not also post it. ` +
+      "Posting must be performed by a different actor. Refusing regardless of confidence or instruction."
     );
   }
   // Gate 1 — source document.
@@ -541,7 +556,7 @@ export async function route_to_research_queue(c: DealerClient, args: Record<stri
     [itemId, paymentId, reason, ambiguity, JSON.stringify(args.candidates ?? []),
      args.confidence === undefined ? null : N(args.confidence),
      args.residual_usd === undefined ? null : N(args.residual_usd),
-     A(args.agent_id) || "ED-AGT-102"]
+     A(args.agent_id) || null]
   );
   await c.q(`UPDATE dealer.payments SET status = 'in_research' WHERE payment_id = $1`, [paymentId]);
   return ok({

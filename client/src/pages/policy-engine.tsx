@@ -71,6 +71,7 @@ import type {
   ComplianceControl,
   RegulatoryChange,
 } from "@shared/schema";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 function severityColor(severity: string): string {
   switch (severity) {
@@ -683,7 +684,9 @@ export default function PolicyEngine() {
                 <SelectItem value="retail">Retail</SelectItem>
                 <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                 <SelectItem value="legal_services">Legal Services</SelectItem>
-                <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
+                {packIndustryOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

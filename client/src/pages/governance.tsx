@@ -115,6 +115,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Policy, AuditEvent, Approval, Agent, PolicyException, ComplianceReport, PolicyTestCase, McpServerTool, OntologyConcept, Skill, Regulation } from "@shared/schema";
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 const domainIcons: Record<string, typeof Shield> = {
   data_handling: Lock,
@@ -7332,7 +7333,7 @@ function CreatePolicyPackDialog({
     { value: "retail", label: "Retail" },
     { value: "technology_saas", label: "Technology / SaaS" },
     { value: "legal_services", label: "Legal Services" },
-    { value: "equipment_dealer", label: "Equipment Dealers & Distribution" },
+    ...packIndustryOptions,
   ];
 
   return (

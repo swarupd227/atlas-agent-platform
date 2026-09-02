@@ -13,6 +13,7 @@ import { validateJourneyBindings, journeyInventory, DEALER_JOURNEYS } from "../p
 import { DEALER_ONTOLOGY_CONCEPTS, DEALER_POLICY_DEFS, DEALER_KB_DEFS } from "../packs/equipment-dealer/ontology";
 import { validateProcessFlows, DEALER_PROCESS_FLOWS } from "../packs/equipment-dealer/process-flows";
 import { auditToolCoverage, providesTool } from "../server/integrations/dealer-operations/mcp-server";
+import { validateIndustryPacks, INDUSTRY_PACKS } from "../shared/industry-packs";
 
 const inv = journeyInventory();
 console.log("VitalEdge / Equipment Dealer vertical inventory");
@@ -82,6 +83,18 @@ if (unprovided.length) {
   console.log("    " + unprovided.join(", "));
 } else {
   console.log("  PASS — every referenced tool exists in the connector.");
+}
+
+// 3. Industry packs are internally consistent. An eval framework whose id
+//    disagrees with its pack binds to nothing at runtime, silently.
+const packs = validateIndustryPacks();
+console.log(`\nIndustry packs: ${INDUSTRY_PACKS.length} registered (${INDUSTRY_PACKS.map((p) => p.id).join(", ")})`);
+if (!packs.ok) {
+  failed = true;
+  console.log("  INDUSTRY PACK VALIDATION FAILED:");
+  for (const e of packs.errors) console.log("    - " + e);
+} else {
+  console.log("  PASS — industry packs internally consistent.");
 }
 
 const flows = validateProcessFlows();

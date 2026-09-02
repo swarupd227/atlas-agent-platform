@@ -297,7 +297,7 @@ export async function prepare_credit_memo(c: DealerClient, args: Record<string, 
   const reason = A(args.reason);
   const clause = A(args.contract_clause);
   const calculation = A(args.calculation);
-  const proposedBy = A(args.agent_id) || "ED-AGT-202";
+  const proposedBy = A(args.agent_id) || null;
 
   if (!account || !amount) return err("account_id and amount_usd are required");
   if (!reason) return err("reason is required");
@@ -409,7 +409,7 @@ export async function apply_credit_hold(c: DealerClient, args: Record<string, un
   const account = A(args.account_id);
   const justification = A(args.justification);
   const approver = A(args.approver);
-  const proposedBy = A(args.agent_id) || "ED-AGT-202";
+  const proposedBy = A(args.agent_id) || null;
   if (!account) return err("account_id is required");
   if (!justification) return err("justification is required — a hold without documented ageing evidence cannot be applied");
 

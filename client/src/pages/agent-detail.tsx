@@ -114,6 +114,7 @@ import { useIndustry } from "@/components/industry-provider";
 import { formatMs } from "@/components/shared-utils";
 import { OutputContractEditor } from "@/components/output-contract-editor";
 import { GenerationMetadataDashboard } from "@/components/generation-metadata-dashboard";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 
 class AgentDetailErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -9787,7 +9788,9 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
                   <SelectItem value="retail">Retail</SelectItem>
                   <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                   <SelectItem value="legal_services">Legal Services</SelectItem>
-                  <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
+                  {packIndustryOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
                   <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                 </SelectContent>
               </Select>

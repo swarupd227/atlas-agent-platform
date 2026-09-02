@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Database, Search, TrendingUp, BarChart3, Trophy, ArrowRight, ArrowLeft, Tag, Users, Target, Layers, Sparkles, Filter, Plus, Loader2, Trash2, Check, Bot, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 const industryOptions = [
   { label: "All", value: "all" },
@@ -28,7 +29,7 @@ const industryOptions = [
   { label: "Manufacturing", value: "manufacturing" },
   { label: "Retail", value: "retail" },
   { label: "Technology/SaaS", value: "technology_saas" },
-  { label: "Equipment Dealers & Distribution", value: "equipment_dealer" },
+  ...packIndustryOptions,
   { label: "Cross-Industry", value: "cross_industry" },
 ];
 
@@ -39,7 +40,7 @@ const industryLabels: Record<string, string> = {
   manufacturing: "Manufacturing",
   retail: "Retail",
   technology_saas: "Technology/SaaS",
-  equipment_dealer: "Equipment Dealers & Distribution",
+  ...packIndustryLabels,
   cross_industry: "Cross-Industry",
 };
 

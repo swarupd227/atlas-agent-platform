@@ -47,6 +47,7 @@ import {
   AlertTriangle,
   Pencil,
 } from "lucide-react";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 const INDUSTRY_FILTERS = [
   { key: "all", label: "All" },
@@ -1141,7 +1142,9 @@ export default function RunbookAutomation() {
                     <SelectItem value="retail">Retail</SelectItem>
                     <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                     <SelectItem value="legal_services">Legal Services</SelectItem>
-                    <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
+                    {packIndustryOptions.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
                     <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1273,7 +1276,9 @@ export default function RunbookAutomation() {
                     <SelectItem value="retail">Retail</SelectItem>
                     <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                     <SelectItem value="legal_services">Legal Services</SelectItem>
-                    <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
+                    {packIndustryOptions.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
                     <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                   </SelectContent>
                 </Select>

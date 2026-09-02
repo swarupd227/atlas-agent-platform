@@ -111,6 +111,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIndustry } from "@/components/industry-provider";
 import type { Skill } from "@shared/schema";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
+import { PACK_INDUSTRY_IDS } from "@shared/industry-packs";
 
 type ToolConfig = { name: string; description: string; permissions?: string[] };
 type WorkflowNode = { id: string; type: string; label: string };
@@ -214,7 +216,7 @@ const industryLabels: Record<string, string> = {
   manufacturing: "Manufacturing",
   retail: "Retail & E-Commerce",
   legal_services: "Legal Services",
-  equipment_dealer: "Equipment Dealers & Distribution",
+  ...packIndustryLabels,
   education: "Education",
   pharma: "Pharmaceuticals",
   media_entertainment: "Media & Entertainment",
@@ -228,7 +230,8 @@ const allCategories = [
 
 const allIndustries = [
   "cross_industry", "technology", "technology_saas", "financial_services", "insurance",
-  "healthcare", "manufacturing", "retail", "legal_services", "equipment_dealer", "education", "pharma", "media_entertainment",
+  "healthcare", "manufacturing", "retail", "legal_services", "education", "pharma", "media_entertainment",
+  ...PACK_INDUSTRY_IDS,
 ];
 
 const complexityOptions = ["low", "medium", "high"];

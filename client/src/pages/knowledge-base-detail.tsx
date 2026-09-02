@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { color: string; icon: typeof Clock }> = {
@@ -1675,7 +1676,9 @@ export default function KnowledgeBaseDetail() {
                   <SelectItem value="retail">Retail</SelectItem>
                   <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                   <SelectItem value="legal_services">Legal Services</SelectItem>
-                  <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
+                  {packIndustryOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

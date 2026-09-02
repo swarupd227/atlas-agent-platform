@@ -1,6 +1,11 @@
-export type IndustryId = "healthcare" | "financial_services" | "manufacturing" | "insurance" | "retail" | "technology_saas" | "legal_services" | "equipment_dealer";
+import {
+  packPipelineStages, packRollbackTriggers, packEvidenceItems, packIndustryLabels,
+} from "@shared/industry-packs";
 
-export const industryLabels: Record<IndustryId, string> = {
+/** Open: built-ins plus any id supplied by an industry pack. */
+export type IndustryId = string;
+
+const builtInLabels: Record<string, string> = {
   healthcare: "Healthcare",
   financial_services: "Financial Services",
   manufacturing: "Manufacturing",
@@ -8,7 +13,6 @@ export const industryLabels: Record<IndustryId, string> = {
   retail: "Retail",
   technology_saas: "Technology / SaaS",
   legal_services: "Legal Services",
-  equipment_dealer: "Equipment Dealers & Distribution",
 };
 
 export interface PipelineStage {
@@ -42,7 +46,7 @@ export interface EvidenceItem {
   regulation?: string;
 }
 
-export const mandatoryPipelineStages: Record<IndustryId, PipelineStage[]> = {
+const builtInStages: Record<string, PipelineStage[]> = {
   healthcare: [
     {
       id: "clinical_safety_review",
@@ -289,56 +293,9 @@ export const mandatoryPipelineStages: Record<IndustryId, PipelineStage[]> = {
       attestationType: "auto",
     },
   ],
-  equipment_dealer: [
-    {
-      id: "revenue_recognition_review",
-      name: "Revenue Recognition Review (ASC 606 / 842)",
-      description: "Validate that rental, service, and whole-goods revenue postings the agent produces recognise revenue in the correct period and category",
-      mandatory: true,
-      order: 1,
-      requiredArtifacts: ["revenue_recognition_test_results", "posting_sample_review"],
-      attestationType: "review",
-    },
-    {
-      id: "financial_controls_attestation",
-      name: "Financial Controls Attestation (SOX)",
-      description: "Formal attestation that agent-initiated financial postings respect segregation of duties and approval authority limits",
-      mandatory: true,
-      order: 2,
-      requiredArtifacts: ["approval_authority_matrix", "segregation_of_duties_report"],
-      attestationType: "manual",
-    },
-    {
-      id: "oem_program_compliance_check",
-      name: "OEM Program Compliance Check",
-      description: "Verify warranty and parts-return submissions conform to each manufacturer's program terms, coverage windows, and labour-time standards",
-      mandatory: true,
-      order: 3,
-      requiredArtifacts: ["oem_program_compliance_matrix", "claim_validation_results"],
-      attestationType: "auto",
-    },
-    {
-      id: "shadow_replay_dealer_ops",
-      name: "Shadow Replay (Dealer Operations)",
-      description: "Replay production remittance, work-order, and rental-billing traces with financial accuracy and equipment-identity scorers",
-      mandatory: true,
-      order: 4,
-      requiredArtifacts: ["shadow_replay_results", "cash_application_accuracy_report"],
-      attestationType: "auto",
-    },
-    {
-      id: "margin_authority_gate",
-      name: "Margin & Credit Authority Gate",
-      description: "Human review of the discount, credit-memo, and credit-hold thresholds the agent is permitted to act on without escalation",
-      mandatory: false,
-      order: 5,
-      requiredArtifacts: ["authority_threshold_signoff"],
-      attestationType: "manual",
-    },
-  ],
 };
 
-export const industryRollbackTriggers: Record<IndustryId, IndustryRollbackTrigger[]> = {
+const builtInTriggers: Record<string, IndustryRollbackTrigger[]> = {
   healthcare: [
     {
       id: "patient_safety_event",
@@ -544,62 +501,9 @@ export const industryRollbackTriggers: Record<IndustryId, IndustryRollbackTrigge
       autoRollback: true,
     },
   ],
-  equipment_dealer: [
-    {
-      id: "cash_misapplication_rate",
-      name: "Cash Misapplication Rate",
-      description: "Payments applied to the wrong customer, invoice, or branch exceed tolerance",
-      metric: "cash_misapplication_rate",
-      condition: "above",
-      threshold: 1,
-      unit: "%",
-      severity: "critical",
-      autoRollback: true,
-    },
-    {
-      id: "unauthorized_credit_memo",
-      name: "Unauthorised Credit Memo",
-      description: "A credit memo was issued above the agent's approved authority limit without human sign-off",
-      metric: "unauthorized_credit_memo_events",
-      condition: "any_event",
-      severity: "critical",
-      autoRollback: true,
-    },
-    {
-      id: "revenue_recognition_error",
-      name: "Revenue Recognition Error",
-      description: "Revenue posted to the wrong period or category under ASC 606 / ASC 842",
-      metric: "revenue_recognition_errors",
-      condition: "any_event",
-      severity: "critical",
-      autoRollback: true,
-    },
-    {
-      id: "warranty_denial_spike",
-      name: "OEM Warranty Denial Spike",
-      description: "Manufacturer denial rate on agent-assembled warranty claims exceeds threshold, signalling program-term drift",
-      metric: "warranty_denial_rate",
-      condition: "above",
-      threshold: 15,
-      unit: "%",
-      severity: "high",
-      autoRollback: true,
-    },
-    {
-      id: "invoice_accuracy_drop",
-      name: "Invoice Accuracy Drop",
-      description: "Rental and service invoice accuracy falls below the dealer's billing-integrity floor",
-      metric: "invoice_accuracy",
-      condition: "below",
-      threshold: 99,
-      unit: "%",
-      severity: "high",
-      autoRollback: true,
-    },
-  ],
 };
 
-export const evidencePackageItems: Record<IndustryId, EvidenceItem[]> = {
+const builtInEvidence: Record<string, EvidenceItem[]> = {
   healthcare: [
     { id: "shadow_replay", name: "Shadow Replay Results", description: "Production trace replay with patient safety scorer", source: "shadow_replay_studio", required: true, regulation: "EU AI Act Art. 9" },
     { id: "canary_performance", name: "Canary Performance Data", description: "Canary deployment metrics and comparison", source: "canary_console", required: true },
@@ -648,15 +552,12 @@ export const evidencePackageItems: Record<IndustryId, EvidenceItem[]> = {
     { id: "privacy_impact", name: "Privacy Impact Assessment", description: "GDPR/CCPA data privacy impact assessment", source: "manual_upload", required: true, regulation: "GDPR" },
     { id: "approval_chain", name: "Approval Chain", description: "Full approval chain with reviewer signatures", source: "approvals", required: true },
   ],
-  equipment_dealer: [
-    { id: "shadow_replay", name: "Shadow Replay Results", description: "Production trace replay with financial accuracy and equipment-identity scorers", source: "shadow_replay_studio", required: true },
-    { id: "cash_application_accuracy_report", name: "Cash Application Accuracy Report", description: "Match rate, misapplication rate, and unapplied-cash ageing from the evaluation run", source: "eval_studio", required: true },
-    { id: "revenue_recognition_test_results", name: "Revenue Recognition Test Results", description: "ASC 606 / ASC 842 period and category correctness across sampled postings", source: "eval_studio", required: true, regulation: "ASC 606" },
-    { id: "oem_program_compliance_matrix", name: "OEM Program Compliance Matrix", description: "Per-manufacturer coverage window, labour-time, and documentation conformance", source: "governance", required: true, regulation: "OEM Warranty Program Terms" },
-    { id: "approval_authority_log", name: "Approval Authority Log", description: "Full chain of discount, credit-memo, and credit-hold approvals with reviewer attribution", source: "approvals", required: true, regulation: "SOX" },
-    { id: "golden_dataset_eval", name: "Golden Dataset Evaluation", description: "Evaluation results against the dealer operations golden dataset", source: "eval_studio", required: true },
-  ],
 };
+
+export const industryLabels: Record<string, string> = { ...builtInLabels, ...packIndustryLabels };
+export const mandatoryPipelineStages: Record<string, PipelineStage[]> = { ...builtInStages, ...packPipelineStages } as Record<string, PipelineStage[]>;
+export const industryRollbackTriggers: Record<string, IndustryRollbackTrigger[]> = { ...builtInTriggers, ...packRollbackTriggers } as Record<string, IndustryRollbackTrigger[]>;
+export const evidencePackageItems: Record<string, EvidenceItem[]> = { ...builtInEvidence, ...packEvidenceItems } as Record<string, EvidenceItem[]>;
 
 export type StageStatus = "pending" | "in_progress" | "completed" | "skipped" | "blocked";
 

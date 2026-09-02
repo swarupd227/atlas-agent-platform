@@ -92,6 +92,7 @@ import {
   Network,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 const iconMap: Record<string, LucideIcon> = {
   headphones: Headphones,
@@ -188,7 +189,7 @@ const industryLabels: Record<string, string> = {
   manufacturing: "Manufacturing",
   retail: "Retail & E-Commerce",
   legal_services: "Legal Services",
-  equipment_dealer: "Equipment Dealers & Distribution",
+  ...packIndustryLabels,
   education: "Education",
   pharma: "Pharmaceuticals",
   media_entertainment: "Media & Entertainment",

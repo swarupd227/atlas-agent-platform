@@ -69,11 +69,12 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   {
     name: "propose_allocation",
     description:
-      "Propose how a payment should be applied across a customer's open invoices, using remittance intent where supplied and amount/reference matching where not. Returns per-invoice amounts, the split by originating branch, an honest confidence score, the unallocated residual, and a posting recommendation. This tool proposes only and holds no posting authority.",
+      "Propose how a payment should be applied across a customer's open invoices, using remittance intent where supplied and amount/reference matching where not. Returns per-invoice amounts, the split by originating branch, an honest confidence score, the unallocated residual, and a posting recommendation. Records which actor produced the proposal. This tool proposes only and holds no posting authority.",
     inputSchema: schema({
       payment_id: str("Payment identifier"),
       account_id: str("Resolved master account identifier"),
-    }, ["payment_id", "account_id"]),
+      agent_id: str("Proposing actor's id, carried through so posting can enforce segregation of duties"),
+    }, ["payment_id", "account_id", "agent_id"]),
   },
   {
     name: "classify_shortfall",
@@ -96,15 +97,16 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
   {
     name: "post_allocation",
     description:
-      "Post an approved allocation to the branch ledgers, splitting each line to its originating branch and attaching the source document to every journal entry. Enforces segregation of duties, the auto-post confidence floor, the source-document requirement, and the residual write-off ceiling — refusing, with the reason, when any gate is not satisfied.",
+      "Post an approved allocation to the branch ledgers, splitting each line to its originating branch and attaching the source document to every journal entry. Enforces segregation of duties (the actor that proposed an allocation may not post it), the auto-post confidence floor, the source-document requirement, and the residual write-off ceiling — refusing, with the reason, when any gate is not satisfied.",
     inputSchema: schema({
       payment_id: str("Payment identifier"),
       allocation: arr("Array of { invoice_id, amount_usd }"),
       confidence: num("Allocation confidence between 0 and 1"),
       source_document: str("Reference to the document justifying the posting (required)"),
+      proposed_by_agent: str("Actor that produced the allocation, from propose_allocation (required)"),
+      agent_id: str("Posting actor's id (required, and must differ from proposed_by_agent)"),
       approver: str("Human approver id, required when confidence is below the auto-post floor"),
-      agent_id: AGENT_ID,
-    }, ["payment_id", "allocation", "confidence", "source_document"]),
+    }, ["payment_id", "allocation", "confidence", "source_document", "proposed_by_agent", "agent_id"]),
   },
   {
     name: "route_to_research_queue",

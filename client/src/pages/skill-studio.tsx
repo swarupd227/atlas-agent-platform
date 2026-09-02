@@ -52,6 +52,7 @@ import {
   Github,
   Download,
 } from "lucide-react";
+import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
 
 const SECTION_TEMPLATES: Record<string, string> = {
   "Trigger Conditions": `## Trigger Conditions\n\n- When: [describe trigger event]\n- Conditions:\n  - [condition 1]\n  - [condition 2]\n- Priority: [high/medium/low]\n\n`,
@@ -1073,7 +1074,9 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                         <SelectItem value="retail">Retail</SelectItem>
                         <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                         <SelectItem value="legal_services">Legal Services</SelectItem>
-                        <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
+                        {packIndustryOptions.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                        ))}
                         <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                         <SelectItem value="custom">Custom</SelectItem>
                       </SelectContent>
@@ -1600,7 +1603,9 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                       <SelectItem value="retail">Retail</SelectItem>
                       <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                       <SelectItem value="legal_services">Legal Services</SelectItem>
-                      <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
+                      {packIndustryOptions.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                      ))}
                       <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                       <SelectItem value="custom">Custom</SelectItem>
                     </SelectContent>

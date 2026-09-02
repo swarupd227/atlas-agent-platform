@@ -11,17 +11,17 @@ import {
   Truck,
   type LucideIcon,
 } from "lucide-react";
+import { INDUSTRY_PACKS, packIndustryTerms } from "@shared/industry-packs";
 
-export type IndustryId =
-  | "financial_services"
-  | "insurance"
-  | "healthcare"
-  | "manufacturing"
-  | "retail"
-  | "technology_saas"
-  | "legal_services"
-  | "equipment_dealer"
-  | "custom";
+/** Industry ids are open: the built-ins listed below, plus any supplied by an
+ *  industry pack in shared/industry-packs. Kept as a string so adding a
+ *  vertical needs no platform edit. */
+export type IndustryId = string;
+
+export const BUILT_IN_INDUSTRY_IDS = [
+  "financial_services", "insurance", "healthcare", "manufacturing",
+  "retail", "technology_saas", "legal_services", "custom",
+] as const;
 
 export type DataClassification = "public" | "internal" | "confidential" | "restricted";
 
@@ -62,7 +62,13 @@ export interface IndustryProfile {
   defaultGovernancePolicies: GovernancePolicy[];
 }
 
-export const INDUSTRIES: IndustryProfile[] = [
+/** lucide icons an industry pack may name. Packs carry names, not components,
+ *  so shared/ never imports React. */
+const PACK_ICONS: Record<string, LucideIcon> = {
+  Landmark, HeartPulse, Factory, ShoppingCart, Settings2, Shield, Monitor, Scale, Truck,
+};
+
+const BUILT_IN_INDUSTRIES: IndustryProfile[] = [
   {
     id: "financial_services",
     label: "Financial Services",
@@ -287,38 +293,6 @@ export const INDUSTRIES: IndustryProfile[] = [
     ],
   },
   {
-    id: "equipment_dealer",
-    label: "Equipment Dealers & Distribution",
-    shortLabel: "Equip Dealer",
-    description: "Heavy equipment, agriculture, and construction dealerships — whole-goods sales, parts, service, rental, and back-office finance across multi-location dealer groups and OEM programs",
-    icon: Truck,
-    color: "hsl(45 85% 45%)",
-    ontology: "AEMP / ISO 15143-3 (Equipment Telematics) + AED Dealer Operations Ontology",
-    agentSkills: 112,
-    regulatoryFrameworks: ["ASC 606 (Revenue Recognition)", "ASC 842 (Leases)", "SOX", "UCC Article 2A", "OEM Warranty Program Terms", "FTC Truth-in-Advertising", "State Dealer Licensing", "GDPR / CCPA"],
-    subVerticals: ["Dealer Finance & Back Office", "Parts & Service", "Rental Operations", "Whole-goods Sales", "Warranty & OEM Programs"],
-    jurisdictions: ["US", "Canada", "EU", "UK", "APAC", "Global"],
-    integrationSystems: [
-      { id: "e_emphasys_erp", name: "e-Emphasys ERP", category: "Dealer ERP", description: "Enterprise dealer management for complex multi-location equipment dealerships" },
-      { id: "intellidealer_dms", name: "IntelliDealer DMS", category: "Dealer DMS", description: "Dealership management system for parts, service, sales, and rental workflows" },
-      { id: "integrated_rental", name: "Integrated Rental", category: "Rental", description: "Rental contract lifecycle, fleet utilization, and rental billing" },
-      { id: "billtrust", name: "Billtrust", category: "AR Automation", description: "Invoice delivery, payment capture, and cash application automation" },
-      { id: "oem_warranty_portal", name: "OEM Warranty Portals", category: "Warranty", description: "Manufacturer warranty claim submission and adjudication portals" },
-      { id: "telematics_aemp", name: "AEMP Telematics Feed", category: "Telematics", description: "ISO 15143-3 machine data: meter hours, location, fault codes, utilization" },
-      { id: "auction_comps", name: "Auction Comparables Feed", category: "Market Data", description: "Used equipment auction results and residual value comparables" },
-      { id: "dealer_crm", name: "Dealer CRM", category: "CRM", description: "Customer, fleet, and opportunity management for equipment dealers" },
-    ],
-    departments: ["Equipment Sales", "Parts", "Service", "Rental", "Finance & Accounting", "Credit & Collections", "Warranty Administration", "Product Support", "IT & Systems", "Executive Leadership"],
-    defaultGovernancePolicies: [
-      { label: "Revenue Recognition Integrity", description: "Rental, service, and whole-goods revenue recognized per ASC 606 / ASC 842 before any invoice is posted" },
-      { label: "Warranty Claim Accuracy", description: "Every OEM warranty claim validated against program terms, coverage windows, and labor-time standards before submission" },
-      { label: "Margin Approval Authority", description: "Discounts and credit memos above threshold require documented human approval at the correct authority level" },
-      { label: "Collections Conduct", description: "Credit holds and collections outreach require documented justification and approved customer-facing language" },
-      { label: "Audit Trail", description: "Every agent action logged with full explainability for SOX and OEM program audits" },
-      { label: "Confidence Thresholds", description: "No auto-execution below 0.80 confidence score for cash application, credit memo, or warranty submission decisions" },
-    ],
-  },
-  {
     id: "custom",
     label: "Cross-Industry",
     shortLabel: "Cross-Industry",
@@ -335,6 +309,33 @@ export const INDUSTRIES: IndustryProfile[] = [
     defaultGovernancePolicies: [],
   },
 ];
+
+/** Built-ins plus every industry supplied by a pack. Custom stays last. */
+export const INDUSTRIES: IndustryProfile[] = (() => {
+  const fromPacks: IndustryProfile[] = INDUSTRY_PACKS.map((p) => ({
+    id: p.id,
+    label: p.profile.label,
+    shortLabel: p.profile.shortLabel,
+    description: p.profile.description,
+    icon: PACK_ICONS[p.profile.iconName] ?? Settings2,
+    color: p.profile.color,
+    ontology: p.profile.ontology,
+    agentSkills: p.profile.agentSkills,
+    regulatoryFrameworks: p.profile.regulatoryFrameworks,
+    subVerticals: p.profile.subVerticals,
+    jurisdictions: p.profile.jurisdictions,
+    integrationSystems: p.profile.integrationSystems,
+    departments: p.profile.departments,
+    defaultGovernancePolicies: p.profile.defaultGovernancePolicies,
+  }));
+  const customIdx = BUILT_IN_INDUSTRIES.findIndex((i) => i.id === "custom");
+  if (customIdx < 0) return [...BUILT_IN_INDUSTRIES, ...fromPacks];
+  return [
+    ...BUILT_IN_INDUSTRIES.slice(0, customIdx),
+    ...fromPacks,
+    ...BUILT_IN_INDUSTRIES.slice(customIdx),
+  ];
+})();
 
 export interface OutcomeTemplateKpi {
   name: string;
@@ -659,21 +660,7 @@ const DEFAULT_TERMS: TerminologyMap = {
   remediation: "Remediation",
 };
 
-const INDUSTRY_TERMS: Record<IndustryId, Partial<TerminologyMap>> = {
-  equipment_dealer: {
-    outcomes: "Dealer Performance Targets",
-    outcome: "Dealer Performance Target",
-    kpis: "Absorption Metrics",
-    kpi: "Absorption Metric",
-    incidents: "Exceptions",
-    incident: "Exception",
-    outcome_owner: "Branch Manager",
-    sla: "Uptime Commitment",
-    drift: "Variance",
-    remediation: "Corrective Action",
-    evaluation: "Control Check",
-    evaluations: "Control Checks",
-  },
+const BUILT_IN_TERMS: Record<string, Partial<TerminologyMap>> = {
   financial_services: {
     outcomes: "Service Commitments",
     outcome: "Service Commitment",
@@ -759,6 +746,12 @@ const INDUSTRY_TERMS: Record<IndustryId, Partial<TerminologyMap>> = {
     evaluations: "Release Validations",
   },
   custom: {},
+};
+
+/** Built-in vocabulary merged with every industry pack's overrides. */
+const INDUSTRY_TERMS: Record<string, Partial<TerminologyMap>> = {
+  ...BUILT_IN_TERMS,
+  ...(packIndustryTerms as Record<string, Partial<TerminologyMap>>),
 };
 
 const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
