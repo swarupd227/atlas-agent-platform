@@ -30,6 +30,7 @@ const SCHEMA = process.env.SUMMIT_SCHEMA || SUMMIT_SCHEMA;
 const READER_PW = process.env.SUMMIT_READER_PASSWORD || "";
 const WRITER_PW = process.env.SUMMIT_WRITER_PASSWORD || "";
 const SSL = process.env.DB_SSL || "require";
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 45_000);
 
 const READ_NAME = "Summit Equipment Group — Dealer Data (read-only)";
 const ACTION_NAME = "Summit Equipment Group — Dealer Operations";
@@ -46,6 +47,7 @@ async function login(): Promise<boolean> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASSWORD }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     console.error(`Login failed: ${res.status} ${(await res.text().catch(() => "")).slice(0, 160)}`);
@@ -65,6 +67,7 @@ async function api(method: "GET" | "POST", path: string, body?: unknown) {
     method,
     headers: { "Content-Type": "application/json", Cookie: cookie },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${text.slice(0, 220)}`);

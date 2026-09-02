@@ -30,6 +30,8 @@ const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const DRY_RUN = process.env.DRY_RUN === "1";
+/** Azure App Service cold starts can take ~30s; beyond that it is really down. */
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 45_000);
 
 // The deployed app runs SECURITY_MODE=production, where Bearer auth is only
 // accepted on /eval/* and MCP paths — every route this script touches
@@ -43,6 +45,7 @@ async function login(): Promise<boolean> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASSWORD }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) {
       fail(`Login failed: ${res.status} ${(await res.text().catch(() => "")).slice(0, 160)}`);
@@ -106,6 +109,10 @@ async function api<T = any>(
         ...(AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      // Without a timeout an app that is down or cold-starting makes fetch
+      // hang forever, and the run simply never returns — far harder to
+      // diagnose than a clear error.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) {
       if (tolerate.includes(res.status)) return null;
@@ -116,7 +123,8 @@ async function api<T = any>(
     const text = await res.text();
     return text ? (JSON.parse(text) as T) : ({} as T);
   } catch (err: any) {
-    fail(`${method} ${path} → ${err?.message || err}`);
+    const timedOut = err?.name === "TimeoutError" || err?.name === "AbortError";
+    fail(`${method} ${path} → ${timedOut ? `no response in ${REQUEST_TIMEOUT_MS / 1000}s — is the app up? try: curl -s "${BASE_URL}/api/integrations/dealer-operations/health"` : err?.message || err}`);
     return null;
   }
 }
