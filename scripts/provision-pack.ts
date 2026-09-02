@@ -156,9 +156,12 @@ async function main() {
     ok(`Authenticated as ${ADMIN_USER}`);
   }
 
-  const health = await api("GET", "/api/health");
-  if (!health && !DRY_RUN) {
-    log("\nServer not reachable. Start it with `npm run dev` and retry.");
+  // Reachability is already proven by the login above. There is deliberately
+  // no separate /api/health probe: that route does not exist, so the SPA
+  // catch-all answers it with index.html and a JSON parse of the response
+  // fails — which reads as "server unreachable" on a perfectly healthy server.
+  if (!DRY_RUN && !authCookie) {
+    log("\nNot authenticated, so nothing below would succeed. Check ADMIN_USER / ADMIN_PASSWORD.");
     process.exit(1);
   }
 
