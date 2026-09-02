@@ -94,6 +94,15 @@ echo "=== 2/4: Playwright MCP container instance ==="
 # --headless: no display needed in a container. --host 0.0.0.0: listen on all
 # interfaces (required inside a container -- localhost-only would be
 # unreachable). --port: arbitrary but matches Microsoft's own example.
+# --allowed-hosts '*': Playwright MCP has its own DNS-rebinding protection on
+# top of network placement -- by default it only serves requests whose Host
+# header is literally "localhost:<port>", which real-MCP-verified live
+# ("Access is only allowed at localhost:8931" from the server itself the
+# first time this ran against the container's actual VNet IP). Disabling it
+# here is safe specifically BECAUSE the real security boundary is the VNet
+# placement below, not this header check: the container has no public IP at
+# all, so nothing outside Azure can reach it regardless of what Host header
+# it would accept.
 # Deploying with --vnet/--subnet is what forces a private-only IP -- ACI
 # rejects a public IP request when a VNet is specified, so there's no flag to
 # accidentally get this wrong.
@@ -111,7 +120,7 @@ else
     --ports "$MCP_PORT" \
     --vnet "$MCP_VNET" --subnet "$MCP_SUBNET_INFRA" \
     --restart-policy Always \
-    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless" \
+    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless --allowed-hosts *" \
     --output none
 fi
 
