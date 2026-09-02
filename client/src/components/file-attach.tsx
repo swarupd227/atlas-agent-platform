@@ -65,11 +65,18 @@ async function extractVideoPoster(file: File): Promise<File | null> {
       setTimeout(() => rej(new Error("decode timeout")), 8000);
     });
     // ~1s in (or the midpoint of a shorter clip) — frame 0 is often black.
-    video.currentTime = Math.min(1, (video.duration || 2) / 2);
-    await new Promise<void>((res, rej) => {
-      video.onseeked = () => res();
-      setTimeout(() => rej(new Error("seek timeout")), 5000);
-    });
+    // Seeking fails on non-seekable clips (fragmented MP4, e.g. anything a
+    // browser or screen recorder produced, where duration reads as Infinity):
+    // there, keep the frame already decoded by loadeddata rather than giving
+    // up on a poster entirely.
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    if (duration > 0) {
+      video.currentTime = Math.min(1, duration / 2);
+      await new Promise<void>((res) => {
+        video.onseeked = () => res();
+        setTimeout(res, 3000);
+      });
+    }
     if (!video.videoWidth || !video.videoHeight) return null;
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
