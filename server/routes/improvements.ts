@@ -28,6 +28,7 @@ import { getOrgId, getDefaultOrgId } from "../auth";
 import { buildSourceDocuments } from "../attachment-context";
 import {
   resolveOntologyTags,
+  resolvePolicyBundle,
   handleZodError,
   buildAgentSystemPrompt,
   generateKpiAlignedEvalSuite,
@@ -3787,13 +3788,28 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
         ? allPolicies.filter(p => p.scopeType === "outcome" && p.scopeId === agent.outcomeId)
         : [];
       const agentPolicies = allPolicies.filter(p => p.scopeType === "agent" && p.scopeId === agentId);
+      const envPolicies = agent.environment
+        ? allPolicies.filter(p => p.scopeType === "env" && p.scopeId === agent.environment)
+        : [];
 
-      const policyMap = new Map<string, typeof allPolicies[0]>();
-      for (const p of orgPolicies) policyMap.set(p.id, p);
-      for (const p of outcomePolicies) policyMap.set(p.id, p);
-      for (const p of agentPolicies) policyMap.set(p.id, p);
+      // This endpoint used to compute its own scope-only union, which disagreed
+      // with what actually enforces at runtime: it ignored agent.policyBindings
+      // entirely, so a policy explicitly bound to an agent (the shape the
+      // wizard and create-team-from-proposals write) was reported as not
+      // applying while resolvePolicyBundle was enforcing it. It also omitted
+      // env scope. Two sources of truth for "which policies govern this agent"
+      // is exactly the discrepancy that makes governance unverifiable, so
+      // defer to the same resolver the runtime uses and keep the per-scope
+      // breakdown alongside it for diagnostics.
+      const bundle = await resolvePolicyBundle(agentId, getOrgId(req));
 
-      const effectivePolicies = Array.from(policyMap.values());
+      const byId = new Map(allPolicies.map(p => [p.id, p]));
+      const effectivePolicies = bundle.appliedPolicies
+        .map(p => byId.get(p.id))
+        .filter((p): p is NonNullable<typeof p> => !!p);
+      // Policies bound via agent.policyBindings rather than matched by scope.
+      const scopedIds = new Set([...orgPolicies, ...outcomePolicies, ...agentPolicies, ...envPolicies].map(p => p.id));
+      const bindingPolicies = effectivePolicies.filter(p => !scopedIds.has(p.id));
 
       let exceptions: any[] = [];
       try {
@@ -3808,6 +3824,18 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
         orgPolicies,
         outcomePolicies,
         agentPolicies,
+        envPolicies,
+        bindingPolicies,
+        // The enforcement-relevant output, straight from the runtime resolver,
+        // so a caller can see not just WHICH policies apply but what they
+        // actually do -- hard blocks, guardrails and redaction patterns.
+        enforcement: {
+          blockedTools: bundle.blockedTools,
+          monitorBlockedTools: bundle.monitorBlockedTools,
+          toolAllowlist: bundle.toolAllowlist,
+          guardrails: bundle.guardrails,
+          redactPatterns: bundle.redactPatterns,
+        },
         exceptions,
         resolvedAt: new Date().toISOString(),
       });
