@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useIndustry, INDUSTRIES } from "./industry-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,11 +9,28 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Check, ChevronDown } from "lucide-react";
 
 export function IndustrySelector() {
-  const { industry, setIndustry, subVertical, setSubVertical, isSelected } = useIndustry();
+  const { industry, clearIndustry, subVertical, setSubVertical, isSelected } = useIndustry();
+  // Switching industry runs clearIndustry(), which drops the whole workspace
+  // configuration (sub-vertical, departments, jurisdictions, integrations, data
+  // classification) and re-opens the 3-step setup wizard -- that is the
+  // intended behaviour (commit 52f8738), but it is destructive enough that a
+  // stray click should not trigger it silently, so confirm first.
+  const [pendingIndustryId, setPendingIndustryId] = useState<string | null>(null);
+  const pendingIndustry = pendingIndustryId ? INDUSTRIES.find((i) => i.id === pendingIndustryId) : null;
 
   if (!isSelected) return null;
 
@@ -41,7 +59,7 @@ export function IndustrySelector() {
             return (
               <DropdownMenuItem
                 key={ind.id}
-                onClick={() => setIndustry(ind.id)}
+                onClick={() => { if (!isActive) setPendingIndustryId(ind.id); }}
                 className="flex items-center gap-2 cursor-pointer"
                 data-testid={`menu-item-industry-${ind.id}`}
               >
@@ -66,6 +84,30 @@ export function IndustrySelector() {
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <AlertDialog open={!!pendingIndustryId} onOpenChange={(open) => { if (!open) setPendingIndustryId(null); }}>
+        <AlertDialogContent data-testid="dialog-confirm-industry-switch">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch to {pendingIndustry?.label}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This resets your {industry?.label} workspace configuration — sub-vertical,
+              departments, jurisdictions, integrations and default data classification —
+              and re-opens the setup wizard so you can configure {pendingIndustry?.label}.
+              Your agents, outcomes and data are not affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-industry-switch">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { setPendingIndustryId(null); clearIndustry(); }}
+              data-testid="button-confirm-industry-switch"
+            >
+              Switch and reconfigure
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {hasSubVerticals && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
