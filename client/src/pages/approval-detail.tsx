@@ -1007,6 +1007,69 @@ export default function ApprovalDetail() {
           </CardContent>
         </Card>
 
+        {/* UI Baseline Diff Panel */}
+        {approval.objectType === "ui_baseline_diff" && (evidence.newScreenshotFileId || evidence.baselineScreenshotFileId) && (
+          <Card data-testid="panel-ui-baseline-diff">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <AppWindow className="w-4 h-4 text-muted-foreground" />
+                UI Baseline Comparison
+              </CardTitle>
+              {typeof evidence.diffPercent === "number" && (
+                <Badge variant="outline" className="text-[10px]" data-testid="badge-diff-percent">
+                  {evidence.diffPercent.toFixed(1)}% different
+                </Badge>
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3">
+                {(evidence.journeyName || evidence.stepName) && (
+                  <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+                    {evidence.journeyName && (
+                      <span data-testid="text-journey-name">Journey: <span className="font-medium text-foreground">{String(evidence.journeyName)}</span></span>
+                    )}
+                    {evidence.stepName && (
+                      <span data-testid="text-step-name">Step: <span className="font-medium text-foreground">{String(evidence.stepName)}</span></span>
+                    )}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5" data-testid="baseline-screenshot-panel">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline</span>
+                    {evidence.baselineScreenshotFileId ? (
+                      <img
+                        src={`/api/agent-files/${evidence.baselineScreenshotFileId}/download`}
+                        alt="Baseline screenshot"
+                        className="w-full rounded-md border object-contain"
+                        data-testid="img-baseline-screenshot"
+                      />
+                    ) : (
+                      <div className="w-full aspect-video rounded-md border border-dashed flex items-center justify-center text-xs text-muted-foreground" data-testid="text-no-baseline">
+                        No baseline yet
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-1.5" data-testid="new-screenshot-panel">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">New capture</span>
+                    {evidence.newScreenshotFileId ? (
+                      <img
+                        src={`/api/agent-files/${evidence.newScreenshotFileId}/download`}
+                        alt="New screenshot"
+                        className="w-full rounded-md border object-contain"
+                        data-testid="img-new-screenshot"
+                      />
+                    ) : (
+                      <div className="w-full aspect-video rounded-md border border-dashed flex items-center justify-center text-xs text-muted-foreground" data-testid="text-no-new-capture">
+                        No new capture
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Policy Deltas Panel */}
         <Card data-testid="panel-policy-deltas">
           <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">

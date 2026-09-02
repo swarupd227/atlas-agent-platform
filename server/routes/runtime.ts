@@ -4,7 +4,7 @@ import { storage } from "../storage";
 import { db } from "../db";
 import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
 import { llmInvokeRateLimiter } from "../rate-limits";
-import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun, deriveRunStatus, inferOrchestrationPattern } from "../dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun, runTeamAgentDag, extractFinalOutputText, deriveRunStatus, inferOrchestrationPattern } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
 import { getDagRunEventBuffer, subscribeDagRunEvents } from "../dag-run-events";
 import { startMagenticTeamAgent } from "../magentic-engine";
@@ -1680,10 +1680,46 @@ function hashCode(str: string): number {
       let toolCalls: Array<Record<string, unknown>> = [];
       let policyCheckResults: Array<Record<string, unknown>> = [];
       let totalTokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+      // Only set for the team-DAG branch below -- mcpResult stays null there,
+      // so the trace-status check further down needs its own success signal
+      // instead of reading mcpResult?.success (which would default a failed
+      // DAG run to "completed").
+      let dagRunSuccess: boolean | null = null;
+      let dagRunId: string | null = null;
 
       const richAgentPrompt = buildAgentSystemPrompt(agent);
 
-      if (mcpServerIds.length > 0) {
+      if (agent.agentType === "team" && (agent as any).blueprintId) {
+        // A team/orchestrator agent's real work is its compiled blueprint graph
+        // (the same one Blueprint Studio's "Run Team Graph" executes) -- neither
+        // branch below understands that at all: the mcp branch expects the
+        // AGENT ITSELF to hold direct tool bindings (a team never does; its
+        // members do), and the bare-completion branch just runs a one-shot
+        // chat completion against the agent's system prompt. Invoking an
+        // orchestrator here previously produced a plausible-looking answer
+        // that silently never ran Journey Runner -> Triage & Report (or
+        // whatever the graph actually is). Route it through the real engine.
+        const teamRun = await runTeamAgentDag(agent.id, (agent as any).blueprintId, input);
+        dagRunId = teamRun.dagRunId;
+        dagRunSuccess = teamRun.result.success;
+        finalOutput = extractFinalOutputText(teamRun.result, teamRun.wavePlan);
+        totalTokens = {
+          prompt_tokens: teamRun.result.totalPromptTokens || 0,
+          completion_tokens: teamRun.result.totalCompletionTokens || 0,
+          total_tokens: (teamRun.result.totalPromptTokens || 0) + (teamRun.result.totalCompletionTokens || 0),
+        };
+
+        await storage.createRunStep({
+          runId: trace.id,
+          stepIndex: stepIndex++,
+          type: "team_dag_run",
+          status: dagRunSuccess ? "completed" : "failed",
+          input: { request: input.slice(0, 200), blueprintId: (agent as any).blueprintId },
+          output: { dagRunId, totalWaves: teamRun.wavePlan.totalWaves, output: finalOutput.slice(0, 1000) },
+          tokenUsage: totalTokens,
+          durationMs: Date.now() - startTime,
+        });
+      } else if (mcpServerIds.length > 0) {
         mcpResult = await executePromptWithMcp(
           agent.id,
           "gateway",
@@ -1815,14 +1851,14 @@ function hashCode(str: string): number {
       const costUsd = (totalTokens.prompt_tokens * 0.00001 + totalTokens.completion_tokens * 0.00003);
 
       await storage.updateTrace(trace.id, {
-        status: mcpResult?.success === false ? "failed" : "completed",
+        status: (mcpResult?.success === false || dagRunSuccess === false) ? "failed" : "completed",
         outputSummary: finalOutput.slice(0, 500),
         costUsd: Math.round(costUsd * 100000) / 100000,
         latencyMs,
         toolCalls,
         policyChecks: policyCheckResults,
         tokenUsage: totalTokens,
-        stepsJson: { stepCount: stepIndex, source: "api_gateway", mcpEnabled: mcpServerIds.length > 0, metadata },
+        stepsJson: { stepCount: stepIndex, source: "api_gateway", mcpEnabled: mcpServerIds.length > 0, teamDagRunId: dagRunId, metadata },
         endedAt: new Date(),
         ...((mcpResult as any)?.softPolicyViolations?.length
           ? { softPolicyViolations: (mcpResult as any).softPolicyViolations }

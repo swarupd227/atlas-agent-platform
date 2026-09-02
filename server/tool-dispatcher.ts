@@ -429,6 +429,53 @@ function resultErrorMessage(result: any): string | null {
   return typeof text === "string" && text.length > 0 ? text : "Tool returned an error";
 }
 
+/**
+ * A real MCP tool's result can carry {type: "image", data: <base64>, mimeType}
+ * content blocks per the MCP spec -- exactly what a browser-automation tool's
+ * screenshot capture returns. Previously nothing downstream of mcpCallTool()
+ * looked for these: the base64 blob either rode along into the model's own
+ * context (expensive, and unrecoverable afterward) or got lost entirely when
+ * a caller stringified the result for a run-step/DAG-state log.
+ *
+ * Persists the first image block found as an agentGeneratedFiles row and
+ * folds its id onto the result via GENERATED_FILE_MARKER -- the exact
+ * mechanism built-in document tools already use (builtin-document-tools.ts)
+ * to surface a download card on the run, so this reuses that entire
+ * downstream pipeline (progress events, trace panel rendering,
+ * GET /api/agent-files/:id/download) instead of inventing a parallel one.
+ * Only the first image block is captured; a tool returning several images in
+ * one call (uncommon -- most screenshot tools return exactly one) surfaces
+ * only the first for now.
+ */
+async function attachImageEvidence(result: unknown, tool: AvailableTool, orgId: string | null | undefined, agentId?: string): Promise<any> {
+  if (!agentId || !result || typeof result !== "object" || !Array.isArray((result as any).content)) return result;
+  const imageBlock = (result as any).content.find((c: any) => c?.type === "image" && typeof c.data === "string");
+  if (!imageBlock) return result;
+
+  try {
+    const { GENERATED_FILE_MARKER } = await import("./builtin-document-tools");
+    const mimeType = typeof imageBlock.mimeType === "string" ? imageBlock.mimeType : "image/png";
+    const ext = mimeType.split("/")[1]?.split("+")[0] || "png";
+    const content = Buffer.from(imageBlock.data, "base64");
+    const row = await storage.createAgentGeneratedFile({
+      organizationId: orgId ?? null,
+      agentId,
+      workspaceRunId: null,
+      traceId: null,
+      filename: `${tool.toolName.replace(/[^a-zA-Z0-9_-]/g, "_")}_${Date.now()}.${ext}`,
+      mimeType,
+      sizeBytes: content.length,
+      source: "platform",
+      anthropicFileId: null,
+      content,
+    } as any);
+    return { ...(result as object), [GENERATED_FILE_MARKER]: { id: row.id, filename: row.filename, mimeType: row.mimeType } };
+  } catch (err: any) {
+    console.error(`[tool-dispatcher] Failed to persist image evidence from ${tool.toolName}:`, err.message);
+    return result;
+  }
+}
+
 export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
   // Built-in document generation (server/builtin-document-tools.ts). No server
   // to call -- the bytes are rendered in-process -- but it still arrives here
@@ -478,7 +525,8 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
   if (tool.isRealMcp) {
     const server = await storage.getMcpServer(tool.serverId);
     if (server) {
-      return mcpSdkCallTool(server, tool.toolName, args);
+      const result = await mcpSdkCallTool(server, tool.toolName, args);
+      return attachImageEvidence(result, tool, orgId, agentId);
     }
   }
 

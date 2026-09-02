@@ -4103,8 +4103,33 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
   const mcpServerIds = mcpLinks.map(l => l.serverId);
 
   const agentKbs = await storage.getAgentKnowledgeBases(deployment.agentId);
-  if (mcpServerIds.length === 0 && agentKbs.length === 0) {
-    return { started: false, message: "Cannot start runtime: No MCP Server integrations or Knowledge Bases linked to this agent. Link an MCP Server or Knowledge Base before deploying." };
+
+  // A team/orchestrator agent doesn't call tools directly -- its work happens
+  // through its member agents' own tool bindings (see executeWorkerAgent
+  // below, and dag-execution-engine.ts's node executor that calls it). This
+  // check used to look only at the orchestrator's OWN links, which meant a
+  // genuinely working team -- one whose members are fully tooled up -- could
+  // never pass activation. For agentType "team", check the blueprint's member
+  // agents transitively instead: an orchestrator whose members ALSO hold zero
+  // tool access is still a real gap worth blocking on, so this isn't skipped
+  // outright.
+  let hasToolAccess = mcpServerIds.length > 0 || agentKbs.length > 0;
+  if (!hasToolAccess && (agent as any).agentType === "team" && (agent as any).blueprintId) {
+    const memberNodes = await storage.getTeamBlueprintNodes((agent as any).blueprintId);
+    const memberAgentIds = memberNodes.map(n => n.refAgentId).filter((id): id is string => !!id);
+    for (const memberId of memberAgentIds) {
+      const [memberMcp, memberKbs] = await Promise.all([
+        storage.getAgentMcpServers(memberId),
+        storage.getAgentKnowledgeBases(memberId),
+      ]);
+      if (memberMcp.length > 0 || memberKbs.length > 0) {
+        hasToolAccess = true;
+        break;
+      }
+    }
+  }
+  if (!hasToolAccess) {
+    return { started: false, message: "Cannot start runtime: No MCP Server integrations or Knowledge Bases linked to this agent (or, for a team, to any of its member agents). Link an MCP Server or Knowledge Base before deploying." };
   }
 
   const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
