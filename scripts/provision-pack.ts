@@ -76,6 +76,7 @@ let kbAlready = 0;
 let mcpLinked = 0;
 let mcpAlready = 0;
 let flowsLinked = 0;
+let kbDeduped = 0;
 const failures: string[] = [];
 
 function log(msg: string) { console.log(msg); }
@@ -89,7 +90,7 @@ function fail(msg: string) { console.log("  ✗ " + msg); failures.push(msg); }
  * success on a re-run and should not be counted against the summary.
  */
 async function api<T = any>(
-  method: "GET" | "POST" | "PATCH" | "PUT",
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
   tolerate: number[] = [],
@@ -402,9 +403,21 @@ async function main() {
           // with no knowledge base and nothing said so.
           fail(`${a.name}: knowledge base "${a.kbName}" did not resolve to an id; binding skipped`);
         } else {
-          const links = await api<any[]>("GET", `/api/agents/${id}/knowledge-bases`);
-          const has = Array.isArray(links) && links.some((l: any) => (l.knowledgeBaseId ?? l.knowledge_base_id) === kbId);
-          if (has) kbAlready++;
+          // This route returns { links, knowledgeBases }, NOT a bare array.
+          // Treating it as an array made the existence check always false, so
+          // every run added another duplicate link.
+          const res0 = await api<any>("GET", `/api/agents/${id}/knowledge-bases`);
+          const links: any[] = Array.isArray(res0?.links) ? res0.links : Array.isArray(res0) ? res0 : [];
+          const mine = links.filter((l: any) => (l.knowledgeBaseId ?? l.knowledge_base_id) === kbId);
+          const has = mine.length > 0;
+          if (has) {
+            kbAlready++;
+            // Remove duplicates left by earlier runs; keep the first.
+            for (const extra of mine.slice(1)) {
+              const del = await api("DELETE", `/api/agents/${id}/knowledge-bases/${extra.id}`);
+              if (del !== null) kbDeduped++;
+            }
+          }
           if (!has) {
             // priority and retrievalConfig carry database defaults, but
             // drizzle-zod still marks notNull-with-default columns as required
@@ -531,7 +544,7 @@ async function main() {
   log("═══════════════════════════════════════════════════════════════");
   log(`  Created: ${created}   Reused: ${reused}   Failed: ${failures.length}`);
   log(`  Connector links: ${mcpLinked} new, ${mcpAlready} already present`);
-  log(`  Knowledge base links: ${kbLinked} new, ${kbAlready} already present, ${kbAttempted} agents expected one`);
+  log(`  Knowledge base links: ${kbLinked} new, ${kbAlready} already present, ${kbAttempted} agents expected one${kbDeduped ? `, ${kbDeduped} duplicate(s) removed` : ""}`);
   log(`  Process flows linked to journeys: ${flowsLinked} of ${DEALER_JOURNEYS.length}`);
   log("═══════════════════════════════════════════════════════════════");
   if (failures.length) {
