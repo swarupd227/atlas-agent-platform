@@ -185,15 +185,21 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
   // ── Bearer API key auth (for CI runners, programmatic access, and the
   // real-MCP-protocol connector routes) ────────────────────────────────────
-  // Accepts: Authorization: Bearer <api-key> on /eval/* paths, or on a
-  // connector's real MCP endpoint (/integrations/<id>/mcp -- see
-  // server/real-mcp-transport.ts, mounted under each enterprise connector's
-  // own router). Key is hashed with SHA-256 and looked up in agent_api_keys.
-  // Scope required depends on the path: /eval/* needs "invoke" or "eval";
-  // an MCP route needs "mcp" specifically -- a key minted for one surface
+  // Accepts: Authorization: Bearer <api-key> on /eval/* paths, on the API
+  // Gateway's own invoke endpoint (/gateway/v1/invoke/<agentId> -- see
+  // routes/runtime.ts, whose own Bearer/X-API-Key parsing this middleware
+  // was blocking upstream: every gateway call 401'd here as "Authentication
+  // required" before the route handler's own key check ever ran, since this
+  // path wasn't in the bearer allowlist), or on a connector's real MCP
+  // endpoint (/integrations/<id>/mcp -- see server/real-mcp-transport.ts,
+  // mounted under each enterprise connector's own router). Key is hashed
+  // with SHA-256 and looked up in agent_api_keys. Scope required depends on
+  // the path: /eval/* and /gateway/v1/invoke/* need "invoke" or "eval"; an
+  // MCP route needs "mcp" specifically -- a key minted for one surface
   // doesn't implicitly grant the other (least-privilege enforcement).
   const pathIsMcp = MCP_BEARER_PATH_RE.test(req.path);
-  const pathAllowsBearer = req.path === "/eval" || req.path.startsWith("/eval/") || pathIsMcp;
+  const pathIsGatewayInvoke = /^\/gateway\/v1\/invoke\/[^/]+$/.test(req.path);
+  const pathAllowsBearer = req.path === "/eval" || req.path.startsWith("/eval/") || pathIsMcp || pathIsGatewayInvoke;
   const authHeader = req.headers["authorization"];
   if (pathAllowsBearer && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     const rawKey = authHeader.slice(7).trim();
