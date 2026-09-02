@@ -21,7 +21,7 @@ import path from "path";
 import readline from "readline";
 import pg from "pg";
 import PDFDocument from "pdfkit";
-import { CREATE_SCHEMA_SQL, DDL_SQL, DROP_SCHEMA_SQL, grantsSql, writeGrantsSql, SUMMIT_SCHEMA } from "../packs/equipment-dealer/dataset/ddl";
+import { CREATE_SCHEMA_SQL, DDL_SQL, DROP_SCHEMA_SQL, grantsSql, writeGrantsSql, SUMMIT_SCHEMA, SUMMIT_TABLES } from "../packs/equipment-dealer/dataset/ddl";
 import { validateSeedConsistency } from "../packs/equipment-dealer/dataset/consistency";
 import {
   BRANCHES, ACCOUNTS, OEM_PROGRAMS, LABOUR_STANDARDS, FLEET_ASSETS,
@@ -286,7 +286,11 @@ async function main() {
     log("═══════════════════════════════════════════════════════════════");
     log(`\n  Read-only analyst connection (integration: postgres, createNew: true)`);
     log(`    host=${host}  database=${database}  user=summit_reader  ssl=require`);
-    log(`    allowedTables=${Object.keys(seedInventory()).join(",")}`);
+    // Every table, not just the seeded ones: the agent-written tables
+    // (journal_entries, credit_memos, credit_holds, research_queue,
+    // warranty_claims) are the audit trail, and the analyst connection must be
+    // able to read them.
+    log(`    allowedTables=${SUMMIT_TABLES.join(",")}`);
     log(`\n  Dealer action connection (integration: dealer-operations)`);
     log(`    host=${host}  database=${database}  user=summit_writer  schema=${SUMMIT_SCHEMA}  ssl=require`);
     log(`\n  Then: npx tsx scripts/provision-pack.ts`);
