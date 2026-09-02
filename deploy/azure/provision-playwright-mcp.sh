@@ -106,6 +106,13 @@ echo "=== 2/4: Playwright MCP container instance ==="
 # Deploying with --vnet/--subnet is what forces a private-only IP -- ACI
 # rejects a public IP request when a VNet is specified, so there's no flag to
 # accidentally get this wrong.
+# --browser chromium --no-sandbox: verified live -- with no --browser flag the
+# server defaulted to the "chrome" channel and failed with "Chromium
+# distribution 'chrome' is not found at /opt/google/chrome/chrome". Per
+# Microsoft's own docs, the official Docker image only supports headless
+# Chromium (the bundled, Playwright-managed browser, not a system Chrome
+# install), and their own example for this exact image passes --no-sandbox
+# alongside it (needed to launch Chromium as root in a container).
 az provider register --namespace Microsoft.ContainerInstance --wait 2>/dev/null || true
 
 if az container show --resource-group "$RG" --name "$MCP_APP_NAME" --output none 2>/dev/null; then
@@ -120,7 +127,7 @@ else
     --ports "$MCP_PORT" \
     --vnet "$MCP_VNET" --subnet "$MCP_SUBNET_INFRA" \
     --restart-policy Always \
-    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless --allowed-hosts *" \
+    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless --allowed-hosts * --browser chromium --no-sandbox" \
     --output none
 fi
 
