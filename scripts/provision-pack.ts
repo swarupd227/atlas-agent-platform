@@ -74,7 +74,17 @@ function ok(msg: string) { console.log("  ✓ " + msg); }
 function skip(msg: string) { console.log("  · " + msg); }
 function fail(msg: string) { console.log("  ✗ " + msg); failures.push(msg); }
 
-async function api<T = any>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<T | null> {
+/**
+ * `tolerate` lists status codes that are an expected outcome rather than a
+ * failure — 409 from the MCP link route means "already linked", which is
+ * success on a re-run and should not be counted against the summary.
+ */
+async function api<T = any>(
+  method: "GET" | "POST" | "PATCH",
+  path: string,
+  body?: unknown,
+  tolerate: number[] = [],
+): Promise<T | null> {
   // Under dry run nothing is written and nothing is read — the point is to
   // exercise payload construction and ordering, not to reach a server.
   if (DRY_RUN) return (method === "GET" ? [] : {}) as T;
@@ -89,6 +99,7 @@ async function api<T = any>(method: "GET" | "POST" | "PATCH", path: string, body
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (!res.ok) {
+      if (tolerate.includes(res.status)) return null;
       const text = await res.text().catch(() => "");
       fail(`${method} ${path} → ${res.status} ${text.slice(0, 200)}`);
       return null;
@@ -310,7 +321,11 @@ async function main() {
         (r) => r.externalId === a.externalId || r.name === a.name,
         "/api/agents",
         {
-          externalId: a.externalId,
+          // NOTE: agents has no externalId, industry, mcpServerIds or
+          // knowledgeBaseIds column. Sending them is silently dropped by Zod,
+          // which is how the first run produced agents bound to nothing.
+          // Identity is by name; connector and KB links are separate joins,
+          // wired immediately below.
           name: a.name,
           description: a.description,
           // The column is agent_type / agentType. A plain `type` key is not on
@@ -319,13 +334,10 @@ async function main() {
           // reject the orchestrator with "Agent is not a team type".
           agentType: isOrchestrator ? "team" : "single",
           status: "active",
-          industry: DEALER_INDUSTRY_ID,
           department: a.department,
           systemPrompt: j.systemPrompts[a.externalId],
           complianceTags: a.complianceTags,
           preloadedSkills: a.skillNames.map((n) => skillIds.get(n)).filter(Boolean),
-          mcpServerIds: a.mcpServerName && dealerServerId ? [dealerServerId] : [],
-          knowledgeBaseIds: a.kbName && kbIds.get(a.kbName) ? [kbIds.get(a.kbName)] : [],
           // Journey Library surfacing — only orchestrators carry these.
           isCuratedJourney: isOrchestrator,
           journeyIndustryId: isOrchestrator ? DEALER_INDUSTRY_ID : undefined,
@@ -351,6 +363,25 @@ async function main() {
         repair.journeySubVertical = j.subVertical;
       }
       await api("PATCH", `/api/agents/${id}`, repair);
+
+      // Connector and knowledge-base links are join tables, not columns on the
+      // agent. Without these an agent has a system prompt but no tools, which
+      // is exactly what the first provisioning run produced.
+      if (a.mcpServerName && dealerServerId) {
+        const linked = await api<any[]>("GET", `/api/agents/${id}/mcp-servers`);
+        const has = Array.isArray(linked) && linked.some((l: any) => (l.serverId ?? l.server_id ?? l.id) === dealerServerId);
+        if (!has) {
+          // 409 means it is already linked — that is success, not a failure.
+          const res = await api("POST", `/api/agents/${id}/mcp-servers`, { serverId: dealerServerId, acknowledgeWarnings: true }, [409]);
+          if (res !== null) ok(`      ${a.name} → Dealer Operations connector`);
+        }
+      }
+      const kbId = a.kbName ? kbIds.get(a.kbName) : undefined;
+      if (kbId) {
+        const links = await api<any[]>("GET", `/api/agents/${id}/knowledge-bases`);
+        const has = Array.isArray(links) && links.some((l: any) => (l.knowledgeBaseId ?? l.knowledge_base_id) === kbId);
+        if (!has) await api("POST", `/api/agents/${id}/knowledge-bases`, { knowledgeBaseId: kbId, priority: 1 });
+      }
     }
 
     // Wire workers to their orchestrator so the journey renders as a team.
