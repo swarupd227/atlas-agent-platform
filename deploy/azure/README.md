@@ -50,6 +50,7 @@ cp config.env.example config.env   # fill in your values
 - `verify.sh` — opens the app URL, curls the health endpoint, and tails the last few minutes of App Service logs.
 - `sync-local-data.sh` — copies data from your local Docker Postgres (`atlas-postgres`, used by `npm run dev`) into the Azure database, replacing whatever's there. Run this **locally** (Git Bash on your machine, not Cloud Shell) — it needs the local Docker container.
 - `recover-secrets.sh` — rebuilds `config.env` and `.generated-secrets.env` from the live Azure app settings of an already-deployed app. Use this if a Cloud Shell session loses `$HOME` (or you're setting up a fresh machine) and you need to reconnect to an existing deployment — see "Recovering after losing local state" below.
+- `provision-playwright-mcp.sh` — optional, for the UI Validation Agent use case: deploys Microsoft's official Playwright MCP server (browser automation — navigate/click/screenshot) into an internal-only Azure Container Apps environment and VNet-integrates the App Service to reach it privately. It has no built-in auth, so it's deliberately never exposed to the public internet — run this only if you actually need real browser automation from an agent. Prints the internal URL to register via Astra's own "Add MCP Server" screen at the end; no code change to the app itself.
 
 ## Recovering after losing local state
 
