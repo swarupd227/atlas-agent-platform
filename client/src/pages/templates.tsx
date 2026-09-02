@@ -188,6 +188,7 @@ const industryLabels: Record<string, string> = {
   manufacturing: "Manufacturing",
   retail: "Retail & E-Commerce",
   legal_services: "Legal Services",
+  equipment_dealer: "Equipment Dealers & Distribution",
   education: "Education",
   pharma: "Pharmaceuticals",
   media_entertainment: "Media & Entertainment",

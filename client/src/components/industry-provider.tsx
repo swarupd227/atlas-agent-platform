@@ -8,6 +8,7 @@ import {
   Shield,
   Monitor,
   Scale,
+  Truck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ export type IndustryId =
   | "retail"
   | "technology_saas"
   | "legal_services"
+  | "equipment_dealer"
   | "custom";
 
 export type DataClassification = "public" | "internal" | "confidential" | "restricted";
@@ -282,6 +284,38 @@ export const INDUSTRIES: IndustryProfile[] = [
       { label: "Audit Trail", description: "Every agent action logged with full explainability for bar compliance and client reporting" },
       { label: "PII Redaction", description: "Automatic redaction of client PII and sensitive matter data in all external outputs" },
       { label: "Confidence Thresholds", description: "No auto-execution below 0.85 confidence score for legal research and drafting decisions" },
+    ],
+  },
+  {
+    id: "equipment_dealer",
+    label: "Equipment Dealers & Distribution",
+    shortLabel: "Equip Dealer",
+    description: "Heavy equipment, agriculture, and construction dealerships — whole-goods sales, parts, service, rental, and back-office finance across multi-location dealer groups and OEM programs",
+    icon: Truck,
+    color: "hsl(45 85% 45%)",
+    ontology: "AEMP / ISO 15143-3 (Equipment Telematics) + AED Dealer Operations Ontology",
+    agentSkills: 112,
+    regulatoryFrameworks: ["ASC 606 (Revenue Recognition)", "ASC 842 (Leases)", "SOX", "UCC Article 2A", "OEM Warranty Program Terms", "FTC Truth-in-Advertising", "State Dealer Licensing", "GDPR / CCPA"],
+    subVerticals: ["Dealer Finance & Back Office", "Parts & Service", "Rental Operations", "Whole-goods Sales", "Warranty & OEM Programs"],
+    jurisdictions: ["US", "Canada", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [
+      { id: "e_emphasys_erp", name: "e-Emphasys ERP", category: "Dealer ERP", description: "Enterprise dealer management for complex multi-location equipment dealerships" },
+      { id: "intellidealer_dms", name: "IntelliDealer DMS", category: "Dealer DMS", description: "Dealership management system for parts, service, sales, and rental workflows" },
+      { id: "integrated_rental", name: "Integrated Rental", category: "Rental", description: "Rental contract lifecycle, fleet utilization, and rental billing" },
+      { id: "billtrust", name: "Billtrust", category: "AR Automation", description: "Invoice delivery, payment capture, and cash application automation" },
+      { id: "oem_warranty_portal", name: "OEM Warranty Portals", category: "Warranty", description: "Manufacturer warranty claim submission and adjudication portals" },
+      { id: "telematics_aemp", name: "AEMP Telematics Feed", category: "Telematics", description: "ISO 15143-3 machine data: meter hours, location, fault codes, utilization" },
+      { id: "auction_comps", name: "Auction Comparables Feed", category: "Market Data", description: "Used equipment auction results and residual value comparables" },
+      { id: "dealer_crm", name: "Dealer CRM", category: "CRM", description: "Customer, fleet, and opportunity management for equipment dealers" },
+    ],
+    departments: ["Equipment Sales", "Parts", "Service", "Rental", "Finance & Accounting", "Credit & Collections", "Warranty Administration", "Product Support", "IT & Systems", "Executive Leadership"],
+    defaultGovernancePolicies: [
+      { label: "Revenue Recognition Integrity", description: "Rental, service, and whole-goods revenue recognized per ASC 606 / ASC 842 before any invoice is posted" },
+      { label: "Warranty Claim Accuracy", description: "Every OEM warranty claim validated against program terms, coverage windows, and labor-time standards before submission" },
+      { label: "Margin Approval Authority", description: "Discounts and credit memos above threshold require documented human approval at the correct authority level" },
+      { label: "Collections Conduct", description: "Credit holds and collections outreach require documented justification and approved customer-facing language" },
+      { label: "Audit Trail", description: "Every agent action logged with full explainability for SOX and OEM program audits" },
+      { label: "Confidence Thresholds", description: "No auto-execution below 0.80 confidence score for cash application, credit memo, or warranty submission decisions" },
     ],
   },
   {
@@ -626,6 +660,20 @@ const DEFAULT_TERMS: TerminologyMap = {
 };
 
 const INDUSTRY_TERMS: Record<IndustryId, Partial<TerminologyMap>> = {
+  equipment_dealer: {
+    outcomes: "Dealer Performance Targets",
+    outcome: "Dealer Performance Target",
+    kpis: "Absorption Metrics",
+    kpi: "Absorption Metric",
+    incidents: "Exceptions",
+    incident: "Exception",
+    outcome_owner: "Branch Manager",
+    sla: "Uptime Commitment",
+    drift: "Variance",
+    remediation: "Corrective Action",
+    evaluation: "Control Check",
+    evaluations: "Control Checks",
+  },
   financial_services: {
     outcomes: "Service Commitments",
     outcome: "Service Commitment",

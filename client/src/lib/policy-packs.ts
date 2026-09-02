@@ -201,6 +201,59 @@ export const POLICY_PACKS: PolicyPack[] = [
       { name: "Human Oversight Controls", domain: "allowed_actions", description: "Human-in-the-loop requirement for high-risk AI operations per Article 14", policyJson: { rules: [{ type: "human_in_loop", triggers: ["high_risk_decision", "automated_decision_with_legal_effect"] }] } },
     ],
   },
+  {
+    id: "dealer-financial-controls-pack",
+    name: "Dealer Financial Controls Pack",
+    description: "SOX-aligned controls for agent-initiated financial postings in a dealership: approval authority, segregation of duties, and audit evidence",
+    industry: "equipment_dealer",
+    framework: "SOX",
+    riskLevel: "critical",
+    policies: [
+      { name: "Credit Memo Authority Limit", domain: "allowed_actions", description: "Agents may prepare but never self-approve credit memos above the configured branch authority limit", policyJson: { rules: [{ type: "value_threshold", action: "credit_memo", maxAutoApproveUsd: 10000, aboveThreshold: "require_human_approval", approverRole: "branch_controller" }] } },
+      { name: "Segregation of Duties", domain: "allowed_actions", description: "The agent that proposes a financial adjustment may not be the agent that posts it to the ledger", policyJson: { rules: [{ type: "segregation_of_duties", proposeRole: "analysis_agent", postRole: "posting_agent", sameActorForbidden: true }] } },
+      { name: "Financial Posting Audit Trail", domain: "logging", description: "Every ledger-affecting action logged with source document, matched invoice, confidence, and approver attribution", policyJson: { rules: [{ type: "audit_requirement", level: "comprehensive", retention_days: 2555, requiredFields: ["source_document", "matched_invoice", "confidence", "approver"] }] } },
+      { name: "Cash Application Confidence Floor", domain: "allowed_actions", description: "Payments are auto-applied only above the confidence floor; everything else routes to the exception queue", policyJson: { rules: [{ type: "confidence_threshold", action: "cash_application", minConfidence: 0.8, belowThreshold: "route_to_exception_queue" }] } },
+    ],
+  },
+  {
+    id: "asc606-842-revenue-pack",
+    name: "Revenue Recognition Pack (ASC 606 / ASC 842)",
+    description: "Policies keeping rental, service, and whole-goods revenue postings compliant with ASC 606 and ASC 842",
+    industry: "equipment_dealer",
+    framework: "ASC 606 / ASC 842",
+    riskLevel: "high",
+    policies: [
+      { name: "Period Cutoff Enforcement", domain: "allowed_actions", description: "Revenue is recognised in the period the performance obligation was satisfied, not the invoice date", policyJson: { rules: [{ type: "period_cutoff", basis: "obligation_satisfied", crossPeriod: "flag_for_review" }] } },
+      { name: "Rental Purchase Option Review", domain: "allowed_actions", description: "Rental contracts containing purchase options are routed for ASC 842 lease-classification review before posting", policyJson: { rules: [{ type: "contract_feature_gate", feature: "purchase_option", action: "require_accounting_review" }] } },
+      { name: "Multi-Obligation Split", domain: "allowed_actions", description: "Contracts bundling equipment, delivery, and extended coverage must be split into separate performance obligations", policyJson: { rules: [{ type: "obligation_split", bundledComponents: ["equipment", "delivery", "extended_coverage", "training"], requireAllocation: true }] } },
+    ],
+  },
+  {
+    id: "oem-warranty-program-pack",
+    name: "OEM Warranty Program Pack",
+    description: "Guards protecting manufacturer program standing by blocking non-compliant warranty claim submissions",
+    industry: "equipment_dealer",
+    framework: "OEM Warranty Program Terms",
+    riskLevel: "high",
+    policies: [
+      { name: "Coverage Window Validation", domain: "allowed_actions", description: "Claims must fall inside the manufacturer coverage window on both calendar months and meter hours", policyJson: { rules: [{ type: "coverage_window", dimensions: ["calendar_months", "meter_hours"], outOfWindow: "block_submission" }] } },
+      { name: "Labour Time Standard Cap", domain: "allowed_actions", description: "Claimed labour may not exceed the published standard repair time without documented justification", policyJson: { rules: [{ type: "value_cap", field: "labour_hours", source: "published_standard_time", overage: "require_goodwill_review" }] } },
+      { name: "Equipment Identity Verification", domain: "data_handling", description: "Serial or PIN must resolve to exactly one fleet asset before a claim is assembled", policyJson: { rules: [{ type: "entity_resolution", identifiers: ["serial_number", "pin"], ambiguous: "escalate_to_service_writer" }] } },
+    ],
+  },
+  {
+    id: "dealer-collections-conduct-pack",
+    name: "Collections Conduct Pack",
+    description: "Policies governing credit holds, dunning outreach, and escalation so collections activity stays justified and on-brand",
+    industry: "equipment_dealer",
+    framework: "Dealer Credit Policy",
+    riskLevel: "medium",
+    policies: [
+      { name: "Credit Hold Justification", domain: "allowed_actions", description: "A credit hold requires documented ageing evidence and excludes balances under active dispute", policyJson: { rules: [{ type: "precondition", action: "credit_hold", requires: ["ageing_evidence", "no_open_dispute"], otherwise: "escalate_to_credit_manager" }] } },
+      { name: "Approved Dunning Language", domain: "allowed_actions", description: "Customer-facing collections messages must use approved templates; no ad-hoc legal or repossession assertions", policyJson: { rules: [{ type: "template_restriction", channel: "customer_outreach", allowFreeform: false, prohibited: ["repossession_threat", "unapproved_fee_assertion"] }] } },
+      { name: "Key Account Escalation Guard", domain: "allowed_actions", description: "Credit holds on strategic or OEM-affiliated accounts always require human review regardless of exposure", policyJson: { rules: [{ type: "account_tier_gate", tiers: ["strategic", "oem_affiliated"], action: "credit_hold", require: "human_approval" }] } },
+    ],
+  },
 ];
 
 export function findPolicyPackName(policyName: string, policyDomain: string): string | null {

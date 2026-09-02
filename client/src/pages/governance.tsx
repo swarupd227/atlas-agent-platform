@@ -7332,6 +7332,7 @@ function CreatePolicyPackDialog({
     { value: "retail", label: "Retail" },
     { value: "technology_saas", label: "Technology / SaaS" },
     { value: "legal_services", label: "Legal Services" },
+    { value: "equipment_dealer", label: "Equipment Dealers & Distribution" },
   ];
 
   return (

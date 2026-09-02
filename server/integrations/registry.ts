@@ -453,3 +453,21 @@ export function getIntegrationsByWave(wave: 1 | 2 | 3 | 4): IntegrationDef[] {
 export function getIntegrationsByCategory(category: IntegrationCategory): IntegrationDef[] {
   return INTEGRATION_REGISTRY.filter((r) => r.category === category);
 }
+
+INTEGRATION_REGISTRY.push({
+  id: "vitaledge-dealer",
+  name: "Dealer Operations (VitalEdge)",
+  description: "Equipment dealership operating system — cash application, collections, OEM warranty, rental billing and whole-goods deal desk over the dealer's operational database",
+  category: "data",
+  logoColor: "#B26A12",
+  authMethod: "basic",
+  credentialFields: [
+    { key: "host", label: "Host", type: "text", required: true, placeholder: "mydb.postgres.database.azure.com" },
+    { key: "port", label: "Port", type: "text", required: false, placeholder: "5432" },
+    { key: "database", label: "Database", type: "text", required: true },
+    { key: "user", label: "User (write role — separate from the read-only analyst connection)", type: "text", required: true },
+    { key: "password", label: "Password", type: "password", required: true },
+    { key: "ssl", label: "SSL Mode (disable | require — default: require)", type: "text", required: false, placeholder: "require" },
+    { key: "schema", label: "Schema (default: summit)", type: "text", required: false, placeholder: "summit" },
+  ],
+});

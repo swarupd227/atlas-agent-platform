@@ -47,6 +47,7 @@ import {
   Unlink,
   Trash2,
   Scale,
+  Truck,
   Cpu,
   Info,
 } from "lucide-react";
@@ -59,6 +60,7 @@ const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; c
   insurance: { label: "Insurance", icon: Shield, color: "text-indigo-600 dark:text-indigo-400" },
   retail: { label: "Retail", icon: ShoppingCart, color: "text-emerald-600 dark:text-emerald-400" },
   legal_services: { label: "Legal Services", icon: Scale, color: "text-violet-600 dark:text-violet-400" },
+  equipment_dealer: { label: "Equipment Dealers & Distribution", icon: Truck, color: "text-yellow-600 dark:text-yellow-400" },
   technology_saas: { label: "Technology / SaaS", icon: Cpu, color: "text-cyan-600 dark:text-cyan-400" },
   supply_chain: { label: "Supply Chain", icon: GitBranch, color: "text-orange-600 dark:text-orange-400" },
   enterprise: { label: "Enterprise", icon: Building2, color: "text-slate-600 dark:text-slate-400" },

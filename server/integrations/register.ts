@@ -20,6 +20,7 @@ import { sapMcpServer } from "./sap/mcp-server";
 import { postgresMcpServer } from "./sql/postgres/mcp-server";
 import { mysqlMcpServer } from "./sql/mysql/mcp-server";
 import { sqlServerMcpServer } from "./sql/sqlserver/mcp-server";
+import { vitalEdgeDealerMcpServer } from "./vitaledge-dealer/mcp-server";
 import type { RealMcpBase } from "../real-mcp-base";
 
 // PUBLIC_URL is set in production (see deploy/azure/provision.sh) to this
@@ -153,6 +154,14 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
       route: "/api/integrations/sqlserver",
       riskTier: "MEDIUM",
       tags: ["data", "sqlserver", "mssql", "database", "wave-5"],
+    },
+    {
+      server: vitalEdgeDealerMcpServer,
+      catalogName: "Dealer Operations (VitalEdge)",
+      description: "Equipment dealership operating system — 57 real tools across cash application, collections, OEM warranty, rental billing integrity and whole-goods deal desk. Executes against the dealer's operational database with authority limits and compliance gates enforced at the tool boundary.",
+      route: "/api/integrations/vitaledge-dealer",
+      riskTier: "HIGH",
+      tags: ["equipment-dealer", "dealer-erp", "finance", "warranty", "rental", "wholegoods"],
     },
   ];
 }

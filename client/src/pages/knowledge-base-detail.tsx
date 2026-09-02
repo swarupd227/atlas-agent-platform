@@ -1675,6 +1675,7 @@ export default function KnowledgeBaseDetail() {
                   <SelectItem value="retail">Retail</SelectItem>
                   <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                   <SelectItem value="legal_services">Legal Services</SelectItem>
+                  <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
                 </SelectContent>
               </Select>
             </div>

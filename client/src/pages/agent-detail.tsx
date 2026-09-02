@@ -9787,6 +9787,7 @@ function AgentKnowledgeBases({ agent }: { agent: any }) {
                   <SelectItem value="retail">Retail</SelectItem>
                   <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
                   <SelectItem value="legal_services">Legal Services</SelectItem>
+                  <SelectItem value="equipment_dealer">Equipment Dealers & Distribution</SelectItem>
                   <SelectItem value="cross_industry">Cross-Industry</SelectItem>
                 </SelectContent>
               </Select>

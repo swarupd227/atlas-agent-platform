@@ -28,6 +28,7 @@ const industryOptions = [
   { label: "Manufacturing", value: "manufacturing" },
   { label: "Retail", value: "retail" },
   { label: "Technology/SaaS", value: "technology_saas" },
+  { label: "Equipment Dealers & Distribution", value: "equipment_dealer" },
   { label: "Cross-Industry", value: "cross_industry" },
 ];
 
@@ -38,6 +39,7 @@ const industryLabels: Record<string, string> = {
   manufacturing: "Manufacturing",
   retail: "Retail",
   technology_saas: "Technology/SaaS",
+  equipment_dealer: "Equipment Dealers & Distribution",
   cross_industry: "Cross-Industry",
 };
 
