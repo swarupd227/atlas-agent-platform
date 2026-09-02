@@ -8,11 +8,22 @@
 # authentication (confirmed against the project's own docs) -- anyone who
 # found a public URL for it could drive a real browser through your Azure
 # environment. Since Astra itself already runs in Azure, the container never
-# needs to be reachable from outside Azure at all: it's deployed into an
-# Azure Container Apps environment created with --internal-only true (no
-# public load balancer, full stop -- stronger than per-app "internal
-# ingress" alone), on a VNet that the App Service is then integrated into.
-# Nothing about this endpoint is ever exposed to the public internet.
+# needs to be reachable from outside Azure at all: it's deployed as an Azure
+# Container Instance directly inside a VNet subnet, which gets it a private
+# IP only -- ACI does not allow a public IP when deployed into a VNet, so
+# this is enforced by Azure itself, not just a config flag we could get
+# wrong. Nothing about this endpoint is ever exposed to the public internet.
+#
+# Why ACI and not Container Apps: the first version of this script used
+# Container Apps, which needs an AKS node pool behind the scenes even for a
+# single always-on container. That hit a real ManagedEnvironmentSubnetDelegationError
+# (fixed, see git history) and then a real AKSCapacityHeavyUsage error in
+# centralus -- a live regional capacity constraint, not something retryable
+# via config. ACI has no AKS underneath at all, so neither failure mode can
+# recur. The tradeoff: ACI's VNet deployment has no built-in DNS name, so the
+# registered MCP URL is the container's private IP rather than a hostname --
+# see the note printed at the end about what happens if the container is
+# ever deleted and recreated.
 #
 # Safe to re-run — every `az ... create` call below is idempotent (no-ops or
 # updates in place if the resource already exists), matching provision.sh.
@@ -35,12 +46,12 @@ done
 
 # --- Naming: override any of these in config.env if you want different names ---
 MCP_VNET="${MCP_VNET:-astra-mcp-vnet}"
-MCP_SUBNET_INFRA="${MCP_SUBNET_INFRA:-mcp-infra-subnet}"       # Container Apps environment infra subnet -- needs to be reasonably large (/23 recommended by Azure)
+MCP_SUBNET_INFRA="${MCP_SUBNET_INFRA:-mcp-infra-subnet}"       # ACI's own subnet -- delegated to Microsoft.ContainerInstance/containerGroups
 MCP_SUBNET_APPSVC="${MCP_SUBNET_APPSVC:-appsvc-integration-subnet}"  # App Service regional VNet integration -- delegated to Microsoft.Web/serverFarms, /27 minimum
-MCP_ENV_NAME="${MCP_ENV_NAME:-astra-mcp-env}"
 MCP_APP_NAME="${MCP_APP_NAME:-playwright-mcp}"
+MCP_PORT=8931
 
-echo "=== 1/5: VNet + subnets ==="
+echo "=== 1/4: VNet + subnets ==="
 if az network vnet show --resource-group "$RG" --name "$MCP_VNET" --output none 2>/dev/null; then
   echo "  $MCP_VNET already exists — skipping create."
 else
@@ -52,21 +63,20 @@ else
 fi
 
 if az network vnet subnet show --resource-group "$RG" --vnet-name "$MCP_VNET" --name "$MCP_SUBNET_INFRA" --output none 2>/dev/null; then
-  echo "  $MCP_SUBNET_INFRA already exists — skipping create."
-  # Still make sure the delegation is present even if the subnet was created
-  # by an earlier, buggy run of this script (before this delegation was added).
+  echo "  $MCP_SUBNET_INFRA already exists — updating delegation."
+  # Re-applied unconditionally, in case an earlier run of this script (before
+  # the Container Apps -> ACI switch) left it delegated to
+  # Microsoft.App/environments instead -- a subnet delegation is replaced,
+  # not additive, so this is exactly what moving it over requires.
   az network vnet subnet update \
     --resource-group "$RG" --vnet-name "$MCP_VNET" --name "$MCP_SUBNET_INFRA" \
-    --delegations Microsoft.App/environments \
+    --delegations Microsoft.ContainerInstance/containerGroups \
     --output none
 else
-  # A Container Apps environment built on a custom VNet requires its
-  # infrastructure subnet delegated to Microsoft.App/environments -- without
-  # this, environment creation fails with ManagedEnvironmentSubnetDelegationError.
   az network vnet subnet create \
     --resource-group "$RG" --vnet-name "$MCP_VNET" --name "$MCP_SUBNET_INFRA" \
     --address-prefixes 10.10.0.0/23 \
-    --delegations Microsoft.App/environments \
+    --delegations Microsoft.ContainerInstance/containerGroups \
     --output none
 fi
 
@@ -80,76 +90,67 @@ else
     --output none
 fi
 
-echo "=== 2/5: Container Apps environment (internal-only -- no public load balancer) ==="
-INFRA_SUBNET_ID=$(az network vnet subnet show --resource-group "$RG" --vnet-name "$MCP_VNET" --name "$MCP_SUBNET_INFRA" --query id -o tsv)
-
-if ! az extension show --name containerapp --output none 2>/dev/null; then
-  echo "  Installing the containerapp CLI extension..."
-  az extension add --name containerapp --only-show-errors
-fi
-az provider register --namespace Microsoft.App --wait 2>/dev/null || true
-az provider register --namespace Microsoft.OperationalInsights --wait 2>/dev/null || true
-
-if az containerapp env show --resource-group "$RG" --name "$MCP_ENV_NAME" --output none 2>/dev/null; then
-  echo "  $MCP_ENV_NAME already exists — skipping create."
-else
-  az containerapp env create \
-    --resource-group "$RG" --name "$MCP_ENV_NAME" \
-    --location "$LOCATION" \
-    --infrastructure-subnet-resource-id "$INFRA_SUBNET_ID" \
-    --internal-only true \
-    --output none
-fi
-
-echo "=== 3/5: Playwright MCP container app ==="
+echo "=== 2/4: Playwright MCP container instance ==="
 # --headless: no display needed in a container. --host 0.0.0.0: listen on all
 # interfaces (required inside a container -- localhost-only would be
-# unreachable). --port 8931: arbitrary but matches Microsoft's own example.
-# --ingress internal: reachable only within the Container Apps environment's
-# VNet, never from the public internet (this is belt-and-suspenders on top of
-# the environment already being --internal-only).
-if az containerapp show --resource-group "$RG" --name "$MCP_APP_NAME" --output none 2>/dev/null; then
-  echo "  $MCP_APP_NAME already exists — skipping create. Re-run with 'az containerapp update' if you need to change its image/args."
+# unreachable). --port: arbitrary but matches Microsoft's own example.
+# Deploying with --vnet/--subnet is what forces a private-only IP -- ACI
+# rejects a public IP request when a VNet is specified, so there's no flag to
+# accidentally get this wrong.
+az provider register --namespace Microsoft.ContainerInstance --wait 2>/dev/null || true
+
+if az container show --resource-group "$RG" --name "$MCP_APP_NAME" --output none 2>/dev/null; then
+  echo "  $MCP_APP_NAME already exists — skipping create. Delete it first ('az container delete') if you need to change its image/args, since ACI container groups are immutable once created."
 else
-  az containerapp create \
+  az container create \
     --resource-group "$RG" --name "$MCP_APP_NAME" \
-    --environment "$MCP_ENV_NAME" \
     --image mcr.microsoft.com/playwright/mcp:latest \
-    --target-port 8931 \
-    --ingress internal \
-    --min-replicas 1 --max-replicas 1 \
-    --cpu 1.0 --memory 2.0Gi \
-    --command "npx" \
-    --args "@playwright/mcp@latest,--port,8931,--host,0.0.0.0,--headless" \
+    --os-type Linux \
+    --cpu 1 --memory 2 \
+    --ports "$MCP_PORT" \
+    --vnet "$MCP_VNET" --subnet "$MCP_SUBNET_INFRA" \
+    --restart-policy Always \
+    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless" \
     --output none
 fi
 
-echo "=== 4/5: VNet-integrate the existing App Service ==="
+echo "=== 3/4: VNet-integrate the existing App Service ==="
 # Regional VNet integration lets astra-agents-platform reach anything on this
-# VNet (including the internal Container Apps environment) over a private
-# connection, without exposing either side to the public internet. This does
-# NOT change how the public internet reaches the App Service itself -- only
-# what the App Service can reach outbound.
+# VNet (including the ACI container's private IP) over a private connection,
+# without exposing either side to the public internet. This does NOT change
+# how the public internet reaches the App Service itself -- only what the
+# App Service can reach outbound.
 az webapp vnet-integration add \
   --resource-group "$RG" --name "$APP_NAME" \
   --vnet "$MCP_VNET" --subnet "$MCP_SUBNET_APPSVC" \
   --output none
 
-echo "=== 5/5: Resolving the internal URL ==="
-MCP_FQDN=$(az containerapp show --resource-group "$RG" --name "$MCP_APP_NAME" --query properties.configuration.ingress.fqdn -o tsv)
+echo "=== 4/4: Resolving the internal address ==="
+# ACI's VNet deployment mode has no built-in DNS name (unlike Container
+# Apps' ingress FQDN) -- the private IP itself is the address. It's stable
+# across restarts of this same container group, but WILL change if the
+# container group is ever deleted and recreated (e.g. to change its image),
+# so re-run this script's final step (or just `az container show`) to get
+# the current IP after any such change, and re-register it in Astra.
+MCP_IP=$(az container show --resource-group "$RG" --name "$MCP_APP_NAME" --query ipAddress.ip -o tsv)
 
 echo ""
 echo "Done."
 echo ""
-echo "Internal MCP server URL (only reachable from inside this VNet, i.e. from"
+echo "Internal MCP server address (only reachable from inside this VNet, i.e. from"
 echo "astra-agents-platform itself now that it's VNet-integrated):"
 echo ""
-echo "  https://${MCP_FQDN}"
+echo "  http://${MCP_IP}:${MCP_PORT}"
 echo ""
 echo "Next: in Astra, go to Agents > (advanced) > MCP Servers > Add Server, and register:"
-echo "  URL:            https://${MCP_FQDN}"
+echo "  URL:            http://${MCP_IP}:${MCP_PORT}"
 echo "  Transport type: streamable-http"
 echo ""
 echo "Give the container a minute to finish starting (npx has to fetch @playwright/mcp"
 echo "on first boot) before the Initialize handshake will succeed. Check logs with:"
-echo "  az containerapp logs show --resource-group $RG --name $MCP_APP_NAME --follow"
+echo "  az container logs --resource-group $RG --name $MCP_APP_NAME"
+echo ""
+echo "If this address ever stops responding after an image/arg change, the container"
+echo "group had to be deleted and recreated and its IP has changed -- re-run:"
+echo "  az container show --resource-group $RG --name $MCP_APP_NAME --query ipAddress.ip -o tsv"
+echo "and update the URL registered in Astra to match."
