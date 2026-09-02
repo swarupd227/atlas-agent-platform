@@ -104,6 +104,7 @@ if az container show --resource-group "$RG" --name "$MCP_APP_NAME" --output none
 else
   az container create \
     --resource-group "$RG" --name "$MCP_APP_NAME" \
+    --location "$LOCATION" \
     --image mcr.microsoft.com/playwright/mcp:latest \
     --os-type Linux \
     --cpu 1 --memory 2 \
