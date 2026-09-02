@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Provisions a Playwright MCP server (Microsoft's official browser-automation
 # MCP server, mcr.microsoft.com/playwright/mcp) for the UI Validation Agent,
-# and VNet-integrates the existing astra-agents-platform App Service so it
-# can reach it privately.
+# VNet-integrates the existing astra-agents-platform App Service so it can
+# reach it privately, and mounts a shared Azure Files share into both so the
+# App Service can actually retrieve the screenshot files the container saves.
 #
 # Why a VNet, not a public endpoint: @playwright/mcp has NO built-in
 # authentication (confirmed against the project's own docs) -- anyone who
@@ -24,6 +25,18 @@
 # registered MCP URL is the container's private IP rather than a hostname --
 # see the note printed at the end about what happens if the container is
 # ever deleted and recreated.
+#
+# Why the shared file share: verified live -- Playwright MCP's
+# browser_take_screenshot tool does NOT return an inline image in its tool
+# result. It saves the file to its own container filesystem and returns only
+# a text filename reference, and this server's real Initialize handshake
+# advertises capabilities: {tools: {}} with no "resources" capability, so
+# there's no MCP-protocol way to read the file back either. Mounting the
+# same Azure Files share into both the container (as Playwright's
+# --output-dir) and this App Service (at a local path the app code reads
+# directly) closes that gap with a plain filesystem read on the app's side --
+# see server/tool-dispatcher.ts's captureFileBasedScreenshot for the code
+# that actually persists it as a downloadable agentGeneratedFiles row.
 #
 # Safe to re-run — every `az ... create` call below is idempotent (no-ops or
 # updates in place if the resource already exists), matching provision.sh.
@@ -50,8 +63,15 @@ MCP_SUBNET_INFRA="${MCP_SUBNET_INFRA:-mcp-infra-subnet}"       # ACI's own subne
 MCP_SUBNET_APPSVC="${MCP_SUBNET_APPSVC:-appsvc-integration-subnet}"  # App Service regional VNet integration -- delegated to Microsoft.Web/serverFarms, /27 minimum
 MCP_APP_NAME="${MCP_APP_NAME:-playwright-mcp}"
 MCP_PORT=8931
+# Storage account names must be globally unique, lowercase alphanumeric only,
+# <=24 chars -- derived from APP_NAME plus a short hash of RG+APP_NAME so a
+# collision with someone else's storage account is unlikely without you
+# having to pick a name yourself.
+MCP_STORAGE_ACCOUNT="${MCP_STORAGE_ACCOUNT:-$(echo -n "${APP_NAME}mcpevid" | tr -dc 'a-z0-9' | cut -c1-18)$(echo -n "${RG}${APP_NAME}" | md5sum | cut -c1-6)}"
+MCP_FILE_SHARE="${MCP_FILE_SHARE:-mcp-evidence}"
+MCP_MOUNT_PATH="/mnt/mcp-evidence"   # same path on both the container and the App Service, by convention -- not user-configurable, since server/tool-dispatcher.ts's default matches this exactly
 
-echo "=== 1/4: VNet + subnets ==="
+echo "=== 1/6: VNet + subnets ==="
 if az network vnet show --resource-group "$RG" --name "$MCP_VNET" --output none 2>/dev/null; then
   echo "  $MCP_VNET already exists — skipping create."
 else
@@ -90,7 +110,31 @@ else
     --output none
 fi
 
-echo "=== 2/4: Playwright MCP container instance ==="
+echo "=== 2/6: Shared storage account + file share (evidence handoff) ==="
+az provider register --namespace Microsoft.Storage --wait 2>/dev/null || true
+
+if az storage account show --resource-group "$RG" --name "$MCP_STORAGE_ACCOUNT" --output none 2>/dev/null; then
+  echo "  $MCP_STORAGE_ACCOUNT already exists — skipping create."
+else
+  az storage account create \
+    --resource-group "$RG" --name "$MCP_STORAGE_ACCOUNT" \
+    --location "$LOCATION" \
+    --sku Standard_LRS --kind StorageV2 \
+    --output none
+fi
+
+MCP_STORAGE_KEY=$(az storage account keys list --resource-group "$RG" --account-name "$MCP_STORAGE_ACCOUNT" --query "[0].value" -o tsv)
+
+if az storage share-rm show --resource-group "$RG" --storage-account "$MCP_STORAGE_ACCOUNT" --name "$MCP_FILE_SHARE" --output none 2>/dev/null; then
+  echo "  $MCP_FILE_SHARE already exists — skipping create."
+else
+  az storage share-rm create \
+    --resource-group "$RG" --storage-account "$MCP_STORAGE_ACCOUNT" --name "$MCP_FILE_SHARE" \
+    --quota 5 \
+    --output none
+fi
+
+echo "=== 3/6: Playwright MCP container instance ==="
 # --headless: no display needed in a container. --host 0.0.0.0: listen on all
 # interfaces (required inside a container -- localhost-only would be
 # unreachable). --port: arbitrary but matches Microsoft's own example.
@@ -113,10 +157,12 @@ echo "=== 2/4: Playwright MCP container instance ==="
 # Chromium (the bundled, Playwright-managed browser, not a system Chrome
 # install), and their own example for this exact image passes --no-sandbox
 # alongside it (needed to launch Chromium as root in a container).
+# --output-dir: writes screenshots into the mounted Azure Files share instead
+# of the container's own ephemeral filesystem -- see the file share note above.
 az provider register --namespace Microsoft.ContainerInstance --wait 2>/dev/null || true
 
 if az container show --resource-group "$RG" --name "$MCP_APP_NAME" --output none 2>/dev/null; then
-  echo "  $MCP_APP_NAME already exists — skipping create. Delete it first ('az container delete') if you need to change its image/args, since ACI container groups are immutable once created."
+  echo "  $MCP_APP_NAME already exists — skipping create. Delete it first ('az container delete') if you need to change its image/args/mounts, since ACI container groups are immutable once created."
 else
   az container create \
     --resource-group "$RG" --name "$MCP_APP_NAME" \
@@ -127,11 +173,15 @@ else
     --ports "$MCP_PORT" \
     --vnet "$MCP_VNET" --subnet "$MCP_SUBNET_INFRA" \
     --restart-policy Always \
-    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless --allowed-hosts * --browser chromium --no-sandbox" \
+    --azure-file-volume-account-name "$MCP_STORAGE_ACCOUNT" \
+    --azure-file-volume-account-key "$MCP_STORAGE_KEY" \
+    --azure-file-volume-share-name "$MCP_FILE_SHARE" \
+    --azure-file-volume-mount-path "$MCP_MOUNT_PATH" \
+    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless --allowed-hosts * --browser chromium --no-sandbox --output-dir $MCP_MOUNT_PATH" \
     --output none
 fi
 
-echo "=== 3/4: VNet-integrate the existing App Service ==="
+echo "=== 4/6: VNet-integrate the existing App Service ==="
 # Regional VNet integration lets astra-agents-platform reach anything on this
 # VNet (including the ACI container's private IP) over a private connection,
 # without exposing either side to the public internet. This does NOT change
@@ -142,7 +192,31 @@ az webapp vnet-integration add \
   --vnet "$MCP_VNET" --subnet "$MCP_SUBNET_APPSVC" \
   --output none
 
-echo "=== 4/4: Resolving the internal address ==="
+echo "=== 5/6: Mounting the same file share into the App Service ==="
+# Linux App Service "custom storage mounts" expose an Azure Files share as a
+# plain local path inside the app's own container -- server/tool-dispatcher.ts
+# then just does a normal fs.readFile() against MCP_MOUNT_PATH, no Storage SDK
+# or network call needed. This is a config-plane change on the Web App
+# resource; it takes effect on the app's next restart, which the final
+# `az webapp restart` below forces immediately rather than waiting for the
+# next code deploy.
+if az webapp config storage-account list --resource-group "$RG" --name "$APP_NAME" --query "[?name=='mcp-evidence']" -o tsv | grep -q .; then
+  echo "  mcp-evidence mount already exists — skipping create."
+else
+  az webapp config storage-account add \
+    --resource-group "$RG" --name "$APP_NAME" \
+    --custom-id mcp-evidence \
+    --storage-type AzureFiles \
+    --account-name "$MCP_STORAGE_ACCOUNT" \
+    --share-name "$MCP_FILE_SHARE" \
+    --access-key "$MCP_STORAGE_KEY" \
+    --mount-path "$MCP_MOUNT_PATH" \
+    --output none
+fi
+
+az webapp restart --resource-group "$RG" --name "$APP_NAME" --output none
+
+echo "=== 6/6: Resolving the internal address ==="
 # ACI's VNet deployment mode has no built-in DNS name (unlike Container
 # Apps' ingress FQDN) -- the private IP itself is the address. It's stable
 # across restarts of this same container group, but WILL change if the
@@ -171,3 +245,6 @@ echo "If this address ever stops responding after an image/arg change, the conta
 echo "group had to be deleted and recreated and its IP has changed -- re-run:"
 echo "  az container show --resource-group $RG --name $MCP_APP_NAME --query ipAddress.ip -o tsv"
 echo "and update the URL registered in Astra to match."
+echo ""
+echo "The App Service just restarted to pick up the new /mnt/mcp-evidence mount --"
+echo "give it a minute before running anything through the UI Validation pipeline."

@@ -476,6 +476,81 @@ async function attachImageEvidence(result: unknown, tool: AvailableTool, orgId: 
   }
 }
 
+// Same local path on both sides of provision-playwright-mcp.sh's shared
+// Azure Files mount: Playwright MCP's --output-dir inside the container, and
+// this App Service's custom storage mount (az webapp config storage-account
+// add --mount-path). Not meant to vary per-deployment -- overridable via env
+// only for local/alternate setups that mount the share somewhere else.
+const MCP_EVIDENCE_MOUNT_PATH = process.env.MCP_EVIDENCE_MOUNT_PATH || "/mnt/mcp-evidence";
+
+/**
+ * Some browser-automation MCP tools don't return an inline image at all --
+ * verified live against Playwright MCP's browser_take_screenshot, which
+ * saves the file to its OWN container filesystem and returns only a text
+ * filename reference. That file would otherwise be unrecoverable: this
+ * server's real Initialize handshake advertises capabilities: {tools: {}},
+ * no "resources" capability, so there's no MCP-protocol way to read it back
+ * either. provision-playwright-mcp.sh mounts one Azure Files share into both
+ * the Playwright container (as --output-dir) and this App Service (at
+ * MCP_EVIDENCE_MOUNT_PATH) specifically so this function can just read the
+ * file directly off the shared mount, no Storage SDK or network call needed.
+ *
+ * Relies on the caller having passed an explicit `filename` argument to the
+ * tool call -- the Journey Catalog skill instructs the agent to always do
+ * this precisely so this function doesn't have to guess or parse
+ * Playwright's own default `page-{timestamp}.png` naming out of free text.
+ * An omitted filename means capture is silently skipped, not that the
+ * screenshot itself failed -- the tool call's own result is untouched.
+ */
+async function captureFileBasedScreenshot(result: unknown, tool: AvailableTool, args: Record<string, any>, orgId: string | null | undefined, agentId?: string): Promise<any> {
+  if (!agentId || tool.toolName !== "browser_take_screenshot") return result;
+  const filename = typeof args?.filename === "string" ? args.filename.trim() : "";
+  if (!filename) return result;
+
+  const fs = await import("fs/promises");
+  const path = await import("path");
+  const filePath = path.join(MCP_EVIDENCE_MOUNT_PATH, filename);
+
+  // A write on the container's mount and a read on this App Service's mount
+  // of the same Azure Files share are two separate SMB clients -- normally
+  // near-instant, but not guaranteed synchronous, hence the short retry
+  // instead of a single read.
+  let content: Buffer | null = null;
+  for (let attempt = 0; attempt < 5 && !content; attempt++) {
+    try {
+      content = await fs.readFile(filePath);
+    } catch {
+      if (attempt < 4) await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  if (!content) {
+    console.error(`[tool-dispatcher] Screenshot evidence file not found on shared mount after retries: ${filePath}`);
+    return result;
+  }
+
+  try {
+    const { GENERATED_FILE_MARKER } = await import("./builtin-document-tools");
+    const ext = path.extname(filename).slice(1).toLowerCase() || "png";
+    const mimeType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
+    const row = await storage.createAgentGeneratedFile({
+      organizationId: orgId ?? null,
+      agentId,
+      workspaceRunId: null,
+      traceId: null,
+      filename,
+      mimeType,
+      sizeBytes: content.length,
+      source: "platform",
+      anthropicFileId: null,
+      content,
+    } as any);
+    return { ...(result as object), [GENERATED_FILE_MARKER]: { id: row.id, filename: row.filename, mimeType: row.mimeType } };
+  } catch (err: any) {
+    console.error(`[tool-dispatcher] Failed to persist file-based screenshot evidence:`, err.message);
+    return result;
+  }
+}
+
 export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
   // Built-in document generation (server/builtin-document-tools.ts). No server
   // to call -- the bytes are rendered in-process -- but it still arrives here
@@ -526,7 +601,12 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
     const server = await storage.getMcpServer(tool.serverId);
     if (server) {
       const result = await mcpSdkCallTool(server, tool.toolName, args);
-      return attachImageEvidence(result, tool, orgId, agentId);
+      const withInlineImage = await attachImageEvidence(result, tool, orgId, agentId);
+      // attachImageEvidence returns the same reference when no inline image
+      // block was found -- only then is it worth also checking the
+      // file-based path, since a given tool call won't need both.
+      if (withInlineImage !== result) return withInlineImage;
+      return captureFileBasedScreenshot(result, tool, args, orgId, agentId);
     }
   }
 
