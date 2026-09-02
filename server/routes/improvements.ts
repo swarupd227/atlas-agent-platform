@@ -2134,6 +2134,35 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           .map(s => ({ skillId: s.id, skillName: s.name }));
       };
 
+      // Third instance of the same shape bug. "policyConstraints" is policy
+      // NAMES per the prompt schema, but both write sites below stored them as
+      // { policies: [...names] } -- an object with no policy ids. That shape is
+      // explicitly skipped by BOTH consumers: resolvePolicyBundle (helpers.ts)
+      // bails on it because "old shape has no per-policy IDs", and
+      // buildAgentSystemPrompt's ACTIVE POLICY ENFORCEMENT section requires
+      // Array.isArray(policyBindings). So every policy an agent was supposedly
+      // bound to reached neither the prompt nor the enforcement path. Resolve
+      // names against the real table into the array-of-{policyId} shape those
+      // consumers actually read.
+      const orgPolicies = (await storage.getPolicies(getOrgId(req))).filter(p => p.status === "active");
+      const policiesByLowerName = new Map(orgPolicies.map(p => [p.name.toLowerCase().trim(), p]));
+      const resolvePolicyBindings = function(names?: string[]): Array<{ policyId: string; policyName: string; enforcement: string }> {
+        if (!names?.length) return [];
+        const out: Array<{ policyId: string; policyName: string; enforcement: string }> = [];
+        for (const raw of names) {
+          const match = policiesByLowerName.get((raw || "").toLowerCase().trim());
+          if (!match || out.some(o => o.policyId === match.id)) continue;
+          // Carry the policy's own declared enforcement rather than inventing
+          // one -- a binding-level override here would silently upgrade a
+          // monitor policy into a hard block.
+          const enforcement = ((match.policyJson as any)?.enforcement
+            || (match.policyJson as any)?.enforcement_mode
+            || "monitor") as string;
+          out.push({ policyId: match.id, policyName: match.name, enforcement });
+        }
+        return out;
+      };
+
       // Same problem as skills above, but this one shipped broken: "matchedOntologyConcepts"
       // is exact ontology concept LABELS per the propose-agents prompt schema, but this route
       // (a separate request from propose-agents, with no access to that request's ranked
@@ -2325,7 +2354,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         systemPrompt: composeSystemPrompt(orchestrator, true),
         complianceTags: orchestrator.complianceTags || [],
         ontologyTags: resolveOntologyTags(orchestrator.matchedOntologyConcepts),
-        policyBindings: orchestrator.policyConstraints?.length ? { policies: orchestrator.policyConstraints } : {},
+        policyBindings: resolvePolicyBindings(orchestrator.policyConstraints),
         preloadedSkills: resolveMatchedSkills(orchestrator.matchedSkills),
         isCuratedJourney: !!markAsCuratedJourney,
         journeyIndustryId: markAsCuratedJourney ? (reqIndustry || null) : null,
@@ -2401,7 +2430,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           systemPrompt: composeSystemPrompt(worker, false),
           complianceTags: worker.complianceTags || [],
           ontologyTags: resolveOntologyTags(worker.matchedOntologyConcepts),
-          policyBindings: worker.policyConstraints?.length ? { policies: worker.policyConstraints } : {},
+          policyBindings: resolvePolicyBindings(worker.policyConstraints),
           preloadedSkills: resolveMatchedSkills(worker.matchedSkills),
           blueprintId: worker.suggestedBlueprintId || undefined,
           runtimeConfig: {
@@ -2457,16 +2486,26 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           if (outcomePolicies.length > 0) {
             const allCreated = [teamAgent, ...createdWorkers];
             for (const created of allCreated) {
-              const existing = (created.policyBindings as any) || {};
-              const existingNames: string[] = Array.isArray(existing.policies) ? existing.policies : [];
-              const newNames = outcomePolicies.map(p => p.name).filter(n => !existingNames.includes(n));
-              if (newNames.length > 0) {
+              // Append in the SAME array-of-{policyId} shape the agent was
+              // created with. This previously rewrote policyBindings into the
+              // { policies: [...names] } object, which would have undone the
+              // resolution above and put the agent back in the shape both
+              // resolvePolicyBundle and buildAgentSystemPrompt ignore.
+              const existing = Array.isArray(created.policyBindings)
+                ? (created.policyBindings as Array<{ policyId?: string }>)
+                : [];
+              const existingIds = new Set(existing.map(b => b.policyId).filter(Boolean));
+              const additions = outcomePolicies
+                .filter(p => !existingIds.has(p.id))
+                .map(p => ({
+                  policyId: p.id,
+                  policyName: p.name,
+                  enforcement: ((p.policyJson as any)?.enforcement || (p.policyJson as any)?.enforcement_mode || "monitor") as string,
+                  source: "outcome" as const,
+                }));
+              if (additions.length > 0) {
                 await storage.updateAgent(created.id, {
-                  policyBindings: {
-                    ...existing,
-                    policies: [...existingNames, ...newNames],
-                    outcomeBindings: outcomePolicies.map(p => ({ policyId: p.id, policyName: p.name, domain: p.domain })),
-                  },
+                  policyBindings: [...existing, ...additions],
                 });
               }
             }
