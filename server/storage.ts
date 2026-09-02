@@ -1694,6 +1694,18 @@ export class DatabaseStorage implements IStorage {
     await db.execute(sql`DELETE FROM aar_action_decisions WHERE agent_id = ${id}`);
     await db.execute(sql`DELETE FROM aar_agent_state_reports WHERE agent_id = ${id}`);
     await db.execute(sql`DELETE FROM aar_configs WHERE agent_id = ${id}`);
+    // The mandate/warrant primitive tables hard-reference agents(id) and were
+    // added after this cleanup was written, so any agent carrying a mandate
+    // could never be deleted (FK violation -> 500) -- and every agent built by
+    // create-team-from-proposals gets one, so that was all of them. Same class
+    // of gap as the AAR tables above. Deleted children-first: derived items
+    // reference derivations, warrants reference task classes, and task classes
+    // and derivations both reference the mandate.
+    await db.delete(mandateDerivedItems).where(eq(mandateDerivedItems.agentId, id));
+    await db.delete(mandateDerivations).where(eq(mandateDerivations.agentId, id));
+    await db.delete(agentWarrants).where(eq(agentWarrants.agentId, id));
+    await db.delete(agentTaskClasses).where(eq(agentTaskClasses.agentId, id));
+    await db.delete(agentMandates).where(eq(agentMandates.agentId, id));
     // Runbooks reference agents but are user content — detach, don't delete.
     await db.execute(sql`UPDATE runbooks SET agent_id = NULL WHERE agent_id = ${id}`);
     const [deleted] = await db.delete(agents).where(eq(agents.id, id)).returning();
