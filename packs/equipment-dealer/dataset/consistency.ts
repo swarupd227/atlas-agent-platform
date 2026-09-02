@@ -72,7 +72,7 @@ export function validateSeedConsistency(): { ok: boolean; errors: string[]; chec
     check("deal.unit FK", unitIds.has(dl.unit_id), dl.deal_id);
   }
 
-  // ── VE-J1: cash application ─────────────────────────────────────────────────
+  // ── ED-J1: cash application ─────────────────────────────────────────────────
   // Bayard: one invoice matching the ACH exactly.
   const bayard = INVOICES.find((i) => i.invoice_id === "INV-88214");
   const bayardPay = PAYMENTS.find((p) => p.payment_id === "PAY-77010");
@@ -138,7 +138,7 @@ export function validateSeedConsistency(): { ok: boolean; errors: string[]; chec
     !!cutoff.obligation_satisfied_on && cutoff.obligation_satisfied_on < cutoff.invoice_date,
     `${cutoff.obligation_satisfied_on} → ${cutoff.invoice_date}`);
 
-  // ── VE-J2: collections ──────────────────────────────────────────────────────
+  // ── ED-J2: collections ──────────────────────────────────────────────────────
   const marchettiOpen = sum(openOf("ACC-4310").map((i) => i.balance_usd));
   const marchettiDisputed = sum(DISPUTES.filter((d) => d.account_id === "ACC-4310" && d.status === "open")
     .map((d) => d.disputed_amount_usd));
@@ -168,7 +168,7 @@ export function validateSeedConsistency(): { ok: boolean; errors: string[]; chec
   check("J2 rental-overage dispute exists for the credit memo case",
     DISPUTES.some((d) => d.reason_code === "rental_overage" && d.status === "open" && !!d.contract_clause));
 
-  // ── VE-J3: warranty ─────────────────────────────────────────────────────────
+  // ── ED-J3: warranty ─────────────────────────────────────────────────────────
   const bySerial = new Map<string, typeof FLEET_ASSETS>();
   for (const u of FLEET_ASSETS) {
     if (!bySerial.has(u.serial_number)) bySerial.set(u.serial_number, [] as never);
@@ -241,7 +241,7 @@ export function validateSeedConsistency(): { ok: boolean; errors: string[]; chec
     check("J3 there are 2 prior warranty final-drive repairs", priors.length === 2, `${priors.length}`);
   }
 
-  // ── VE-J4: rental ───────────────────────────────────────────────────────────
+  // ── ED-J4: rental ───────────────────────────────────────────────────────────
   const hoursIn = (unit: string, from: string, to: string) => {
     const rows = TELEMATICS_READINGS
       .filter((t) => t.unit_id === unit && t.reported && t.reading_date >= from && t.reading_date <= to)
@@ -289,7 +289,7 @@ export function validateSeedConsistency(): { ok: boolean; errors: string[]; chec
   check("J4 a negotiated-rate contract exists (over-billing direction)",
     RENTAL_CONTRACTS.some((r) => r.is_negotiated_rate));
 
-  // ── VE-J5: whole-goods ──────────────────────────────────────────────────────
+  // ── ED-J5: whole-goods ──────────────────────────────────────────────────────
   const landed = (unitId: string) => {
     const u = FLEET_ASSETS.find((a) => a.unit_id === unitId)!;
     const days = u.inventory_since ? daysBetween(u.inventory_since, SEED_TODAY) : 0;

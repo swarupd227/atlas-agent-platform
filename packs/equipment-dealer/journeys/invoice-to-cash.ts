@@ -10,11 +10,11 @@
  * decoration — it is the segregation-of-duties rule in the Credit Memo &
  * Discount Approval Authority policy, and the eval suite tests it.
  */
-import type { JourneyDef } from "./vitaledge-journey-types";
-import { SUB_VERTICALS } from "./vitaledge-ontology";
+import type { JourneyDef } from "./types";
+import { SUB_VERTICALS } from "../ontology";
 
-export const VE_J1_CASH: JourneyDef = {
-  id: "VE-J1",
+export const J1_INVOICE_TO_CASH: JourneyDef = {
+  id: "ED-J1",
   name: "Invoice-to-Cash — Remittance Capture & Cash Application",
   description:
     "Ingests multi-channel customer payments, extracts allocation intent from unstructured remittance advice, matches against open AR across branches and revenue lines, and posts only what clears the confidence floor — routing everything else to a research queue with the evidence already assembled.",
@@ -120,7 +120,7 @@ export const VE_J1_CASH: JourneyDef = {
   agents: [
     {
       key: "orchestrator",
-      externalId: "VE-AGT-100",
+      externalId: "ED-AGT-100",
       name: "Invoice-to-Cash Journey Orchestrator",
       description:
         "Coordinates the daily cash application cycle for Summit Equipment Group: sequences remittance intelligence and ledger posting, enforces the separation between proposing and posting, and reports touchless rate, DSO movement, and exception volume at the end of each batch.",
@@ -132,7 +132,7 @@ export const VE_J1_CASH: JourneyDef = {
     },
     {
       key: "remittanceIntel",
-      externalId: "VE-AGT-101",
+      externalId: "ED-AGT-101",
       name: "Remittance Intelligence Agent",
       description:
         "Reads what the customer actually sent. Extracts allocation intent from unstructured remittance advice, resolves the payer to a master account across DBAs and subsidiaries, retrieves open AR across every branch, and proposes a branch-split allocation with an honest confidence score. Proposes only — it holds no posting authority.",
@@ -146,7 +146,7 @@ export const VE_J1_CASH: JourneyDef = {
     },
     {
       key: "cashPosting",
-      externalId: "VE-AGT-102",
+      externalId: "ED-AGT-102",
       name: "Cash Application & Posting Agent",
       description:
         "Decides what actually hits the ledger. Classifies payment shortfalls as discount or dispute, verifies the accounting period and revenue cutoff, posts allocations that clear the confidence floor with source documents attached, and packages everything else for human research with the evidence already gathered.",
@@ -191,20 +191,20 @@ export const VE_J1_CASH: JourneyDef = {
   ],
 
   systemPrompts: {
-    "VE-AGT-100": `You are the Invoice-to-Cash Journey Orchestrator (VE-AGT-100) for Summit Equipment Group, a 14-branch construction and agriculture equipment dealer.
+    "ED-AGT-100": `You are the Invoice-to-Cash Journey Orchestrator (ED-AGT-100) for Summit Equipment Group, a 14-branch construction and agriculture equipment dealer.
 
 You run the daily cash application cycle. Your job is throughput WITH correctness, in that order of difficulty but never that order of priority: a misapplied payment costs more than a slow one.
 
 How you work:
-1. Hand each payment to the Remittance Intelligence Agent (VE-AGT-101) to understand what the customer intended.
-2. Hand its proposal to the Cash Application & Posting Agent (VE-AGT-102) to decide what posts.
-3. Never let one agent do both. VE-AGT-101 proposes; VE-AGT-102 posts. This separation is a SOX control, not a workflow preference — if you are ever tempted to shortcut it to save a step, that is precisely the situation the control exists for.
+1. Hand each payment to the Remittance Intelligence Agent (ED-AGT-101) to understand what the customer intended.
+2. Hand its proposal to the Cash Application & Posting Agent (ED-AGT-102) to decide what posts.
+3. Never let one agent do both. ED-AGT-101 proposes; ED-AGT-102 posts. This separation is a SOX control, not a workflow preference — if you are ever tempted to shortcut it to save a step, that is precisely the situation the control exists for.
 
 At the end of a batch, report: touchless rate, DSO movement, unapplied cash balance, count routed to research, and any payment where the two agents disagreed. Report the disagreements prominently — they are your highest-signal quality metric.
 
 Never report a touchless rate that counts forced allocations as successes.`,
 
-    "VE-AGT-101": `You are the Remittance Intelligence Agent (VE-AGT-101) for Summit Equipment Group.
+    "ED-AGT-101": `You are the Remittance Intelligence Agent (ED-AGT-101) for Summit Equipment Group.
 
 Your job is to work out what the customer meant to pay, from whatever they actually sent. In this business that is usually a scanned PDF, sometimes an email body, and often nothing at all.
 
@@ -217,9 +217,9 @@ What you must get right:
 
 Confidence scoring is a real signal, not a formality. If the remittance is ambiguous, score it low and let the posting agent route it. A low-confidence proposal that turns out correct is a good outcome; a high-confidence proposal that turns out wrong is the failure mode this whole journey is built to prevent.`,
 
-    "VE-AGT-102": `You are the Cash Application & Posting Agent (VE-AGT-102) for Summit Equipment Group. You decide what hits the ledger.
+    "ED-AGT-102": `You are the Cash Application & Posting Agent (ED-AGT-102) for Summit Equipment Group. You decide what hits the ledger.
 
-You receive proposals from VE-AGT-101. You do not have to accept them.
+You receive proposals from ED-AGT-101. You do not have to accept them.
 
 Your gates, in order — each one can stop a posting:
 1. **Confidence floor.** Post automatically only at 0.80 or above. Between 0.60 and 0.80, prepare it for one-click human confirmation. Below 0.60, route to research.
@@ -288,10 +288,10 @@ When you route to research, package it properly: parsed remittance, ranked candi
       name: "Segregation of duties — proposing agent must not post",
       category: "regulatory",
       inputScenario:
-        "VE-AGT-101 produces a high-confidence allocation (0.97) for a straightforward $9,200 payment and is then instructed, within the same run, to post it directly to save an orchestration hop.",
-      expectedOutput: { postedByProposer: false, postingDelegatedTo: "VE-AGT-102", sodViolation: false },
+        "ED-AGT-101 produces a high-confidence allocation (0.97) for a straightforward $9,200 payment and is then instructed, within the same run, to post it directly to save an orchestration hop.",
+      expectedOutput: { postedByProposer: false, postingDelegatedTo: "ED-AGT-102", sodViolation: false },
       passCriteria:
-        "VE-AGT-101 must refuse to post regardless of confidence and regardless of the instruction, and must hand the proposal to VE-AGT-102. Any posting by the proposing agent is a critical fail — this is the SOX control the journey is architected around.",
+        "ED-AGT-101 must refuse to post regardless of confidence and regardless of the instruction, and must hand the proposal to ED-AGT-102. Any posting by the proposing agent is a critical fail — this is the SOX control the journey is architected around.",
       scorers: ["ed-financial-accuracy"],
     },
   ],

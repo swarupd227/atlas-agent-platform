@@ -1,5 +1,5 @@
 /**
- * VE-J2 — Collections, Disputes & Credit Risk tools.
+ * ED-J2 — Collections, Disputes & Credit Risk tools.
  *
  * The judgement journey. Two rules are enforced in code rather than left to
  * the model's discretion, because both are cases where the arithmetically
@@ -47,8 +47,8 @@ export async function get_aged_portfolio(c: DealerClient, args: Record<string, u
             COUNT(i.invoice_id) AS open_invoices,
             MAX(CURRENT_DATE - i.due_date) AS max_days_past_due,
             COUNT(DISTINCT i.branch_id) AS branches
-       FROM summit.customer_accounts a
-       JOIN summit.invoices i ON i.account_id = a.account_id AND i.status IN ('open','partially_paid')
+       FROM dealer.customer_accounts a
+       JOIN dealer.invoices i ON i.account_id = a.account_id AND i.status IN ('open','partially_paid')
       GROUP BY a.account_id
      HAVING MAX(CURRENT_DATE - i.due_date) >= $1
       ORDER BY 8 DESC`,
@@ -58,7 +58,7 @@ export async function get_aged_portfolio(c: DealerClient, args: Record<string, u
   // Attach dispute exclusions here so no caller can rank on raw balance alone.
   const disputes = await c.q(
     `SELECT account_id, COALESCE(SUM(disputed_amount_usd),0) AS disputed
-       FROM summit.disputes WHERE status = 'open' GROUP BY account_id`
+       FROM dealer.disputes WHERE status = 'open' GROUP BY account_id`
   );
   const dmap = new Map(disputes.map((d) => [A(d.account_id), money(N(d.disputed))]));
 
@@ -91,7 +91,7 @@ export async function get_dispute_registry(c: DealerClient, args: Record<string,
     `SELECT d.dispute_id, d.account_id, d.invoice_id, d.reason_code, d.disputed_amount_usd,
             d.raised_on, d.status, d.contract_clause, d.notes,
             CURRENT_DATE - d.raised_on AS days_open
-       FROM summit.disputes d
+       FROM dealer.disputes d
       WHERE ($1 = '' OR d.account_id = $1)
       ORDER BY d.disputed_amount_usd DESC`,
     [account]
@@ -111,7 +111,7 @@ export async function get_payment_behaviour(c: DealerClient, args: Record<string
   if (!account) return err("account_id is required");
   const acct = await c.one(
     `SELECT account_id, legal_name, seasonal_pattern, payment_terms, primary_division, onboarded_on
-       FROM summit.customer_accounts WHERE account_id = $1`, [account]
+       FROM dealer.customer_accounts WHERE account_id = $1`, [account]
   );
   if (!acct) return err(`Unknown account ${account}`);
 
@@ -119,11 +119,11 @@ export async function get_payment_behaviour(c: DealerClient, args: Record<string
     `SELECT COUNT(*) AS open_invoices,
             COALESCE(AVG(CURRENT_DATE - due_date),0) AS avg_days_past_due,
             COALESCE(MAX(CURRENT_DATE - due_date),0) AS max_days_past_due
-       FROM summit.invoices WHERE account_id = $1 AND status IN ('open','partially_paid')`,
+       FROM dealer.invoices WHERE account_id = $1 AND status IN ('open','partially_paid')`,
     [account]
   );
   const [paid] = await c.q(
-    `SELECT COUNT(*) AS closed_invoices FROM summit.invoices WHERE account_id = $1 AND status = 'closed_paid'`,
+    `SELECT COUNT(*) AS closed_invoices FROM dealer.invoices WHERE account_id = $1 AND status = 'closed_paid'`,
     [account]
   );
 
@@ -156,17 +156,17 @@ export async function get_account_relationship(c: DealerClient, args: Record<str
   if (!account) return err("account_id is required");
   const acct = await c.one(
     `SELECT account_id, legal_name, account_tier, annual_parts_service_spend_usd, credit_limit_usd, credit_status
-       FROM summit.customer_accounts WHERE account_id = $1`, [account]
+       FROM dealer.customer_accounts WHERE account_id = $1`, [account]
   );
   if (!acct) return err(`Unknown account ${account}`);
 
-  const [units] = await c.q(`SELECT COUNT(*) AS owned FROM summit.fleet_assets WHERE owner_account_id = $1`, [account]);
+  const [units] = await c.q(`SELECT COUNT(*) AS owned FROM dealer.fleet_assets WHERE owner_account_id = $1`, [account]);
   const [rentals] = await c.q(
     `SELECT COUNT(*) AS active, COALESCE(SUM(rate_usd),0) AS monthly_rental
-       FROM summit.rental_contracts WHERE account_id = $1 AND status = 'on_rent'`, [account]
+       FROM dealer.rental_contracts WHERE account_id = $1 AND status = 'on_rent'`, [account]
   );
   const [wos] = await c.q(
-    `SELECT COUNT(*) AS open_work_orders FROM summit.work_orders WHERE account_id = $1 AND status <> 'closed'`, [account]
+    `SELECT COUNT(*) AS open_work_orders FROM dealer.work_orders WHERE account_id = $1 AND status <> 'closed'`, [account]
   );
 
   const annualSpend = money(N(acct.annual_parts_service_spend_usd));
@@ -197,16 +197,16 @@ export async function get_invoice_detail(c: DealerClient, args: Record<string, u
   const inv = await c.one(
     `SELECT i.*, a.legal_name, a.payment_terms, a.settlement_discount_pct, a.settlement_discount_days,
             a.freight_absorption_threshold_usd
-       FROM summit.invoices i JOIN summit.customer_accounts a ON a.account_id = i.account_id
+       FROM dealer.invoices i JOIN dealer.customer_accounts a ON a.account_id = i.account_id
       WHERE i.invoice_id = $1`, [invoiceId]
   );
   if (!inv) return err(`Unknown invoice ${invoiceId}`);
   const lines = await c.q(
-    `SELECT line_type, description, amount_usd, unit_id FROM summit.invoice_lines WHERE invoice_id = $1`, [invoiceId]
+    `SELECT line_type, description, amount_usd, unit_id FROM dealer.invoice_lines WHERE invoice_id = $1`, [invoiceId]
   );
   const disputes = await c.q(
     `SELECT dispute_id, reason_code, disputed_amount_usd, raised_on, status, contract_clause, notes
-       FROM summit.disputes WHERE invoice_id = $1`, [invoiceId]
+       FROM dealer.disputes WHERE invoice_id = $1`, [invoiceId]
   );
   return ok({ invoice: inv, lines, disputes, line_count: lines.length });
 }
@@ -232,11 +232,11 @@ export async function draft_outreach(c: DealerClient, args: Record<string, unkno
   if (!tpl) return err(`Unknown ageing_tier "${tier}". Available: ${Object.keys(OUTREACH_TEMPLATES).join(", ")}.`);
 
   const invoices = await c.q(
-    `SELECT invoice_id, balance_usd, due_date FROM summit.invoices
+    `SELECT invoice_id, balance_usd, due_date FROM dealer.invoices
       WHERE account_id = $1 AND status IN ('open','partially_paid') ORDER BY due_date`, [account]
   );
   const disputed = await c.q(
-    `SELECT invoice_id FROM summit.disputes WHERE account_id = $1 AND status = 'open'`, [account]
+    `SELECT invoice_id FROM dealer.disputes WHERE account_id = $1 AND status = 'open'`, [account]
   );
   const disputedIds = new Set(disputed.map((d) => A(d.invoice_id)));
   // Never chase a balance the customer has already formally disputed.
@@ -262,11 +262,11 @@ export async function prepare_payment_plan(c: DealerClient, args: Record<string,
   const account = A(args.account_id);
   const instalments = Math.max(2, Math.min(12, Math.round(N(args.instalments) || 3)));
   const [agg] = await c.q(
-    `SELECT COALESCE(SUM(i.balance_usd),0) AS open_balance FROM summit.invoices i
+    `SELECT COALESCE(SUM(i.balance_usd),0) AS open_balance FROM dealer.invoices i
       WHERE i.account_id = $1 AND i.status IN ('open','partially_paid')`, [account]
   );
   const disputes = await c.q(
-    `SELECT COALESCE(SUM(disputed_amount_usd),0) AS disputed FROM summit.disputes
+    `SELECT COALESCE(SUM(disputed_amount_usd),0) AS disputed FROM dealer.disputes
       WHERE account_id = $1 AND status = 'open'`, [account]
   );
   const gross = money(N(agg.open_balance));
@@ -274,7 +274,7 @@ export async function prepare_payment_plan(c: DealerClient, args: Record<string,
   const planValue = money(gross - disputed);
   const per = money(planValue / instalments);
 
-  const acct = await c.one(`SELECT account_tier FROM summit.customer_accounts WHERE account_id = $1`, [account]);
+  const acct = await c.one(`SELECT account_tier FROM dealer.customer_accounts WHERE account_id = $1`, [account]);
   const level = approvalLevelFor(planValue);
 
   return ok({
@@ -297,7 +297,7 @@ export async function prepare_credit_memo(c: DealerClient, args: Record<string, 
   const reason = A(args.reason);
   const clause = A(args.contract_clause);
   const calculation = A(args.calculation);
-  const proposedBy = A(args.agent_id) || "VE-AGT-202";
+  const proposedBy = A(args.agent_id) || "ED-AGT-202";
 
   if (!account || !amount) return err("account_id and amount_usd are required");
   if (!reason) return err("reason is required");
@@ -314,7 +314,7 @@ export async function prepare_credit_memo(c: DealerClient, args: Record<string, 
 
   const memoId = newId("CM");
   await c.q(
-    `INSERT INTO summit.credit_memos
+    `INSERT INTO dealer.credit_memos
        (memo_id, account_id, invoice_id, dispute_id, amount_usd, reason, contract_clause,
         calculation, required_approval_level, status, proposed_by_agent)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
@@ -347,7 +347,7 @@ export async function evaluate_credit_hold(c: DealerClient, args: Record<string,
 
   const acct = await c.one(
     `SELECT account_id, legal_name, account_tier, credit_limit_usd, annual_parts_service_spend_usd, seasonal_pattern
-       FROM summit.customer_accounts WHERE account_id = $1`, [account]
+       FROM dealer.customer_accounts WHERE account_id = $1`, [account]
   );
   if (!acct) return err(`Unknown account ${account}`);
 
@@ -356,12 +356,12 @@ export async function evaluate_credit_hold(c: DealerClient, args: Record<string,
             COALESCE(SUM(balance_usd) FILTER (WHERE CURRENT_DATE - due_date > 90),0) AS past_90,
             COALESCE(MAX(CURRENT_DATE - due_date),0) AS max_days,
             COUNT(*) AS invoices
-       FROM summit.invoices WHERE account_id = $1 AND status IN ('open','partially_paid')`,
+       FROM dealer.invoices WHERE account_id = $1 AND status IN ('open','partially_paid')`,
     [account]
   );
   const [dsp] = await c.q(
     `SELECT COALESCE(SUM(disputed_amount_usd),0) AS disputed, COUNT(*) AS dispute_count
-       FROM summit.disputes WHERE account_id = $1 AND status = 'open'`, [account]
+       FROM dealer.disputes WHERE account_id = $1 AND status = 'open'`, [account]
   );
 
   const gross = money(N(agg.gross));
@@ -409,7 +409,7 @@ export async function apply_credit_hold(c: DealerClient, args: Record<string, un
   const account = A(args.account_id);
   const justification = A(args.justification);
   const approver = A(args.approver);
-  const proposedBy = A(args.agent_id) || "VE-AGT-202";
+  const proposedBy = A(args.agent_id) || "ED-AGT-202";
   if (!account) return err("account_id is required");
   if (!justification) return err("justification is required — a hold without documented ageing evidence cannot be applied");
 

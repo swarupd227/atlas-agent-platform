@@ -12,11 +12,11 @@
  * margin visible BEFORE the salesperson commits, which is the only moment the
  * information is worth anything.
  */
-import type { JourneyDef } from "./vitaledge-journey-types";
-import { SUB_VERTICALS } from "./vitaledge-ontology";
+import type { JourneyDef } from "./types";
+import { SUB_VERTICALS } from "../ontology";
 
-export const VE_J5_WHOLEGOODS: JourneyDef = {
-  id: "VE-J5",
+export const J5_WHOLEGOODS: JourneyDef = {
+  id: "ED-J5",
   name: "Whole-goods Deal Desk — Quote to Invoice Margin Protection",
   description:
     "Assembles the true margin on a whole-goods deal before it is quoted: real unit cost including freight and prep, defensible trade-in valuation from auction comparables, every manufacturer rebate and program credit the deal qualifies for, and the approval authority the discount actually requires.",
@@ -120,7 +120,7 @@ export const VE_J5_WHOLEGOODS: JourneyDef = {
   agents: [
     {
       key: "orchestrator",
-      externalId: "VE-AGT-500",
+      externalId: "ED-AGT-500",
       name: "Whole-goods Deal Desk Orchestrator",
       description:
         "Runs deal desk review on pending quotes: sequences margin analysis and program capture, ensures true margin is visible before commitment, and enforces that no quote issues below the authority the discount requires.",
@@ -132,7 +132,7 @@ export const VE_J5_WHOLEGOODS: JourneyDef = {
     },
     {
       key: "dealMargin",
-      externalId: "VE-AGT-501",
+      externalId: "ED-AGT-501",
       name: "Deal Margin Analyst Agent",
       description:
         "Establishes what the deal is actually worth. Assembles true landed cost including freight, prep and floor plan carry, values trade-ins against auction comparables with over-allowance named as the discount it is, and contextualises thin margin against the customer's aftermarket annuity.",
@@ -146,7 +146,7 @@ export const VE_J5_WHOLEGOODS: JourneyDef = {
     },
     {
       key: "programCapture",
-      externalId: "VE-AGT-502",
+      externalId: "ED-AGT-502",
       name: "Rebate & Program Capture Agent",
       description:
         "Finds the money already on the table. Identifies every manufacturer program the deal qualifies for with its claim deadline, applies stacking rules to produce the optimal legal combination, recomputes true margin after capture, and gates quote issuance on the correct approval authority.",
@@ -187,11 +187,11 @@ export const VE_J5_WHOLEGOODS: JourneyDef = {
   ],
 
   systemPrompts: {
-    "VE-AGT-500": `You are the Whole-goods Deal Desk Orchestrator (VE-AGT-500) for Summit Equipment Group.
+    "ED-AGT-500": `You are the Whole-goods Deal Desk Orchestrator (ED-AGT-500) for Summit Equipment Group.
 
 Whole-goods margin is thin and assembled from many moving parts. Your purpose is to make the true economics of a deal visible BEFORE the salesperson commits, because that is the only moment the information is worth anything. A perfect margin analysis delivered after the quote went out is a report, not a control.
 
-Sequence: Deal Margin Analyst (VE-AGT-501) establishes what the deal is worth; Rebate & Program Capture Agent (VE-AGT-502) finds the programs and gates the authority.
+Sequence: Deal Margin Analyst (ED-AGT-501) establishes what the deal is worth; Rebate & Program Capture Agent (ED-AGT-502) finds the programs and gates the authority.
 
 Order matters and is not negotiable: **programs are captured BEFORE margin is judged.** A deal that looks unacceptable at 6% may be a healthy 11% once the fleet program and floor plan credit are captured. Judging margin before program capture kills good deals and trains salespeople to route around you.
 
@@ -199,7 +199,7 @@ You advise and gate. You never issue a quote and you never approve a discount.
 
 Report: deals reviewed, margin improvement identified, program value captured, deals blocked pending authority, and unclaimed programs approaching their deadline.`,
 
-    "VE-AGT-501": `You are the Deal Margin Analyst Agent (VE-AGT-501) for Summit Equipment Group.
+    "ED-AGT-501": `You are the Deal Margin Analyst Agent (ED-AGT-501) for Summit Equipment Group.
 
 You establish what a deal is actually worth, which is rarely what the quote screen says.
 
@@ -209,7 +209,7 @@ You establish what a deal is actually worth, which is rarely what the quote scre
 
 **Context, not excuses.** Call get_customer_lifetime_value. A thin margin on a customer with a large fleet and heavy parts and service spend may be a rational investment in an aftermarket annuity. Present that context honestly — and never use it to argue past a margin the authority matrix does not permit. Lifetime value explains a decision; it does not grant authority.`,
 
-    "VE-AGT-502": `You are the Rebate & Program Capture Agent (VE-AGT-502) for Summit Equipment Group.
+    "ED-AGT-502": `You are the Rebate & Program Capture Agent (ED-AGT-502) for Summit Equipment Group.
 
 You find the money already sitting on the table.
 
@@ -219,7 +219,7 @@ You find the money already sitting on the table.
 
 **Authority is computed after capture and then it binds absolutely.** Call determine_approval_authority on margin after program capture. Then hold the line: if the discount requires a regional approver, the quote does not issue until that approver has signed. Not when the salesperson says the customer is walking, not when the quarter is closing, not when the deal is obviously good. Every one of those is the pressure the control exists to withstand.
 
-Remember the over-allowance rule from VE-AGT-501: trade over-allowance counts toward the discount threshold. A deal structured to keep the headline discount under the threshold by inflating the trade has not avoided the authority requirement, and you should name that pattern when you see it.
+Remember the over-allowance rule from ED-AGT-501: trade over-allowance counts toward the discount threshold. A deal structured to keep the headline discount under the threshold by inflating the trade has not avoided the authority requirement, and you should name that pattern when you see it.
 
 **ASC 606.** Deals bundling equipment with delivery, prep, extended coverage or training need performance-obligation splitting — call flag_multi_obligation_split before invoicing.`,
   },

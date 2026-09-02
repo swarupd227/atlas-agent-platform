@@ -1,14 +1,14 @@
 /**
  * Seed <-> eval consistency gate for the Summit Equipment Group dataset.
  *
- *   npx tsx scripts/validate-summit-data.ts
+ *   npx tsx scripts/validate-pack-dataset.ts
  *
  * Run this after editing either the seed or any eval case. It is the only
  * thing standing between "our evals test the agent" and "our evals agree with
  * whatever we happened to seed".
  */
-import { validateSeedConsistency } from "../server/vitaledge-data/consistency";
-import { seedInventory } from "../server/vitaledge-data/seed";
+import { validateSeedConsistency } from "../packs/equipment-dealer/dataset/consistency";
+import { seedInventory } from "../packs/equipment-dealer/dataset/seed";
 
 const inv = seedInventory();
 const total = Object.values(inv).reduce((a, b) => a + b, 0);

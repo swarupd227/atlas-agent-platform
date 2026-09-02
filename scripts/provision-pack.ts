@@ -4,26 +4,26 @@
  * indistinguishable from what a user would build in the UI.
  *
  *   npm run dev                                   # in another terminal
- *   npx tsx scripts/validate-vitaledge.ts         # always run this first
- *   npx tsx scripts/provision-vitaledge.ts
+ *   npx tsx scripts/validate-pack.ts         # always run this first
+ *   npx tsx scripts/provision-pack.ts
  *
  * Against the deployed environment:
- *   BASE_URL=https://astra-agents-artizent.azurewebsites.net AUTH_TOKEN=... npx tsx scripts/provision-vitaledge.ts
+ *   BASE_URL=https://astra-agents-artizent.azurewebsites.net AUTH_TOKEN=... npx tsx scripts/provision-pack.ts
  *
  * Idempotent: every create is preceded by a lookup on natural key (name /
  * externalId), so re-running repairs a partial provision rather than
  * duplicating it. Safe to re-run after a failure.
  */
-import { VITALEDGE_JOURNEYS, validateJourneyBindings, journeyInventory } from "../server/vitaledge-journeys";
+import { DEALER_JOURNEYS, validateJourneyBindings, journeyInventory } from "../packs/equipment-dealer/journeys";
 import {
-  VITALEDGE_ONTOLOGY_CONCEPTS,
-  VITALEDGE_KB_DEFS,
-  VITALEDGE_POLICY_DEFS,
-  VITALEDGE_INDUSTRY_ID,
-  VITALEDGE_ONTOLOGY_NAME,
-} from "../server/vitaledge-ontology";
-import { VITALEDGE_PROCESS_FLOWS, validateProcessFlows } from "../server/vitaledge-process-flows";
-import { auditToolCoverage } from "../server/integrations/vitaledge-dealer/mcp-server";
+  DEALER_ONTOLOGY_CONCEPTS,
+  DEALER_KB_DEFS,
+  DEALER_POLICY_DEFS,
+  DEALER_INDUSTRY_ID,
+  DEALER_ONTOLOGY_NAME,
+} from "../packs/equipment-dealer/ontology";
+import { DEALER_PROCESS_FLOWS, validateProcessFlows } from "../packs/equipment-dealer/process-flows";
+import { auditToolCoverage } from "../server/integrations/dealer-operations/mcp-server";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:5000";
 const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
@@ -135,11 +135,11 @@ async function main() {
   const flows = validateProcessFlows();
   if (!bindings.ok || !flows.ok) {
     log("\nRefusing to provision — validation failed. Run:");
-    log("  npx tsx scripts/validate-vitaledge.ts");
+    log("  npx tsx scripts/validate-pack.ts");
     process.exit(1);
   }
   const inv = journeyInventory();
-  log(`\nTo provision: ${inv.journeys} journeys · ${inv.agents} agents · ${inv.skills} skills · ${inv.mcpServers} connectors (${inv.mcpTools} tools) · ${VITALEDGE_ONTOLOGY_CONCEPTS.length} concepts · ${VITALEDGE_POLICY_DEFS.length} policies · ${inv.evalCases} eval cases`);
+  log(`\nTo provision: ${inv.journeys} journeys · ${inv.agents} agents · ${inv.skills} skills · ${inv.mcpServers} connectors (${inv.mcpTools} tools) · ${DEALER_ONTOLOGY_CONCEPTS.length} concepts · ${DEALER_POLICY_DEFS.length} policies · ${inv.evalCases} eval cases`);
 
   // Authenticate before anything else; against production nothing else works.
   if (!DRY_RUN) {
@@ -164,11 +164,11 @@ async function main() {
 
   // ── 1. Ontology ───────────────────────────────────────────────────────────
   log("\n[1/8] Ontology concepts");
-  const conceptPayload = VITALEDGE_ONTOLOGY_CONCEPTS.map((c) => ({
+  const conceptPayload = DEALER_ONTOLOGY_CONCEPTS.map((c) => ({
     id: c.id,
-    industryId: VITALEDGE_INDUSTRY_ID,
+    industryId: DEALER_INDUSTRY_ID,
     subVerticals: c.subVerticals,
-    ontologyName: VITALEDGE_ONTOLOGY_NAME,
+    ontologyName: DEALER_ONTOLOGY_NAME,
     label: c.label,
     category: c.category,
     description: c.description,
@@ -180,18 +180,18 @@ async function main() {
     source: "industry-standard",
   }));
   const bulk = await api("POST", "/api/ontology/concepts/bulk", { concepts: conceptPayload });
-  if (bulk) { created += conceptPayload.length; ok(`${conceptPayload.length} concepts under ${VITALEDGE_ONTOLOGY_NAME}`); }
+  if (bulk) { created += conceptPayload.length; ok(`${conceptPayload.length} concepts under ${DEALER_ONTOLOGY_NAME}`); }
 
   // ── 2. Knowledge bases ────────────────────────────────────────────────────
   log("\n[2/8] Knowledge bases");
   const kbIds = new Map<string, string>();
-  for (const kb of VITALEDGE_KB_DEFS) {
+  for (const kb of DEALER_KB_DEFS) {
     const id = await ensure(
       kb.name,
       "/api/knowledge-bases",
       (r) => r.name === kb.name,
       "/api/knowledge-bases",
-      { name: kb.name, description: kb.description, industry: VITALEDGE_INDUSTRY_ID, status: "active" },
+      { name: kb.name, description: kb.description, industry: DEALER_INDUSTRY_ID, status: "active" },
     );
     if (id) kbIds.set(kb.name, id);
   }
@@ -199,7 +199,7 @@ async function main() {
   // ── 3. Governance policies ────────────────────────────────────────────────
   log("\n[3/8] Governance policies");
   const policyIds = new Map<string, string>();
-  for (const p of VITALEDGE_POLICY_DEFS) {
+  for (const p of DEALER_POLICY_DEFS) {
     const id = await ensure(
       p.name,
       "/api/policies",
@@ -210,7 +210,7 @@ async function main() {
         domain: p.domain,
         description: p.description,
         policyJson: p.policyJson,
-        industry: VITALEDGE_INDUSTRY_ID,
+        industry: DEALER_INDUSTRY_ID,
         status: "active",
         enforcement: "hard",
       },
@@ -234,28 +234,28 @@ async function main() {
 
   const servers = await api<any[]>("GET", "/api/mcp-servers");
   const dealerServer = Array.isArray(servers)
-    ? servers.find((r) => r.integrationId === "vitaledge-dealer" || /Dealer Operations \(VitalEdge\)/.test(r.name ?? ""))
+    ? servers.find((r) => r.integrationId === "dealer-operations" || /Dealer Operations \(VitalEdge\)/.test(r.name ?? ""))
     : null;
   const dealerServerId: string | null = dealerServer?.id ?? null;
   if (dealerServerId) {
-    ok(`Dealer Operations (VitalEdge) — ${dealerServerId}`);
+    ok(`Dealer Operations — ${dealerServerId}`);
     if (dealerServer.status !== "active") {
       skip("Connector is registered but not connected. Configure its credentials under Integrations, then re-run.");
     }
   } else if (!DRY_RUN) {
-    fail("Dealer Operations connector is not registered. Start the server (it registers on boot) and ensure server/integrations/register.ts includes vitalEdgeDealerMcpServer.");
+    fail("Dealer Operations connector is not registered. Start the server (it registers on boot) and ensure server/integrations/register.ts includes dealerOperationsMcpServer.");
   }
 
   // Which tools each agent is permitted, taken from the journey groupings.
   const toolsForAgent = new Map<string, string[]>();
-  for (const j of VITALEDGE_JOURNEYS) {
+  for (const j of DEALER_JOURNEYS) {
     for (const a of j.agents) {
       const server = j.mcpServers.find((m) => m.name === a.mcpServerName);
       if (server) toolsForAgent.set(a.externalId, server.tools.map((t) => t.name));
     }
   }
   const toolsForSkill = new Map<string, string[]>();
-  for (const j of VITALEDGE_JOURNEYS) {
+  for (const j of DEALER_JOURNEYS) {
     for (const a of j.agents) {
       for (const skillName of a.skillNames) {
         toolsForSkill.set(skillName, toolsForAgent.get(a.externalId) ?? []);
@@ -266,7 +266,7 @@ async function main() {
   // ── 5. Skills ─────────────────────────────────────────────────────────────
   log("\n[5/8] Skills");
   const skillIds = new Map<string, string>();
-  for (const j of VITALEDGE_JOURNEYS) {
+  for (const j of DEALER_JOURNEYS) {
     for (const s of j.skills) {
       const id = await ensure(
         s.name,
@@ -276,7 +276,7 @@ async function main() {
         {
           name: s.name,
           description: s.description,
-          industry: VITALEDGE_INDUSTRY_ID,
+          industry: DEALER_INDUSTRY_ID,
           domain: s.domain,
           version: "1.0.0",
           author: "VitalEdge Vertical Pack",
@@ -287,7 +287,7 @@ async function main() {
           // Real per-agent tool scoping: a skill may only reach the tools its
           // owning agent is entitled to, not all 57.
           allowedTools: toolsForSkill.get(s.name) ?? [],
-          requiredMcpServers: ["vitaledge-dealer"],
+          requiredMcpServers: ["dealer-operations"],
         },
       );
       if (id) skillIds.set(s.name, id);
@@ -297,7 +297,7 @@ async function main() {
   // ── 6. Agents (orchestrator marked as a curated Journey Library entry) ─────
   log("\n[6/8] Agents & journeys");
   const agentIds = new Map<string, string>();
-  for (const j of VITALEDGE_JOURNEYS) {
+  for (const j of DEALER_JOURNEYS) {
     log(`  ${j.id} — ${j.name}`);
     for (const a of j.agents) {
       const isOrchestrator = a.role === "orchestrator";
@@ -312,7 +312,7 @@ async function main() {
           description: a.description,
           type: isOrchestrator ? "team" : "single",
           status: "active",
-          industry: VITALEDGE_INDUSTRY_ID,
+          industry: DEALER_INDUSTRY_ID,
           department: a.department,
           systemPrompt: j.systemPrompts[a.externalId],
           complianceTags: a.complianceTags,
@@ -321,7 +321,7 @@ async function main() {
           knowledgeBaseIds: a.kbName && kbIds.get(a.kbName) ? [kbIds.get(a.kbName)] : [],
           // Journey Library surfacing — only orchestrators carry these.
           isCuratedJourney: isOrchestrator,
-          journeyIndustryId: isOrchestrator ? VITALEDGE_INDUSTRY_ID : undefined,
+          journeyIndustryId: isOrchestrator ? DEALER_INDUSTRY_ID : undefined,
           journeySubVertical: isOrchestrator ? j.subVertical : undefined,
           riskTier: "HIGH",
           autonomyMode: "assisted",
@@ -346,7 +346,7 @@ async function main() {
 
   // ── 7. Blueprints ─────────────────────────────────────────────────────────
   log("\n[7/8] Blueprints");
-  for (const j of VITALEDGE_JOURNEYS) {
+  for (const j of DEALER_JOURNEYS) {
     for (const b of j.blueprints) {
       await ensure(
         b.name,
@@ -356,7 +356,7 @@ async function main() {
         {
           name: b.name,
           description: b.description,
-          industry: VITALEDGE_INDUSTRY_ID,
+          industry: DEALER_INDUSTRY_ID,
           steps: b.steps,
           status: "active",
         },
@@ -366,7 +366,7 @@ async function main() {
 
   // ── 8. Eval suites ────────────────────────────────────────────────────────
   log("\n[8/8] Eval suites");
-  for (const j of VITALEDGE_JOURNEYS) {
+  for (const j of DEALER_JOURNEYS) {
     const orch = j.agents.find((a) => a.role === "orchestrator");
     await ensure(
       `${j.evalSuiteName} (${j.evalCases.length} cases)`,
@@ -376,7 +376,7 @@ async function main() {
       {
         name: j.evalSuiteName,
         description: `Regression suite for ${j.name}. Covers happy path, edge cases, adversarial pressure, and regulatory controls.`,
-        industry: VITALEDGE_INDUSTRY_ID,
+        industry: DEALER_INDUSTRY_ID,
         agentId: orch ? agentIds.get(orch.externalId) : undefined,
         status: "active",
         testCases: j.evalCases.map((c) => ({
@@ -393,15 +393,15 @@ async function main() {
 
   // ── Process flows ─────────────────────────────────────────────────────────
   log("\n[+] Process flows");
-  for (const j of VITALEDGE_JOURNEYS) {
-    const flow = VITALEDGE_PROCESS_FLOWS[j.id];
+  for (const j of DEALER_JOURNEYS) {
+    const flow = DEALER_PROCESS_FLOWS[j.id];
     if (!flow) continue;
     await ensure(
       `${j.id} flow (${flow.nodes.length} nodes, ${flow.nodes.filter((n) => n.type === "expert_approval").length} human gates)`,
       "/api/process-flows",
       (r) => r.name === flow.name,
       "/api/process-flows",
-      { name: flow.name, industry: VITALEDGE_INDUSTRY_ID, graph: flow },
+      { name: flow.name, industry: DEALER_INDUSTRY_ID, graph: flow },
     );
   }
 

@@ -1,5 +1,5 @@
 /**
- * VE-J4 — Rental Contract Billing Integrity tools.
+ * ED-J4 — Rental Contract Billing Integrity tools.
  *
  * Telematics is the independent witness and it does not take sides:
  * `reconcile_billed_vs_actual` reports under-billing and over-billing with the
@@ -19,7 +19,7 @@ const N = (v: unknown) => (typeof v === "number" ? v : parseFloat(String(v ?? "0
 async function utilisation(c: DealerClient, unitId: string, from: string, to: string) {
   const rows = await c.q(
     `SELECT reading_date, engine_hours, idle_hours, reported
-       FROM summit.telematics_readings
+       FROM dealer.telematics_readings
       WHERE unit_id = $1 AND reading_date BETWEEN $2 AND $3
       ORDER BY reading_date`,
     [unitId, from, to]
@@ -49,9 +49,9 @@ export async function get_billing_cycle_queue(c: DealerClient, args: Record<stri
             r.included_hours, r.overage_rate_per_hour_usd, r.is_negotiated_rate,
             r.has_purchase_option, r.status,
             a.legal_name, f.manufacturer, f.model, f.machine_class
-       FROM summit.rental_contracts r
-       JOIN summit.customer_accounts a ON a.account_id = r.account_id
-       JOIN summit.fleet_assets f ON f.unit_id = r.unit_id
+       FROM dealer.rental_contracts r
+       JOIN dealer.customer_accounts a ON a.account_id = r.account_id
+       JOIN dealer.fleet_assets f ON f.unit_id = r.unit_id
       WHERE r.status IN ('on_rent','off_rent','disputed') AND ($1 = '' OR r.branch_id = $1)
       ORDER BY r.start_date`,
     [branch]
@@ -71,9 +71,9 @@ export async function get_rental_contract_terms(c: DealerClient, args: Record<st
   if (!id) return err("contract_id is required");
   const row = await c.one(
     `SELECT r.*, f.manufacturer, f.model, f.machine_class, a.legal_name
-       FROM summit.rental_contracts r
-       JOIN summit.fleet_assets f ON f.unit_id = r.unit_id
-       JOIN summit.customer_accounts a ON a.account_id = r.account_id
+       FROM dealer.rental_contracts r
+       JOIN dealer.fleet_assets f ON f.unit_id = r.unit_id
+       JOIN dealer.customer_accounts a ON a.account_id = r.account_id
       WHERE r.contract_id = $1`,
     [id]
   );
@@ -109,7 +109,7 @@ export async function get_off_rent_request(c: DealerClient, args: Record<string,
   if (!id) return err("contract_id is required");
   const row = await c.one(
     `SELECT contract_id, unit_id, account_id, claimed_off_rent_date, actual_collected_date, status
-       FROM summit.rental_contracts WHERE contract_id = $1`, [id]
+       FROM dealer.rental_contracts WHERE contract_id = $1`, [id]
   );
   if (!row) return err(`Unknown rental contract ${id}`);
   if (!row.claimed_off_rent_date) return ok({ contract_id: id, off_rent_requested: false });
@@ -127,11 +127,11 @@ export async function get_condition_report(c: DealerClient, args: Record<string,
   const contractId = A(args.contract_id);
   if (!contractId) return err("contract_id is required");
   const rows = await c.q(
-    `SELECT * FROM summit.condition_reports WHERE contract_id = $1 ORDER BY report_date`, [contractId]
+    `SELECT * FROM dealer.condition_reports WHERE contract_id = $1 ORDER BY report_date`, [contractId]
   );
   const out = rows.find((r) => A(r.report_type) === "check_out");
   const inn = rows.find((r) => A(r.report_type) === "check_in");
-  const rental = await c.one(`SELECT start_date, actual_collected_date FROM summit.rental_contracts WHERE contract_id = $1`, [contractId]);
+  const rental = await c.one(`SELECT start_date, actual_collected_date FROM dealer.rental_contracts WHERE contract_id = $1`, [contractId]);
   const months = rental?.actual_collected_date
     ? money(daysBetween(A(rental.start_date), A(rental.actual_collected_date)) / 30.44) : null;
   const hoursUsed = out && inn ? N(inn.meter_hours) - N(out.meter_hours) : null;
@@ -150,7 +150,7 @@ export async function get_condition_report(c: DealerClient, args: Record<string,
 export async function calculate_cycle_invoice(c: DealerClient, args: Record<string, unknown>) {
   const contractId = A(args.contract_id);
   if (!contractId) return err("contract_id is required");
-  const rc = await c.one(`SELECT * FROM summit.rental_contracts WHERE contract_id = $1`, [contractId]);
+  const rc = await c.one(`SELECT * FROM dealer.rental_contracts WHERE contract_id = $1`, [contractId]);
   if (!rc) return err(`Unknown rental contract ${contractId}`);
 
   const from = A(args.from_date) || A(rc.start_date);
@@ -202,7 +202,7 @@ export async function reconcile_billed_vs_actual(c: DealerClient, args: Record<s
   const calc = JSON.parse(calcRes.content[0].text);
   if (calc.error) return calcRes;
 
-  const rc = await c.one(`SELECT * FROM summit.rental_contracts WHERE contract_id = $1`, [contractId]);
+  const rc = await c.one(`SELECT * FROM dealer.rental_contracts WHERE contract_id = $1`, [contractId]);
   const shouldBe = money(N(calc.total_usd));
   const findings: Array<{ direction: string; amount_usd: number; reason: string; evidence: string }> = [];
 
@@ -251,7 +251,7 @@ export async function reconcile_billed_vs_actual(c: DealerClient, args: Record<s
 export async function verify_off_rent_date(c: DealerClient, args: Record<string, unknown>) {
   const contractId = A(args.contract_id);
   if (!contractId) return err("contract_id is required");
-  const rc = await c.one(`SELECT * FROM summit.rental_contracts WHERE contract_id = $1`, [contractId]);
+  const rc = await c.one(`SELECT * FROM dealer.rental_contracts WHERE contract_id = $1`, [contractId]);
   if (!rc) return err(`Unknown rental contract ${contractId}`);
   if (!rc.claimed_off_rent_date) return ok({ contract_id: contractId, off_rent_claimed: false });
 
@@ -307,7 +307,7 @@ export async function flag_asc842_review(c: DealerClient, args: Record<string, u
   if (!contractId) return err("contract_id is required");
   const rc = await c.one(
     `SELECT contract_id, has_purchase_option, purchase_option_terms, rate_period, rate_usd, start_date
-       FROM summit.rental_contracts WHERE contract_id = $1`, [contractId]
+       FROM dealer.rental_contracts WHERE contract_id = $1`, [contractId]
   );
   if (!rc) return err(`Unknown rental contract ${contractId}`);
   if (!rc.has_purchase_option) {
@@ -326,7 +326,7 @@ export async function flag_asc842_review(c: DealerClient, args: Record<string, u
 export async function release_invoice(c: DealerClient, args: Record<string, unknown>) {
   const contractId = A(args.contract_id);
   if (!contractId) return err("contract_id is required");
-  const rc = await c.one(`SELECT * FROM summit.rental_contracts WHERE contract_id = $1`, [contractId]);
+  const rc = await c.one(`SELECT * FROM dealer.rental_contracts WHERE contract_id = $1`, [contractId]);
   if (!rc) return err(`Unknown rental contract ${contractId}`);
 
   // Gate 1 — ASC 842 must be cleared first.
@@ -348,7 +348,7 @@ export async function release_invoice(c: DealerClient, args: Record<string, unkn
 
   const invoiceId = newId("INV");
   await c.q(
-    `INSERT INTO summit.invoices
+    `INSERT INTO dealer.invoices
        (invoice_id, account_id, branch_id, revenue_line, invoice_date, due_date,
         original_amount_usd, balance_usd, status, obligation_satisfied_on, source_document)
      VALUES ($1,$2,$3,'rental',CURRENT_DATE,CURRENT_DATE + 30,$4,$4,'open',CURRENT_DATE,$5)`,

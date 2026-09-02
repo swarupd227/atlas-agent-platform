@@ -455,8 +455,8 @@ export function getIntegrationsByCategory(category: IntegrationCategory): Integr
 }
 
 INTEGRATION_REGISTRY.push({
-  id: "vitaledge-dealer",
-  name: "Dealer Operations (VitalEdge)",
+  id: "dealer-operations",
+  name: "Dealer Operations",
   description: "Equipment dealership operating system — cash application, collections, OEM warranty, rental billing and whole-goods deal desk over the dealer's operational database",
   category: "data",
   logoColor: "#B26A12",
@@ -468,6 +468,6 @@ INTEGRATION_REGISTRY.push({
     { key: "user", label: "User (write role — separate from the read-only analyst connection)", type: "text", required: true },
     { key: "password", label: "Password", type: "password", required: true },
     { key: "ssl", label: "SSL Mode (disable | require — default: require)", type: "text", required: false, placeholder: "require" },
-    { key: "schema", label: "Schema (default: summit)", type: "text", required: false, placeholder: "summit" },
+    { key: "schema", label: "Schema holding the dealer dataset", type: "text", required: false, placeholder: "dealer_ops" },
   ],
 });

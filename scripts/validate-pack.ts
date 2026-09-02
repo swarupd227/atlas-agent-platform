@@ -7,22 +7,22 @@
  *   2. The process-flow compiler does not enforce business invariants, so a
  *      flow can compile with an unreachable node or a condition-less decision.
  *
- *   npx tsx scripts/validate-vitaledge.ts
+ *   npx tsx scripts/validate-pack.ts
  */
-import { validateJourneyBindings, journeyInventory, VITALEDGE_JOURNEYS } from "../server/vitaledge-journeys";
-import { VITALEDGE_ONTOLOGY_CONCEPTS, VITALEDGE_POLICY_DEFS, VITALEDGE_KB_DEFS } from "../server/vitaledge-ontology";
-import { validateProcessFlows, VITALEDGE_PROCESS_FLOWS } from "../server/vitaledge-process-flows";
-import { auditToolCoverage } from "../server/integrations/vitaledge-dealer/mcp-server";
+import { validateJourneyBindings, journeyInventory, DEALER_JOURNEYS } from "../packs/equipment-dealer/journeys";
+import { DEALER_ONTOLOGY_CONCEPTS, DEALER_POLICY_DEFS, DEALER_KB_DEFS } from "../packs/equipment-dealer/ontology";
+import { validateProcessFlows, DEALER_PROCESS_FLOWS } from "../packs/equipment-dealer/process-flows";
+import { auditToolCoverage, providesTool } from "../server/integrations/dealer-operations/mcp-server";
 
 const inv = journeyInventory();
 console.log("VitalEdge / Equipment Dealer vertical inventory");
 console.log("──────────────────────────────────────────────");
 for (const [k, v] of Object.entries(inv)) console.log(`  ${k.padEnd(18)} ${v}`);
-console.log(`  ${"knowledgeBases".padEnd(18)} ${VITALEDGE_KB_DEFS.length}`);
-console.log(`  ${"policies".padEnd(18)} ${VITALEDGE_POLICY_DEFS.length}`);
+console.log(`  ${"knowledgeBases".padEnd(18)} ${DEALER_KB_DEFS.length}`);
+console.log(`  ${"policies".padEnd(18)} ${DEALER_POLICY_DEFS.length}`);
 
 console.log("\nPer-journey:");
-for (const j of VITALEDGE_JOURNEYS) {
+for (const j of DEALER_JOURNEYS) {
   const tools = j.mcpServers.reduce((n, s) => n + s.tools.length, 0);
   console.log(`  ${j.id}  ${j.name}`);
   console.log(`        ${j.subVertical}`);
@@ -30,7 +30,7 @@ for (const j of VITALEDGE_JOURNEYS) {
 }
 
 console.log("\nProcess flows:");
-for (const [id, f] of Object.entries(VITALEDGE_PROCESS_FLOWS)) {
+for (const [id, f] of Object.entries(DEALER_PROCESS_FLOWS)) {
   const gates = f.nodes.filter((n) => n.type === "expert_approval").length;
   const decisions = f.nodes.filter((n) => n.type === "make_decision").length;
   console.log(`  ${id}  ${f.nodes.length} nodes · ${f.edges.length} edges · ${decisions} decisions · ${gates} human approval gates`);
@@ -38,8 +38,8 @@ for (const [id, f] of Object.entries(VITALEDGE_PROCESS_FLOWS)) {
 
 // A concept no agent binds to is not an error — it may be reachable through
 // relationships in the knowledge graph — but it is worth seeing.
-const bound = new Set(VITALEDGE_JOURNEYS.flatMap((j) => j.agents.flatMap((a) => a.ontologyTags)));
-const unbound = VITALEDGE_ONTOLOGY_CONCEPTS.filter((c) => !bound.has(c.label)).map((c) => c.label);
+const bound = new Set(DEALER_JOURNEYS.flatMap((j) => j.agents.flatMap((a) => a.ontologyTags)));
+const unbound = DEALER_ONTOLOGY_CONCEPTS.filter((c) => !bound.has(c.label)).map((c) => c.label);
 if (unbound.length) {
   console.log(`\nConcepts not directly bound by an agent (${unbound.length}):`);
   console.log("  " + unbound.join(", "));
@@ -56,17 +56,32 @@ if (!bindings.ok) {
   console.log("\nPASS — all journey bindings valid.");
 }
 
+// Two directions, deliberately separate.
+// 1. The connector is internally consistent — its own concern, no pack involved.
 const audit = auditToolCoverage();
-console.log("\nConnector tool coverage:");
-console.log(`  ${audit.declared} declared by journeys · ${audit.implemented} implemented · ${audit.orphanHandlers.length} orphan handler(s)`);
+console.log("\nDealer Operations connector (platform):");
+console.log(`  ${audit.declared} tools declared · ${audit.implemented} implemented · ${audit.orphanHandlers.length} orphan handler(s)`);
 if (!audit.ok) {
   failed = true;
-  console.log("\nTOOL COVERAGE FAILED:");
-  if (audit.missingHandlers.length) console.log("  no implementation: " + audit.missingHandlers.join(", "));
-  if (audit.missingSchemas.length) console.log("  no input schema:   " + audit.missingSchemas.join(", "));
-  if (audit.orphanHandlers.length) console.log("  orphan handlers:   " + audit.orphanHandlers.join(", "));
+  console.log("  CONNECTOR INCONSISTENT:");
+  if (audit.missingHandlers.length) console.log("    no implementation: " + audit.missingHandlers.join(", "));
+  if (audit.orphanHandlers.length) console.log("    orphan handlers:   " + audit.orphanHandlers.join(", "));
 } else {
-  console.log("PASS — every declared tool is implemented and schema'd.");
+  console.log("  PASS — declared contract matches implementations.");
+}
+
+// 2. Every tool THIS PACK references is provided by the connector. The pack
+//    depends on the platform; the platform never depends on the pack.
+const referenced = new Set<string>();
+for (const j of DEALER_JOURNEYS) for (const s of j.mcpServers) for (const t of s.tools) referenced.add(t.name);
+const unprovided = Array.from(referenced).filter((n) => !providesTool(n));
+console.log(`\nPack → connector: ${referenced.size} tools referenced by journeys`);
+if (unprovided.length) {
+  failed = true;
+  console.log("  PACK REFERENCES TOOLS THE CONNECTOR DOES NOT PROVIDE:");
+  console.log("    " + unprovided.join(", "));
+} else {
+  console.log("  PASS — every referenced tool exists in the connector.");
 }
 
 const flows = validateProcessFlows();

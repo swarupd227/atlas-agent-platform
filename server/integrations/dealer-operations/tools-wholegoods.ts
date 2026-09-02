@@ -1,5 +1,5 @@
 /**
- * VE-J5 — Whole-goods Deal Desk tools.
+ * ED-J5 — Whole-goods Deal Desk tools.
  *
  * Two orderings are enforced in code because both are places where a
  * reasonable-sounding shortcut destroys the control:
@@ -18,7 +18,7 @@ const A = (v: unknown) => (typeof v === "string" ? v : String(v ?? ""));
 const N = (v: unknown) => (typeof v === "number" ? v : parseFloat(String(v ?? "0")) || 0);
 
 async function landedCost(c: DealerClient, unitId: string) {
-  const u = await c.one(`SELECT * FROM summit.fleet_assets WHERE unit_id = $1`, [unitId]);
+  const u = await c.one(`SELECT * FROM dealer.fleet_assets WHERE unit_id = $1`, [unitId]);
   if (!u) return null;
   const days = u.inventory_since ? daysBetween(A(u.inventory_since), todayIso()) : 0;
   const invoice = money(N(u.invoice_cost_usd));
@@ -39,10 +39,10 @@ export async function get_pending_deals(c: DealerClient, args: Record<string, un
   const branch = A(args.branch_id);
   const rows = await c.q(
     `SELECT d.*, a.legal_name, a.account_tier, f.manufacturer, f.model, f.machine_class,
-            EXISTS (SELECT 1 FROM summit.trade_ins t WHERE t.deal_id = d.deal_id) AS has_trade_in
-       FROM summit.deals d
-       JOIN summit.customer_accounts a ON a.account_id = d.account_id
-       JOIN summit.fleet_assets f ON f.unit_id = d.unit_id
+            EXISTS (SELECT 1 FROM dealer.trade_ins t WHERE t.deal_id = d.deal_id) AS has_trade_in
+       FROM dealer.deals d
+       JOIN dealer.customer_accounts a ON a.account_id = d.account_id
+       JOIN dealer.fleet_assets f ON f.unit_id = d.unit_id
       WHERE d.status IN ('quoted','desk_review','blocked_pending_authority')
         AND ($1 = '' OR d.branch_id = $1)
       ORDER BY d.quoted_on DESC`,
@@ -52,7 +52,7 @@ export async function get_pending_deals(c: DealerClient, args: Record<string, un
 }
 
 export async function get_true_landed_cost(c: DealerClient, args: Record<string, unknown>) {
-  const unitId = A(args.unit_id) || (await c.one(`SELECT unit_id FROM summit.deals WHERE deal_id = $1`, [A(args.deal_id)]))?.unit_id;
+  const unitId = A(args.unit_id) || (await c.one(`SELECT unit_id FROM dealer.deals WHERE deal_id = $1`, [A(args.deal_id)]))?.unit_id;
   if (!unitId) return err("unit_id or deal_id is required");
   const lc = await landedCost(c, A(unitId));
   if (!lc) return err(`Unknown unit ${unitId}`);
@@ -75,7 +75,7 @@ export async function get_true_landed_cost(c: DealerClient, args: Record<string,
 export async function get_trade_in_assessment(c: DealerClient, args: Record<string, unknown>) {
   const dealId = A(args.deal_id);
   if (!dealId) return err("deal_id is required");
-  const rows = await c.q(`SELECT * FROM summit.trade_ins WHERE deal_id = $1`, [dealId]);
+  const rows = await c.q(`SELECT * FROM dealer.trade_ins WHERE deal_id = $1`, [dealId]);
   if (!rows.length) return ok({ deal_id: dealId, has_trade_in: false });
   return ok({ deal_id: dealId, has_trade_in: true, trade_ins: rows });
 }
@@ -84,7 +84,7 @@ export async function get_auction_comparables(c: DealerClient, args: Record<stri
   const make = A(args.manufacturer), model = A(args.model);
   if (!make || !model) return err("manufacturer and model are required");
   const rows = await c.q(
-    `SELECT * FROM summit.auction_comparables
+    `SELECT * FROM dealer.auction_comparables
       WHERE manufacturer = $1 AND model = $2 ORDER BY sale_date DESC`, [make, model]
   );
   if (!rows.length) return ok({ manufacturer: make, model, comparable_count: 0, note: "No comparables on file. A trade valuation without comparables is desk judgement and must be flagged as such." });
@@ -104,11 +104,11 @@ export async function get_customer_lifetime_value(c: DealerClient, args: Record<
   if (!account) return err("account_id is required");
   const a = await c.one(
     `SELECT account_id, legal_name, account_tier, annual_parts_service_spend_usd, credit_status
-       FROM summit.customer_accounts WHERE account_id = $1`, [account]
+       FROM dealer.customer_accounts WHERE account_id = $1`, [account]
   );
   if (!a) return err(`Unknown account ${account}`);
-  const [units] = await c.q(`SELECT COUNT(*) AS owned FROM summit.fleet_assets WHERE owner_account_id = $1`, [account]);
-  const [rentals] = await c.q(`SELECT COUNT(*) AS active FROM summit.rental_contracts WHERE account_id = $1 AND status = 'on_rent'`, [account]);
+  const [units] = await c.q(`SELECT COUNT(*) AS owned FROM dealer.fleet_assets WHERE owner_account_id = $1`, [account]);
+  const [rentals] = await c.q(`SELECT COUNT(*) AS active FROM dealer.rental_contracts WHERE account_id = $1 AND status = 'on_rent'`, [account]);
   return ok({
     account_id: account, legal_name: a.legal_name, account_tier: a.account_tier,
     units_owned: N(units.owned), active_rentals: N(rentals.active),
@@ -125,13 +125,13 @@ export async function identify_eligible_programs(c: DealerClient, args: Record<s
   if (!dealId) return err("deal_id is required");
   const deal = await c.one(
     `SELECT d.*, f.manufacturer, f.machine_class, f.inventory_since
-       FROM summit.deals d JOIN summit.fleet_assets f ON f.unit_id = d.unit_id
+       FROM dealer.deals d JOIN dealer.fleet_assets f ON f.unit_id = d.unit_id
       WHERE d.deal_id = $1`, [dealId]
   );
   if (!deal) return err(`Unknown deal ${dealId}`);
 
   const rows = await c.q(
-    `SELECT * FROM summit.rebate_programs
+    `SELECT * FROM dealer.rebate_programs
       WHERE manufacturer = $1 AND (applies_to_class IS NULL OR applies_to_class = $2)
       ORDER BY value_usd DESC`,
     [deal.manufacturer, deal.machine_class]
@@ -202,17 +202,17 @@ export async function calculate_true_margin(c: DealerClient, args: Record<string
     );
   }
 
-  const deal = await c.one(`SELECT * FROM summit.deals WHERE deal_id = $1`, [dealId]);
+  const deal = await c.one(`SELECT * FROM dealer.deals WHERE deal_id = $1`, [dealId]);
   if (!deal) return err(`Unknown deal ${dealId}`);
   const lc = await landedCost(c, A(deal.unit_id));
   if (!lc) return err("Unit not found for this deal");
 
-  const trades = await c.q(`SELECT * FROM summit.trade_ins WHERE deal_id = $1`, [dealId]);
+  const trades = await c.q(`SELECT * FROM dealer.trade_ins WHERE deal_id = $1`, [dealId]);
   let tradeOver = 0;
   const tradeDetail: unknown[] = [];
   for (const t of trades) {
     const comps = await c.q(
-      `SELECT sale_price_usd FROM summit.auction_comparables WHERE manufacturer = $1 AND model = $2`,
+      `SELECT sale_price_usd FROM dealer.auction_comparables WHERE manufacturer = $1 AND model = $2`,
       [t.manufacturer, t.model]
     );
     const avg = comps.length ? money(comps.reduce((s, x) => s + N(x.sale_price_usd), 0) / comps.length) : null;
@@ -251,14 +251,14 @@ export async function calculate_true_margin(c: DealerClient, args: Record<string
 export async function determine_approval_authority(c: DealerClient, args: Record<string, unknown>) {
   const dealId = A(args.deal_id);
   if (!dealId) return err("deal_id is required");
-  const deal = await c.one(`SELECT * FROM summit.deals WHERE deal_id = $1`, [dealId]);
+  const deal = await c.one(`SELECT * FROM dealer.deals WHERE deal_id = $1`, [dealId]);
   if (!deal) return err(`Unknown deal ${dealId}`);
 
-  const trades = await c.q(`SELECT * FROM summit.trade_ins WHERE deal_id = $1`, [dealId]);
+  const trades = await c.q(`SELECT * FROM dealer.trade_ins WHERE deal_id = $1`, [dealId]);
   let tradeOver = 0;
   for (const t of trades) {
     const comps = await c.q(
-      `SELECT sale_price_usd FROM summit.auction_comparables WHERE manufacturer = $1 AND model = $2`,
+      `SELECT sale_price_usd FROM dealer.auction_comparables WHERE manufacturer = $1 AND model = $2`,
       [t.manufacturer, t.model]
     );
     if (comps.length) {
@@ -335,7 +335,7 @@ export async function prepare_deal_summary(c: DealerClient, args: Record<string,
 export async function flag_multi_obligation_split(c: DealerClient, args: Record<string, unknown>) {
   const dealId = A(args.deal_id);
   if (!dealId) return err("deal_id is required");
-  const deal = await c.one(`SELECT deal_id, bundled_components, sale_price_usd FROM summit.deals WHERE deal_id = $1`, [dealId]);
+  const deal = await c.one(`SELECT deal_id, bundled_components, sale_price_usd FROM dealer.deals WHERE deal_id = $1`, [dealId]);
   if (!deal) return err(`Unknown deal ${dealId}`);
   const bundled = (deal.bundled_components as string[]) ?? [];
   if (!bundled.length) {

@@ -12,29 +12,29 @@
  * exactly one trigger, at least one end, no orphan nodes, and every decision
  * node's outgoing edges carry conditions.
  */
-import { PROCESS_FLOW_VERSION, type ProcessFlowGraph } from "../shared/process-flow";
+import { PROCESS_FLOW_VERSION, type ProcessFlowGraph } from "../../shared/process-flow";
 
 const X = (col: number) => col * 260;
 const Y = (row: number) => row * 150;
 
 // ─── J1 — Invoice-to-Cash ─────────────────────────────────────────────────────
-export const VE_J1_FLOW: ProcessFlowGraph = {
+export const J1_FLOW: ProcessFlowGraph = {
   version: PROCESS_FLOW_VERSION,
   name: "Invoice-to-Cash — Remittance Capture & Cash Application",
   nodes: [
     { id: "j1-trigger", type: "trigger", label: "Payment batch received", description: "Daily receipts land from ACH, cheque, lockbox and card channels", actor: "System", position: { x: X(0), y: Y(1) } },
-    { id: "j1-fetch", type: "get_info", label: "Retrieve payments & remittance", description: "Pull the batch and any attached remittance advice in its native format", actor: "VE-AGT-101", estimatedMins: 2, position: { x: X(1), y: Y(1) } },
-    { id: "j1-extract", type: "ai_reasoning", label: "Extract allocation intent", description: "Parse unstructured PDF or email remittance into invoice references and amounts; produce a completeness score", actor: "VE-AGT-101", estimatedMins: 3, position: { x: X(2), y: Y(1) } },
-    { id: "j1-resolve", type: "ai_reasoning", label: "Resolve payer to master account", description: "Map the payer string across DBAs, subsidiaries and third-party payers to one customer account", actor: "VE-AGT-101", estimatedMins: 1, position: { x: X(3), y: Y(1) } },
-    { id: "j1-propose", type: "ai_reasoning", label: "Propose branch-split allocation", description: "Match against open AR across all branches and propose per-invoice amounts with a confidence score", actor: "VE-AGT-101", estimatedMins: 3, position: { x: X(4), y: Y(1) } },
-    { id: "j1-conf", type: "make_decision", label: "Confidence gate", description: "Apply the policy confidence floor to the proposed allocation", actor: "VE-AGT-102", position: { x: X(5), y: Y(1) } },
-    { id: "j1-shortfall", type: "ai_reasoning", label: "Classify any shortfall", description: "Determine whether a payment variance is a contractual settlement discount or an unstated dispute", actor: "VE-AGT-102", estimatedMins: 2, position: { x: X(6), y: Y(0) } },
-    { id: "j1-period", type: "make_decision", label: "Period & cutoff check", description: "Confirm the accounting period is open and no revenue crosses a period boundary", actor: "VE-AGT-102", position: { x: X(7), y: Y(0) } },
+    { id: "j1-fetch", type: "get_info", label: "Retrieve payments & remittance", description: "Pull the batch and any attached remittance advice in its native format", actor: "ED-AGT-101", estimatedMins: 2, position: { x: X(1), y: Y(1) } },
+    { id: "j1-extract", type: "ai_reasoning", label: "Extract allocation intent", description: "Parse unstructured PDF or email remittance into invoice references and amounts; produce a completeness score", actor: "ED-AGT-101", estimatedMins: 3, position: { x: X(2), y: Y(1) } },
+    { id: "j1-resolve", type: "ai_reasoning", label: "Resolve payer to master account", description: "Map the payer string across DBAs, subsidiaries and third-party payers to one customer account", actor: "ED-AGT-101", estimatedMins: 1, position: { x: X(3), y: Y(1) } },
+    { id: "j1-propose", type: "ai_reasoning", label: "Propose branch-split allocation", description: "Match against open AR across all branches and propose per-invoice amounts with a confidence score", actor: "ED-AGT-101", estimatedMins: 3, position: { x: X(4), y: Y(1) } },
+    { id: "j1-conf", type: "make_decision", label: "Confidence gate", description: "Apply the policy confidence floor to the proposed allocation", actor: "ED-AGT-102", position: { x: X(5), y: Y(1) } },
+    { id: "j1-shortfall", type: "ai_reasoning", label: "Classify any shortfall", description: "Determine whether a payment variance is a contractual settlement discount or an unstated dispute", actor: "ED-AGT-102", estimatedMins: 2, position: { x: X(6), y: Y(0) } },
+    { id: "j1-period", type: "make_decision", label: "Period & cutoff check", description: "Confirm the accounting period is open and no revenue crosses a period boundary", actor: "ED-AGT-102", position: { x: X(7), y: Y(0) } },
     { id: "j1-confirm", type: "expert_approval", label: "One-click confirmation", description: "AR clerk confirms a mid-confidence allocation (0.60-0.80)", actor: "AR Clerk", estimatedMins: 1, position: { x: X(6), y: Y(1) } },
-    { id: "j1-research", type: "take_action", label: "Route to research queue", description: "Package the parsed remittance, ranked candidates and the specific ambiguity for a human researcher", actor: "VE-AGT-102", estimatedMins: 1, position: { x: X(6), y: Y(2) } },
+    { id: "j1-research", type: "take_action", label: "Route to research queue", description: "Package the parsed remittance, ranked candidates and the specific ambiguity for a human researcher", actor: "ED-AGT-102", estimatedMins: 1, position: { x: X(6), y: Y(2) } },
     { id: "j1-accounting", type: "expert_approval", label: "Accounting review", description: "Controller resolves a cross-period posting rather than the agent forcing a period", actor: "Branch Controller", estimatedMins: 10, position: { x: X(8), y: Y(1) } },
-    { id: "j1-post", type: "take_action", label: "Post to branch ledgers", description: "Debit cash, credit AR per invoice, split to each originating branch, with source document attached", actor: "VE-AGT-102", estimatedMins: 1, position: { x: X(8), y: Y(0) } },
-    { id: "j1-notify", type: "send_notification", label: "Report batch impact", description: "Touchless rate, DSO movement, unapplied cash, and exception count to the finance team", actor: "VE-AGT-100", position: { x: X(9), y: Y(1) } },
+    { id: "j1-post", type: "take_action", label: "Post to branch ledgers", description: "Debit cash, credit AR per invoice, split to each originating branch, with source document attached", actor: "ED-AGT-102", estimatedMins: 1, position: { x: X(8), y: Y(0) } },
+    { id: "j1-notify", type: "send_notification", label: "Report batch impact", description: "Touchless rate, DSO movement, unapplied cash, and exception count to the finance team", actor: "ED-AGT-100", position: { x: X(9), y: Y(1) } },
     { id: "j1-end", type: "end", label: "Batch complete", description: "Cycle recorded with full audit trail", actor: "System", position: { x: X(10), y: Y(1) } },
   ],
   edges: [
@@ -60,27 +60,27 @@ export const VE_J1_FLOW: ProcessFlowGraph = {
 };
 
 // ─── J2 — Collections, Disputes & Credit Risk ─────────────────────────────────
-export const VE_J2_FLOW: ProcessFlowGraph = {
+export const J2_FLOW: ProcessFlowGraph = {
   version: PROCESS_FLOW_VERSION,
   name: "Collections, Disputes & Credit Risk",
   nodes: [
     { id: "j2-trigger", type: "trigger", label: "Weekly collections cycle", description: "Scheduled review of the aged AR portfolio", actor: "System", position: { x: X(0), y: Y(1) } },
-    { id: "j2-portfolio", type: "get_info", label: "Load aged portfolio", description: "Balances by ageing bucket, branch, and account tier across 342 accounts", actor: "VE-AGT-201", estimatedMins: 2, position: { x: X(1), y: Y(1) } },
-    { id: "j2-disputes", type: "get_info", label: "Load dispute registry", description: "Open disputes per account — these are excluded from hold exposure before anything is ranked", actor: "VE-AGT-201", estimatedMins: 1, position: { x: X(2), y: Y(1) } },
-    { id: "j2-behaviour", type: "ai_reasoning", label: "Assess payment behaviour", description: "Compare against the account's own 24-month pattern to separate seasonal lateness from genuine deterioration", actor: "VE-AGT-201", estimatedMins: 3, position: { x: X(3), y: Y(1) } },
-    { id: "j2-exposure", type: "ai_reasoning", label: "Compute recoverable exposure", description: "Net of disputes and unapplied cash; quantify what a credit hold would cost in aftermarket revenue", actor: "VE-AGT-201", estimatedMins: 3, position: { x: X(4), y: Y(1) } },
-    { id: "j2-route", type: "make_decision", label: "Select action", description: "Dun, payment plan, dispute resolution, credit hold, or escalate", actor: "VE-AGT-201", position: { x: X(5), y: Y(1) } },
-    { id: "j2-dun", type: "take_action", label: "Draft approved-language outreach", description: "Draft from the approved template library for the ageing tier — never free-form", actor: "VE-AGT-202", estimatedMins: 2, position: { x: X(6), y: Y(0) } },
-    { id: "j2-dispute", type: "ai_reasoning", label: "Classify dispute root cause", description: "Read invoice line detail against the governing contract and cite the clause", actor: "VE-AGT-202", estimatedMins: 4, position: { x: X(6), y: Y(1) } },
-    { id: "j2-memo", type: "ai_reasoning", label: "Assemble credit memo", description: "Evidence, clause citation and calculation, with the approval level the value requires", actor: "VE-AGT-202", estimatedMins: 3, position: { x: X(7), y: Y(1) } },
-    { id: "j2-authority", type: "make_decision", label: "Credit memo authority gate", description: "Apply the delegation-of-authority matrix to the memo value", actor: "VE-AGT-202", position: { x: X(8), y: Y(1) } },
+    { id: "j2-portfolio", type: "get_info", label: "Load aged portfolio", description: "Balances by ageing bucket, branch, and account tier across 342 accounts", actor: "ED-AGT-201", estimatedMins: 2, position: { x: X(1), y: Y(1) } },
+    { id: "j2-disputes", type: "get_info", label: "Load dispute registry", description: "Open disputes per account — these are excluded from hold exposure before anything is ranked", actor: "ED-AGT-201", estimatedMins: 1, position: { x: X(2), y: Y(1) } },
+    { id: "j2-behaviour", type: "ai_reasoning", label: "Assess payment behaviour", description: "Compare against the account's own 24-month pattern to separate seasonal lateness from genuine deterioration", actor: "ED-AGT-201", estimatedMins: 3, position: { x: X(3), y: Y(1) } },
+    { id: "j2-exposure", type: "ai_reasoning", label: "Compute recoverable exposure", description: "Net of disputes and unapplied cash; quantify what a credit hold would cost in aftermarket revenue", actor: "ED-AGT-201", estimatedMins: 3, position: { x: X(4), y: Y(1) } },
+    { id: "j2-route", type: "make_decision", label: "Select action", description: "Dun, payment plan, dispute resolution, credit hold, or escalate", actor: "ED-AGT-201", position: { x: X(5), y: Y(1) } },
+    { id: "j2-dun", type: "take_action", label: "Draft approved-language outreach", description: "Draft from the approved template library for the ageing tier — never free-form", actor: "ED-AGT-202", estimatedMins: 2, position: { x: X(6), y: Y(0) } },
+    { id: "j2-dispute", type: "ai_reasoning", label: "Classify dispute root cause", description: "Read invoice line detail against the governing contract and cite the clause", actor: "ED-AGT-202", estimatedMins: 4, position: { x: X(6), y: Y(1) } },
+    { id: "j2-memo", type: "ai_reasoning", label: "Assemble credit memo", description: "Evidence, clause citation and calculation, with the approval level the value requires", actor: "ED-AGT-202", estimatedMins: 3, position: { x: X(7), y: Y(1) } },
+    { id: "j2-authority", type: "make_decision", label: "Credit memo authority gate", description: "Apply the delegation-of-authority matrix to the memo value", actor: "ED-AGT-202", position: { x: X(8), y: Y(1) } },
     { id: "j2-controller", type: "expert_approval", label: "Branch controller approval", description: "Required for credit memos from $10,000 to $100,000", actor: "Branch Controller", estimatedMins: 15, position: { x: X(9), y: Y(1) } },
     { id: "j2-cfo", type: "expert_approval", label: "Regional CFO approval", description: "Required for credit memos above $100,000", actor: "Regional CFO", estimatedMins: 30, position: { x: X(9), y: Y(2) } },
-    { id: "j2-holdcheck", type: "make_decision", label: "Credit hold guard", description: "Strategic and OEM-affiliated accounts always require human approval regardless of exposure", actor: "VE-AGT-201", position: { x: X(6), y: Y(3) } },
+    { id: "j2-holdcheck", type: "make_decision", label: "Credit hold guard", description: "Strategic and OEM-affiliated accounts always require human approval regardless of exposure", actor: "ED-AGT-201", position: { x: X(6), y: Y(3) } },
     { id: "j2-creditmgr", type: "expert_approval", label: "Credit manager approval", description: "Human decision on the hold, with relationship cost presented alongside recoverable exposure", actor: "Credit Manager", estimatedMins: 20, position: { x: X(7), y: Y(3) } },
-    { id: "j2-applyhold", type: "take_action", label: "Apply credit hold", description: "Applied account-wide across all branches with justification reference recorded", actor: "VE-AGT-202", estimatedMins: 1, position: { x: X(8), y: Y(3) } },
-    { id: "j2-issue", type: "take_action", label: "Issue credit memo", description: "Post the approved memo and notify the customer using approved language", actor: "VE-AGT-202", estimatedMins: 1, position: { x: X(10), y: Y(1) } },
-    { id: "j2-notify", type: "send_notification", label: "Report cycle outcome", description: "Recoverable exposure, actions taken, relationship value at risk, and unresolved disagreements", actor: "VE-AGT-200", position: { x: X(11), y: Y(1) } },
+    { id: "j2-applyhold", type: "take_action", label: "Apply credit hold", description: "Applied account-wide across all branches with justification reference recorded", actor: "ED-AGT-202", estimatedMins: 1, position: { x: X(8), y: Y(3) } },
+    { id: "j2-issue", type: "take_action", label: "Issue credit memo", description: "Post the approved memo and notify the customer using approved language", actor: "ED-AGT-202", estimatedMins: 1, position: { x: X(10), y: Y(1) } },
+    { id: "j2-notify", type: "send_notification", label: "Report cycle outcome", description: "Recoverable exposure, actions taken, relationship value at risk, and unresolved disagreements", actor: "ED-AGT-200", position: { x: X(11), y: Y(1) } },
     { id: "j2-end", type: "end", label: "Cycle complete", description: "Actions recorded with justification and approver attribution", actor: "System", position: { x: X(12), y: Y(1) } },
   ],
   edges: [
@@ -113,28 +113,28 @@ export const VE_J2_FLOW: ProcessFlowGraph = {
 };
 
 // ─── J3 — Warranty Recovery ───────────────────────────────────────────────────
-export const VE_J3_FLOW: ProcessFlowGraph = {
+export const J3_FLOW: ProcessFlowGraph = {
   version: PROCESS_FLOW_VERSION,
   name: "Service Work Order → OEM Warranty Claim → Cash",
   nodes: [
     { id: "j3-trigger", type: "trigger", label: "Work order completed", description: "A service job is closed and enters warranty screening", actor: "System", position: { x: X(0), y: Y(1) } },
-    { id: "j3-wo", type: "get_info", label: "Load work order", description: "Labour lines, parts consumed, technician narrative and completion date", actor: "VE-AGT-301", estimatedMins: 1, position: { x: X(1), y: Y(1) } },
-    { id: "j3-asset", type: "make_decision", label: "Resolve equipment identity", description: "Serial or PIN must resolve to exactly one fleet asset, corroborated by make and model", actor: "VE-AGT-301", position: { x: X(2), y: Y(1) } },
+    { id: "j3-wo", type: "get_info", label: "Load work order", description: "Labour lines, parts consumed, technician narrative and completion date", actor: "ED-AGT-301", estimatedMins: 1, position: { x: X(1), y: Y(1) } },
+    { id: "j3-asset", type: "make_decision", label: "Resolve equipment identity", description: "Serial or PIN must resolve to exactly one fleet asset, corroborated by make and model", actor: "ED-AGT-301", position: { x: X(2), y: Y(1) } },
     { id: "j3-escalate", type: "expert_approval", label: "Service writer disambiguation", description: "Human resolves a serial that collides across manufacturers — the agent never guesses", actor: "Service Writer", estimatedMins: 10, position: { x: X(2), y: Y(3) } },
-    { id: "j3-terms", type: "get_info", label: "Load live OEM program terms", description: "Coverage window, published labour standards and documentation requirements, revalidated not cached", actor: "VE-AGT-301", estimatedMins: 1, position: { x: X(3), y: Y(1) } },
-    { id: "j3-coverage", type: "make_decision", label: "Coverage adjudication", description: "Check calendar months AND meter hours; check repeat-failure provisions before concluding out-of-coverage", actor: "VE-AGT-301", position: { x: X(4), y: Y(1) } },
+    { id: "j3-terms", type: "get_info", label: "Load live OEM program terms", description: "Coverage window, published labour standards and documentation requirements, revalidated not cached", actor: "ED-AGT-301", estimatedMins: 1, position: { x: X(3), y: Y(1) } },
+    { id: "j3-coverage", type: "make_decision", label: "Coverage adjudication", description: "Check calendar months AND meter hours; check repeat-failure provisions before concluding out-of-coverage", actor: "ED-AGT-301", position: { x: X(4), y: Y(1) } },
     { id: "j3-goodwill", type: "expert_approval", label: "Goodwill review", description: "Out-of-coverage repair routed to a human for goodwill or customer-pay — never submitted hopefully", actor: "Service Manager", estimatedMins: 15, position: { x: X(5), y: Y(3) } },
-    { id: "j3-labour", type: "ai_reasoning", label: "Cap labour at published standard", description: "Compare booked hours to standard time; absorb undocumented overage rather than claiming it", actor: "VE-AGT-301", estimatedMins: 2, position: { x: X(5), y: Y(1) } },
-    { id: "j3-narrative", type: "ai_reasoning", label: "Construct failure narrative", description: "Build complaint, cause and correction with a named causal part from terse technician notes", actor: "VE-AGT-302", estimatedMins: 3, position: { x: X(6), y: Y(1) } },
-    { id: "j3-narrcheck", type: "make_decision", label: "Cause established?", description: "If the notes do not establish a cause, request clarification — never infer one", actor: "VE-AGT-302", position: { x: X(7), y: Y(1) } },
-    { id: "j3-clarify", type: "send_notification", label: "Request technician clarification", description: "Return to the technician for the missing cause rather than fabricating a causal chain", actor: "VE-AGT-302", position: { x: X(7), y: Y(3) } },
-    { id: "j3-gate", type: "make_decision", label: "Pre-submission compliance gate", description: "Coverage, labour, causal part, narrative and identity all re-checked before any portal call", actor: "VE-AGT-302", position: { x: X(8), y: Y(1) } },
-    { id: "j3-submit", type: "take_action", label: "Submit to OEM portal", description: "Submit the compliance-passed claim to the correct manufacturer portal", actor: "VE-AGT-302", estimatedMins: 2, position: { x: X(9), y: Y(0) } },
-    { id: "j3-adjudicate", type: "get_info", label: "Retrieve adjudication result", description: "Approved, denied with reason code, or partially approved with labour write-down", actor: "VE-AGT-302", estimatedMins: 1, position: { x: X(10), y: Y(0) } },
-    { id: "j3-denial", type: "make_decision", label: "Denial analysis", description: "Classify honestly as resubmittable, correctable, or genuine loss", actor: "VE-AGT-302", position: { x: X(11), y: Y(0) } },
-    { id: "j3-post", type: "take_action", label: "Post warranty receivable", description: "Post to the branch that did the work, in the period the repair obligation was satisfied", actor: "VE-AGT-302", estimatedMins: 1, position: { x: X(12), y: Y(1) } },
-    { id: "j3-writeoff", type: "take_action", label: "Record documented write-off", description: "Record the denial reason so the cause distribution stays visible rather than absorbed silently", actor: "VE-AGT-302", estimatedMins: 1, position: { x: X(12), y: Y(2) } },
-    { id: "j3-notify", type: "send_notification", label: "Report recovery metrics", description: "Denial rate, days-to-reimbursement, recovery rate, goodwill value and denial-cause distribution", actor: "VE-AGT-300", position: { x: X(13), y: Y(1) } },
+    { id: "j3-labour", type: "ai_reasoning", label: "Cap labour at published standard", description: "Compare booked hours to standard time; absorb undocumented overage rather than claiming it", actor: "ED-AGT-301", estimatedMins: 2, position: { x: X(5), y: Y(1) } },
+    { id: "j3-narrative", type: "ai_reasoning", label: "Construct failure narrative", description: "Build complaint, cause and correction with a named causal part from terse technician notes", actor: "ED-AGT-302", estimatedMins: 3, position: { x: X(6), y: Y(1) } },
+    { id: "j3-narrcheck", type: "make_decision", label: "Cause established?", description: "If the notes do not establish a cause, request clarification — never infer one", actor: "ED-AGT-302", position: { x: X(7), y: Y(1) } },
+    { id: "j3-clarify", type: "send_notification", label: "Request technician clarification", description: "Return to the technician for the missing cause rather than fabricating a causal chain", actor: "ED-AGT-302", position: { x: X(7), y: Y(3) } },
+    { id: "j3-gate", type: "make_decision", label: "Pre-submission compliance gate", description: "Coverage, labour, causal part, narrative and identity all re-checked before any portal call", actor: "ED-AGT-302", position: { x: X(8), y: Y(1) } },
+    { id: "j3-submit", type: "take_action", label: "Submit to OEM portal", description: "Submit the compliance-passed claim to the correct manufacturer portal", actor: "ED-AGT-302", estimatedMins: 2, position: { x: X(9), y: Y(0) } },
+    { id: "j3-adjudicate", type: "get_info", label: "Retrieve adjudication result", description: "Approved, denied with reason code, or partially approved with labour write-down", actor: "ED-AGT-302", estimatedMins: 1, position: { x: X(10), y: Y(0) } },
+    { id: "j3-denial", type: "make_decision", label: "Denial analysis", description: "Classify honestly as resubmittable, correctable, or genuine loss", actor: "ED-AGT-302", position: { x: X(11), y: Y(0) } },
+    { id: "j3-post", type: "take_action", label: "Post warranty receivable", description: "Post to the branch that did the work, in the period the repair obligation was satisfied", actor: "ED-AGT-302", estimatedMins: 1, position: { x: X(12), y: Y(1) } },
+    { id: "j3-writeoff", type: "take_action", label: "Record documented write-off", description: "Record the denial reason so the cause distribution stays visible rather than absorbed silently", actor: "ED-AGT-302", estimatedMins: 1, position: { x: X(12), y: Y(2) } },
+    { id: "j3-notify", type: "send_notification", label: "Report recovery metrics", description: "Denial rate, days-to-reimbursement, recovery rate, goodwill value and denial-cause distribution", actor: "ED-AGT-300", position: { x: X(13), y: Y(1) } },
     { id: "j3-end", type: "end", label: "Claim cycle complete", description: "Outcome recorded with full evidence chain", actor: "System", position: { x: X(14), y: Y(1) } },
   ],
   edges: [
@@ -167,25 +167,25 @@ export const VE_J3_FLOW: ProcessFlowGraph = {
 };
 
 // ─── J4 — Rental Billing Integrity ────────────────────────────────────────────
-export const VE_J4_FLOW: ProcessFlowGraph = {
+export const J4_FLOW: ProcessFlowGraph = {
   version: PROCESS_FLOW_VERSION,
   name: "Rental Contract Billing Integrity & Revenue Assurance",
   nodes: [
     { id: "j4-trigger", type: "trigger", label: "Cycle billing due", description: "Rental contracts reach their billing cycle date", actor: "System", position: { x: X(0), y: Y(1) } },
-    { id: "j4-contracts", type: "get_info", label: "Load contracts & terms", description: "Contract-specific rates, included hours and charge schedules — never branch defaults", actor: "VE-AGT-401", estimatedMins: 2, position: { x: X(1), y: Y(1) } },
-    { id: "j4-telematics", type: "get_info", label: "Pull telematics utilisation", description: "AEMP / ISO 15143-3 engine hours, location history and reporting gaps for the cycle period", actor: "VE-AGT-401", estimatedMins: 2, position: { x: X(2), y: Y(1) } },
-    { id: "j4-gapcheck", type: "make_decision", label: "Telematics coverage sufficient?", description: "A reporting gap cannot support a billing claim in either direction", actor: "VE-AGT-401", position: { x: X(3), y: Y(1) } },
+    { id: "j4-contracts", type: "get_info", label: "Load contracts & terms", description: "Contract-specific rates, included hours and charge schedules — never branch defaults", actor: "ED-AGT-401", estimatedMins: 2, position: { x: X(1), y: Y(1) } },
+    { id: "j4-telematics", type: "get_info", label: "Pull telematics utilisation", description: "AEMP / ISO 15143-3 engine hours, location history and reporting gaps for the cycle period", actor: "ED-AGT-401", estimatedMins: 2, position: { x: X(2), y: Y(1) } },
+    { id: "j4-gapcheck", type: "make_decision", label: "Telematics coverage sufficient?", description: "A reporting gap cannot support a billing claim in either direction", actor: "ED-AGT-401", position: { x: X(3), y: Y(1) } },
     { id: "j4-gapflag", type: "expert_approval", label: "Human review of reporting gap", description: "Rental manager decides on a period the machine did not report — the agent never extrapolates", actor: "Rental Manager", estimatedMins: 10, position: { x: X(3), y: Y(3) } },
-    { id: "j4-reconcile", type: "ai_reasoning", label: "Reconcile billed vs actual", description: "Compare against contract terms and verified utilisation; record variance and direction per line", actor: "VE-AGT-401", estimatedMins: 4, position: { x: X(4), y: Y(1) } },
-    { id: "j4-asc842", type: "make_decision", label: "Purchase option present?", description: "Rental-purchase options trigger ASC 842 lease-classification review before any revenue posts", actor: "VE-AGT-402", position: { x: X(5), y: Y(1) } },
+    { id: "j4-reconcile", type: "ai_reasoning", label: "Reconcile billed vs actual", description: "Compare against contract terms and verified utilisation; record variance and direction per line", actor: "ED-AGT-401", estimatedMins: 4, position: { x: X(4), y: Y(1) } },
+    { id: "j4-asc842", type: "make_decision", label: "Purchase option present?", description: "Rental-purchase options trigger ASC 842 lease-classification review before any revenue posts", actor: "ED-AGT-402", position: { x: X(5), y: Y(1) } },
     { id: "j4-leasereview", type: "expert_approval", label: "ASC 842 classification review", description: "Accounting classifies the contract before revenue is recognised as operating rental", actor: "Financial Controller", estimatedMins: 25, position: { x: X(5), y: Y(3) } },
-    { id: "j4-variance", type: "make_decision", label: "Variance direction", description: "Under-billed, over-billed, or clean — all three are reported, none suppressed", actor: "VE-AGT-402", position: { x: X(6), y: Y(1) } },
-    { id: "j4-substantiate", type: "ai_reasoning", label: "Substantiate ancillary charges", description: "Damage, fuel and cleaning charges checked against the check-in condition report and baseline", actor: "VE-AGT-402", estimatedMins: 3, position: { x: X(7), y: Y(0) } },
-    { id: "j4-adjust", type: "ai_reasoning", label: "Prepare billing adjustment", description: "Adjustment in the evidenced direction with hour-meter evidence attached", actor: "VE-AGT-402", estimatedMins: 2, position: { x: X(8), y: Y(1) } },
-    { id: "j4-authority", type: "make_decision", label: "Adjustment authority gate", description: "Adjustments above the agent ceiling require the branch controller", actor: "VE-AGT-402", position: { x: X(9), y: Y(1) } },
+    { id: "j4-variance", type: "make_decision", label: "Variance direction", description: "Under-billed, over-billed, or clean — all three are reported, none suppressed", actor: "ED-AGT-402", position: { x: X(6), y: Y(1) } },
+    { id: "j4-substantiate", type: "ai_reasoning", label: "Substantiate ancillary charges", description: "Damage, fuel and cleaning charges checked against the check-in condition report and baseline", actor: "ED-AGT-402", estimatedMins: 3, position: { x: X(7), y: Y(0) } },
+    { id: "j4-adjust", type: "ai_reasoning", label: "Prepare billing adjustment", description: "Adjustment in the evidenced direction with hour-meter evidence attached", actor: "ED-AGT-402", estimatedMins: 2, position: { x: X(8), y: Y(1) } },
+    { id: "j4-authority", type: "make_decision", label: "Adjustment authority gate", description: "Adjustments above the agent ceiling require the branch controller", actor: "ED-AGT-402", position: { x: X(9), y: Y(1) } },
     { id: "j4-controller", type: "expert_approval", label: "Branch controller approval", description: "Required for adjustments above $10,000 in either direction", actor: "Branch Controller", estimatedMins: 15, position: { x: X(10), y: Y(2) } },
-    { id: "j4-release", type: "take_action", label: "Release cycle invoice", description: "Release the reconciled invoice with each line traced to its evidence source", actor: "VE-AGT-402", estimatedMins: 1, position: { x: X(11), y: Y(1) } },
-    { id: "j4-notify", type: "send_notification", label: "Report both directions", description: "Under-billing recovered AND over-billing corrected, with over-billing reported first", actor: "VE-AGT-400", position: { x: X(12), y: Y(1) } },
+    { id: "j4-release", type: "take_action", label: "Release cycle invoice", description: "Release the reconciled invoice with each line traced to its evidence source", actor: "ED-AGT-402", estimatedMins: 1, position: { x: X(11), y: Y(1) } },
+    { id: "j4-notify", type: "send_notification", label: "Report both directions", description: "Under-billing recovered AND over-billing corrected, with over-billing reported first", actor: "ED-AGT-400", position: { x: X(12), y: Y(1) } },
     { id: "j4-end", type: "end", label: "Cycle complete", description: "Billing released with evidence chain intact", actor: "System", position: { x: X(13), y: Y(1) } },
   ],
   edges: [
@@ -214,25 +214,25 @@ export const VE_J4_FLOW: ProcessFlowGraph = {
 };
 
 // ─── J5 — Whole-goods Deal Desk ───────────────────────────────────────────────
-export const VE_J5_FLOW: ProcessFlowGraph = {
+export const J5_FLOW: ProcessFlowGraph = {
   version: PROCESS_FLOW_VERSION,
   name: "Whole-goods Deal Desk — Quote to Invoice Margin Protection",
   nodes: [
     { id: "j5-trigger", type: "trigger", label: "Quote submitted to deal desk", description: "A salesperson submits a whole-goods quote for review before issuance", actor: "System", position: { x: X(0), y: Y(1) } },
-    { id: "j5-deal", type: "get_info", label: "Load deal structure", description: "Unit configuration, proposed price, discount, trade-in and salesperson authority level", actor: "VE-AGT-501", estimatedMins: 1, position: { x: X(1), y: Y(1) } },
-    { id: "j5-cost", type: "get_info", label: "Assemble true landed cost", description: "Invoice cost plus freight, prep, attachments and floor plan interest accrued in inventory", actor: "VE-AGT-501", estimatedMins: 2, position: { x: X(2), y: Y(1) } },
-    { id: "j5-trade", type: "make_decision", label: "Trade-in present?", description: "Trade-ins require comparable-based valuation before margin can be assessed", actor: "VE-AGT-501", position: { x: X(3), y: Y(1) } },
-    { id: "j5-comps", type: "ai_reasoning", label: "Value trade against auction comps", description: "Value against recent comparable sales adjusted for condition and reconditioning; name any over-allowance as discount", actor: "VE-AGT-501", estimatedMins: 4, position: { x: X(4), y: Y(0) } },
-    { id: "j5-programs", type: "ai_reasoning", label: "Identify eligible programs", description: "Every rebate, volume program, floor plan credit and allowance the deal qualifies for, with claim deadlines", actor: "VE-AGT-502", estimatedMins: 3, position: { x: X(5), y: Y(1) } },
-    { id: "j5-stacking", type: "ai_reasoning", label: "Apply stacking rules", description: "Determine the optimal LEGAL combination; name excluded programs and why", actor: "VE-AGT-502", estimatedMins: 2, position: { x: X(6), y: Y(1) } },
-    { id: "j5-margin", type: "ai_reasoning", label: "Compute true margin after capture", description: "Margin assessed only after program capture, so good deals are not rejected on a pre-capture figure", actor: "VE-AGT-502", estimatedMins: 2, position: { x: X(7), y: Y(1) } },
-    { id: "j5-obligation", type: "make_decision", label: "Bundled obligations?", description: "Deals bundling delivery, prep, extended coverage or training need ASC 606 splitting", actor: "VE-AGT-502", position: { x: X(8), y: Y(1) } },
-    { id: "j5-split", type: "take_action", label: "Flag obligation split", description: "Flag for ASC 606 performance-obligation allocation before invoicing", actor: "VE-AGT-502", estimatedMins: 1, position: { x: X(8), y: Y(3) } },
-    { id: "j5-authority", type: "make_decision", label: "Effective discount authority gate", description: "Headline discount PLUS trade over-allowance measured against the authority matrix", actor: "VE-AGT-502", position: { x: X(9), y: Y(1) } },
+    { id: "j5-deal", type: "get_info", label: "Load deal structure", description: "Unit configuration, proposed price, discount, trade-in and salesperson authority level", actor: "ED-AGT-501", estimatedMins: 1, position: { x: X(1), y: Y(1) } },
+    { id: "j5-cost", type: "get_info", label: "Assemble true landed cost", description: "Invoice cost plus freight, prep, attachments and floor plan interest accrued in inventory", actor: "ED-AGT-501", estimatedMins: 2, position: { x: X(2), y: Y(1) } },
+    { id: "j5-trade", type: "make_decision", label: "Trade-in present?", description: "Trade-ins require comparable-based valuation before margin can be assessed", actor: "ED-AGT-501", position: { x: X(3), y: Y(1) } },
+    { id: "j5-comps", type: "ai_reasoning", label: "Value trade against auction comps", description: "Value against recent comparable sales adjusted for condition and reconditioning; name any over-allowance as discount", actor: "ED-AGT-501", estimatedMins: 4, position: { x: X(4), y: Y(0) } },
+    { id: "j5-programs", type: "ai_reasoning", label: "Identify eligible programs", description: "Every rebate, volume program, floor plan credit and allowance the deal qualifies for, with claim deadlines", actor: "ED-AGT-502", estimatedMins: 3, position: { x: X(5), y: Y(1) } },
+    { id: "j5-stacking", type: "ai_reasoning", label: "Apply stacking rules", description: "Determine the optimal LEGAL combination; name excluded programs and why", actor: "ED-AGT-502", estimatedMins: 2, position: { x: X(6), y: Y(1) } },
+    { id: "j5-margin", type: "ai_reasoning", label: "Compute true margin after capture", description: "Margin assessed only after program capture, so good deals are not rejected on a pre-capture figure", actor: "ED-AGT-502", estimatedMins: 2, position: { x: X(7), y: Y(1) } },
+    { id: "j5-obligation", type: "make_decision", label: "Bundled obligations?", description: "Deals bundling delivery, prep, extended coverage or training need ASC 606 splitting", actor: "ED-AGT-502", position: { x: X(8), y: Y(1) } },
+    { id: "j5-split", type: "take_action", label: "Flag obligation split", description: "Flag for ASC 606 performance-obligation allocation before invoicing", actor: "ED-AGT-502", estimatedMins: 1, position: { x: X(8), y: Y(3) } },
+    { id: "j5-authority", type: "make_decision", label: "Effective discount authority gate", description: "Headline discount PLUS trade over-allowance measured against the authority matrix", actor: "ED-AGT-502", position: { x: X(9), y: Y(1) } },
     { id: "j5-branch", type: "expert_approval", label: "Branch manager approval", description: "Required where effective discount exceeds salesperson authority", actor: "Branch Manager", estimatedMins: 20, position: { x: X(10), y: Y(2) } },
     { id: "j5-regional", type: "expert_approval", label: "Regional approval", description: "Required for the deepest discount tier — no retroactive approval, no quarter-end exception", actor: "Regional Sales Director", estimatedMins: 45, position: { x: X(10), y: Y(3) } },
-    { id: "j5-summary", type: "take_action", label: "Issue deal desk summary", description: "True margin, program capture, valuation basis and flagged risks returned to the salesperson", actor: "VE-AGT-500", estimatedMins: 1, position: { x: X(11), y: Y(1) } },
-    { id: "j5-notify", type: "send_notification", label: "Report desk outcome", description: "Margin improvement, program value captured, deals blocked pending authority, deadlines approaching", actor: "VE-AGT-500", position: { x: X(12), y: Y(1) } },
+    { id: "j5-summary", type: "take_action", label: "Issue deal desk summary", description: "True margin, program capture, valuation basis and flagged risks returned to the salesperson", actor: "ED-AGT-500", estimatedMins: 1, position: { x: X(11), y: Y(1) } },
+    { id: "j5-notify", type: "send_notification", label: "Report desk outcome", description: "Margin improvement, program value captured, deals blocked pending authority, deadlines approaching", actor: "ED-AGT-500", position: { x: X(12), y: Y(1) } },
     { id: "j5-end", type: "end", label: "Review complete", description: "Deal cleared for quote issuance or held for authority", actor: "System", position: { x: X(13), y: Y(1) } },
   ],
   edges: [
@@ -260,12 +260,12 @@ export const VE_J5_FLOW: ProcessFlowGraph = {
   ],
 };
 
-export const VITALEDGE_PROCESS_FLOWS: Record<string, ProcessFlowGraph> = {
-  "VE-J1": VE_J1_FLOW,
-  "VE-J2": VE_J2_FLOW,
-  "VE-J3": VE_J3_FLOW,
-  "VE-J4": VE_J4_FLOW,
-  "VE-J5": VE_J5_FLOW,
+export const DEALER_PROCESS_FLOWS: Record<string, ProcessFlowGraph> = {
+  "ED-J1": J1_FLOW,
+  "ED-J2": J2_FLOW,
+  "ED-J3": J3_FLOW,
+  "ED-J4": J4_FLOW,
+  "ED-J5": J5_FLOW,
 };
 
 /**
@@ -276,7 +276,7 @@ export const VITALEDGE_PROCESS_FLOWS: Record<string, ProcessFlowGraph> = {
  */
 export function validateProcessFlows(): { ok: boolean; errors: string[] } {
   const errors: string[] = [];
-  for (const [id, flow] of Object.entries(VITALEDGE_PROCESS_FLOWS)) {
+  for (const [id, flow] of Object.entries(DEALER_PROCESS_FLOWS)) {
     const ids = new Set(flow.nodes.map((n) => n.id));
     const triggers = flow.nodes.filter((n) => n.type === "trigger");
     const ends = flow.nodes.filter((n) => n.type === "end");

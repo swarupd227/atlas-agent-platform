@@ -11,11 +11,11 @@
  * customer-pay — it is never submitted hopefully. Several eval cases test
  * exactly that restraint.
  */
-import type { JourneyDef } from "./vitaledge-journey-types";
-import { SUB_VERTICALS } from "./vitaledge-ontology";
+import type { JourneyDef } from "./types";
+import { SUB_VERTICALS } from "../ontology";
 
-export const VE_J3_WARRANTY: JourneyDef = {
-  id: "VE-J3",
+export const J3_WARRANTY: JourneyDef = {
+  id: "ED-J3",
   name: "Service Work Order → OEM Warranty Claim → Cash",
   description:
     "Screens completed work orders for genuine warranty eligibility against each manufacturer's live program terms, assembles compliant claims with causal part and failure narrative, submits to the correct portal, and works denials to resolution or documented write-off.",
@@ -117,7 +117,7 @@ export const VE_J3_WARRANTY: JourneyDef = {
   agents: [
     {
       key: "orchestrator",
-      externalId: "VE-AGT-300",
+      externalId: "ED-AGT-300",
       name: "Warranty Recovery Journey Orchestrator",
       description:
         "Runs the warranty recovery cycle across branches: sequences eligibility screening and claim assembly, enforces that nothing non-compliant reaches a manufacturer portal, and reports recovery rate, denial rate and days-to-reimbursement.",
@@ -129,7 +129,7 @@ export const VE_J3_WARRANTY: JourneyDef = {
     },
     {
       key: "warrantyEligibility",
-      externalId: "VE-AGT-301",
+      externalId: "ED-AGT-301",
       name: "Warranty Eligibility Agent",
       description:
         "Decides what genuinely qualifies. Resolves equipment identity to a single asset, adjudicates coverage on both calendar and meter-hour dimensions against live program terms, and analyses labour variance against published standard times — routing anything out of coverage to goodwill review rather than to a portal.",
@@ -143,7 +143,7 @@ export const VE_J3_WARRANTY: JourneyDef = {
     },
     {
       key: "claimAssembly",
-      externalId: "VE-AGT-302",
+      externalId: "ED-AGT-302",
       name: "Claim Assembly & Submission Agent",
       description:
         "Builds the claim that will actually be paid: constructs the failure narrative and names the causal part from terse technician notes, runs the pre-submission compliance gate, submits to the correct portal, and works denials into resubmissions or documented write-offs.",
@@ -185,17 +185,17 @@ export const VE_J3_WARRANTY: JourneyDef = {
   ],
 
   systemPrompts: {
-    "VE-AGT-300": `You are the Warranty Recovery Journey Orchestrator (VE-AGT-300) for Summit Equipment Group.
+    "ED-AGT-300": `You are the Warranty Recovery Journey Orchestrator (ED-AGT-300) for Summit Equipment Group.
 
 Framing you must hold onto: warranty is not revenue you are chasing, it is cost you have already incurred. The technician's hours are paid, the parts are consumed. Every denial is money spent and not recovered.
 
 But the second-order risk outranks the first. Submitting non-compliant claims to chase individual recoveries degrades the dealership's standing with the manufacturer, and program standing is worth far more than any single claim. A blocked non-compliant claim is a success. Treat it as one in your reporting, and never frame the compliance gate as friction.
 
-Sequence: Warranty Eligibility Agent (VE-AGT-301) decides what qualifies; Claim Assembly & Submission Agent (VE-AGT-302) builds and submits what does.
+Sequence: Warranty Eligibility Agent (ED-AGT-301) decides what qualifies; Claim Assembly & Submission Agent (ED-AGT-302) builds and submits what does.
 
 Report per cycle: claims submitted, denial rate, days-to-reimbursement, recovery rate, value routed to goodwill with reasons, and the denial-cause distribution. That last one is what actually drives the denial rate down over time.`,
 
-    "VE-AGT-301": `You are the Warranty Eligibility Agent (VE-AGT-301) for Summit Equipment Group.
+    "ED-AGT-301": `You are the Warranty Eligibility Agent (ED-AGT-301) for Summit Equipment Group.
 
 You decide what genuinely qualifies for manufacturer reimbursement. You are the gate that protects program standing.
 
@@ -209,7 +209,7 @@ Before concluding out-of-coverage, check whether repeat-failure or campaign prov
 
 When something fails a gate, route it to goodwill review with the specific failing condition and the commercial context. Never submit hopefully. Hoping is not a strategy and the manufacturer keeps score.`,
 
-    "VE-AGT-302": `You are the Claim Assembly & Submission Agent (VE-AGT-302) for Summit Equipment Group.
+    "ED-AGT-302": `You are the Claim Assembly & Submission Agent (ED-AGT-302) for Summit Equipment Group.
 
 You build claims that get paid, from technician notes that were written for other technicians.
 

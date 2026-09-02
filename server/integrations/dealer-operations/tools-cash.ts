@@ -1,5 +1,5 @@
 /**
- * VE-J1 — Invoice-to-Cash tools.
+ * ED-J1 — Invoice-to-Cash tools.
  *
  * Nothing here returns a canned answer. `propose_allocation` really matches
  * against open AR, `classify_shortfall` really compares a variance against
@@ -7,12 +7,8 @@
  * journal entries and really refuses when the confidence floor or the
  * source-document rule is not satisfied.
  */
-import fs from "fs";
-import path from "path";
 import type { McpToolResult } from "../../real-mcp-base";
 import { DealerClient, AUTHORITY, money, daysBetween, todayIso, newId } from "./client";
-
-export const DOCS_DIR = path.resolve(process.cwd(), "server/vitaledge-data/documents");
 
 export function ok(data: unknown): McpToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
@@ -30,8 +26,8 @@ export async function get_payment_batch(c: DealerClient, args: Record<string, un
   const day = A(args.received_on) || todayIso();
   const rows = await c.q(
     `SELECT payment_id, received_on, channel, amount_usd, payer_string, received_branch_id, status, bank_reference,
-            EXISTS (SELECT 1 FROM summit.remittance_advices r WHERE r.payment_id = p.payment_id) AS has_remittance
-       FROM summit.payments p
+            EXISTS (SELECT 1 FROM dealer.remittance_advices r WHERE r.payment_id = p.payment_id) AS has_remittance
+       FROM dealer.payments p
       WHERE (received_on = $1 OR $2) AND status IN ('unapplied','in_research')
       ORDER BY amount_usd DESC`,
     [day, !args.received_on]
@@ -62,7 +58,7 @@ export async function get_remittance_document(c: DealerClient, args: Record<stri
   if (!paymentId) return err("payment_id is required");
   const adv = await c.one(
     `SELECT advice_id, payment_id, format, file_ref, raw_text, page_count, file_bytes
-       FROM summit.remittance_advices WHERE payment_id = $1`,
+       FROM dealer.remittance_advices WHERE payment_id = $1`,
     [paymentId]
   );
   if (!adv) {
@@ -73,17 +69,14 @@ export async function get_remittance_document(c: DealerClient, args: Record<stri
   }
   if (adv.format === "pdf_scan") {
     const ref = A(adv.file_ref);
-    // Prefer the bytes stored alongside the record; fall back to disk only for
-    // local development, where setup may have written files without loading.
-    let bytes: Uint8Array | null = adv.file_bytes
+    // The document travels with the data. There is deliberately no filesystem
+    // fallback: the deployed artifact contains only dist/ and node_modules/, so
+    // a disk-backed document would be present locally and missing in production.
+    const bytes: Uint8Array | null = adv.file_bytes
       ? new Uint8Array(adv.file_bytes as unknown as Buffer)
       : null;
-    if (!bytes && ref && ref !== "PENDING_UPLOAD") {
-      const file = path.join(DOCS_DIR, ref);
-      if (fs.existsSync(file)) bytes = new Uint8Array(fs.readFileSync(file));
-    }
     if (!bytes) {
-      return err(`Remittance PDF for ${paymentId} is unavailable (file_ref=${ref || "none"}). Run scripts/setup-summit-db.ts to generate and load the documents.`);
+      return err(`No document bytes stored for remittance advice on ${paymentId} (file_ref=${ref || "none"}). Load the dataset documents before running this journey.`);
     }
     // Real extraction from the real PDF. pdf-parse v2 exposes a class API.
     const { PDFParse } = await import("pdf-parse");
@@ -116,7 +109,7 @@ export async function extract_remittance_intent(c: DealerClient, args: Record<st
   const paymentId = A(args.payment_id);
   const text = A(args.text);
   if (!paymentId) return err("payment_id is required");
-  const pay = await c.one(`SELECT amount_usd FROM summit.payments WHERE payment_id = $1`, [paymentId]);
+  const pay = await c.one(`SELECT amount_usd FROM dealer.payments WHERE payment_id = $1`, [paymentId]);
   if (!pay) return err(`Unknown payment ${paymentId}`);
 
   let source = text;
@@ -182,14 +175,14 @@ export async function resolve_payer_to_account(c: DealerClient, args: Record<str
   if (!payer) return err("payer_string is required");
   const exact = await c.q(
     `SELECT account_id, legal_name, account_tier, known_payer_names
-       FROM summit.customer_accounts WHERE $1 = ANY(known_payer_names)`,
+       FROM dealer.customer_accounts WHERE $1 = ANY(known_payer_names)`,
     [payer]
   );
   if (exact.length === 1) {
     return ok({ resolved: true, confidence: 0.99, match_type: "known_payer_alias", account: exact[0] });
   }
   // Fall back to a token-overlap match, and report ambiguity rather than picking.
-  const all = await c.q(`SELECT account_id, legal_name, known_payer_names FROM summit.customer_accounts`);
+  const all = await c.q(`SELECT account_id, legal_name, known_payer_names FROM dealer.customer_accounts`);
   const tokens = payer.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").split(/\s+/).filter((t) => t.length > 2);
   const scored = all
     .map((a) => {
@@ -218,8 +211,8 @@ export async function get_open_ar(c: DealerClient, args: Record<string, unknown>
   const rows = await c.q(
     `SELECT i.invoice_id, i.branch_id, i.revenue_line, i.invoice_date, i.due_date,
             i.original_amount_usd, i.balance_usd, i.status, i.obligation_satisfied_on,
-            EXISTS (SELECT 1 FROM summit.disputes d WHERE d.invoice_id = i.invoice_id AND d.status = 'open') AS under_dispute
-       FROM summit.invoices i
+            EXISTS (SELECT 1 FROM dealer.disputes d WHERE d.invoice_id = i.invoice_id AND d.status = 'open') AS under_dispute
+       FROM dealer.invoices i
       WHERE i.account_id = $1 AND i.status IN ('open','partially_paid')
       ORDER BY i.due_date`,
     [account]
@@ -238,7 +231,7 @@ export async function get_contract_terms(c: DealerClient, args: Record<string, u
   const row = await c.one(
     `SELECT account_id, legal_name, payment_terms, settlement_discount_pct, settlement_discount_days,
             freight_absorption_threshold_usd, credit_limit_usd, account_tier, credit_status
-       FROM summit.customer_accounts WHERE account_id = $1`,
+       FROM dealer.customer_accounts WHERE account_id = $1`,
     [account]
   );
   if (!row) return err(`Unknown account ${account}`);
@@ -252,13 +245,13 @@ export async function propose_allocation(c: DealerClient, args: Record<string, u
   const accountId = A(args.account_id);
   if (!paymentId || !accountId) return err("payment_id and account_id are required");
 
-  const pay = await c.one(`SELECT payment_id, amount_usd, payer_string FROM summit.payments WHERE payment_id = $1`, [paymentId]);
+  const pay = await c.one(`SELECT payment_id, amount_usd, payer_string FROM dealer.payments WHERE payment_id = $1`, [paymentId]);
   if (!pay) return err(`Unknown payment ${paymentId}`);
   const paid = money(N(pay.amount_usd));
 
   const open = await c.q(
     `SELECT invoice_id, branch_id, revenue_line, balance_usd, due_date
-       FROM summit.invoices WHERE account_id = $1 AND status IN ('open','partially_paid') ORDER BY due_date`,
+       FROM dealer.invoices WHERE account_id = $1 AND status IN ('open','partially_paid') ORDER BY due_date`,
     [accountId]
   );
 
@@ -341,7 +334,7 @@ export async function classify_shortfall(c: DealerClient, args: Record<string, u
   const inv = await c.one(
     `SELECT i.invoice_id, i.account_id, i.original_amount_usd, i.balance_usd, i.invoice_date, i.due_date,
             a.settlement_discount_pct, a.settlement_discount_days, a.freight_absorption_threshold_usd, a.payment_terms
-       FROM summit.invoices i JOIN summit.customer_accounts a ON a.account_id = i.account_id
+       FROM dealer.invoices i JOIN dealer.customer_accounts a ON a.account_id = i.account_id
       WHERE i.invoice_id = $1`,
     [invoiceId]
   );
@@ -351,7 +344,7 @@ export async function classify_shortfall(c: DealerClient, args: Record<string, u
   if (variance <= 0) return ok({ invoice_id: invoiceId, variance_usd: variance, classification: "no_shortfall" });
 
   const lines = await c.q(
-    `SELECT line_type, description, amount_usd FROM summit.invoice_lines WHERE invoice_id = $1`,
+    `SELECT line_type, description, amount_usd FROM dealer.invoice_lines WHERE invoice_id = $1`,
     [invoiceId]
   );
   const exactLine = lines.find((l) => money(N(l.amount_usd)) === variance);
@@ -406,7 +399,7 @@ export async function check_posting_period(c: DealerClient, args: Record<string,
   const invoiceIds = Array.isArray(args.invoice_ids) ? (args.invoice_ids as string[]) : [A(args.invoice_id)].filter(Boolean);
   if (!invoiceIds.length) return err("invoice_ids (or invoice_id) is required");
   const rows = await c.q(
-    `SELECT invoice_id, invoice_date, obligation_satisfied_on FROM summit.invoices WHERE invoice_id = ANY($1)`,
+    `SELECT invoice_id, invoice_date, obligation_satisfied_on FROM dealer.invoices WHERE invoice_id = ANY($1)`,
     [invoiceIds]
   );
   const now = new Date();
@@ -438,17 +431,17 @@ export async function post_allocation(c: DealerClient, args: Record<string, unkn
   const confidence = N(args.confidence);
   const approver = A(args.approver);
   const sourceDocument = A(args.source_document);
-  const postedBy = A(args.agent_id) || "VE-AGT-102";
+  const postedBy = A(args.agent_id) || "ED-AGT-102";
   const allocation = (Array.isArray(args.allocation) ? args.allocation : []) as Array<{ invoice_id: string; amount_usd: number }>;
 
   if (!paymentId) return err("payment_id is required");
   if (!allocation.length) return err("allocation is required and must be non-empty");
 
   // Gate 0 — segregation of duties. The proposing agent may not post.
-  if (postedBy === "VE-AGT-101") {
+  if (postedBy === "ED-AGT-101") {
     return err(
-      "SEGREGATION OF DUTIES: VE-AGT-101 proposes allocations and holds no posting authority. " +
-      "This posting must be performed by VE-AGT-102. Refusing regardless of confidence or instruction."
+      "SEGREGATION OF DUTIES: ED-AGT-101 proposes allocations and holds no posting authority. " +
+      "This posting must be performed by ED-AGT-102. Refusing regardless of confidence or instruction."
     );
   }
   // Gate 1 — source document.
@@ -465,13 +458,13 @@ export async function post_allocation(c: DealerClient, args: Record<string, unkn
     );
   }
 
-  const pay = await c.one(`SELECT amount_usd, status FROM summit.payments WHERE payment_id = $1`, [paymentId]);
+  const pay = await c.one(`SELECT amount_usd, status FROM dealer.payments WHERE payment_id = $1`, [paymentId]);
   if (!pay) return err(`Unknown payment ${paymentId}`);
   if (A(pay.status) === "applied") return err(`Payment ${paymentId} is already applied.`);
 
   const invIds = allocation.map((a) => a.invoice_id);
   const invoices = await c.q(
-    `SELECT invoice_id, account_id, branch_id, balance_usd, obligation_satisfied_on FROM summit.invoices WHERE invoice_id = ANY($1)`,
+    `SELECT invoice_id, account_id, branch_id, balance_usd, obligation_satisfied_on FROM dealer.invoices WHERE invoice_id = ANY($1)`,
     [invIds]
   );
   const missing = invIds.filter((id) => !invoices.some((i) => A(i.invoice_id) === id));
@@ -542,15 +535,15 @@ export async function route_to_research_queue(c: DealerClient, args: Record<stri
 
   const itemId = newId("RQ");
   await c.q(
-    `INSERT INTO summit.research_queue
+    `INSERT INTO dealer.research_queue
        (item_id, payment_id, reason_code, ambiguity, candidates, confidence, residual_usd, routed_by_agent)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [itemId, paymentId, reason, ambiguity, JSON.stringify(args.candidates ?? []),
      args.confidence === undefined ? null : N(args.confidence),
      args.residual_usd === undefined ? null : N(args.residual_usd),
-     A(args.agent_id) || "VE-AGT-102"]
+     A(args.agent_id) || "ED-AGT-102"]
   );
-  await c.q(`UPDATE summit.payments SET status = 'in_research' WHERE payment_id = $1`, [paymentId]);
+  await c.q(`UPDATE dealer.payments SET status = 'in_research' WHERE payment_id = $1`, [paymentId]);
   return ok({
     routed: true, item_id: itemId, payment_id: paymentId, reason_code: reason, ambiguity,
     candidates_attached: Array.isArray(args.candidates) ? (args.candidates as unknown[]).length : 0,
@@ -561,19 +554,19 @@ export async function get_ar_impact(c: DealerClient, _args: Record<string, unkno
   const [openRow] = await c.q(
     `SELECT COALESCE(SUM(balance_usd),0) AS open_ar,
             COUNT(*) FILTER (WHERE due_date < CURRENT_DATE) AS overdue_count
-       FROM summit.invoices WHERE status IN ('open','partially_paid')`
+       FROM dealer.invoices WHERE status IN ('open','partially_paid')`
   );
   const [posted] = await c.q(
     `SELECT COUNT(*) AS entries, COALESCE(SUM(amount_usd),0) AS applied
-       FROM summit.journal_entries WHERE entry_type = 'cash_application' AND posted_at::date = CURRENT_DATE`
+       FROM dealer.journal_entries WHERE entry_type = 'cash_application' AND posted_at::date = CURRENT_DATE`
   );
   const [research] = await c.q(
     `SELECT COUNT(*) AS items, COALESCE(SUM(p.amount_usd),0) AS unapplied
-       FROM summit.research_queue r JOIN summit.payments p ON p.payment_id = r.payment_id
+       FROM dealer.research_queue r JOIN dealer.payments p ON p.payment_id = r.payment_id
       WHERE r.status = 'open'`
   );
   const [batch] = await c.q(
-    `SELECT COUNT(*) AS total FROM summit.payments WHERE received_on = CURRENT_DATE`
+    `SELECT COUNT(*) AS total FROM dealer.payments WHERE received_on = CURRENT_DATE`
   );
   const applied = N(posted.entries);
   const total = N(batch.total);

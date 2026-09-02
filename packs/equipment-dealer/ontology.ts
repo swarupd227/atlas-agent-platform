@@ -13,9 +13,9 @@
  * renaming a concept silently unbinds the agents that reference it.
  */
 
-export const VITALEDGE_INDUSTRY_ID = "equipment_dealer";
-export const VITALEDGE_ONTOLOGY_NAME = "AED Dealer Operations Ontology";
-export const VITALEDGE_DEALER_NAME = "Summit Equipment Group";
+export const DEALER_INDUSTRY_ID = "equipment_dealer";
+export const DEALER_ONTOLOGY_NAME = "AED Dealer Operations Ontology";
+export const DEMO_TENANT_NAME = "Summit Equipment Group";
 
 export const SUB_VERTICALS = {
   finance: "Dealer Finance & Back Office",
@@ -663,7 +663,7 @@ const SUPPORTING: OntologyConceptDef[] = [
   },
 ];
 
-export const VITALEDGE_ONTOLOGY_CONCEPTS: OntologyConceptDef[] = [
+export const DEALER_ONTOLOGY_CONCEPTS: OntologyConceptDef[] = [
   ...ENTITIES,
   ...DOCUMENTS,
   ...PROCESSES,
@@ -673,7 +673,7 @@ export const VITALEDGE_ONTOLOGY_CONCEPTS: OntologyConceptDef[] = [
 ];
 
 // ─── Knowledge bases ──────────────────────────────────────────────────────────
-export const VITALEDGE_KB_DEFS = [
+export const DEALER_KB_DEFS = [
   {
     name: "Dealer Cash Application & Remittance Handbook",
     description:
@@ -702,7 +702,7 @@ export const VITALEDGE_KB_DEFS = [
 ] as const;
 
 // ─── Governance policies ──────────────────────────────────────────────────────
-export const VITALEDGE_POLICY_DEFS = [
+export const DEALER_POLICY_DEFS = [
   {
     name: "Cash Application Authority & Confidence Floor",
     domain: "financial_controls",

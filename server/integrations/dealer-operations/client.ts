@@ -1,10 +1,10 @@
 /**
- * Dealer Operations client — the data access layer behind the VitalEdge
- * dealer connector.
+ * Dealer Operations client — the data access layer behind the dealer
+ * operations connector.
  *
- * Every method here runs real parameterised SQL against the `summit` schema.
- * There are no fixtures: if a tool reports that a payment spans three
- * branches, it is because three rows in `summit.invoices` say so.
+ * Every method here runs real parameterised SQL against the dealer schema the
+ * connection names. There are no fixtures: if a tool reports that a payment
+ * spans three branches, it is because three rows in the invoices table say so.
  *
  * Connection identity is deliberately separate from the read-only connection
  * the agents explore with. This client uses the WRITE role, and only the
@@ -20,7 +20,9 @@ export interface DealerCredentials {
   user: string;
   password: string;
   ssl?: string;
-  /** Defaults to "summit"; exposed so a second dataset can be pointed at. */
+  /** Postgres schema holding the dealer data. Required in practice; the
+   *  connector writes SQL against a neutral `dealer.` token that is rewritten
+   *  to this value, so no tenant name appears in platform code. */
   schema?: string;
 }
 
@@ -29,7 +31,7 @@ export class DealerClient {
   readonly schema: string;
 
   constructor(creds: DealerCredentials) {
-    this.schema = (creds.schema || "summit").replace(/[^a-zA-Z0-9_]/g, "");
+    this.schema = (creds.schema || "dealer_ops").replace(/[^a-zA-Z0-9_]/g, "");
     const sslMode = (creds.ssl ?? "require").toLowerCase();
     this.pool = new pg.Pool({
       host: creds.host,
@@ -45,7 +47,7 @@ export class DealerClient {
   }
 
   async q<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
-    const scoped = sql.replace(/\bsummit\./g, `${this.schema}.`);
+    const scoped = sql.replace(/\bdealer\./g, `${this.schema}.`);
     const res = await this.pool.query(scoped, params);
     return res.rows as T[];
   }
@@ -96,9 +98,10 @@ export function todayIso(): string {
 /**
  * The delegation-of-authority matrix, in one place.
  *
- * This is the control that Act 4 of the demo turns on, so it lives here as
- * data rather than being re-derived inside each tool — a threshold duplicated
- * across call sites is a threshold that eventually disagrees with itself.
+ * Defaults only. The authoritative thresholds for a given dealership live in
+ * its governance policies; these are the fallbacks the connector enforces so a
+ * threshold is never simply absent. Kept in one place because a limit
+ * duplicated across call sites eventually disagrees with itself.
  */
 export const AUTHORITY = {
   agentCreditMemoCeilingUsd: 10_000,

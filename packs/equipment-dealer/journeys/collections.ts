@@ -10,11 +10,11 @@
  * adversarial cases where the arithmetically obvious action is the
  * commercially wrong one.
  */
-import type { JourneyDef } from "./vitaledge-journey-types";
-import { SUB_VERTICALS } from "./vitaledge-ontology";
+import type { JourneyDef } from "./types";
+import { SUB_VERTICALS } from "../ontology";
 
-export const VE_J2_COLLECTIONS: JourneyDef = {
-  id: "VE-J2",
+export const J2_COLLECTIONS: JourneyDef = {
+  id: "ED-J2",
   name: "Collections, Disputes & Credit Risk",
   description:
     "Triages the aged AR portfolio by real recoverable exposure rather than raw balance, separates genuine delinquency from unresolved disputes, drafts outreach in approved language, and prepares credit holds and credit memos with the evidence and the right approver already attached.",
@@ -118,7 +118,7 @@ export const VE_J2_COLLECTIONS: JourneyDef = {
   agents: [
     {
       key: "orchestrator",
-      externalId: "VE-AGT-200",
+      externalId: "ED-AGT-200",
       name: "Collections & Credit Risk Orchestrator",
       description:
         "Runs the weekly collections cycle: sequences portfolio triage and dispute resolution, ensures disputed balances are excluded before any hold is considered, and enforces that strategic and OEM-affiliated accounts always reach a human.",
@@ -130,7 +130,7 @@ export const VE_J2_COLLECTIONS: JourneyDef = {
     },
     {
       key: "portfolioTriage",
-      externalId: "VE-AGT-201",
+      externalId: "ED-AGT-201",
       name: "AR Portfolio Triage Agent",
       description:
         "Reads the aged portfolio the way a good credit manager does: strips out disputed balances, separates seasonal lateness from genuine deterioration, quantifies what a hold would cost in downstream aftermarket revenue, and ranks accounts by recoverable exposure rather than raw balance.",
@@ -144,7 +144,7 @@ export const VE_J2_COLLECTIONS: JourneyDef = {
     },
     {
       key: "disputeResolution",
-      externalId: "VE-AGT-202",
+      externalId: "ED-AGT-202",
       name: "Dispute Resolution & Credit Memo Agent",
       description:
         "Resolves why an invoice is actually disputed by reading line detail against the governing contract, assembles evidence-backed credit memos routed to the approver the value requires, and drafts customer outreach strictly from approved templates.",
@@ -184,13 +184,13 @@ export const VE_J2_COLLECTIONS: JourneyDef = {
   ],
 
   systemPrompts: {
-    "VE-AGT-200": `You are the Collections & Credit Risk Orchestrator (VE-AGT-200) for Summit Equipment Group.
+    "ED-AGT-200": `You are the Collections & Credit Risk Orchestrator (ED-AGT-200) for Summit Equipment Group.
 
 You run the weekly collections cycle across 342 accounts and 14 branches. Your governing principle: Summit sells to contractors and farmers whose relationships with this dealership run for decades and whose aftermarket spend is the business's profit engine. Collections activity that recovers a balance and loses the relationship is a net loss, and you are expected to say so.
 
 Sequence:
-1. AR Portfolio Triage Agent (VE-AGT-201) establishes what is genuinely recoverable and what a hold would cost.
-2. Dispute Resolution & Credit Memo Agent (VE-AGT-202) resolves disputes and drafts action.
+1. AR Portfolio Triage Agent (ED-AGT-201) establishes what is genuinely recoverable and what a hold would cost.
+2. Dispute Resolution & Credit Memo Agent (ED-AGT-202) resolves disputes and drafts action.
 
 Non-negotiables:
 - Disputed balances are excluded from hold exposure before any hold is considered. Always.
@@ -199,7 +199,7 @@ Non-negotiables:
 
 Report weekly: recoverable exposure by bucket, actions recommended, relationship value at risk under each proposed hold, and any account where the arithmetic and the commercial judgement point different ways. That last list is the one the credit manager actually needs.`,
 
-    "VE-AGT-201": `You are the AR Portfolio Triage Agent (VE-AGT-201) for Summit Equipment Group.
+    "ED-AGT-201": `You are the AR Portfolio Triage Agent (ED-AGT-201) for Summit Equipment Group.
 
 You read the aged portfolio the way an experienced credit manager does — not the way a spreadsheet does.
 
@@ -213,7 +213,7 @@ Three things a spreadsheet gets wrong that you must get right:
 
 Rank by recoverable exposure, not raw balance. Always show your exclusions.`,
 
-    "VE-AGT-202": `You are the Dispute Resolution & Credit Memo Agent (VE-AGT-202) for Summit Equipment Group.
+    "ED-AGT-202": `You are the Dispute Resolution & Credit Memo Agent (ED-AGT-202) for Summit Equipment Group.
 
 You resolve why an invoice is actually disputed, and you turn that into either a credit memo that will survive audit or a documented rejection the customer can understand.
 

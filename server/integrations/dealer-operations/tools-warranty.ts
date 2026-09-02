@@ -1,5 +1,5 @@
 /**
- * VE-J3 — Work Order → OEM Warranty Claim → Cash tools.
+ * ED-J3 — Work Order → OEM Warranty Claim → Cash tools.
  *
  * `resolve_asset` returns every candidate when a serial collides rather than
  * picking the likelier one; `run_compliance_gate` checks coverage on both the
@@ -8,7 +8,7 @@
  *
  * ADJUDICATION IS A SIMULATOR, and is labelled as one in its own output. We
  * have no access to a manufacturer portal, so the verdict is COMPUTED from the
- * program terms stored in `summit.oem_programs` — it is derived, never canned —
+ * program terms stored in `dealer.oem_programs` — it is derived, never canned —
  * but it stands in for a counterparty we cannot reach. Everything else in this
  * file is real.
  */
@@ -27,8 +27,8 @@ export async function get_completed_work_orders(c: DealerClient, args: Record<st
     `SELECT w.work_order_id, w.unit_id, w.serial_entered, w.account_id, w.branch_id,
             w.completed_on, w.meter_hours_at_service, w.repair_code, w.technician_notes,
             w.complaint, w.cause, w.correction, w.causal_part, w.labour_hours_booked, w.segment,
-            EXISTS (SELECT 1 FROM summit.warranty_claims wc WHERE wc.work_order_id = w.work_order_id) AS claim_exists
-       FROM summit.work_orders w
+            EXISTS (SELECT 1 FROM dealer.warranty_claims wc WHERE wc.work_order_id = w.work_order_id) AS claim_exists
+       FROM dealer.work_orders w
       WHERE w.completed_on IS NOT NULL AND w.segment = 'warranty'
         AND ($1 = '' OR w.branch_id = $1)
       ORDER BY w.completed_on DESC`,
@@ -51,7 +51,7 @@ export async function resolve_asset(c: DealerClient, args: Record<string, unknow
   const candidates = await c.q(
     `SELECT unit_id, serial_number, manufacturer, model, machine_class, meter_hours,
             ownership_status, branch_id, owner_account_id, delivery_date, program_code
-       FROM summit.fleet_assets WHERE UPPER(serial_number) = UPPER($1)`,
+       FROM dealer.fleet_assets WHERE UPPER(serial_number) = UPPER($1)`,
     [serial]
   );
 
@@ -93,8 +93,8 @@ export async function resolve_asset(c: DealerClient, args: Record<string, unknow
 export async function get_oem_program_terms(c: DealerClient, args: Record<string, unknown>) {
   const code = A(args.program_code);
   const rows = code
-    ? await c.q(`SELECT * FROM summit.oem_programs WHERE program_code = $1`, [code])
-    : await c.q(`SELECT * FROM summit.oem_programs ORDER BY manufacturer`);
+    ? await c.q(`SELECT * FROM dealer.oem_programs WHERE program_code = $1`, [code])
+    : await c.q(`SELECT * FROM dealer.oem_programs ORDER BY manufacturer`);
   if (code && !rows.length) return err(`Unknown program ${code}`);
   return ok({
     programs: rows.map((p) => ({
@@ -111,12 +111,12 @@ export async function get_asset_service_history(c: DealerClient, args: Record<st
   const wos = await c.q(
     `SELECT work_order_id, completed_on, meter_hours_at_service, repair_code, causal_part,
             segment, labour_hours_booked, cause
-       FROM summit.work_orders WHERE unit_id = $1 ORDER BY completed_on`,
+       FROM dealer.work_orders WHERE unit_id = $1 ORDER BY completed_on`,
     [unitId]
   );
   const claims = await c.q(
     `SELECT claim_id, work_order_id, status, approved_amount_usd, denial_reason_code
-       FROM summit.warranty_claims WHERE unit_id = $1 ORDER BY submitted_on`,
+       FROM dealer.warranty_claims WHERE unit_id = $1 ORDER BY submitted_on`,
     [unitId]
   );
   // Repeat failures on the same component are what extension provisions turn on.
@@ -141,7 +141,7 @@ export async function get_labour_standard(c: DealerClient, args: Record<string, 
   const make = A(args.manufacturer), model = A(args.model), code = A(args.repair_code);
   if (!make || !model || !code) return err("manufacturer, model and repair_code are required");
   const row = await c.one(
-    `SELECT * FROM summit.labour_standards WHERE manufacturer = $1 AND model = $2 AND repair_code = $3`,
+    `SELECT * FROM dealer.labour_standards WHERE manufacturer = $1 AND model = $2 AND repair_code = $3`,
     [make, model, code]
   );
   if (!row) return err(`No published standard time for ${make} ${model} / ${code}. Claimed labour cannot exceed a standard that does not exist — escalate.`);
@@ -153,7 +153,7 @@ export async function get_labour_standard(c: DealerClient, args: Record<string, 
 export async function assemble_claim(c: DealerClient, args: Record<string, unknown>) {
   const woId = A(args.work_order_id);
   if (!woId) return err("work_order_id is required");
-  const wo = await c.one(`SELECT * FROM summit.work_orders WHERE work_order_id = $1`, [woId]);
+  const wo = await c.one(`SELECT * FROM dealer.work_orders WHERE work_order_id = $1`, [woId]);
   if (!wo) return err(`Unknown work order ${woId}`);
 
   const missing: string[] = [];
@@ -164,25 +164,25 @@ export async function assemble_claim(c: DealerClient, args: Record<string, unkno
   if (!wo.correction) missing.push("correction missing");
 
   const asset = wo.unit_id
-    ? await c.one(`SELECT * FROM summit.fleet_assets WHERE unit_id = $1`, [wo.unit_id])
+    ? await c.one(`SELECT * FROM dealer.fleet_assets WHERE unit_id = $1`, [wo.unit_id])
     : null;
   const std = asset
-    ? await c.one(`SELECT standard_hours FROM summit.labour_standards WHERE manufacturer=$1 AND model=$2 AND repair_code=$3`,
+    ? await c.one(`SELECT standard_hours FROM dealer.labour_standards WHERE manufacturer=$1 AND model=$2 AND repair_code=$3`,
         [asset.manufacturer, asset.model, wo.repair_code])
     : null;
 
-  const lines = await c.q(`SELECT * FROM summit.work_order_lines WHERE work_order_id = $1`, [woId]);
+  const lines = await c.q(`SELECT * FROM dealer.work_order_lines WHERE work_order_id = $1`, [woId]);
   const partsTotal = money(lines.filter((l) => A(l.line_type) === "part").reduce((s, l) => s + N(l.amount_usd), 0));
   const bookedHours = N(wo.labour_hours_booked);
   const stdHours = std ? N(std.standard_hours) : null;
   const claimableHours = stdHours === null ? bookedHours : Math.min(bookedHours, stdHours);
 
-  const existing = await c.one(`SELECT claim_id FROM summit.warranty_claims WHERE work_order_id = $1`, [woId]);
+  const existing = await c.one(`SELECT claim_id FROM dealer.warranty_claims WHERE work_order_id = $1`, [woId]);
   const claimId = existing ? A(existing.claim_id) : newId("WC");
 
   if (!existing) {
     await c.q(
-      `INSERT INTO summit.warranty_claims
+      `INSERT INTO dealer.warranty_claims
          (claim_id, work_order_id, unit_id, program_code, claimed_labour_hours, standard_labour_hours,
           claimed_parts_usd, claimed_total_usd, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'draft')`,
@@ -212,9 +212,9 @@ export async function assemble_claim(c: DealerClient, args: Record<string, unkno
 export async function run_compliance_gate(c: DealerClient, args: Record<string, unknown>) {
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
-  const claim = await c.one(`SELECT * FROM summit.warranty_claims WHERE claim_id = $1`, [claimId]);
+  const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
   if (!claim) return err(`Unknown claim ${claimId}`);
-  const wo = await c.one(`SELECT * FROM summit.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
+  const wo = await c.one(`SELECT * FROM dealer.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
   const failures: string[] = [];
   const checks: Record<string, unknown> = {};
 
@@ -226,9 +226,9 @@ export async function run_compliance_gate(c: DealerClient, args: Record<string, 
     checks.identity = { passed: true, unit_id: claim.unit_id };
   }
 
-  const asset = claim.unit_id ? await c.one(`SELECT * FROM summit.fleet_assets WHERE unit_id = $1`, [claim.unit_id]) : null;
+  const asset = claim.unit_id ? await c.one(`SELECT * FROM dealer.fleet_assets WHERE unit_id = $1`, [claim.unit_id]) : null;
   const prog = asset?.program_code
-    ? await c.one(`SELECT * FROM summit.oem_programs WHERE program_code = $1`, [asset.program_code])
+    ? await c.one(`SELECT * FROM dealer.oem_programs WHERE program_code = $1`, [asset.program_code])
     : null;
 
   // 2. Coverage — BOTH dimensions, then repeat-failure extension.
@@ -242,7 +242,7 @@ export async function run_compliance_gate(c: DealerClient, args: Record<string, 
     let repeatDetail: unknown = null;
     if (!withinHours && prog.repeat_failure_provision && wo?.causal_part) {
       const priors = await c.q(
-        `SELECT work_order_id, meter_hours_at_service FROM summit.work_orders
+        `SELECT work_order_id, meter_hours_at_service FROM dealer.work_orders
           WHERE unit_id = $1 AND causal_part = $2 AND segment = 'warranty' AND work_order_id <> $3`,
         [claim.unit_id, wo.causal_part, claim.work_order_id]
       );
@@ -285,7 +285,7 @@ export async function run_compliance_gate(c: DealerClient, args: Record<string, 
 
   const result = failures.length === 0 ? "PASS" : "FAIL";
   await c.q(
-    `UPDATE summit.warranty_claims SET gate_result = $1, gate_failures = $2,
+    `UPDATE dealer.warranty_claims SET gate_result = $1, gate_failures = $2,
             status = CASE WHEN $1 = 'FAIL' THEN 'blocked' ELSE status END
       WHERE claim_id = $3`,
     [result, failures, claimId]
@@ -302,7 +302,7 @@ export async function run_compliance_gate(c: DealerClient, args: Record<string, 
 export async function submit_claim(c: DealerClient, args: Record<string, unknown>) {
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
-  const claim = await c.one(`SELECT * FROM summit.warranty_claims WHERE claim_id = $1`, [claimId]);
+  const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
   if (!claim) return err(`Unknown claim ${claimId}`);
 
   // Hard gate — the portal call cannot be reached without a recorded PASS.
@@ -317,7 +317,7 @@ export async function submit_claim(c: DealerClient, args: Record<string, unknown
     return err(`Claim ${claimId} is already ${claim.status}.`);
   }
 
-  await c.q(`UPDATE summit.warranty_claims SET status = 'submitted', submitted_on = CURRENT_DATE WHERE claim_id = $1`, [claimId]);
+  await c.q(`UPDATE dealer.warranty_claims SET status = 'submitted', submitted_on = CURRENT_DATE WHERE claim_id = $1`, [claimId]);
   return ok({
     submitted: true, claim_id: claimId, portal_reference: newId("OEM"),
     submitted_on: todayIso(), expected_adjudication_days: 10,
@@ -328,14 +328,14 @@ export async function submit_claim(c: DealerClient, args: Record<string, unknown
 export async function route_to_goodwill_review(c: DealerClient, args: Record<string, unknown>) {
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
-  const claim = await c.one(`SELECT * FROM summit.warranty_claims WHERE claim_id = $1`, [claimId]);
+  const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
   if (!claim) return err(`Unknown claim ${claimId}`);
-  const wo = await c.one(`SELECT account_id, branch_id FROM summit.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
+  const wo = await c.one(`SELECT account_id, branch_id FROM dealer.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
   const acct = wo?.account_id
-    ? await c.one(`SELECT legal_name, account_tier, annual_parts_service_spend_usd FROM summit.customer_accounts WHERE account_id = $1`, [wo.account_id])
+    ? await c.one(`SELECT legal_name, account_tier, annual_parts_service_spend_usd FROM dealer.customer_accounts WHERE account_id = $1`, [wo.account_id])
     : null;
 
-  await c.q(`UPDATE summit.warranty_claims SET status = 'goodwill' WHERE claim_id = $1`, [claimId]);
+  await c.q(`UPDATE dealer.warranty_claims SET status = 'goodwill' WHERE claim_id = $1`, [claimId]);
   return ok({
     routed: true, claim_id: claimId, routed_to: "service_manager",
     failing_conditions: claim.gate_failures ?? [A(args.reason) || "out_of_coverage"],
@@ -349,15 +349,15 @@ export async function route_to_goodwill_review(c: DealerClient, args: Record<str
 
 /**
  * ADJUDICATION SIMULATOR — see the file header. The verdict is derived from
- * the program terms in `summit.oem_programs` and the claim's own numbers; it
+ * the program terms in `dealer.oem_programs` and the claim's own numbers; it
  * is not a canned response. It stands in for a manufacturer portal we have no
  * access to, and says so in its own output.
  */
 export async function get_claim_status(c: DealerClient, args: Record<string, unknown>) {
   const claimId = A(args.claim_id);
   const rows = claimId
-    ? await c.q(`SELECT * FROM summit.warranty_claims WHERE claim_id = $1`, [claimId])
-    : await c.q(`SELECT * FROM summit.warranty_claims WHERE status IN ('submitted','resubmitted') ORDER BY submitted_on`);
+    ? await c.q(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId])
+    : await c.q(`SELECT * FROM dealer.warranty_claims WHERE status IN ('submitted','resubmitted') ORDER BY submitted_on`);
   if (claimId && !rows.length) return err(`Unknown claim ${claimId}`);
 
   const adjudicated: unknown[] = [];
@@ -366,9 +366,9 @@ export async function get_claim_status(c: DealerClient, args: Record<string, unk
       adjudicated.push({ claim_id: claim.claim_id, status: claim.status, approved_amount_usd: claim.approved_amount_usd });
       continue;
     }
-    const asset = claim.unit_id ? await c.one(`SELECT * FROM summit.fleet_assets WHERE unit_id = $1`, [claim.unit_id]) : null;
-    const prog = asset?.program_code ? await c.one(`SELECT * FROM summit.oem_programs WHERE program_code = $1`, [asset.program_code]) : null;
-    const wo = await c.one(`SELECT * FROM summit.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
+    const asset = claim.unit_id ? await c.one(`SELECT * FROM dealer.fleet_assets WHERE unit_id = $1`, [claim.unit_id]) : null;
+    const prog = asset?.program_code ? await c.one(`SELECT * FROM dealer.oem_programs WHERE program_code = $1`, [asset.program_code]) : null;
+    const wo = await c.one(`SELECT * FROM dealer.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
 
     let status = "approved";
     let reasonCode: string | null = null;
@@ -397,7 +397,7 @@ export async function get_claim_status(c: DealerClient, args: Record<string, unk
     }
 
     await c.q(
-      `UPDATE summit.warranty_claims
+      `UPDATE dealer.warranty_claims
           SET status = $1, adjudicated_on = CURRENT_DATE, approved_amount_usd = $2,
               denial_reason_code = $3, denial_reason_text = $4
         WHERE claim_id = $5`,
@@ -412,7 +412,7 @@ export async function get_claim_status(c: DealerClient, args: Record<string, unk
 
   return ok({
     source: "OEM_ADJUDICATION_SIMULATOR",
-    disclosure: "Manufacturer portals are not reachable from this environment. This verdict is COMPUTED from the program terms stored in summit.oem_programs and the claim's own figures — it is derived, not canned — but it stands in for a real counterparty. Swap this for the live portal integration when credentials exist.",
+    disclosure: "Manufacturer portals are not reachable from this environment. This verdict is COMPUTED from the program terms stored in dealer.oem_programs and the claim's own figures — it is derived, not canned — but it stands in for a real counterparty. Swap this for the live portal integration when credentials exist.",
     claim_count: adjudicated.length,
     claims: adjudicated,
   });
@@ -421,7 +421,7 @@ export async function get_claim_status(c: DealerClient, args: Record<string, unk
 export async function analyze_denial(c: DealerClient, args: Record<string, unknown>) {
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
-  const claim = await c.one(`SELECT * FROM summit.warranty_claims WHERE claim_id = $1`, [claimId]);
+  const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
   if (!claim) return err(`Unknown claim ${claimId}`);
   if (A(claim.status) !== "denied") return ok({ claim_id: claimId, status: claim.status, note: "Not denied — nothing to analyse." });
 
@@ -448,11 +448,11 @@ export async function analyze_denial(c: DealerClient, args: Record<string, unkno
 export async function post_warranty_receivable(c: DealerClient, args: Record<string, unknown>) {
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
-  const claim = await c.one(`SELECT * FROM summit.warranty_claims WHERE claim_id = $1`, [claimId]);
+  const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
   if (!claim) return err(`Unknown claim ${claimId}`);
   if (A(claim.status) !== "approved") return err(`Claim ${claimId} is ${claim.status}, not approved. Only approved claims post as receivables.`);
 
-  const wo = await c.one(`SELECT branch_id, account_id, completed_on FROM summit.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
+  const wo = await c.one(`SELECT branch_id, account_id, completed_on FROM dealer.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
   if (!wo) return err("Work order not found for this claim.");
 
   // Posts to the period the repair obligation was satisfied — not the period
@@ -460,12 +460,12 @@ export async function post_warranty_receivable(c: DealerClient, args: Record<str
   const period = A(wo.completed_on).slice(0, 7);
   const entryId = newId("JE");
   await c.q(
-    `INSERT INTO summit.journal_entries
+    `INSERT INTO dealer.journal_entries
        (entry_id, branch_id, account_id, entry_type, debit_account, credit_account,
         amount_usd, accounting_period, source_document, posted_by_agent)
      VALUES ($1,$2,$3,'warranty_receivable','1250-Warranty Receivable','4200-Warranty Revenue',$4,$5,$6,$7)`,
     [entryId, wo.branch_id, wo.account_id ?? null, money(N(claim.approved_amount_usd)), period,
-     `Warranty claim ${claimId} / work order ${claim.work_order_id}`, A(args.agent_id) || "VE-AGT-302"]
+     `Warranty claim ${claimId} / work order ${claim.work_order_id}`, A(args.agent_id) || "ED-AGT-302"]
   );
   return ok({
     posted: true, entry_id: entryId, claim_id: claimId,

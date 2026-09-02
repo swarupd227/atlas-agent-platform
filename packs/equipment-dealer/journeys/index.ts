@@ -6,28 +6,28 @@
  * prompts and eval suite. The provisioner walks this array; the demo script
  * walks it in the same order.
  */
-import type { JourneyDef } from "./vitaledge-journey-types";
-import { VITALEDGE_ONTOLOGY_CONCEPTS } from "./vitaledge-ontology";
-import { VE_J1_CASH } from "./vitaledge-journey-cash";
-import { VE_J2_COLLECTIONS } from "./vitaledge-journey-collections";
-import { VE_J3_WARRANTY } from "./vitaledge-journey-warranty";
-import { VE_J4_RENTAL } from "./vitaledge-journey-rental";
-import { VE_J5_WHOLEGOODS } from "./vitaledge-journey-wholegoods";
+import type { JourneyDef } from "./types";
+import { DEALER_ONTOLOGY_CONCEPTS } from "../ontology";
+import { J1_INVOICE_TO_CASH } from "./invoice-to-cash";
+import { J2_COLLECTIONS } from "./collections";
+import { J3_WARRANTY } from "./warranty";
+import { J4_RENTAL } from "./rental";
+import { J5_WHOLEGOODS } from "./wholegoods";
 
-export const VITALEDGE_JOURNEYS: JourneyDef[] = [
-  VE_J1_CASH,
-  VE_J2_COLLECTIONS,
-  VE_J3_WARRANTY,
-  VE_J4_RENTAL,
-  VE_J5_WHOLEGOODS,
+export const DEALER_JOURNEYS: JourneyDef[] = [
+  J1_INVOICE_TO_CASH,
+  J2_COLLECTIONS,
+  J3_WARRANTY,
+  J4_RENTAL,
+  J5_WHOLEGOODS,
 ];
 
 export {
-  VE_J1_CASH,
-  VE_J2_COLLECTIONS,
-  VE_J3_WARRANTY,
-  VE_J4_RENTAL,
-  VE_J5_WHOLEGOODS,
+  J1_INVOICE_TO_CASH,
+  J2_COLLECTIONS,
+  J3_WARRANTY,
+  J4_RENTAL,
+  J5_WHOLEGOODS,
 };
 
 /**
@@ -38,9 +38,9 @@ export {
  */
 export function validateJourneyBindings(): { ok: boolean; errors: string[] } {
   const errors: string[] = [];
-  const conceptLabels = new Set(VITALEDGE_ONTOLOGY_CONCEPTS.map((c) => c.label));
+  const conceptLabels = new Set(DEALER_ONTOLOGY_CONCEPTS.map((c) => c.label));
 
-  for (const journey of VITALEDGE_JOURNEYS) {
+  for (const journey of DEALER_JOURNEYS) {
     const skillNames = new Set(journey.skills.map((s) => s.name));
     const mcpNames = new Set(journey.mcpServers.map((m) => m.name));
     const agentKeys = new Set(journey.agents.map((a) => a.key));
@@ -107,14 +107,14 @@ export function validateJourneyBindings(): { ok: boolean; errors: string[] } {
 /** Flat counts for the provisioner's summary output and the demo script. */
 export function journeyInventory() {
   return {
-    journeys: VITALEDGE_JOURNEYS.length,
-    ontologyConcepts: VITALEDGE_ONTOLOGY_CONCEPTS.length,
-    agents: VITALEDGE_JOURNEYS.reduce((n, j) => n + j.agents.length, 0),
-    skills: VITALEDGE_JOURNEYS.reduce((n, j) => n + j.skills.length, 0),
-    mcpServers: VITALEDGE_JOURNEYS.reduce((n, j) => n + j.mcpServers.length, 0),
-    mcpTools: VITALEDGE_JOURNEYS.reduce((n, j) => n + j.mcpServers.reduce((m, s) => m + s.tools.length, 0), 0),
-    blueprints: VITALEDGE_JOURNEYS.reduce((n, j) => n + j.blueprints.length, 0),
-    evalSuites: VITALEDGE_JOURNEYS.length,
-    evalCases: VITALEDGE_JOURNEYS.reduce((n, j) => n + j.evalCases.length, 0),
+    journeys: DEALER_JOURNEYS.length,
+    ontologyConcepts: DEALER_ONTOLOGY_CONCEPTS.length,
+    agents: DEALER_JOURNEYS.reduce((n, j) => n + j.agents.length, 0),
+    skills: DEALER_JOURNEYS.reduce((n, j) => n + j.skills.length, 0),
+    mcpServers: DEALER_JOURNEYS.reduce((n, j) => n + j.mcpServers.length, 0),
+    mcpTools: DEALER_JOURNEYS.reduce((n, j) => n + j.mcpServers.reduce((m, s) => m + s.tools.length, 0), 0),
+    blueprints: DEALER_JOURNEYS.reduce((n, j) => n + j.blueprints.length, 0),
+    evalSuites: DEALER_JOURNEYS.length,
+    evalCases: DEALER_JOURNEYS.reduce((n, j) => n + j.evalCases.length, 0),
   };
 }

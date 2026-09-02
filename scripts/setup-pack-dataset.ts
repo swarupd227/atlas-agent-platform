@@ -2,7 +2,7 @@
  * Builds the Summit Equipment Group dataset: schema, roles, seed data, and the
  * remittance PDFs the cash-application journey genuinely extracts from.
  *
- *   DATABASE_URL=postgres://admin:...@host:5432/db npx tsx scripts/setup-summit-db.ts
+ *   DATABASE_URL=postgres://admin:...@host:5432/db npx tsx scripts/setup-pack-dataset.ts
  *
  * Flags:
  *   --reset      drop and rebuild the schema (destructive; asks for confirmation
@@ -21,15 +21,15 @@ import path from "path";
 import readline from "readline";
 import pg from "pg";
 import PDFDocument from "pdfkit";
-import { CREATE_SCHEMA_SQL, DDL_SQL, DROP_SCHEMA_SQL, grantsSql, writeGrantsSql, SUMMIT_SCHEMA } from "../server/vitaledge-data/ddl";
-import { validateSeedConsistency } from "../server/vitaledge-data/consistency";
+import { CREATE_SCHEMA_SQL, DDL_SQL, DROP_SCHEMA_SQL, grantsSql, writeGrantsSql, SUMMIT_SCHEMA } from "../packs/equipment-dealer/dataset/ddl";
+import { validateSeedConsistency } from "../packs/equipment-dealer/dataset/consistency";
 import {
   BRANCHES, ACCOUNTS, OEM_PROGRAMS, LABOUR_STANDARDS, FLEET_ASSETS,
   INVOICES, INVOICE_LINES, PAYMENTS, REMITTANCE_ADVICES, DISPUTES,
   WORK_ORDERS, WORK_ORDER_LINES, RENTAL_CONTRACTS, TELEMATICS_READINGS,
   CONDITION_REPORTS, REBATE_PROGRAMS, AUCTION_COMPARABLES, DEALS, TRADE_INS,
   seedInventory,
-} from "../server/vitaledge-data/seed";
+} from "../packs/equipment-dealer/dataset/seed";
 
 const DOCS_DIR = path.resolve(process.cwd(), "server/vitaledge-data/documents");
 const args = new Set(process.argv.slice(2));
@@ -158,7 +158,7 @@ async function main() {
   const consistency = validateSeedConsistency();
   if (!consistency.ok) {
     log(`\nRefusing to load — ${consistency.errors.length} seed inconsistenc(ies). Run:`);
-    log("  npx tsx scripts/validate-summit-data.ts");
+    log("  npx tsx scripts/validate-pack-dataset.ts");
     process.exit(1);
   }
   log(`\n✓ Seed passes ${consistency.checks} consistency checks against the eval cases.`);
@@ -174,7 +174,7 @@ async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) {
     log("\nDATABASE_URL is not set. Provide an admin connection string:");
-    log("  DATABASE_URL=postgres://user:pass@host:5432/db npx tsx scripts/setup-summit-db.ts");
+    log("  DATABASE_URL=postgres://user:pass@host:5432/db npx tsx scripts/setup-pack-dataset.ts");
     process.exit(1);
   }
 
@@ -287,9 +287,9 @@ async function main() {
     log(`\n  Read-only analyst connection (integration: postgres, createNew: true)`);
     log(`    host=${host}  database=${database}  user=summit_reader  ssl=require`);
     log(`    allowedTables=${Object.keys(seedInventory()).join(",")}`);
-    log(`\n  Dealer action connection (integration: vitaledge-dealer)`);
+    log(`\n  Dealer action connection (integration: dealer-operations)`);
     log(`    host=${host}  database=${database}  user=summit_writer  schema=${SUMMIT_SCHEMA}  ssl=require`);
-    log(`\n  Then: npx tsx scripts/provision-vitaledge.ts`);
+    log(`\n  Then: npx tsx scripts/provision-pack.ts`);
   } finally {
     client.release();
     await pool.end();

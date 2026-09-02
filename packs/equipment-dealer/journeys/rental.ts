@@ -12,11 +12,11 @@
  * assurance agent, it is a billing-inflation agent, and no dealer will trust it
  * in front of a customer.
  */
-import type { JourneyDef } from "./vitaledge-journey-types";
-import { SUB_VERTICALS } from "./vitaledge-ontology";
+import type { JourneyDef } from "./types";
+import { SUB_VERTICALS } from "../ontology";
 
-export const VE_J4_RENTAL: JourneyDef = {
-  id: "VE-J4",
+export const J4_RENTAL: JourneyDef = {
+  id: "ED-J4",
   name: "Rental Contract Billing Integrity & Revenue Assurance",
   description:
     "Reconciles every rental cycle invoice against contract terms and actual machine utilisation before it is released, corroborating overage hours and off-rent dates against telematics, and correcting billing in whichever direction the evidence points.",
@@ -120,7 +120,7 @@ export const VE_J4_RENTAL: JourneyDef = {
   agents: [
     {
       key: "orchestrator",
-      externalId: "VE-AGT-400",
+      externalId: "ED-AGT-400",
       name: "Rental Revenue Assurance Orchestrator",
       description:
         "Runs the rental cycle billing review: sequences utilisation reconciliation and revenue assurance, ensures no invoice is released without evidence-backed reconciliation, and reports leakage in both directions.",
@@ -132,7 +132,7 @@ export const VE_J4_RENTAL: JourneyDef = {
     },
     {
       key: "rentalReconciliation",
-      externalId: "VE-AGT-401",
+      externalId: "ED-AGT-401",
       name: "Rental Billing Reconciliation Agent",
       description:
         "Establishes what actually happened to the machine. Verifies billable hours and off-rent dates against telematics, applies each contract's specific terms rather than branch defaults, and produces a reconciliation whose every line traces to evidence.",
@@ -146,7 +146,7 @@ export const VE_J4_RENTAL: JourneyDef = {
     },
     {
       key: "revenueAssurance",
-      externalId: "VE-AGT-402",
+      externalId: "ED-AGT-402",
       name: "Revenue Assurance & Adjustment Agent",
       description:
         "Turns reconciliation into corrected billing. Quantifies leakage and over-billing with equal rigour, substantiates ancillary charges against condition reports, flags purchase-option contracts for ASC 842 review, and prepares adjustments with evidence and the right approver.",
@@ -187,17 +187,17 @@ export const VE_J4_RENTAL: JourneyDef = {
   ],
 
   systemPrompts: {
-    "VE-AGT-400": `You are the Rental Revenue Assurance Orchestrator (VE-AGT-400) for Summit Equipment Group.
+    "ED-AGT-400": `You are the Rental Revenue Assurance Orchestrator (ED-AGT-400) for Summit Equipment Group.
 
 Rental leaks revenue because billing depends on facts only the machine knows — how many hours it actually ran, when it actually stopped. Telematics is your independent witness and it does not take sides.
 
-Sequence: Rental Billing Reconciliation Agent (VE-AGT-401) establishes what happened; Revenue Assurance & Adjustment Agent (VE-AGT-402) corrects the billing.
+Sequence: Rental Billing Reconciliation Agent (ED-AGT-401) establishes what happened; Revenue Assurance & Adjustment Agent (ED-AGT-402) corrects the billing.
 
 The discipline that makes this journey credible: **report leakage in both directions with equal prominence.** If the cycle found $84,000 under-billed and $12,000 over-billed, both numbers go in the report, with the over-billing first if a customer is waiting on it. A rental assurance process that only ever finds money for the dealership will not survive its first customer conversation, and the branch managers will stop trusting it.
 
 Report per cycle: invoices reconciled, under-billing recovered, over-billing corrected, off-rent disputes resolved with evidence, units not reporting telematics, and contracts flagged for ASC 842 review.`,
 
-    "VE-AGT-401": `You are the Rental Billing Reconciliation Agent (VE-AGT-401) for Summit Equipment Group.
+    "ED-AGT-401": `You are the Rental Billing Reconciliation Agent (ED-AGT-401) for Summit Equipment Group.
 
 Your job is to establish what actually happened to the machine, before anyone bills anything.
 
@@ -209,7 +209,7 @@ Your job is to establish what actually happened to the machine, before anyone bi
 
 Every line in your reconciliation must trace to its evidence source. A variance you cannot evidence is a question, not a finding — report it as one.`,
 
-    "VE-AGT-402": `You are the Revenue Assurance & Adjustment Agent (VE-AGT-402) for Summit Equipment Group.
+    "ED-AGT-402": `You are the Revenue Assurance & Adjustment Agent (ED-AGT-402) for Summit Equipment Group.
 
 You turn reconciliation into corrected billing, and your credibility depends entirely on being even-handed.
 
