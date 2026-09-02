@@ -203,13 +203,17 @@ async function main() {
     log("  ✓ 24 tables");
 
     step("Creating scoped roles");
+    // CREATE ROLE and ALTER ROLE are utility statements, and PostgreSQL does
+    // not accept bind parameters in those — `PASSWORD $1` is a syntax error,
+    // not a placeholder. The password must be inlined as a quoted literal.
+    const lit = (v: string) => "'" + v.replace(/'/g, "''") + "'";
     for (const [role, pw] of [["summit_reader", readerPw], ["summit_writer", writerPw]] as const) {
       const exists = await client.query(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [role]);
       if (exists.rowCount) {
-        await client.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD $1`, [pw]);
+        await client.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD ${lit(pw)}`);
         log(`  · ${role} — password rotated`);
       } else {
-        await client.query(`CREATE ROLE ${role} WITH LOGIN PASSWORD $1`, [pw]);
+        await client.query(`CREATE ROLE ${role} WITH LOGIN PASSWORD ${lit(pw)}`);
         log(`  ✓ ${role} created`);
       }
     }
@@ -278,6 +282,55 @@ async function main() {
       log(`  ${pass ? "✓" : "✗"} ${label.padEnd(20)} expected ${expected}, got ${got}`);
     }
     if (failed) { log(`\n${failed} post-load check(s) failed.`); process.exit(1); }
+
+    // Prove each role can actually log in and read. Without this the script
+    // could report success while the connector was still unable to
+    // authenticate — and Postgres reports a missing role and a wrong password
+    // with the SAME "password authentication failed" message, so the failure
+    // is genuinely indistinguishable from the outside.
+    step("Verifying role logins");
+    const parsedUrl = new URL(url);
+    let loginFailures = 0;
+    for (const [role, pw, expectWritable] of [
+      ["summit_reader", readerPw, false],
+      ["summit_writer", writerPw, true],
+    ] as const) {
+      const probe = new pg.Pool({
+        host: parsedUrl.hostname,
+        port: parsedUrl.port ? parseInt(parsedUrl.port, 10) : 5432,
+        database: parsedUrl.pathname.replace(/^\//, ""),
+        user: role,
+        password: pw,
+        ssl: { rejectUnauthorized: false },
+        max: 1,
+        connectionTimeoutMillis: 10_000,
+      });
+      try {
+        const r = await probe.query(`SELECT COUNT(*)::int AS n FROM ${SUMMIT_SCHEMA}.branches`);
+        log(`  ✓ ${role} authenticated and read ${r.rows[0].n} branches`);
+        // The read role must NOT be able to write; that separation is the
+        // whole reason there are two roles.
+        if (!expectWritable) {
+          try {
+            await probe.query(`INSERT INTO ${SUMMIT_SCHEMA}.branches (branch_id, name, division, city, state, controller_name) VALUES ('__probe','x','construction','x','XX','x')`);
+            await probe.query(`DELETE FROM ${SUMMIT_SCHEMA}.branches WHERE branch_id = '__probe'`);
+            log(`  ✗ ${role} was able to WRITE — the read-only grant is not in effect`);
+            loginFailures++;
+          } catch {
+            log(`  ✓ ${role} correctly refused a write`);
+          }
+        }
+      } catch (e: any) {
+        loginFailures++;
+        log(`  ✗ ${role} could NOT authenticate: ${e?.message ?? e}`);
+      } finally {
+        await probe.end().catch(() => {});
+      }
+    }
+    if (loginFailures) {
+      log(`\n${loginFailures} role check(s) failed — the connector would not be able to reach this data.`);
+      process.exit(1);
+    }
 
     const host = new URL(url).hostname;
     const database = new URL(url).pathname.replace(/^\//, "");
