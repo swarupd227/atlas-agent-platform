@@ -67,6 +67,11 @@ async function login(): Promise<boolean> {
 
 let created = 0;
 let reused = 0;
+let kbAttempted = 0;
+let kbLinked = 0;
+let kbAlready = 0;
+let mcpLinked = 0;
+let mcpAlready = 0;
 const failures: string[] = [];
 
 function log(msg: string) { console.log(msg); }
@@ -85,9 +90,12 @@ async function api<T = any>(
   body?: unknown,
   tolerate: number[] = [],
 ): Promise<T | null> {
-  // Under dry run nothing is written and nothing is read — the point is to
-  // exercise payload construction and ordering, not to reach a server.
-  if (DRY_RUN) return (method === "GET" ? [] : {}) as T;
+  // Under dry run nothing is written and nothing is read. A POST must still
+  // return an object carrying an id: `ensure` returns null without one, the
+  // caller then hits `continue`, and every downstream step — the agent PATCH,
+  // the connector link, the knowledge-base link — is silently skipped. That
+  // made the dry run blind to exactly the bugs it should have caught.
+  if (DRY_RUN) return (method === "GET" ? [] : { id: `dry-run-${path.split("/").pop()}` }) as T;
   try {
     const res = await fetch(`${BASE_URL}${path}`, {
       method,
@@ -370,14 +378,16 @@ async function main() {
       if (a.mcpServerName && dealerServerId) {
         const linked = await api<any[]>("GET", `/api/agents/${id}/mcp-servers`);
         const has = Array.isArray(linked) && linked.some((l: any) => (l.serverId ?? l.server_id ?? l.id) === dealerServerId);
+        if (has) mcpAlready++;
         if (!has) {
           // 409 means it is already linked — that is success, not a failure.
           const res = await api("POST", `/api/agents/${id}/mcp-servers`, { serverId: dealerServerId, acknowledgeWarnings: true }, [409]);
-          if (res !== null) ok(`      ${a.name} → Dealer Operations connector`);
+          if (res !== null) { mcpLinked++; ok(`      ${a.name} → Dealer Operations connector`); }
         }
       }
       if (a.kbName) {
         const kbId = kbIds.get(a.kbName);
+        kbAttempted++;
         if (!kbId) {
           // Never skip a binding in silence — that is how ten agents ended up
           // with no knowledge base and nothing said so.
@@ -385,6 +395,7 @@ async function main() {
         } else {
           const links = await api<any[]>("GET", `/api/agents/${id}/knowledge-bases`);
           const has = Array.isArray(links) && links.some((l: any) => (l.knowledgeBaseId ?? l.knowledge_base_id) === kbId);
+          if (has) kbAlready++;
           if (!has) {
             // priority and retrievalConfig carry database defaults, but
             // drizzle-zod still marks notNull-with-default columns as required
@@ -395,7 +406,7 @@ async function main() {
               priority: 1,
               retrievalConfig: { topK: 5, scoreThreshold: 0.3 },
             });
-            if (res !== null) ok(`      ${a.name} → KB "${a.kbName}"`);
+            if (res !== null) { kbLinked++; ok(`      ${a.name} → KB "${a.kbName}"`); }
           }
         }
       }
@@ -494,6 +505,8 @@ async function main() {
   log("");
   log("═══════════════════════════════════════════════════════════════");
   log(`  Created: ${created}   Reused: ${reused}   Failed: ${failures.length}`);
+  log(`  Connector links: ${mcpLinked} new, ${mcpAlready} already present`);
+  log(`  Knowledge base links: ${kbLinked} new, ${kbAlready} already present, ${kbAttempted} agents expected one`);
   log("═══════════════════════════════════════════════════════════════");
   if (failures.length) {
     log("\nFailures (re-run is safe and will retry only what is missing):");
