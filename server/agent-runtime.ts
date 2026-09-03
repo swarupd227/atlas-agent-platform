@@ -2957,9 +2957,14 @@ export async function executeWorkerAgent(
 
   const workerRtConfig = (workerAgent.runtimeConfig as Record<string, any>) || {};
   const workerPrompt = workerRtConfig.prompt || workerAgent.description || `Execute task for ${workerAgent.name}`;
-  const contextualPrompt = previousContext
-    ? `${workerPrompt}\n\n## INPUT FROM PREVIOUS STAGE\n${previousContext}`
-    : workerPrompt;
+  // The request the team was given has to reach the worker. It used to arrive
+  // only as previousContext, which is empty for the first tier — so tier-0
+  // workers were handed nothing but their own role description and answered by
+  // reciting their responsibilities instead of doing the work. Every worker now
+  // sees its role, the actual request, and whatever the previous stage produced.
+  const requestBlock = teamAgent.prompt ? `\n\n## REQUEST\n${teamAgent.prompt}` : "";
+  const upstreamBlock = previousContext ? `\n\n## INPUT FROM PREVIOUS STAGE\n${previousContext}` : "";
+  const contextualPrompt = `${workerPrompt}${requestBlock}${upstreamBlock}`;
 
   const workerMcpLinks = await storage.getAgentMcpServers(workerId);
   const workerMcpIds = workerMcpLinks.map(l => l.serverId);
