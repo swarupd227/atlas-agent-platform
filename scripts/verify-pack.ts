@@ -126,6 +126,24 @@ async function main() {
     ? ok("no duplicate knowledge-base links")
     : bad(`${kbLinkTotal} knowledge-base links across ${kbBound} workers — duplicates remain, re-run provision-pack.ts`);
 
+  // ── Team membership ───────────────────────────────────────────────────────
+  // Orchestrators execute their registered members. A team with no members
+  // runs an empty pipeline and answers "I processed your request but couldn't
+  // generate a detailed response" — a 200 response that looks like a model
+  // failure. Configuration checks alone missed this, so assert it directly.
+  console.log("
+Team membership");
+  let teamsWithMembers = 0;
+  for (const t of teams) {
+    const members: any[] = await req("GET", `/api/agent-teams/${t.id}/members`);
+    const workers = Array.isArray(members) ? members.filter((m) => (m.role ?? "worker") !== "orchestrator") : [];
+    if (workers.length >= 2) teamsWithMembers++;
+    else bad(`${t.name} has ${workers.length} registered worker(s), expected 2`);
+  }
+  teamsWithMembers === teams.length
+    ? ok(`all ${teams.length} orchestrators have their workers registered`)
+    : bad(`${teamsWithMembers}/${teams.length} orchestrators have their workers registered`);
+
   // ── Journeys and their process flows ──────────────────────────────────────
   console.log("\nJourneys");
   const journeys: any[] = await req("GET", "/api/journeys");
