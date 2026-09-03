@@ -73,10 +73,18 @@ async function main() {
 
   // ── Connector ─────────────────────────────────────────────────────────────
   console.log("\nConnector");
+  // Two endpoints, two different questions. /health is the platform's generic
+  // connection health (mounted ahead of the connector's own router); /contract
+  // is the connector's declared-vs-implemented tool audit.
   const health = await req("GET", "/api/integrations/dealer-operations/health");
-  health.audit?.ok && health.tools === 57
-    ? ok(`Dealer Operations: ${health.tools} tools, contract consistent`)
-    : bad(`Dealer Operations health: ${JSON.stringify(health).slice(0, 160)}`);
+  health.status === "connected"
+    ? ok(`Dealer Operations connected (${health.metrics?.totalCalls ?? 0} calls in 24h, ${health.metrics?.totalErrors ?? 0} errors)`)
+    : bad(`Dealer Operations status is "${health.status}" — reconnect it under Integrations`);
+
+  const contract = await req("GET", "/api/integrations/dealer-operations/contract");
+  contract.audit?.ok && contract.tools === 57
+    ? ok(`${contract.tools} tools, declared contract matches the implementations`)
+    : bad(`tool contract: ${JSON.stringify(contract.audit ?? contract).slice(0, 160)}`);
 
   // ── Agents ────────────────────────────────────────────────────────────────
   console.log("\nAgents");

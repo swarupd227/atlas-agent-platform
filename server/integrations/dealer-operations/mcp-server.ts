@@ -156,7 +156,14 @@ export const dealerOperationsMcpServer = new DealerOperationsMcpServer();
 export function createDealerOperationsRouter(): Router {
   const router = Router();
 
-  router.get("/health", (_req: Request, res: Response) => {
+  // NOT "/health": the platform mounts a generic /api/integrations/:id/health
+  // ahead of this router, so a /health here is shadowed and never reached.
+  // That generic route reports connection status and call metrics, which is
+  // what the Integrations UI reads for every connector. This endpoint answers
+  // a different question — does the declared tool contract match what is
+  // actually implemented — so it gets its own path rather than fighting for
+  // that one.
+  router.get("/contract", (_req: Request, res: Response) => {
     const audit = auditToolCoverage();
     res.json({
       status: audit.ok ? "ok" : "degraded",
