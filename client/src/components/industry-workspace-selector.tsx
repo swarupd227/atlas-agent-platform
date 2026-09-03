@@ -113,8 +113,13 @@ export function IndustryWorkspaceSelector() {
 
   return (
     <div className="fixed inset-0 z-[100] bg-background flex flex-col" data-testid="industry-workspace-selector">
-      <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-auto">
-        <div className="max-w-5xl w-full space-y-4">
+      {/* justify-center would center the overflow when the wizard is taller than
+          the viewport, pushing its top above scrollTop 0 where it cannot be
+          scrolled to — the step indicator, heading and "Skip for now" became
+          unreachable on short viewports. Auto margins center the child when
+          there is free space and collapse to 0 when there is not. */}
+      <div className="flex-1 flex flex-col items-center p-4 overflow-auto">
+        <div className="max-w-5xl w-full space-y-4 my-auto">
 
           {step === "select" && (
             <>
