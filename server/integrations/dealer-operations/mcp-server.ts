@@ -17,6 +17,8 @@
 import { Router, type Request, type Response } from "express";
 import { RealMcpBase, type McpToolResult, type RealMcpToolDef } from "../../real-mcp-base";
 import { getOrgId, getDefaultOrgId } from "../../auth";
+import { createMcpProtocolRouter } from "../../real-mcp-transport";
+import { mcpToolCallRateLimiter } from "../../rate-limits";
 import { DealerClient, type DealerCredentials } from "./client";
 import { TOOL_CATALOG, TOOL_NAMES } from "./catalog";
 import { err } from "./tools-cash";
@@ -204,6 +206,16 @@ export function createDealerOperationsRouter(): Router {
       await client.close().catch(() => {});
     }
   });
+
+  // The real MCP protocol endpoint, /api/integrations/dealer-operations/mcp.
+  // This is how AGENTS reach these tools — the routes above are for operators
+  // and scripts holding a session cookie. Without it an agent's tool call POSTs
+  // to a path that has no MCP endpoint and is not covered by
+  // MCP_BEARER_PATH_RE (server/auth.ts), so it is rejected with
+  // "Authentication required": the MCP handshake never completes, the server
+  // stays status "registered" / health "unknown", and every tool call fails.
+  // Same mount as every other enterprise connector (see integrations/sql).
+  router.use(mcpToolCallRateLimiter, createMcpProtocolRouter(dealerOperationsMcpServer, "dealer-operations"));
 
   return router;
 }
