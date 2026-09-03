@@ -214,6 +214,18 @@ async function main() {
   const bulk = await api("POST", "/api/ontology/concepts/bulk", { concepts: conceptPayload });
   if (bulk) { created += conceptPayload.length; ok(`${conceptPayload.length} concepts under ${DEALER_ONTOLOGY_NAME}`); }
 
+  // Label → concept id, so agents can carry real ontology tags. Read back
+  // rather than trusting the bulk response, which is the only way to pick up
+  // concepts a previous run already created.
+  const conceptIdByLabel = new Map<string, string>();
+  {
+    const all = await api<any[]>("GET", "/api/ontology-concepts/all");
+    for (const c of Array.isArray(all) ? all : []) {
+      const label = String(c?.label ?? c?.name ?? "").trim();
+      if (label && c?.id && !conceptIdByLabel.has(label)) conceptIdByLabel.set(label, c.id);
+    }
+  }
+
   // ── 2. Knowledge bases ────────────────────────────────────────────────────
   log("\n[2/8] Knowledge bases");
   const kbIds = new Map<string, string>();
@@ -366,6 +378,17 @@ async function main() {
             .map((n, i) => {
               const skillId = skillIds.get(n);
               return skillId ? { skillId, skillName: n, domain: skillDomains.get(n), loadOrder: i } : null;
+            })
+            .filter(Boolean),
+          // The pack declares ontologyTags per agent and this never wrote them,
+          // so every agent landed with none. That is not cosmetic: buildRuntimeContext
+          // falls back to industry + ontology-tag matching when an agent has no
+          // resolvable skills, and with no tags and no industry column that
+          // fallback matches nothing at all.
+          ontologyTags: (a.ontologyTags ?? [])
+            .map((label) => {
+              const conceptId = conceptIdByLabel.get(label);
+              return conceptId ? { conceptId, conceptLabel: label } : null;
             })
             .filter(Boolean),
           // Journey Library surfacing — only orchestrators carry these.
