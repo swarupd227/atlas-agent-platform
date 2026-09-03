@@ -298,6 +298,7 @@ async function main() {
   // ── 5. Skills ─────────────────────────────────────────────────────────────
   log("\n[5/8] Skills");
   const skillIds = new Map<string, string>();
+  const skillDomains = new Map<string, string>();
   for (const j of DEALER_JOURNEYS) {
     for (const s of j.skills) {
       const id = await ensure(
@@ -322,7 +323,7 @@ async function main() {
           requiredMcpServers: ["dealer-operations"],
         },
       );
-      if (id) skillIds.set(s.name, id);
+      if (id) { skillIds.set(s.name, id); skillDomains.set(s.name, s.domain); }
     }
   }
 
@@ -355,7 +356,18 @@ async function main() {
           department: a.department,
           systemPrompt: j.systemPrompts[a.externalId],
           complianceTags: a.complianceTags,
-          preloadedSkills: a.skillNames.map((n) => skillIds.get(n)).filter(Boolean),
+          // Skill BINDINGS, not bare ids. The Skills tab (client/src/pages/
+          // agent-detail.tsx) reads each entry's .skillId to resolve it against
+          // the skills catalog, so an array of plain id strings resolves to
+          // nothing and the agent renders as having no skills at all — even
+          // though the ids are right there on the record. Same shape the UI
+          // itself writes when a skill is attached by hand.
+          preloadedSkills: a.skillNames
+            .map((n, i) => {
+              const skillId = skillIds.get(n);
+              return skillId ? { skillId, skillName: n, domain: skillDomains.get(n), loadOrder: i } : null;
+            })
+            .filter(Boolean),
           // Journey Library surfacing — only orchestrators carry these.
           isCuratedJourney: isOrchestrator,
           journeyIndustryId: isOrchestrator ? DEALER_INDUSTRY_ID : undefined,
@@ -475,9 +487,10 @@ async function main() {
 
   // ── 8. Eval suites ────────────────────────────────────────────────────────
   log("\n[8/8] Eval suites");
+  const suiteBindingsByAgent = new Map<string, Array<Record<string, unknown>>>();
   for (const j of DEALER_JOURNEYS) {
     const orch = j.agents.find((a) => a.role === "orchestrator");
-    await ensure(
+    const suiteId = await ensure(
       `${j.evalSuiteName} (${j.evalCases.length} cases)`,
       "/api/evals",
       (r) => r.name === j.evalSuiteName,
@@ -498,6 +511,30 @@ async function main() {
         })),
       },
     );
+
+    // Bind the suite onto the orchestrator. The agent detail page's "Eval Suite
+    // Bindings" card reads agents.evalBindings, which is a separate field from
+    // the eval_suites.agentId link — creating the suite alone leaves that card
+    // empty, so the agent reads as having no evals even though the suite is
+    // attached and listed under Evals.
+    const orchId = orch ? agentIds.get(orch.externalId) : undefined;
+    if (suiteId && orchId) {
+      const list = suiteBindingsByAgent.get(orchId) ?? [];
+      list.push({
+        suiteId,
+        suiteName: j.evalSuiteName,
+        name: j.evalSuiteName,
+        type: "regression",
+        passThreshold: 0.9,
+        schedule: "weekly",
+      });
+      suiteBindingsByAgent.set(orchId, list);
+    }
+  }
+
+  for (const [agentId, bindings] of suiteBindingsByAgent) {
+    const res = await api("PATCH", `/api/agents/${agentId}`, { evalBindings: bindings });
+    if (res) ok(`eval bindings on ${agentId} (${bindings.length})`);
   }
 
   // ── Process flows ─────────────────────────────────────────────────────────
