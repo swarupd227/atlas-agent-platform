@@ -3216,6 +3216,30 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
     }];
   }
 
+  // Last resort: a team whose membership lives only in agent_team_members.
+  // Adding members through the Teams UI (or POST /api/agent-teams/:id/members)
+  // writes that table and nothing else, leaving runtimeConfig empty — so every
+  // branch above finds nothing and the team executes with zero workers,
+  // surfacing as "I processed your request but couldn't generate a detailed
+  // response." Registered members ARE the execution plan when no blueprint or
+  // orchestration graph narrows it further.
+  if (executionTiers.length === 0) {
+    try {
+      const members = await storage.getAgentTeamMembers(teamAgent.agentId);
+      const workers = members.filter((m: any) => (m.role ?? "worker") !== "orchestrator");
+      if (workers.length > 0) {
+        executionTiers = [{
+          tierIndex: 0,
+          agents: workers.map((m: any) => ({ agentId: m.memberAgentId })),
+          gates: [],
+        }];
+        console.log(`[agent-runtime] Team ${teamAgent.agentId} had no blueprint or orchestration config; using ${workers.length} registered team member(s).`);
+      }
+    } catch (err: any) {
+      console.log(`[agent-runtime] Could not load team members: ${err.message}`);
+    }
+  }
+
   allSteps.push({
     id: "team_step_tiers",
     name: "Orchestrator: Execution Plan",
