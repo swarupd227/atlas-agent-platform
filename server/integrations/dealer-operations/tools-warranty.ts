@@ -209,11 +209,36 @@ export async function assemble_claim(c: DealerClient, args: Record<string, unkno
 }
 
 /** Every mandatory check, re-run from source data. Nothing is trusted from the caller. */
+/**
+ * A claim lookup miss, explained well enough that the caller can correct it.
+ *
+ * Agents reach for the work order id here, because that is what the screening
+ * tools hand back -- seen live: run_compliance_gate was called with WO-55120
+ * through WO-55125, every call failed with a bare "Unknown claim", no gate
+ * verdict was ever recorded, and submit_claim then correctly refused all three
+ * assembled claims because it hard-gates on a recorded PASS. The whole journey
+ * stalled on an identifier mix-up that the error text did not diagnose.
+ */
+async function unknownClaim(c: DealerClient, claimId: string) {
+  const viaWo = await c.one(
+    `SELECT claim_id FROM dealer.warranty_claims WHERE work_order_id = $1`,
+    [claimId]
+  );
+  if (viaWo) {
+    return err(
+      `${claimId} is a work order, not a warranty claim. The claim assembled from it is ${viaWo.claim_id} — call this tool with that instead.`
+    );
+  }
+  return err(
+    `Unknown claim ${claimId}. Warranty claim identifiers are the claim_id returned by assemble_claim, not a work order id.`
+  );
+}
+
 export async function run_compliance_gate(c: DealerClient, args: Record<string, unknown>) {
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
   const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
-  if (!claim) return err(`Unknown claim ${claimId}`);
+  if (!claim) return unknownClaim(c, claimId);
   const wo = await c.one(`SELECT * FROM dealer.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
   const failures: string[] = [];
   const checks: Record<string, unknown> = {};
@@ -303,7 +328,7 @@ export async function submit_claim(c: DealerClient, args: Record<string, unknown
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
   const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
-  if (!claim) return err(`Unknown claim ${claimId}`);
+  if (!claim) return unknownClaim(c, claimId);
 
   // Hard gate — the portal call cannot be reached without a recorded PASS.
   if (A(claim.gate_result) !== "PASS") {
@@ -329,7 +354,7 @@ export async function route_to_goodwill_review(c: DealerClient, args: Record<str
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
   const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
-  if (!claim) return err(`Unknown claim ${claimId}`);
+  if (!claim) return unknownClaim(c, claimId);
   const wo = await c.one(`SELECT account_id, branch_id FROM dealer.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);
   const acct = wo?.account_id
     ? await c.one(`SELECT legal_name, account_tier, annual_parts_service_spend_usd FROM dealer.customer_accounts WHERE account_id = $1`, [wo.account_id])
@@ -422,7 +447,7 @@ export async function analyze_denial(c: DealerClient, args: Record<string, unkno
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
   const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
-  if (!claim) return err(`Unknown claim ${claimId}`);
+  if (!claim) return unknownClaim(c, claimId);
   if (A(claim.status) !== "denied") return ok({ claim_id: claimId, status: claim.status, note: "Not denied — nothing to analyse." });
 
   const code = A(claim.denial_reason_code);
@@ -449,7 +474,7 @@ export async function post_warranty_receivable(c: DealerClient, args: Record<str
   const claimId = A(args.claim_id);
   if (!claimId) return err("claim_id is required");
   const claim = await c.one(`SELECT * FROM dealer.warranty_claims WHERE claim_id = $1`, [claimId]);
-  if (!claim) return err(`Unknown claim ${claimId}`);
+  if (!claim) return unknownClaim(c, claimId);
   if (A(claim.status) !== "approved") return err(`Claim ${claimId} is ${claim.status}, not approved. Only approved claims post as receivables.`);
 
   const wo = await c.one(`SELECT branch_id, account_id, completed_on FROM dealer.work_orders WHERE work_order_id = $1`, [claim.work_order_id]);

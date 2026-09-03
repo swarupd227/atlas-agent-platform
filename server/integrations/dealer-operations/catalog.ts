@@ -274,13 +274,13 @@ export const TOOL_CATALOG: RealMcpToolDef[] = [
     name: "run_compliance_gate",
     description:
       "Run every mandatory pre-submission check against source data rather than trusting the caller: equipment identity resolved, coverage on both calendar and meter-hour dimensions including repeat-failure extensions, labour within the published standard, and causal part and narrative present. Records the verdict so submission can be gated on it.",
-    inputSchema: schema({ claim_id: str("Claim identifier") }, ["claim_id"]),
+    inputSchema: schema({ claim_id: str("Claim identifier as returned by assemble_claim (e.g. WC-...). Not a work order id.") }, ["claim_id"]),
   },
   {
     name: "submit_claim",
     description:
-      "Submit a warranty claim to the manufacturer portal. Refuses any claim that has not recorded a passing compliance gate — protecting the dealership's program standing, which outweighs the value of any individual claim.",
-    inputSchema: schema({ claim_id: str("Claim identifier") }, ["claim_id"]),
+      "Submit a warranty claim to the manufacturer portal. Refuses any claim that has not recorded a passing compliance gate — protecting the dealership's program standing, which outweighs the value of any individual claim. Run run_compliance_gate on the claim first; without a recorded PASS this always refuses.",
+    inputSchema: schema({ claim_id: str("Claim identifier as returned by assemble_claim (e.g. WC-...). Not a work order id.") }, ["claim_id"]),
   },
   {
     name: "route_to_goodwill_review",
