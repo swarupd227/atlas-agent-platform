@@ -263,11 +263,19 @@ export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServ
 // Maps integrationId → connector singleton so the agent runtime can dispatch tool
 // calls directly (with the agent's own orgId) instead of making a credential-less
 // HTTP self-call that would silently resolve to the default org.
+// Every connector with an in-process singleton belongs here. Omitting one does
+// not fail loudly: its tools list fine, its connection tests fine, and its
+// cookie-authenticated /tools routes work — but the runtime cannot dispatch to
+// it in-process, so it falls back to an HTTP self-call that has no session and
+// 401s, and performMcpServerInitialize takes the same HTTP path and leaves the
+// server stuck at status "registered" / health "unknown". dealer-operations was
+// missing and presented as an "authentication error" inside agent output.
 const ENTERPRISE_SERVER_BY_ID = new Map<string, RealMcpBase>(
   [
     salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer,
     githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer,
     workdayMcpServer, sapMcpServer, postgresMcpServer, mysqlMcpServer, sqlServerMcpServer,
+    dealerOperationsMcpServer,
   ].map((s) => [s.integrationId, s]),
 );
 
