@@ -99,7 +99,20 @@ export function IndustrySelector() {
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="button-cancel-industry-switch">Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => { setPendingIndustryId(null); clearIndustry(); }}
+              onClick={() => {
+                setPendingIndustryId(null);
+                // Radix sets pointer-events:none on <body> while a modal is open
+                // and clears it when the modal closes. Calling clearIndustry() in
+                // this same tick mounts the setup wizard in the same commit that
+                // this dialog unmounts, and that cleanup is lost -- leaving the
+                // wizard fully rendered but completely unclickable, since every
+                // card inherits pointer-events:none from <body>. That is why
+                // switching industry appeared to open a wizard you could not use,
+                // and why it only happened when an industry was already set (the
+                // only path that shows this dialog). Let the dialog finish closing
+                // first.
+                setTimeout(() => clearIndustry(), 0);
+              }}
               data-testid="button-confirm-industry-switch"
             >
               Switch and reconfigure

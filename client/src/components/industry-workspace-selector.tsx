@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentTemplate } from "@shared/schema";
 import { useIndustry, INDUSTRIES, type IndustryId, type DataClassification, type WorkspaceConfig } from "./industry-provider";
@@ -31,6 +31,19 @@ export function IndustryWorkspaceSelector() {
   const [chosenJurisdictions, setChosenJurisdictions] = useState<string[]>([]);
   const [chosenIntegrations, setChosenIntegrations] = useState<string[]>([]);
   const [dataClassDefault, setDataClassDefault] = useState<DataClassification>("internal");
+
+  // This wizard is a full-screen overlay that is often opened as a modal
+  // closes (see industry-selector.tsx's switch-confirm dialog). Radix sets
+  // pointer-events:none on <body> for the duration of a modal and clears it on
+  // close; if that cleanup is missed, every element here inherits it and the
+  // wizard renders perfectly while being completely unclickable -- no card can
+  // be selected and the workspace is stuck. Asserting it on mount covers every
+  // entry path, not just the one dialog known to cause it.
+  useEffect(() => {
+    if (document.body.style.pointerEvents === "none") {
+      document.body.style.pointerEvents = "";
+    }
+  }, []);
 
   const selected = selectedId ? INDUSTRIES.find((i) => i.id === selectedId) : null;
 
