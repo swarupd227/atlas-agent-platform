@@ -9,7 +9,7 @@
  * The one thing it will not do is invent a number. A reporting gap is reported
  * as a gap; `calculate_cycle_invoice` refuses to extrapolate usage across it.
  */
-import { DealerClient, AUTHORITY, money, daysBetween, todayIso, newId } from "./client";
+import { DealerClient, AUTHORITY, money, daysBetween, todayIso, dateIso, newId } from "./client";
 import { ok, err } from "./tools-cash";
 
 const A = (v: unknown) => (typeof v === "string" ? v : String(v ?? ""));
@@ -118,7 +118,7 @@ export async function get_off_rent_request(c: DealerClient, args: Record<string,
     claimed_off_rent_date: row.claimed_off_rent_date,
     actual_collected_date: row.actual_collected_date,
     days_between_claim_and_collection: row.actual_collected_date
-      ? daysBetween(A(row.claimed_off_rent_date), A(row.actual_collected_date)) : null,
+      ? daysBetween(dateIso(row.claimed_off_rent_date), dateIso(row.actual_collected_date)) : null,
     status: row.status,
   });
 }
@@ -153,8 +153,8 @@ export async function calculate_cycle_invoice(c: DealerClient, args: Record<stri
   const rc = await c.one(`SELECT * FROM dealer.rental_contracts WHERE contract_id = $1`, [contractId]);
   if (!rc) return err(`Unknown rental contract ${contractId}`);
 
-  const from = A(args.from_date) || A(rc.start_date);
-  const to = A(args.to_date) || A(rc.actual_collected_date) || todayIso();
+  const from = A(args.from_date) || dateIso(rc.start_date);
+  const to = A(args.to_date) || dateIso(rc.actual_collected_date) || todayIso();
   const u = await utilisation(c, A(rc.unit_id), from, to);
 
   const lines: Array<{ line_type: string; description: string; amount_usd: number; evidence: string }> = [];
@@ -255,8 +255,8 @@ export async function verify_off_rent_date(c: DealerClient, args: Record<string,
   if (!rc) return err(`Unknown rental contract ${contractId}`);
   if (!rc.claimed_off_rent_date) return ok({ contract_id: contractId, off_rent_claimed: false });
 
-  const claimed = A(rc.claimed_off_rent_date);
-  const collected = A(rc.actual_collected_date) || todayIso();
+  const claimed = dateIso(rc.claimed_off_rent_date);
+  const collected = dateIso(rc.actual_collected_date) || todayIso();
   const u = await utilisation(c, A(rc.unit_id), claimed, collected);
   const corroborated = u.engine_hours_accrued < 1.0;
 

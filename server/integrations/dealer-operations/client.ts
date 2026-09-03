@@ -96,6 +96,27 @@ export function todayIso(): string {
 }
 
 /**
+ * A DATE column as 'YYYY-MM-DD'.
+ *
+ * node-postgres hands DATE columns back as JS Date objects, so String()-ing one
+ * yields "Mon Aug 03 2026 00:00:00 GMT+0000 (Coordinated Universal Time)".
+ * Feeding that back into a query as a date parameter makes Postgres reject the
+ * statement outright ("invalid input syntax for type date"), and slicing it for
+ * a period label produces "Mon Aug" instead of "2026-08". Always route a date
+ * column through here before it reaches SQL or output.
+ */
+export function dateIso(v: unknown): string {
+  if (v == null) return "";
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const s = String(v);
+  // Already 'YYYY-MM-DD' (possibly with a time component) — keep the date part.
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  if (m) return m[1];
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+
+/**
  * The delegation-of-authority matrix, in one place.
  *
  * Defaults only. The authoritative thresholds for a given dealership live in

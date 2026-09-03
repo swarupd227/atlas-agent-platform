@@ -8,7 +8,7 @@
  * source-document rule is not satisfied.
  */
 import type { McpToolResult } from "../../real-mcp-base";
-import { DealerClient, AUTHORITY, money, daysBetween, todayIso, newId } from "./client";
+import { DealerClient, AUTHORITY, money, daysBetween, todayIso, newId, dateIso } from "./client";
 
 export function ok(data: unknown): McpToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
@@ -354,7 +354,7 @@ export async function classify_shortfall(c: DealerClient, args: Record<string, u
   );
   const exactLine = lines.find((l) => money(N(l.amount_usd)) === variance);
 
-  const daysToPay = daysBetween(A(inv.invoice_date), todayIso());
+  const daysToPay = daysBetween(dateIso(inv.invoice_date), todayIso());
   const discountWindow = N(inv.settlement_discount_days);
   const discountPct = N(inv.settlement_discount_pct);
   const discountValue = money(N(inv.original_amount_usd) * (discountPct / 100));
@@ -414,7 +414,7 @@ export async function check_posting_period(c: DealerClient, args: Record<string,
     .map((r) => ({
       invoice_id: r.invoice_id,
       obligation_period: A(r.obligation_satisfied_on).slice(0, 7),
-      invoice_period: A(r.invoice_date).slice(0, 7),
+      invoice_period: dateIso(r.invoice_date).slice(0, 7),
     }));
   return ok({
     current_period: currentPeriod, period_open: true,
