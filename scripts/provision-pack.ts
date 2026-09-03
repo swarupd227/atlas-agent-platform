@@ -242,6 +242,17 @@ async function main() {
 
   // ── 3. Governance policies ────────────────────────────────────────────────
   log("\n[3/8] Governance policies");
+  // Which policies govern which journey. The pack's policies carry a domain but
+  // no agent scope, and the agents' complianceTags are short codes rather than
+  // policy names, so the association is declared here rather than guessed.
+  // Every agent in a journey inherits its journey's policies.
+  const POLICIES_BY_JOURNEY: Record<string, string[]> = {
+    "ED-J1": ["Cash Application Authority & Confidence Floor", "Revenue Recognition Controls (ASC 606 / ASC 842)"],
+    "ED-J2": ["Collections Conduct & Credit Hold Standard", "Credit Memo & Discount Approval Authority"],
+    "ED-J3": ["OEM Warranty Submission Guard", "Revenue Recognition Controls (ASC 606 / ASC 842)"],
+    "ED-J4": ["Revenue Recognition Controls (ASC 606 / ASC 842)", "Credit Memo & Discount Approval Authority"],
+    "ED-J5": ["Credit Memo & Discount Approval Authority"],
+  };
   const policyIds = new Map<string, string>();
   for (const p of DEALER_POLICY_DEFS) {
     const id = await ensure(
@@ -389,6 +400,15 @@ async function main() {
             .map((label) => {
               const conceptId = conceptIdByLabel.get(label);
               return conceptId ? { conceptId, conceptLabel: label } : null;
+            })
+            .filter(Boolean),
+          // Left empty before, so the agent detail page showed no policies and
+          // the post-run soft-policy judge had nothing to evaluate -- even
+          // though all five policies existed and were active.
+          policyBindings: (POLICIES_BY_JOURNEY[j.id] ?? [])
+            .map((policyName) => {
+              const policyId = policyIds.get(policyName);
+              return policyId ? { policyId, policyName, name: policyName, enforcement: "hard" } : null;
             })
             .filter(Boolean),
           // Journey Library surfacing — only orchestrators carry these.
