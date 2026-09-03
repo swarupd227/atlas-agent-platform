@@ -131,8 +131,7 @@ async function main() {
   // runs an empty pipeline and answers "I processed your request but couldn't
   // generate a detailed response" — a 200 response that looks like a model
   // failure. Configuration checks alone missed this, so assert it directly.
-  console.log("
-Team membership");
+  console.log("\nTeam membership");
   let teamsWithMembers = 0;
   for (const t of teams) {
     const members: any[] = await req("GET", `/api/agent-teams/${t.id}/members`);
