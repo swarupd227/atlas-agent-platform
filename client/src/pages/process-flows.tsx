@@ -408,13 +408,19 @@ export default function ProcessFlows() {
 
   return (
     <div className="flex flex-col h-full" data-testid="page-process-flows">
-      <div className="flex items-center gap-3 p-4 border-b shrink-0">
-        <Workflow className="w-5 h-5 text-primary" />
-        <div>
+      {/* Header wraps rather than overflows. With an outcome in context this row
+          carries seven buttons; without flex-wrap they ran off the right edge, and
+          because the title block had no min-width flexbox crushed it until
+          "Process Flow Studio" broke across three lines and the description
+          rendered as a narrow column. The title now holds a sensible minimum and
+          the buttons wrap onto a second line instead. */}
+      <div className="flex items-center flex-wrap gap-x-3 gap-y-2 p-4 border-b shrink-0">
+        <Workflow className="w-5 h-5 text-primary shrink-0" />
+        <div className="min-w-[240px] flex-1">
           <h1 className="text-base font-semibold">Process Flow Studio</h1>
           <p className="text-xs text-muted-foreground">Describe the steps of a process, no KPI commitment required — for a goal you're accountable for, use Outcomes instead</p>
         </div>
-        <div className="flex-1" />
+        <div className="flex items-center flex-wrap gap-2 shrink-0 ml-auto [&_button]:shrink-0">
         <Button
           size="sm"
           variant="outline"
@@ -497,6 +503,7 @@ export default function ProcessFlows() {
             Sync to Automation
           </Button>
         )}
+        </div>
       </div>
 
       <div className="flex flex-1 min-h-0">
