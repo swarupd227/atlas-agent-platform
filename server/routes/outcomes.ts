@@ -2252,7 +2252,18 @@ async function createOutcomeVersion(
             autonomyMode: draft.autonomyMode || "assisted",
             systemPrompt: draft.systemPrompt || "",
             toolsConfig: draft.toolsConfig || [],
-            policyBindings: draft.policyBindings?.length ? { policies: draft.policyBindings.map((b: any) => b.policyName) } : {},
+            // An ARRAY of bindings, not { policies: [names] }. Everything that
+            // consumes this field -- the agent detail page, and the MCP-link
+            // route's policy check -- expects an array; the object shape made
+            // that route throw, so an agent created here could never be given
+            // tools. Keep the policy name on both keys the readers look for.
+            policyBindings: (draft.policyBindings ?? []).map((b: any) => ({
+              policyId: b.policyId,
+              policyName: b.policyName,
+              name: b.policyName,
+              domain: b.domain,
+              enforcement: b.enforcement ?? "soft",
+            })),
             ontologyTags: draft.ontologyTags || [],
             preloadedSkills: draft.preloadedSkills || [],
             runtimeConfig: { prompt: description, guardrailsConfig: draft.guardrailsConfig, evalSuiteConfig: draft.evalSuiteConfig },
