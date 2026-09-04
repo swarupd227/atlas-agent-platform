@@ -145,6 +145,10 @@ export default function ProcessFlows() {
   const [aiDescription, setAiDescription] = useState(() => urlParams.outcomeName || "");
   const [aiFiles, setAiFiles] = useState<AttachedFile[]>([]);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  // Full-viewport canvas. Header, AI panel and toolbar together leave little
+  // room for a 9-node graph; this lifts the editor out of the page shell
+  // without disturbing any of the layout beneath it.
+  const [canvasExpanded, setCanvasExpanded] = useState(false);
   const [flowName, setFlowName] = useState(() => urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "");
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [genMsgIdx, setGenMsgIdx] = useState(0);
@@ -170,6 +174,11 @@ export default function ProcessFlows() {
         replaceLaidOut({ nodes: g.nodes, edges: g.edges });
         setFlowName(data.name || "Generated Flow");
         toast({ title: "Process flow generated" });
+        // The describe panel has done its job; leaving it open squeezed the
+        // canvas into a ~200px strip on a 1080p screen. Collapse it so the
+        // generated graph gets the viewport -- "Describe Workflow" reopens it
+        // with the text intact.
+        setAiPanelOpen(false);
       } else {
         // The request can succeed (200 OK) while still carrying an empty
         // graph -- e.g. the model's response got truncated and failed to
@@ -511,7 +520,7 @@ export default function ProcessFlows() {
         <div className="flex-1 flex flex-col min-w-0">
           {/* AI Panel */}
           {aiPanelOpen && (
-            <div className="border-b p-4 bg-muted/20 flex flex-col gap-2">
+            <div className="border-b p-4 bg-muted/20 flex flex-col gap-2 max-h-[45vh] overflow-y-auto shrink-0">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-purple-500" />
@@ -590,6 +599,14 @@ export default function ProcessFlows() {
                 <span className="text-[11px] text-muted-foreground hidden lg:inline">Drag from a node's right dot to connect · click a connection to add a branch condition</span>
                 <button
                   type="button"
+                  onClick={() => setCanvasExpanded(v => !v)}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  data-testid="button-expand-canvas"
+                >
+                  {canvasExpanded ? "Exit full screen" : "Full screen"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => setClearConfirmOpen(true)}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   data-testid="button-clear-flow"
@@ -603,7 +620,20 @@ export default function ProcessFlows() {
           </div>
 
           {/* Canvas — React Flow graph editor (branch / parallel / loop) */}
-          <div className="flex-1 min-h-0 relative" data-testid="flow-canvas-container">
+          <div
+            className={canvasExpanded ? "fixed inset-0 z-50 bg-background" : "flex-1 min-h-0 relative"}
+            data-testid="flow-canvas-container"
+          >
+            {canvasExpanded && (
+              <button
+                type="button"
+                onClick={() => setCanvasExpanded(false)}
+                className="absolute top-3 right-3 z-10 rounded-md border bg-background/90 px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-accent"
+                data-testid="button-exit-fullscreen"
+              >
+                Exit full screen
+              </button>
+            )}
             <FlowGraphCanvas
               flowKey={`flow-${flowKey}`}
               initialNodes={graph.nodes}
