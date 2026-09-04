@@ -95,10 +95,31 @@ const EU_AI_ACT_MAP: Record<string, { label: string; className: string }> = {
   LOW: { label: "Minimal Risk", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
 };
 
+/** An ontology tag is either a bare label or a { conceptId, conceptLabel } binding. */
+function ontologyTagLabel(tag: unknown): string | null {
+  if (typeof tag === "string") return tag.trim() || null;
+  if (tag && typeof tag === "object") {
+    const t = tag as Record<string, unknown>;
+    for (const key of ["conceptLabel", "label", "name", "conceptId"]) {
+      const v = t[key];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return null;
+}
+
 function getIndustryDomain(agent: Agent): string {
   if (agent.department) return agent.department;
   const tags = agent.ontologyTags as Record<string, unknown> | string[] | null;
-  if (tags && Array.isArray(tags) && tags.length > 0) return String(tags[0]);
+  // String(tag) on a binding object rendered the literal "[object Object]" in the
+  // Industry Profile column for every agent without a department -- which is
+  // every agent created by the team-generation path.
+  if (tags && Array.isArray(tags) && tags.length > 0) {
+    for (const tag of tags) {
+      const label = ontologyTagLabel(tag);
+      if (label) return label;
+    }
+  }
   if (tags && typeof tags === "object" && !Array.isArray(tags)) {
     const keys = Object.keys(tags);
     if (keys.length > 0) return keys[0];
