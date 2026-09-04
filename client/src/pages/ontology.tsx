@@ -1205,11 +1205,16 @@ export default function OntologyExplorer() {
     <div className="flex h-full" data-testid="ontology-explorer">
       <div className="w-[300px] border-r flex flex-col shrink-0" data-testid="ontology-sidebar">
         <div className="p-3 border-b space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
-              <h2 className="text-sm font-semibold truncate" data-testid="text-ontology-name">{ontologyName}</h2>
-            </div>
+          {/* The name gets its own row. Sharing a justify-between row with the
+              five action buttons left it about a third of the 300px sidebar, so
+              anything real — "AEMP / ISO 15143-3 (Equipment Telematics) + AED
+              Dealer Operations Ontology" — truncated to "AEMP / ISO 1...".
+              Wraps rather than truncates so the full ontology name is readable. */}
+          <div className="flex items-start gap-2 min-w-0">
+            <BookOpen className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+            <h2 className="text-sm font-semibold leading-snug break-words min-w-0" title={ontologyName} data-testid="text-ontology-name">{ontologyName}</h2>
+          </div>
+          <div>
             <div className="flex flex-row gap-1 flex-wrap">
               <Button
                 size="sm"
@@ -1274,7 +1279,11 @@ export default function OntologyExplorer() {
               data-testid="input-search-concepts"
             />
           </div>
-          <div className="flex items-center justify-between gap-2">
+          {/* The coverage line used to sit beside the tabs in a justify-between
+              row. The Tabs carries w-full, so it claimed the whole row and left
+              the paragraph no width at all — it overflowed the 300px sidebar and
+              rendered on top of the concept detail panel. Its own row instead. */}
+          <div className="space-y-1.5">
             <Tabs value={sourceFilter} onValueChange={(v) => setSourceFilter(v as SourceFilter)} className="w-full">
               <TabsList className="w-full" data-testid="filter-source-toggle">
                 <TabsTrigger value="all" className="flex-1 text-xs" data-testid="filter-all">All</TabsTrigger>
@@ -1286,8 +1295,8 @@ export default function OntologyExplorer() {
               </TabsList>
             </Tabs>
             {coverage && coverage.unusedCount > 0 && (
-              <p className="text-[11px] text-muted-foreground" data-testid="text-coverage-summary">
-                {coverage.usedCount} of {coverage.totalConcepts} concepts are referenced by at least one agent -- {coverage.unusedCount} never used.
+              <p className="text-[11px] text-muted-foreground leading-snug break-words" data-testid="text-coverage-summary">
+                {coverage.usedCount} of {coverage.totalConcepts} concepts are referenced by at least one agent — {coverage.unusedCount} never used.
               </p>
             )}
           </div>
