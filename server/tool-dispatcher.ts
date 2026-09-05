@@ -514,7 +514,18 @@ async function captureFileBasedScreenshot(result: unknown, tool: AvailableTool, 
 
   const fs = await import("fs/promises");
   const path = await import("path");
-  const filePath = path.join(MCP_EVIDENCE_MOUNT_PATH, filename);
+  // The Journey Catalog skill instructs the agent to prefix every screenshot
+  // filename with "mcp-evidence/" (see provision-playwright-mcp.sh's comment
+  // on why), and Playwright resolves that filename relative to its own
+  // working directory -- which is exactly the PARENT of MCP_EVIDENCE_MOUNT_PATH
+  // by construction (mount path = <playwright-cwd>/mcp-evidence). Joining
+  // against MCP_EVIDENCE_MOUNT_PATH directly here would double the
+  // "mcp-evidence" segment (verified live: a real, successful screenshot call
+  // with filename "mcp-evidence/x.png" produced a doubled, nonexistent
+  // /home/node/mcp-evidence/mcp-evidence/x.png on this side, while Playwright
+  // itself correctly wrote to /home/node/mcp-evidence/x.png) -- joining
+  // against its parent instead reproduces the same resolution Playwright uses.
+  const filePath = path.join(path.dirname(MCP_EVIDENCE_MOUNT_PATH), filename);
 
   // A write on the container's mount and a read on this App Service's mount
   // of the same Azure Files share are two separate SMB clients -- normally
