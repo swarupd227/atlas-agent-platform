@@ -625,6 +625,7 @@ export interface IStorage {
   createAgentGeneratedFile(data: InsertAgentGeneratedFile): Promise<AgentGeneratedFile>;
   listAgentGeneratedFiles(orgId?: string, limit?: number): Promise<Array<Record<string, any>>>;
   getAgentGeneratedFile(id: string, orgId?: string): Promise<AgentGeneratedFile | undefined>;
+  getLatestAgentGeneratedFileByFilename(agentId: string, filename: string): Promise<AgentGeneratedFile | undefined>;
 
   getAgentMandate(agentId: string, orgId?: string): Promise<AgentMandate | undefined>;
   getAgentMandatesForAgents(agentIds: string[], orgId?: string): Promise<AgentMandate[]>;
@@ -3205,6 +3206,28 @@ export class DatabaseStorage implements IStorage {
     const clause = orgId ? and(eq(agentGeneratedFiles.id, id), eq(agentGeneratedFiles.organizationId, orgId)) : eq(agentGeneratedFiles.id, id);
     const [file] = await db.select().from(agentGeneratedFiles).where(clause);
     return file;
+  }
+  // Screenshot-baseline lookup: "the current baseline" for a journey+step is
+  // just the most recent row whose filename matches the well-known baseline
+  // path convention (server/services/screenshot-baseline.ts) -- no separate
+  // table needed. Excludes `content` for the same reason listAgentGeneratedFiles
+  // does; callers needing bytes call getAgentGeneratedFile(id) with the id this
+  // returns.
+  async getLatestAgentGeneratedFileByFilename(agentId: string, filename: string) {
+    const [file] = await db
+      .select({
+        id: agentGeneratedFiles.id,
+        agentId: agentGeneratedFiles.agentId,
+        filename: agentGeneratedFiles.filename,
+        mimeType: agentGeneratedFiles.mimeType,
+        sizeBytes: agentGeneratedFiles.sizeBytes,
+        createdAt: agentGeneratedFiles.createdAt,
+      })
+      .from(agentGeneratedFiles)
+      .where(and(eq(agentGeneratedFiles.agentId, agentId), eq(agentGeneratedFiles.filename, filename)))
+      .orderBy(desc(agentGeneratedFiles.createdAt))
+      .limit(1);
+    return file as AgentGeneratedFile | undefined;
   }
 
   async getAgentMandate(agentId: string, orgId?: string) {

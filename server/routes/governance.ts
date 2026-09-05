@@ -4,6 +4,7 @@ import { storage } from "../storage";
 import { db } from "../db";
 import { resumeTeamAgentDagRun } from "../dag-execution-engine";
 import { resumeWorkspaceRun } from "../workspace-run";
+import { promoteToBaseline } from "../services/screenshot-baseline";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { z, ZodError } from "zod";
 import {
@@ -1360,6 +1361,28 @@ Ontology: ${ontologyName || "industry standard"}`,
           }
         })
         .catch(() => {});
+    }
+
+    // A ui_baseline_diff approval (server/services/screenshot-baseline.ts,
+    // created by tool-dispatcher.ts's captureFileBasedScreenshot when a new
+    // screenshot differs from its stored baseline by more than the
+    // threshold) means a human is deciding whether the new version IS the
+    // correct one going forward. Approving it should actually promote that
+    // capture to be the new baseline -- not just flip the approval's status
+    // with no effect on future comparisons, which would make every
+    // subsequent run flag the same "regression" forever.
+    if (status === "approved" && approval.objectType === "ui_baseline_diff") {
+      const evidence = (approval.evidenceJson || {}) as Record<string, any>;
+      const { journeyName, stepName, newScreenshotFileId } = evidence;
+      if (journeyName && stepName && newScreenshotFileId) {
+        storage.getAgentGeneratedFile(newScreenshotFileId)
+          .then(file => {
+            if (file?.content) {
+              return promoteToBaseline(journeyName, stepName, file.content as Buffer);
+            }
+          })
+          .catch((err: any) => console.error(`[baseline-promote] failed for approval ${approval.id}:`, err.message));
+      }
     }
 
     if (status === "approved" && approval.objectType === "patch" && approval.objectId) {

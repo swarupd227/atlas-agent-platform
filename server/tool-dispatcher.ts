@@ -27,6 +27,7 @@ import { storage } from "./storage";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpAuthHeaders } from "./mcp-client";
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
+import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
 export type PolicyBundle = Awaited<ReturnType<typeof resolvePolicyBundle>>;
 
@@ -544,11 +545,12 @@ async function captureFileBasedScreenshot(result: unknown, tool: AvailableTool, 
     return result;
   }
 
+  let row: { id: string; filename: string | null; mimeType: string | null };
   try {
     const { GENERATED_FILE_MARKER } = await import("./builtin-document-tools");
     const ext = path.extname(filename).slice(1).toLowerCase() || "png";
     const mimeType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
-    const row = await storage.createAgentGeneratedFile({
+    const created = await storage.createAgentGeneratedFile({
       organizationId: orgId ?? null,
       agentId,
       workspaceRunId: null,
@@ -560,6 +562,69 @@ async function captureFileBasedScreenshot(result: unknown, tool: AvailableTool, 
       anthropicFileId: null,
       content,
     } as any);
+    row = created;
+
+    // Real pixel-diff baseline comparison -- best-effort, wrapped separately
+    // so a decode/compare failure never undoes the capture that just
+    // succeeded above. Only PNGs are supported by pngjs; a jpeg/webp capture
+    // (an explicit, non-default `type` argument) skips comparison rather
+    // than erroring, since Playwright supports those formats even though the
+    // Journey Catalog skill's own convention only asks for png.
+    if (mimeType === "image/png") {
+      try {
+        const parsed = parseJourneyStepFromFilename(filename);
+        if (parsed) {
+          const { journeySlug, stepName } = parsed;
+          const compare = await compareAgainstBaseline(journeySlug, stepName, content);
+          if (!compare.baselineExisted) {
+            // First capture for this journey+step becomes the baseline --
+            // give it its own DB row (same bytes) under the baseline
+            // filename convention so it's a real, findable record, not just
+            // a raw file on the mount.
+            await storage.createAgentGeneratedFile({
+              organizationId: orgId ?? null,
+              agentId,
+              workspaceRunId: null,
+              traceId: null,
+              filename: baselineFilename(journeySlug, stepName),
+              mimeType,
+              sizeBytes: content.length,
+              source: "platform",
+              anthropicFileId: null,
+              content,
+            } as any);
+          } else if (exceedsThreshold(compare.diffPercent)) {
+            const baselineRow = await storage.getLatestAgentGeneratedFileByFilename(agentId, baselineFilename(journeySlug, stepName));
+            if (baselineRow) {
+              await storage.createApproval({
+                type: "tool-invocation",
+                objectType: "ui_baseline_diff",
+                objectId: row.id,
+                objectName: `${journeySlug} / ${stepName}`,
+                status: "pending",
+                requestedBy: agentId,
+                requesterType: "agent",
+                agentId,
+                organizationId: orgId ?? undefined,
+                description: compare.dimensionMismatch
+                  ? `Visual regression: new capture for "${journeySlug} / ${stepName}" is a different size than its baseline (dimension mismatch).`
+                  : `Visual regression: new capture for "${journeySlug} / ${stepName}" differs from its baseline by ${compare.diffPercent!.toFixed(1)}%, above the ${DEFAULT_DIFF_THRESHOLD_PERCENT}% threshold.`,
+                evidenceJson: {
+                  journeyName: journeySlug,
+                  stepName,
+                  newScreenshotFileId: row.id,
+                  baselineScreenshotFileId: baselineRow.id,
+                  diffPercent: compare.diffPercent,
+                },
+              } as any);
+            }
+          }
+        }
+      } catch (compareErr: any) {
+        console.error(`[tool-dispatcher] Baseline comparison failed for ${filename} (capture itself still succeeded):`, compareErr.message);
+      }
+    }
+
     return { ...(result as object), [GENERATED_FILE_MARKER]: { id: row.id, filename: row.filename, mimeType: row.mimeType } };
   } catch (err: any) {
     console.error(`[tool-dispatcher] Failed to persist file-based screenshot evidence:`, err.message);
