@@ -3007,6 +3007,16 @@ export async function executeWorkerAgent(
         dagToolAllowlist,
         modelProvider: workerAgent.modelProvider ?? undefined,
         modelName: workerAgent.modelName ?? undefined,
+        // Previously never threaded through for a DAG worker node -- every
+        // worker got the generic "respond with summary/severity/riskFactors/
+        // findings/recommendedActions" analysis prompt regardless of its own
+        // system prompt asking for something else entirely. Verified live:
+        // this mismatch measurably correlated with a worker fabricating
+        // plausible-but-false tool-call results to fill fields that didn't
+        // fit its actual task. A worker whose runtimeConfig.conversational
+        // is explicitly true now gets the free-form "respond in natural
+        // language, no forced JSON schema" path instead.
+        conversational: workerRtConfig.conversational === true,
       },
       undefined,
       workerRuntimeAgent.orgId ?? undefined,
