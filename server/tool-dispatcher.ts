@@ -477,11 +477,16 @@ async function attachImageEvidence(result: unknown, tool: AvailableTool, orgId: 
 }
 
 // Same local path on both sides of provision-playwright-mcp.sh's shared
-// Azure Files mount: Playwright MCP's --output-dir inside the container, and
-// this App Service's custom storage mount (az webapp config storage-account
-// add --mount-path). Not meant to vary per-deployment -- overridable via env
-// only for local/alternate setups that mount the share somewhere else.
-const MCP_EVIDENCE_MOUNT_PATH = process.env.MCP_EVIDENCE_MOUNT_PATH || "/mnt/mcp-evidence";
+// Azure Files mount: a subdirectory of Playwright MCP's own working
+// directory inside the container, and this App Service's custom storage
+// mount (az webapp config storage-account add --mount-path). Deliberately
+// NOT under /mnt -- verified live that browser_take_screenshot's explicit
+// filename argument resolves relative to the process's own cwd (/home/node
+// under npx), ignoring --output-dir entirely, unlike the tool-loop's own
+// auto-generated page snapshot which DOES respect --output-dir. Not meant to
+// vary per-deployment -- overridable via env only for local/alternate setups
+// that mount the share somewhere else.
+const MCP_EVIDENCE_MOUNT_PATH = process.env.MCP_EVIDENCE_MOUNT_PATH || "/home/node/mcp-evidence";
 
 /**
  * Some browser-automation MCP tools don't return an inline image at all --

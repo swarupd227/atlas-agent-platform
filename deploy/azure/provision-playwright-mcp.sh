@@ -32,11 +32,24 @@
 # a text filename reference, and this server's real Initialize handshake
 # advertises capabilities: {tools: {}} with no "resources" capability, so
 # there's no MCP-protocol way to read the file back either. Mounting the
-# same Azure Files share into both the container (as Playwright's
-# --output-dir) and this App Service (at a local path the app code reads
-# directly) closes that gap with a plain filesystem read on the app's side --
-# see server/tool-dispatcher.ts's captureFileBasedScreenshot for the code
-# that actually persists it as a downloadable agentGeneratedFiles row.
+# same Azure Files share into both the container and this App Service (at a
+# local path the app code reads directly) closes that gap with a plain
+# filesystem read on the app's side -- see server/tool-dispatcher.ts's
+# captureFileBasedScreenshot for the code that actually persists it as a
+# downloadable agentGeneratedFiles row.
+#
+# Why the mount path is under /home/node, not /mnt: verified live, the hard
+# way -- --output-dir DOES correctly redirect the tool-loop's own
+# auto-generated page snapshot (browser_navigate's implicit accessibility
+# snapshot) to wherever it points. It does NOT apply to browser_take_screenshot
+# when called with an explicit filename: that path resolves relative to the
+# process's own working directory regardless of --output-dir. `find /` inside
+# the running container showed every test screenshot sitting in /home/node
+# (Playwright MCP's cwd under npx), never in the --output-dir path. So the
+# share is mounted at a subdirectory of /home/node instead (not the whole
+# home directory, to avoid disturbing npx's own package cache there), and the
+# Journey Catalog skill instructs the agent to prefix every screenshot
+# filename with that subdirectory name so explicit saves land on the share too.
 #
 # Safe to re-run — every `az ... create` call below is idempotent (no-ops or
 # updates in place if the resource already exists), matching provision.sh.
@@ -69,7 +82,13 @@ MCP_PORT=8931
 # having to pick a name yourself.
 MCP_STORAGE_ACCOUNT="${MCP_STORAGE_ACCOUNT:-$(echo -n "${APP_NAME}mcpevid" | tr -dc 'a-z0-9' | cut -c1-18)$(echo -n "${RG}${APP_NAME}" | md5sum | cut -c1-6)}"
 MCP_FILE_SHARE="${MCP_FILE_SHARE:-mcp-evidence}"
-MCP_MOUNT_PATH="/mnt/mcp-evidence"   # same path on both the container and the App Service, by convention -- not user-configurable, since server/tool-dispatcher.ts's default matches this exactly
+# Same path on both the container and the App Service, by convention -- not
+# user-configurable, since server/tool-dispatcher.ts's default matches this
+# exactly. Under /home/node (Playwright MCP's own working directory when run
+# via npx, verified live) rather than /mnt, and a SUBDIRECTORY of it rather
+# than the whole home directory, so the mount doesn't disturb npx's own
+# package cache already living at /home/node/.npm.
+MCP_MOUNT_PATH="/home/node/mcp-evidence"
 
 echo "=== 1/6: VNet + subnets ==="
 if az network vnet show --resource-group "$RG" --name "$MCP_VNET" --output none 2>/dev/null; then
@@ -201,7 +220,16 @@ echo "=== 5/6: Mounting the same file share into the App Service ==="
 # `az webapp restart` below forces immediately rather than waiting for the
 # next code deploy.
 if az webapp config storage-account list --resource-group "$RG" --name "$APP_NAME" --query "[?name=='mcp-evidence']" -o tsv | grep -q .; then
-  echo "  mcp-evidence mount already exists — skipping create."
+  echo "  mcp-evidence mount already exists — updating mount path (idempotent, in case it points at an old path)."
+  az webapp config storage-account update \
+    --resource-group "$RG" --name "$APP_NAME" \
+    --custom-id mcp-evidence \
+    --storage-type AzureFiles \
+    --account-name "$MCP_STORAGE_ACCOUNT" \
+    --share-name "$MCP_FILE_SHARE" \
+    --access-key "$MCP_STORAGE_KEY" \
+    --mount-path "$MCP_MOUNT_PATH" \
+    --output none
 else
   az webapp config storage-account add \
     --resource-group "$RG" --name "$APP_NAME" \
@@ -246,5 +274,11 @@ echo "group had to be deleted and recreated and its IP has changed -- re-run:"
 echo "  az container show --resource-group $RG --name $MCP_APP_NAME --query ipAddress.ip -o tsv"
 echo "and update the URL registered in Astra to match."
 echo ""
-echo "The App Service just restarted to pick up the new /mnt/mcp-evidence mount --"
+echo "The App Service just restarted to pick up the new ${MCP_MOUNT_PATH} mount --"
 echo "give it a minute before running anything through the UI Validation pipeline."
+echo ""
+echo "Reminder: browser_take_screenshot's explicit filename argument resolves against"
+echo "Playwright MCP's own working directory (/home/node), not --output-dir. The Journey"
+echo "Catalog skill instructs the agent to prefix screenshot filenames with 'mcp-evidence/'"
+echo "so they land on this share -- a filename without that prefix will still succeed but"
+echo "won't be retrievable afterward."
