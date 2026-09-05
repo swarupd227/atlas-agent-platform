@@ -2911,6 +2911,63 @@ function buildTiersFromExecutionGraph(
   }));
 }
 
+/**
+ * Renders every REAL tool call a worker actually made -- from the tool-loop's
+ * own step records, not the model's own narrative -- as a small, code-
+ * generated log appended to its output. Verified live: a worker confidently
+ * narrated a specific tool call (exact filename, plausible return code, a
+ * "confirmation link") for a call that was never actually dispatched --
+ * toolCallCount showed only 2 real calls, neither of which produced the
+ * claimed file. No amount of "don't fabricate" prompt wording reliably
+ * prevents this on its own; a model can still describe a call in convincing
+ * enough detail. This is the deterministic counterpart: whatever the model's
+ * own text claims, this ledger is built directly from the dispatcher's own
+ * records (steps of type "api_call", which only exist if dispatchToolCall
+ * actually ran) and travels alongside the narrative, so a human or a
+ * downstream agent (e.g. Triage & Report) can check the claim against what
+ * was actually dispatched instead of trusting it outright.
+ */
+function buildVerifiedToolCallLog(steps: any[]): string {
+  const calls = (steps || []).filter((s: any) => s.type === "api_call");
+  if (calls.length === 0) {
+    return "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, not the model's narrative): no tool calls were dispatched this run.";
+  }
+
+  const lines = calls.map((s: any, i: number) => {
+    const tool = s.mcpTool || s.name || "unknown";
+    const status = s.status === "completed" ? "OK" : "FAILED";
+    const argsStr = JSON.stringify(s.input || {}).slice(0, 200);
+    let resultSummary: string;
+    if (s.status === "completed") {
+      const data = s.output?.data;
+      const content = Array.isArray(data?.content) ? data.content : null;
+      if (content) {
+        resultSummary = content.map((c: any) => {
+          if (c?.type === "image") {
+            const approxBytes = typeof c.data === "string" ? Math.round(c.data.length * 0.75) : 0;
+            return `[image ${c.mimeType || "?"}, ~${approxBytes} bytes]`;
+          }
+          if (c?.type === "text") {
+            const text = String(c.text ?? "");
+            return `"${text.slice(0, 120)}${text.length > 120 ? "..." : ""}"`;
+          }
+          return `[${c?.type || "unknown"} block]`;
+        }).join(" ");
+      } else {
+        resultSummary = JSON.stringify(data ?? s.output ?? {}).slice(0, 200);
+      }
+    } else {
+      resultSummary = `ERROR: ${s.error || "unknown error"}`;
+    }
+    return `${i + 1}. ${tool} [${status}] args=${argsStr} -> ${resultSummary}`;
+  });
+
+  return [
+    "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, generated directly from the dispatcher's own records -- NOT the model's narrative above):",
+    ...lines,
+  ].join("\n");
+}
+
 export async function executeWorkerAgent(
   workerId: string,
   teamAgent: RuntimeAgent,
@@ -3035,6 +3092,7 @@ export async function executeWorkerAgent(
     if (Array.isArray(structuredOutput) && structuredOutput.length > 0) {
       enrichedOutput = `${outputText}\n\n## STRUCTURED RECORDS FROM ${workerAgent.name} (${structuredOutput.length} records)\nThese are the exact record IDs and details processed by this agent. Downstream agents MUST reference these same record IDs for traceability.\n\`\`\`json\n${JSON.stringify({ processedRecords: structuredOutput }, null, 2)}\n\`\`\``;
     }
+    enrichedOutput = `${enrichedOutput}\n\n---\n${buildVerifiedToolCallLog(result.steps)}`;
 
     // On failure, executePromptWithMcp already recorded a real reason on the
     // failing step (e.g. "No MCP Server integrations... linked") -- surface it
