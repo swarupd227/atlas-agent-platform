@@ -1699,7 +1699,18 @@ function hashCode(str: string): number {
         // orchestrator here previously produced a plausible-looking answer
         // that silently never ran Journey Runner -> Triage & Report (or
         // whatever the graph actually is). Route it through the real engine.
-        const teamRun = await runTeamAgentDag(agent.id, (agent as any).blueprintId, input);
+        //
+        // `environment` was accepted by this route's own request schema and
+        // recorded on the trace, but never actually reached the DAG itself --
+        // runTeamAgentDag's initial state is seeded from `input` alone, so a
+        // caller's environment selection had zero effect on which target a
+        // worker like Journey Runner would resolve "go to: <path>" against.
+        // Prepending it here (always, not just when non-default, since the
+        // schema's "production" default is itself a real, meaningful
+        // selection a worker should see explicitly rather than infer) is
+        // read by Journey Runner's own environment-resolution instructions.
+        const dagInput = `Target environment: ${environment}\n\n${input}`;
+        const teamRun = await runTeamAgentDag(agent.id, (agent as any).blueprintId, dagInput);
         dagRunId = teamRun.dagRunId;
         dagRunSuccess = teamRun.result.success;
         finalOutput = extractFinalOutputText(teamRun.result, teamRun.wavePlan);
