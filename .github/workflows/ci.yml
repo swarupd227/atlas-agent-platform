@@ -37,7 +37,7 @@ jobs:
       # engine-parity + tool-dispatcher enforce that every execution engine
       # routes tool calls through the single gated dispatcher.
       - name: Unit tests
-        run: npx vitest run -c vitest.integration.config.ts tests/llm-resilience.test.ts tests/engine-parity.test.ts tests/tool-dispatcher.test.ts tests/audit-signing.test.ts tests/url-safety.test.ts tests/authz-route-conformance.test.ts tests/workspace-slack-signature.test.ts tests/workspace-teams-auth.test.ts tests/openapi-import.test.ts tests/kb-sensitivity-access.test.ts tests/connector-poll-query.test.ts tests/dag-skill-node.test.ts tests/file-extract.test.ts tests/file-upload-attach.test.ts tests/container-upload.test.ts tests/mandate-lint.test.ts tests/mandate-document.test.ts
+        run: npx vitest run -c vitest.integration.config.ts tests/llm-resilience.test.ts tests/engine-parity.test.ts tests/tool-dispatcher.test.ts tests/audit-signing.test.ts tests/url-safety.test.ts tests/authz-route-conformance.test.ts tests/workspace-slack-signature.test.ts tests/workspace-teams-auth.test.ts tests/openapi-import.test.ts tests/kb-sensitivity-access.test.ts tests/connector-poll-query.test.ts tests/dag-skill-node.test.ts tests/file-extract.test.ts tests/file-upload-attach.test.ts tests/container-upload.test.ts tests/mandate-lint.test.ts tests/mandate-document.test.ts tests/conversation-history.test.ts
 
       # Connector contract tests — probe each connector's cheapest read-only
       # tool against a live sandbox. Suites without CONTRACT_* secrets are

@@ -1706,6 +1706,16 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_agents_curated_journey ON agents(is_curated_journey) WHERE is_curated_journey = true;
     `);
 
+    // A Playground follow-up ("And last month?") only ever saw its own prior
+    // PROSE in conversation history, never the actual tool call (e.g. the SQL
+    // and date-range parameter) it ran -- so the model had nothing concrete to
+    // reparameterize and would just repeat the previous answer (test finding
+    // SC-A-04). Storing the tool calls alongside the assistant's chat message
+    // lets the next turn's history include them verbatim.
+    await client.query(`
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS tool_calls JSONB;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

@@ -6,6 +6,7 @@ import { getOrgId } from "../auth";
 import { getRequestRole } from "../permissions";
 import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt, recomputeOutcomeKpis } from "./helpers";
+import { buildConversationHistoryText, FOLLOW_UP_CONTEXT_INSTRUCTIONS, type ChatToolCallSummary } from "../conversation-history";
 import { buildAttachmentContext } from "../attachment-context";
 import { executePromptWithMcp, executeTeamPipeline, type RuntimeProgressEvent, type RuntimeAgent } from "../agent-runtime";
 import { callClaude, stripJsonFences, getAnthropicClient } from "../claude";
@@ -190,6 +191,11 @@ const router = Router();
       res.setHeader("Connection", "keep-alive");
 
       let fullResponse = "";
+      // Populated only by the MCP/KB branch below when the run actually
+      // executed tools -- carried into the assistant's saved chatMessages
+      // row so the NEXT turn's history can see the real query/parameters
+      // used (SC-A-04: follow-up context handling), not just the prose.
+      let assistantToolCalls: ChatToolCallSummary[] | null = null;
 
       // Team/Magentic agents were falling straight into the single-agent
       // branches below -- executePromptWithMcp has no idea how to run a team's
@@ -203,10 +209,10 @@ const router = Router();
         try {
           const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
           const conversationHistory = existingMsgs.length > 1
-            ? existingMsgs.slice(0, -1).map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n\n")
+            ? buildConversationHistoryText(existingMsgs.slice(0, -1))
             : "";
           const teamPrompt = conversationHistory
-            ? `## Conversation History\n${conversationHistory}\n\n## Current User Message\n${modelContent}`
+            ? `## Conversation History\n${conversationHistory}\n\n${FOLLOW_UP_CONTEXT_INSTRUCTIONS}\n\n## Current User Message\n${modelContent}`
             : modelContent;
           const teamOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
           const teamRuntimeAgent: RuntimeAgent = {
@@ -255,10 +261,10 @@ const router = Router();
         res.write(`data: ${JSON.stringify({ content: "" })}\n\n`);
 
         const conversationHistory = existingMsgs.length > 1
-          ? existingMsgs.slice(0, -1).map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n\n")
+          ? buildConversationHistoryText(existingMsgs.slice(0, -1))
           : "";
         const mcpPrompt = conversationHistory
-          ? `## Conversation History\n${conversationHistory}\n\n## Current User Message\n${modelContent}`
+          ? `## Conversation History\n${conversationHistory}\n\n${FOLLOW_UP_CONTEXT_INSTRUCTIONS}\n\n## Current User Message\n${modelContent}`
           : modelContent;
 
         try {
@@ -297,6 +303,9 @@ const router = Router();
             const toolCalls = result.steps
               .filter((s: any) => s.type === "api_call" && s.mcpResolved)
               .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, output: s.output, status: s.status, error: s.error }));
+            // Carried into the assistant's chatMessages row below (outside
+            // this try) so the next follow-up turn's history can see it.
+            assistantToolCalls = toolCalls.length > 0 ? toolCalls : null;
             await storage.createTrace({
               agentId,
               environment: "playground",
@@ -429,6 +438,7 @@ const router = Router();
         conversationId: sessionId,
         role: "assistant",
         content: fullResponse,
+        toolCalls: assistantToolCalls,
       });
 
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
