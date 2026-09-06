@@ -3,16 +3,37 @@ import * as pixelmatchModule from "pixelmatch";
 import { promises as fs } from "fs";
 import path from "path";
 
-// pixelmatch ships as a single CommonJS `module.exports = function`, not a
-// named/default export -- verified live, `import pixelmatch from "pixelmatch"`
-// bundled (esbuild's CJS interop) to a reference whose actual callable landed
-// somewhere other than a plain call, throwing "(0, Tie.default) is not a
-// function" the first time this ran against a real screenshot. Resolving
-// defensively against both possible shapes avoids depending on exactly how
-// the bundler wraps a given CJS module in this build.
-const pixelmatch = ((pixelmatchModule as any).default ?? pixelmatchModule) as (
+type PixelmatchFn = (
   img1: Uint8Array, img2: Uint8Array, output: Uint8Array | null, width: number, height: number, options?: Record<string, unknown>
 ) => number;
+
+// pixelmatch ships as a single CommonJS `module.exports = function`, not a
+// named/default export. Verified live, twice: a plain `?? .default` fallback
+// isn't enough -- the first attempt threw "(0, Tie.default) is not a
+// function" (bundler wrapped it one way), and after guarding for that,
+// the SECOND attempt threw "yze is not a function" (a different call shape
+// still wasn't a function either). Rather than guess a third specific shape,
+// this tries every plausible interop wrapping esbuild/tsc could produce and
+// uses whichever one actually IS a function, so the exact bundling behavior
+// doesn't matter.
+// Lazy + cached rather than resolved at module load: a resolution failure
+// here must only break the one comparison call that needs it (the caller in
+// tool-dispatcher.ts already wraps compareAgainstBaseline in a try/catch for
+// exactly this reason), not crash this whole module's import for every other
+// export it has.
+let cachedPixelmatch: PixelmatchFn | null = null;
+function resolvePixelmatch(): PixelmatchFn {
+  if (cachedPixelmatch) return cachedPixelmatch;
+  const m = pixelmatchModule as unknown as Record<string, unknown> & ((...args: unknown[]) => unknown);
+  const candidates: unknown[] = [m, m?.default, (m?.default as any)?.default, m?.pixelmatch];
+  for (const candidate of candidates) {
+    if (typeof candidate === "function") {
+      cachedPixelmatch = candidate as PixelmatchFn;
+      return cachedPixelmatch;
+    }
+  }
+  throw new Error(`Could not resolve a callable pixelmatch function from the imported module (shape: ${Object.keys(m || {}).join(", ")})`);
+}
 
 // Same convention as tool-dispatcher.ts's MCP_EVIDENCE_MOUNT_PATH -- a
 // subdirectory of Playwright MCP's own working directory, shared with the
@@ -102,7 +123,7 @@ export async function compareAgainstBaseline(journeySlug: string, stepName: stri
   const { width, height } = baselinePng;
   const totalPixels = width * height;
   const diffPng = new PNG({ width, height });
-  const diffPixels = pixelmatch(baselinePng.data, newPng.data, diffPng.data, width, height, { threshold: 0.1 });
+  const diffPixels = resolvePixelmatch()(baselinePng.data, newPng.data, diffPng.data, width, height, { threshold: 0.1 });
   const diffPercent = totalPixels > 0 ? (diffPixels / totalPixels) * 100 : 0;
 
   return { baselineExisted: true, diffPercent, diffPixels, totalPixels, dimensionMismatch: false };
