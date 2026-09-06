@@ -986,6 +986,18 @@ async function upsertIntegrationMcpServer(
     if (created?.id && template) {
       const templateTools = await storage.getMcpServerTools(template.id);
       for (const t of templateTools) {
+        // Defensive, not just a straight clone: a template tool created
+        // before registerEnterpriseIntegrations()'s own backfill ran (or
+        // before this annotation existed at all) can still have
+        // annotations:null at the moment a sibling is cloned from it --
+        // cloning that null verbatim gives the sibling's tool no
+        // enterpriseIntegration marker, so executeTool() can never route it
+        // in-process and it falls through to an HTTP self-call that 401s in
+        // production (confirmed live: every tool on a real sibling server
+        // had annotations:null while the template's had the full object).
+        // Force the one field the dispatcher actually keys on, on top of
+        // whatever else the template carries.
+        const templateAnnotations = (t.annotations as Record<string, unknown> | null) ?? {};
         await storage.createMcpServerTool({
           serverId: created.id,
           name: t.name,
@@ -994,9 +1006,13 @@ async function upsertIntegrationMcpServer(
           // round-trip casts are the drizzle shape mismatch, not lost typing.
           inputSchema: t.inputSchema as any,
           outputSchema: t.outputSchema as any,
-          // Carries `enterpriseIntegration`, which is how the dispatcher knows
-          // to route this tool in-process to the connector.
-          annotations: t.annotations as any,
+          annotations: {
+            method: "POST",
+            endpoint: `/tools/${t.name}`,
+            requiresCredentials: true,
+            ...templateAnnotations,
+            enterpriseIntegration: integrationId,
+          } as any,
           // fingerprintHash is intentionally not copied -- it is omitted from
           // the insert schema and drift detection recomputes it per server.
           riskClassification: t.riskClassification,

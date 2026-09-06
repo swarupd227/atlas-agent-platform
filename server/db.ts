@@ -1716,6 +1716,32 @@ export async function runStartupMigrations() {
       ALTER TABLE messages ADD COLUMN IF NOT EXISTS tool_calls JSONB;
     `);
 
+    // Backfill: a sibling MCP server's tools are cloned from the integration's
+    // template row (enterprise-integrations.ts's connectIntegration), but a
+    // sibling created before the template's own tools were backfilled with
+    // `enterpriseIntegration` inherited that null verbatim. A tool with no
+    // enterpriseIntegration annotation misses executeTool()'s in-process
+    // dispatch and falls through to an HTTP self-call, which 401s in
+    // production ("Authentication required") even though the connection
+    // itself is healthy -- confirmed live on a real scoped Postgres sibling
+    // (server_id c6570176..., all 7 tool rows had annotations:null while its
+    // template's had the full object). Idempotent: only touches rows that
+    // are still missing the marker.
+    await client.query(`
+      UPDATE mcp_server_tools t
+      SET annotations = COALESCE(t.annotations, '{}'::jsonb)
+        || jsonb_build_object(
+             'method', COALESCE(t.annotations->>'method', 'POST'),
+             'endpoint', COALESCE(t.annotations->>'endpoint', '/tools/' || t.name),
+             'requiresCredentials', COALESCE((t.annotations->'requiresCredentials')::boolean, true),
+             'enterpriseIntegration', s.integration_id
+           )
+      FROM mcp_servers s
+      WHERE t.server_id = s.id
+        AND s.integration_id IS NOT NULL
+        AND (t.annotations IS NULL OR t.annotations->>'enterpriseIntegration' IS NULL);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);
