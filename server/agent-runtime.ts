@@ -1554,6 +1554,18 @@ After receiving tool results, provide a structured analysis with key findings, s
     ? buildStrictJsonSchemaOption(earlyNoToolsContract, llmProvider.providerName)
     : undefined;
 
+  // A fixed 4096-token budget starves this call when the prompt itself is
+  // large -- confirmed live: a worker fed a long upstream narrative (a rich,
+  // real Journey Runner report from a DAG run) spent its entire completion
+  // budget still reasoning about the input, was cut off before emitting
+  // either a tool call or a complete answer, and the resulting truncated,
+  // unparseable JSON collapsed to an empty {} downstream. Scaling the budget
+  // with input size is a general fix, not specific to any one agent -- any
+  // worker fed enough upstream context can hit the same wall. Purely
+  // additive: small prompts keep today's 4096 exactly.
+  const planCallInputChars = systemMessage.length + prompt.length;
+  const planCallMaxTokens = planCallInputChars > 8000 ? 16384 : 4096;
+
   try {
     const planCallStartMs = performance.now();
     const planResult = await (onProgress
@@ -1565,7 +1577,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           {
             model: modelName,
             tools: canonicalTools.length > 0 ? canonicalTools : undefined,
-            maxTokens: 4096,
+            maxTokens: planCallMaxTokens,
             requestedProvider: providerName,
             ...(earlyJsonSchemaOption ? { jsonSchema: earlyJsonSchemaOption } : {}),
             ...(getCodeExecConfig() ?? {}),
@@ -1583,7 +1595,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           {
             model: modelName,
             tools: canonicalTools.length > 0 ? canonicalTools : undefined,
-            maxTokens: 4096,
+            maxTokens: planCallMaxTokens,
             requestedProvider: providerName,
             ...(earlyJsonSchemaOption ? { jsonSchema: earlyJsonSchemaOption } : {}),
             ...(getCodeExecConfig() ?? {}),
