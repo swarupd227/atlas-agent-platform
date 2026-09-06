@@ -279,6 +279,19 @@ export async function mcpListTools(server: McpServer, auth?: McpServerAuth | nul
   }));
 }
 
+// Backstop on top of the MCP SDK's own request timeout (60s by default,
+// applied per-call inside client.callTool). Confirmed live: a real run
+// against the Playwright MCP server hung for 20+ minutes with zero
+// progress, and restarting that server afterward did NOT unstick it --
+// the cached connection below is one long-lived object reused across every
+// call to a given server, so once its transport wedges (a dropped
+// connection, a browser action that never resolves server-side), every
+// call sharing it hangs too, with nothing on this side ever timing out on
+// its own. Evicting the cached connection on timeout, not just rejecting
+// the call, is the actual fix -- otherwise the next call reuses the same
+// broken object and hangs again.
+const MCP_CALL_TOOL_TIMEOUT_MS = 120_000;
+
 export async function mcpCallTool(
   server: McpServer,
   toolName: string,
@@ -294,8 +307,18 @@ export async function mcpCallTool(
     evictConnection(server.id);
     conn = await getConnection(server.id, server.url, authHeaders);
   }
-  const result = await conn.client.callTool({ name: toolName, arguments: args });
-  return result;
+  try {
+    const result = await Promise.race([
+      conn.client.callTool({ name: toolName, arguments: args }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`MCP tool call "${toolName}" on server "${server.name || server.id}" timed out after ${MCP_CALL_TOOL_TIMEOUT_MS / 1000}s`)), MCP_CALL_TOOL_TIMEOUT_MS),
+      ),
+    ]);
+    return result;
+  } catch (err) {
+    evictConnection(server.id);
+    throw err;
+  }
 }
 
 export async function mcpListResources(server: McpServer, auth?: McpServerAuth | null): Promise<McpResourceDef[]> {
