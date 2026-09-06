@@ -17,6 +17,7 @@ import { runMeetingTranscription } from "./meeting-transcription";
 import { readFile, unlink } from "fs/promises";
 import { pollDueResourceChangeTriggers } from "./connector-poller";
 import { pollDueScheduleTriggers } from "./schedule-trigger-poller";
+import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
 import { pollWaitingApprovalDagRuns } from "./dag-resume-poller";
 
 // ── Meeting transcription (async long-meeting path) ─────────────────────────────
@@ -566,6 +567,31 @@ async function processAgentRun(job: Job): Promise<Record<string, unknown>> {
   }
 
   const triggeredBy = (payload.triggeredBy as string | undefined) ?? "api";
+
+  // A team/orchestrator agent's real work is its compiled blueprint graph, not
+  // a bare LLM completion -- same gap already fixed for the gateway invoke
+  // route (routes/runtime.ts) for the identical reason: runAgentOnce ->
+  // executeAgentCycle only treats a team agent as a team when
+  // runtimeConfig.orchestration.workerIds is populated, which a blueprint
+  // built through Team Studio never sets. Every caller of this job type
+  // (schedule triggers, webhooks, agent_completion triggers) silently got a
+  // plausible-looking "cycle completed" success that never actually invoked
+  // the blueprint's worker nodes. Route those agents through the real DAG
+  // engine directly, mirroring the gateway route's fix.
+  const agent = await storage.getAgent(job.agentId);
+  if (agent?.agentType === "team" && (agent as any).blueprintId) {
+    const teamRun = await runTeamAgentDag(job.agentId, (agent as any).blueprintId, input || "Run the pipeline.");
+    return {
+      agentId: job.agentId,
+      deploymentId: deployment.id,
+      success: teamRun.result.success,
+      message: extractFinalOutputText(teamRun.result, teamRun.wavePlan),
+      dagRunId: teamRun.dagRunId,
+      triggeredBy,
+      completedAt: new Date().toISOString(),
+    };
+  }
+
   const result = await runAgentOnce(deployment.id, input || undefined, undefined, undefined, triggeredBy);
   return {
     agentId: job.agentId,
