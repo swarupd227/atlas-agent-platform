@@ -1,7 +1,18 @@
 import { PNG } from "pngjs";
-import pixelmatch from "pixelmatch";
+import * as pixelmatchModule from "pixelmatch";
 import { promises as fs } from "fs";
 import path from "path";
+
+// pixelmatch ships as a single CommonJS `module.exports = function`, not a
+// named/default export -- verified live, `import pixelmatch from "pixelmatch"`
+// bundled (esbuild's CJS interop) to a reference whose actual callable landed
+// somewhere other than a plain call, throwing "(0, Tie.default) is not a
+// function" the first time this ran against a real screenshot. Resolving
+// defensively against both possible shapes avoids depending on exactly how
+// the bundler wraps a given CJS module in this build.
+const pixelmatch = ((pixelmatchModule as any).default ?? pixelmatchModule) as (
+  img1: Uint8Array, img2: Uint8Array, output: Uint8Array | null, width: number, height: number, options?: Record<string, unknown>
+) => number;
 
 // Same convention as tool-dispatcher.ts's MCP_EVIDENCE_MOUNT_PATH -- a
 // subdirectory of Playwright MCP's own working directory, shared with the
