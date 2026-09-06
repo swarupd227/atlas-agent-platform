@@ -3084,9 +3084,27 @@ export async function executeWorkerAgent(
     const structuredOutput = workerAnalysis.structuredOutput || workerAnalysis.processedRecords || null;
     const analysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
     const analysisSummary = analysisStep?.output?.summary || analysisStep?.output?.analysis;
-    const outputText = typeof analysisSummary === "string" && analysisSummary.length > 0
+    const hasUsableAnalysis = typeof analysisSummary === "string" && analysisSummary.length > 0;
+    const outputText = hasUsableAnalysis
       ? analysisSummary
       : JSON.stringify(result.summary.analysis || {});
+
+    // executePromptWithMcp's own `success` is failedSteps.length === 0 --
+    // ANY tool call anywhere in the run's history, even one the model later
+    // recovered from (e.g. retried after a fresh browser_snapshot per the
+    // Journey Catalog skill's transient-failure instructions), makes it
+    // false. Verified live: a deliberately-broken click produced a real
+    // recovery attempt and a coherent final analysis, yet this node still
+    // reported the raw first-failure tool error as if nothing else happened,
+    // discarding the model's own narrative entirely. A worker node that DID
+    // produce a real final analysis has functionally succeeded regardless of
+    // what happened earlier in its own tool-calling history -- that earlier
+    // hiccup is exactly what buildVerifiedToolCallLog's ledger already
+    // surfaces for anyone who wants to see it, not a reason to discard the
+    // model's actual answer. result.success itself is left unchanged (other
+    // callers may legitimately rely on its narrower "zero tool errors"
+    // meaning) -- only this node's own reported outcome is widened.
+    const nodeSucceeded = result.success || hasUsableAnalysis;
 
     let enrichedOutput = outputText;
     if (Array.isArray(structuredOutput) && structuredOutput.length > 0) {
@@ -3098,7 +3116,7 @@ export async function executeWorkerAgent(
     // failing step (e.g. "No MCP Server integrations... linked") -- surface it
     // here instead of leaving callers (dag-execution-engine, the run-dag API,
     // the UI) with only a bare "failed" status and no way to diagnose why.
-    const failedStep = !result.success
+    const failedStep = !nodeSucceeded
       ? [...result.steps].reverse().find((s: any) => s.error)
       : undefined;
 
@@ -3109,7 +3127,7 @@ export async function executeWorkerAgent(
         id: `team_worker_${workerId}_${workerIndex}`,
         name: `Worker: ${workerAgent.name}`,
         type: "worker_execution",
-        status: result.success ? "completed" : "failed",
+        status: nodeSucceeded ? "completed" : "failed",
         startedAt: new Date(startTime).toISOString(),
         completedAt: new Date(endTime).toISOString(),
         timingMs: endTime - startTime,
@@ -3127,7 +3145,7 @@ export async function executeWorkerAgent(
         workerSteps: result.steps,
       },
       output: enrichedOutput,
-      success: result.success,
+      success: nodeSucceeded,
       startTime,
       endTime,
       costUsd: result.summary.costUsd || 0,
