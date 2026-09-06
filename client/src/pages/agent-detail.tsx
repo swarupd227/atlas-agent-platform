@@ -9824,6 +9824,7 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
   const [triggerType, setTriggerType] = useState<string>("webhook");
   const [webhookSecret, setWebhookSecret] = useState("");
   const [cronExpression, setCronExpression] = useState("0 * * * *");
+  const [scheduleInput, setScheduleInput] = useState("");
   const [sourceAgentId, setSourceAgentId] = useState("");
   const [mcpServerId, setMcpServerId] = useState("");
   const [mcpResourceUri, setMcpResourceUri] = useState("");
@@ -9849,6 +9850,7 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
         if (webhookSecret) config.secret = webhookSecret;
       } else if (triggerType === "schedule") {
         config.cron = cronExpression;
+        if (scheduleInput.trim()) config.input = scheduleInput.trim();
       } else if (triggerType === "agent_completion") {
         config.sourceAgentId = sourceAgentId;
       } else if (triggerType === "mcp_resource_change") {
@@ -9901,6 +9903,7 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
     setTriggerType("webhook");
     setWebhookSecret("");
     setCronExpression("0 * * * *");
+    setScheduleInput("");
     setSourceAgentId("");
     setMcpServerId("");
     setMcpResourceUri("");
@@ -10065,6 +10068,12 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
                         <code className="text-[11px] bg-muted/40 px-2 py-1 rounded-md font-mono">{config.cron}</code>
                         <span className="text-xs text-muted-foreground">({cronToHuman(config.cron)})</span>
                       </div>
+                      {config.input && (
+                        <div className="flex flex-col gap-0.5 mt-1">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Request Text</span>
+                          <span className="text-xs font-mono whitespace-pre-wrap">{config.input}</span>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -10159,6 +10168,22 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
                 <p className="text-[10px] text-muted-foreground">
                   Preview: {cronToHuman(cronExpression)}
                 </p>
+                {agent.agentType === "team" && (
+                  <>
+                    <Label className="text-xs mt-1.5">Request Text</Label>
+                    <Textarea
+                      value={scheduleInput}
+                      onChange={(e) => setScheduleInput(e.target.value)}
+                      placeholder="Target environment: staging&#10;&#10;Run the full journey catalog."
+                      className="text-sm font-mono min-h-[72px]"
+                      data-testid="input-schedule-request"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      A team agent has no default request of its own -- without this, each scheduled
+                      run has nothing to act on and will correctly report that it has no work to do.
+                    </p>
+                  </>
+                )}
               </div>
             )}
 

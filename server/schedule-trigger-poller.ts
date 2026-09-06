@@ -78,11 +78,12 @@ export async function fireOneScheduleTrigger(trigger: AgentTrigger, now: Date): 
     lastFiredAt: now,
     fireCount: (trigger.fireCount || 0) + 1,
   });
+  const input = typeof config.input === "string" && config.input.trim() ? config.input : undefined;
   const job = await storage.createJob({
     type: "agent_run",
     agentId: trigger.agentId,
     status: "queued",
-    payload: { triggeredBy: "schedule", triggerId: trigger.id, cron },
+    payload: { triggeredBy: "schedule", triggerId: trigger.id, cron, input },
   });
   await storage.createAuditEvent({
     actorType: "system",

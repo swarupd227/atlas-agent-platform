@@ -580,7 +580,15 @@ async function processAgentRun(job: Job): Promise<Record<string, unknown>> {
   // engine directly, mirroring the gateway route's fix.
   const agent = await storage.getAgent(job.agentId);
   if (agent?.agentType === "team" && (agent as any).blueprintId) {
-    const teamRun = await runTeamAgentDag(job.agentId, (agent as any).blueprintId, input || "Run the pipeline.");
+    // A team agent has no implicit default request the way a single agent's
+    // configured runtimeConfig.prompt serves as one -- every other entry
+    // point (Team Studio's Run button, the gateway route, Workspace chat)
+    // always supplies real request text from a human or caller. Falling
+    // back to the agent's own runtimeConfig.prompt (if set) mirrors that
+    // single-agent convention rather than inventing placeholder text with
+    // no real content for Journey Runner to act on.
+    const dagInput = input || (agent.runtimeConfig as Record<string, any>)?.prompt || "Run the pipeline.";
+    const teamRun = await runTeamAgentDag(job.agentId, (agent as any).blueprintId, dagInput);
     return {
       agentId: job.agentId,
       deploymentId: deployment.id,
