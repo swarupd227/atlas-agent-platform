@@ -108,10 +108,26 @@ export interface EnforcementResult {
  * (see runStartupMigrations() in server/db.ts) precisely so every existing
  * contract keeps today's decode path until flipped per-contract, rather than
  * every production agent switching at once the moment this column exists.
- * Anthropic has no equivalent structural restriction on tool input_schema, so
- * the compat check only gates the OpenAI path. Shared by agent-runtime.ts
- * (the generating call) and attemptRepair() below (the repair call), so both
- * apply the same eligibility rule.
+ *
+ * Anthropic has no equivalent STRUCTURAL restriction on tool input_schema
+ * (unlike OpenAI's strict mode, which rejects some schema shapes outright),
+ * so the compat check only gates the OpenAI path -- but this is not the same
+ * as a hard content guarantee. Verified live: forced tool_choice measurably
+ * improves schema adherence over plain prompting, but it is NOT
+ * grammar-constrained decoding the way OpenAI's strict json_schema mode is --
+ * the model can still omit a `required` field on an edge-case input (seen in
+ * production: a trivially short analysis prompt produced a tool call missing
+ * its required "summary" string, decodePath correctly recorded as
+ * "strict_native", and the SAME omission survived one repair attempt with
+ * the identical forced schema). Anthropic's own tool-use docs describe this
+ * as best-effort schema-following, not a compliance guarantee. Contracts on
+ * agents where losing the whole output over one soft field is worse than a
+ * best-effort result should use enforcementMode "monitor" (or "lenient" with
+ * a real fallbackOutput) rather than "strict", which throws unconditionally
+ * on a post-repair validation failure regardless of decode path.
+ *
+ * Shared by agent-runtime.ts (the generating call) and attemptRepair() below
+ * (the repair call), so both apply the same eligibility rule.
  */
 export function buildStrictJsonSchemaOption(
   contract: OutputContract,
