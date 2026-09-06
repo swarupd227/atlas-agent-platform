@@ -3040,7 +3040,18 @@ export async function executeWorkerAgent(
     runtimeConfig: workerRtConfig,
     memoryGovernanceRules: (workerAgent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || undefined,
     orgId: (workerAgent as any).organizationId ?? teamAgent.orgId ?? null,
-  };
+    // buildRuntimeContext (below) resolves skill CONTENT (a skill's markdown
+    // body -- e.g. Journey Runner's Journey Catalog) by reading
+    // (agent as any).preloadedSkills directly off this object, not by
+    // re-fetching the agent record. Without this, a worker node's preloaded
+    // skills are silently dropped even though the worker's TOOLS still work
+    // correctly (executePromptWithMcp separately re-fetches the agent by id
+    // for tool-gating). Confirmed live: Triage & Report's generate_pdf
+    // skill-gated tool worked as a DAG worker, but Journey Runner's Journey
+    // Catalog skill content never reached its context the same way -- two
+    // different consumers of preloadedSkills, only one of them fed here.
+    ...( (workerAgent as any).preloadedSkills ? { preloadedSkills: (workerAgent as any).preloadedSkills } : {} ),
+  } as RuntimeAgent;
 
   const workerContextResult = await buildRuntimeContext(workerRuntimeAgent);
   const workerContext = workerContextResult.context;
