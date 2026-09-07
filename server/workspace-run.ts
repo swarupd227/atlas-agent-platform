@@ -34,6 +34,7 @@ import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGen
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import type { Skill } from "@shared/schema";
 import { buildAttachmentContext } from "./attachment-context";
+import { resolveBrandAssetFileIds } from "./brand-assets";
 
 // Fallback for agents created before maxToolIterations existed / with it
 // explicitly null. Kept in sync with shared/schema.ts's column default.
@@ -210,27 +211,17 @@ async function resolveSkillAllowlist(agent: any): Promise<string[] | null> {
  *  small cap keeps a hoarded asset library from swamping the prompt; the most
  *  recently uploaded win, which is also the natural "replace the old logo"
  *  behaviour. */
-const BRAND_ASSET_LIMIT = 5;
-
 /**
  * The org's standing brand assets, for agents that can generate documents.
- * Document capability is the gate: a Q&A agent has no use for a logo file,
- * and injecting one would only add noise to every answer. Best-effort — a
- * lookup failure means the run proceeds without brand assets, not that it
- * fails.
+ * The gate and the lookup live in ./brand-assets so the Team DAG worker path
+ * (agent-runtime.ts) resolves exactly the same set. Best-effort — a lookup
+ * failure means the run proceeds without brand assets, not that it fails.
  */
 async function resolveBrandAssetIds(agent: any, orgId: string | undefined, alreadyAttached: string[]): Promise<string[]> {
   try {
     if (!orgId) return [];
     const activeSkills = await resolveActiveSkills(agent);
-    const docMode = resolveDocumentMode((agent as any)?.documentGenerationMode);
-    if (documentToolsForSkills(activeSkills, docMode).length === 0) return [];
-    const rows = await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
-      .where(and(eq(uploadedFiles.organizationId, orgId), eq(uploadedFiles.context, "brand")))
-      .orderBy(desc(uploadedFiles.createdAt))
-      .limit(BRAND_ASSET_LIMIT);
-    const attached = new Set(alreadyAttached);
-    return rows.map((r) => r.id).filter((id) => !attached.has(id));
+    return await resolveBrandAssetFileIds(activeSkills, orgId, alreadyAttached);
   } catch (e: any) {
     console.error("[workspace-run] brand asset lookup failed (non-fatal):", e?.message);
     return [];

@@ -16,6 +16,12 @@ import { RunSpanCollector } from "./run-spans";
 import { evaluateRule } from "./rule-evaluator";
 import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES } from "./services/pii/pii-masking-engine";
 import type { RuleGroup, OutputContract } from "@shared/schema";
+// Brand assets → worker container (see the "Brand assets" block in
+// executePromptWithMcp). Kept as their own import lines rather than folded into
+// the ones above so the hunk stays independent of concurrent edits up there.
+import { ensureContainerFiles } from "./anthropic-code-execution";
+import { buildAttachmentContext } from "./attachment-context";
+import { resolveBrandAssetFileIds } from "./brand-assets";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -1250,6 +1256,54 @@ export async function executePromptWithMcp(
   const getCodeExecConfig = () => (codeExecAccess.enabled
     ? buildCodeExecutionRequestConfig(resolvedActiveSkills, codeExecContainerId, docGenerationMode === "platform")
     : null);
+
+  // ── Brand assets → container (server/brand-assets.ts) ──────────────────────
+  // Standing brand assets (Files → Brand Assets: logo, master template) ride
+  // into the code-execution container for document-capable workers, the same
+  // way workspace-run.ts already does for Workspace runs. This is what lets a
+  // team's Deck Assembler build ON an uploaded master (its layouts, theme and
+  // media) instead of only describing it from the prompt. Gated on the same
+  // condition as the container itself, so a worker without code execution is
+  // untouched. Best-effort: any failure leaves the worker on prompt text alone
+  // and never fails the node.
+  let brandAttachment: Pick<LLMMessage, "attachmentFileIds" | "attachmentImageFileIds"> = {};
+  let brandContext = "";
+  if (getCodeExecConfig() && orgId) {
+    try {
+      const brandIds = await resolveBrandAssetFileIds(resolvedActiveSkills, orgId);
+      if (brandIds.length) {
+        const containerFiles = await ensureContainerFiles(brandIds, orgId);
+        if (containerFiles.length) {
+          brandAttachment = {
+            attachmentFileIds: containerFiles.map((f) => f.fileId),
+            // Images additionally ride as vision blocks (same cap as Workspace).
+            attachmentImageFileIds: containerFiles
+              .filter((f) => (f.mimeType ?? "").startsWith("image/") && (f.sizeBytes ?? 0) <= 4_500_000)
+              .map((f) => f.fileId),
+          };
+          const { context, names } = await buildAttachmentContext(brandIds, orgId, [
+            "The organization keeps the following standing brand assets (logo, master templates, approved imagery). The files themselves are uploaded into your code-execution container.",
+            "Apply them to every document you generate in this run: when a master template (.pptx/.potx/.docx) is present, open it and build on its own layouts, theme, fonts and media rather than starting from a blank document, unless the task says otherwise.",
+          ]);
+          brandContext = context;
+          steps.push({
+            id: `step_${steps.length + 1}`,
+            name: "Attach Brand Assets",
+            type: "skill_resolution",
+            status: "completed",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            output: { fileIds: brandIds, filenames: names, containerUploads: containerFiles.length },
+          });
+        }
+      }
+    } catch (brandErr: any) {
+      console.warn(`[agent-runtime] brand asset attach skipped (non-fatal): ${brandErr?.message}`);
+    }
+  }
+  const modelPrompt = brandContext ? `${brandContext}\n\n${prompt}` : prompt;
+  /** The worker's user turn: the prompt plus any brand-asset container uploads. A fresh object per call site -- nothing downstream mutates it, this just keeps that true by construction. */
+  const makeUserTurn = (): LLMMessage => ({ role: "user", content: modelPrompt, ...brandAttachment });
   /** Fold a completion result's generatedFiles/containerId into this run -- call after every completeWithFallback/streamCompleteWithFallback. */
   const captureCodeExecResult = async (llmResult: { generatedFiles?: Array<{ fileId: string; toolUseId: string }>; containerId?: string }) => {
     if (llmResult.containerId) codeExecContainerId = llmResult.containerId;
@@ -1572,7 +1626,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       ? streamCompleteWithFallback(
           [
             { role: "system", content: systemMessage },
-            { role: "user", content: prompt },
+            makeUserTurn(),
           ],
           {
             model: modelName,
@@ -1590,7 +1644,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       : completeWithFallback(
           [
             { role: "system", content: systemMessage },
-            { role: "user", content: prompt },
+            makeUserTurn(),
           ],
           {
             model: modelName,
@@ -1775,7 +1829,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     let iterationsUsed = 0;
     let conversationMessages: LLMMessage[] = [
       { role: "system", content: systemMessage },
-      { role: "user", content: prompt },
+      makeUserTurn(),
     ];
 
     while (currentToolCalls.length > 0 && iterationsUsed < MAX_TOOL_ITERATIONS && !costCapReached) {
