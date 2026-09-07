@@ -2140,6 +2140,20 @@ After receiving tool results, provide a structured analysis with key findings, s
           { role: "user" as const, content: analysisPrompt },
         ];
 
+        // Same fix as the planning call's budget (see planCallMaxTokens above):
+        // a fixed 4096-token cap starves this call once the accumulated tool-
+        // calling conversation is large -- confirmed live, twice, on a
+        // conversational worker (Journey Runner) whose final report is
+        // synthesized from a long real browser session. Both times the report
+        // was cut off mid-sentence at exactly this ceiling, right at the one
+        // paragraph explaining its most important finding, and downstream
+        // (Triage & Report) drew a different conclusion each time depending on
+        // how much of that explanation survived. hasRecordData/hasOutputSchema
+        // don't cover this case since Journey Runner isn't a record-processing
+        // agent -- gate on the actual conversation size instead.
+        const analysisInputSize = JSON.stringify(analysisMessages).length;
+        const analysisCallMaxTokens = hasRecordData || hasOutputSchema || analysisInputSize > 8000 ? 16384 : 4096;
+
         // Fetched here (before the generating call) rather than after, so its
         // schema can be attached as vendor-native strict decoding on the call
         // itself -- this call carries no `tools`, so unlike the planning call
@@ -2161,7 +2175,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               analysisMessages,
               {
                 model: modelName,
-                maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
+                maxTokens: analysisCallMaxTokens,
               },
               (chunk) => {
                 onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
@@ -2172,7 +2186,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               analysisMessages,
               {
                 model: modelName,
-                maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
+                maxTokens: analysisCallMaxTokens,
                 ...(isConversational ? {} : { responseFormat: "json" as const }),
                 ...(analysisJsonSchemaOption ? { jsonSchema: analysisJsonSchemaOption } : {}),
               },
