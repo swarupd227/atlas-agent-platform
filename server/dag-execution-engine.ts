@@ -176,6 +176,14 @@ export interface DAGExecutionConfig {
   // Fired the moment a gate node creates its approval record -- before the
   // (potentially long) wait for a human decision begins.
   onApprovalPending?: (nodeId: string, approvalId: string) => void;
+  // Fired by the in-process gate waiter the moment it observes the human's
+  // decision. Must atomically claim the run (waiting_approval -> running) and
+  // return whether THIS strand now owns the continuation; false means another
+  // path (fast-path PATCH on a different instance, or the poller) already
+  // resumed the run, and the waiter must abandon its strand rather than run
+  // the next wave a second time. Not consulted on resumed runs -- they hold
+  // the claim already (see resumeTeamAgentDagRun).
+  onApprovalDecided?: (nodeId: string, approvalId: string) => Promise<boolean>;
   // Resumability (see resumeTeamAgentDagRun): when set, execute() skips every
   // wave before resumeFromWave -- their results are supplied via
   // resumePriorWaveResults instead of being re-run -- and starts real
@@ -249,6 +257,35 @@ export function deriveRunStatus(result: Pick<DAGExecutionResult, "success" | "sk
   if (!result.success) return "failed";
   return result.skippedNodeIds.length > 0 ? "completed_with_skips" : "completed";
 }
+
+/**
+ * Thrown by the in-process gate waiter when, by the time a human decided its
+ * approval, some other strand (the approvals PATCH fast path on another
+ * server instance, or dag-resume-poller) had already claimed and resumed the
+ * run. The strand that catches this must stop WITHOUT writing any status or
+ * trace: the run row now belongs to whoever won the claim, and writing
+ * "failed" over their in-flight work is precisely the bug this prevents.
+ */
+export class DagRunSupersededError extends Error {
+  dagRunId?: string;
+  constructor(message: string) {
+    super(message);
+    this.name = "DagRunSupersededError";
+  }
+}
+
+/**
+ * dagExecutionRun ids with a live execution strand in THIS process -- the
+ * original run (whose gate node is sitting inside waitForApproval polling for
+ * the decision) or a resumed one. resumeTeamAgentDagRun consults this so a
+ * same-process resume attempt (the approvals PATCH fast path, or a poller
+ * tick) defers to the strand that will continue on its own, instead of
+ * racing it: before this existed the fast path claimed the row at decision-
+ * write time, always beating the waiter's 10s poll, and the paused wave then
+ * ran twice in parallel -- two generate_pptx calls, two files, and a stale
+ * timeout from the abandoned strand flipping a successful run to "failed".
+ */
+const liveDagRunStrands = new Set<string>();
 
 export class DAGExecutionError extends Error {
   constructor(
@@ -641,6 +678,14 @@ export class DAGExecutionEngine {
         }
       } else {
         const settled = await Promise.allSettled(nodePromises);
+        // A superseded gate waiter is not a failed node -- it's this whole
+        // strand being told to stand down. Letting allSettled fold it into a
+        // "failed" gate result would trip the rejected-gate halt below and
+        // write "failed" over the strand that actually owns the run now.
+        const superseded = settled.find(
+          (s): s is PromiseRejectedResult => s.status === "rejected" && s.reason instanceof DagRunSupersededError,
+        );
+        if (superseded) throw superseded.reason;
         const executedResults = settled.map((s, i) => {
           if (s.status === "fulfilled") return s.value;
           const nc = config.executionPlan.nodeConfig[eligibleNodeIds[i]];
@@ -1357,6 +1402,20 @@ export class DAGExecutionEngine {
       config.resumePendingApprovalId,
     );
 
+    // The decision is in. Before this strand carries the run forward it must
+    // win the same atomic waiting_approval -> running claim that the resume
+    // paths take (see resumeTeamAgentDagRun). A resumed run skips this: it
+    // already holds the claim, and its gate re-run short-circuited above via
+    // resumePendingApprovalId without ever waiting.
+    if (!config.resumeFromWave && config.onApprovalDecided) {
+      const owned = await config.onApprovalDecided(nodeId, approvalId);
+      if (!owned) {
+        throw new DagRunSupersededError(
+          `Approval ${approvalId} for gate "${nc.label || nodeId}" was decided, but the run had already been resumed by another strand -- this waiter is standing down`,
+        );
+      }
+    }
+
     return {
       nodeId,
       agentId: "",
@@ -1470,6 +1529,9 @@ export class DAGExecutionEngine {
       resumePendingApprovalId: config.resumePendingApprovalId,
       onWaveComplete: config.onWaveComplete,
       onApprovalPending: config.onApprovalPending,
+      // A gate nested inside a referenced child team still parks the PARENT
+      // run row, so the claim it must win on decision is the parent's too.
+      onApprovalDecided: config.onApprovalDecided,
       ancestorTeamAgentIds: [...ancestry, config.teamAgentId],
     });
 
@@ -1631,6 +1693,9 @@ async function executeTeamAgentDagRun(
 ): Promise<DAGExecutionResult> {
   const { dagRun, wavePlan, stateSchema, initialState, nodeWave, teamAgentRuntimeConfig, resumeFromWave, resumePriorWaveResults, resumePendingApprovalId } = setup;
   const engine = new DAGExecutionEngine();
+  // Registered for the strand's whole lifetime (cleared in `finally`), so a
+  // same-process resume attempt defers to it -- see liveDagRunStrands.
+  liveDagRunStrands.add(dagRun.id);
   try {
     const result = await engine.execute({
       executionPlan: wavePlan,
@@ -1668,6 +1733,16 @@ async function executeTeamAgentDagRun(
         publishDagRunEvent(dagRun.id, { type: "approval_pending", nodeId, label, wave: nodeWave[nodeId] ?? 0, totalWaves: wavePlan.totalWaves, approvalId });
         opts?.onApprovalPending?.(nodeId, nodeWave[nodeId] ?? 0, label, wavePlan.totalWaves, approvalId);
       },
+      onApprovalDecided: async (_nodeId, approvalId) => {
+        // Same atomic waiting_approval -> running UPDATE the resume paths use,
+        // so exactly one strand -- this waiter, a fast-path PATCH resume on
+        // another instance, or the poller -- carries the run past the gate.
+        const owned = await storage.claimDagExecutionRunForResume(dagRun.id);
+        if (!owned) {
+          console.warn(`[dag-run] ${dagRun.id}: approval ${approvalId} decided but the run was already resumed elsewhere -- in-process waiter standing down`);
+        }
+        return owned;
+      },
       onWaveComplete: async (waveNum, state) => {
         await storage.updateDagExecutionRun(dagRun.id, { status: "running", currentWave: waveNum, currentState: state, pendingApprovalId: null });
         publishDagRunEvent(dagRun.id, { type: "wave_complete", wave: waveNum, totalWaves: wavePlan.totalWaves });
@@ -1696,6 +1771,14 @@ async function executeTeamAgentDagRun(
 
     return result;
   } catch (execErr: any) {
+    if (execErr instanceof DagRunSupersededError) {
+      // Another strand owns the run row now. Touch nothing -- no status, no
+      // run_complete event, no outcome event -- or we'd write "failed" over
+      // work that strand is still doing (or has already finished).
+      console.log(`[dag-run] ${dagRun.id}: superseded -- ${execErr.message}`);
+      execErr.dagRunId = dagRun.id;
+      throw execErr;
+    }
     const isDagError = execErr instanceof DAGExecutionError;
     await storage.updateDagExecutionRun(dagRun.id, {
       status: "failed",
@@ -1710,6 +1793,8 @@ async function executeTeamAgentDagRun(
     // making every caller thread a separate try/catch around each awaited step.
     execErr.dagRunId = dagRun.id;
     throw execErr;
+  } finally {
+    liveDagRunStrands.delete(dagRun.id);
   }
 }
 
@@ -1751,6 +1836,9 @@ export async function startTeamAgentDagRun(
       writeDagRunTrace(teamAgentId, setup.dagRun.id, request, output, result.success, result.totalCostUsd, result.waveResults, startMs, setup.wavePlan);
     })
     .catch((err) => {
+      // The strand that won the claim writes this run's trace when it
+      // finishes; a superseded strand has nothing truthful to record.
+      if (err instanceof DagRunSupersededError) return;
       console.error(`[dag-run] ${setup.dagRun.id} failed:`, err.message);
       const waveResults = err instanceof DAGExecutionError ? err.context.waveResults : [];
       writeDagRunTrace(teamAgentId, setup.dagRun.id, request, `Team pipeline failed: ${err.message}`, false, 0, waveResults, startMs, setup.wavePlan);
@@ -1897,6 +1985,14 @@ async function setupResumeForDagRun(dagRun: DagExecutionRun): Promise<DagRunSetu
  * one being created, so the re-run doesn't ask for approval a second time.
  */
 export async function resumeTeamAgentDagRun(dagRunId: string): Promise<void> {
+  // A live strand in this process (the original waiter polling for the
+  // decision, or an earlier resume) will carry the run forward itself the
+  // moment it sees the decision. Resuming here as well would re-run the
+  // paused wave in parallel with it -- the double-execution this guards.
+  if (liveDagRunStrands.has(dagRunId)) {
+    console.log(`[dag-resume] Run ${dagRunId} has a live in-process strand -- deferring to it`);
+    return;
+  }
   const claimed = await storage.claimDagExecutionRunForResume(dagRunId);
   if (!claimed) return;
 

@@ -7,7 +7,7 @@
  * "continue anyway" for a decision nobody made.
  */
 import { describe, it, expect, vi } from "vitest";
-import { computeWaves, DAGExecutionEngine } from "../server/dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, DagRunSupersededError } from "../server/dag-execution-engine";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 vi.mock("../server/agent-runtime", () => ({
@@ -218,5 +218,96 @@ describe("DAGExecutionEngine — approval gate execution", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("DAGExecutionEngine — approval resume ownership (double-fire guard)", () => {
+  // Reproduces a live bug: after a human approved a gate, the PATCH
+  // fast-path resumed the run in a fresh strand while the original
+  // in-process waiter (10s polling) also woke up and continued. Both
+  // strands ran the downstream nodes; the loser then overwrote the
+  // winner's "completed" with "failed". The engine now asks
+  // onApprovalDecided whether this strand still owns the run and stands
+  // down (DagRunSupersededError) when it doesn't.
+  function gatePlan() {
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Manager Sign-off", stateKey: "gate_result" });
+    const downstream = node({ id: "next-1", nodeType: "internal_agent", refAgentId: "agent-next", stateKey: "next_out" });
+    const edge = {
+      id: "e1", blueprintId: "bp1", sourceNodeId: "gate-1", targetNodeId: "next-1",
+      label: null, contentPartTypes: [], allowedMetadata: null, slaTimeoutMs: null,
+      failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge;
+    return computeWaves([gateNode, downstream], [edge]);
+  }
+
+  it("stands down without running downstream nodes when another strand already claimed the resume, even under best_effort", async () => {
+    const { waitForApproval, executeWorkerAgent } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockImplementation(async (_a: any, _b: any, _c: any, _d: any, _e: any, onCreated: (id: string) => void) => {
+      onCreated("approval-777");
+      return { approved: true, decidedBy: "user-1" };
+    });
+    (executeWorkerAgent as any).mockClear();
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "should not run" });
+
+    const onApprovalDecided = vi.fn().mockResolvedValue(false);
+    const engine = new DAGExecutionEngine();
+    await expect(engine.execute({
+      executionPlan: gatePlan(),
+      stateSchema: {},
+      initialState: {},
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+      onApprovalDecided,
+    })).rejects.toBeInstanceOf(DagRunSupersededError);
+
+    expect(onApprovalDecided).toHaveBeenCalledWith("gate-1", "approval-777");
+    expect(executeWorkerAgent).not.toHaveBeenCalled();
+  });
+
+  it("continues normally when this strand wins the claim", async () => {
+    const { waitForApproval, executeWorkerAgent } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockImplementation(async (_a: any, _b: any, _c: any, _d: any, _e: any, onCreated: (id: string) => void) => {
+      onCreated("approval-778");
+      return { approved: true, decidedBy: "user-1" };
+    });
+    (executeWorkerAgent as any).mockClear();
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "ran" });
+
+    const onApprovalDecided = vi.fn().mockResolvedValue(true);
+    const engine = new DAGExecutionEngine();
+    const result = await engine.execute({
+      executionPlan: gatePlan(),
+      stateSchema: {},
+      initialState: {},
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+      onApprovalDecided,
+    });
+
+    expect(result.success).toBe(true);
+    expect(executeWorkerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-claim on a resumed strand, which already owns the run by construction", async () => {
+    const { waitForApproval, executeWorkerAgent } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (executeWorkerAgent as any).mockClear();
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "ran" });
+
+    const onApprovalDecided = vi.fn().mockResolvedValue(false);
+    const engine = new DAGExecutionEngine();
+    const result = await engine.execute({
+      executionPlan: gatePlan(),
+      stateSchema: {},
+      initialState: {},
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+      resumeFromWave: 1,
+      resumePendingApprovalId: "approval-779",
+      onApprovalDecided,
+    });
+
+    expect(onApprovalDecided).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
   });
 });
