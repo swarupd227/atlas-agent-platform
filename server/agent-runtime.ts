@@ -1662,7 +1662,15 @@ After receiving tool results, provide a structured analysis with key findings, s
   // worker fed enough upstream context can hit the same wall. Purely
   // additive: small prompts keep today's 4096 exactly.
   const planCallInputChars = systemMessage.length + prompt.length;
-  const planCallMaxTokens = planCallInputChars > 8000 ? 16384 : 4096;
+  // A code-execution agent writes PROGRAMS, not prose, and the program can be
+  // far longer than any answer: a template-fill script covering ~190 shape
+  // replacements ran out of budget mid-script at 16,497 completion tokens and
+  // the turn ended having produced no file at all (live 2026-09-08). Give
+  // those runs the larger ceiling both providers accept; everything else keeps
+  // today's behaviour exactly.
+  const planCallMaxTokens = getCodeExecConfig()
+    ? 32768
+    : (planCallInputChars > 8000 ? 16384 : 4096);
 
   try {
     const planCallStartMs = performance.now();
@@ -2087,7 +2095,9 @@ After receiving tool results, provide a structured analysis with key findings, s
                 {
                   model: modelName,
                   tools: canonicalTools.length > 0 ? canonicalTools : undefined,
-                  maxTokens: 4096,
+                  // Same reason as planCallMaxTokens: a code-execution agent may
+                  // still be writing a long program on a later iteration.
+                  maxTokens: getCodeExecConfig() ? 32768 : 4096,
                   ...(getCodeExecConfig() ?? {}),
                 },
                 (chunk) => {
@@ -2100,7 +2110,9 @@ After receiving tool results, provide a structured analysis with key findings, s
                 {
                   model: modelName,
                   tools: canonicalTools.length > 0 ? canonicalTools : undefined,
-                  maxTokens: 4096,
+                  // Same reason as planCallMaxTokens: a code-execution agent may
+                  // still be writing a long program on a later iteration.
+                  maxTokens: getCodeExecConfig() ? 32768 : 4096,
                   ...(getCodeExecConfig() ?? {}),
                 },
                 [llmProvider, fallbackLlmProvider],
