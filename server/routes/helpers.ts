@@ -1063,12 +1063,82 @@ export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): P
   return { updated: changes.length, totalRuns: totalTraces, totalEvents: relevantEvents.length, changes, kpis: updatedKpis };
 }
 
+/**
+ * An agent's industry, derived from the ontology concepts its ontologyTags
+ * point at. Agents carry no industry column, and the concept table is the only
+ * place that association actually exists. Returns null when the agent has no
+ * resolvable tags, which callers must treat as "unknown", never as a default.
+ */
+const agentIndustryCache = new Map<string, { value: string | null; at: number }>();
+const AGENT_INDUSTRY_TTL_MS = 60_000;
+
+export async function resolveAgentIndustry(agent: any): Promise<string | null> {
+  if (!agent?.id) return null;
+  const cached = agentIndustryCache.get(agent.id);
+  if (cached && Date.now() - cached.at < AGENT_INDUSTRY_TTL_MS) return cached.value;
+
+  let value: string | null = null;
+  try {
+    const tags = Array.isArray(agent.ontologyTags) ? agent.ontologyTags : [];
+    const conceptIds = tags
+      .map((t: any) => (typeof t === "string" ? t : t?.conceptId))
+      .filter((x: any): x is string => typeof x === "string");
+    // Count industries across the agent's concepts and take the dominant one:
+    // a stray cross-industry tag should not flip an otherwise clear agent.
+    const counts = new Map<string, number>();
+    for (const cid of conceptIds.slice(0, 12)) {
+      const concept = await storage.getOntologyConcept(cid);
+      const ind = (concept as any)?.industryId;
+      if (typeof ind === "string" && ind) counts.set(ind, (counts.get(ind) || 0) + 1);
+    }
+    let best: string | null = null;
+    let bestN = 0;
+    for (const [ind, n] of Array.from(counts.entries())) if (n > bestN) { best = ind; bestN = n; }
+    value = best;
+  } catch {
+    value = null;
+  }
+  agentIndustryCache.set(agent.id, { value, at: Date.now() });
+  return value;
+}
+
 export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   const agent = await storage.getAgent(agentId, orgId);
   const allPolicies = await storage.getPolicies(orgId);
   const activePolicies = allPolicies.filter(p => p.status === "active");
 
-  const orgPolicies = activePolicies.filter(p => p.scopeType === "org");
+  // Org-scoped policies apply to EVERY agent in the org, which over-applies
+  // badly once one org carries several industries' governance: an insurance
+  // fraud agent was resolving 61 policies, 56 of them org-scoped fulfilment,
+  // editorial and production rules from unrelated demos.
+  //
+  // Opt-in industry scoping, kept in policyJson so it needs no migration and
+  // no column that would collide with the industry-pack work in progress:
+  // an org policy carrying policyJson.industry applies only to agents in that
+  // industry. A policy WITHOUT the field applies everywhere exactly as before,
+  // so existing policies are untouched. Agents have no industry column, so an
+  // agent's industry is derived from the concepts its ontologyTags point at.
+  const allOrgPolicies = activePolicies.filter(p => p.scopeType === "org");
+  const industryScoped = allOrgPolicies.filter(p => typeof (p.policyJson as any)?.industry === "string");
+  let orgPolicies = allOrgPolicies;
+  if (industryScoped.length > 0) {
+    // Only pay for the concept lookup when some policy actually uses scoping.
+    const agentIndustry = await resolveAgentIndustry(agent);
+    orgPolicies = allOrgPolicies.filter(p => {
+      const ind = (p.policyJson as any)?.industry;
+      if (typeof ind !== "string") return true;
+      // FAIL OPEN when the agent's industry cannot be determined. Measured on
+      // live data: 485 of 586 agents carry no ontologyTags at all, so a
+      // fail-closed rule here would silently strip governance from 83% of the
+      // fleet the moment anyone tagged a policy. Quietly removing a policy from
+      // an agent is a far worse failure than over-applying one, so an agent we
+      // cannot place keeps today's behaviour and still receives the policy.
+      // This filter therefore only starts excluding once agents actually carry
+      // ontology tags -- see the note on the caller about that precondition.
+      if (agentIndustry === null) return true;
+      return ind === agentIndustry;
+    });
+  }
   const outcomePolicies = agent?.outcomeId
     ? activePolicies.filter(p => p.scopeType === "outcome" && p.scopeId === agent.outcomeId)
     : [];
