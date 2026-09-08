@@ -9,6 +9,7 @@ import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
+import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -1590,9 +1591,10 @@ After receiving tool results, provide a structured analysis with key findings, s
 
   const instructionHeader = kbOnlyMode ? "## KNOWLEDGE-BASED ASSISTANT INSTRUCTIONS" : "## MCP TOOL EXECUTION INSTRUCTIONS";
 
-  const systemMessage = agentSystemPrompt
-    ? `${agentSystemPrompt}\n\n${instructionHeader}\n${baseInstructions}${kbContext}`
-    : `You are an autonomous agent executing a task.\nIndustry context: ${industry || "general"}.\n\n${baseInstructions}${kbContext}`;
+  // Ordering respects lost-in-the-middle: instructions at the top, retrieved
+  // reference docs in the middle, operational instructions last (adjacent to
+  // the user turn). See server/agent-prompt-assembly.ts.
+  const systemMessage = assembleAgentSystemMessage({ agentSystemPrompt, industry, instructionHeader, baseInstructions, kbContext });
 
   let toolCallResults: Array<{
     toolName: string;
