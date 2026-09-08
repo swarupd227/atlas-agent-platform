@@ -2835,6 +2835,15 @@ export async function waitForApproval(
   timeoutMs: number = 30 * 60 * 1000,
   onCreated?: (approvalId: string) => void,
   existingApprovalId?: string,
+  /**
+   * How this decision should read on the Approvals page. Every gate of a given
+   * blueprint otherwise files under the same bare node label ("Manual Review
+   * Approval Gate"), so a reviewer facing three pending rows cannot tell which
+   * run each belongs to -- reported live 2026-09-08 ("I can't make out with the
+   * IDs"). Callers that know the run supply a distinguishing name and a
+   * description that leads with the artifact actually being approved.
+   */
+  approvalMeta?: { objectName?: string; description?: string },
 ): Promise<{ approved: boolean; decidedBy?: string; reason?: string }> {
   // Resuming a DAG run re-runs the whole paused wave (see resumeTeamAgentDagRun
   // in dag-execution-engine.ts), including the gate node itself -- without
@@ -2854,12 +2863,13 @@ export async function waitForApproval(
     approval = await storage.createApproval({
       type: "hitl_gate",
       objectType: "pipeline_gate",
-      objectName: gateName,
+      objectName: approvalMeta?.objectName || gateName,
       status: "pending",
       requestedBy: agentId,
       requesterType: "agent",
       agentId,
-      description: `Pipeline HITL checkpoint: ${gateName}\n\nContext:\n${context.slice(0, 2000)}`,
+      description: approvalMeta?.description
+        || `Pipeline HITL checkpoint: ${gateName}\n\nContext:\n${context.slice(0, 2000)}`,
       riskScore: gateType === "approval" ? 0.7 : 0.4,
     });
   }

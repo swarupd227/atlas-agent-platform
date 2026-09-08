@@ -1173,9 +1173,17 @@ function NodeConfigPanel({
         </>
       )}
 
-      {(node.nodeType === "internal_agent" || node.nodeType === "remote_agent") && (
+      {/* A gate's timeout is a human decision window, not an LLM call budget, so
+          it gets its own label and a hint in hours. It was previously not
+          editable here at all: an edge_gate fell back to the engine's 30-minute
+          floor with no way to change it, and a reviewer who stepped away for an
+          hour came back to a failed run ("Gate timed out after 30 minutes").
+          The engine still enforces that 30-minute floor as the minimum. */}
+      {(node.nodeType === "internal_agent" || node.nodeType === "remote_agent" || node.nodeType === "edge_gate") && (
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-muted-foreground">Timeout (ms)</label>
+          <label className="text-xs font-medium text-muted-foreground">
+            {node.nodeType === "edge_gate" ? "Decision window (ms)" : "Timeout (ms)"}
+          </label>
           <Input
             type="number"
             value={localTimeoutMs}
@@ -1189,7 +1197,11 @@ function NodeConfigPanel({
             data-testid="input-timeout-ms"
           />
           {localTimeoutMs && parseInt(localTimeoutMs) > 0 && (
-            <span className="text-[10px] text-muted-foreground">{(parseInt(localTimeoutMs) / 1000).toFixed(1)}s</span>
+            <span className="text-[10px] text-muted-foreground">
+              {node.nodeType === "edge_gate"
+                ? `${(Math.max(parseInt(localTimeoutMs), 30 * 60 * 1000) / 3600_000).toFixed(1)}h to decide (30 min minimum)`
+                : `${(parseInt(localTimeoutMs) / 1000).toFixed(1)}s`}
+            </span>
           )}
         </div>
       )}

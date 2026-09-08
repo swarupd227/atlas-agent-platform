@@ -204,6 +204,9 @@ export interface DAGExecutionConfig {
   // recurse until the process hangs or stack-overflows -- there was no
   // guard against this at all before.
   ancestorTeamAgentIds?: string[];
+  /** Run and team identity, used to give each approval a name a human can tell apart. */
+  dagRunId?: string;
+  teamAgentName?: string;
 }
 
 export interface NodeExecutionResult {
@@ -1405,10 +1408,48 @@ export class DAGExecutionEngine {
     // (meant for LLM timeouts) would expire a gate almost immediately, so a
     // gate always gets at least the same 30-minute floor the old engine used.
     const timeoutMs = Math.max(nc.timeoutMs, 30 * 60 * 1000);
+    const asText = (v: any) => (typeof v === "object" ? JSON.stringify(v, null, 2) : String(v));
     const context = Object.entries(currentState)
       .filter(([k]) => k !== "request")
-      .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+      .map(([k, v]) => `${k}: ${asText(v)}`)
       .join("\n") || (currentState.request as string) || "";
+
+    // What is actually up for decision: the output of the node(s) feeding this
+    // gate. Previously the approval carried a flat 2000-char dump of the whole
+    // state, which starts with the FIRST thing the run produced -- so a
+    // reviewer approving a slide outline saw only the strategy brief and had to
+    // open the run page to find what they were approving.
+    const upstreamKeys = (config.executionPlan.incomingEdges[nodeId] || [])
+      .map((e) => config.executionPlan.nodeConfig[e.sourceNodeId]?.stateKey)
+      .filter((k): k is string => !!k && currentState[k] !== undefined);
+    const subject = upstreamKeys
+      .map((k) => `--- FOR APPROVAL: ${k} ---\n${asText(currentState[k]).slice(0, 12000)}`)
+      .join("\n\n");
+    const otherContext = Object.entries(currentState)
+      .filter(([k]) => k !== "request" && !upstreamKeys.includes(k))
+      .map(([k, v]) => `${k}: ${asText(v).slice(0, 1500)}`)
+      .join("\n");
+
+    // A name a human can pick out of a list of pending rows: the gate, the team
+    // it belongs to, the run, and the first line of the request that started it.
+    const requestLabel = String(currentState.request ?? "")
+      .split("\n").map((l) => l.trim()).find((l) => l.length > 0)?.slice(0, 60);
+    const objectName = [
+      nc.label || "Approval Gate",
+      config.teamAgentName,
+      requestLabel,
+      config.dagRunId ? `run ${config.dagRunId.slice(0, 8)}` : undefined,
+    ].filter(Boolean).join(" · ");
+
+    const description = [
+      `Pipeline HITL checkpoint: ${nc.label || "Approval Gate"}`,
+      config.teamAgentName ? `Team: ${config.teamAgentName}` : undefined,
+      config.dagRunId ? `Run: ${config.dagRunId}` : undefined,
+      requestLabel ? `Request: ${requestLabel}` : undefined,
+      "",
+      subject || `Context:\n${context.slice(0, 4000)}`,
+      otherContext ? `\n--- Other context ---\n${otherContext}` : undefined,
+    ].filter((p) => p !== undefined).join("\n");
 
     let approvalId = "";
     const result = await waitForApproval(
@@ -1422,6 +1463,7 @@ export class DAGExecutionEngine {
         config.onApprovalPending?.(nodeId, id);
       },
       config.resumePendingApprovalId,
+      { objectName, description },
     );
 
     // The decision is in. Before this strand carries the run forward it must
@@ -1549,6 +1591,10 @@ export class DAGExecutionEngine {
       // the resume otherwise getting stuck re-asking for a decision that was
       // already made. See executeGateNode and setupResumeForDagRun.
       resumePendingApprovalId: config.resumePendingApprovalId,
+      // A gate inside the child still belongs to the parent's run, and the
+      // reviewer should see the child team's name on it.
+      dagRunId: config.dagRunId,
+      teamAgentName: teamAgent.name || config.teamAgentName,
       onWaveComplete: config.onWaveComplete,
       onApprovalPending: config.onApprovalPending,
       // A gate nested inside a referenced child team still parks the PARENT
@@ -1716,6 +1762,8 @@ async function executeTeamAgentDagRun(
   opts?: RunTeamAgentDagOptions,
 ): Promise<DAGExecutionResult> {
   const { dagRun, wavePlan, stateSchema, initialState, nodeWave, teamAgentRuntimeConfig, resumeFromWave, resumePriorWaveResults, resumePendingApprovalId } = setup;
+  // Only used to label approvals so a human can tell two pending gates apart.
+  const teamAgentName = await storage.getAgent(teamAgentId).then((a) => a?.name).catch(() => undefined);
   const engine = new DAGExecutionEngine();
   // Registered for the strand's whole lifetime (cleared in `finally`), so a
   // same-process resume attempt defers to it -- see liveDagRunStrands.
@@ -1728,6 +1776,8 @@ async function executeTeamAgentDagRun(
       errorStrategy: opts?.errorStrategy || "best_effort",
       teamAgentId,
       teamAgentRuntimeConfig,
+      dagRunId: dagRun.id,
+      teamAgentName,
       resumeFromWave,
       resumePriorWaveResults,
       resumePendingApprovalId,

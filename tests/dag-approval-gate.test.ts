@@ -93,9 +93,11 @@ describe("DAGExecutionEngine — approval gate execution", () => {
     expect(result.success).toBe(false);
     // executeGateNode forwards a 7th arg (config.resumePendingApprovalId, for
     // resuming a paused run into the same in-flight approval) -- unset here,
-    // so undefined. toHaveBeenCalledWith requires an exact arg-count match,
-    // so this must list all 7 positions or the assertion fails regardless of
-    // whether the first 6 are individually correct.
+    // so undefined -- and an 8th (approvalMeta: the human-readable name and
+    // description for the Approvals page). toHaveBeenCalledWith requires an
+    // exact arg-count match, so this must list all 8 positions or the
+    // assertion fails regardless of whether the first 6 are individually
+    // correct.
     expect(waitForApproval).toHaveBeenCalledWith(
       "team-1",
       "Manager Sign-off",
@@ -104,6 +106,7 @@ describe("DAGExecutionEngine — approval gate execution", () => {
       expect.any(Number),
       expect.any(Function),
       undefined,
+      expect.objectContaining({ objectName: expect.any(String), description: expect.any(String) }),
     );
   });
 
@@ -218,6 +221,62 @@ describe("DAGExecutionEngine — approval gate execution", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("DAGExecutionEngine — approval identity on the Approvals page", () => {
+  // Live 2026-09-08: three pending gates from three runs of the same blueprint
+  // all read "Manual Review Approval Gate", and the reviewer could not tell
+  // which was which ("I can't make out with the IDs"). The name now carries
+  // the team, the request and the run; the description leads with the artifact
+  // being approved rather than a flat dump of the whole state.
+  it("names the approval with team, request and run, and leads the description with the upstream output", async () => {
+    const { waitForApproval, executeWorkerAgent } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "the outline" });
+
+    const producer = node({ id: "arch", refAgentId: "agent-arch", stateKey: "slide_outline" });
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Manual Review", stateKey: "gate_result" });
+    const edge = {
+      id: "e1", blueprintId: "bp1", sourceNodeId: "arch", targetNodeId: "gate-1", label: null, contentPartTypes: [],
+      allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge;
+
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves([producer, gateNode], [edge]),
+      stateSchema: {},
+      initialState: { request: "Campaign brief — Operation Power Play.\nMarkets: DE/AT." },
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+      teamAgentName: "Marcom Deck Team",
+      dagRunId: "9721c414-d419-4d73-8c10-d88b9620638c",
+    });
+
+    const meta = (waitForApproval as any).mock.calls.at(-1)[7];
+    expect(meta.objectName).toBe("Manual Review · Marcom Deck Team · Campaign brief — Operation Power Play. · run 9721c414");
+    // The thing being decided comes first, before any other state.
+    expect(meta.description).toContain("--- FOR APPROVAL: slide_outline ---");
+    expect(meta.description.indexOf("FOR APPROVAL")).toBeLessThan(meta.description.indexOf("Other context") === -1 ? Infinity : meta.description.indexOf("Other context"));
+    expect(meta.description).toContain("the outline");
+    expect(meta.description).toContain("Run: 9721c414-d419-4d73-8c10-d88b9620638c");
+  });
+
+  it("falls back to the bare gate label when the caller supplies no run identity", async () => {
+    const { waitForApproval } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Manager Sign-off", stateKey: "gate_result" });
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves([gateNode], []),
+      stateSchema: {},
+      initialState: {},
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+    });
+
+    expect((waitForApproval as any).mock.calls.at(-1)[7].objectName).toBe("Manager Sign-off");
   });
 });
 
