@@ -178,10 +178,21 @@ echo "=== 3/6: Playwright MCP container instance ==="
 # alongside it (needed to launch Chromium as root in a container).
 # --output-dir: writes screenshots into the mounted Azure Files share instead
 # of the container's own ephemeral filesystem -- see the file share note above.
+# --isolated: confirmed live -- without it, @playwright/mcp keeps one
+# persistent browser profile/page shared by every connected client. Two DAG
+# runs whose schedules overlapped (a cron interval shorter than the run's own
+# duration) ended up driving that one shared page concurrently: one run's
+# browser_snapshot returned the OTHER run's page content, and the other run
+# hung indefinitely waiting on page state that had been pulled out from under
+# it. Per the project's own docs, this is the documented fix for concurrent
+# clients -- each session gets its own in-memory profile instead of sharing
+# the persistent one. The tradeoff (session storage/login state resets when a
+# session's browser closes) doesn't matter here since every journey run logs
+# in fresh anyway.
 az provider register --namespace Microsoft.ContainerInstance --wait 2>/dev/null || true
 
 if az container show --resource-group "$RG" --name "$MCP_APP_NAME" --output none 2>/dev/null; then
-  echo "  $MCP_APP_NAME already exists — skipping create. Delete it first ('az container delete') if you need to change its image/args/mounts, since ACI container groups are immutable once created."
+  echo "  $MCP_APP_NAME already exists — skipping create. Delete it first ('az container delete') if you need to change its image/args/mounts, since ACI container groups are immutable once created. Recreating assigns a NEW private IP -- update the platform's mcp_servers row afterward (PATCH /api/mcp-servers/:id { url }), same as any other IP-drift recovery."
 else
   az container create \
     --resource-group "$RG" --name "$MCP_APP_NAME" \
@@ -196,7 +207,7 @@ else
     --azure-file-volume-account-key "$MCP_STORAGE_KEY" \
     --azure-file-volume-share-name "$MCP_FILE_SHARE" \
     --azure-file-volume-mount-path "$MCP_MOUNT_PATH" \
-    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless --allowed-hosts * --browser chromium --no-sandbox --output-dir $MCP_MOUNT_PATH" \
+    --command-line "npx @playwright/mcp@latest --port $MCP_PORT --host 0.0.0.0 --headless --allowed-hosts * --browser chromium --no-sandbox --isolated --output-dir $MCP_MOUNT_PATH" \
     --output none
 fi
 
