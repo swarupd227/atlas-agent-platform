@@ -53,6 +53,7 @@ import {
   Download,
 } from "lucide-react";
 import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
+import { useIndustry } from "@/components/industry-provider";
 
 const SECTION_TEMPLATES: Record<string, string> = {
   "Trigger Conditions": `## Trigger Conditions\n\n- When: [describe trigger event]\n- Conditions:\n  - [condition 1]\n  - [condition 2]\n- Priority: [high/medium/low]\n\n`,
@@ -196,6 +197,7 @@ function StudioLanding() {
   const [, navigate] = useLocation();
   const { data: skills = [], isLoading } = useQuery<Skill[]>({ queryKey: ["/api/skills"] });
   const { toast } = useToast();
+  const { industry: workspaceIndustry } = useIndustry();
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async () => {
@@ -204,7 +206,12 @@ function StudioLanding() {
       const res = await apiRequest("POST", "/api/skills", {
         name: "New Skill",
         description: "Describe what this skill does...",
-        industry: "financial_services",
+        // Default to the workspace the user is actually in. Hardcoding
+        // financial_services meant every skill created from an Insurance (or
+        // any other) workspace was silently filed under the wrong industry and
+        // never surfaced to that industry's agents, and the author had to
+        // notice and correct it by hand on every single skill.
+        industry: workspaceIndustry?.id ?? "financial_services",
         domain: "general",
         author: "studio",
         version: "1.0.0",
@@ -287,6 +294,7 @@ export default function SkillStudio() {
 
 function SkillStudioEditor({ skillId: id }: { skillId: string }) {
   const { toast } = useToast();
+  const { industry: workspaceIndustry } = useIndustry();
   const [activeTab, setActiveTab] = useState("editor");
 
   const { data: skill, isLoading } = useQuery<Skill>({
@@ -296,7 +304,9 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [industry, setIndustry] = useState("financial_services");
+  // Seed from the active workspace so a new skill starts in the industry the
+  // author is working in, not a hardcoded default.
+  const [industry, setIndustry] = useState(workspaceIndustry?.id ?? "financial_services");
   const [domain, setDomain] = useState("");
   const [tags, setTags] = useState("");
   const [allowedTools, setAllowedTools] = useState("");
@@ -323,7 +333,12 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
 
   const [builderInput, setBuilderInput] = useState("");
   const [builderSkillName, setBuilderSkillName] = useState("");
-  const [builderIndustry, setBuilderIndustry] = useState("financial_services");
+  const [builderIndustry, setBuilderIndustry] = useState(workspaceIndustry?.id ?? "financial_services");
+  // The workspace (and, for an existing skill, the skill itself) can resolve
+  // after this component mounts, so a useState default alone would leave the
+  // builder generating for the wrong industry. Follow the skill's industry
+  // until the author picks something else in the builder's own selector.
+  useEffect(() => { if (industry) setBuilderIndustry(industry); }, [industry]);
   const [builderDomain, setBuilderDomain] = useState("");
   const [builderLoading, setBuilderLoading] = useState(false);
   const [builderResult, setBuilderResult] = useState<any>(null);
