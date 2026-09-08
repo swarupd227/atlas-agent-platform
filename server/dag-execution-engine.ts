@@ -490,6 +490,24 @@ function buildAgentInput(
 }
 
 /**
+ * Deliverables a node produced (a .pptx, a PDF) are recorded in shared state
+ * under `<stateKey>_files` and handed to every later node's container, so a
+ * reviewer inspects the real artifact rather than the producer's account of
+ * it. Living in state -- not in engine memory -- is what lets them survive a
+ * pause at an approval gate and a resume in another process.
+ */
+export const GENERATED_FILES_STATE_SUFFIX = "_files";
+
+export function collectUpstreamGeneratedFileIds(state: Record<string, any>): string[] {
+  const ids: string[] = [];
+  for (const [key, value] of Object.entries(state)) {
+    if (!key.endsWith(GENERATED_FILES_STATE_SUFFIX) || !Array.isArray(value)) continue;
+    for (const f of value) if (f && typeof f.id === "string") ids.push(f.id);
+  }
+  return Array.from(new Set(ids));
+}
+
+/**
  * Apply reducer semantics when merging a node's output into shared state.
  */
 export function applyReducer(
@@ -975,7 +993,8 @@ export class DAGExecutionEngine {
       }
     }
 
-    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInput, config, nc.timeoutMs, toolAllowlist);
+    const upstreamGeneratedFileIds = collectUpstreamGeneratedFileIds(currentState);
+    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInput, config, nc.timeoutMs, toolAllowlist, upstreamGeneratedFileIds);
 
     const durationMs = Date.now() - start;
 
@@ -1010,7 +1029,10 @@ export class DAGExecutionEngine {
       nodeId,
       agentId: nc.agentId,
       status: "completed",
-      output: { [nc.stateKey]: workerResult.output },
+      output: {
+        [nc.stateKey]: workerResult.output,
+        ...(workerResult.generatedFiles?.length ? { [`${nc.stateKey}${GENERATED_FILES_STATE_SUFFIX}`]: workerResult.generatedFiles } : {}),
+      },
       durationMs,
       promptTokens: workerResult.promptTokens || 0,
       completionTokens: workerResult.completionTokens || 0,
@@ -1573,7 +1595,8 @@ export class DAGExecutionEngine {
     config: DAGExecutionConfig,
     timeoutMs: number,
     toolAllowlist?: string[],
-  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number }> {
+    upstreamGeneratedFileIds?: string[],
+  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }> }> {
     const mockTeamAgent = {
       deploymentId: undefined,
       agentId: "__dag_orchestrator__",
@@ -1594,7 +1617,7 @@ export class DAGExecutionEngine {
         ),
     );
 
-    const workerPromise = executeWorkerAgent(agentId, mockTeamAgent as any, contextInput, 0, toolAllowlist);
+    const workerPromise = executeWorkerAgent(agentId, mockTeamAgent as any, contextInput, 0, toolAllowlist, upstreamGeneratedFileIds);
 
     try {
       const result = await Promise.race([workerPromise, timeoutPromise]);
@@ -1607,6 +1630,7 @@ export class DAGExecutionEngine {
         costUsd: (result as any).costUsd || 0,
         toolCallCount: (result as any).toolCallCount || 0,
         traceId: (result as any).step?.id || "",
+        ...(Array.isArray((result as any).generatedFiles) && (result as any).generatedFiles.length ? { generatedFiles: (result as any).generatedFiles } : {}),
       };
     } catch (err: any) {
       return { success: false, output: "", error: err.message };

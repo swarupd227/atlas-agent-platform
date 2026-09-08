@@ -158,6 +158,59 @@ export async function downloadGeneratedFile(fileId: string): Promise<{
   };
 }
 
+/**
+ * Files produced by EARLIER steps of a Team DAG run (agent_generated_files
+ * rows), readied for a later worker's container. Without this a reviewer node
+ * could only grade the producer's own summary of its deliverable -- live
+ * 2026-09-08: a QA node passed a deck whose subtitle placeholders were all
+ * empty because the assembler's report said "subtitles preserved verbatim".
+ *
+ * Bytes come from wherever the row keeps them (inline for platform-rendered
+ * files, Anthropic's Files API for sandbox output) and are pushed as a FRESH
+ * upload each time: generated files are small, and the row's single
+ * anthropicFileId column must keep pointing at the downloadable original.
+ * With `upload` false only the metadata is returned, for framing a worker
+ * that has no container to open the file with. Best-effort per file.
+ */
+export async function ensureGeneratedContainerFiles(
+  generatedFileIds: string[],
+  orgId: string | undefined,
+  upload: boolean,
+): Promise<Array<{ id: string; filename: string | null; mimeType: string | null; sizeBytes: number | null; fileId?: string }>> {
+  const out: Array<{ id: string; filename: string | null; mimeType: string | null; sizeBytes: number | null; fileId?: string }> = [];
+  if (!generatedFileIds.length) return out;
+  const { toFile } = await import("@anthropic-ai/sdk");
+  const client = upload ? await getAnthropicRawClient() : null;
+
+  for (const id of generatedFileIds) {
+    try {
+      const row = await storage.getAgentGeneratedFile(id, orgId);
+      if (!row) continue;
+      const entry = { id: row.id, filename: row.filename ?? null, mimeType: row.mimeType ?? null, sizeBytes: row.sizeBytes ?? null } as (typeof out)[number];
+      if (upload && client) {
+        let bytes: Buffer | null = null;
+        if (row.content) {
+          bytes = Buffer.from(row.content);
+        } else if (row.anthropicFileId) {
+          const dl = await downloadGeneratedFile(row.anthropicFileId);
+          bytes = Buffer.from(await new Response(dl.body).arrayBuffer());
+        }
+        if (bytes) {
+          const uploaded = await client.beta.files.upload({
+            file: await toFile(bytes, row.filename ?? `generated-${row.id}`, { type: row.mimeType ?? "application/octet-stream" }),
+          });
+          const fileId = (uploaded as any).id;
+          if (fileId) entry.fileId = fileId;
+        }
+      }
+      out.push(entry);
+    } catch (err: any) {
+      console.error(`[anthropic-code-execution] upstream deliverable ${id} could not be readied for the container (non-fatal):`, err?.message);
+    }
+  }
+  return out;
+}
+
 /** Fetches metadata only, used right after generation to persist filename/mimeType/sizeBytes without downloading bytes. */
 export async function fetchGeneratedFileMetadata(fileId: string): Promise<{
   filename: string | undefined;

@@ -19,7 +19,7 @@ import type { RuleGroup, OutputContract } from "@shared/schema";
 // Brand assets → worker container (see the "Brand assets" block in
 // executePromptWithMcp). Kept as their own import lines rather than folded into
 // the ones above so the hunk stays independent of concurrent edits up there.
-import { ensureContainerFiles } from "./anthropic-code-execution";
+import { ensureContainerFiles, ensureGeneratedContainerFiles } from "./anthropic-code-execution";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds } from "./brand-assets";
 
@@ -1049,11 +1049,11 @@ export async function executePromptWithMcp(
   prompt: string,
   industry?: string,
   agentSystemPrompt?: string,
-  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number; dagToolAllowlist?: string[] },
+  options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number; dagToolAllowlist?: string[]; /** agent_generated_files ids produced by earlier nodes of the same Team DAG run -- readied for this worker's container (see "Upstream deliverables" below). */ upstreamGeneratedFileIds?: string[] },
   onProgress?: (event: RuntimeProgressEvent) => void,
   orgId?: string | null,
   callerRole?: RoleId | null,
-): Promise<{ steps: any[]; success: boolean; summary: any; spans?: { traceId: string; spans: any[] }; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[]; hardViolations?: Array<{ toolName: string; reason: string; policyIds: string[]; enforcementMode: string; iteration: number; blockedAt: string }> }> {
+): Promise<{ steps: any[]; success: boolean; summary: any; spans?: { traceId: string; spans: any[] }; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[]; hardViolations?: Array<{ toolName: string; reason: string; policyIds: string[]; enforcementMode: string; iteration: number; blockedAt: string }>; /** Files this run produced (sandbox or platform renderer), so a DAG engine can hand them to downstream nodes. */ generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }> }> {
   const startTime = Date.now();
   const steps: any[] = [];
   const promptSectionMetrics: ContextSectionMetric[] = [];
@@ -1301,14 +1301,56 @@ export async function executePromptWithMcp(
       console.warn(`[agent-runtime] brand asset attach skipped (non-fatal): ${brandErr?.message}`);
     }
   }
-  const modelPrompt = brandContext ? `${brandContext}\n\n${prompt}` : prompt;
+  // ── Upstream deliverables → container ──────────────────────────────────────
+  // Files produced by earlier nodes of the same Team DAG run (a Deck
+  // Assembler's .pptx) ride into this worker's container, so a reviewer node
+  // opens the real artifact instead of grading the producer's own summary of
+  // it. Framed even without a container: a text-only reviewer is told a file
+  // exists that it cannot inspect, so it says so rather than passing it on
+  // trust. Best-effort, never fails the node.
+  let upstreamContext = "";
+  const upstreamIds = options?.upstreamGeneratedFileIds ?? [];
+  if (upstreamIds.length) {
+    try {
+      const canOpen = !!getCodeExecConfig();
+      const files = await ensureGeneratedContainerFiles(upstreamIds, orgId ?? undefined, canOpen);
+      if (files.length) {
+        const containerIds = files.map(f => f.fileId).filter((id): id is string => !!id);
+        if (canOpen && containerIds.length) {
+          brandAttachment = { ...brandAttachment, attachmentFileIds: [...(brandAttachment.attachmentFileIds ?? []), ...containerIds] };
+        }
+        upstreamContext = [
+          "## UPSTREAM DELIVERABLES",
+          canOpen && containerIds.length
+            ? "The following files were produced by earlier steps of this run and are uploaded into your code-execution container. Open and inspect the actual files; never rely on an earlier step's description of them."
+            : "The following files were produced by earlier steps of this run, but this agent has no code execution and cannot open them. State explicitly that you could not inspect them; do not report on their contents as if you had.",
+          ...files.map(f => `- ${f.filename ?? f.id} (${f.mimeType ?? "unknown type"}, ${f.sizeBytes ?? "?"} bytes)`),
+        ].join("\n");
+        steps.push({
+          id: `step_${steps.length + 1}`,
+          name: "Attach Upstream Deliverables",
+          type: "skill_resolution",
+          status: "completed",
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          output: { files: files.map(f => ({ id: f.id, filename: f.filename })), containerUploads: containerIds.length },
+        });
+      }
+    } catch (upErr: any) {
+      console.warn(`[agent-runtime] upstream deliverable attach skipped (non-fatal): ${upErr?.message}`);
+    }
+  }
+  const modelPrompt = [brandContext, upstreamContext, prompt].filter(Boolean).join("\n\n");
   /** The worker's user turn: the prompt plus any brand-asset container uploads. A fresh object per call site -- nothing downstream mutates it, this just keeps that true by construction. */
   const makeUserTurn = (): LLMMessage => ({ role: "user", content: modelPrompt, ...brandAttachment });
+  /** Every file this run produced, by either route -- returned to the caller so a DAG engine can pass deliverables downstream. */
+  const runGeneratedFiles: Array<{ id: string; filename: string | null; mimeType: string | null }> = [];
   /** Fold a completion result's generatedFiles/containerId into this run -- call after every completeWithFallback/streamCompleteWithFallback. */
   const captureCodeExecResult = async (llmResult: { generatedFiles?: Array<{ fileId: string; toolUseId: string }>; containerId?: string }) => {
     if (llmResult.containerId) codeExecContainerId = llmResult.containerId;
     if (llmResult.generatedFiles?.length) {
       const records = await persistGeneratedFiles(llmResult.generatedFiles, { organizationId: orgId ?? null, agentId, traceId: idempotencyScope });
+      runGeneratedFiles.push(...records.map(r => ({ id: r.id, filename: r.filename, mimeType: r.mimeType })));
       // Piggyback on the existing tool_call_result event type -- ExecutionTracePanel
       // (client/src/pages/agent-playground.tsx) reads a generatedFiles field off any
       // tool_call_result event's data to render a download card, no new event type needed.
@@ -1958,6 +2000,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             // and a model handed the raw file id there will invent its own
             // "sandbox:/<id>" link even when told explicitly not to.
             const producedFile = (dispatch.result as any)?.[GENERATED_FILE_MARKER];
+            if (producedFile?.id) runGeneratedFiles.push({ id: producedFile.id, filename: producedFile.filename ?? null, mimeType: producedFile.mimeType ?? null });
             toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: stripGeneratedFileMarker(dispatch.result) });
             emitProgress("tool_call_result", {
               tool: matchedTool.toolName,
@@ -2759,6 +2802,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     retrievedDocs: kbRetrievals,
     contextSectionMetrics: promptSectionMetrics,
     hardViolations: runtimeHardViolations,
+    ...(runGeneratedFiles.length ? { generatedFiles: runGeneratedFiles } : {}),
     ...(conversationalResponse ? { conversationalResponse } : {}),
     ...(softPolicyViolations.length > 0 ? { softPolicyViolations } : {}),
     // GAP5: First-class contract enforcement result fields
@@ -3054,6 +3098,8 @@ export async function executeWorkerAgent(
   previousContext: string,
   workerIndex: number,
   dagToolAllowlist?: string[],
+  /** Deliverables from earlier nodes of the same DAG run (agent_generated_files ids). */
+  upstreamGeneratedFileIds?: string[],
 ): Promise<{
   agentId: string;
   agentName: string;
@@ -3066,6 +3112,7 @@ export async function executeWorkerAgent(
   promptTokens?: number;
   completionTokens?: number;
   toolCallCount?: number;
+  generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>;
 }> {
   const startTime = Date.now();
   const workerAgent = await storage.getAgent(workerId);
@@ -3165,6 +3212,7 @@ export async function executeWorkerAgent(
         // is explicitly true now gets the free-form "respond in natural
         // language, no forced JSON schema" path instead.
         conversational: workerRtConfig.conversational === true,
+        ...(upstreamGeneratedFileIds?.length ? { upstreamGeneratedFileIds } : {}),
       },
       undefined,
       workerRuntimeAgent.orgId ?? undefined,
@@ -3243,6 +3291,7 @@ export async function executeWorkerAgent(
       promptTokens: result.summary.tokenUsage?.promptTokens || 0,
       completionTokens: result.summary.tokenUsage?.completionTokens || 0,
       toolCallCount: Array.isArray(result.summary.toolsUsed) ? result.summary.toolsUsed.length : 0,
+      ...(result.generatedFiles?.length ? { generatedFiles: result.generatedFiles } : {}),
     };
   } catch (err: any) {
     const endTime = Date.now();
