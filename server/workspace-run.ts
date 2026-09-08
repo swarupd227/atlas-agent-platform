@@ -33,7 +33,7 @@ import type { RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import type { Skill } from "@shared/schema";
-import { buildAttachmentContext } from "./attachment-context";
+import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds } from "./brand-assets";
 
 // Fallback for agents created before maxToolIterations existed / with it
@@ -302,9 +302,9 @@ export async function startWorkspaceRun(params: {
 
   const { context: attachmentContext, names: attachedNames } = await buildAttachmentContext(fileIds, orgId);
   const { context: brandContext } = await buildAttachmentContext(brandIds, orgId, [
-    "The organization keeps the following standing brand assets (logo, templates, approved imagery).",
+    "The organization keeps the following standing brand assets (logo, templates, approved imagery). Only a short text preview of each is shown here; the files themselves are available to you in full.",
     "They are available to every document you generate in this run — apply them where appropriate (e.g. place the logo, match the template's style) unless the user says otherwise.",
-  ]);
+  ], BRAND_ASSET_PREVIEW_CHARS);
   // What the model sees. `input` stays the user's own words everywhere else,
   // so run history and the KB retrieval query aren't swamped by file contents.
   const modelInput = [attachmentContext, brandContext, input].filter(Boolean).join("\n\n");

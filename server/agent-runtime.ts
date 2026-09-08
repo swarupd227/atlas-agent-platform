@@ -20,7 +20,7 @@ import type { RuleGroup, OutputContract } from "@shared/schema";
 // executePromptWithMcp). Kept as their own import lines rather than folded into
 // the ones above so the hunk stays independent of concurrent edits up there.
 import { ensureContainerFiles } from "./anthropic-code-execution";
-import { buildAttachmentContext } from "./attachment-context";
+import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds } from "./brand-assets";
 
 export function canonicalJsonStringify(obj: any): string {
@@ -1282,9 +1282,9 @@ export async function executePromptWithMcp(
               .map((f) => f.fileId),
           };
           const { context, names } = await buildAttachmentContext(brandIds, orgId, [
-            "The organization keeps the following standing brand assets (logo, master templates, approved imagery). The files themselves are uploaded into your code-execution container.",
+            "The organization keeps the following standing brand assets (logo, master templates, approved imagery). The files themselves are uploaded into your code-execution container; only a short text preview of each is shown here.",
             "Apply them to every document you generate in this run: when a master template (.pptx/.potx/.docx) is present, open it and build on its own layouts, theme, fonts and media rather than starting from a blank document, unless the task says otherwise.",
-          ]);
+          ], BRAND_ASSET_PREVIEW_CHARS);
           brandContext = context;
           steps.push({
             id: `step_${steps.length + 1}`,

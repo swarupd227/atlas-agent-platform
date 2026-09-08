@@ -806,6 +806,59 @@ function extractAnthropicServerToolData(content: Anthropic.ContentBlock[]): {
  */
 const MAX_PAUSE_TURN_CONTINUATIONS = 8;
 
+/**
+ * A paused turn is resumed by echoing the model's own content back, and that
+ * content carries every byte the sandbox printed (bash_code_execution_tool_result
+ * stdout/stderr). The echo is charged as input on the next leg, so a model that
+ * dumps a large file to stdout (live 2026-09-08: a Deck Assembler cat'ing a
+ * 15MB .pptx master's XML) turns its own inspection into a 400
+ * "prompt is too long: 314487 tokens > 200000" on the continuation, with no
+ * trace of why. These bounds keep a runaway echo under the context window:
+ * nothing is touched until the cumulative echoed output crosses the soft
+ * limit, after which each oversized result block is cut to the head with an
+ * in-band marker so the model knows what it lost and prints less next time.
+ */
+export const PAUSE_TURN_ECHO_SOFT_LIMIT_CHARS = 400_000; // ~100k tokens of sandbox output before any cut
+export const PAUSE_TURN_RESULT_BLOCK_CAP_CHARS = 60_000; // per result block once over the soft limit
+
+export function boundPausedTurnContent(
+  content: any[],
+  echoedCharsBefore: number,
+): { content: any[]; chars: number; truncatedBlocks: number } {
+  let chars = 0;
+  for (const block of content) {
+    const r = block?.content;
+    if (r && typeof r === "object") {
+      if (typeof r.stdout === "string") chars += r.stdout.length;
+      if (typeof r.stderr === "string") chars += r.stderr.length;
+    }
+  }
+  if (echoedCharsBefore + chars <= PAUSE_TURN_ECHO_SOFT_LIMIT_CHARS) return { content, chars, truncatedBlocks: 0 };
+
+  let truncatedBlocks = 0;
+  const cut = (s: string): string => {
+    if (s.length <= PAUSE_TURN_RESULT_BLOCK_CAP_CHARS) return s;
+    truncatedBlocks++;
+    return `${s.slice(0, PAUSE_TURN_RESULT_BLOCK_CAP_CHARS)}\n…[platform truncated this output: ${PAUSE_TURN_RESULT_BLOCK_CAP_CHARS} of ${s.length} characters kept. Your printed output is exhausting the context window -- print summaries, not file contents]`;
+  };
+  const bounded = content.map((block) => {
+    const r = block?.content;
+    if (!r || typeof r !== "object") return block;
+    const hasBig = (typeof r.stdout === "string" && r.stdout.length > PAUSE_TURN_RESULT_BLOCK_CAP_CHARS)
+      || (typeof r.stderr === "string" && r.stderr.length > PAUSE_TURN_RESULT_BLOCK_CAP_CHARS);
+    if (!hasBig) return block;
+    return {
+      ...block,
+      content: {
+        ...r,
+        ...(typeof r.stdout === "string" ? { stdout: cut(r.stdout) } : {}),
+        ...(typeof r.stderr === "string" ? { stderr: cut(r.stderr) } : {}),
+      },
+    };
+  });
+  return { content: bounded, chars, truncatedBlocks };
+}
+
 class AnthropicProvider implements LLMProvider {
   readonly providerName = "anthropic";
   private client: Anthropic | null = null;
@@ -950,6 +1003,8 @@ class AnthropicProvider implements LLMProvider {
     let costUsd = 0;
     let containerId: string | undefined = options?.anthropicContainer?.id;
     let stopReason: string | undefined;
+    // Sandbox output echoed back across continuations so far (see boundPausedTurnContent).
+    let echoedCodeExecChars = 0;
 
     for (let attempt = 0; ; attempt++) {
       // Reuse the container the previous leg ran in, so files written before the
@@ -978,8 +1033,16 @@ class AnthropicProvider implements LLMProvider {
           this.providerName,
         );
         cbRecordSuccess(this.providerName);
-      } catch (err) {
+      } catch (err: any) {
         cbRecordFailure(this.providerName);
+        // A context overflow on a continuation is almost always the echoed
+        // sandbox output, not the caller's prompt -- say so, or the caller
+        // spends the afternoon shrinking a prompt that was never the problem.
+        if (attempt > 0 && /prompt is too long/i.test(String(err?.message ?? ""))) {
+          try {
+            err.message = `${err.message} [pause_turn continuation ${attempt}: ${echoedCodeExecChars} chars of code-execution output were echoed back from earlier legs -- the sandbox printed too much; instruct the agent to print summaries instead of file contents]`;
+          } catch { /* read-only message on an exotic error type -- rethrow as-is */ }
+        }
         throw err;
       }
 
@@ -1014,7 +1077,12 @@ class AnthropicProvider implements LLMProvider {
         );
         break;
       }
-      anthropicMessages.push({ role: "assistant", content: response.content as any });
+      const echoed = boundPausedTurnContent(response.content as any[], echoedCodeExecChars);
+      echoedCodeExecChars += echoed.chars;
+      console.log(
+        `[llm-provider] pause_turn continuation ${attempt + 1}: last leg ${legPrompt} input tokens; sandbox output this leg ${echoed.chars} chars, cumulative ${echoedCodeExecChars}${echoed.truncatedBlocks ? `, ${echoed.truncatedBlocks} result block(s) truncated to stay under the context window` : ""}`,
+      );
+      anthropicMessages.push({ role: "assistant", content: echoed.content as any });
     }
 
     // A forced tool_choice returns the JSON as a tool_use input block, not
@@ -1146,6 +1214,7 @@ class AnthropicProvider implements LLMProvider {
     let costUsd = 0;
     let containerId: string | undefined = options?.anthropicContainer?.id;
     let stopReason: string | undefined;
+    let echoedCodeExecChars = 0;
 
     try {
       for (let attempt = 0; ; attempt++) {
@@ -1213,7 +1282,12 @@ class AnthropicProvider implements LLMProvider {
           );
           break;
         }
-        anthropicMessages.push({ role: "assistant", content: finalMsg.content as any });
+        const echoed = boundPausedTurnContent(finalMsg.content as any[], echoedCodeExecChars);
+        echoedCodeExecChars += echoed.chars;
+        console.log(
+          `[llm-provider] streamed pause_turn continuation ${attempt + 1}: last leg ${legPrompt} input tokens; sandbox output this leg ${echoed.chars} chars, cumulative ${echoedCodeExecChars}${echoed.truncatedBlocks ? `, ${echoed.truncatedBlocks} result block(s) truncated to stay under the context window` : ""}`,
+        );
+        anthropicMessages.push({ role: "assistant", content: echoed.content as any });
       }
 
       cbRecordSuccess(this.providerName);

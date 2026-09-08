@@ -68,9 +68,25 @@ export async function buildAttachmentContext(
   fileIds: string[],
   orgId?: string,
   framing?: string[],
+  /**
+   * Per-file cap on the inlined text. Unset = whole extraction, which is right
+   * for a user's own per-message attachment (the text IS the evidence). Set it
+   * for files that ride along as resources -- brand assets in particular: the
+   * bytes are already in the code-execution container, so the inlined text is
+   * only orientation. Five assets can be anything up to the 25MB upload cap
+   * each (a long PDF extracts to hundreds of thousands of chars), and their
+   * text would otherwise ride along on every document-capable run unbounded.
+   */
+  maxCharsPerFile?: number,
 ): Promise<{ context: string; names: string[] }> {
   const ordered = await readAttachedFiles(fileIds, orgId);
   if (!ordered.length) return { context: "", names: [] };
+
+  const bodyOf = (f: UploadedFileRow): string => {
+    const full = (f.extractedText ?? "").trim();
+    if (!maxCharsPerFile || full.length <= maxCharsPerFile) return full;
+    return `${full.slice(0, maxCharsPerFile)}\n[… preview only: ${maxCharsPerFile} of ${full.length} characters shown; the complete file is available to you as an uploaded file …]`;
+  };
 
   return {
     context: [
@@ -79,11 +95,18 @@ export async function buildAttachmentContext(
         "Base your answer on them; if a file appears truncated or unreadable, say so rather than guessing at what it might contain.",
       ]),
       "",
-      ...ordered.map((f) => renderBlock(f, f.extractedText ?? "")),
+      ...ordered.map((f) => renderBlock(f, bodyOf(f))),
     ].join("\n"),
     names: ordered.map((f) => f.filename),
   };
 }
+
+/**
+ * How much of a brand asset's text to inline as orientation. Five assets at
+ * this cap stay under ~8k tokens, leaving the request's budget for the actual
+ * work; the files themselves ride in the container in full.
+ */
+export const BRAND_ASSET_PREVIEW_CHARS = 6_000;
 
 /**
  * Authoring framing: the files are source documents (an SOP, a process
