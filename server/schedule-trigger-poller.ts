@@ -74,6 +74,16 @@ export async function fireOneScheduleTrigger(trigger: AgentTrigger, now: Date): 
     return { triggerId: trigger.id, fired: false };
   }
 
+  // Overlap guard: don't fire again while this trigger's previous run is
+  // still queued/processing. Confirmed live -- a cron interval shorter than
+  // the agent's actual run duration let two runs execute concurrently
+  // against the same non-isolated Playwright MCP browser session, which
+  // corrupted each other's page state and permanently hung one of the runs.
+  const activeJob = await storage.getActiveJobForTrigger(trigger.id);
+  if (activeJob) {
+    return { triggerId: trigger.id, fired: false, skipped: `previous run (job ${activeJob.id}) still ${activeJob.status}` };
+  }
+
   await storage.updateAgentTrigger(trigger.id, {
     lastFiredAt: now,
     fireCount: (trigger.fireCount || 0) + 1,

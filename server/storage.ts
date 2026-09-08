@@ -2492,6 +2492,27 @@ export class DatabaseStorage implements IStorage {
     return job ?? undefined;
   }
 
+  // Backs schedule-trigger-poller's overlap guard: a schedule trigger whose
+  // cron interval is shorter than a real run's duration must not fire again
+  // while its previous run is still going -- confirmed live that two
+  // concurrent runs sharing one non-isolated Playwright MCP browser session
+  // corrupt each other's page state (one run's snapshot returns the other
+  // run's page content) and can wedge a run into a permanent hang.
+  async getActiveJobForTrigger(triggerId: string) {
+    const [job] = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, "agent_run"),
+          or(eq(jobs.status, "queued"), eq(jobs.status, "processing")),
+          sql`payload->>'triggerId' = ${triggerId}`
+        )
+      )
+      .limit(1);
+    return job ?? undefined;
+  }
+
   async cancelScheduledRunsForDeployment(deploymentId: string) {
     await db
       .delete(jobs)
