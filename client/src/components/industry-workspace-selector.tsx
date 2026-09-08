@@ -22,6 +22,36 @@ import {
 type WizardStep = "select" | "configure" | "review";
 
 export function IndustryWorkspaceSelector() {
+  // Radix locks <body> with pointer-events:none while a modal is open and
+  // restores it when the close ANIMATION finishes. Switching industry from an
+  // already-configured workspace unmounts the confirm AlertDialog and mounts
+  // this wizard, and that restore is lost -- leaving the wizard fully rendered
+  // but completely unclickable, because every card inherits pointer-events:none
+  // from <body>. Deferring the switch by a macrotask (setTimeout 0) was tried
+  // and shipped, and was NOT enough: verified in production that the body style
+  // was still stuck with zero dialogs open, because the restore lands after the
+  // exit animation, well past a 0ms callback.
+  //
+  // Fix it where the symptom actually is, on a condition rather than a timing
+  // guess: once this wizard is mounted and no modal remains open, nothing has
+  // any business holding pointer-events on <body>.
+  useEffect(() => {
+    const release = () => {
+      if (!document.querySelector('[role="dialog"],[role="alertdialog"]')) {
+        if (document.body.style.pointerEvents === "none") {
+          document.body.style.removeProperty("pointer-events");
+        }
+      }
+    };
+    release();
+    // The stale value can also be written just after we mount, as the outgoing
+    // dialog finishes tearing down, so watch the attribute rather than firing
+    // once and hoping we won the race.
+    const obs = new MutationObserver(release);
+    obs.observe(document.body, { attributes: true, attributeFilter: ["style"] });
+    return () => obs.disconnect();
+  }, []);
+
   const { isSelected, setIndustry, setWorkspaceConfig } = useIndustry();
   const [selectedId, setSelectedId] = useState<IndustryId | null>(null);
   const [step, setStep] = useState<WizardStep>("select");
