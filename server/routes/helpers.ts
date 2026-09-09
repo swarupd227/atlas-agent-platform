@@ -630,31 +630,45 @@ RULES:
     return parts.join("\n");
   }
 
-  parts.push(`You are "${agent.name}", an AI agent managed on the ATLAS (Nous Agent Orchestrator Platform).`);
-  parts.push(`\nUNLIKE a generic AI assistant, you operate within a specific INDUSTRY CONTEXT with regulatory guardrails, policy enforcement, and domain ontology. Every response you give MUST reflect this context. This is what makes you different from ChatGPT or any generic LLM.`);
-
+  // Each logical section below is wrapped in an XML-style tag
+  // (<role>, <compliance_framework>, <policies>, ...). A 2,800+-token prose
+  // prompt with only "## Header" markers and no closing boundary is exactly
+  // the shape that makes a model read a policy statement as an instruction
+  // to the user (or vice versa) -- it has to infer where one section ends
+  // and the next begins from adjacency alone. An explicit closing tag
+  // removes that inference step. Content/wording is unchanged from before;
+  // only the section boundaries are new (scoped to this function only --
+  // agent.systemPrompt and agent-runtime.ts's own ad-hoc "## " sections are
+  // separate prompt-construction paths, not touched here).
+  const roleLines: string[] = [];
+  roleLines.push(`You are "${agent.name}", an AI agent managed on the ATLAS (Nous Agent Orchestrator Platform).`);
+  roleLines.push(`\nUNLIKE a generic AI assistant, you operate within a specific INDUSTRY CONTEXT with regulatory guardrails, policy enforcement, and domain ontology. Every response you give MUST reflect this context. This is what makes you different from ChatGPT or any generic LLM.`);
   if (agent.description) {
-    parts.push(`\nYour purpose: ${agent.description}`);
+    roleLines.push(`\nYour purpose: ${agent.description}`);
   }
+  parts.push(`<role>\n${roleLines.join("\n")}\n</role>`);
 
   if (agent.riskTier) {
     const autonomyMode = agent.autonomyMode || "assisted";
-    parts.push(`\n## OPERATIONAL PARAMETERS`);
-    parts.push(`- Risk Tier: ${agent.riskTier}`);
-    parts.push(`- Autonomy Mode: ${autonomyMode}`);
+    const opLines: string[] = [];
+    opLines.push(`## OPERATIONAL PARAMETERS`);
+    opLines.push(`- Risk Tier: ${agent.riskTier}`);
+    opLines.push(`- Autonomy Mode: ${autonomyMode}`);
     const autonomyInstructions: Record<string, string> = {
       manual: "You CANNOT take any action without explicit human approval. Always present options and wait for approval before proceeding.",
       assisted: "You can perform routine, low-risk actions autonomously but MUST request human approval for medium or high-risk decisions. Always explain your reasoning.",
       supervised: "You can operate semi-autonomously but a human supervisor reviews your outputs. Flag any decision that touches policy boundaries or high-risk factors for explicit sign-off.",
       autonomous: "You can operate with high autonomy on routine tasks, but MUST still respect hard-block policies and escalation rules. Self-audit your decisions against policy constraints.",
     };
-    parts.push(`- Behavioral Rule: ${autonomyInstructions[autonomyMode] || autonomyInstructions.assisted}`);
+    opLines.push(`- Behavioral Rule: ${autonomyInstructions[autonomyMode] || autonomyInstructions.assisted}`);
+    parts.push(`\n<operational_parameters>\n${opLines.join("\n")}\n</operational_parameters>`);
   }
 
   const compliance = Array.isArray(agent.complianceTags) ? agent.complianceTags : [];
   if (compliance.length > 0) {
-    parts.push(`\n## REGULATORY COMPLIANCE FRAMEWORK`);
-    parts.push(`You are bound by the following regulations and MUST actively reference them in your analysis:`);
+    const complianceLines: string[] = [];
+    complianceLines.push(`## REGULATORY COMPLIANCE FRAMEWORK`);
+    complianceLines.push(`You are bound by the following regulations and MUST actively reference them in your analysis:`);
     const regulationDescriptions: Record<string, string> = {
       TILA: "Truth in Lending Act — Requires clear disclosure of loan terms, APR, and total costs to borrowers. You must ensure all rate/cost information is transparently communicated.",
       ECOA: "Equal Credit Opportunity Act — Prohibits discrimination in lending. You must NEVER consider race, religion, national origin, sex, marital status, or age (except as permitted) in credit decisions.",
@@ -681,83 +695,99 @@ RULES:
     compliance.forEach((tag: string) => {
       const desc = regulationDescriptions[tag];
       if (desc) {
-        parts.push(`- **${tag}**: ${desc}`);
+        complianceLines.push(`- **${tag}**: ${desc}`);
       } else {
-        parts.push(`- **${tag}**: You must comply with this regulation in all responses and decisions.`);
+        complianceLines.push(`- **${tag}**: You must comply with this regulation in all responses and decisions.`);
       }
     });
-    parts.push(`\nWhen analyzing data or making recommendations, EXPLICITLY cite which regulation(s) inform your reasoning. For example: "Under ECOA, this factor cannot be considered..." or "Per TILA requirements, the APR must be disclosed as..."`);
+    complianceLines.push(`\nWhen analyzing data or making recommendations, EXPLICITLY cite which regulation(s) inform your reasoning. For example: "Under ECOA, this factor cannot be considered..." or "Per TILA requirements, the APR must be disclosed as..."`);
+    parts.push(`\n<compliance_framework>\n${complianceLines.join("\n")}\n</compliance_framework>`);
   }
 
   const policies = Array.isArray(agent.policyBindings) ? agent.policyBindings as Array<{ policyName?: string; name?: string; description?: string; enforcement?: string }> : [];
   if (policies.length > 0) {
-    parts.push(`\n## ACTIVE POLICY ENFORCEMENT`);
-    parts.push(`The following policies are bound to you and enforce behavioral constraints:`);
+    const policyLines: string[] = [];
+    policyLines.push(`## ACTIVE POLICY ENFORCEMENT`);
+    policyLines.push(`The following policies are bound to you and enforce behavioral constraints:`);
     policies.forEach(p => {
       const name = p.policyName || p.name || "Unnamed Policy";
       const enforcement = (p.enforcement || "soft").toUpperCase();
       const desc = p.description || "";
       if (enforcement === "HARD" || enforcement === "HARD_BLOCK") {
-        parts.push(`- 🛑 [HARD BLOCK] ${name}: ${desc || "Violation will halt the action immediately. You CANNOT bypass this."}`);
+        policyLines.push(`- 🛑 [HARD BLOCK] ${name}: ${desc || "Violation will halt the action immediately. You CANNOT bypass this."}`);
       } else {
-        parts.push(`- ⚠️ [SOFT WARN] ${name}: ${desc || "Violations are logged and flagged but do not block execution."}`);
+        policyLines.push(`- ⚠️ [SOFT WARN] ${name}: ${desc || "Violations are logged and flagged but do not block execution."}`);
       }
     });
-    parts.push(`\nFor HARD BLOCK policies: If your response would violate any of these, you MUST stop and trigger an approval_required block instead of proceeding.`);
-    parts.push(`For SOFT WARN policies: You may proceed but must acknowledge the policy consideration in your response.`);
+    policyLines.push(`\nFor HARD BLOCK policies: If your response would violate any of these, you MUST stop and trigger an approval_required block instead of proceeding.`);
+    policyLines.push(`For SOFT WARN policies: You may proceed but must acknowledge the policy consideration in your response.`);
+    parts.push(`\n<policies>\n${policyLines.join("\n")}\n</policies>`);
   }
 
   const ontologyTags = agent.ontologyTags && typeof agent.ontologyTags === "object" ? agent.ontologyTags : null;
   if (ontologyTags) {
-    parts.push(`\n## DOMAIN ONTOLOGY`);
-    parts.push(`You reason using the following industry knowledge graph concepts:`);
+    const ontologyLines: string[] = [];
+    ontologyLines.push(`## DOMAIN ONTOLOGY`);
+    ontologyLines.push(`You reason using the following industry knowledge graph concepts:`);
     if (Array.isArray(ontologyTags)) {
       ontologyTags.forEach((tag: any) => {
         if (typeof tag === "string") {
-          parts.push(`- ${tag}`);
+          ontologyLines.push(`- ${tag}`);
         } else if (tag.concept && tag.category) {
-          parts.push(`- ${tag.concept} (${tag.category}): ${tag.description || ""}`);
+          ontologyLines.push(`- ${tag.concept} (${tag.category}): ${tag.description || ""}`);
         }
       });
     } else if (typeof ontologyTags === "object") {
       Object.entries(ontologyTags).forEach(([key, val]) => {
         if (typeof val === "string") {
-          parts.push(`- ${key}: ${val}`);
+          ontologyLines.push(`- ${key}: ${val}`);
         } else if (Array.isArray(val)) {
-          parts.push(`- ${key}: ${val.join(", ")}`);
+          ontologyLines.push(`- ${key}: ${val.join(", ")}`);
         }
       });
     }
-    parts.push(`\nUse these domain concepts in your analysis. Reference specific ontology terms when they are relevant to the user's question.`);
+    ontologyLines.push(`\nUse these domain concepts in your analysis. Reference specific ontology terms when they are relevant to the user's question.`);
+    parts.push(`\n<domain_ontology>\n${ontologyLines.join("\n")}\n</domain_ontology>`);
   }
 
   const tools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig as Array<{ name?: string; description?: string }> : [];
   if (tools.length > 0) {
-    parts.push(`\n## TOOLS`);
-    parts.push(`You have access to these tools (simulate their behavior in conversation):`);
+    const toolLines: string[] = [];
+    toolLines.push(`## TOOLS`);
+    toolLines.push(`You have access to these tools (simulate their behavior in conversation):`);
     tools.forEach(t => {
-      parts.push(`- ${t.name}: ${t.description || "No description"}`);
+      toolLines.push(`- ${t.name}: ${t.description || "No description"}`);
     });
+    parts.push(`\n<tools>\n${toolLines.join("\n")}\n</tools>`);
   }
 
   const bp = agent.blueprintJson && typeof agent.blueprintJson === "object" ? agent.blueprintJson as Record<string, unknown> : {};
   const nodes = Array.isArray(bp.nodes) ? bp.nodes as Array<{ label?: string; type?: string }> : [];
   if (nodes.length > 0) {
-    parts.push(`\n## WORKFLOW STEPS`);
+    const workflowLines: string[] = [];
+    workflowLines.push(`## WORKFLOW STEPS`);
     nodes.forEach((n, i) => {
-      parts.push(`${i + 1}. ${n.label || "Step"} (${n.type || "action"})`);
+      workflowLines.push(`${i + 1}. ${n.label || "Step"} (${n.type || "action"})`);
     });
+    parts.push(`\n<workflow_steps>\n${workflowLines.join("\n")}\n</workflow_steps>`);
   }
 
-  parts.push(`\n## BEHAVIORAL GUIDELINES`);
-  parts.push(`- Respond helpfully and stay in character as "${agent.name}".`);
-  parts.push(`- ALWAYS ground your responses in your configured industry context, compliance frameworks, and policies.`);
-  parts.push(`- When searching the web, interpret and filter results through your regulatory and domain lens — do not just relay raw information.`);
-  parts.push(`- If asked about capabilities you don't have, explain what you would do if those tools were available.`);
-  parts.push(`- Cite specific regulations, policies, or ontology concepts by name when they are relevant.`);
+  const behaviorLines: string[] = [];
+  behaviorLines.push(`## BEHAVIORAL GUIDELINES`);
+  behaviorLines.push(`- Respond helpfully and stay in character as "${agent.name}".`);
+  behaviorLines.push(`- ALWAYS ground your responses in your configured industry context, compliance frameworks, and policies.`);
+  behaviorLines.push(`- When searching the web, interpret and filter results through your regulatory and domain lens — do not just relay raw information.`);
+  behaviorLines.push(`- If asked about capabilities you don't have, explain what you would do if those tools were available.`);
+  behaviorLines.push(`- Cite specific regulations, policies, or ontology concepts by name when they are relevant.`);
+  parts.push(`\n<behavioral_guidelines>\n${behaviorLines.join("\n")}\n</behavioral_guidelines>`);
 
+  // Content below is unchanged from before tagging was added -- the client
+  // (agent-playground.tsx, agent-wizard.tsx, governance.tsx) actively parses
+  // these exact ```risk_assessment/```decision/```approval_required fenced
+  // blocks to render rich UI cards, so only a wrapping tag was added here,
+  // nothing reworded.
   parts.push(`
-
+<output_format>
 IMPORTANT — STRUCTURED OUTPUT INSTRUCTIONS:
 When you perform analysis, assessments, or make decisions, you MUST embed structured blocks in your response using fenced code blocks with special labels. The UI will parse these and render them as rich visual cards. Always include these blocks alongside your natural language explanation.
 
@@ -802,7 +832,7 @@ RULES:
 - Include natural language explanation BEFORE and/or AFTER the blocks to provide context.
 - The JSON inside blocks must be valid JSON.
 - For approval_required: use this when the action crosses a policy boundary, involves HIGH/CRITICAL risk, or your autonomy mode is "assisted" or "supervised" and the action has significant impact.
-`);
+</output_format>`);
 
   return parts.join("\n");
 }
