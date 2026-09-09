@@ -57,6 +57,17 @@ function sameMinute(a: Date, b: Date): boolean {
   return Math.floor(a.getTime() / 60000) === Math.floor(b.getTime() / 60000);
 }
 
+// A genuinely wedged tool call (e.g. an MCP transport that never resolves --
+// see mcp-client.ts's MCP_CALL_TOOL_TIMEOUT_MS note) can leave a job stuck in
+// "processing" forever, since nothing else in the system currently times a
+// run out. Without a ceiling here, the overlap guard below would treat that
+// one hung job as a permanent lock on its trigger -- confirmed live: a job
+// stuck since 2026-09-08 blocked every later fire of its trigger, silently,
+// with the trigger's fireCount/lastFiredAt never advancing again. 30 minutes
+// is generous over every real run observed this project (typically 2-4 min)
+// while still being well short of "this is obviously never coming back."
+const MAX_ACTIVE_JOB_AGE_MS = 30 * 60 * 1000;
+
 export async function fireOneScheduleTrigger(trigger: AgentTrigger, now: Date): Promise<{ triggerId: string; fired: boolean; skipped?: string }> {
   const config = (trigger.config || {}) as Record<string, any>;
   const cron = config.cron as string | undefined;
@@ -81,7 +92,26 @@ export async function fireOneScheduleTrigger(trigger: AgentTrigger, now: Date): 
   // corrupted each other's page state and permanently hung one of the runs.
   const activeJob = await storage.getActiveJobForTrigger(trigger.id);
   if (activeJob) {
-    return { triggerId: trigger.id, fired: false, skipped: `previous run (job ${activeJob.id}) still ${activeJob.status}` };
+    const startedAt = activeJob.startedAt ?? activeJob.createdAt;
+    const ageMs = startedAt ? now.getTime() - new Date(startedAt).getTime() : 0;
+    if (ageMs < MAX_ACTIVE_JOB_AGE_MS) {
+      return { triggerId: trigger.id, fired: false, skipped: `previous run (job ${activeJob.id}) still ${activeJob.status}` };
+    }
+    // Older than any real run should take -- treat as abandoned rather than
+    // let it lock this trigger out forever.
+    await storage.updateJob(activeJob.id, {
+      status: "failed",
+      error: `Marked failed by schedule-trigger-poller: still "${activeJob.status}" after ${Math.round(ageMs / 60000)} minutes, exceeding the ${MAX_ACTIVE_JOB_AGE_MS / 60000}-minute staleness ceiling.`,
+      completedAt: now,
+    });
+    await storage.createAuditEvent({
+      actorType: "system",
+      action: "stale_job_marked_failed",
+      objectType: "agent_trigger",
+      objectId: trigger.id,
+      details: `Job ${activeJob.id} was still "${activeJob.status}" after ${Math.round(ageMs / 60000)} min -- marked failed so trigger ${trigger.id} isn't permanently locked out.`,
+    });
+    console.warn(`[schedule-trigger] Trigger ${trigger.id}: abandoned job ${activeJob.id} (${Math.round(ageMs / 60000)}m old) marked failed, proceeding to fire`);
   }
 
   await storage.updateAgentTrigger(trigger.id, {
