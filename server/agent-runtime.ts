@@ -1668,8 +1668,15 @@ After receiving tool results, provide a structured analysis with key findings, s
   // the turn ended having produced no file at all (live 2026-09-08). Give
   // those runs the larger ceiling both providers accept; everything else keeps
   // today's behaviour exactly.
+  // ...but only on the streaming path. Anthropic REFUSES a non-streaming request
+  // whose max_tokens is above ~21.3k ("streaming is required"), and
+  // completeWithFallback then quietly serves the turn from the other provider --
+  // which has no code execution at all, so the agent narrates a build it never
+  // did. Live 2026-09-09: a Deck Assembler "reported" a finished deck, with a
+  // fabricated download link, in 9 seconds on the fallback model.
+  const codeExecMaxTokens = onProgress ? 32768 : 21_000;
   const planCallMaxTokens = getCodeExecConfig()
-    ? 32768
+    ? codeExecMaxTokens
     : (planCallInputChars > 8000 ? 16384 : 4096);
 
   try {
@@ -1709,6 +1716,23 @@ After receiving tool results, provide a structured analysis with key findings, s
           [llmProvider, fallbackLlmProvider],
         ));
     const planCallLatencyMs = performance.now() - planCallStartMs;
+    // A code-execution run that gets served by the FALLBACK provider silently
+    // loses its container: the model has no way to run anything, and (observed
+    // live) reports a finished deliverable it never built. Make that visible
+    // instead of letting it pass as a completed run.
+    if (getCodeExecConfig() && planResult.actualProvider && planResult.actualProvider !== llmProvider.providerName) {
+      const msg = `Code execution was configured, but this turn was served by the fallback provider "${planResult.actualProvider}" instead of "${llmProvider.providerName}" -- no sandbox was available, so any file this run claims to have produced does not exist.`;
+      console.error(`[agent-runtime] Agent ${agentId}: ${msg}`);
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        name: "Code execution unavailable (provider fallback)",
+        type: "skill_resolution",
+        status: "failed",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        error: msg,
+      } as any);
+    }
     await captureCodeExecResult(planResult);
 
     totalPromptTokens += planResult.tokensUsed.prompt;
@@ -2097,7 +2121,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   tools: canonicalTools.length > 0 ? canonicalTools : undefined,
                   // Same reason as planCallMaxTokens: a code-execution agent may
                   // still be writing a long program on a later iteration.
-                  maxTokens: getCodeExecConfig() ? 32768 : 4096,
+                  maxTokens: getCodeExecConfig() ? codeExecMaxTokens : 4096,
                   ...(getCodeExecConfig() ?? {}),
                 },
                 (chunk) => {
@@ -2112,7 +2136,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   tools: canonicalTools.length > 0 ? canonicalTools : undefined,
                   // Same reason as planCallMaxTokens: a code-execution agent may
                   // still be writing a long program on a later iteration.
-                  maxTokens: getCodeExecConfig() ? 32768 : 4096,
+                  maxTokens: getCodeExecConfig() ? codeExecMaxTokens : 4096,
                   ...(getCodeExecConfig() ?? {}),
                 },
                 [llmProvider, fallbackLlmProvider],
