@@ -23,6 +23,10 @@ import {
   slugifyFilename,
   type DocumentFormat,
 } from "./document-renderer";
+import { fillPptxTemplate, templateFillSpecSchema } from "./document-template-fill";
+import { db } from "./db";
+import { uploadedFiles } from "@shared/schema";
+import { and, desc, eq } from "drizzle-orm";
 
 /** Synthetic server identity; `serverId` is what executeTool routes on. */
 export const BUILTIN_DOCUMENT_SERVER_ID = "builtin:document";
@@ -30,6 +34,7 @@ const BUILTIN_DOCUMENT_SERVER_NAME = "Document Generation";
 
 export const GENERATE_PPTX_TOOL = "generate_pptx";
 export const GENERATE_PDF_TOOL = "generate_pdf";
+export const FILL_TEMPLATE_TOOL = "fill_document_template";
 
 /**
  * Marker the engines look for on a tool result to fold the new file into the
@@ -76,6 +81,55 @@ const SPEC_JSON_SCHEMA = {
     },
   },
   required: ["title", "sections"],
+} as const;
+
+const TEMPLATE_FILL_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    templateFilename: {
+      type: "string",
+      description: "Filename of the template to fill, as shown in the template's description (e.g. the brand asset you were given).",
+    },
+    templateFileId: { type: "string", description: "Id of the template file, if known. Either this or templateFilename." },
+    outputTitle: { type: "string", description: "Title for the produced file." },
+    footer: { type: "string", description: "Optional text for every slide's footer placeholder." },
+    slides: {
+      type: "array",
+      description: "One entry per template slide you are filling or dropping, addressed by the template's own slide numbers.",
+      items: {
+        type: "object",
+        properties: {
+          slide: { type: "number", description: "1-based slide number in the template." },
+          drop: { type: "boolean", description: "Remove this slide from the output." },
+          shapes: {
+            type: "array",
+            description: "Text replacements for this slide's shapes.",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Shape name as it appears in the template." },
+                was: { type: "string", description: "Start of the shape's current text; only needed when shapes share a name." },
+                text: { type: "string", description: "Replacement text; use a newline to separate paragraphs." },
+              },
+              required: ["name", "text"],
+            },
+          },
+          table: {
+            type: "object",
+            description: "Cell text for a table on this slide. Row and column counts stay as the template has them.",
+            properties: {
+              name: { type: "string" },
+              rows: { type: "array", items: { type: "array", items: { type: "string" } } },
+            },
+            required: ["rows"],
+          },
+          notes: { type: "string", description: "Speaker notes for this slide." },
+        },
+        required: ["slide"],
+      },
+    },
+  },
+  required: ["outputTitle", "slides"],
 } as const;
 
 function toolDef(toolName: string, format: DocumentFormat, description: string): AvailableTool {
@@ -132,6 +186,20 @@ export function documentToolsForSkills(skills: Skill[], mode: DocumentGeneration
         "Use this whenever the user asks for a PDF, report or document. Supply the full content; " +
         "the file is rendered and returned to the user, so do not also paste the outline into your reply.",
     ),
+    {
+      serverId: BUILTIN_DOCUMENT_SERVER_ID,
+      serverName: BUILTIN_DOCUMENT_SERVER_NAME,
+      serverUrl: "",
+      toolName: FILL_TEMPLATE_TOOL,
+      toolDescription:
+        "Fill an EXISTING PowerPoint template with new text and attach the result to this run. " +
+        "Use this instead of generate_pptx whenever a template or branded master is available and the deck " +
+        "should keep that design: every picture, diagram, layout, colour and font stays exactly as the template " +
+        "has it, and only the text of the shapes you name changes. Address slides by the template's own slide " +
+        "numbers and shapes by the template's own shape names. The result reports any shape that did not match, " +
+        "so check that report rather than assuming the fill worked.",
+      toolInputSchema: TEMPLATE_FILL_JSON_SCHEMA,
+    },
   ];
 }
 
@@ -148,10 +216,12 @@ export async function executeBuiltinDocumentTool(
   args: Record<string, any>,
   ctx: { orgId?: string | null; agentId?: string; workspaceRunId?: string; traceId?: string },
 ): Promise<any> {
+  if (!ctx.agentId) throw new Error(`No agent context to generate a document for "${toolName}"`);
+  if (toolName === FILL_TEMPLATE_TOOL) return executeTemplateFill(args, ctx);
+
   const format: DocumentFormat | null =
     toolName === GENERATE_PPTX_TOOL ? "pptx" : toolName === GENERATE_PDF_TOOL ? "pdf" : null;
   if (!format) throw new Error(`Unknown document tool "${toolName}"`);
-  if (!ctx.agentId) throw new Error(`No agent context to generate a document for "${toolName}"`);
 
   const parsed = documentSpecSchema.safeParse(args);
   if (!parsed.success) {
@@ -197,6 +267,108 @@ export async function executeBuiltinDocumentTool(
       `Generated ${filename} (${spec.sections.length} ${format === "pptx" ? "slides" : "sections"}). ` +
       `It is already attached to this run and shown to the user as a download. ` +
       `Do not include a link, URL or file path in your reply, and do not repeat the document's contents.`,
+    [GENERATED_FILE_MARKER]: { id: row.id, filename: row.filename, mimeType: row.mimeType },
+  };
+}
+
+
+const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+/**
+ * Resolve the template the caller named. Files are looked up inside the
+ * caller's own organisation only, and by id or filename -- an agent knows the
+ * template by the name it was given, not by an id it never sees.
+ */
+async function loadTemplateBytes(
+  spec: { templateFileId?: string; templateFilename?: string },
+  orgId?: string | null,
+): Promise<{ content: Buffer; filename: string } | { error: string }> {
+  const scope = (extra: any) => (orgId ? and(extra, eq(uploadedFiles.organizationId, orgId)) : extra);
+
+  const rows = spec.templateFileId
+    ? await db.select().from(uploadedFiles).where(scope(eq(uploadedFiles.id, spec.templateFileId)))
+    : spec.templateFilename
+      ? await db
+          .select()
+          .from(uploadedFiles)
+          .where(scope(eq(uploadedFiles.filename, spec.templateFilename)))
+          .orderBy(desc(uploadedFiles.createdAt))
+          .limit(1)
+      : [];
+
+  const row = rows[0];
+  if (!row) {
+    return {
+      error: spec.templateFileId || spec.templateFilename
+        ? `No template file found matching ${spec.templateFileId ?? spec.templateFilename}.`
+        : "Supply templateFilename (or templateFileId) naming the template to fill.",
+    };
+  }
+  if (!row.content) return { error: `Template "${row.filename}" has no stored bytes to fill.` };
+  return { content: Buffer.from(row.content as any), filename: row.filename };
+}
+
+/** Fills a stored template and persists the result, same as the generators do. */
+async function executeTemplateFill(
+  args: Record<string, any>,
+  ctx: { orgId?: string | null; agentId?: string; workspaceRunId?: string; traceId?: string },
+): Promise<any> {
+  const parsed = templateFillSpecSchema.safeParse(args);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "Invalid template fill spec.",
+      details: parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`),
+    };
+  }
+  const spec = parsed.data;
+
+  const loaded = await loadTemplateBytes(spec, ctx.orgId);
+  if ("error" in loaded) return { ok: false, error: loaded.error };
+
+  let filled: Awaited<ReturnType<typeof fillPptxTemplate>>;
+  try {
+    filled = await fillPptxTemplate(loaded.content, spec);
+  } catch (err: any) {
+    // Returned rather than thrown: a malformed template is something the model
+    // can report to the user, and failing the whole run helps nobody.
+    return { ok: false, error: `Could not fill template "${loaded.filename}": ${err?.message ?? err}` };
+  }
+
+  const filename = `${slugifyFilename(spec.outputTitle, "presentation")}.pptx`;
+  const row = await storage.createAgentGeneratedFile({
+    organizationId: ctx.orgId ?? null,
+    agentId: ctx.agentId!,
+    workspaceRunId: ctx.workspaceRunId ?? null,
+    traceId: ctx.traceId ?? null,
+    filename,
+    mimeType: PPTX_MIME,
+    sizeBytes: filled.content.length,
+    source: "platform",
+    anthropicFileId: null,
+    content: filled.content,
+  } as any);
+
+  const { report } = filled;
+  return {
+    ok: true,
+    filename,
+    mimeType: PPTX_MIME,
+    sizeBytes: filled.content.length,
+    template: loaded.filename,
+    slidesInOutput: report.slidesInOutput,
+    slidesDropped: report.slidesDropped,
+    shapesFilled: report.shapesFilled,
+    tablesFilled: report.tablesFilled,
+    notesWritten: report.notesWritten,
+    unmatched: report.unmatched,
+    message:
+      `Filled ${loaded.filename} into ${filename}: ${report.shapesFilled} shape(s), ` +
+      `${report.tablesFilled} table(s), ${report.notesWritten} note(s), ${report.slidesInOutput} slide(s)` +
+      (report.unmatched.length > 0
+        ? `. ${report.unmatched.length} shape(s) did not match the template and were NOT filled -- report these.`
+        : ", every named shape matched.") +
+      ` The file is attached to this run and shown to the user as a download. Do not include a link, URL or file path in your reply.`,
     [GENERATED_FILE_MARKER]: { id: row.id, filename: row.filename, mimeType: row.mimeType },
   };
 }
