@@ -480,7 +480,12 @@ async function runTeamWorkspaceRun(
       environment: "workspace",
       status,
       inputSummary: input.slice(0, 500),
-      outputSummary: output.slice(0, 500),
+      // Untruncated -- this IS the signed, accountable record (see the
+      // comment above), and outputSummary is an unbounded text column.
+      // Capping it here silently desynced Signed Trace from what the user
+      // actually saw (test finding UI-TRACE-01: the trace cut off
+      // mid-sentence at a fixed length while the real response continued).
+      outputSummary: output,
       costUsd,
       latencyMs: Date.now() - startMs,
       modelId: agent.modelName || "gpt-4.1",
@@ -505,8 +510,11 @@ async function runTeamWorkspaceRun(
     console.error("[workspace-run] team trace write failed (non-fatal):", e.message);
   }
 
+  // Untruncated (UI-TRACE-01) -- this is what run-detail.tsx's "main
+  // output" renders; it must match the signed trace above verbatim, not
+  // just be "long enough" up to some arbitrary cap.
   await db.update(workspaceRuns).set({
-    status, outputSummary: output.slice(0, 4000), costUsd, traceId: traceId ?? undefined,
+    status, outputSummary: output, costUsd, traceId: traceId ?? undefined,
     checkpoint: {
       messages: [], iterationsUsed: 0, steps: waveResultsForTrace, totalCostUsd: costUsd,
       totalTokens: { prompt: 0, completion: 0, total: 0 },
@@ -786,7 +794,12 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
         environment: "workspace",
         status,
         inputSummary: runRow.requestText.slice(0, 500),
-        outputSummary: output.slice(0, 500),
+        // Untruncated -- this IS the signed, accountable record (see the
+        // comment above), and outputSummary is an unbounded text column.
+        // Capping it here silently desynced Signed Trace from what the user
+        // actually saw (test finding UI-TRACE-01: the trace cut off
+        // mid-sentence at a fixed length while the real response continued).
+        outputSummary: output,
         costUsd: Math.round(cp.totalCostUsd * 100000) / 100000,
         latencyMs: Date.now() - startMs,
         modelId: cp.modelName,
@@ -824,7 +837,8 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
     }
     await recordWorkspaceOutcomeEvent(agentId, orgId, status, cost);
     delete cp.pendingToolCalls; delete cp.pendingToolIndex;
-    await persist({ status, outputSummary: output.slice(0, 4000), costUsd: cost, traceId: traceId ?? undefined, pendingApprovalId: null, pendingSummary: null });
+    // Untruncated (UI-TRACE-01) -- must match the signed trace above verbatim.
+    await persist({ status, outputSummary: output, costUsd: cost, traceId: traceId ?? undefined, pendingApprovalId: null, pendingSummary: null });
     onEvent({ type: "completed", output, costUsd: cost, traceId, generatedFiles: cp.generatedFiles });
     const [fresh] = await db.select().from(workspaceRuns).where(eq(workspaceRuns.id, runId)).limit(1);
     return view(fresh);

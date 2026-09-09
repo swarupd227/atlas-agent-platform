@@ -879,7 +879,8 @@ function hashCode(str: string): number {
 
       await storage.updateTrace(trace.id, {
         status: "completed",
-        outputSummary: finalOutput.slice(0, 500),
+        // Untruncated (UI-TRACE-01) -- Signed Trace must match the real output.
+        outputSummary: finalOutput,
         costUsd: Math.round(costUsd * 100000) / 100000,
         latencyMs,
         toolCalls,
@@ -1863,7 +1864,8 @@ function hashCode(str: string): number {
 
       await storage.updateTrace(trace.id, {
         status: (mcpResult?.success === false || dagRunSuccess === false) ? "failed" : "completed",
-        outputSummary: finalOutput.slice(0, 500),
+        // Untruncated (UI-TRACE-01) -- Signed Trace must match the real output.
+        outputSummary: finalOutput,
         costUsd: Math.round(costUsd * 100000) / 100000,
         latencyMs,
         toolCalls,
@@ -2051,7 +2053,8 @@ function hashCode(str: string): number {
       const latencyMs = Date.now() - startTime;
       await storage.updateTrace(trace.id, {
         status: mcpResult.success === false ? "failed" : "completed",
-        outputSummary: String(outputText).slice(0, 500),
+        // Untruncated (UI-TRACE-01) -- Signed Trace must match the real output.
+        outputSummary: String(outputText),
         latencyMs,
         stepsJson: { source: "a2a_message", mcpEnabled: mcpServerIds.length > 0 },
         endedAt: new Date(),

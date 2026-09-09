@@ -245,7 +245,17 @@ const router = Router();
           // all (content is undefined and .length would throw), and the trace
           // should name the file the user actually sent.
           inputSummary: `Playground: ${storedContent.length > 120 ? storedContent.substring(0, 117) + "..." : storedContent}`,
-              outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
+              // Full response, untruncated -- outputSummary is a text column
+              // with no length limit, and this is the only place the Signed
+              // Trace / Response Trace view (trace-detail.tsx) reads the
+              // agent's output from. Truncating it here silently desynced the
+              // trace from what the user actually saw in the chat (test
+              // finding UI-TRACE-01: the trace cut off mid-sentence at a
+              // fixed length while the streamed response was complete).
+              // Callers that want a short preview (workspace.tsx's run list,
+              // monitor.tsx's activity feed) already do their own
+              // client-side truncation on top of this.
+              outputSummary: fullResponse,
               stepsJson: result.steps,
               modelId: agent.modelName || "gpt-4.1",
             });
@@ -315,7 +325,17 @@ const router = Router();
           // all (content is undefined and .length would throw), and the trace
           // should name the file the user actually sent.
           inputSummary: `Playground: ${storedContent.length > 120 ? storedContent.substring(0, 117) + "..." : storedContent}`,
-              outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
+              // Full response, untruncated -- outputSummary is a text column
+              // with no length limit, and this is the only place the Signed
+              // Trace / Response Trace view (trace-detail.tsx) reads the
+              // agent's output from. Truncating it here silently desynced the
+              // trace from what the user actually saw in the chat (test
+              // finding UI-TRACE-01: the trace cut off mid-sentence at a
+              // fixed length while the streamed response was complete).
+              // Callers that want a short preview (workspace.tsx's run list,
+              // monitor.tsx's activity feed) already do their own
+              // client-side truncation on top of this.
+              outputSummary: fullResponse,
               stepsJson: result.steps,
               modelId: "claude-opus-4-5",
               toolCalls: toolCalls.length > 0 ? toolCalls : null,
@@ -391,7 +411,8 @@ const router = Router();
           // all (content is undefined and .length would throw), and the trace
           // should name the file the user actually sent.
           inputSummary: `Playground: ${storedContent.length > 120 ? storedContent.substring(0, 117) + "..." : storedContent}`,
-            outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
+            // Untruncated -- see the MCP branch's createTrace above (UI-TRACE-01).
+            outputSummary: fullResponse,
             modelId: agent.modelName || "gpt-4.1",
           });
           await recordPlaygroundOutcomeEvent(agent);
@@ -427,7 +448,8 @@ const router = Router();
           // all (content is undefined and .length would throw), and the trace
           // should name the file the user actually sent.
           inputSummary: `Playground: ${storedContent.length > 120 ? storedContent.substring(0, 117) + "..." : storedContent}`,
-            outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
+            // Untruncated -- see the MCP branch's createTrace above (UI-TRACE-01).
+            outputSummary: fullResponse,
             modelId: "claude-opus-4-5",
           });
           await recordPlaygroundOutcomeEvent(agent);

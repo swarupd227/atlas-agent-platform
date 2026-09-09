@@ -1956,7 +1956,9 @@ async function writeDagRunTrace(
       environment: "blueprint",
       status: success ? "completed" : "failed",
       inputSummary: request.slice(0, 500),
-      outputSummary: output.slice(0, 500),
+      // Untruncated (UI-TRACE-01) -- Signed Trace must show the same
+      // response the run actually produced, not a fixed-length preview.
+      outputSummary: output,
       costUsd,
       latencyMs: Date.now() - startMs,
       modelId: agent?.modelName || "gpt-4.1",
