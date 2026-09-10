@@ -3323,7 +3323,19 @@ Rules:
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
       }
-      const { outcomeName, outcomeDescription, industry, existingKpis } = req.body;
+      const { existingKpis } = req.body;
+      // Both Outcome Builder callers (Quick Create "AI Suggest", AI Assistant
+      // "Suggest More") send name/description and industry as a bare id string;
+      // without these fallbacks the model was prompted with "Outcome: undefined"
+      // in the "undefined" industry and invented generic KPIs.
+      const industry = typeof req.body.industry === "string"
+        ? { id: req.body.industry, label: req.body.industry.replace(/_/g, " ") }
+        : req.body.industry;
+      const outcomeName = req.body.outcomeName ?? req.body.name;
+      const outcomeDescription = req.body.outcomeDescription ?? req.body.description;
+      if (!outcomeName && !outcomeDescription) {
+        return res.status(400).json({ error: "Outcome name or description required" });
+      }
 
       const industryNote = industry ? `The user operates in the "${industry.label}" industry. Use industry-standard KPIs, benchmarks, and measurement methods specific to ${industry.label}. Reference standards like ${industry.id === 'financial_services' ? 'SLA adherence, STP rates, false positive rates' : industry.id === 'healthcare' ? 'HEDIS measures, CMS Star ratings, readmission rates' : industry.id === 'manufacturing' ? 'OEE, MTBF, MTTR, first-pass yield' : industry.id === 'insurance' ? 'loss ratio, combined ratio, claims cycle time' : industry.id === 'retail' ? 'forecast accuracy, conversion rate, inventory turnover' : 'industry-standard metrics'}.` : '';
 
