@@ -97,6 +97,8 @@ function matchAll(xml: string, pattern: RegExp): RegExpExecArray[] {
 const xmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /** Visible text of an XML fragment, with entities resolved. */
 function textOf(xml: string): string {
   return matchAll(xml, /<a:t>([\s\S]*?)<\/a:t>/g)
@@ -111,17 +113,54 @@ function textOf(xml: string): string {
 }
 
 /**
+ * The first `<qname>` element in `xml`, whole: either self-closing, or running
+ * to its own closing tag. Matching "up to the first `/>`" instead stops inside
+ * any element that has children -- `<a:rPr><a:solidFill><a:schemeClr/>` -- and
+ * leaves it unclosed, which corrupts the part. None of the elements this module
+ * lifts (bodyPr, lstStyle, p, pPr, r, rPr) can contain another of its own name.
+ */
+function firstElement(xml: string, qname: string): string | undefined {
+  const open = new RegExp(`<${escapeRe(qname)}(?=[\\s/>])[^>]*>`).exec(xml);
+  if (!open) return undefined;
+  if (open[0].endsWith("/>")) return open[0];
+  const closeTag = `</${qname}>`;
+  const close = xml.indexOf(closeTag, open.index + open[0].length);
+  return close === -1 ? undefined : xml.slice(open.index, close + closeTag.length);
+}
+
+/**
+ * Why `xml` is not well-formed by tag balance, or null. Not a full parser, but
+ * it catches exactly what a text rewrite can break: an element cut in half.
+ */
+export function xmlBalanceProblem(xml: string): string | null {
+  const stack: string[] = [];
+  const tag = /<(\/?)([A-Za-z_][\w:.-]*)\b[^>]*?(\/?)>/g;
+  let m: RegExpExecArray | null;
+  while ((m = tag.exec(xml)) !== null) {
+    const [, closing, name, selfClosing] = m;
+    if (selfClosing) continue;
+    if (!closing) {
+      stack.push(name);
+      continue;
+    }
+    const open = stack.pop();
+    if (open !== name) return `</${name}> closes <${open ?? "nothing"}>`;
+  }
+  return stack.length ? `<${stack[stack.length - 1]}> is never closed` : null;
+}
+
+/**
  * Rebuild a text body's paragraphs around new text, keeping the first
  * paragraph's properties and its first run's properties as the style.
  */
 function rewriteTextBody(txBody: string, text: string, tag: "p" | "a"): string {
   const paragraphs = text.split("\n").map((p) => p.trim()).filter((p) => p.length > 0);
-  const bodyPr = txBody.match(/<a:bodyPr[\s\S]*?(?:\/>|<\/a:bodyPr>)/)?.[0] ?? "<a:bodyPr/>";
-  const lstStyle = txBody.match(/<a:lstStyle[\s\S]*?(?:\/>|<\/a:lstStyle>)/)?.[0] ?? "";
-  const firstPara = txBody.match(/<a:p>[\s\S]*?<\/a:p>/)?.[0] ?? "";
-  const pPr = firstPara.match(/<a:pPr[\s\S]*?(?:\/>|<\/a:pPr>)/)?.[0] ?? "";
-  const firstRun = firstPara.match(/<a:r>[\s\S]*?<\/a:r>/)?.[0] ?? "";
-  const rPr = firstRun.match(/<a:rPr[\s\S]*?(?:\/>|<\/a:rPr>)/)?.[0] ?? "";
+  const bodyPr = firstElement(txBody, "a:bodyPr") ?? "<a:bodyPr/>";
+  const lstStyle = firstElement(txBody, "a:lstStyle") ?? "";
+  const firstPara = firstElement(txBody, "a:p") ?? "";
+  const pPr = firstElement(firstPara, "a:pPr") ?? "";
+  const firstRun = firstElement(firstPara, "a:r") ?? "";
+  const rPr = firstElement(firstRun, "a:rPr") ?? "";
 
   const rendered = (paragraphs.length > 0 ? paragraphs : [""])
     .map((p) => `<a:p>${pPr}<a:r>${rPr}<a:t>${xmlEscape(p)}</a:t></a:r></a:p>`)
@@ -185,6 +224,11 @@ function fillTable(slideXml: string, table: { name?: string; rows: string[][] })
 
 const NOTES_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
 const NOTES_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+const NOTES_MASTER_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster";
+const SLIDE_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+const RELS_OPEN =
+  "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+  "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">";
 
 const notesSlideXml = (text: string) =>
   "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
@@ -217,6 +261,7 @@ export async function fillPptxTemplate(
   let presXml = await presFile.async("string");
   let relsXml = await relsFile.async("string");
   let contentTypes = (await zip.file("[Content_Types].xml")?.async("string")) ?? "";
+  const notesMasterPath = Object.keys(zip.files).find((p) => /^ppt\/notesMasters\/[^/]+\.xml$/.test(p));
 
   const relTarget = new Map<string, string>();
   for (const m of matchAll(relsXml, /<Relationship\b[^>]*>/g)) {
@@ -295,20 +340,30 @@ export async function fillPptxTemplate(
           zip.file(notesPath, notesXml.replace(body, body.replace(txBody, rewriteTextBody(txBody, entry.notes, "p"))));
           report.notesWritten++;
         }
+      } else if (!notesMasterPath) {
+        // A notes slide has to hang off a notes master. Writing one without it
+        // yields a package PowerPoint offers to "repair", so report it instead.
+        report.unmatched.push({ slide: entry.slide, name: "(speaker notes: the template has no notes master)" });
       } else {
-        // No notes slide yet: add the part, its content type and the slide's
-        // relationship to it, so the notes survive when PowerPoint opens it.
+        // No notes slide yet: add the part, its own relationships (the notes
+        // master and the slide it belongs to), its content type and the slide's
+        // relationship to it. PowerPoint needs every one of them to open the
+        // file without a repair prompt.
         const notesName = `notesSlideFill${entry.slide}.xml`;
         const notesPath = `ppt/notesSlides/${notesName}`;
         const relId = `rIdNotesFill${entry.slide}`;
         zip.file(notesPath, notesSlideXml(entry.notes));
+        zip.file(
+          `ppt/notesSlides/_rels/${notesName}.rels`,
+          RELS_OPEN +
+            `<Relationship Id="rId1" Type="${NOTES_MASTER_REL_TYPE}" Target="../notesMasters/${notesMasterPath.split("/").pop()}"/>` +
+            `<Relationship Id="rId2" Type="${SLIDE_REL_TYPE}" Target="../slides/${slot.path.split("/").pop()}"/>` +
+            "</Relationships>",
+        );
         const relTag = `<Relationship Id="${relId}" Type="${NOTES_REL_TYPE}" Target="../notesSlides/${notesName}"/>`;
         slideRels = slideRels
           ? slideRels.replace(/<\/Relationships>/, `${relTag}</Relationships>`)
-          : "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
-            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
-            relTag +
-            "</Relationships>";
+          : RELS_OPEN + relTag + "</Relationships>";
         zip.file(slideRelsPath, slideRels);
         if (contentTypes && !contentTypes.includes(notesPath)) {
           contentTypes = contentTypes.replace(
@@ -326,11 +381,33 @@ export async function fillPptxTemplate(
   for (const slideNo of dropped) {
     const slot = slideSlots[slideNo - 1];
     if (!slot) continue;
+    const slideRelsPath = slot.path.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels";
+    const slideRels = (await zip.file(slideRelsPath)?.async("string")) ?? "";
+    const slideId = slot.tag.match(/\sid="(\d+)"/)?.[1];
+
     presXml = presXml.replace(slot.tag, "");
+    // Everything else that names the slide goes with it: a section list or a
+    // custom show still pointing at a removed slide is a package PowerPoint
+    // offers to repair.
+    if (slideId) presXml = presXml.replace(new RegExp(`<\\w+:sldId\\s+id="${slideId}"\\s*/>`, "g"), "");
+    presXml = presXml.replace(new RegExp(`<p:sld\\s+r:id="${escapeRe(slot.rId)}"\\s*/>`, "g"), "");
     relsXml = relsXml.replace(new RegExp(`<Relationship\\b[^>]*Id="${slot.rId}"[^>]*/>`), "");
     zip.remove(slot.path);
-    zip.remove(slot.path.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels");
+    zip.remove(slideRelsPath);
     if (contentTypes) contentTypes = contentTypes.replace(new RegExp(`<Override PartName="/${slot.path}"[^>]*/>`), "");
+
+    // Its notes slide belongs to it alone and would otherwise point at nothing.
+    const notesName = slideRels.match(/Target="\.\.\/notesSlides\/([^"]+)"/)?.[1];
+    if (notesName) {
+      zip.remove(`ppt/notesSlides/${notesName}`);
+      zip.remove(`ppt/notesSlides/_rels/${notesName}.rels`);
+      if (contentTypes) {
+        contentTypes = contentTypes.replace(
+          new RegExp(`<Override PartName="/ppt/notesSlides/${escapeRe(notesName)}"[^>]*/>`),
+          "",
+        );
+      }
+    }
     report.slidesDropped.push(slideNo);
   }
   report.slidesInOutput = slideSlots.length - report.slidesDropped.length;
@@ -338,6 +415,15 @@ export async function fillPptxTemplate(
   zip.file(presPath, presXml);
   zip.file(relsPath, relsXml);
   if (contentTypes) zip.file("[Content_Types].xml", contentTypes);
+
+  // Last line of defence. A package with one malformed part will not open, and
+  // nothing downstream can tell that from a good fill -- so never return one.
+  const touchable = /^(ppt\/(slides|notesSlides)\/(_rels\/)?[^/]+\.(xml|rels)|ppt\/presentation\.xml|ppt\/_rels\/presentation\.xml\.rels|\[Content_Types\]\.xml)$/;
+  for (const path of Object.keys(zip.files)) {
+    if (!touchable.test(path)) continue;
+    const problem = xmlBalanceProblem(await zip.file(path)!.async("string"));
+    if (problem) throw new Error(`Template fill produced malformed XML in ${path} (${problem}); no file was produced.`);
+  }
 
   const content = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
   return { content, report };
