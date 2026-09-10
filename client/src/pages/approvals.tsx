@@ -116,7 +116,14 @@ export default function Approvals() {
   const { toast } = useToast();
   const approvalPerm = usePermission("approve_changes");
 
-  const { data: approvals, isLoading, isError, error, refetch } = useQuery<Approval[]>({ queryKey: ["/api/approvals"] });
+  // The app-wide default is staleTime: Infinity, which left this queue showing
+  // whatever it fetched first: an approval raised mid-session (a pipeline gate
+  // waiting on a human) never appeared until a hard reload.
+  const { data: approvals, isLoading, isError, error, refetch } = useQuery<Approval[]>({
+    queryKey: ["/api/approvals"],
+    refetchOnMount: "always",
+    refetchInterval: 30000,
+  });
   const { data: evalSuites } = useQuery<EvalSuite[]>({ queryKey: ["/api/evals"] });
   const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: outcomes } = useQuery<OutcomeContract[]>({ queryKey: ["/api/outcomes"] });
@@ -171,7 +178,7 @@ export default function Approvals() {
       }
     }
     return true;
-  });
+  }).sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
 
   const pending   = (approvals ?? []).filter(a => a.status === "pending").length;
   const approved  = (approvals ?? []).filter(a => a.status === "approved").length;
