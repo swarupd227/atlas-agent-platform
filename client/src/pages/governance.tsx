@@ -5896,7 +5896,13 @@ function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete, onToggleSt
         return;
       }
       setIsStructuredFormat(true);
-      setStructuredJsonEdit(JSON.stringify(enhanced, null, 2));
+      // Merge, don't replace. Save in JSON mode writes exactly this text as the
+      // whole policyJson, so showing the AI's bare {rules} here meant the next
+      // Save silently deleted the policy's guardrails, redaction patterns and
+      // enforcement level -- its actual runtime enforcement. Keep every
+      // existing key; take the rules (and only keys the policy lacks) from AI.
+      const existingJson = ((policy?.policyJson as any) || {}) as Record<string, unknown>;
+      setStructuredJsonEdit(JSON.stringify({ ...enhanced, ...existingJson, rules }, null, 2));
       setIsEditingStructured(true);
       toast({ title: "Rules enhanced by AI", description: `${rules.length} rules generated. Review and save when ready.` });
     },
@@ -6932,8 +6938,14 @@ function PolicyPackDetailDialog({
     },
     onSuccess: ({ data, idx }) => {
       const enhanced = data.enhancedRules;
-      setLocalEnhancements((prev) => ({ ...prev, [idx]: enhanced }));
-      onPersistEnhancement(idx, enhanced);
+      // Merge, don't replace: this is persisted as the policy's whole policyJson
+      // and applied as-is on install, so the AI's bare {rules} dropped every
+      // other key the template carried (8 pack templates set an enforcement
+      // level). Keep existing keys; take the rules from the AI.
+      const base = ((localEnhancements[idx] ?? pack.policies[idx]?.policyJson) || {}) as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...(enhanced || {}), ...base, rules: (enhanced as any)?.rules ?? (base as any).rules };
+      setLocalEnhancements((prev) => ({ ...prev, [idx]: merged }));
+      onPersistEnhancement(idx, merged);
       setEnhancingIdx(null);
       toast({ title: "Policy rules enhanced and saved", description: "The enriched rules have been persisted" });
     },
