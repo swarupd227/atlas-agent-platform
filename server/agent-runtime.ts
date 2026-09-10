@@ -8,7 +8,7 @@ import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } fr
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
-import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
+import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL } from "./builtin-document-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries } from "./routes/helpers";
@@ -1316,14 +1316,17 @@ export async function executePromptWithMcp(
   // Files produced by earlier nodes of the same Team DAG run (a Deck
   // Assembler's .pptx) ride into this worker's container, so a reviewer node
   // opens the real artifact instead of grading the producer's own summary of
-  // it. Framed even without a container: a text-only reviewer is told a file
-  // exists that it cannot inspect, so it says so rather than passing it on
-  // trust. Best-effort, never fails the node.
+  // it. Without a container, a reviewer offered inspect_document reads the file
+  // through that tool, by id; one with neither is told a file exists that it
+  // cannot inspect, so it says so rather than passing it on trust.
+  // Best-effort, never fails the node.
   let upstreamContext = "";
   const upstreamIds = options?.upstreamGeneratedFileIds ?? [];
   if (upstreamIds.length) {
     try {
       const canOpen = !!getCodeExecConfig();
+      const canInspect = !canOpen &&
+        documentToolsForSkills(resolvedActiveSkills, docGenerationMode).some(t => t.toolName === INSPECT_DOCUMENT_TOOL);
       const files = await ensureGeneratedContainerFiles(upstreamIds, orgId ?? undefined, canOpen);
       if (files.length) {
         const containerIds = files.map(f => f.fileId).filter((id): id is string => !!id);
@@ -1334,8 +1337,12 @@ export async function executePromptWithMcp(
           "## UPSTREAM DELIVERABLES",
           canOpen && containerIds.length
             ? "The following files were produced by earlier steps of this run and are uploaded into your code-execution container. Open and inspect the actual files; never rely on an earlier step's description of them."
-            : "The following files were produced by earlier steps of this run, but this agent has no code execution and cannot open them. State explicitly that you could not inspect them; do not report on their contents as if you had.",
-          ...files.map(f => `- ${f.filename ?? f.id} (${f.mimeType ?? "unknown type"}, ${f.sizeBytes ?? "?"} bytes)`),
+            : canInspect
+              ? "The following files were produced by earlier steps of this run. Inspect each one with the inspect_document tool, passing its file id (and the template it was filled from, when there is one); never rely on an earlier step's description of them. File ids are for that tool only: never show them to the user."
+              : "The following files were produced by earlier steps of this run, but this agent has no code execution and cannot open them. State explicitly that you could not inspect them; do not report on their contents as if you had.",
+          ...files.map(f => canInspect
+            ? `- ${f.filename ?? f.id} [file id: ${f.id}] (${f.mimeType ?? "unknown type"}, ${f.sizeBytes ?? "?"} bytes)`
+            : `- ${f.filename ?? f.id} (${f.mimeType ?? "unknown type"}, ${f.sizeBytes ?? "?"} bytes)`),
         ].join("\n");
         steps.push({
           id: `step_${steps.length + 1}`,

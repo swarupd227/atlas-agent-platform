@@ -331,6 +331,107 @@ describe("fillPptxTemplate", () => {
     expect(xmlBalanceProblem("<a:p><a:r>")).toMatch(/never closed/);
   });
 
+  it("gives each new paragraph the formatting of the template paragraph in the same position", async () => {
+    const withList = await JSZip.loadAsync(await buildTemplate());
+    const heading = '<a:p><a:pPr lvl="0"><a:buNone/></a:pPr><a:r><a:rPr lang="en-US" sz="2000" b="1"/><a:t>Heading</a:t></a:r></a:p>';
+    const item = '<a:p><a:pPr lvl="1"/><a:r><a:rPr lang="en-US" sz="1400"/><a:t>item</a:t></a:r></a:p>';
+    withList.file(
+      "ppt/slides/slide1.xml",
+      slideXml(
+        '<p:sp><p:nvSpPr><p:cNvPr id="2" name="List 1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/>' +
+          `<p:txBody><a:bodyPr/><a:lstStyle/>${heading}${item}</p:txBody></p:sp>`,
+      ),
+    );
+    const template = (await withList.generateAsync({ type: "nodebuffer" })) as Buffer;
+    const { content } = await fillPptxTemplate(template, {
+      outputTitle: "Filled",
+      slides: [{ slide: 1, shapes: [{ name: "List 1", text: "New heading\nOne\nTwo" }] }],
+    });
+    const paras = (await readSlides(content)).parts["ppt/slides/slide1.xml"].match(/<a:p>[\s\S]*?<\/a:p>/g)!;
+    expect(paras).toHaveLength(3);
+    expect(paras[0]).toContain("<a:buNone/>");
+    expect(paras[0]).toContain('sz="2000" b="1"');
+    for (const p of paras.slice(1)) {
+      expect(p).toContain('<a:pPr lvl="1"/>');
+      expect(p).toContain('sz="1400"');
+      expect(p).not.toContain('b="1"');
+    }
+  });
+
+  it("keeps a bold label bold and the rest plain, and honours **bold** markup", async () => {
+    const withRuns = await JSZip.loadAsync(await buildTemplate());
+    const labelled =
+      '<a:p><a:r><a:rPr lang="en-US" b="1"/><a:t>Owner:</a:t></a:r><a:r><a:rPr lang="en-US"/><a:t> Marketing</a:t></a:r></a:p>';
+    withRuns.file(
+      "ppt/slides/slide1.xml",
+      slideXml(
+        '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Label 1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/>' +
+          `<p:txBody><a:bodyPr/><a:lstStyle/>${labelled}</p:txBody></p:sp>` +
+          sp("Plain 2", "plain words here"),
+      ),
+    );
+    const template = (await withRuns.generateAsync({ type: "nodebuffer" })) as Buffer;
+    const { content } = await fillPptxTemplate(template, {
+      outputTitle: "Filled",
+      slides: [
+        {
+          slide: 1,
+          shapes: [
+            { name: "Label 1", text: "Channel: Paid social" },
+            { name: "Plain 2", text: "Use **bold** here" },
+          ],
+        },
+      ],
+    });
+    const s1 = (await readSlides(content)).parts["ppt/slides/slide1.xml"];
+    expect(s1).toContain(
+      '<a:r><a:rPr lang="en-US" b="1"/><a:t>Channel:</a:t></a:r><a:r><a:rPr lang="en-US"/><a:t> Paid social</a:t></a:r>',
+    );
+    expect(s1).toContain(
+      '<a:r><a:rPr b="0" lang="en-US"/><a:t>Use </a:t></a:r>' +
+        '<a:r><a:rPr b="1" lang="en-US"/><a:t>bold</a:t></a:r>' +
+        '<a:r><a:rPr b="0" lang="en-US"/><a:t> here</a:t></a:r>',
+    );
+  });
+
+  it("shrinks text that needs more room than the template's, and reports what shrinking cannot save", async () => {
+    // A 200 x 40 pt box, 18 pt text, set to grow with its text.
+    const boxed = (name: string, text: string) =>
+      `<p:sp><p:nvSpPr><p:cNvPr id="2" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${200 * 12700}" cy="${40 * 12700}"/></a:xfrm></p:spPr>` +
+      `<p:txBody><a:bodyPr wrap="square"><a:spAutoFit/></a:bodyPr><a:lstStyle/>` +
+      `<a:p><a:r><a:rPr lang="en-US" sz="1800"/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const withBoxes = await JSZip.loadAsync(await buildTemplate());
+    withBoxes.file("ppt/slides/slide1.xml", slideXml(boxed("Fits 1", "Short") + boxed("Longer 2", "Short") + boxed("Far too long 3", "Short")));
+    const template = (await withBoxes.generateAsync({ type: "nodebuffer" })) as Buffer;
+
+    const { content, report } = await fillPptxTemplate(template, {
+      outputTitle: "Filled",
+      slides: [
+        {
+          slide: 1,
+          shapes: [
+            { name: "Fits 1", text: "Tiny" },
+            { name: "Longer 2", text: "Twenty-eight characters here and a bit more" },
+            { name: "Far too long 3", text: "word ".repeat(60).trim() },
+          ],
+        },
+      ],
+    });
+
+    const byName = Object.fromEntries(report.overflow.map((o) => [o.name, o]));
+    expect(byName["Fits 1"]).toBeUndefined();
+    expect(byName["Longer 2"]).toMatchObject({ slide: 1, resolved: true });
+    expect(byName["Longer 2"].fontScale).toBeLessThan(1);
+    expect(byName["Far too long 3"]).toMatchObject({ resolved: false });
+
+    const s1 = (await readSlides(content)).parts["ppt/slides/slide1.xml"];
+    const shape = (n: string) => s1.match(new RegExp(`<p:sp>(?:(?!</p:sp>)[\\s\\S])*?name="${n}"[\\s\\S]*?</p:sp>`))![0];
+    expect(shape("Fits 1")).toContain("<a:spAutoFit/>");
+    expect(shape("Longer 2")).toMatch(/<a:bodyPr wrap="square"><a:normAutofit fontScale="\d+" lnSpcReduction="10000"\/><\/a:bodyPr>/);
+    expect(xmlBalanceProblem(s1)).toBeNull();
+  });
+
   it("rejects a package that is not a presentation", async () => {
     const notPptx = (await new JSZip().file("hello.txt", "hi").generateAsync({ type: "nodebuffer" })) as Buffer;
     await expect(fillPptxTemplate(notPptx, { outputTitle: "x", slides: [{ slide: 1 }] })).rejects.toThrow(

@@ -29,6 +29,7 @@
 
 import { z } from "zod";
 import JSZipImport from "jszip";
+import { FIT_TOLERANCE, fitRatio, inheritedText } from "./document-text-fit";
 
 // jszip ships CJS; the server bundles to CJS where the module object itself is
 // the constructor, while ESM tooling wraps it in `.default`. Same dance as
@@ -40,7 +41,9 @@ const shapeFillSchema = z.object({
   was: z.string().optional().describe(
     "Start of the shape's CURRENT text. Only needed to disambiguate when several shapes on one slide share a name.",
   ),
-  text: z.string().describe("Replacement text. Use a newline to separate paragraphs."),
+  text: z.string().describe(
+    "Replacement text. Use a newline to separate paragraphs; wrap words in **double asterisks** to make them bold.",
+  ),
 });
 
 const tableFillSchema = z.object({
@@ -78,6 +81,10 @@ export interface TemplateFillReport {
   /** Every shape the map asked for that the template does not have. Callers are
    *  expected to surface these: a silent miss looks like a successful fill. */
   unmatched: Array<{ slide: number; name: string; was?: string }>;
+  /** Shapes whose new text needs clearly more room than the template's own text
+   *  had. `roomNeeded` is that ratio, `fontScale` the shrink-to-fit applied, and
+   *  `resolved` whether shrinking was enough; unresolved ones will overflow. */
+  overflow: Array<{ slide: number; name: string; roomNeeded: number; fontScale: number; resolved: boolean }>;
 }
 
 /** Collect every match. An exec loop rather than matchAll: the server's TS
@@ -149,24 +156,126 @@ export function xmlBalanceProblem(xml: string): string | null {
   return stack.length ? `<${stack[stack.length - 1]}> is never closed` : null;
 }
 
+interface ParagraphStyle {
+  pPr: string;
+  /** Style of the paragraph's first run. */
+  rPr: string;
+  /** When the first run is bold, the first later run that is not: the
+   *  template's "Label: text" pattern. */
+  bodyRPr?: string;
+}
+
+const isBold = (rPr: string) => /\sb="1"/.test(rPr);
+
+/** A copy of a run style with bold switched explicitly on or off. */
+function withBold(rPr: string, on: boolean): string {
+  const value = on ? "1" : "0";
+  if (!rPr) return `<a:rPr b="${value}"/>`;
+  const open = rPr.match(/^<a:rPr\b[^>]*>/)?.[0];
+  if (!open) return rPr;
+  return open.replace(/\sb="[01]"/, "").replace(/^<a:rPr/, `<a:rPr b="${value}"`) + rPr.slice(open.length);
+}
+
 /**
- * Rebuild a text body's paragraphs around new text, keeping the first
- * paragraph's properties and its first run's properties as the style.
+ * The formatting of each paragraph in a text body that has a run to lend it.
+ * New paragraph i takes paragraph i's formatting (extras take the last one), so
+ * a bold heading over plain lines, or bullets under an unbulleted lead-in,
+ * survive the rewrite instead of every line copying the first.
  */
+function paragraphStyles(txBody: string): ParagraphStyle[] {
+  const styles: ParagraphStyle[] = [];
+  let emptyParagraphStyle: ParagraphStyle | undefined;
+  for (const m of matchAll(txBody, /<a:p\b[^>]*?(?:\/>|>[\s\S]*?<\/a:p>)/g)) {
+    const para = m[0];
+    const pPr = firstElement(para, "a:pPr") ?? "";
+    const runs = matchAll(para, /<a:r\b[^>]*>[\s\S]*?<\/a:r>/g).map((r) => firstElement(r[0], "a:rPr") ?? "");
+    if (runs.length === 0) {
+      // An empty paragraph -- typically an empty placeholder. Its end-of-paragraph
+      // properties are the only run style it has.
+      const end = firstElement(para, "a:endParaRPr");
+      if (!emptyParagraphStyle) {
+        emptyParagraphStyle = {
+          pPr,
+          rPr: end ? end.replace(/^<a:endParaRPr/, "<a:rPr").replace(/<\/a:endParaRPr>$/, "</a:rPr>") : "",
+        };
+      }
+      continue;
+    }
+    const bodyRPr = isBold(runs[0]) ? runs.slice(1).find((r) => !isBold(r)) : undefined;
+    styles.push(bodyRPr !== undefined ? { pPr, rPr: runs[0], bodyRPr } : { pPr, rPr: runs[0] });
+  }
+  return styles.length > 0 ? styles : [emptyParagraphStyle ?? { pPr: "", rPr: "" }];
+}
+
+/**
+ * One paragraph's runs. `**text**` marks bold explicitly. Otherwise, where the
+ * template paragraph was "<bold label>: <plain text>", the new text is split at
+ * its first colon the same way.
+ */
+function runsFor(text: string, style: ParagraphStyle): Array<{ text: string; rPr: string }> {
+  if (text.includes("**")) {
+    const plain = style.bodyRPr ?? withBold(style.rPr, false);
+    const bold = withBold(style.bodyRPr ?? style.rPr, true);
+    return text
+      .split("**")
+      .map((t, i) => ({ text: t, rPr: i % 2 === 1 ? bold : plain }))
+      .filter((r) => r.text.length > 0);
+  }
+  if (style.bodyRPr !== undefined) {
+    const colon = text.indexOf(":");
+    if (colon > 0 && colon <= 60) {
+      return [
+        { text: text.slice(0, colon + 1), rPr: style.rPr },
+        { text: text.slice(colon + 1), rPr: style.bodyRPr },
+      ].filter((r) => r.text.length > 0);
+    }
+    return [{ text, rPr: style.bodyRPr }];
+  }
+  return [{ text, rPr: style.rPr }];
+}
+
+/** Rebuild a text body's paragraphs around new text in the template's formatting. */
 function rewriteTextBody(txBody: string, text: string, tag: "p" | "a"): string {
   const paragraphs = text.split("\n").map((p) => p.trim()).filter((p) => p.length > 0);
   const bodyPr = firstElement(txBody, "a:bodyPr") ?? "<a:bodyPr/>";
   const lstStyle = firstElement(txBody, "a:lstStyle") ?? "";
-  const firstPara = firstElement(txBody, "a:p") ?? "";
-  const pPr = firstElement(firstPara, "a:pPr") ?? "";
-  const firstRun = firstElement(firstPara, "a:r") ?? "";
-  const rPr = firstElement(firstRun, "a:rPr") ?? "";
+  const styles = paragraphStyles(txBody);
 
   const rendered = (paragraphs.length > 0 ? paragraphs : [""])
-    .map((p) => `<a:p>${pPr}<a:r>${rPr}<a:t>${xmlEscape(p)}</a:t></a:r></a:p>`)
+    .map((p, i) => {
+      const style = styles[Math.min(i, styles.length - 1)];
+      const runs = runsFor(p, style).map((r) => `<a:r>${r.rPr}<a:t>${xmlEscape(r.text)}</a:t></a:r>`);
+      return `<a:p>${style.pPr}${runs.join("")}</a:p>`;
+    })
     .join("");
 
   return `<${tag}:txBody>${bodyPr}${lstStyle}${rendered}</${tag}:txBody>`;
+}
+
+/** Shrinking further than this stops being legible; beyond it, report instead. */
+const MIN_FONT_SCALE = 0.7;
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Turn on PowerPoint's own shrink-on-overflow for a shape at the given scale.
+ * It replaces "resize shape to fit text" too, which would otherwise grow the
+ * box into its neighbours.
+ */
+function withShrinkToFit(shapeXml: string, scale: number): string {
+  const bodyPr = firstElement(shapeXml, "a:bodyPr");
+  if (!bodyPr) return shapeXml;
+  const current = Number(bodyPr.match(/<a:normAutofit\b[^>]*\sfontScale="(\d+)"/)?.[1] ?? 100000);
+  const fontScale = Math.max(1000, Math.round((current * scale) / 1000) * 1000);
+  const autofit = `<a:normAutofit fontScale="${fontScale}" lnSpcReduction="10000"/>`;
+
+  const selfClosing = bodyPr.endsWith("/>");
+  const open = selfClosing ? `${bodyPr.slice(0, -2).trimEnd()}>` : bodyPr.slice(0, bodyPr.indexOf(">") + 1);
+  const inner = selfClosing ? "" : bodyPr.slice(open.length, bodyPr.length - "</a:bodyPr>".length);
+  const rest = inner.replace(/<a:(?:normAutofit|spAutoFit|noAutofit)\b[^>]*\/>|<a:normAutofit\b[^>]*>[\s\S]*?<\/a:normAutofit>/g, "");
+  // Schema order inside bodyPr: prstTxWarp, then the autofit choice, then the rest.
+  const warp = firstElement(rest, "a:prstTxWarp") ?? "";
+  const after = warp ? rest.replace(warp, "") : rest;
+  return shapeXml.replace(bodyPr, () => `${open}${warp}${autofit}${after}</a:bodyPr>`);
 }
 
 const shapeName = (sp: string) => sp.match(/<p:cNvPr[^>]*\sname="([^"]*)"/)?.[1] ?? "";
@@ -178,7 +287,11 @@ const SHAPE_RE = /<p:sp>[\s\S]*?<\/p:sp>/g;
  * current text -- matches. Returns null when nothing matched, so the caller can
  * report the miss rather than assume success.
  */
-function fillShape(slideXml: string, target: { name: string; was?: string; text: string }): string | null {
+function fillShape(
+  slideXml: string,
+  target: { name: string; was?: string; text: string },
+  layout: { layoutXml: string | null; masterXml: string | null } = { layoutXml: null, masterXml: null },
+): { xml: string; fit: { roomNeeded: number; fontScale: number; resolved: boolean } | null } | null {
   const candidates = matchAll(slideXml, SHAPE_RE).map((m) => m[0]).filter((b) => shapeName(b) === target.name);
   if (candidates.length === 0) return null;
 
@@ -187,7 +300,22 @@ function fillShape(slideXml: string, target: { name: string; was?: string; text:
 
   const txBody = chosen.match(/<p:txBody>[\s\S]*?<\/p:txBody>/)?.[0];
   if (!txBody) return null;
-  return slideXml.replace(chosen, chosen.replace(txBody, rewriteTextBody(txBody, target.text, "p")));
+  let filled = chosen.replace(txBody, () => rewriteTextBody(txBody, target.text, "p"));
+
+  // The template's own text fits its box. New text that needs clearly more
+  // room gets PowerPoint's shrink-on-overflow at the estimated scale, and is
+  // reported either way, so text that shrinking cannot save gets shortened.
+  let fit: { roomNeeded: number; fontScale: number; resolved: boolean } | null = null;
+  const inherited = inheritedText(chosen, layout.layoutXml, layout.masterXml);
+  const ratio = fitRatio(chosen, filled, inherited);
+  if (ratio !== null && ratio > FIT_TOLERANCE) {
+    const scale = Math.max(MIN_FONT_SCALE, Math.sqrt(1 / ratio));
+    filled = withShrinkToFit(filled, scale);
+    const after = fitRatio(chosen, filled, inherited) ?? ratio;
+    fit = { roomNeeded: round2(ratio), fontScale: round2(scale), resolved: after <= FIT_TOLERANCE };
+  }
+  const result = filled;
+  return { xml: slideXml.replace(chosen, () => result), fit };
 }
 
 /** Footer placeholders carry a "ftr" placeholder type; slide numbers are left alone. */
@@ -197,7 +325,8 @@ function fillFooters(slideXml: string, footer: string): string {
     if (!/<p:ph[^>]*type="ftr"/.test(sp)) continue;
     const txBody = sp.match(/<p:txBody>[\s\S]*?<\/p:txBody>/)?.[0];
     if (!txBody) continue;
-    out = out.replace(sp, sp.replace(txBody, rewriteTextBody(txBody, footer, "p")));
+    const rewritten = rewriteTextBody(txBody, footer, "p");
+    out = out.replace(sp, () => sp.replace(txBody, () => rewritten));
   }
   return out;
 }
@@ -215,11 +344,25 @@ function fillTable(slideXml: string, table: { name?: string; rows: string[][] })
       const cellBody = tc.match(/<a:txBody>[\s\S]*?<\/a:txBody>/)?.[0];
       if (!cellBody) return;
       const text = table.rows[rowIdx]?.[colIdx] ?? "";
-      updatedTr = updatedTr.replace(tc, tc.replace(cellBody, rewriteTextBody(cellBody, text, "a")));
+      const rewritten = rewriteTextBody(cellBody, text, "a");
+      updatedTr = updatedTr.replace(tc, () => tc.replace(cellBody, () => rewritten));
     });
-    updatedTbl = updatedTbl.replace(tr, updatedTr);
+    const row = updatedTr;
+    updatedTbl = updatedTbl.replace(tr, () => row);
   });
-  return slideXml.replace(tbl, updatedTbl);
+  const filledTable = updatedTbl;
+  return slideXml.replace(tbl, () => filledTable);
+}
+
+/** The layout a slide uses and the master behind it, for what its placeholders inherit. */
+async function layoutAndMaster(zip: JSZipImport, slidePath: string): Promise<{ layoutXml: string | null; masterXml: string | null }> {
+  const read = async (path: string) => (await zip.file(path)?.async("string")) ?? null;
+  const slideRels = (await read(slidePath.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels")) ?? "";
+  const layout = slideRels.match(/Target="\.\.\/slideLayouts\/([^"]+)"/)?.[1];
+  if (!layout) return { layoutXml: null, masterXml: null };
+  const layoutRels = (await read(`ppt/slideLayouts/_rels/${layout}.rels`)) ?? "";
+  const master = layoutRels.match(/Target="\.\.\/slideMasters\/([^"]+)"/)?.[1];
+  return { layoutXml: await read(`ppt/slideLayouts/${layout}`), masterXml: master ? await read(`ppt/slideMasters/${master}`) : null };
 }
 
 const NOTES_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
@@ -284,6 +427,7 @@ export async function fillPptxTemplate(
     tablesFilled: 0,
     notesWritten: 0,
     unmatched: [],
+    overflow: [],
   };
 
   const dropped: number[] = [];
@@ -301,14 +445,16 @@ export async function fillPptxTemplate(
     }
 
     let slideXml = await slideFile.async("string");
+    const layout = entry.shapes?.length ? await layoutAndMaster(zip, slot.path) : undefined;
 
     for (const shape of entry.shapes ?? []) {
-      const next = fillShape(slideXml, shape);
-      if (next === null) {
+      const filled = fillShape(slideXml, shape, layout);
+      if (filled === null) {
         report.unmatched.push({ slide: entry.slide, name: shape.name, was: shape.was });
       } else {
-        slideXml = next;
+        slideXml = filled.xml;
         report.shapesFilled++;
+        if (filled.fit) report.overflow.push({ slide: entry.slide, name: shape.name, ...filled.fit });
       }
     }
 
@@ -337,7 +483,8 @@ export async function fillPptxTemplate(
           : undefined;
         const txBody = body?.match(/<p:txBody>[\s\S]*?<\/p:txBody>/)?.[0];
         if (notesXml && body && txBody) {
-          zip.file(notesPath, notesXml.replace(body, body.replace(txBody, rewriteTextBody(txBody, entry.notes, "p"))));
+          const rewritten = rewriteTextBody(txBody, entry.notes, "p");
+          zip.file(notesPath, notesXml.replace(body, () => body.replace(txBody, () => rewritten)));
           report.notesWritten++;
         }
       } else if (!notesMasterPath) {

@@ -24,8 +24,10 @@ import {
   type DocumentFormat,
 } from "./document-renderer";
 import { fillPptxTemplate, templateFillSpecSchema } from "./document-template-fill";
+import type { TemplateFillReport } from "./document-template-fill";
+import { describePptx, inspectPptx } from "./document-inspect";
 import { db } from "./db";
-import { uploadedFiles } from "@shared/schema";
+import { agentGeneratedFiles, uploadedFiles } from "@shared/schema";
 import { and, desc, eq } from "drizzle-orm";
 
 /** Synthetic server identity; `serverId` is what executeTool routes on. */
@@ -35,6 +37,7 @@ const BUILTIN_DOCUMENT_SERVER_NAME = "Document Generation";
 export const GENERATE_PPTX_TOOL = "generate_pptx";
 export const GENERATE_PDF_TOOL = "generate_pdf";
 export const FILL_TEMPLATE_TOOL = "fill_document_template";
+export const INSPECT_DOCUMENT_TOOL = "inspect_document";
 
 /**
  * Marker the engines look for on a tool result to fold the new file into the
@@ -109,7 +112,10 @@ const TEMPLATE_FILL_JSON_SCHEMA = {
               properties: {
                 name: { type: "string", description: "Shape name as it appears in the template." },
                 was: { type: "string", description: "Start of the shape's current text; only needed when shapes share a name." },
-                text: { type: "string", description: "Replacement text; use a newline to separate paragraphs." },
+                text: {
+                  type: "string",
+                  description: "Replacement text; use a newline to separate paragraphs and **double asterisks** for bold.",
+                },
               },
               required: ["name", "text"],
             },
@@ -130,6 +136,22 @@ const TEMPLATE_FILL_JSON_SCHEMA = {
     },
   },
   required: ["outputTitle", "slides"],
+} as const;
+
+const INSPECT_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    documentFileId: { type: "string", description: "Id of the deck to inspect, e.g. as listed under UPSTREAM DELIVERABLES." },
+    documentFilename: {
+      type: "string",
+      description: "Filename of the deck to inspect when its id is not known; the most recent file with that name is used.",
+    },
+    templateFilename: {
+      type: "string",
+      description: "The template the deck was filled from; enables the comparison checks. Given alone, the template itself is described.",
+    },
+    templateFileId: { type: "string", description: "Id of the template, if known. Either this or templateFilename." },
+  },
 } as const;
 
 function toolDef(toolName: string, format: DocumentFormat, description: string): AvailableTool {
@@ -200,6 +222,21 @@ export function documentToolsForSkills(skills: Skill[], mode: DocumentGeneration
         "so check that report rather than assuming the fill worked.",
       toolInputSchema: TEMPLATE_FILL_JSON_SCHEMA,
     },
+    {
+      serverId: BUILTIN_DOCUMENT_SERVER_ID,
+      serverName: BUILTIN_DOCUMENT_SERVER_NAME,
+      serverUrl: "",
+      toolName: INSPECT_DOCUMENT_TOOL,
+      toolDescription:
+        "Inspect a PowerPoint deck and get the facts back in one call -- no sandbox, no code. Two uses. " +
+        "(1) Review a produced deck: pass documentFileId (or documentFilename) and, when it was filled from a template, " +
+        "templateFilename. Returns whether every part is well-formed, package problems, and per slide: structure versus " +
+        "the template slide, text still identical to the template, text needing more room than the template's own text " +
+        "had (overflow, after any shrink-to-fit), shapes shrunk to fit, empty placeholders, prompt text, open markers, " +
+        "notes and footers. (2) Describe a template before writing for it: pass only templateFilename to get every " +
+        "slide's text shapes with their current text and maxChars, the text that fits there. Judge from these facts.",
+      toolInputSchema: INSPECT_JSON_SCHEMA,
+    },
   ];
 }
 
@@ -216,6 +253,8 @@ export async function executeBuiltinDocumentTool(
   args: Record<string, any>,
   ctx: { orgId?: string | null; agentId?: string; workspaceRunId?: string; traceId?: string },
 ): Promise<any> {
+  // Inspection reads documents and produces none, so it needs no agent to attribute a file to.
+  if (toolName === INSPECT_DOCUMENT_TOOL) return executeInspect(args, ctx);
   if (!ctx.agentId) throw new Error(`No agent context to generate a document for "${toolName}"`);
   if (toolName === FILL_TEMPLATE_TOOL) return executeTemplateFill(args, ctx);
 
@@ -362,13 +401,106 @@ async function executeTemplateFill(
     tablesFilled: report.tablesFilled,
     notesWritten: report.notesWritten,
     unmatched: report.unmatched,
+    overflow: report.overflow,
     message:
       `Filled ${loaded.filename} into ${filename}: ${report.shapesFilled} shape(s), ` +
       `${report.tablesFilled} table(s), ${report.notesWritten} note(s), ${report.slidesInOutput} slide(s)` +
       (report.unmatched.length > 0
         ? `. ${report.unmatched.length} shape(s) did not match the template and were NOT filled -- report these.`
         : ", every named shape matched.") +
+      overflowNote(report.overflow) +
       ` The file is attached to this run and shown to the user as a download. Do not include a link, URL or file path in your reply.`,
     [GENERATED_FILE_MARKER]: { id: row.id, filename: row.filename, mimeType: row.mimeType },
   };
+}
+
+/** What the fill's overflow report means, in words the calling model will act on. */
+function overflowNote(overflow: TemplateFillReport["overflow"]): string {
+  if (overflow.length === 0) return " All text fits the room the template gave it.";
+  const tooLong = overflow.filter((o) => !o.resolved);
+  return (
+    ` ${overflow.length - tooLong.length} shape(s) had more text than the template's and were shrunk to fit.` +
+    (tooLong.length > 0
+      ? ` ${tooLong.length} shape(s) are still too long even shrunk and will overflow -- list them ` +
+        `(the overflow entries with resolved=false) so their text can be shortened.`
+      : "")
+  );
+}
+
+/**
+ * The deck to inspect: a file an agent produced (by id, or the most recent with
+ * that filename) or an uploaded one -- always inside the caller's organisation.
+ */
+async function loadDocumentBytes(
+  spec: { documentFileId?: string; documentFilename?: string },
+  orgId?: string | null,
+): Promise<{ content: Buffer; filename: string } | { error: string }> {
+  const generatedScope = (extra: any) => (orgId ? and(extra, eq(agentGeneratedFiles.organizationId, orgId)) : extra);
+  const uploadedScope = (extra: any) => (orgId ? and(extra, eq(uploadedFiles.organizationId, orgId)) : extra);
+
+  let row: { filename: string | null; content: unknown } | undefined;
+  if (spec.documentFileId) {
+    [row] = await db.select().from(agentGeneratedFiles).where(generatedScope(eq(agentGeneratedFiles.id, spec.documentFileId)));
+    if (!row) [row] = await db.select().from(uploadedFiles).where(uploadedScope(eq(uploadedFiles.id, spec.documentFileId)));
+  } else if (spec.documentFilename) {
+    [row] = await db
+      .select()
+      .from(agentGeneratedFiles)
+      .where(generatedScope(eq(agentGeneratedFiles.filename, spec.documentFilename)))
+      .orderBy(desc(agentGeneratedFiles.createdAt))
+      .limit(1);
+    if (!row) {
+      [row] = await db
+        .select()
+        .from(uploadedFiles)
+        .where(uploadedScope(eq(uploadedFiles.filename, spec.documentFilename)))
+        .orderBy(desc(uploadedFiles.createdAt))
+        .limit(1);
+    }
+  }
+
+  const ref = spec.documentFileId ?? spec.documentFilename ?? "";
+  if (!row) return { error: `No document found matching ${ref}.` };
+  if (!row.content) {
+    return { error: `"${row.filename ?? ref}" was produced in a code-execution sandbox and its bytes are not stored here, so it cannot be inspected.` };
+  }
+  return { content: Buffer.from(row.content as any), filename: row.filename ?? ref };
+}
+
+/**
+ * inspect_document. Every check a reviewer would run is computed here in one
+ * pass, so the reviewer reads facts instead of opening the file in a sandbox a
+ * command at a time. With only a template, it describes the template instead.
+ */
+async function executeInspect(args: Record<string, any>, ctx: { orgId?: string | null }): Promise<any> {
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const documentFileId = str(args.documentFileId);
+  const documentFilename = str(args.documentFilename);
+  const templateFileId = str(args.templateFileId);
+  const templateFilename = str(args.templateFilename);
+  const wantsDocument = !!(documentFileId || documentFilename);
+  const wantsTemplate = !!(templateFileId || templateFilename);
+  if (!wantsDocument && !wantsTemplate) {
+    return { ok: false, error: "Name the deck to inspect (documentFileId or documentFilename), the template it came from, or both." };
+  }
+
+  let template: { content: Buffer; filename: string } | null = null;
+  if (wantsTemplate) {
+    const loaded = await loadTemplateBytes({ templateFileId, templateFilename }, ctx.orgId);
+    if ("error" in loaded) return { ok: false, error: loaded.error };
+    template = loaded;
+  }
+
+  try {
+    if (!wantsDocument && template) {
+      return { ok: true, template: template.filename, ...(await describePptx(template.content)) };
+    }
+    const doc = await loadDocumentBytes({ documentFileId, documentFilename }, ctx.orgId);
+    if ("error" in doc) return { ok: false, error: doc.error };
+    const report = await inspectPptx(doc.content, template?.content);
+    return { ok: true, document: doc.filename, template: template?.filename ?? null, ...report };
+  } catch (err: any) {
+    // Returned, not thrown: an unreadable file is a finding the reviewer reports.
+    return { ok: false, error: `Could not inspect the document: ${err?.message ?? err}` };
+  }
 }
