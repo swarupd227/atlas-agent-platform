@@ -1273,9 +1273,12 @@ export interface GovernancePromptEntry {
   hard: boolean;
   description: string;
   directives: string[];
+  /** 0 = bound to / scoped to this agent, 1 = outcome, 2 = env, 3 = org-wide. */
+  specificity: number;
 }
 
 const HARD_ENFORCEMENT_LEVELS = new Set(["hard", "strict", "block", "hard_block"]);
+const SCOPE_SPECIFICITY: Record<string, number> = { agent: 0, outcome: 1, env: 2, org: 3 };
 
 function renderPolicyRule(r: any): string {
   if (typeof r === "string") return r.trim();
@@ -1304,14 +1307,17 @@ function renderPolicyRule(r: any): string {
  * names produced "Rules: Rule 1; Rule 2" and nothing an agent could follow.
  */
 export async function resolveGovernancePromptEntries(agentId: string, orgId?: string): Promise<GovernancePromptEntry[]> {
-  let resolvedOrgId = orgId;
-  if (!resolvedOrgId) {
-    // Some runtime callers carry no org; org-scoped policies still need one.
-    const agentRow = await storage.getAgent(agentId);
-    resolvedOrgId = (agentRow as any)?.organizationId ?? undefined;
-  }
+  // The agent row supplies the org (some runtime callers carry none) and its
+  // explicit policyBindings, which rank first below.
+  const agentRow = await storage.getAgent(agentId, orgId);
+  const resolvedOrgId = orgId ?? (agentRow as any)?.organizationId ?? undefined;
   const bundle = await resolvePolicyBundle(agentId, resolvedOrgId);
   if (bundle.appliedPolicies.length === 0) return [];
+  const rawBindings = (agentRow as any)?.policyBindings;
+  const boundIds = new Set<string>(
+    Array.isArray(rawBindings) ? rawBindings.map((b: any) => b?.policyId).filter((x: unknown): x is string => typeof x === "string") : [],
+  );
+  const scopeById = new Map(bundle.appliedPolicies.map(a => [a.id, String(a.scope ?? "org")]));
 
   const rows = await storage.getPolicies(resolvedOrgId);
   const byId = new Map(rows.map(p => [p.id, p]));
@@ -1335,11 +1341,17 @@ export async function resolveGovernancePromptEntries(agentId: string, orgId?: st
       hard: HARD_ENFORCEMENT_LEVELS.has(enforcement),
       description: p.description || "",
       directives,
+      // scopeType alone can't tell an explicit binding apart (a binding to an
+      // outcome-scoped policy still reports "outcome"), so bindings rank first.
+      specificity: boundIds.has(p.id) ? 0 : (SCOPE_SPECIFICITY[scopeById.get(p.id) ?? "org"] ?? 3),
     });
   }
-  // Hard-enforced first, so a tight token budget drops advisory policies
-  // before binding ones.
-  entries.sort((a, b) => Number(b.hard) - Number(a.hard));
+  // Most specific first, then hard-enforced first within each tier. A policy
+  // bound to this agent on purpose is a far stronger signal than an org-wide
+  // default. Ordering by enforcement alone put 29 hard org-wide demo policies
+  // ahead of the P&C orchestrator's 5 bound Insurance policies; the 600-token
+  // runtime budget held 6 entries, all demo. Bound-first, all 5 fit in 513.
+  entries.sort((a, b) => a.specificity - b.specificity || Number(b.hard) - Number(a.hard));
   return entries;
 }
 
