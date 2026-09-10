@@ -1405,6 +1405,43 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  // Backs the AAR/warrant gates' standing-grant check (server/tool-dispatcher.ts):
+  // confirmed live (SC-A-05) that approving a tool-invocation approval only
+  // ever affected that ONE pending request. The gate itself never looked at
+  // approval history, so a Playground/run-test call has no pause/resume to
+  // re-dispatch with the one-shot humanApprovedApprovalId override (unlike
+  // Workspace/DAG runs) -- the very next attempt at the same tool re-hit
+  // REQUIRE_APPROVAL and created a brand new pending approval, forever, no
+  // matter how many times a human approved the previous one. Once a human has
+  // approved this exact (agent, tool) combination, that decision should stand
+  // for later calls too, not just the one already-paused request it was
+  // created for -- an explicit "approved" the gate can find without needing
+  // any run-specific plumbing. Only "approved" is a standing grant; a
+  // "rejected" decision does NOT permanently block -- it just leaves nothing
+  // special behind, same as no decision at all, so a later request can still
+  // be asked fresh.
+  // Matched on requestedBy, not the agentId column: both gate call sites that
+  // create these approvals (evaluateActionPolicy, evaluateWarrantCondition in
+  // tool-dispatcher.ts) set requestedBy to the calling agent's id but leave
+  // the agentId column null -- confirmed by reading both call sites, not
+  // assumed.
+  async getLatestApprovalDecision(agentId: string, type: string, objectName: string) {
+    const [approval] = await db
+      .select()
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.requestedBy, agentId),
+          eq(approvals.type, type),
+          eq(approvals.objectName, objectName),
+          or(eq(approvals.status, "approved"), eq(approvals.status, "rejected"))
+        )
+      )
+      .orderBy(desc(sql`coalesce(${approvals.decidedAt}, ${approvals.createdAt})`))
+      .limit(1);
+    return approval ?? undefined;
+  }
+
   async getAuditEvents(orgId?: string) {
     const scopedOrgId = resolveOrgIdForRead(orgId);
     if (scopedOrgId) {

@@ -323,19 +323,32 @@ export async function evaluateActionPolicy(
   }
 
   if (decision === "REQUIRE_APPROVAL" && agent) {
-    const approval = await storage.createApproval({
-      organizationId: agent.organizationId ?? undefined,
-      type: "tool-invocation",
-      objectType: "mcp-tool",
-      objectId: serverId ?? agentId,
-      objectName: toolName,
-      riskScore: computeApprovalRiskScore(riskLevel, isSideEffectful(tool)),
-      status: "pending",
-      requestedBy: agentId,
-      requesterType: "agent",
-      description: `AAR policy gate: agent '${agent.name}' requires approval to call tool '${toolName}'`,
-    });
-    approvalId = approval.id;
+    // Standing-grant check -- see storage.getLatestApprovalDecision. Without
+    // this, a Playground/run-test call (no pause/resume, so it can never
+    // re-dispatch with the one-shot humanApprovedApprovalId override) would
+    // hit REQUIRE_APPROVAL again on every single retry even after a human
+    // approved the previous request, since nothing here ever looked at
+    // approval history -- confirmed live as SC-A-05.
+    const priorDecision = await storage.getLatestApprovalDecision(agentId, "tool-invocation", toolName);
+    if (priorDecision?.status === "approved") {
+      decision = "ALLOW";
+      reason = `Tool '${toolName}' was approved by ${priorDecision.decidedBy ?? "a reviewer"} and remains authorized`;
+      rulesTriggered.push("previously-approved");
+    } else {
+      const approval = await storage.createApproval({
+        organizationId: agent.organizationId ?? undefined,
+        type: "tool-invocation",
+        objectType: "mcp-tool",
+        objectId: serverId ?? agentId,
+        objectName: toolName,
+        riskScore: computeApprovalRiskScore(riskLevel, isSideEffectful(tool)),
+        status: "pending",
+        requestedBy: agentId,
+        requesterType: "agent",
+        description: `AAR policy gate: agent '${agent.name}' requires approval to call tool '${toolName}'`,
+      });
+      approvalId = approval.id;
+    }
   }
 
   // Persist the decision (best-effort — do not let persistence failure block policy enforcement)
@@ -396,6 +409,17 @@ export async function evaluateWarrantCondition(
       };
     }
     if (warrant.grants === "requires_approval") {
+      // Standing-grant check -- see storage.getLatestApprovalDecision and the
+      // matching comment in evaluateActionPolicy above. Same defect, same
+      // fix: without this, a Playground/run-test call re-hits
+      // REQUIRE_APPROVAL on every retry forever, since the warrant's own
+      // `grants` value never changes just because one past request under it
+      // was approved -- confirmed live as SC-A-05 (Data Agent / database
+      // access under a warrant-gated task class).
+      const priorDecision = await storage.getLatestApprovalDecision(agentId, "tool-invocation", toolName);
+      if (priorDecision?.status === "approved") {
+        continue; // treated like grants === "autonomous" for this task class
+      }
       const approval = await storage.createApproval({
         organizationId: agent?.organizationId ?? undefined,
         type: "tool-invocation",
