@@ -34,6 +34,7 @@ import {
   computeConstraintGraph,
   generateOntologyEvalCases,
   resolvePolicyBundle,
+  resolveGovernancePromptEntries,
 } from "./helpers";
 import * as nodeCrypto from "crypto";
 import {
@@ -861,15 +862,16 @@ const router = Router();
 
       // Layer 2 — Industry Governance
       try {
-        const policies = await storage.getPolicies(getOrgId(req));
-        const activePolicies = policies.filter(p => p.status === "active");
+        // Same resolver the runtime uses, so this preview shows the policies
+        // an agent is actually given -- it previously listed the first 10 org
+        // policies regardless of bindings, disagreeing with the runtime.
+        const policyEntries = await resolveGovernancePromptEntries(req.params.id, getOrgId(req));
         const ontologyTags = Array.isArray((agent as any).ontologyTags) ? (agent as any).ontologyTags as Array<{ conceptId: string; conceptLabel: string }> : [];
         const lines: string[] = [];
         lines.push(`## GOVERNANCE POLICIES`);
-        activePolicies.slice(0, 10).forEach(p => {
-          const policyJson = p.policyJson as any;
-          const enforcement = policyJson?.enforcement || "soft";
-          lines.push(`- [${enforcement.toUpperCase()}] ${p.name} (${p.domain}): ${p.description || ""}`);
+        policyEntries.forEach(e => {
+          lines.push(`- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}] ${e.name} (${e.domain})${e.directives.length > 0 ? "" : `: ${e.description}`}`);
+          e.directives.slice(0, 4).forEach(d => lines.push(`  - ${d}`));
         });
         if (ontologyTags.length > 0) {
           lines.push(`\n## ONTOLOGY CONCEPTS`);
@@ -878,10 +880,10 @@ const router = Router();
         const preview = lines.join("\n");
         layers.push({
           id: "governance", name: "Industry Governance", description: "Active compliance policies and ontology concept tags",
-          status: activePolicies.length > 0 || ontologyTags.length > 0 ? "populated" : "not_configured",
+          status: policyEntries.length > 0 || ontologyTags.length > 0 ? "populated" : "not_configured",
           tokenEstimate: estimateTokens(preview), previewContent: preview,
           sourceLabel: "Governance", sourceUrl: "/governance",
-          itemCount: activePolicies.length + ontologyTags.length,
+          itemCount: policyEntries.length + ontologyTags.length,
         });
       } catch { layers.push({ id: "governance", name: "Industry Governance", description: "Active compliance policies and ontology concept tags", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load governance data." }); }
 

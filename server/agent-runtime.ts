@@ -11,7 +11,7 @@ import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGen
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
-import { resolvePolicyBundle } from "./routes/helpers";
+import { resolvePolicyBundle, resolveGovernancePromptEntries } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { RunSpanCollector } from "./run-spans";
 import { evaluateRule } from "./rule-evaluator";
@@ -324,19 +324,29 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
   }
 
   if (layerBudgets.governance > 0) try {
-    const policies = await storage.getPolicies();
-    const activePolicies = policies.filter(p => p.status === "active");
-    if (activePolicies.length > 0) {
+    // The policies that actually govern THIS agent, from the same resolver
+    // that gates its tools. This used to list the first 20 active policies
+    // across every organisation, in unspecified database order, ignoring
+    // bindings, scope and industry -- so every team agent was told to follow
+    // the same oldest demo policies (live: the 10 Insurance policies sat at
+    // positions 80-90 of 91 and never reached an Insurance journey agent).
+    const entries = await resolveGovernancePromptEntries(agent.agentId);
+    if (entries.length > 0) {
       const policyLines: string[] = [];
       policyLines.push(`\n## GOVERNANCE POLICIES (you must comply with these)`);
       let policyTokensUsed = estimateTokenCount(policyLines[0]);
-      for (const p of activePolicies.slice(0, 20)) {
-        const policyJson = p.policyJson as any;
-        const enforcement = policyJson?.enforcement || "soft";
-        const rules = Array.isArray(policyJson?.rules) ? policyJson.rules.slice(0, 3).map((r: any) => r.description || r.name || JSON.stringify(r)).join("; ") : "";
-        const line = `- [${enforcement.toUpperCase()}] ${p.name} (${p.domain}): ${p.description || ""}${rules ? ` Rules: ${rules}` : ""}`;
+      for (const e of entries) {
+        // Directives carry the behaviour; the description is only context, so
+        // show it only when a policy has no directives -- that lets more
+        // binding policies fit inside the governance budget.
+        const body = e.directives.length > 0
+          ? e.directives.slice(0, 4).map(d => `\n  - ${d}`).join("")
+          : `: ${e.description}`;
+        const line = `- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}] ${e.name} (${e.domain})${body}`;
         const lineTokens = estimateTokenCount(line);
-        if (policyTokensUsed + lineTokens > layerBudgets.governance) break;
+        // Skip rather than stop: one long policy shouldn't crowd out every
+        // policy after it. Entries arrive hard-enforced first.
+        if (policyTokensUsed + lineTokens > layerBudgets.governance) continue;
         policyLines.push(line);
         policyTokensUsed += lineTokens;
       }

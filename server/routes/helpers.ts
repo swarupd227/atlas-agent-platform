@@ -1265,6 +1265,84 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   };
 }
 
+export interface GovernancePromptEntry {
+  policyId: string;
+  name: string;
+  domain: string;
+  enforcement: string;
+  hard: boolean;
+  description: string;
+  directives: string[];
+}
+
+const HARD_ENFORCEMENT_LEVELS = new Set(["hard", "strict", "block", "hard_block"]);
+
+function renderPolicyRule(r: any): string {
+  if (typeof r === "string") return r.trim();
+  if (!r || typeof r !== "object") return "";
+  if (typeof r.description === "string" && r.description.trim()) return r.description.trim();
+  const value = typeof r.value === "string" ? r.value.trim() : r.value != null ? String(r.value) : "";
+  if (r.field && value) return `${r.name ? `${r.name}: ` : ""}${r.field} ${r.operator || "equals"} ${value}`;
+  if (value) return value;
+  // A bare auto-generated label says nothing an agent can act on.
+  return typeof r.name === "string" && !/^Rule \d+$/.test(r.name) ? r.name : "";
+}
+
+/**
+ * The policies that actually govern one agent, in the order it should read
+ * them, each with the directives that carry behaviour.
+ *
+ * Built on resolvePolicyBundle -- the same resolver that gates tools for a run
+ * -- so what an agent is TOLD matches what is ENFORCED on it: org/outcome/
+ * agent/env scopes, explicit policyBindings, and industry scoping. Prompt
+ * builders previously listed the first N active policies straight from
+ * storage, ignoring all of that.
+ *
+ * Directives are the policy's guardrails when it has any. Otherwise they are
+ * what each rule actually says: rules created in the governance UI are named
+ * "Rule 1".."Rule N" with the operative sentence in `value`, so rendering rule
+ * names produced "Rules: Rule 1; Rule 2" and nothing an agent could follow.
+ */
+export async function resolveGovernancePromptEntries(agentId: string, orgId?: string): Promise<GovernancePromptEntry[]> {
+  let resolvedOrgId = orgId;
+  if (!resolvedOrgId) {
+    // Some runtime callers carry no org; org-scoped policies still need one.
+    const agentRow = await storage.getAgent(agentId);
+    resolvedOrgId = (agentRow as any)?.organizationId ?? undefined;
+  }
+  const bundle = await resolvePolicyBundle(agentId, resolvedOrgId);
+  if (bundle.appliedPolicies.length === 0) return [];
+
+  const rows = await storage.getPolicies(resolvedOrgId);
+  const byId = new Map(rows.map(p => [p.id, p]));
+  const entries: GovernancePromptEntry[] = [];
+  for (const applied of bundle.appliedPolicies) {
+    const p = byId.get(applied.id);
+    if (!p) continue;
+    const pj = (p.policyJson as any) || {};
+    const enforcement = String(applied.enforcement || pj.enforcement || "monitor").toLowerCase();
+    const guardrails: string[] = Array.isArray(pj.guardrails)
+      ? pj.guardrails.filter((g: unknown): g is string => typeof g === "string" && g.trim().length > 0)
+      : [];
+    const directives = guardrails.length > 0
+      ? guardrails
+      : (Array.isArray(pj.rules) ? pj.rules : []).map(renderPolicyRule).filter((s: string) => s.length > 0);
+    entries.push({
+      policyId: p.id,
+      name: p.name,
+      domain: p.domain,
+      enforcement,
+      hard: HARD_ENFORCEMENT_LEVELS.has(enforcement),
+      description: p.description || "",
+      directives,
+    });
+  }
+  // Hard-enforced first, so a tight token budget drops advisory policies
+  // before binding ones.
+  entries.sort((a, b) => Number(b.hard) - Number(a.hard));
+  return entries;
+}
+
 export async function generateOntologyEvalCases(
   suiteId: string,
   orgId?: string,
