@@ -359,6 +359,39 @@ export function isV1AgentManifest(x: any): boolean {
   return !!x && typeof x === "object" && x.manifestVersion === "1.0" && !x.apiVersion;
 }
 
+export function isV2Manifest(x: any): boolean {
+  return !!x && typeof x === "object" && x.apiVersion === ASTRA_MANIFEST_API_VERSION;
+}
+
+/** Adapt a v2 `kind: agent` manifest into the v1.0 import shape the existing
+ *  import-manifest route already consumes, so v2 agent import reuses the proven
+ *  write path instead of a parallel one. Inverse of upgradeV1AgentManifest for
+ *  the agent fields (refs come back as names). */
+export function agentManifestToV1Shape(m: AstraManifest<AgentSpec>): Record<string, any> {
+  const s = (m.spec || {}) as AgentSpec;
+  return {
+    manifestVersion: "1.0",
+    agentVersion: m.metadata.version ? String(m.metadata.version) : "1.0.0",
+    ...(m.metadata.sourceId ? { agentId: m.metadata.sourceId } : {}),
+    agent: {
+      name: m.metadata.name,
+      description: s.description ?? null,
+      modelProvider: s.model?.provider ?? null,
+      modelName: s.model?.name ?? null,
+      riskTier: s.riskTier ?? null,
+      autonomyMode: s.autonomyMode ?? null,
+      toolsConfig: s.toolsConfig ?? null,
+      permissionsConfig: s.permissionsConfig ?? null,
+      systemPrompt: s.systemPrompt ?? null,
+    },
+    blueprint: s.blueprintJson ? { name: m.metadata.name, blueprintJson: s.blueprintJson, version: m.metadata.version ?? 1 } : null,
+    contextProfile: s.contextProfile ? { name: s.contextProfile.ref, version: s.contextProfile.version } : null,
+    memoryProfile: s.memoryProfile ? { name: s.memoryProfile.ref, version: s.memoryProfile.version } : null,
+    policies: Array.isArray(s.policies) ? s.policies.map((p) => ({ name: p.ref, domain: p.domain, version: p.version })) : [],
+    evalSuites: Array.isArray(s.evalSuites) ? s.evalSuites : [],
+  };
+}
+
 // ===========================================================================
 //  equality normalization + validation
 // ===========================================================================

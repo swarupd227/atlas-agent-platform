@@ -11,6 +11,7 @@ import { startMagenticTeamAgent } from "../magentic-engine";
 import { mergeIntoWorkflowState, sanitizeForCheckpoint, writeStageCompleteCheckpoint } from "../workflow-state-helpers";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { conversations, messages as chatMessages, traceSpans, kpiDefinitions } from "@shared/schema";
+import { teamToManifest, upgradeV1AgentManifest, agentManifestToV1Shape, isV2Manifest, validateManifest as validateManifestV2 } from "@shared/manifest-v2";
 import { z, ZodError } from "zod";
 import { parseAIJsonResponse, AIResponseParseError } from "../claude";
 import {
@@ -10654,6 +10655,28 @@ clean:
         ...sections,
       };
 
+      // Opt-in Astra Manifest v2 (?manifestVersion=2). Default is the exact v1.0
+      // object above, so existing callers (git-push/pull, the export UI) are
+      // untouched. v2 for a team emits the FULL node/edge graph + state schema
+      // (v1's teamGraph is lossy); v2 for a single agent upgrades the v1 object.
+      // Refs are raw ids for now — id->slug portability is the pending
+      // slug-authority decision, and the v2 serializer supports a resolver when
+      // we settle it. See shared/manifest-v2.ts.
+      let outputManifest: any = manifest;
+      if (String(req.query.manifestVersion || "") === "2") {
+        if (agent.agentType === "team" && blueprint) {
+          const stateSchemaRow = await storage.getDagStateSchemaByTeamAgent(agent.id);
+          outputManifest = teamToManifest({
+            blueprint: { name: agent.name, version: blueprint.version ?? undefined, id: agent.id },
+            nodes: teamGraphNodes,
+            edges: teamGraphEdges,
+            stateSchema: stateSchemaRow ? { fields: stateSchemaRow.fields as any, reducers: stateSchemaRow.reducers as any } : null,
+          });
+        } else {
+          outputManifest = upgradeV1AgentManifest(manifest);
+        }
+      }
+
       if (formatParam === "yaml") {
         const yamlLines: string[] = [];
         const toYaml = (obj: any, indent: number = 0): void => {
@@ -10685,11 +10708,11 @@ clean:
             }
           }
         };
-        toYaml(manifest);
+        toYaml(outputManifest);
         res.setHeader("Content-Type", "text/yaml");
         res.send(yamlLines.join("\n"));
       } else {
-        res.json(manifest);
+        res.json(outputManifest);
       }
     } catch (e: any) {
       console.error("[export-manifest] Error:", e);
@@ -10937,7 +10960,24 @@ clean:
 
   router.post("/api/agents/import-manifest", async (req, res) => {
     try {
-      const manifest = req.body;
+      let manifest = req.body;
+
+      // Astra Manifest v2 support. A v2 manifest carries apiVersion, not
+      // manifestVersion. To avoid a parallel (risky) write path, we adapt a v2
+      // kind:agent into the v1.0 shape the proven logic below already consumes.
+      // Team/flow v2 import is deliberately refused (clear 400, no partial
+      // write) until its write path lands in a later slice.
+      if (isV2Manifest(manifest)) {
+        const issues = validateManifestV2(manifest);
+        if (issues.length > 0) {
+          return res.status(400).json({ message: "Invalid v2 manifest", issues });
+        }
+        if (manifest.kind !== "agent") {
+          return res.status(400).json({ message: `v2 import currently supports kind:agent only; got kind:${manifest.kind}. Team/flow import lands in a later slice.` });
+        }
+        manifest = agentManifestToV1Shape(manifest);
+      }
+
       if (!manifest || !manifest.manifestVersion) {
         return res.status(400).json({ message: "Invalid manifest: missing manifestVersion" });
       }

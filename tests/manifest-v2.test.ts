@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   teamToManifest, manifestToTeam, flowToManifest, manifestToFlow,
-  upgradeV1AgentManifest, isV1AgentManifest, normalizeForCompare, validateManifest,
+  upgradeV1AgentManifest, isV1AgentManifest, isV2Manifest, agentManifestToV1Shape,
+  normalizeForCompare, validateManifest,
   ASTRA_MANIFEST_API_VERSION,
   type TeamInput, type FlowInput,
 } from "../shared/manifest-v2";
@@ -120,6 +121,33 @@ describe("Astra Manifest v2 — v1.0 upgrade", () => {
 
   it("does not mistake a v2 manifest for v1", () => {
     expect(isV1AgentManifest(teamToManifest(teamInput))).toBe(false);
+  });
+});
+
+describe("Astra Manifest v2 — S3 route adapters", () => {
+  const v1 = {
+    manifestVersion: "1.0", agentVersion: "2.0.0", agentId: "abc",
+    agent: { name: "Sales Analyst", description: "d", modelProvider: "anthropic", modelName: "claude-sonnet-4-5", riskTier: "HIGH", autonomyMode: "supervised", toolsConfig: [{ name: "sql" }], permissionsConfig: { x: 1 }, systemPrompt: "p" },
+    blueprint: { name: "bp", blueprintJson: { a: 1 }, version: 2 },
+  };
+
+  it("isV2Manifest distinguishes v1 from v2", () => {
+    expect(isV2Manifest(teamToManifest(teamInput))).toBe(true);
+    expect(isV2Manifest(v1)).toBe(false);
+  });
+
+  it("v1 -> v2 -> v1-shape preserves the agent's core config (import path fidelity)", () => {
+    const back = agentManifestToV1Shape(upgradeV1AgentManifest(v1));
+    expect(back.manifestVersion).toBe("1.0");
+    expect(back.agent.name).toBe("Sales Analyst");
+    expect(back.agent.modelProvider).toBe("anthropic");
+    expect(back.agent.modelName).toBe("claude-sonnet-4-5");
+    expect(back.agent.riskTier).toBe("HIGH");
+    expect(back.agent.toolsConfig).toEqual([{ name: "sql" }]);
+    expect(back.agent.permissionsConfig).toEqual({ x: 1 });
+    expect(back.blueprint.blueprintJson).toEqual({ a: 1 });
+    // The adapted shape is exactly what the existing import route expects.
+    expect(back.agent.name && back.manifestVersion).toBeTruthy();
   });
 });
 
