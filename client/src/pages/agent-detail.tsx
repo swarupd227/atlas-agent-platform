@@ -5080,6 +5080,8 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
                   </div>
                 )}
 
+                <OutputModeCard agent={agent} />
+
                 {hasDocumentSkill && (
                   <DocumentGenerationModeCard agent={agent} />
                 )}
@@ -7786,6 +7788,100 @@ function MandateDerivationReview({ agentId }: { agentId: string }) {
  * correctly every time. Shown only when the agent has a document-generating
  * skill attached (server/builtin-document-tools.ts's skillGrantsDocumentGeneration).
  */
+type OutputMode = "analysis" | "answer";
+
+const OUTPUT_MODE_OPTIONS: Array<{ value: OutputMode; label: string; description: string }> = [
+  {
+    value: "analysis",
+    label: "Structured summary",
+    description:
+      "After using tools, a final step summarises the results as JSON (summary, severity, findings, recommended actions). " +
+      "Right for monitoring and triage agents whose results feed dashboards.",
+  },
+  {
+    value: "answer",
+    label: "The agent's own answer",
+    description:
+      "The agent's final answer, in the format its instructions ask for, is the result as-is -- no summarising step. " +
+      "Right for agents that produce a deliverable: an outline, a report, a verdict, a document.",
+  },
+];
+
+/**
+ * agents.runtimeConfig.outputMode (server/output-mode.ts): whether a run's
+ * result is the platform's structured summary or the agent's own final answer.
+ */
+function OutputModeCard({ agent }: { agent: Agent }) {
+  const { toast } = useToast();
+  const runtimeConfig = ((agent as any).runtimeConfig as Record<string, any> | null) ?? {};
+  const current: OutputMode = runtimeConfig.outputMode === "answer" ? "answer" : "analysis";
+  const [saving, setSaving] = useState(false);
+
+  const setMode = async (mode: OutputMode) => {
+    if (mode === current) return;
+    setSaving(true);
+    try {
+      // PATCH replaces runtimeConfig as a whole, so merge into what is there.
+      const next: Record<string, any> = { ...runtimeConfig };
+      if (mode === "answer") next.outputMode = "answer";
+      else delete next.outputMode;
+      await apiRequest("PATCH", `/api/agents/${agent.id}`, { runtimeConfig: next });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      toast({ title: "Output format updated", description: OUTPUT_MODE_OPTIONS.find(o => o.value === mode)?.label });
+    } catch (e: any) {
+      toast({ title: "Failed to update", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card data-testid="section-output-mode">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+            <FileCheck className="w-3.5 h-3.5 text-primary" />
+          </div>
+          <div>
+            <CardTitle className="text-sm font-medium">Output</CardTitle>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              What a run returns as its result, and what a team's next step receives.
+            </p>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <RadioGroup
+          value={current}
+          onValueChange={(v) => setMode(v as OutputMode)}
+          className="flex flex-col gap-3"
+          data-testid="radiogroup-output-mode"
+        >
+          {OUTPUT_MODE_OPTIONS.map(opt => (
+            <label
+              key={opt.value}
+              htmlFor={`output-mode-${opt.value}`}
+              className={`flex items-start gap-2.5 rounded-md border p-2.5 cursor-pointer hover-elevate ${current === opt.value ? "border-primary/50 bg-primary/5" : ""}`}
+            >
+              <RadioGroupItem
+                value={opt.value}
+                id={`output-mode-${opt.value}`}
+                disabled={saving}
+                data-testid={`radio-output-mode-${opt.value}`}
+                className="mt-0.5"
+              />
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-xs font-medium">{opt.label}</span>
+                <span className="text-[11px] text-muted-foreground">{opt.description}</span>
+              </div>
+            </label>
+          ))}
+        </RadioGroup>
+      </CardContent>
+    </Card>
+  );
+}
+
 function DocumentGenerationModeCard({ agent }: { agent: Agent }) {
   const { toast } = useToast();
   const current: DocumentGenerationMode =

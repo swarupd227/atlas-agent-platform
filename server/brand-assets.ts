@@ -44,3 +44,47 @@ export async function resolveBrandAssetFileIds(
   const attached = new Set(alreadyAttached);
   return rows.map((r) => r.id).filter((id) => !attached.has(id));
 }
+
+type BrandAssetRow = { filename: string; kind: string | null; sizeBytes: number | null; extractMeta: unknown };
+
+/**
+ * The org's brand assets as a short prompt block, by filename -- for a
+ * document-capable agent WITHOUT a code-execution container. It cannot be
+ * handed the files, but it must still name a template to the document tools
+ * (fill_document_template, inspect_document take templateFilename). Empty
+ * string when the org has none.
+ */
+export async function describeBrandAssetsForPrompt(orgId: string): Promise<string> {
+  const rows = await db
+    .select({
+      filename: uploadedFiles.filename,
+      kind: uploadedFiles.kind,
+      sizeBytes: uploadedFiles.sizeBytes,
+      extractMeta: uploadedFiles.extractMeta,
+    })
+    .from(uploadedFiles)
+    .where(and(eq(uploadedFiles.organizationId, orgId), eq(uploadedFiles.context, "brand")))
+    .orderBy(desc(uploadedFiles.createdAt))
+    .limit(BRAND_ASSET_LIMIT);
+  return formatBrandAssetList(rows);
+}
+
+export function formatBrandAssetList(rows: BrandAssetRow[]): string {
+  if (rows.length === 0) return "";
+  const describe = (r: BrandAssetRow) => {
+    const meta = (r.extractMeta ?? {}) as { slides?: number; pages?: number };
+    const facts = [
+      r.kind,
+      meta.slides ? `${meta.slides} slides` : meta.pages ? `${meta.pages} pages` : null,
+      r.sizeBytes ? `${(r.sizeBytes / 1_048_576).toFixed(1)} MB` : null,
+    ].filter(Boolean);
+    return `- ${r.filename}${facts.length ? ` (${facts.join(", ")})` : ""}`;
+  };
+  return [
+    "## BRAND ASSETS",
+    "The organization's standing brand assets (templates, logos). Refer to a template by its filename exactly as listed -- " +
+      "that is the templateFilename the document tools take. Use the one the request names; if it names none and only one " +
+      "listed template fits the task, use that one.",
+    ...rows.map(describe),
+  ].join("\n");
+}

@@ -22,7 +22,8 @@ import type { RuleGroup, OutputContract } from "@shared/schema";
 // the ones above so the hunk stays independent of concurrent edits up there.
 import { ensureContainerFiles, ensureGeneratedContainerFiles } from "./anthropic-code-execution";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
-import { resolveBrandAssetFileIds } from "./brand-assets";
+import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
+import { resolveOutputMode, ownFinalAnswer, continuationMaxTokens } from "./output-mode";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -1311,6 +1312,15 @@ export async function executePromptWithMcp(
     } catch (brandErr: any) {
       console.warn(`[agent-runtime] brand asset attach skipped (non-fatal): ${brandErr?.message}`);
     }
+  } else if (orgId && documentToolsForSkills(resolvedActiveSkills, docGenerationMode).length > 0) {
+    // No container, so the files cannot ride along -- but an agent that fills
+    // or inspects a template still has to NAME it to the document tools. A
+    // short list by filename, no file contents.
+    try {
+      brandContext = await describeBrandAssetsForPrompt(orgId);
+    } catch (brandErr: any) {
+      console.warn(`[agent-runtime] brand asset listing skipped (non-fatal): ${brandErr?.message}`);
+    }
   }
   // ── Upstream deliverables → container ──────────────────────────────────────
   // Files produced by earlier nodes of the same Team DAG run (a Deck
@@ -2138,7 +2148,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   tools: canonicalTools.length > 0 ? canonicalTools : undefined,
                   // Same reason as planCallMaxTokens: a code-execution agent may
                   // still be writing a long program on a later iteration.
-                  maxTokens: getCodeExecConfig() ? codeExecMaxTokens : 4096,
+                  maxTokens: getCodeExecConfig() ? codeExecMaxTokens : continuationMaxTokens(resolveOutputMode(runtimeConfig)),
                   ...(getCodeExecConfig() ?? {}),
                 },
                 (chunk) => {
@@ -2153,7 +2163,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   tools: canonicalTools.length > 0 ? canonicalTools : undefined,
                   // Same reason as planCallMaxTokens: a code-execution agent may
                   // still be writing a long program on a later iteration.
-                  maxTokens: getCodeExecConfig() ? codeExecMaxTokens : 4096,
+                  maxTokens: getCodeExecConfig() ? codeExecMaxTokens : continuationMaxTokens(resolveOutputMode(runtimeConfig)),
                   ...(getCodeExecConfig() ?? {}),
                 },
                 [llmProvider, fallbackLlmProvider],
@@ -2321,8 +2331,16 @@ After receiving tool results, provide a structured analysis with key findings, s
           ? buildStrictJsonSchemaOption(analysisContract, llmProvider.providerName)
           : undefined;
 
+        // outputMode "answer" (server/output-mode.ts): the model already gave
+        // its final answer at the end of the tool loop, and that answer -- in
+        // the format its instructions define -- is the result. It still goes
+        // through the contract enforcement, parsing and masking below; only
+        // the second call that would rewrite it into a summary is skipped.
+        const ownAnswer = ownFinalAnswer(resolveOutputMode(runtimeConfig), currentToolCalls, currentContent);
         const llmCallStartMs = performance.now();
-        const analysisResult = await (onProgress && isConversational
+        const analysisResult = ownAnswer !== undefined
+          ? ({ content: ownAnswer, tokensUsed: { prompt: 0, completion: 0, total: 0 }, costUsd: 0 } as unknown as Awaited<ReturnType<typeof completeWithFallback>>)
+          : await (onProgress && isConversational
           ? streamCompleteWithFallback(
               analysisMessages,
               {
@@ -2440,6 +2458,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         }
 
         analysis.iterationsUsed = iterationsUsed;
+        if (ownAnswer !== undefined) analysis.answerSource = "agent";
 
         // Check if strict_with_interrupt triggered a non-success terminal state.
         // Uses the explicit shouldInterrupt flag from the enforcer — NOT validationStatus="failed"
