@@ -1179,6 +1179,10 @@ function NodeConfigPanel({
           floor with no way to change it, and a reviewer who stepped away for an
           hour came back to a failed run ("Gate timed out after 30 minutes").
           The engine still enforces that 30-minute floor as the minimum. */}
+      {node.nodeType === "internal_agent" && (
+        <RevisionPolicyEditor node={node} allNodes={allNodes} onUpdate={onUpdate} />
+      )}
+
       {(node.nodeType === "internal_agent" || node.nodeType === "remote_agent" || node.nodeType === "edge_gate") && (
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-muted-foreground">
@@ -1206,6 +1210,134 @@ function NodeConfigPanel({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * "Revise on failure" for a reviewer step: when its output matches the rule,
+ * the run goes back to the chosen upstream step with this step's findings and
+ * re-runs everything in between -- approval gates ask again -- then checks
+ * again, up to the round limit. Stored in node.config.revision; the engine
+ * (server/dag-execution-engine.ts, RevisionPolicy) ignores a target that is
+ * not actually upstream of this step.
+ */
+function RevisionPolicyEditor({
+  node,
+  allNodes,
+  onUpdate,
+}: {
+  node: TeamBlueprintNode;
+  allNodes: TeamBlueprintNode[];
+  onUpdate: (updates: Partial<TeamBlueprintNode>) => void;
+}) {
+  const current = ((node.config as any)?.revision ?? null) as { targetNodeId?: string; maxRounds?: number; when?: RuleGroup } | null;
+  const firstLeaf = (current?.when?.conditions ?? []).find((c): c is RuleLeaf => "field" in c);
+  const leaf: RuleLeaf = firstLeaf ?? { field: "summary", operator: "contains" as RuleOperator, value: "FAIL:" };
+
+  const [field, setField] = useState(leaf.field);
+  const [operator, setOperator] = useState<RuleOperator>(leaf.operator);
+  const [value, setValue] = useState(String(leaf.value ?? ""));
+  const [rounds, setRounds] = useState(String(current?.maxRounds ?? 1));
+  const [trackedNodeId, setTrackedNodeId] = useState(node.id);
+  if (trackedNodeId !== node.id) {
+    setTrackedNodeId(node.id);
+    setField(leaf.field);
+    setOperator(leaf.operator);
+    setValue(String(leaf.value ?? ""));
+    setRounds(String(current?.maxRounds ?? 1));
+  }
+
+  const targets = allNodes.filter(n => n.id !== node.id && (n.nodeType === "internal_agent" || n.nodeType === "remote_agent"));
+
+  const save = (patch: { targetNodeId?: string | null; field?: string; operator?: RuleOperator; value?: string; maxRounds?: string }) => {
+    const targetNodeId = patch.targetNodeId !== undefined ? patch.targetNodeId : current?.targetNodeId ?? null;
+    const nextConfig: Record<string, any> = { ...((node.config as any) || {}) };
+    if (!targetNodeId) {
+      delete nextConfig.revision;
+    } else {
+      const maxRounds = Math.min(3, Math.max(1, parseInt(patch.maxRounds ?? rounds) || 1));
+      nextConfig.revision = {
+        targetNodeId,
+        maxRounds,
+        when: {
+          combinator: "AND",
+          conditions: [{ field: patch.field ?? field, operator: patch.operator ?? operator, value: patch.value ?? value }],
+        },
+      };
+    }
+    onUpdate({ config: nextConfig } as any);
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border p-2" data-testid="section-revision-policy">
+      <label className="text-xs font-medium text-muted-foreground">Revise on failure</label>
+      <p className="text-[10px] text-muted-foreground">
+        When this step's output matches the rule, the run goes back to the chosen step with this step's findings,
+        re-runs everything in between (approval gates ask again) and checks again.
+      </p>
+      <select
+        className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+        value={current?.targetNodeId ?? ""}
+        onChange={e => save({ targetNodeId: e.target.value || null })}
+        data-testid="select-revision-target"
+      >
+        <option value="">Off</option>
+        {targets.map(t => (
+          <option key={t.id} value={t.id}>Send back to: {t.label}</option>
+        ))}
+      </select>
+      {current?.targetNodeId && (
+        <>
+          <label className="text-[11px] text-muted-foreground">When this step's output</label>
+          <div className="flex gap-1">
+            <Input
+              className="h-8 text-xs"
+              value={field}
+              onChange={e => setField(e.target.value)}
+              onBlur={() => save({ field })}
+              placeholder="summary"
+              data-testid="input-revision-field"
+            />
+            <select
+              className="h-8 rounded-md border bg-background px-1 text-xs"
+              value={operator}
+              onChange={e => {
+                const next = e.target.value as RuleOperator;
+                setOperator(next);
+                save({ operator: next });
+              }}
+              data-testid="select-revision-operator"
+            >
+              {(["contains", "not_contains", "==", "!="] as RuleOperator[]).map(op => (
+                <option key={op} value={op}>{op}</option>
+              ))}
+            </select>
+            <Input
+              className="h-8 text-xs"
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              onBlur={() => save({ value })}
+              placeholder="FAIL:"
+              data-testid="input-revision-value"
+            />
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Checked against this step's own output: one of its JSON fields, or <code>output</code> for its full text.
+          </p>
+          <label className="text-[11px] text-muted-foreground">Max rounds per run (1-3)</label>
+          <Input
+            type="number"
+            min={1}
+            max={3}
+            className="h-8 text-xs"
+            value={rounds}
+            onChange={e => setRounds(e.target.value)}
+            onBlur={() => save({ maxRounds: rounds })}
+            data-testid="input-revision-rounds"
+          />
+        </>
+      )}
+    </div>
   );
 }
 

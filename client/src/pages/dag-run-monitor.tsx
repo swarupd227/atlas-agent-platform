@@ -42,6 +42,8 @@ interface DagWaveNodeResult {
 }
 interface DagWaveResult {
   waveNumber: number;
+  /** Set when the wave ran again inside a revise-on-failure loop. */
+  revisionRound?: number;
   startedAt: string;
   completedAt: string;
   durationMs: number;
@@ -230,7 +232,8 @@ export default function DagRunMonitor() {
   const elapsedMs = startedMs
     ? (run.completedAt ? new Date(run.completedAt).getTime() : Date.now()) - startedMs
     : null;
-  const pendingWaves = (run.totalWaves ?? 0) - waveResults.length;
+  // A revision re-runs waves, so there can be more results than planned waves.
+  const pendingWaves = Math.max(0, (run.totalWaves ?? 0) - waveResults.length);
   const backHref = (teamAgent as any)?.blueprintId ? `/blueprints/${(teamAgent as any).blueprintId}` : "/agents/teams";
 
   return (
@@ -430,11 +433,11 @@ export default function DagRunMonitor() {
         <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">
           {isMagentic ? "Step-by-Step Progress" : "Wave-by-Wave Progress"}
         </span>
-        {waveResults.map(wave => (
-          <Card key={wave.waveNumber} data-testid={`card-wave-${wave.waveNumber}`}>
+        {waveResults.map((wave, waveIdx) => (
+          <Card key={`${wave.waveNumber}-${waveIdx}`} data-testid={`card-wave-${wave.waveNumber}${wave.revisionRound ? `-r${wave.revisionRound}` : ""}`}>
             <CardContent className="p-4 flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">{isMagentic ? "Step" : "Wave"} {wave.waveNumber}</span>
+                <span className="text-xs font-medium text-muted-foreground">{isMagentic ? "Step" : "Wave"} {wave.waveNumber}{wave.revisionRound ? ` · revision ${wave.revisionRound}` : ""}</span>
                 {wave.durationMs > 0 && <span className="text-[11px] text-muted-foreground">{durationLabel(wave.durationMs)}</span>}
               </div>
               <div className="flex flex-col gap-1.5">

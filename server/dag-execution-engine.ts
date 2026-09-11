@@ -128,6 +128,20 @@ export function inferOrchestrationPattern(totalNodes: number, totalWaves: number
   return "mixed"; // multiple waves, and at least one wave runs nodes concurrently
 }
 
+/**
+ * A reviewer node's "revise on failure" policy (node.config.revision). When the
+ * node's own output matches `when`, the run goes back to `targetNodeId` with
+ * the reviewer's findings and re-runs every node on the way back to the
+ * reviewer -- approval gates included, which ask a human again -- up to
+ * `maxRounds` times per run.
+ */
+export interface RevisionPolicy {
+  targetNodeId: string;
+  /** Evaluated against the reviewer's own output: its JSON fields, plus `output`, the full text. */
+  when: RuleGroup;
+  maxRounds: number;
+}
+
 export interface NodePlanConfig {
   agentId: string | null;
   stateKey: string;
@@ -145,6 +159,7 @@ export interface NodePlanConfig {
   label: string;
   gateType: string | null;
   refToolIds: string[] | null;
+  revision: RevisionPolicy | null;
 }
 
 export interface StateFieldDef {
@@ -233,6 +248,8 @@ export interface WaveExecutionResult {
   completedAt: string;
   durationMs: number;
   nodes: NodeExecutionResult[];
+  /** Set when this wave ran again inside a revise-on-failure loop. */
+  revisionRound?: number;
 }
 
 export interface DAGExecutionResult {
@@ -390,6 +407,7 @@ export function computeWaves(
       label: node.label,
       gateType: node.gateType || null,
       refToolIds: (node.refToolIds as string[] | null) || null,
+      revision: parseRevisionPolicy((node.config as any)?.revision, node.id, nodes),
     };
   }
 
@@ -433,6 +451,72 @@ export function computeWaves(
     totalWaves: waves.length,
     maxParallelism: waves.length > 0 ? Math.max(...waves.map((w) => w.nodes.length)) : 0,
   };
+}
+
+/** A node's revise-on-failure policy from node.config.revision; null when absent or unusable. */
+function parseRevisionPolicy(raw: any, nodeId: string, nodes: TeamBlueprintNode[]): RevisionPolicy | null {
+  if (!raw || typeof raw !== "object") return null;
+  const targetNodeId = typeof raw.targetNodeId === "string" ? raw.targetNodeId : "";
+  if (!targetNodeId || targetNodeId === nodeId || !nodes.some((n) => n.id === targetNodeId)) return null;
+  const when = raw.when;
+  if (!when || typeof when !== "object" || !Array.isArray(when.conditions) || when.conditions.length === 0) return null;
+  const maxRounds = Math.min(3, Math.max(1, Math.floor(Number(raw.maxRounds) || 1)));
+  return { targetNodeId, when: when as RuleGroup, maxRounds };
+}
+
+/**
+ * The nodes a revision re-runs: every node on some path from `target` to
+ * `source`, both included. Null when `source` is not downstream of `target`,
+ * i.e. there is nothing to send the work back through.
+ */
+export function revisionLoopNodes(target: string, source: string, edgeMap: Record<string, string[]>): string[] | null {
+  const walk = (start: string, next: (id: string) => string[]) => {
+    const seen = new Set<string>([start]);
+    const queue = [start];
+    while (queue.length > 0) {
+      for (const id of next(queue.shift()!)) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          queue.push(id);
+        }
+      }
+    }
+    return seen;
+  };
+  const downstream = walk(target, (id) => edgeMap[id] ?? []);
+  if (!downstream.has(source)) return null;
+  const reverse: Record<string, string[]> = {};
+  for (const [from, tos] of Object.entries(edgeMap)) {
+    for (const to of tos) {
+      if (!reverse[to]) reverse[to] = [];
+      reverse[to].push(from);
+    }
+  }
+  const upstream = walk(source, (id) => reverse[id] ?? []);
+  return Array.from(downstream).filter((id) => upstream.has(id));
+}
+
+/**
+ * Where a run's revise-on-failure loops stand, kept in shared state under a
+ * reserved key so a run resumed at a gate inside a loop carries on with that
+ * loop -- and its round count -- instead of starting over. Keys beginning with
+ * "__" are engine bookkeeping: agents and approvers never see them.
+ */
+export const REVISION_STATE_KEY = "__revision";
+
+interface RevisionBookkeeping {
+  rounds: Record<string, number>;
+  active?: { sourceNodeId: string; nodeIds: string[]; round: number };
+}
+
+function readRevisionBookkeeping(state: Record<string, any>): RevisionBookkeeping {
+  const raw = state[REVISION_STATE_KEY];
+  const rounds: Record<string, number> = raw && typeof raw.rounds === "object" && raw.rounds ? { ...raw.rounds } : {};
+  const a = raw?.active;
+  if (a && typeof a.sourceNodeId === "string" && Array.isArray(a.nodeIds)) {
+    return { rounds, active: { sourceNodeId: a.sourceNodeId, nodeIds: a.nodeIds.map(String), round: Number(a.round) || 1 } };
+  }
+  return { rounds };
 }
 
 // For a Handoff-mode edge, the routing decision comes from the SOURCE
@@ -483,7 +567,7 @@ function buildAgentInput(
   }
 
   for (const [key, value] of Object.entries(currentState)) {
-    if (value === null || value === undefined) continue;
+    if (value === null || value === undefined || key.startsWith("__")) continue;
     sections.push(`## STATE: ${key}`);
     sections.push(typeof value === "object" ? JSON.stringify(value, null, 2) : String(value));
     sections.push(``);
@@ -659,12 +743,23 @@ export class DAGExecutionEngine {
       }
     }
 
-    for (const wave of config.executionPlan.waves) {
-      if (config.resumeFromWave && wave.wave_number < config.resumeFromWave) continue;
+    const revision = readRevisionBookkeeping(currentState);
+    // Replaced once a revision rewinds the run: see the comment there.
+    let execConfig = config;
+    const waves = config.executionPlan.waves;
+
+    for (let waveIndex = 0; waveIndex < waves.length; waveIndex++) {
+      const wave = waves[waveIndex];
+      if (execConfig.resumeFromWave && wave.wave_number < execConfig.resumeFromWave) continue;
+      // Inside a revision loop only the loop's own nodes run again; every other
+      // node keeps the result it already has.
+      const loop = revision.active;
+      const runNodes = loop ? wave.nodes.filter((id) => loop.nodeIds.includes(id)) : wave.nodes;
+      if (runNodes.length === 0) continue;
       const waveStart = Date.now();
 
       const { eligibleNodeIds, skippedResults } = await this.filterGatedNodes(
-        wave.nodes,
+        runNodes,
         config.executionPlan.incomingEdges,
         currentState,
         nodeOutputText,
@@ -675,7 +770,7 @@ export class DAGExecutionEngine {
 
       const nodePromises = eligibleNodeIds.map((nodeId) => {
         config.onNodeStart?.(nodeId, wave.wave_number);
-        return this.executeNode(nodeId, currentState, config);
+        return this.executeNode(nodeId, currentState, execConfig);
       });
 
       let nodeResults: NodeExecutionResult[];
@@ -730,7 +825,7 @@ export class DAGExecutionEngine {
       // restore wave.nodes' original order so the wave display doesn't jumble
       // gated nodes to the front.
       const resultByNodeId = new Map(nodeResults.map((r) => [r.nodeId, r]));
-      nodeResults = wave.nodes.map((id) => resultByNodeId.get(id)!);
+      nodeResults = runNodes.map((id) => resultByNodeId.get(id)!);
 
       for (const nr of nodeResults) {
         config.onNodeComplete?.(nr.nodeId, wave.wave_number, nr);
@@ -755,6 +850,7 @@ export class DAGExecutionEngine {
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - waveStart,
         nodes: nodeResults,
+        ...(loop ? { revisionRound: loop.round } : {}),
       };
       waveResults.push(waveResult);
 
@@ -803,9 +899,83 @@ export class DAGExecutionEngine {
         success = false;
         break;
       }
+
+      // Revise on failure: a reviewer in this wave whose output matches its
+      // policy sends the run back to its target with its findings, and every
+      // node between the two runs again.
+      const rewind = this.decideRevision(nodeResults, nodeOutputText, config.executionPlan, revision);
+      if (rewind) {
+        currentState = {
+          ...currentState,
+          revision_request: rewind.request,
+          [REVISION_STATE_KEY]: { rounds: revision.rounds, active: revision.active },
+        };
+        // Persisted as if the run had just finished the wave before the
+        // target's, so a restart re-runs the loop rather than skipping it.
+        await config.onWaveComplete?.(rewind.targetWave - 1, currentState);
+        // The resume settings described the ORIGINAL pause. Inside the loop a
+        // gate must ask afresh: reusing that earlier approval would wave the
+        // revised work through without a human ever seeing it.
+        execConfig = { ...config, resumeFromWave: undefined, resumePriorWaveResults: undefined, resumePendingApprovalId: undefined };
+        waveIndex = rewind.targetWaveIndex - 1;
+        continue;
+      }
+      if (loop && runNodes.includes(loop.sourceNodeId)) {
+        // The reviewer ran again and passed (or has no rounds left): the loop is over.
+        revision.active = undefined;
+        currentState = { ...currentState, [REVISION_STATE_KEY]: { rounds: revision.rounds } };
+        await config.onWaveComplete?.(wave.wave_number, currentState);
+      }
     }
 
     return { finalState: currentState, waveResults, totalPromptTokens, totalCompletionTokens, totalCostUsd, totalToolCalls, success, skippedNodeIds: Array.from(skippedNodeIds) };
+  }
+
+  /**
+   * Whether a node that just ran sends the run back for revision: it has a
+   * policy, rounds left, and its own output matches the policy's rule. Records
+   * the round and the loop's nodes in `revision`, and says where to rewind to.
+   */
+  private decideRevision(
+    nodeResults: NodeExecutionResult[],
+    nodeOutputText: Map<string, string>,
+    plan: ComputedWavePlan,
+    revision: RevisionBookkeeping,
+  ): { request: string; targetWave: number; targetWaveIndex: number } | null {
+    for (const nr of nodeResults) {
+      if (nr.status !== "completed") continue;
+      const policy = plan.nodeConfig[nr.nodeId]?.revision;
+      if (!policy) continue;
+      const used = revision.rounds[nr.nodeId] ?? 0;
+      if (used >= policy.maxRounds) continue;
+      const text = nodeOutputText.get(nr.nodeId);
+      if (!text) continue;
+      const facts = { ...(extractStructuredOutput(text) ?? {}), output: text };
+      if (!evaluateRule(policy.when, facts).result) continue;
+      const nodeIds = revisionLoopNodes(policy.targetNodeId, nr.nodeId, plan.edgeMap);
+      const targetWaveIndex = plan.waves.findIndex((w) => w.nodes.includes(policy.targetNodeId));
+      if (!nodeIds || targetWaveIndex < 0) continue;
+
+      const round = used + 1;
+      revision.rounds[nr.nodeId] = round;
+      revision.active = { sourceNodeId: nr.nodeId, nodeIds, round };
+      const source = plan.nodeConfig[nr.nodeId];
+      const target = plan.nodeConfig[policy.targetNodeId];
+      return {
+        targetWave: plan.waves[targetWaveIndex].wave_number,
+        targetWaveIndex,
+        request: [
+          `REVISION ROUND ${round} of ${policy.maxRounds}: "${source.label}" reviewed the result and sent it back to "${target.label}".`,
+          `${target.label}: revise your previous output (## STATE: ${target.stateKey}) so it resolves every finding below. ` +
+            `Keep everything that was not criticised exactly as it was, and return the complete revised version, not only the changes.`,
+          `The steps after it run again on the revised version.`,
+          ``,
+          `## FINDINGS FROM ${source.label}`,
+          text.slice(0, 12000),
+        ].join("\n"),
+      };
+    }
+    return null;
   }
 
   /**
@@ -1410,7 +1580,7 @@ export class DAGExecutionEngine {
     const timeoutMs = Math.max(nc.timeoutMs, 30 * 60 * 1000);
     const asText = (v: any) => (typeof v === "object" ? JSON.stringify(v, null, 2) : String(v));
     const context = Object.entries(currentState)
-      .filter(([k]) => k !== "request")
+      .filter(([k]) => k !== "request" && !k.startsWith("__"))
       .map(([k, v]) => `${k}: ${asText(v)}`)
       .join("\n") || (currentState.request as string) || "";
 
@@ -1426,7 +1596,7 @@ export class DAGExecutionEngine {
       .map((k) => `--- FOR APPROVAL: ${k} ---\n${asText(currentState[k]).slice(0, 12000)}`)
       .join("\n\n");
     const otherContext = Object.entries(currentState)
-      .filter(([k]) => k !== "request" && !upstreamKeys.includes(k))
+      .filter(([k]) => k !== "request" && !k.startsWith("__") && !upstreamKeys.includes(k))
       .map(([k, v]) => `${k}: ${asText(v).slice(0, 1500)}`)
       .join("\n");
 
