@@ -10,7 +10,7 @@ import { Link } from "wouter";
 import {
   Sparkles, Send, Brain, Wrench, CheckCircle2, ShieldQuestion, XCircle,
   Ban, Loader2, Clock, Receipt, ArrowRight, CircleDollarSign, Download,
-  FileText, Pencil, Info, BookOpen,
+  FileText, Pencil, Info, BookOpen, Check, ChevronsUpDown,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,12 +19,14 @@ import { Input } from "@/components/ui/input";
 import { FileAttach, type AttachedFile } from "@/components/file-attach";
 import { PENDING_ATTACHMENT_KEY } from "@/lib/pending-attachment";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { EmptyState } from "@/components/ui-vocab";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 interface WorkspaceAgent {
   id: string; name: string; description: string | null; riskTier: string;
@@ -167,6 +169,7 @@ const OUTCOME_STYLE: Record<string, string> = {
 
 export default function Workspace() {
   const [agentId, setAgentId] = useState<string>("");
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
@@ -342,21 +345,47 @@ export default function Workspace() {
         <CardContent className="flex flex-col gap-3 pt-5">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-muted-foreground">Ask</span>
-            <Select value={agentId} onValueChange={setAgentId}>
-              <SelectTrigger className="w-[280px] h-8" data-testid="select-workspace-agent" aria-label="Choose an agent">
-                <SelectValue placeholder="Choose an agent…" />
-              </SelectTrigger>
-              <SelectContent>
-                {agents.map(a => (
-                  <SelectItem key={a.id} value={a.id} data-testid={`option-agent-${a.id}`}>
-                    {/* Plain-text suffix, not a nested Badge: Radix projects a
-                        SelectItem's children into the closed trigger too, and a
-                        component there renders oddly cramped at this width. */}
-                    {a.name}{a.canGenerateDocuments ? "  ·  📄 Documents" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover open={agentPickerOpen} onOpenChange={setAgentPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={agentPickerOpen}
+                  aria-label="Choose an agent"
+                  className="w-[280px] h-8 justify-between font-normal"
+                  data-testid="select-workspace-agent"
+                >
+                  <span className="truncate">
+                    {agents.find(a => a.id === agentId)?.name ?? "Choose an agent…"}
+                  </span>
+                  <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[280px] p-0" align="start">
+                <Command>
+                  {/* Filters the list live as the user types -- cmdk matches each
+                      CommandItem's `value` (the agent's name) against the query. */}
+                  <CommandInput placeholder="Search agents…" data-testid="input-workspace-agent-search" />
+                  <CommandList>
+                    <CommandEmpty>No agents found.</CommandEmpty>
+                    <CommandGroup>
+                      {agents.map(a => (
+                        <CommandItem
+                          key={a.id}
+                          value={a.id}
+                          keywords={[a.name]}
+                          data-testid={`option-agent-${a.id}`}
+                          onSelect={() => { setAgentId(a.id); setAgentPickerOpen(false); }}
+                        >
+                          <Check className={cn("h-3.5 w-3.5", agentId === a.id ? "opacity-100" : "opacity-0")} />
+                          <span className="truncate">{a.name}{a.canGenerateDocuments ? "  ·  📄 Documents" : ""}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           </div>
           {/* Cost hint: a user picking an agent that can generate or edit
               documents should see roughly what that costs BEFORE sending,
