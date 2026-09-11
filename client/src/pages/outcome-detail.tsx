@@ -116,6 +116,7 @@ import { usePermission, useRole } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { streamProposeAgents } from "@/lib/propose-agents-stream";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
 import { normalizeToGraph, flattenGraphToSteps, PROCESS_FLOW_VERSION } from "@shared/process-flow";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
@@ -5452,7 +5453,7 @@ function BusinessProcessFlowSection({
 
 function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps, onProcessFlowStepsGenerated }: { outcome: OutcomeContract; kpis: KpiDefinition[]; initialTemplateId?: string | null; processFlowSteps?: AutoProcessStep[]; onProcessFlowStepsGenerated?: (steps: AutoProcessStep[]) => void }) {
   const { toast } = useToast();
-  const { industry, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
+  const { industry, subVertical, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
   const agentPerm = usePermission("create_modify_blueprints");
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(initialTemplateId ?? null);
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
@@ -5479,6 +5480,9 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
   const [updatedAgentIndices, setUpdatedAgentIndices] = useState<Set<number>>(new Set());
   const updatedBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showCreateConfirm, setShowCreateConfirm] = useState(false);
+  // Journey Library lists only teams created with markAsCuratedJourney, so
+  // without this choice nothing created in the UI could ever appear there.
+  const [listInJourneyLibrary, setListInJourneyLibrary] = useState(true);
   const [streamLogs, setStreamLogs] = useState<{ time: string; message: string }[]>([]);
   const streamLogsEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -5957,6 +5961,8 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
         const res = await apiRequest("POST", "/api/ai/create-team-from-proposals", {
           outcomeId: outcome.id,
           industry: industry?.id || "general",
+          markAsCuratedJourney: listInJourneyLibrary && !!industry?.id,
+          journeySubVertical: subVertical || undefined,
           orchestrator: { ...orchestrator, suggestedKnowledgeBases: orchestrator.suggestedKnowledgeBases || [] },
           workers: selectedWorkers.map(w => ({ ...w, suggestedKnowledgeBases: w.suggestedKnowledgeBases || [] })),
           pipeline,
@@ -6531,6 +6537,25 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
               </div>
             ))}
           </div>
+          {orchestratorSelected && orchestrator && (
+            <div className="flex items-start gap-2 pt-2 border-t" data-testid="option-list-in-journey-library">
+              <Checkbox
+                id="list-in-journey-library"
+                checked={listInJourneyLibrary && !!industry?.id}
+                disabled={!industry?.id}
+                onCheckedChange={(v) => setListInJourneyLibrary(v === true)}
+                data-testid="checkbox-list-in-journey-library"
+              />
+              <label htmlFor="list-in-journey-library" className="flex flex-col gap-0.5 cursor-pointer">
+                <span className="text-xs font-medium">List in Journey Library</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {industry?.id
+                    ? `Show this team as a journey under ${industry.label}${subVertical ? ` · ${subVertical}` : ""}.`
+                    : "Select an industry workspace to list this team in the Journey Library."}
+                </span>
+              </label>
+            </div>
+          )}
           <DialogFooter className="gap-2">
             <Button variant="ghost" size="sm" onClick={() => setShowCreateConfirm(false)} data-testid="button-cancel-create">Cancel</Button>
             <Button size="sm" onClick={() => { setShowCreateConfirm(false); createSelectedAgents(); }} data-testid="button-confirm-create" className="shadow-sm shadow-primary/15">

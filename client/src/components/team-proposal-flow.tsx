@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useIndustry } from "@/components/industry-provider";
 import { Loader2, Sparkles, ArrowRight, Bot, Crown } from "lucide-react";
 
 interface ProposedEdge {
@@ -67,9 +69,14 @@ export function TeamProposalDialog({
   const [draftElapsedSec, setDraftElapsedSec] = useState(0);
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  const { industry, subVertical } = useIndustry();
+  // Journey Library lists only teams created with markAsCuratedJourney, so
+  // without this choice nothing created in the UI could ever appear there.
+  const [listInJourneyLibrary, setListInJourneyLibrary] = useState(true);
 
   function reset() {
     setStep("describe");
+    setListInJourneyLibrary(true);
     setProposal(null);
     setEditedConditions({});
     setDraftProgress(null);
@@ -95,6 +102,9 @@ export function TeamProposalDialog({
           outcomeContract: { name: description.slice(0, 60), description },
           kpis: [],
           processFlowSteps,
+          // Without this the draft was grounded as "general": no industry
+          // skills, ontology concepts or knowledge bases were offered.
+          industryContext: industry ? { industryId: industry.id, subVertical: subVertical || undefined } : undefined,
         },
         setDraftProgress,
       )) as ProposalResult;
@@ -161,6 +171,9 @@ export function TeamProposalDialog({
           }
         : null;
       const res = await apiRequest("POST", "/api/ai/create-team-from-proposals", {
+        industry: industry?.id,
+        markAsCuratedJourney: listInJourneyLibrary && !!industry?.id,
+        journeySubVertical: subVertical || undefined,
         orchestrator: proposal.orchestrator,
         workers: proposal.agents,
         pipeline,
@@ -357,6 +370,24 @@ export function TeamProposalDialog({
                 </p>
               </div>
             )}
+
+            <div className="flex items-start gap-2 pt-2 border-t" data-testid="option-list-in-journey-library">
+              <Checkbox
+                id="team-proposal-list-in-journey-library"
+                checked={listInJourneyLibrary && !!industry?.id}
+                disabled={!industry?.id}
+                onCheckedChange={(v) => setListInJourneyLibrary(v === true)}
+                data-testid="checkbox-list-in-journey-library"
+              />
+              <label htmlFor="team-proposal-list-in-journey-library" className="flex flex-col gap-0.5 cursor-pointer">
+                <span className="text-xs font-medium">List in Journey Library</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {industry?.id
+                    ? `Show this team as a journey under ${industry.label}${subVertical ? ` · ${subVertical}` : ""}.`
+                    : "Select an industry workspace to list this team in the Journey Library."}
+                </span>
+              </label>
+            </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={() => setStep("describe")} data-testid="button-back-to-describe">
