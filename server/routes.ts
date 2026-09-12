@@ -37,6 +37,7 @@ import { ensureHearstAgents } from "./hearst-live-run";
 import { ensureFitchAgents } from "./fitch-live-run";
 import { ensureOnespanAgents } from "./onespan-live-run";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
+import watchlistScreeningRouter from "./mock-mcp/watchlist-screening";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
 import salesforceRouter from "./mock-mcp/salesforce";
@@ -236,6 +237,7 @@ export async function registerRoutes(
   app.use(publicApiRouter);
 
   registerKnowledgeBaseRoutes(app);
+  app.use("/api/mock/watchlist-screening", watchlistScreeningRouter);
   app.use("/api/mock/adobe", adobeAnalyticsRouter);
   app.use("/api/mock/marketo", marketoRouter);
   app.use("/api/mock/salesforce", salesforceRouter);

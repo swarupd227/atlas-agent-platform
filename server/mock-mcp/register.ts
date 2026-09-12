@@ -19,6 +19,61 @@ interface MockMcpServerDef {
 function getServerDefinitions(): MockMcpServerDef[] {
   return [
     {
+      name: "Global Watchlist Screening Service",
+      description: "Simulated sanctions and terrorism watchlist screening service. Screens individuals and organizations against OFAC SDN, OFAC Consolidated, UN, EU, UK HM Treasury and FBI terrorism lists, returning a clear / potential match / match / pending verdict with the matched and unmatched identifiers, the lists checked and their versions, and the screening timestamp. Deterministic: the same party always returns the same verdict.",
+      baseUrl: `${BASE_URL}/api/mock/watchlist-screening`,
+      tools: [
+        {
+          name: "screen_party",
+          description: "Screen an individual or organization against sanctions and terrorism watchlists. Returns a verdict (clear, potential_match, match, pending), any matching list entries with matched and unmatched identifiers, the lists and versions checked, and the screening timestamp. A positive match is a legal prohibition on transacting and must be escalated to compliance, never overridden by a business user.",
+          endpoint: "/screen-party",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              fullName: { type: "string", description: "Legal name of the party being screened" },
+              entityType: { type: "string", enum: ["individual", "organization"], description: "Whether the party is a person or an entity" },
+              dateOfBirth: { type: "string", description: "Date of birth (YYYY-MM-DD), individuals only — used to separate a true match from a false positive" },
+              country: { type: "string", description: "ISO country code of the party" },
+              address: { type: "string", description: "Address of the party" },
+              identifiers: { type: "object", description: "Business or personal identifiers, e.g. { fein, duns, passport, registrationNumber }" },
+              listScope: { type: "string", description: "Optional comma-separated list ids to restrict screening to, e.g. OFAC_SDN,UN_CONS. Defaults to all lists." },
+            },
+            required: ["fullName"],
+          },
+        },
+        {
+          name: "get_screening_result",
+          description: "Retrieve a previously returned screening result by its screeningId, for audit evidence or to re-read the matched identifiers during adjudication.",
+          endpoint: "/screening-result",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { screeningId: { type: "string", description: "Screening id returned by screen_party" } },
+            required: ["screeningId"],
+          },
+        },
+        {
+          name: "list_watchlists",
+          description: "List the watchlists available for screening with their authority, version and last-updated date. Record these versions with any screening result, because a clean screen against a stale list is not evidence of compliance.",
+          endpoint: "/watchlists",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "get_list_entry",
+          description: "Retrieve the full watchlist entry behind a match — aliases, date and place of birth, addresses, identifiers, sanctions programs and designation date — so a reviewer can adjudicate a potential match on evidence rather than on a score.",
+          endpoint: "/list-entry",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { entryId: { type: "string", description: "Entry id from a screening match, e.g. SDN-24871" } },
+            required: ["entryId"],
+          },
+        },
+      ],
+    },
+    {
       name: "Marketo Marketing Automation",
       description: "Marketo REST API for lead management, smart lists, campaign triggering, and engagement tracking. Provides access to 1,000 financial services marketing leads.",
       baseUrl: `${BASE_URL}/api/mock/marketo`,
