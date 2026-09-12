@@ -219,6 +219,97 @@ router.patch("/api/enterprise-integrations/connections/:connectionId", async (re
   }
 });
 
+// GET/PATCH /api/enterprise-integrations/connections/:connectionId/config —
+// edit non-secret fields (e.g. Postgres's "Allowed Tables" governance field)
+// on an EXISTING connection without deleting and recreating it. Confirmed
+// live (SC-C-05-1): the only way to change such a field was delete + re-add,
+// even though POST .../connect already supports in-place updates via
+// connectionId -- the UI never exposed that for anything short of a full
+// re-auth, and full re-auth means re-typing every secret (password, API
+// tokens, ...) just to tweak a table allowlist.
+// Deliberately narrower than a full credential edit: any field the
+// integration's own registry marks `type: "password"` is refused outright,
+// both directions, so a secret can never be read back to the client or
+// overwritten through this route -- re-authenticating a changed secret still
+// goes through the existing POST .../connect path. Generic across every
+// integration's own registry-declared fields, not special-cased to Postgres.
+router.get("/api/enterprise-integrations/connections/:connectionId/config", async (req: Request, res: Response) => {
+  try {
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    const conn = await storage.getIntegrationConnectionById(orgId, req.params.connectionId);
+    if (!conn) return res.status(404).json({ error: "Connection not found" });
+
+    const def = getIntegrationDef(conn.integrationId);
+    const nonSecretKeys = new Set((def?.credentialFields ?? []).filter((f) => f.type !== "password").map((f) => f.key));
+    const creds = conn.credentialBlob ? decryptCredentialMap(conn.credentialBlob) : {};
+
+    const values: Record<string, string> = {};
+    for (const key of Object.keys(creds)) {
+      if (nonSecretKeys.has(key)) values[key] = creds[key];
+    }
+    res.json({ values });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const editConfigSchema = z.object({ credentials: z.record(z.string()) });
+
+router.patch("/api/enterprise-integrations/connections/:connectionId/config", async (req: Request, res: Response) => {
+  try {
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    const parsed = editConfigSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const conn = await storage.getIntegrationConnectionById(orgId, req.params.connectionId);
+    if (!conn) return res.status(404).json({ error: "Connection not found" });
+
+    const def = getIntegrationDef(conn.integrationId);
+    const fieldsByKey = new Map((def?.credentialFields ?? []).map((f) => [f.key, f]));
+    const secretKeys = Object.keys(parsed.data.credentials).filter((k) => fieldsByKey.get(k)?.type === "password");
+    if (secretKeys.length > 0) {
+      return res.status(400).json({ error: `This route cannot change secret field(s): ${secretKeys.join(", ")}. Re-authenticate via Connect to change a secret.` });
+    }
+    const unknownKeys = Object.keys(parsed.data.credentials).filter((k) => !fieldsByKey.has(k));
+    if (unknownKeys.length > 0) {
+      return res.status(400).json({ error: `Unknown field(s) for integration '${conn.integrationId}': ${unknownKeys.join(", ")}` });
+    }
+
+    const existingCreds = conn.credentialBlob ? decryptCredentialMap(conn.credentialBlob) : {};
+    const mergedCreds = { ...existingCreds, ...parsed.data.credentials };
+    const credentialBlob = encryptCredentialMap(mergedCreds);
+
+    await db.update(integrationConnections)
+      .set({ credentialBlob, updatedAt: new Date() })
+      .where(eq(integrationConnections.id, conn.id));
+
+    // Config changes like a table allowlist can make an already-connected
+    // integration newly fail (or newly succeed) against the same credentials
+    // -- re-test so status/lastError reflect the edit immediately rather than
+    // showing stale "connected" until the next unrelated test.
+    let testResult: { ok: boolean; error?: string } | null = null;
+    try {
+      testResult = await testConnectionHealth(conn.integrationId, mergedCreds, def, orgId);
+      if ((testResult as any)?.status !== "not_verifiable") {
+        await storage.recordIntegrationTestResult(conn.id, testResult!.ok, testResult!.error ?? null);
+      }
+    } catch { /* non-fatal, same as the connect route's own test-on-save */ }
+
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "integration_connection_edit_config",
+      objectType: "integration_connection",
+      objectId: conn.id,
+      details: JSON.stringify({ integrationId: conn.integrationId, changedFields: Object.keys(parsed.data.credentials) }),
+      organizationId: orgId,
+    }).catch(() => {});
+
+    res.json({ id: conn.id, testResult });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/enterprise-integrations/connections/:connectionId/promote
 // Makes this the connection that type-only credential lookups resolve to.
 router.post("/api/enterprise-integrations/connections/:connectionId/promote", async (req: Request, res: Response) => {

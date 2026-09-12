@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import {
   Shield, Eye, EyeOff, Zap, RefreshCw, Activity, AlertCircle,
   Tag, Lock, Unlock, Timer, FileText, Download, FileCode, Terminal,
   KeyRound, Building2, GitBranch, LayoutGrid, Snowflake, Link2,
-  CheckCheck, WifiOff, Loader2, ExternalLink, Info, Star, Layers,
+  CheckCheck, WifiOff, Loader2, ExternalLink, Info, Star, Layers, Settings2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -1630,6 +1630,119 @@ function ConnectDialog({
   );
 }
 
+// Edits an EXISTING connection's non-secret registry fields (e.g. Postgres's
+// "Allowed Tables") without touching its stored credentials -- confirmed live
+// (SC-C-05-1) that the only way to change such a field was delete + re-add
+// the whole connection, forcing every secret to be re-typed just to tweak a
+// table allowlist. Deliberately shows only fields the integration's own
+// registry marks as non-"password" -- see GET/PATCH .../config on the server,
+// which refuses secret fields outright in both directions.
+function EditConnectionConfigDialog({
+  integration,
+  connectionId,
+  connectionLabel,
+  open,
+  onOpenChange,
+}: {
+  integration: IntegrationDef | null;
+  connectionId: string | null;
+  connectionLabel: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
+
+  const nonSecretFields = (integration?.credentialFields ?? []).filter((f) => f.type !== "password");
+
+  const { data, isLoading } = useQuery<{ values: Record<string, string> }>({
+    queryKey: [`/api/enterprise-integrations/connections/${connectionId}/config`],
+    enabled: open && !!connectionId,
+  });
+
+  useEffect(() => {
+    if (data?.values) setFormValues(data.values);
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("PATCH", `/api/enterprise-integrations/connections/${connectionId}/config`, { credentials: formValues }),
+    onSuccess: () => {
+      toast({ title: "Configuration updated", description: "Existing credentials were kept — no need to reconnect." });
+      queryClient.invalidateQueries({ queryKey: [`/api/enterprise-integrations/${integration?.id}/connections`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/enterprise-integrations"] });
+      onOpenChange(false);
+    },
+    onError: (err: any) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }),
+  });
+
+  if (!integration || !connectionId) return null;
+
+  const visibleFields = nonSecretFields.filter(
+    (field) => !field.showWhen || formValues[field.showWhen.field] === field.showWhen.equals,
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md max-h-[85vh] flex flex-col overflow-hidden" data-testid="dialog-edit-connection-config">
+        <DialogHeader className="shrink-0">
+          <DialogTitle>Edit {connectionLabel || integration.name} configuration</DialogTitle>
+          <DialogDescription>
+            Change settings like table access without re-entering credentials or recreating the connection.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 py-1 overflow-y-auto flex-1 min-h-0 pr-1">
+          {isLoading && <Skeleton className="h-24 w-full" />}
+          {!isLoading && visibleFields.length === 0 && (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              This integration has no editable settings besides credentials.
+            </p>
+          )}
+          {!isLoading && visibleFields.map((field) => (
+            <div key={field.key} className="flex flex-col gap-1.5">
+              <Label htmlFor={`edit-field-${field.key}`} className="text-xs">{field.label}</Label>
+              {field.type === "select" ? (
+                <Select
+                  value={formValues[field.key] ?? field.options?.[0]?.value ?? ""}
+                  onValueChange={(v) => setFormValues((prev) => ({ ...prev, [field.key]: v }))}
+                >
+                  <SelectTrigger id={`edit-field-${field.key}`} data-testid={`select-edit-cred-${field.key}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(field.options ?? []).map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  id={`edit-field-${field.key}`}
+                  data-testid={`input-edit-cred-${field.key}`}
+                  placeholder={field.placeholder}
+                  value={formValues[field.key] ?? ""}
+                  onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+        <DialogFooter className="shrink-0 border-t pt-4">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            data-testid="button-save-connection-config"
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending || isLoading}
+          >
+            {saveMutation.isPending && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function N8nTestCallDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { toast } = useToast();
   const [path, setPath] = useState("webhook/");
@@ -1903,6 +2016,7 @@ function ConnectionsManagerDialog({
   const [draftName, setDraftName] = useState("");
   // Remembered across the 409 round-trip so the forced retry knows its target.
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [editConfigId, setEditConfigId] = useState<string | null>(null);
 
   const integrationId = integration?.id;
 
@@ -1998,8 +2112,10 @@ function ConnectionsManagerDialog({
   if (!integration) return null;
 
   const rows = connections ?? [];
+  const editingConnection = rows.find((r) => r.id === editConfigId);
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl" data-testid="dialog-manage-connections">
         <DialogHeader>
@@ -2081,6 +2197,18 @@ function ConnectionsManagerDialog({
                   >
                     <Pencil className="w-3.5 h-3.5" />
                   </Button>
+                  {(integration.credentialFields ?? []).some((f) => f.type !== "password") && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs"
+                      onClick={() => setEditConfigId(c.id)}
+                      title="Edit configuration (e.g. Allowed Tables) without recreating the connection"
+                      data-testid={`button-edit-config-${c.id}`}
+                    >
+                      <Settings2 className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
                   {!c.isDefault && (
                     <Button
                       size="sm"
@@ -2151,6 +2279,14 @@ function ConnectionsManagerDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <EditConnectionConfigDialog
+      integration={integration}
+      connectionId={editConfigId}
+      connectionLabel={editingConnection?.name || integration.name}
+      open={!!editConfigId}
+      onOpenChange={(o) => { if (!o) setEditConfigId(null); }}
+    />
+    </>
   );
 }
 
