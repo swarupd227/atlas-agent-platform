@@ -506,7 +506,7 @@ export const REVISION_STATE_KEY = "__revision";
 
 interface RevisionBookkeeping {
   rounds: Record<string, number>;
-  active?: { sourceNodeId: string; nodeIds: string[]; round: number };
+  active?: { sourceNodeId: string; targetNodeId: string; nodeIds: string[]; round: number };
 }
 
 function readRevisionBookkeeping(state: Record<string, any>): RevisionBookkeeping {
@@ -514,9 +514,64 @@ function readRevisionBookkeeping(state: Record<string, any>): RevisionBookkeepin
   const rounds: Record<string, number> = raw && typeof raw.rounds === "object" && raw.rounds ? { ...raw.rounds } : {};
   const a = raw?.active;
   if (a && typeof a.sourceNodeId === "string" && Array.isArray(a.nodeIds)) {
-    return { rounds, active: { sourceNodeId: a.sourceNodeId, nodeIds: a.nodeIds.map(String), round: Number(a.round) || 1 } };
+    return {
+      rounds,
+      active: {
+        sourceNodeId: a.sourceNodeId,
+        // "" for a run persisted before the target was recorded: the loop
+        // still works, only its per-node framing falls back to the generic form.
+        targetNodeId: typeof a.targetNodeId === "string" ? a.targetNodeId : "",
+        nodeIds: a.nodeIds.map(String),
+        round: Number(a.round) || 1,
+      },
+    };
   }
   return { rounds };
+}
+
+/**
+ * What a node needs to know when it runs inside a revision loop.
+ *
+ * The reviewer's findings go into shared state under `revision_request`,
+ * where EVERY re-run node reads them -- but they are addressed to exactly one
+ * node, and a node that merely sits downstream of it cannot tell that from the
+ * text. Left unframed, a downstream step answers a request aimed at someone
+ * else: it reports on the revision instead of redoing its own work, and what
+ * was a full deliverable comes back as a commentary a fraction of the length.
+ * Observed live, and not something each agent's author should have to
+ * anticipate in their prompt.
+ *
+ * So the engine says which of the three positions a node is in. Undefined
+ * when no loop is active or this node is not in it.
+ */
+export function revisionFraming(
+  nodeId: string,
+  state: Record<string, any>,
+  plan: Pick<ComputedWavePlan, "nodeConfig">,
+): string | undefined {
+  const active = readRevisionBookkeeping(state).active;
+  if (!active || !active.nodeIds.includes(nodeId)) return undefined;
+  const target = plan.nodeConfig[active.targetNodeId]?.label ?? "the step that was sent back";
+  const reviewer = plan.nodeConfig[active.sourceNodeId]?.label ?? "the reviewer";
+  const round = `Revision round ${active.round}.`;
+
+  if (nodeId === active.targetNodeId) {
+    return (
+      `${round} "${reviewer}" reviewed your output and sent it back to you. The findings below are yours to resolve. `
+      + `Keep everything that was not criticised exactly as it was, and return your COMPLETE revised output -- never a summary of what changed.`
+    );
+  }
+  if (nodeId === active.sourceNodeId) {
+    return (
+      `${round} You are the reviewer that sent this work back, and it has now been revised. `
+      + `Judge the revised version on its own merits, as if you were seeing it for the first time.`
+    );
+  }
+  return (
+    `${round} You are running again because you sit downstream of "${target}", whose output has been revised. `
+    + `The findings below were addressed to "${target}", not to you: do not answer them and do not report on the revision. `
+    + `Redo YOUR OWN job in full against the revised inputs and return your complete output, at the same depth as before.`
+  );
 }
 
 // For a Handoff-mode edge, the routing decision comes from the SOURCE
@@ -545,6 +600,7 @@ function buildAgentInput(
   nodeConfig: NodePlanConfig,
   userInput?: string,
   handoffTargets?: string[],
+  revisionFraming?: string,
 ): string {
   const sections: string[] = [];
   sections.push(`## DAG EXECUTION CONTEXT`);
@@ -563,6 +619,12 @@ function buildAgentInput(
   if (userInput) {
     sections.push(`## USER REQUEST`);
     sections.push(userInput);
+    sections.push(``);
+  }
+
+  if (revisionFraming) {
+    sections.push(`## REVISION`);
+    sections.push(revisionFraming);
     sections.push(``);
   }
 
@@ -958,7 +1020,7 @@ export class DAGExecutionEngine {
 
       const round = used + 1;
       revision.rounds[nr.nodeId] = round;
-      revision.active = { sourceNodeId: nr.nodeId, nodeIds, round };
+      revision.active = { sourceNodeId: nr.nodeId, targetNodeId: policy.targetNodeId, nodeIds, round };
       const source = plan.nodeConfig[nr.nodeId];
       const target = plan.nodeConfig[policy.targetNodeId];
       return {
@@ -1150,7 +1212,14 @@ export class DAGExecutionEngine {
     }
 
     const handoffTargets = getHandoffTargetLabels(nodeId, config.executionPlan);
-    const agentInput = buildAgentInput(nodeId, currentState, nc, currentState["request"] as string | undefined, handoffTargets);
+    const agentInput = buildAgentInput(
+      nodeId,
+      currentState,
+      nc,
+      currentState["request"] as string | undefined,
+      handoffTargets,
+      revisionFraming(nodeId, currentState, config.executionPlan),
+    );
 
     // A Tool Set node directly upstream of this agent node scopes which MCP
     // tools it may call -- resolved to tool names (not ids) so it can be

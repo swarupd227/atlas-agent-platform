@@ -6,7 +6,7 @@
  * resumed past an earlier approval, which must never be reused for new work.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { computeWaves, DAGExecutionEngine, REVISION_STATE_KEY, revisionLoopNodes } from "../server/dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, REVISION_STATE_KEY, revisionFraming, revisionLoopNodes } from "../server/dag-execution-engine";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 vi.mock("../server/agent-runtime", () => ({
@@ -91,6 +91,49 @@ describe("computeWaves -- revision policy", () => {
   });
 });
 
+describe("revisionFraming", () => {
+  const plan = computeWaves(
+    [author(), node({ id: "middle", label: "Middle", refAgentId: "ag-middle", stateKey: "middle_output" }), reviewer(2)],
+    [edge("author", "middle"), edge("middle", "reviewer")],
+  );
+  const inLoop = {
+    [REVISION_STATE_KEY]: { rounds: { reviewer: 1 }, active: { sourceNodeId: "reviewer", targetNodeId: "author", nodeIds: ["author", "middle", "reviewer"], round: 1 } },
+  };
+
+  it("tells the node that was sent back that the findings are its own", () => {
+    const text = revisionFraming("author", inLoop, plan)!;
+    expect(text).toContain("Revision round 1.");
+    expect(text).toContain('"Reviewer" reviewed your output and sent it back to you');
+    expect(text).toContain("COMPLETE revised output");
+  });
+
+  it("tells a node that is merely downstream not to answer someone else's findings", () => {
+    const text = revisionFraming("middle", inLoop, plan)!;
+    expect(text).toContain('downstream of "Author"');
+    expect(text).toContain("not to you: do not answer them");
+    expect(text).toContain("Redo YOUR OWN job in full");
+  });
+
+  it("tells the reviewer to judge the revised work afresh", () => {
+    expect(revisionFraming("reviewer", inLoop, plan)!).toContain("as if you were seeing it for the first time");
+  });
+
+  it("says nothing outside a loop", () => {
+    expect(revisionFraming("author", {}, plan)).toBeUndefined();
+    expect(revisionFraming("author", { [REVISION_STATE_KEY]: { rounds: {} } }, plan)).toBeUndefined();
+    // a node that is not part of the loop at all
+    const narrow = { [REVISION_STATE_KEY]: { rounds: {}, active: { sourceNodeId: "reviewer", targetNodeId: "middle", nodeIds: ["middle", "reviewer"], round: 1 } } };
+    expect(revisionFraming("author", narrow, plan)).toBeUndefined();
+  });
+
+  it("still frames a loop persisted before the target was recorded", () => {
+    const legacy = { [REVISION_STATE_KEY]: { rounds: {}, active: { sourceNodeId: "reviewer", nodeIds: ["author", "middle", "reviewer"], round: 2 } } };
+    const text = revisionFraming("middle", legacy, plan)!;
+    expect(text).toContain("Revision round 2.");
+    expect(text).toContain("the step that was sent back");
+  });
+});
+
 describe("DAGExecutionEngine -- revise on failure", () => {
   let executeWorkerAgent: any;
   let waitForApproval: any;
@@ -142,7 +185,44 @@ describe("DAGExecutionEngine -- revise on failure", () => {
     // At the rewind the run is persisted as "before the author's wave", so a
     // restart re-runs the loop instead of skipping past it.
     expect(persisted.map(([wave]) => wave)).toEqual([1, 2, 0, 1, 2, 2]);
-    expect(persisted[2][1][REVISION_STATE_KEY].active).toEqual({ sourceNodeId: "reviewer", nodeIds: ["author", "reviewer"], round: 1 });
+    expect(persisted[2][1][REVISION_STATE_KEY].active).toEqual({ sourceNodeId: "reviewer", targetNodeId: "author", nodeIds: ["author", "reviewer"], round: 1 });
+  });
+
+  it("frames the revision per node, so a downstream step redoes its work instead of reporting on someone else's findings", async () => {
+    const inputs: Record<string, string[]> = { "ag-author": [], "ag-middle": [] };
+    let reviews = 0;
+    executeWorkerAgent.mockImplementation(async (agentId: string, _team: unknown, input: string) => {
+      if (agentId === "ag-reviewer") {
+        reviews++;
+        return { success: true, output: reviews === 1 ? "FAIL: thin" : "PASS" };
+      }
+      inputs[agentId].push(input);
+      return { success: true, output: `${agentId} output ${inputs[agentId].length}` };
+    });
+
+    const plan = computeWaves(
+      [author(), node({ id: "middle", label: "Middle", refAgentId: "ag-middle", stateKey: "middle_output" }), reviewer(2)],
+      [edge("author", "middle"), edge("middle", "reviewer")],
+    );
+    const result = await new DAGExecutionEngine().execute({
+      executionPlan: plan,
+      stateSchema: {},
+      initialState: { request: "Write it" },
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+    });
+
+    expect(result.success).toBe(true);
+    // First pass carries no revision framing at all.
+    expect(inputs["ag-middle"][0]).not.toContain("## REVISION");
+    // On the re-run each node is told which position it is in.
+    expect(inputs["ag-author"][1]).toContain("## REVISION");
+    expect(inputs["ag-author"][1]).toContain("sent it back to you");
+    expect(inputs["ag-middle"][1]).toContain("## REVISION");
+    expect(inputs["ag-middle"][1]).toContain('downstream of "Author"');
+    expect(inputs["ag-middle"][1]).toContain("Redo YOUR OWN job in full");
+    // The downstream node still sees the findings; it is just told they are not its to answer.
+    expect(inputs["ag-middle"][1]).toContain("FAIL: thin");
   });
 
   it("stops after the round limit even if the reviewer still fails", async () => {
