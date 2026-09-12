@@ -90,16 +90,21 @@ const LIST_ENTRIES: ListEntry[] = [
   },
 ];
 
-/** Seeded parties whose verdict is fixed regardless of the hash. */
-const SEEDED: Record<string, "match" | "potential_match" | "pending"> = {
-  "vostok maritime trading llc": "match",
-  "hassan karim mansour": "match",
-  "meridian freight holdings": "match",
-  "h k mansour": "potential_match",
-  "hasan mansur": "potential_match",
-  "meridian freight services inc": "potential_match",
-  "northgate industrial supply": "pending",
-};
+/**
+ * Seeded parties whose verdict is fixed regardless of the hash. Written as
+ * display names and normalised on load -- keying this map by hand is how the
+ * first cut broke: "Vostok Maritime Trading LLC" never matched, because
+ * normalise() strips the legal suffix before the lookup.
+ */
+const SEEDED_PARTIES: Array<[string, "match" | "potential_match" | "pending"]> = [
+  ["Vostok Maritime Trading LLC", "match"],
+  ["Hassan Karim Mansour", "match"],
+  ["Meridian Freight Holdings", "match"],
+  ["H. K. Mansour", "potential_match"],
+  ["Hasan Mansur", "potential_match"],
+  ["Meridian Freight Services Inc", "potential_match"],
+  ["Northgate Industrial Supply", "pending"],
+];
 
 function normalise(name: string): string {
   return String(name || "")
@@ -118,10 +123,13 @@ function hash(value: string): number {
   return h;
 }
 
+const SEEDED = new Map(SEEDED_PARTIES.map(([name, verdict]) => [normalise(name), verdict] as const));
+
 /** Deterministic verdict: seeded first, otherwise a stable hash bucket. */
 function verdictFor(name: string): "clear" | "potential_match" | "match" | "pending" {
   const key = normalise(name);
-  if (SEEDED[key]) return SEEDED[key];
+  const seeded = SEEDED.get(key);
+  if (seeded) return seeded;
   const bucket = hash(key) % 20;
   if (bucket === 0) return "match";
   if (bucket === 1 || bucket === 2) return "potential_match";
