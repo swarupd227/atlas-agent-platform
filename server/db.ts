@@ -1315,6 +1315,31 @@ export async function runStartupMigrations() {
         updated_at       TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_process_flows_org ON process_flows(organization_id);
+
+      -- Durable task queue for the polyglot worker model (Initiative 04). A
+      -- flow's worker_task node enqueues a row; an external worker polls its
+      -- taskType, does the work, and reports back. At-least-once via a claim
+      -- lease + attempts. The engine wiring that produces/consumes it is a
+      -- separate slice; this is the primitive.
+      CREATE TABLE IF NOT EXISTS worker_tasks (
+        id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id   VARCHAR,
+        dag_run_id        VARCHAR,
+        node_key          VARCHAR,
+        task_type         TEXT NOT NULL,
+        input             JSONB,
+        status            TEXT NOT NULL DEFAULT 'pending',
+        output            JSONB,
+        error             TEXT,
+        attempts          INTEGER NOT NULL DEFAULT 0,
+        max_attempts      INTEGER NOT NULL DEFAULT 3,
+        lease_expires_at  TIMESTAMP,
+        claimed_by        TEXT,
+        created_at        TIMESTAMP DEFAULT NOW(),
+        updated_at        TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_worker_tasks_poll ON worker_tasks(task_type, status);
+      CREATE INDEX IF NOT EXISTS idx_worker_tasks_run ON worker_tasks(dag_run_id);
     `);
 
     // Backfill + integrity for the multi-connection columns. Separated from the

@@ -215,7 +215,9 @@ import {
   marketplaceInstallations, type MarketplaceInstallation, type InsertMarketplaceInstallation,
   evalPersonas, type EvalPersona, type InsertEvalPersona,
   processFlows, type ProcessFlowRecord, type InsertProcessFlow,
+  workerTasks, type WorkerTask, type InsertWorkerTask,
 } from "@shared/schema";
+import { completeTransition, failTransition, type WorkerTaskState } from "./worker-tasks";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -621,6 +623,14 @@ export interface IStorage {
   createProcessFlow(flow: InsertProcessFlow): Promise<ProcessFlowRecord>;
   updateProcessFlow(id: string, data: Partial<ProcessFlowRecord>, orgId?: string): Promise<ProcessFlowRecord | undefined>;
   deleteProcessFlow(id: string, orgId?: string): Promise<boolean>;
+
+  createWorkerTask(task: InsertWorkerTask): Promise<WorkerTask>;
+  getWorkerTask(id: string, orgId?: string): Promise<WorkerTask | undefined>;
+  listWorkerTasks(filter: { dagRunId?: string; taskType?: string; status?: string }, orgId?: string): Promise<WorkerTask[]>;
+  claimNextWorkerTask(taskType: string, claimedBy: string, orgId?: string, leaseMs?: number): Promise<WorkerTask | undefined>;
+  completeWorkerTask(id: string, output: unknown, orgId?: string): Promise<{ ok: boolean; task?: WorkerTask; reason?: string }>;
+  failWorkerTask(id: string, error: string, orgId?: string): Promise<{ ok: boolean; task?: WorkerTask; reason?: string }>;
+  deleteWorkerTask(id: string, orgId?: string): Promise<boolean>;
 
   createAgentGeneratedFile(data: InsertAgentGeneratedFile): Promise<AgentGeneratedFile>;
   listAgentGeneratedFiles(orgId?: string, limit?: number): Promise<Array<Record<string, any>>>;
@@ -3230,6 +3240,85 @@ export class DatabaseStorage implements IStorage {
     const owned = await this.getProcessFlow(id, orgId);
     if (!owned) return false;
     await db.delete(processFlows).where(eq(processFlows.id, id));
+    return true;
+  }
+
+  async createWorkerTask(task: InsertWorkerTask) {
+    const orgId = resolveOrgId(task.organizationId);
+    const [created] = await db.insert(workerTasks).values({ ...task, organizationId: orgId }).returning();
+    return created;
+  }
+  async getWorkerTask(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(workerTasks.id, id), eq(workerTasks.organizationId, orgId)) : eq(workerTasks.id, id);
+    const [row] = await db.select().from(workerTasks).where(clause);
+    return row;
+  }
+  async listWorkerTasks(filter: { dagRunId?: string; taskType?: string; status?: string }, orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const conds = [] as any[];
+    if (scopedOrgId) conds.push(eq(workerTasks.organizationId, scopedOrgId));
+    if (filter.dagRunId) conds.push(eq(workerTasks.dagRunId, filter.dagRunId));
+    if (filter.taskType) conds.push(eq(workerTasks.taskType, filter.taskType));
+    if (filter.status) conds.push(eq(workerTasks.status, filter.status));
+    const q = db.select().from(workerTasks);
+    const rows = conds.length ? await q.where(and(...conds)) : await q;
+    return rows.sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0));
+  }
+  // Atomically claim the oldest claimable task of a type: a `pending` one, or a
+  // `claimed` one whose lease has expired (previous worker died), with attempts
+  // remaining. FOR UPDATE SKIP LOCKED keeps concurrent pollers from grabbing the
+  // same row. Returns undefined when the queue has nothing for this type.
+  async claimNextWorkerTask(taskType: string, claimedBy: string, orgId?: string, leaseMs = 60_000) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const orgClause = scopedOrgId ? sql`AND organization_id = ${scopedOrgId}` : sql``;
+    const result = await db.execute(sql`
+      UPDATE worker_tasks SET
+        status = 'claimed',
+        attempts = attempts + 1,
+        claimed_by = ${claimedBy},
+        lease_expires_at = NOW() + (${leaseMs} || ' milliseconds')::interval,
+        error = NULL,
+        updated_at = NOW()
+      WHERE id = (
+        SELECT id FROM worker_tasks
+        WHERE task_type = ${taskType}
+          AND attempts < max_attempts
+          AND (status = 'pending' OR (status = 'claimed' AND lease_expires_at <= NOW()))
+          ${orgClause}
+        ORDER BY created_at
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *;
+    `);
+    const rows = (result as any).rows as WorkerTask[] | undefined;
+    return rows && rows.length ? rows[0] : undefined;
+  }
+  private async applyWorkerTaskTransition(
+    id: string,
+    transition: (state: WorkerTaskState) => { ok: boolean; reason?: string; patch?: Record<string, any> },
+    orgId?: string,
+  ): Promise<{ ok: boolean; task?: WorkerTask; reason?: string }> {
+    const owned = await this.getWorkerTask(id, orgId);
+    if (!owned) return { ok: false, reason: "not found" };
+    const r = transition({ status: owned.status as any, attempts: owned.attempts, maxAttempts: owned.maxAttempts, leaseExpiresAt: owned.leaseExpiresAt });
+    if (!r.ok) return { ok: false, reason: r.reason };
+    const [updated] = await db.update(workerTasks)
+      .set({ ...(r.patch as any), updatedAt: new Date() })
+      .where(eq(workerTasks.id, id))
+      .returning();
+    return { ok: true, task: updated };
+  }
+  async completeWorkerTask(id: string, output: unknown, orgId?: string) {
+    return this.applyWorkerTaskTransition(id, (s) => completeTransition(s, output), orgId);
+  }
+  async failWorkerTask(id: string, error: string, orgId?: string) {
+    return this.applyWorkerTaskTransition(id, (s) => failTransition(s, error), orgId);
+  }
+  async deleteWorkerTask(id: string, orgId?: string) {
+    const owned = await this.getWorkerTask(id, orgId);
+    if (!owned) return false;
+    await db.delete(workerTasks).where(eq(workerTasks.id, id));
     return true;
   }
 

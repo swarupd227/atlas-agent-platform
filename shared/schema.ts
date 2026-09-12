@@ -1543,6 +1543,33 @@ export const insertProcessFlowSchema = createInsertSchema(processFlows).omit({ i
 export type InsertProcessFlow = z.infer<typeof insertProcessFlowSchema>;
 export type ProcessFlowRecord = typeof processFlows.$inferSelect;
 
+// Durable task queue for the polyglot worker model (Initiative 04): a flow's
+// worker_task node enqueues a row here and the run parks; an external worker (in
+// any language) polls for its taskType, does the work, and reports back, which
+// resumes the run. At-least-once via a claim lease + attempts. This table is the
+// primitive; the engine wiring that produces/consumes it is a separate slice.
+export const workerTasks = pgTable("worker_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").references(() => organizations.id),
+  dagRunId: varchar("dag_run_id"),        // the run this task belongs to (null for standalone)
+  nodeKey: varchar("node_key"),           // the worker_task node in the flow
+  taskType: text("task_type").notNull(),  // the poll key a worker filters on
+  input: jsonb("input"),
+  status: text("status").notNull().default("pending"), // pending | claimed | completed | failed
+  output: jsonb("output"),
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(3),
+  leaseExpiresAt: timestamp("lease_expires_at"),
+  claimedBy: text("claimed_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertWorkerTaskSchema = createInsertSchema(workerTasks).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertWorkerTask = z.infer<typeof insertWorkerTaskSchema>;
+export type WorkerTask = typeof workerTasks.$inferSelect;
+
 // A single field/operator/value comparison, or a nested AND/OR group of them
 // -- lets the rule builder UI express compound logic like
 // "(amount > 10000 AND NOT vendorApproved) OR duplicateInvoice == true"
