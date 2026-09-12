@@ -574,6 +574,68 @@ export function revisionFraming(
   );
 }
 
+/**
+ * Upstream work a node was NOT given, and must not assume it was.
+ *
+ * When a node fails, its state key is simply absent from shared state. There
+ * is no marker and no notice, so a later node sees a gap it cannot
+ * distinguish from a key it was never meant to receive -- and a model asked to
+ * review completeness fills that silence with an assumption. Observed live: a
+ * reviewer whose upstream writer had timed out returned "PASS -- all eight
+ * sections of every brief exist and carry actual content" for briefs that were
+ * never written, and that verdict went to a human approval gate.
+ *
+ * So every node is told which of its ancestors produced nothing. Failures and
+ * gated-out branches are worded differently on purpose: a failure is a hole in
+ * the work, while a skip is a path the run legitimately did not take, and
+ * calling the second one a defect would have reviewers raising false alarms on
+ * every conditional graph.
+ */
+export function upstreamFailureNotice(
+  nodeId: string,
+  plan: Pick<ComputedWavePlan, "edgeMap" | "nodeConfig">,
+  outcomes: ReadonlyMap<string, { status: string; error?: string }>,
+): string | undefined {
+  if (outcomes.size === 0) return undefined;
+
+  const reverse: Record<string, string[]> = {};
+  for (const [source, targets] of Object.entries(plan.edgeMap)) {
+    for (const target of targets) (reverse[target] ??= []).push(source);
+  }
+  const ancestors = new Set<string>();
+  const queue = [...(reverse[nodeId] ?? [])];
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    if (ancestors.has(id)) continue;
+    ancestors.add(id);
+    queue.push(...(reverse[id] ?? []));
+  }
+
+  const lines: string[] = [];
+  for (const id of Array.from(ancestors)) {
+    const outcome = outcomes.get(id);
+    // Only an absence is worth reporting. Anything else is a node that
+    // produced its output, and saying so would just be noise.
+    if (!outcome || (outcome.status !== "failed" && outcome.status !== "skipped")) continue;
+    const nc = plan.nodeConfig[id];
+    const name = nc?.label || id;
+    const key = nc?.stateKey ? ` (state key \`${nc.stateKey}\`)` : "";
+    if (outcome.status === "skipped") {
+      lines.push(`- "${name}"${key} did not run on this path, so it has no output. This is a route the run did not take, not a defect.`);
+    } else {
+      lines.push(`- "${name}"${key} produced NO output: ${outcome.error || "it failed"}.`);
+    }
+  }
+  if (lines.length === 0) return undefined;
+
+  return [
+    `These earlier steps gave you nothing. Their content does not exist:`,
+    ...lines,
+    `Work with what you actually received. Never assume the missing content exists, never describe it, and never judge it complete or compliant. ` +
+      `If your job depends on it, say plainly which part you could not do and why.`,
+  ].join("\n");
+}
+
 // For a Handoff-mode edge, the routing decision comes from the SOURCE
 // node's own output naming its target -- but the agent can only do that if
 // it's told which target labels are valid. Looks up, for a given node,
@@ -601,6 +663,7 @@ function buildAgentInput(
   userInput?: string,
   handoffTargets?: string[],
   revisionFraming?: string,
+  upstreamFailures?: string,
 ): string {
   const sections: string[] = [];
   sections.push(`## DAG EXECUTION CONTEXT`);
@@ -619,6 +682,12 @@ function buildAgentInput(
   if (userInput) {
     sections.push(`## USER REQUEST`);
     sections.push(userInput);
+    sections.push(``);
+  }
+
+  if (upstreamFailures) {
+    sections.push(`## UPSTREAM STEPS THAT PRODUCED NOTHING`);
+    sections.push(upstreamFailures);
     sections.push(``);
   }
 
@@ -781,6 +850,12 @@ export class DAGExecutionEngine {
     // trigger and should itself be skipped -- see filterGatedNodes.
     const skippedNodeIds = new Set<string>();
 
+    // What each node actually produced, so a later node can be told which of
+    // its ancestors gave it nothing (see upstreamFailureNotice). A node that
+    // succeeds on a revision re-run clears its earlier failure -- otherwise the
+    // run would keep reporting a hole that has since been filled.
+    const nodeOutcomes = new Map<string, { status: string; error?: string }>();
+
     // Resuming after a restart: replay already-completed waves' bookkeeping
     // (bumping the same totals/maps the main loop below updates) without
     // re-executing anything. currentState itself is NOT recomputed here --
@@ -795,6 +870,8 @@ export class DAGExecutionEngine {
           totalCostUsd += nr.costUsd || 0;
           totalToolCalls += nr.toolCallCount || 0;
           if (nr.status === "skipped") skippedNodeIds.add(nr.nodeId);
+        if (nr.status === "completed") nodeOutcomes.delete(nr.nodeId);
+        else nodeOutcomes.set(nr.nodeId, { status: nr.status, error: nr.error });
           if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
           const nc = config.executionPlan.nodeConfig[nr.nodeId];
           if (nc && nr.status === "completed") {
@@ -832,7 +909,7 @@ export class DAGExecutionEngine {
 
       const nodePromises = eligibleNodeIds.map((nodeId) => {
         config.onNodeStart?.(nodeId, wave.wave_number);
-        return this.executeNode(nodeId, currentState, execConfig);
+        return this.executeNode(nodeId, currentState, execConfig, nodeOutcomes);
       });
 
       let nodeResults: NodeExecutionResult[];
@@ -896,6 +973,8 @@ export class DAGExecutionEngine {
         totalCostUsd += nr.costUsd || 0;
         totalToolCalls += nr.toolCallCount || 0;
         if (nr.status === "skipped") skippedNodeIds.add(nr.nodeId);
+        if (nr.status === "completed") nodeOutcomes.delete(nr.nodeId);
+        else nodeOutcomes.set(nr.nodeId, { status: nr.status, error: nr.error });
         if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
         const nc = config.executionPlan.nodeConfig[nr.nodeId];
         if (nc && nr.status === "completed") {
@@ -1151,6 +1230,7 @@ export class DAGExecutionEngine {
     nodeId: string,
     currentState: Record<string, any>,
     config: DAGExecutionConfig,
+    nodeOutcomes: ReadonlyMap<string, { status: string; error?: string }> = new Map(),
   ): Promise<NodeExecutionResult> {
     const nc = config.executionPlan.nodeConfig[nodeId];
     if (!nc) {
@@ -1219,6 +1299,7 @@ export class DAGExecutionEngine {
       currentState["request"] as string | undefined,
       handoffTargets,
       revisionFraming(nodeId, currentState, config.executionPlan),
+      upstreamFailureNotice(nodeId, config.executionPlan, nodeOutcomes),
     );
 
     // A Tool Set node directly upstream of this agent node scopes which MCP

@@ -6,7 +6,7 @@
  * resumed past an earlier approval, which must never be reused for new work.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { computeWaves, DAGExecutionEngine, REVISION_STATE_KEY, revisionFraming, revisionLoopNodes } from "../server/dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, REVISION_STATE_KEY, revisionFraming, revisionLoopNodes, upstreamFailureNotice } from "../server/dag-execution-engine";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 vi.mock("../server/agent-runtime", () => ({
@@ -134,6 +134,42 @@ describe("revisionFraming", () => {
   });
 });
 
+describe("upstreamFailureNotice", () => {
+  const plan = computeWaves(
+    [author(), node({ id: "middle", label: "Middle", refAgentId: "ag-middle", stateKey: "middle_output" }), reviewer(2)],
+    [edge("author", "middle"), edge("middle", "reviewer")],
+  );
+
+  it("names an ancestor that produced nothing, so a reviewer cannot assume its work exists", () => {
+    const outcomes = new Map([["author", { status: "failed", error: "timed out after 600000ms" }]]);
+    const text = upstreamFailureNotice("reviewer", plan, outcomes)!;
+    expect(text).toContain('"Author"');
+    expect(text).toContain("`draft`");
+    expect(text).toContain("produced NO output: timed out after 600000ms");
+    expect(text).toContain("Never assume the missing content exists");
+  });
+
+  it("words a gated-out branch as a route not taken, not a defect", () => {
+    const outcomes = new Map([["author", { status: "skipped" }]]);
+    const text = upstreamFailureNotice("reviewer", plan, outcomes)!;
+    expect(text).toContain("did not run on this path");
+    expect(text).toContain("not a defect");
+    expect(text).not.toContain("produced NO output");
+  });
+
+  it("only reports a node's own ancestors", () => {
+    // the reviewer failing says nothing to the author, which runs before it
+    const outcomes = new Map([["reviewer", { status: "failed", error: "boom" }]]);
+    expect(upstreamFailureNotice("author", plan, outcomes)).toBeUndefined();
+    expect(upstreamFailureNotice("middle", plan, outcomes)).toBeUndefined();
+  });
+
+  it("says nothing when every ancestor produced its output", () => {
+    expect(upstreamFailureNotice("reviewer", plan, new Map())).toBeUndefined();
+    expect(upstreamFailureNotice("reviewer", plan, new Map([["author", { status: "completed" }]]))).toBeUndefined();
+  });
+});
+
 describe("DAGExecutionEngine -- revise on failure", () => {
   let executeWorkerAgent: any;
   let waitForApproval: any;
@@ -223,6 +259,41 @@ describe("DAGExecutionEngine -- revise on failure", () => {
     expect(inputs["ag-middle"][1]).toContain("Redo YOUR OWN job in full");
     // The downstream node still sees the findings; it is just told they are not its to answer.
     expect(inputs["ag-middle"][1]).toContain("FAIL: thin");
+  });
+
+  it("tells a later node that an upstream node produced nothing, and clears that once a revision re-run fills it", async () => {
+    const reviewerInputs: string[] = [];
+    let authorRuns = 0;
+    executeWorkerAgent.mockImplementation(async (agentId: string, _team: unknown, input: string) => {
+      if (agentId === "ag-author") {
+        authorRuns++;
+        // fails first time, succeeds on the revision re-run
+        return authorRuns === 1
+          ? { success: false, output: "", step: { error: "timed out after 600000ms" } }
+          : { success: true, output: "the real draft" };
+      }
+      reviewerInputs.push(input);
+      return { success: true, output: reviewerInputs.length === 1 ? "FAIL: nothing to review" : "PASS" };
+    });
+
+    const plan = computeWaves([author(), reviewer(2)], [edge("author", "reviewer")]);
+    const result = await new DAGExecutionEngine().execute({
+      executionPlan: plan,
+      stateSchema: {},
+      initialState: { request: "Write it" },
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+    });
+
+    // First review: told plainly that the author gave it nothing.
+    expect(reviewerInputs[0]).toContain("## UPSTREAM STEPS THAT PRODUCED NOTHING");
+    expect(reviewerInputs[0]).toContain('"Author"');
+    expect(reviewerInputs[0]).toContain("produced NO output");
+    // After the revision round the author actually produced its draft, so the
+    // notice is gone rather than reporting a hole that has since been filled.
+    expect(reviewerInputs[1]).not.toContain("## UPSTREAM STEPS THAT PRODUCED NOTHING");
+    expect(reviewerInputs[1]).toContain("the real draft");
+    expect(result.finalState.draft).toBe("the real draft");
   });
 
   it("stops after the round limit even if the reviewer still fails", async () => {
