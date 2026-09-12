@@ -38,6 +38,28 @@ jobs:
         run: |
           echo "Deploying $(git rev-parse --short HEAD) -- $(git log -1 --pretty=%s)" >> "$GITHUB_STEP_SUMMARY"
 
+      # webapps-deploy reports an empty publish-profile as "No credentials
+      # found. Add an Azure login action before this action", which reads like
+      # the workflow is missing a step rather than the secret being unset. Say
+      # what is actually wrong, before spending five minutes on a build.
+      - name: Check the publish profile secret is present
+        env:
+          PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        run: |
+          if [ -z "${PROFILE}" ]; then
+            echo "::error::Secret AZURE_WEBAPP_PUBLISH_PROFILE is empty or not visible to this workflow."
+            echo "Set it under Settings -> Secrets and variables -> Actions -> Repository secrets," >&2
+            echo "named exactly AZURE_WEBAPP_PUBLISH_PROFILE, holding the whole downloaded file" >&2
+            echo "including its <publishData> wrapper. Environment and Dependabot secrets are separate" >&2
+            echo "stores and do not apply here." >&2
+            exit 1
+          fi
+          case "${PROFILE}" in
+            *"<publishData"*) : ;;
+            *) echo "::error::AZURE_WEBAPP_PUBLISH_PROFILE does not contain a <publishData> element -- it looks truncated or is the wrong file."; exit 1 ;;
+          esac
+          echo "Publish profile secret present (${#PROFILE} characters)."
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
