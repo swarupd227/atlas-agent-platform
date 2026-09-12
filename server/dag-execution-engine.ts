@@ -699,6 +699,11 @@ function buildAgentInput(
 
   for (const [key, value] of Object.entries(currentState)) {
     if (value === null || value === undefined || key.startsWith("__")) continue;
+    // The request lives in shared state AND is rendered above as "## USER
+    // REQUEST" (the caller passes currentState.request as userInput), so
+    // dumping it again here sent every worker two copies of it. On a journey
+    // fed a long brief that is the single largest line item in the prompt.
+    if (key === "request" && userInput) continue;
     sections.push(`## STATE: ${key}`);
     sections.push(typeof value === "object" ? JSON.stringify(value, null, 2) : String(value));
     sections.push(``);
@@ -1970,7 +1975,18 @@ export class DAGExecutionEngine {
       mcpServerIds: [],
       intervalMs: 0,
       industry: config.teamAgentRuntimeConfig?.industry,
-      prompt: contextInput,
+      // NOT contextInput. executeWorkerAgent renders teamAgent.prompt as a
+      // "## REQUEST" block and previousContext as "## INPUT FROM PREVIOUS
+      // STAGE" -- two different things for its non-DAG callers, where the
+      // team's standing prompt and the last worker's output genuinely differ.
+      // Passing contextInput as both sent every DAG worker its whole context
+      // twice: role, request, upstream-failure notice, revision framing and
+      // every state key, duplicated in one call. That doubled the input cost
+      // of every team run and halved the usable context -- a five-step journey
+      // whose state was ~73k tokens was rejected at 209,930 > 200,000.
+      // The request already reaches the worker inside contextInput, under
+      // buildAgentInput's "## USER REQUEST" heading, so nothing is lost.
+      prompt: undefined,
       agentType: "team" as const,
       runtimeConfig: config.teamAgentRuntimeConfig || {},
     };
