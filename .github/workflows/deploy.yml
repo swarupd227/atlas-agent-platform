@@ -1,0 +1,89 @@
+name: Deploy to Azure
+
+# Deploying from Cloud Shell means an interactive session has to survive
+# `npm install` + `npm run build` on a small container -- several minutes
+# during which a disconnect loses the deploy. This does the same work on a
+# runner: same build, same prune, same zip, same zip-deploy.
+#
+# Manual by default. A push to main does NOT deploy on its own -- several
+# sessions commit to this repo, and an automatic deploy would put whatever
+# landed last in front of users without anyone choosing to.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit SHA to deploy"
+        required: false
+        default: "main"
+
+# One deploy at a time, and never cancel one midway: a half-uploaded zip is
+# how a Web App ends up serving a broken build.
+concurrency:
+  group: deploy-azure
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & zip-deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+
+      - name: Record what is being deployed
+        run: |
+          echo "Deploying $(git rev-parse --short HEAD) -- $(git log -1 --pretty=%s)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (client + server)
+        run: npm run build
+
+      # server/index.ts is bundled into dist/index.cjs with most dependencies
+      # inlined (script/build.ts's allowlist); what stays external is a real
+      # production dependency. Pruning keeps the upload small, exactly as
+      # deploy/azure/deploy.sh does.
+      - name: Prune devDependencies
+        run: npm prune --omit=dev
+
+      # The Web App has SCM_DO_BUILD_DURING_DEPLOYMENT=false, so Azure runs
+      # `npm start` against precisely what is in this zip -- no server-side
+      # Oryx build (which could not resolve devDependencies on this app).
+      - name: Zip deployment artifact
+        run: zip -rq deploy.zip package.json package-lock.json dist node_modules
+
+      - name: Deploy to Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: astra-agents-artizent
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: deploy.zip
+
+      # A zip-deploy returning 200 only means Azure accepted the upload; the
+      # app still has to come up. deploy/azure/verify.sh exists for this
+      # reason, so do not report success until the site actually answers.
+      - name: Wait for the app to come up
+        run: |
+          url="https://astra-agents-artizent.azurewebsites.net/"
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$url" || echo 000)
+            echo "attempt $i: $code"
+            if [ "$code" = "200" ]; then
+              echo "App is serving." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "App did not return 200 within 5 minutes of the deploy." >&2
+          exit 1
