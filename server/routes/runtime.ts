@@ -12,6 +12,7 @@ import { mergeIntoWorkflowState, sanitizeForCheckpoint, writeStageCompleteCheckp
 import { desc, eq, and, sql } from "drizzle-orm";
 import { conversations, messages as chatMessages, traceSpans, kpiDefinitions } from "@shared/schema";
 import { teamToManifest, upgradeV1AgentManifest, agentManifestToV1Shape, isV2Manifest, validateManifest as validateManifestV2 } from "@shared/manifest-v2";
+import { importTeamManifest, importFlowManifest } from "../manifest-import";
 import { z, ZodError } from "zod";
 import { parseAIJsonResponse, AIResponseParseError } from "../claude";
 import {
@@ -10972,9 +10973,41 @@ clean:
         if (issues.length > 0) {
           return res.status(400).json({ message: "Invalid v2 manifest", issues });
         }
-        if (manifest.kind !== "agent") {
-          return res.status(400).json({ message: `v2 import currently supports kind:agent only; got kind:${manifest.kind}. Team/flow import lands in a later slice.` });
+        if (manifest.kind === "flow") {
+          // Create-only, additive: a new standalone process-flow record.
+          const result = await importFlowManifest(manifest, {
+            createProcessFlow: (i) => storage.createProcessFlow(i as any),
+            orgId: getOrgId(req),
+          });
+          await storage.createAuditEvent({
+            actorType: "user", action: "import_manifest_v2_flow", objectType: "process_flow", objectId: result.processFlowId,
+            details: `Imported flow "${manifest.metadata.name}" (${result.nodes} nodes) from a v2 manifest`,
+          });
+          return res.status(201).json({ mode: "create", kind: "flow", ...result });
         }
+        if (manifest.kind === "team") {
+          // Create-only for now (never mutates an existing team's graph).
+          const importMode = (req.query.mode as string) || "create";
+          if (importMode !== "create") {
+            return res.status(400).json({ message: "v2 team import supports mode=create only for now (updating an existing team's graph lands in a later slice)." });
+          }
+          const result = await importTeamManifest(manifest, {
+            createAgent: (i) => storage.createAgent(i as any),
+            createBlueprint: (i) => storage.createBlueprint(i as any),
+            createNode: (i) => storage.createTeamBlueprintNode(i as any),
+            createEdge: (i) => storage.createTeamBlueprintEdge(i as any),
+            updateAgent: (id, p) => storage.updateAgent(id, p as any),
+            createStateSchema: (i) => storage.createDagStateSchema(i as any),
+            orgId: getOrgId(req),
+          });
+          await storage.createAuditEvent({
+            actorType: "user", action: "import_manifest_v2_team", objectType: "agent", objectId: result.agentId,
+            details: `Imported team "${manifest.metadata.name}" (${result.nodes} nodes, ${result.edges} edges) from a v2 manifest`,
+          });
+          return res.status(201).json({ mode: "create", kind: "team", ...result });
+        }
+        // kind: agent — adapt into the v1.0 shape and fall through to the
+        // existing, proven agent write path below.
         manifest = agentManifestToV1Shape(manifest);
       }
 
