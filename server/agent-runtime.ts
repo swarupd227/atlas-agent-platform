@@ -11,7 +11,7 @@ import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGen
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL } from "./builtin-document-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
-import { resolvePolicyBundle, resolveGovernancePromptEntries } from "./routes/helpers";
+import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { RunSpanCollector } from "./run-spans";
 import { evaluateRule } from "./rule-evaluator";
@@ -331,28 +331,11 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     // bindings, scope and industry -- so every team agent was told to follow
     // the same oldest demo policies (live: the 10 Insurance policies sat at
     // positions 80-90 of 91 and never reached an Insurance journey agent).
+    // Rendering lives in routes/helpers (renderGovernanceBlock) so this hot
+    // path and every prompt built outside it show identical policy text.
     const entries = await resolveGovernancePromptEntries(agent.agentId);
-    if (entries.length > 0) {
-      const policyLines: string[] = [];
-      policyLines.push(`\n## GOVERNANCE POLICIES (you must comply with these)`);
-      let policyTokensUsed = estimateTokenCount(policyLines[0]);
-      for (const e of entries) {
-        // Directives carry the behaviour; the description is only context, so
-        // show it only when a policy has no directives -- that lets more
-        // binding policies fit inside the governance budget.
-        const body = e.directives.length > 0
-          ? e.directives.slice(0, 4).map(d => `\n  - ${d}`).join("")
-          : `: ${e.description}`;
-        const line = `- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}] ${e.name} (${e.domain})${body}`;
-        const lineTokens = estimateTokenCount(line);
-        // Skip rather than stop: one long policy shouldn't crowd out every
-        // policy after it. Entries arrive hard-enforced first.
-        if (policyTokensUsed + lineTokens > layerBudgets.governance) continue;
-        policyLines.push(line);
-        policyTokensUsed += lineTokens;
-      }
-      if (policyLines.length > 1) trackSection("governance_policies", policyLines.join("\n"));
-    }
+    const policyBlock = renderGovernanceBlock(entries, layerBudgets.governance);
+    if (policyBlock) trackSection("governance_policies", policyBlock);
   } catch {}
 
   if (layerBudgets.capabilities > 0) try {

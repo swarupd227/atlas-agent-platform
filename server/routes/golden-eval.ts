@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
-import { buildAgentSystemPrompt } from "./helpers";
+import { buildAgentSystemPromptWithGovernance } from "./helpers";
 import { callClaude, stripJsonFences } from "../claude";
 
 const router = Router();
@@ -134,7 +134,9 @@ router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
     const limit = Math.min(Number(req.body?.limit) || allCases.length, 25);
     const cases = allCases.slice(0, limit);
 
-    const systemPrompt = buildAgentSystemPrompt(agent);
+    // Judge against the policy text the runtime actually shows the agent, not
+    // policy names alone -- see buildAgentSystemPromptWithGovernance.
+    const systemPrompt = await buildAgentSystemPromptWithGovernance(agent, orgId);
 
     const run = await storage.createEvalRun({
       suiteId: suite.id,

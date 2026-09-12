@@ -5,7 +5,7 @@ import { eq, desc } from "drizzle-orm";
 import { getOrgId } from "../auth";
 import { getRequestRole } from "../permissions";
 import { conversations, messages as chatMessages } from "@shared/schema";
-import { buildAgentSystemPrompt, recomputeOutcomeKpis } from "./helpers";
+import { buildAgentSystemPrompt, buildAgentSystemPromptWithGovernance, recomputeOutcomeKpis } from "./helpers";
 import { buildConversationHistoryText, FOLLOW_UP_CONTEXT_INSTRUCTIONS, type ChatToolCallSummary } from "../conversation-history";
 import { buildAttachmentContext } from "../attachment-context";
 import { executePromptWithMcp, executeTeamPipeline, type RuntimeProgressEvent, type RuntimeAgent } from "../agent-runtime";
@@ -162,7 +162,7 @@ const router = Router();
       const msgsForModel = existingMsgs.map((m, i) =>
         i === existingMsgs.length - 1 && m.role === "user" ? { ...m, content: modelContent } : m);
 
-      const systemPrompt = buildAgentSystemPrompt(agent);
+      const systemPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
 
       const agentTools = Array.isArray(agent.toolsConfig)
         ? (agent.toolsConfig as Array<{ name?: string; type?: string }>)

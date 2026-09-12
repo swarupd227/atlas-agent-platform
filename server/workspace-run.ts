@@ -23,7 +23,7 @@ import { db } from "./db";
 import { workspaceRuns, uploadedFiles, type WorkspaceRun } from "@shared/schema";
 import { storage } from "./storage";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
-import { resolvePolicyBundle, buildAgentSystemPrompt, recomputeOutcomeKpis } from "./routes/helpers";
+import { resolvePolicyBundle, buildAgentSystemPromptWithGovernance, recomputeOutcomeKpis } from "./routes/helpers";
 import { getProvider, completeWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage } from "./llm-provider";
 import { RunSpanCollector } from "./run-spans";
 import { canonicalJsonStringify } from "./agent-runtime";
@@ -318,7 +318,7 @@ export async function startWorkspaceRun(params: {
   const mcpLinks = await storage.getAgentMcpServers(agentId);
   const mcpServerIds = mcpLinks.map((l: any) => l.serverId);
   const skillAllowlist = await resolveSkillAllowlist(agent);
-  const baseSystemMessage = buildAgentSystemPrompt(agent);
+  const baseSystemMessage = await buildAgentSystemPromptWithGovernance(agent, orgId);
 
   // Permissions-aware retrieval: the Workspace is the consumption surface —
   // real employees asking a real agent for work — so it's exactly where a

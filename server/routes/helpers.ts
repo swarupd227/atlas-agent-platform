@@ -1355,6 +1355,65 @@ export async function resolveGovernancePromptEntries(agentId: string, orgId?: st
   return entries;
 }
 
+/** chars/4, the same estimate agent-runtime budgets with (duplicated rather
+ *  than imported: agent-runtime imports this module, so importing it back
+ *  would be circular). */
+const estimateGovernanceTokens = (text: string): number => Math.ceil(text.length / 4);
+
+/**
+ * Renders resolved governance entries as the prompt block. Shared so every
+ * surface shows an agent the same policy text: the directives carry the
+ * behaviour, the description is context only, and one long policy is skipped
+ * rather than allowed to crowd out the entries after it.
+ */
+export function renderGovernanceBlock(entries: GovernancePromptEntry[], budget = 600): string {
+  if (entries.length === 0) return "";
+  const lines: string[] = [`\n## GOVERNANCE POLICIES (you must comply with these)`];
+  let used = estimateGovernanceTokens(lines[0]);
+  for (const e of entries) {
+    const body = e.directives.length > 0
+      ? e.directives.slice(0, 4).map(d => `\n  - ${d}`).join("")
+      : `: ${e.description}`;
+    const line = `- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}] ${e.name} (${e.domain})${body}`;
+    const lineTokens = estimateGovernanceTokens(line);
+    if (used + lineTokens > budget) continue;
+    lines.push(line);
+    used += lineTokens;
+  }
+  return lines.length > 1 ? lines.join("\n") : "";
+}
+
+/**
+ * buildAgentSystemPrompt renders <policies> from agent.policyBindings, which
+ * hold only {policyId, policyName, enforcement} -- no rule text. Agents were
+ * therefore told a policy's NAME and that violating it halts the action, with
+ * none of the directives saying what it requires, and had to infer the rest.
+ * A golden eval caught the consequence: an agent bound to a hard "Agent of
+ * Record Confidentiality" policy disclosed a suppressed account's existence
+ * to a competing producer, because "confidentiality" without its directives
+ * reads as "explain the restriction".
+ *
+ * This composes the same prompt but substitutes the resolved governance block
+ * agent-runtime uses, so judged and executed behaviour sees the real rules.
+ */
+export async function buildAgentSystemPromptWithGovernance(agent: any, orgId?: string): Promise<string> {
+  const base = buildAgentSystemPrompt(agent);
+  try {
+    const agentId = agent?.agentId || agent?.id;
+    if (!agentId) return base;
+    const entries = await resolveGovernancePromptEntries(agentId, orgId);
+    const block = renderGovernanceBlock(entries);
+    if (!block) return base;
+    const governance = `\n<governance_policies>${block}\n\nFor HARD policies: if your response would violate one, stop and trigger an approval_required block instead of proceeding.\n</governance_policies>`;
+    // Replace the name-only block when present, otherwise append.
+    return /<policies>[\s\S]*?<\/policies>/.test(base)
+      ? base.replace(/\n?<policies>[\s\S]*?<\/policies>/, governance)
+      : base + governance;
+  } catch {
+    return base;
+  }
+}
+
 export async function generateOntologyEvalCases(
   suiteId: string,
   orgId?: string,

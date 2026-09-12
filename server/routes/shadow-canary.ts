@@ -3,7 +3,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { getRequestRole } from "../permissions";
-import { buildAgentSystemPrompt } from "./helpers";
+import { buildAgentSystemPromptWithGovernance } from "./helpers";
 import { llmInvokeRateLimiter } from "../rate-limits";
 import {
   executePromptWithMcp,
@@ -266,7 +266,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         const mcpLinks = await storage.getAgentMcpServers(agentId);
         mcpServerIds = mcpLinks.map(l => l.serverId);
         const testAgent = await storage.getAgent(agentId, getOrgId(req));
-        if (testAgent) richPrompt = buildAgentSystemPrompt(testAgent);
+        if (testAgent) richPrompt = await buildAgentSystemPromptWithGovernance(testAgent, getOrgId(req));
       }
 
       const testAgentForIter = agentId ? await storage.getAgent(agentId, getOrgId(req)) : null;
@@ -480,7 +480,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       if (deployAgent) {
         await storage.updateAgent(deployment.agentId, { status: "deployed" });
       }
-      const richSystemPrompt = deployAgent ? buildAgentSystemPrompt(deployAgent) : undefined;
+      const richSystemPrompt = deployAgent ? await buildAgentSystemPromptWithGovernance(deployAgent, getOrgId(req)) : undefined;
       const runtimeResult = await startAgentRuntime(req.params.id, richSystemPrompt);
       console.log(`[deploy] Agent runtime: ${runtimeResult.message}`);
 
@@ -497,7 +497,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       let agent: any = null;
       if (dep) {
         agent = await storage.getAgent(dep.agentId, getOrgId(req));
-        if (agent) richPrompt = buildAgentSystemPrompt(agent);
+        if (agent) richPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
       }
       const result = await startAgentRuntime(req.params.id, richPrompt);
       if (dep && (result.started || result.message?.includes("already running"))) {
@@ -598,7 +598,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         inputConfig: { prompt },
       });
 
-      const execRichPrompt = buildAgentSystemPrompt(agent);
+      const execRichPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
       // Team agents must go through executeTeamPipeline (tiers, gates,
       // conditional/deterministic-rule edge routing) -- calling
       // executePromptWithMcp directly here silently ran them as a plain
@@ -737,7 +737,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         await storage.updateAgent(req.params.id, { status: "deployed" });
       }
 
-      const richSystemPrompt = buildAgentSystemPrompt(agent);
+      const richSystemPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
       await stopAgentRuntime(deployment!.id);
       const runtimeResult = await startAgentRuntime(deployment!.id, richSystemPrompt);
 
@@ -768,7 +768,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         return res.status(400).json({ error: "Agent has no task prompt configured. Set a prompt in runtime config or provide one in the request." });
       }
 
-      const richSystemPrompt = buildAgentSystemPrompt(agent);
+      const richSystemPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
 
       let result: { steps: any[]; success: boolean; summary: any; promptInputs?: any };
 
