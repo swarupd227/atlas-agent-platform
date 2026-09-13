@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicRequestOptions } from "./anthropic-request-options";
 import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import { resolveProviderKey } from "./llm-provider-keys";
 
@@ -1028,7 +1029,7 @@ class AnthropicProvider implements LLMProvider {
                 ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...(container ? { container: container as any } : {}),
               },
-              options?.anthropicBetas?.length ? { headers: { "anthropic-beta": options.anthropicBetas.join(",") } } : undefined,
+              anthropicRequestOptions(options?.anthropicBetas),
             ),
           this.providerName,
         );
@@ -1240,7 +1241,7 @@ class AnthropicProvider implements LLMProvider {
                 ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...(container ? { container: container as any } : {}),
               },
-              options?.anthropicBetas?.length ? { headers: { "anthropic-beta": options.anthropicBetas.join(",") } } : undefined,
+              anthropicRequestOptions(options?.anthropicBetas),
             ) as Promise<MessageStream>,
           this.providerName,
         );
