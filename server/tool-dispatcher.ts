@@ -27,6 +27,7 @@ import { storage } from "./storage";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpAuthHeaders } from "./mcp-client";
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
+import { coerceToolArgsToSchema } from "./tool-arg-coercion";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
 export type PolicyBundle = Awaited<ReturnType<typeof resolvePolicyBundle>>;
@@ -657,6 +658,10 @@ async function captureFileBasedScreenshot(result: unknown, tool: AvailableTool, 
 }
 
 export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
+  // A list or object the model sent as JSON text is parsed back into the type
+  // the tool's schema declares, for every kind of tool below.
+  args = coerceToolArgsToSchema(args, tool.toolInputSchema);
+
   // Built-in document generation (server/builtin-document-tools.ts). No server
   // to call -- the bytes are rendered in-process -- but it still arrives here
   // via dispatchToolCall, so every gate above has already run.
