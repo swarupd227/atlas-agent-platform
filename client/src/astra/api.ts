@@ -99,6 +99,9 @@ export function useThread(threadId: string | null, options: { industryId?: strin
     // Opening the thread we just created and are already streaming to: keep going.
     if (threadId && freshRef.current === threadId) return;
     abortRef.current?.abort();
+    // Detach it too, so its end-of-stream resync can't load the old thread over this one.
+    abortRef.current = null;
+    freshRef.current = null;
     setLive(IDLE_TURN);
     setStreaming(false);
     if (threadId) void load(threadId);
