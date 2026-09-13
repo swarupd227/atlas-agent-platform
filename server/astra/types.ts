@@ -72,6 +72,10 @@ export interface AstraToolContext extends AstraContext {
   services: AstraServices;
   /** Narration while a long tool runs (e.g. an agent run). */
   onProgress?: (event: AstraEvent) => void;
+  /** The role permission matrix, for tools whose options need a further permission. */
+  can?: PermissionCheck;
+  /** Set only when this call runs because the user pressed Confirm on this action. */
+  confirmation?: PendingAction;
 }
 
 export interface ToolRunResult {
@@ -92,6 +96,14 @@ export interface AstraTool<I = any> {
   confirm: boolean;
   /** One sentence for the confirm card, built from the validated input. */
   describe?: (input: I, ctx: AstraContext) => string;
+  /**
+   * Look before pausing: resolve names, check the change is possible and
+   * gather what the user must see on the card. Returning `refuse` ends the
+   * call with that message and no card (there is nothing to confirm).
+   * `frozen` is kept server-side with the action and handed back on Confirm
+   * as ctx.confirmation.frozen, so run() can refuse if things changed.
+   */
+  preview?: (ctx: AstraToolContext, input: I) => Promise<ConfirmPreview>;
   run: (ctx: AstraToolContext, input: I) => Promise<ToolRunResult>;
 }
 
@@ -99,6 +111,15 @@ export interface AstraTool<I = any> {
 export type PermissionCheck = (role: RoleId, permission: PermissionAction) => boolean;
 
 // ── Threads ─────────────────────────────────────────────────────────────────
+
+export interface ConfirmWarning {
+  title: string;
+  detail: string;
+}
+
+export type ConfirmPreview =
+  | { refuse: string }
+  | { summary?: string; details?: string[]; warnings?: ConfirmWarning[]; frozen?: Record<string, unknown> };
 
 export interface PendingAction {
   id: string;
@@ -108,6 +129,12 @@ export interface PendingAction {
   /** The validated input, frozen when the turn paused. Confirm runs exactly this. */
   input: Record<string, unknown>;
   summary: string;
+  /** What the change will do, one line each (shown on the card). */
+  details?: string[];
+  /** What the user is acknowledging by confirming. */
+  warnings?: ConfirmWarning[];
+  /** Server-side facts captured by preview(); never sent by the client. */
+  frozen?: Record<string, unknown>;
   /** The Astra message that carries the confirm card. */
   messageId: string | null;
   createdAt: string;

@@ -124,6 +124,8 @@ interface Session {
   threadId: string;
   cp: Checkpoint;
   emit: OnAstraEvent;
+  /** The action the user just confirmed, handed to the tool it resumes. */
+  approved?: PendingAction;
 }
 
 /** Send a user message and run the turn until it finishes, fails or pauses for confirmation. */
@@ -216,6 +218,7 @@ export async function resolveAction(
 
   // Confirm runs the input frozen when the turn paused -- never anything sent with the click.
   call.arguments = action.input;
+  session.approved = action;
   return continueCalls(session, cp.pendingToolIndex);
 }
 
@@ -313,7 +316,14 @@ async function continueCalls(s: Session, approvedIndex: number | null, fromLoop 
         rawInput: call.arguments,
         toolCallId: call.id,
         approved: approvedIndex === i,
-        ctx: { ...ctx, threadId, services: deps.services, onProgress: emit },
+        ctx: {
+          ...ctx,
+          threadId,
+          services: deps.services,
+          onProgress: emit,
+          can: deps.can,
+          ...(approvedIndex === i && s.approved ? { confirmation: s.approved } : {}),
+        },
       },
       { can: deps.can, audit: deps.audit, rateLimit: deps.rateLimit, now: deps.now },
     );

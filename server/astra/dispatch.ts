@@ -11,7 +11,7 @@
  * chain.
  */
 import { randomUUID } from "crypto";
-import type { AstraContext, AstraTool, AstraToolContext, AuditFn, PendingAction, PermissionCheck, ToolRunResult } from "./types";
+import type { AstraContext, AstraTool, AstraToolContext, AuditFn, ConfirmPreview, PendingAction, PermissionCheck, ToolRunResult } from "./types";
 import { completeProof } from "./proof";
 
 export type DispatchOutcome =
@@ -83,6 +83,15 @@ export async function dispatchAstraTool(req: DispatchRequest, deps: DispatchDeps
   if (!parsed.success) return fail(`Invalid input for ${tool.name}: ${zodIssues(parsed.error)}`);
 
   if (tool.confirm && !req.approved) {
+    let preview: ConfirmPreview = {};
+    if (tool.preview) {
+      try {
+        preview = await tool.preview(ctx, parsed.data);
+      } catch (err: any) {
+        return fail(err?.message ? String(err.message) : "Couldn't prepare this change.");
+      }
+    }
+    if ("refuse" in preview) return fail(preview.refuse);
     return {
       kind: "needs_confirmation",
       action: {
@@ -91,7 +100,10 @@ export async function dispatchAstraTool(req: DispatchRequest, deps: DispatchDeps
         toolName: tool.name,
         toolCallId: req.toolCallId,
         input: parsed.data as Record<string, unknown>,
-        summary: describeAction(tool, parsed.data, ctx),
+        summary: preview.summary ?? describeAction(tool, parsed.data, ctx),
+        ...(preview.details?.length ? { details: preview.details } : {}),
+        ...(preview.warnings?.length ? { warnings: preview.warnings } : {}),
+        ...(preview.frozen ? { frozen: preview.frozen } : {}),
         messageId: null,
         createdAt: new Date(now()).toISOString(),
       },

@@ -7,7 +7,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { agentMcpServers, agents } from "@shared/schema";
+import { agentMcpServers, agents, type InsertPolicy } from "@shared/schema";
 import { getIndustryPack } from "@shared/industry-packs";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
@@ -118,6 +118,68 @@ async function getIndustryContext(industryId: string | null | undefined) {
   };
 }
 
+// ── attach_connector ─────────────────────────────────────────────────────────
+
+async function getConnector(orgId: string, serverId: string) {
+  const server = await storage.getMcpServer(serverId);
+  if (!server || !isMcpServerVisibleToOrg(server, orgId)) return undefined;
+  return { id: server.id, name: server.name, integrationId: server.integrationId, riskTier: server.riskTier };
+}
+
+async function getConnectorTools(orgId: string, serverId: string) {
+  if (!(await getConnector(orgId, serverId))) return [];
+  const tools = await storage.getMcpServerTools(serverId);
+  return tools.map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    riskClassification: t.riskClassification,
+    annotations: t.annotations,
+    sideEffectful: isSideEffectful(asAvailableTool(serverId, t)),
+  }));
+}
+
+async function isConnectorLinked(orgId: string, agentId: string, serverId: string) {
+  if (!(await storage.getAgent(agentId, orgId))) return false;
+  return !!(await storage.getAgentMcpServerByIds(agentId, serverId));
+}
+
+async function listPolicies(orgId: string) {
+  return storage.getPolicies(orgId);
+}
+
+async function createPolicy(orgId: string, policy: Omit<InsertPolicy, "organizationId">) {
+  return storage.createPolicy({ ...policy, organizationId: orgId });
+}
+
+async function deletePolicy(orgId: string, policyId: string) {
+  return storage.deletePolicy(policyId, orgId);
+}
+
+async function linkConnector(orgId: string, agentId: string, serverId: string) {
+  // Both ends re-checked against the organization at the moment of writing.
+  if (!(await storage.getAgent(agentId, orgId))) throw new Error("Agent not found in this organization.");
+  if (!(await getConnector(orgId, serverId))) throw new Error("Connector not available to this organization.");
+  if (await storage.getAgentMcpServerByIds(agentId, serverId)) throw new Error("The connector is already attached to this agent.");
+  return storage.createAgentMcpServer({ agentId, serverId, assignedBy: "astra-workspace" });
+}
+
+async function recordAudit(
+  orgId: string,
+  userId: string | null,
+  event: { action: string; objectType: string; objectId: string; details: Record<string, unknown> },
+) {
+  await storage.createAuditEvent({
+    actorType: "user",
+    actorId: userId ?? "unknown",
+    action: event.action,
+    objectType: event.objectType,
+    objectId: event.objectId,
+    organizationId: orgId,
+    details: JSON.stringify(event.details),
+  });
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -132,5 +194,13 @@ export function createAstraServices(): AstraServices {
     agentsLinkedToConnectors,
     getIndustryContext,
     getOrganizationName,
+    getConnector,
+    getConnectorTools,
+    isConnectorLinked,
+    listPolicies,
+    createPolicy,
+    deletePolicy,
+    linkConnector,
+    recordAudit,
   };
 }
