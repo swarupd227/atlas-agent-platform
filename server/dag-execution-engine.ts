@@ -633,8 +633,8 @@ export function upstreamFailureNotice(
       lines.push(`- "${name}"${key} did not run on this path, so it has no output. This is a route the run did not take, not a defect.`);
     } else if (outcome.status === MISSING_FILE_STATUS) {
       lines.push(
-        `- "${name}"${key} was building a FILE and never produced it: ${outcome.error || "no file was created"}. ` +
-          `No file from this step exists. Its text output is not that file, and nothing in it proves the file was made.`,
+        `- "${name}"${key} was building a FILE and has no current file: ${outcome.error || "no file was created"}. ` +
+          `No file from this step exists for this run's current inputs. Its text output is not that file, and nothing in it proves the file was made.`,
       );
     } else {
       lines.push(`- "${name}"${key} produced NO output: ${outcome.error || "it failed"}.`);
@@ -806,6 +806,18 @@ export function collectUpstreamGeneratedFileIds(state: Record<string, any>): str
 /** nodeOutcomes status for a step that tried to produce a file and has none. */
 export const MISSING_FILE_STATUS = "missing_file";
 
+/** What one node has done about producing a file, across all of its passes in a run. */
+export interface NodeFileHistory {
+  /** Passes that actually ran (completed, failed or timed out). */
+  passes: number;
+  /** A pass of this node put a file in shared state. */
+  producedFile: boolean;
+  /** Calls to a file-producing tool that ended without a file, oldest first. */
+  failedAttempts: string[];
+  /** A later pass produced no new file, so the earlier one was withdrawn as stale. */
+  withdrewStaleFile: boolean;
+}
+
 /**
  * A deliverable file an earlier step tried to make and never made.
  *
@@ -814,21 +826,72 @@ export const MISSING_FILE_STATUS = "missing_file";
  * both rejected, a revision pass made no tool call at all, and the reviewer
  * after it returned "PASS -- the deck now exists" for a file that was never
  * created; the run ended "completed". A step is expected to deliver a file
- * once any of its calls to a file-producing tool in this run has failed, and
- * it stays expected until a file from it is actually in shared state.
+ * once it has produced one or attempted to in this run, and it stays expected
+ * until a file from it for its CURRENT inputs is in shared state.
  */
 export function missingDeliverableError(
   nodeId: string,
   plan: Pick<ComputedWavePlan, "nodeConfig">,
-  failedAttempts: ReadonlyMap<string, string[]>,
+  history: ReadonlyMap<string, NodeFileHistory>,
   state: Record<string, any>,
 ): string | undefined {
-  const attempts = failedAttempts.get(nodeId);
-  if (!attempts || attempts.length === 0) return undefined;
+  const h = history.get(nodeId);
+  if (!h || (h.failedAttempts.length === 0 && !h.withdrewStaleFile)) return undefined;
   const stateKey = plan.nodeConfig[nodeId]?.stateKey;
   const files = stateKey ? state[`${stateKey}${GENERATED_FILES_STATE_SUFFIX}`] : undefined;
   if (Array.isArray(files) && files.length > 0) return undefined;
-  return attempts[attempts.length - 1];
+  if (h.withdrewStaleFile) {
+    return (
+      `it ran again after its inputs were revised and produced no new file, so the file from its earlier pass ` +
+      `(built from the inputs before the revision) was withdrawn` +
+      (h.failedAttempts.length > 0 ? `; last failed attempt: ${h.failedAttempts[h.failedAttempts.length - 1]}` : "")
+    );
+  }
+  return h.failedAttempts[h.failedAttempts.length - 1];
+}
+
+/**
+ * Records one pass of a node and returns shared state with any file that pass
+ * made stale removed.
+ *
+ * A step that produced a file and then runs again -- a revision round, after
+ * its inputs changed -- owes a new file. If the new pass makes none, the old
+ * file still sits in state and every later step inspects it as if it were the
+ * current deliverable. Live: a deck assembler's revision pass wrote its
+ * shortened text as a reply instead of calling the fill tool, the reviewer
+ * re-inspected the original deck (8 shapes overflowing) and passed it, and the
+ * run ended "completed" on a deck that never received the fix.
+ */
+export function recordNodeFilePass(
+  nr: Pick<NodeExecutionResult, "nodeId" | "status" | "output" | "failedFileAttempts">,
+  plan: Pick<ComputedWavePlan, "nodeConfig">,
+  history: Map<string, NodeFileHistory>,
+  state: Record<string, any>,
+): Record<string, any> {
+  if (nr.status === "skipped") return state;
+  const h = history.get(nr.nodeId) ?? { passes: 0, producedFile: false, failedAttempts: [], withdrewStaleFile: false };
+  history.set(nr.nodeId, h);
+  h.passes++;
+  if (nr.failedFileAttempts?.length) h.failedAttempts.push(...nr.failedFileAttempts);
+  if (nr.status !== "completed") return state;
+
+  const stateKey = plan.nodeConfig[nr.nodeId]?.stateKey;
+  if (!stateKey) return state;
+  const fileKey = `${stateKey}${GENERATED_FILES_STATE_SUFFIX}`;
+  const madeNow = Array.isArray(nr.output?.[fileKey]) && nr.output[fileKey].length > 0;
+  if (madeNow) {
+    h.producedFile = true;
+    h.withdrewStaleFile = false;
+    return state;
+  }
+  if (h.producedFile && h.passes > 1) {
+    h.withdrewStaleFile = true;
+    if (fileKey in state) {
+      const { [fileKey]: _stale, ...rest } = state;
+      return rest;
+    }
+  }
+  return state;
 }
 
 /**
@@ -961,16 +1024,15 @@ export class DAGExecutionEngine {
     // succeeds on a revision re-run clears its earlier failure -- otherwise the
     // run would keep reporting a hole that has since been filled.
     const nodeOutcomes = new Map<string, { status: string; error?: string }>();
-    // Every failed attempt each node has made at producing a file, across all
-    // of its passes in this run (see missingDeliverableError).
-    const failedFileAttempts = new Map<string, string[]>();
-    const recordFileOutcome = (nr: NodeExecutionResult, state: Record<string, any>) => {
-      if (nr.failedFileAttempts?.length) {
-        failedFileAttempts.set(nr.nodeId, [...(failedFileAttempts.get(nr.nodeId) ?? []), ...nr.failedFileAttempts]);
-      }
-      if (nr.status !== "completed") return;
-      const missing = missingDeliverableError(nr.nodeId, config.executionPlan, failedFileAttempts, state);
+    // What each node has done about producing a file, across all of its passes
+    // in this run (see recordNodeFilePass and missingDeliverableError).
+    const fileHistory = new Map<string, NodeFileHistory>();
+    const recordFileOutcome = (nr: NodeExecutionResult, state: Record<string, any>): Record<string, any> => {
+      const next = recordNodeFilePass(nr, config.executionPlan, fileHistory, state);
+      if (nr.status !== "completed") return next;
+      const missing = missingDeliverableError(nr.nodeId, config.executionPlan, fileHistory, next);
       if (missing) nodeOutcomes.set(nr.nodeId, { status: MISSING_FILE_STATUS, error: missing });
+      return next;
     };
 
     // Resuming after a restart: replay already-completed waves' bookkeeping
@@ -991,7 +1053,7 @@ export class DAGExecutionEngine {
         if (nr.status === "completed" && !nr.truncated) nodeOutcomes.delete(nr.nodeId);
         else nodeOutcomes.set(nr.nodeId, { status: nr.status === "completed" ? "truncated" : nr.status, error: nr.error });
           if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
-          recordFileOutcome(nr, currentState);
+          currentState = recordFileOutcome(nr, currentState);
           const nc = config.executionPlan.nodeConfig[nr.nodeId];
           if (nc && nr.status === "completed") {
             const value = nr.output[nc.stateKey];
@@ -1104,7 +1166,7 @@ export class DAGExecutionEngine {
       }
 
       currentState = mergeWaveOutputs(currentState, nodeResults, config.stateSchema);
-      for (const nr of nodeResults) recordFileOutcome(nr, currentState);
+      for (const nr of nodeResults) currentState = recordFileOutcome(nr, currentState);
 
       const waveResult: WaveExecutionResult = {
         waveNumber: wave.wave_number,
