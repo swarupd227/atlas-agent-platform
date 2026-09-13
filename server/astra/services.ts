@@ -9,7 +9,7 @@ import { db } from "../db";
 import { storage } from "../storage";
 import { agentMcpServers, agents, workspaceRuns, type InsertPolicy } from "@shared/schema";
 import { getWorkspaceAgents, getWorkspaceRun, resumeWorkspaceRun, startWorkspaceRun, type OnWorkspaceEvent } from "../workspace-run";
-import { getRedactionLevel, redactPayload, type RoleId } from "../permissions";
+import { getRedactionLevel, hasPermission, redactPayload, type RoleId } from "../permissions";
 import { getIndustryPack } from "@shared/industry-packs";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
@@ -184,9 +184,29 @@ async function recordAudit(
 
 // ── run_agent / get_run ──────────────────────────────────────────────────────
 
-/** The agents this role may run in the Workspace (runnable, in its audience, not a team's internal worker). */
+const RUNNABLE_STATUSES = new Set(["active", "deployed"]);
+
+/**
+ * The agents this role may run from Astra: what the Workspace offers it
+ * (runnable, in its audience, not a team's internal worker), plus -- for roles
+ * that can view agents -- a team's internal workers on their own. The
+ * Workspace hides those to keep business users' list short; someone building
+ * agents needs to run a step by itself. Audience and status rules still apply,
+ * and teams themselves are not included.
+ */
 async function listRunnableAgents(orgId: string, role: RoleId) {
-  return getWorkspaceAgents(orgId, role);
+  const offered = await getWorkspaceAgents(orgId, role);
+  if (!hasPermission(role, "view_agents")) return offered;
+  const ids = new Set(offered.map((a) => a.id));
+  const workers = (await storage.getAgents(orgId))
+    .filter((a) => !ids.has(a.id) && RUNNABLE_STATUSES.has(a.status) && a.agentType !== "team")
+    .filter((a) => {
+      if (role === "admin") return true;
+      const audience = ((a as any).workspaceAudience as string[] | null) ?? [];
+      return audience.length === 0 || audience.includes(role);
+    })
+    .map((a) => ({ id: a.id, name: a.name, description: a.description ?? null, ontologyTags: Array.isArray((a as any).ontologyTags) ? (a as any).ontologyTags : [] }));
+  return [...offered, ...workers];
 }
 
 /**

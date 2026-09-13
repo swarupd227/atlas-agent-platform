@@ -101,13 +101,18 @@ export function capHistory(messages: LLMMessage[], turns: number): LLMMessage[] 
   return messages.slice(userIdx[userIdx.length - turns]);
 }
 
+/** A few words for the live step list -- never a dump of the payload. */
 function preview(value: unknown): string {
-  try {
-    const text = typeof value === "string" ? value : JSON.stringify(value);
-    return text.length > 200 ? `${text.slice(0, 200)}…` : text;
-  } catch {
-    return "[unserializable]";
-  }
+  const clip = (text: string) => (text.length > 140 ? `${text.slice(0, 140)}…` : text);
+  if (typeof value === "string") return clip(value);
+  if (!value || typeof value !== "object") return "";
+  const v = value as Record<string, unknown>;
+  if (typeof v.message === "string") return clip(v.message);
+  if (v.ambiguous) return "several matches";
+  if (v.found === false) return "not found";
+  if (typeof v.total === "number") return `${v.total} found`;
+  if (typeof v.status === "string") return v.status.replace(/_/g, " ");
+  return "";
 }
 
 function parseSuggestions(raw: unknown): Suggestion[] {

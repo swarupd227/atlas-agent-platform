@@ -318,3 +318,16 @@ describe("boundaries (static)", () => {
     }
   });
 });
+
+describe("proof merging", () => {
+  it("keeps each distinct fact once and folds generic read-only lines behind specific ones", async () => {
+    const { mergeProof, summarizeParts } = await import("../server/astra/proof");
+    let p = mergeProof(null, { compliance: { status: "measured", summary: "Read only · no special permission" } });
+    p = mergeProof(p, { compliance: { status: "measured", summary: "Read only · permission view_agents" } });
+    p = mergeProof(p, { compliance: { status: "measured", summary: "Read only · permission view_agents" } });
+    expect(p.compliance).toMatchObject({ summary: "Read only · permission view_agents" });
+    p = mergeProof(p, { compliance: { status: "measured", summary: "1 policy bound · autonomy assisted · risk MEDIUM" } });
+    expect(p.compliance).toMatchObject({ summary: "1 policy bound · autonomy assisted · risk MEDIUM" });
+    expect(summarizeParts(["Read only · no special permission"])).toBe("Read only");
+  });
+});

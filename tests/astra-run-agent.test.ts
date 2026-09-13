@@ -64,6 +64,7 @@ function fakeWorkspace(gates: string[] = []) {
   const services = {
     listRunnableAgents: vi.fn(async (_org: string, _role: string) => runnable),
     getAgent: async (org: string, id: string) => (org === ORG ? all[id] : undefined),
+    listAgents: async (org: string) => (org === ORG ? Object.values(all) : []),
     startAgentRun: vi.fn(async (org: string, _role: string, agentId: string, request: string, onEvent: (e: any) => void) => {
       const run = { id: `run-${runs.size + 1}`, org, agentId, status: "running", requestText: request, outputSummary: null, costUsd: 0, traceId: null, pending: null, steps: [], gateIndex: 0 };
       runs.set(run.id, run);
@@ -149,11 +150,11 @@ describe("run_agent", () => {
     expect(t.events.some((e) => e.type === "working" && e.label === "AR Data Gathering started")).toBe(true);
   });
 
-  it("refuses an agent the role can't run, without starting anything", async () => {
+  it("refuses an agent that isn't runnable, says why, and starts nothing", async () => {
     const t = setup([
       ask("Warranty Claims"),
       (messages) => {
-        expect(lastToolResult(messages).result).toMatchObject({ ran: false, message: expect.stringContaining("isn't available to run") });
+        expect(lastToolResult(messages).result).toMatchObject({ ran: false, message: "Warranty Claims is draft. Only active or deployed agents can run." });
         return finishWith("Warranty Claims is still a draft.");
       },
     ]);

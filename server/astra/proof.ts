@@ -20,9 +20,30 @@ export function completeProof(partial?: Partial<ProofEnvelope> | null): ProofEnv
   };
 }
 
+const READ_ONLY = /^Read only · (.*)$/;
+
+function partsOf(segment: Extract<ProofSegment, { status: "measured" }>): string[] {
+  const parts = segment.details?.parts;
+  return Array.isArray(parts) ? (parts as string[]) : [segment.summary];
+}
+
+/**
+ * One line from many tools' summaries: each distinct fact once, and the
+ * generic "Read only · permission X" lines folded into one, behind anything
+ * more specific (a confirmation, policies bound, a gate result).
+ */
+export function summarizeParts(parts: string[]): string {
+  const specific = parts.filter((p) => !READ_ONLY.test(p));
+  const permissions = Array.from(
+    new Set(parts.map((p) => READ_ONLY.exec(p)?.[1]).filter((p): p is string => !!p && p !== "no special permission").map((p) => p.replace(/^permission /, ""))),
+  );
+  const readOnly = parts.length > specific.length ? `Read only${permissions.length ? ` · ${permissions.length === 1 ? "permission" : "permissions"} ${permissions.join(", ")}` : ""}` : null;
+  return [...specific, ...(readOnly && specific.length === 0 ? [readOnly] : [])].join(" · ");
+}
+
 /**
  * Merge a tool's proof into the turn's. A measured segment wins over "not
- * measured"; two measured summaries are joined so neither is lost.
+ * measured"; distinct measured facts are all kept (see summarizeParts).
  */
 export function mergeProof(into: ProofEnvelope | null, from: Partial<ProofEnvelope> | undefined): ProofEnvelope {
   const base = into ?? emptyProof();
@@ -30,8 +51,9 @@ export function mergeProof(into: ProofEnvelope | null, from: Partial<ProofEnvelo
   const merge = (a: ProofSegment, b: ProofSegment | undefined): ProofSegment => {
     if (!b || b.status === "not_measured") return a;
     if (a.status === "not_measured") return b;
-    if (a.summary === b.summary) return a;
-    return { status: "measured", summary: `${a.summary} · ${b.summary}`, details: { ...(a.details ?? {}), ...(b.details ?? {}) } };
+    const parts = Array.from(new Set([...partsOf(a), ...partsOf(b)]));
+    if (parts.length === 1) return a;
+    return { status: "measured", summary: summarizeParts(parts), details: { ...(a.details ?? {}), ...(b.details ?? {}), parts } };
   };
   return {
     compliance: merge(base.compliance, from.compliance),

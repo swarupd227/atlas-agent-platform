@@ -179,13 +179,21 @@ export const runAgentTool: AstraTool<Input> = {
       if (candidates && candidates.length > 1) {
         return { payload: { ran: false, ambiguous: true, candidates: candidates.slice(0, 8).map((a) => ({ id: a.id, name: a.name })) } };
       }
-      const existing = await ctx.services.getAgent(ctx.orgId, input.agent);
+      // Say why it can't run, whether the model passed an id or a name.
+      const needle = input.agent.trim().toLowerCase();
+      const existing =
+        (await ctx.services.getAgent(ctx.orgId, input.agent)) ??
+        ((await ctx.services.listAgents(ctx.orgId)) as Array<{ name?: string }>).find((a) => String(a.name ?? "").toLowerCase() === needle);
       return {
         payload: {
           ran: false,
-          message: existing
-            ? `${existing.name} isn't available to run: it is ${existing.status}, or not offered to the ${ctx.role} role. Only active or deployed agents in the role's audience can run.`
-            : "No agent you can run matches that. Use list_agents to see them.",
+          message: !existing
+            ? "No agent you can run matches that. Use list_agents to see them."
+            : existing.agentType === "team"
+              ? `${existing.name} is a team. Running teams from Astra isn't available yet; open it in the Workspace.`
+              : !["active", "deployed"].includes(existing.status)
+                ? `${existing.name} is ${existing.status}. Only active or deployed agents can run.`
+                : `${existing.name} isn't offered to the ${ctx.role} role: its Workspace audience doesn't include this role.`,
         },
       };
     }

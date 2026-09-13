@@ -29,7 +29,12 @@ function Workspace() {
   const [artifact, setArtifact] = useState<ArtifactRef | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const thread = useThread(threadId, { industryId: industry?.id ?? null, onArtifact: setArtifact });
+  // A result opens by itself only where the pane sits beside the conversation;
+  // on narrower screens it would cover the answer, so it waits for a tap.
+  const autoOpen = useCallback((a: ArtifactRef) => {
+    if (window.matchMedia("(min-width: 1024px)").matches) setArtifact(a);
+  }, []);
+  const thread = useThread(threadId, { industryId: industry?.id ?? null, onArtifact: autoOpen });
 
   useEffect(() => {
     if (!threadId) setArtifact(null);
