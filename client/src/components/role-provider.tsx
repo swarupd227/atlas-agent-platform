@@ -238,6 +238,9 @@ export function RoleProvider({ children }: { children: ReactNode }) {
     // The Agent Workspace is the universal consumption surface — every role can
     // use it. (Which agents a person sees inside it is gated separately.)
     if (route === "/workspace" || route.startsWith("/workspace")) return true;
+    // The Astra Workspace (preview) is the same kind of surface: every role can
+    // open it, and what each role can do inside is decided per tool on the server.
+    if (route === "/astra" || route.startsWith("/astra/")) return true;
     // Files (client/src/pages/files.tsx) is Workspace's document history --
     // every generated .pptx/.pdf across every run, not a new capability. It
     // was added to the sidebar's primaryNav after every role's allowedRoutes

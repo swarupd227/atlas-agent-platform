@@ -50,6 +50,7 @@ import {
   Store,
   Sparkles,
   Users,
+  MessageSquareText,
 } from "lucide-react";
 import {
   Sidebar,
@@ -68,6 +69,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useRole } from "./role-provider";
+import { useAstraEnabled } from "@/astra/api";
 import { type LucideIcon } from "lucide-react";
 import { FeedbackTrigger } from "./feedback-modal";
 import type { Agent, OutcomeContract } from "@shared/schema";
@@ -95,6 +97,7 @@ export function AppSidebar() {
 function FullAppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
+  const { enabled: astraEnabled } = useAstraEnabled();
 
   const { data: alertsData } = useQuery<any[]>({
     queryKey: ["/api/observability/alerts"],
@@ -120,6 +123,8 @@ function FullAppSidebar() {
   // no structure, on top of the 33 already inside Advanced.
   const primaryNav: NavItem[] = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
+    // The conversation-first workspace, while it is a preview behind ASTRA_WORKSPACE_ENABLED.
+    ...(astraEnabled ? [{ title: "Try Astra (preview)", url: "/astra", icon: MessageSquareText }] : []),
     { title: "Workspace", url: "/workspace", icon: Sparkles },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "Agents", url: "/agents", icon: Bot },

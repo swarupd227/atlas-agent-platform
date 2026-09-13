@@ -157,6 +157,7 @@ const FeedbackTracker = lazy(() => import("@/pages/feedback"));
 const ProcessFlows = lazy(() => import("@/pages/process-flows"));
 const BusinessCommandCenter = lazy(() => import("@/pages/business-command-center"));
 const MyActions = lazy(() => import("@/pages/my-actions"));
+const AstraLayout = lazy(() => import("@/astra/astra-layout"));
 const BusinessSettings = lazy(() => import("@/pages/business-settings"));
 const MyWorkers = lazy(() => import("@/pages/my-workers"));
 import { Shield, LogOut, Briefcase } from "lucide-react";
@@ -499,6 +500,9 @@ function AuthGate() {
     <Suspense fallback={<RouteFallback />}>
       <Switch>
         <Route path="/agents/:id/export" component={AgentExport} />
+        <Route path="/astra" nest>
+          <AstraLayout />
+        </Route>
         <Route>{() => <DashboardLayout />}</Route>
       </Switch>
     </Suspense>

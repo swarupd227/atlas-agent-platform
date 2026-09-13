@@ -14,6 +14,11 @@ function getRole(): string {
   return "admin";
 }
 
+/** Headers every API call carries (the demo-mode role), for callers that use fetch directly. */
+export function getApiHeaders(): Record<string, string> {
+  return getHeaders();
+}
+
 function getHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   if (cachedSecurityMode !== "production") {

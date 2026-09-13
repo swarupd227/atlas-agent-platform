@@ -286,3 +286,85 @@
     inset: -1px;
   }
 }
+
+/* ── Astra Workspace (/astra) ─────────────────────────────────────────────────
+   Artizent agentic palette: sand neutrals, one volt accent, dark first.
+   AstraLayout puts .astra on <html> while /astra is open, so dialogs and
+   popovers rendered in portals pick the tokens up too. Nothing outside
+   /astra changes. */
+.astra {
+  --astra-volt: 52 100% 50%;
+  --astra-ok: 152 48% 40%;
+  --astra-warn: 34 86% 46%;
+  --astra-fail: 358 70% 52%;
+  --background: 44 36% 94%;
+  --foreground: 50 14% 10%;
+  --border: 44 20% 82%;
+  --card: 45 40% 97%;
+  --card-foreground: 50 14% 10%;
+  --card-border: 44 20% 84%;
+  --popover: 45 40% 97%;
+  --popover-foreground: 50 14% 10%;
+  --popover-border: 44 20% 80%;
+  --primary: 52 100% 50%;
+  --primary-foreground: 50 14% 10%;
+  --secondary: 44 24% 88%;
+  --secondary-foreground: 50 14% 10%;
+  --muted: 44 24% 89%;
+  --muted-foreground: 45 9% 36%;
+  --accent: 44 26% 86%;
+  --accent-foreground: 50 14% 10%;
+  --input: 44 16% 72%;
+  --ring: 46 90% 42%;
+  --font-sans: Geist, "Open Sans", system-ui, sans-serif;
+  --font-mono: "Geist Mono", Menlo, monospace;
+  --astra-display: Outfit, Geist, system-ui, sans-serif;
+  --radius: .375rem;
+}
+
+.astra.dark {
+  --astra-ok: 152 52% 52%;
+  --astra-warn: 36 92% 58%;
+  --astra-fail: 358 80% 64%;
+  --background: 60 6% 5%;
+  --foreground: 45 30% 93%;
+  --border: 48 7% 15%;
+  --card: 50 7% 8%;
+  --card-foreground: 45 30% 93%;
+  --card-border: 48 7% 14%;
+  --popover: 50 7% 9%;
+  --popover-foreground: 45 30% 93%;
+  --popover-border: 48 7% 18%;
+  --primary: 52 100% 50%;
+  --primary-foreground: 60 6% 5%;
+  --secondary: 48 7% 13%;
+  --secondary-foreground: 45 30% 93%;
+  --muted: 48 7% 11%;
+  --muted-foreground: 45 9% 62%;
+  --accent: 48 7% 14%;
+  --accent-foreground: 45 30% 93%;
+  --input: 48 7% 22%;
+  --ring: 52 100% 50%;
+}
+
+.astra-md { line-height: 1.6; overflow-wrap: anywhere; }
+.astra-md > * + * { margin-top: .6em; }
+.astra-md h1, .astra-md h2, .astra-md h3 { font-family: var(--astra-display); font-weight: 600; line-height: 1.25; margin-top: 1em; }
+.astra-md h1 { font-size: 1.25rem; }
+.astra-md h2 { font-size: 1.125rem; }
+.astra-md h3 { font-size: 1rem; }
+.astra-md ul { list-style: disc; padding-left: 1.25rem; }
+.astra-md ol { list-style: decimal; padding-left: 1.25rem; }
+.astra-md li + li { margin-top: .2em; }
+.astra-md a { text-decoration: underline; text-underline-offset: 2px; }
+.astra-md strong { font-weight: 600; }
+.astra-md code { font-family: var(--font-mono); font-size: .85em; padding: .1em .35em; border-radius: .25rem; background: hsl(var(--muted)); }
+.astra-md pre { overflow-x: auto; padding: .75rem; border-radius: .375rem; background: hsl(var(--muted)); }
+.astra-md pre code { padding: 0; background: none; }
+.astra-md table { display: block; overflow-x: auto; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.astra-md th, .astra-md td { border: 1px solid hsl(var(--border)); padding: .3rem .55rem; text-align: left; }
+.astra-md blockquote { border-left: 2px solid hsl(var(--border)); padding-left: .75rem; color: hsl(var(--muted-foreground)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .astra .animate-pulse, .astra .animate-spin { animation: none; }
+}
