@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   ANTHROPIC_STREAM_IDLE_TIMEOUT_MS,
+  ANTHROPIC_TOOL_IDLE_TIMEOUT_MS,
   StreamIdleTimeoutError,
   awaitStreamWithIdleTimeout,
 } from "../server/anthropic-stream";
@@ -28,7 +29,7 @@ class APIUserAbortError extends Error {
 /** Stands in for the SDK's MessageStream: emit events, then finish or be aborted. */
 class FakeStream<T> {
   abortCount = 0;
-  private listeners: Record<string, Array<() => void>> = {};
+  private listeners: Record<string, Array<(payload?: unknown) => void>> = {};
   private settle!: { resolve: (v: T) => void; reject: (e: unknown) => void };
   private readonly done = new Promise<T>((resolve, reject) => {
     this.settle = { resolve, reject };
@@ -39,12 +40,12 @@ class FakeStream<T> {
     // an abort that lands first must not surface as an unhandled rejection.
     this.done.catch(() => {});
   }
-  on(event: string, listener: () => void) {
+  on(event: string, listener: (payload?: unknown) => void) {
     (this.listeners[event] ||= []).push(listener);
     return this;
   }
-  emit(event: "connect" | "streamEvent") {
-    for (const l of this.listeners[event] ?? []) l();
+  emit(event: "connect" | "streamEvent", payload?: unknown) {
+    for (const l of this.listeners[event] ?? []) l(payload);
   }
   abort() {
     this.abortCount++;
@@ -95,6 +96,49 @@ describe("awaitStreamWithIdleTimeout", () => {
     expect(stream.abortCount).toBe(0);
   });
 
+  it("waits out a long silence while the model builds a tool call's input", async () => {
+    // The API emits a tool's input one complete key and value at a time: a call
+    // whose argument is one large value streams nothing while it is written.
+    const stream = new FakeStream<string>();
+    const pending = awaitStreamWithIdleTimeout(stream, { idleTimeoutMs: 1000, toolIdleTimeoutMs: 10_000 });
+    stream.emit("streamEvent", { type: "message_start" });
+    stream.emit("streamEvent", { type: "content_block_start", content_block: { type: "tool_use", name: "fill_document_template" } });
+    await vi.advanceTimersByTimeAsync(5000); // five times the text limit, not one event
+    expect(stream.abortCount).toBe(0);
+    stream.finish("tool call");
+    await expect(pending).resolves.toBe("tool call");
+  });
+
+  it("gives a server-side tool's silent sandbox the same allowance", async () => {
+    const stream = new FakeStream<string>();
+    const pending = awaitStreamWithIdleTimeout(stream, { idleTimeoutMs: 1000, toolIdleTimeoutMs: 10_000 });
+    stream.emit("streamEvent", { type: "content_block_start", content_block: { type: "server_tool_use", name: "code_execution" } });
+    stream.emit("streamEvent", { type: "content_block_stop" });
+    await vi.advanceTimersByTimeAsync(4000); // the sandbox runs between blocks
+    expect(stream.abortCount).toBe(0);
+    stream.finish("ran");
+    await expect(pending).resolves.toBe("ran");
+  });
+
+  it("still abandons a tool call that stays silent past the tool limit", async () => {
+    const stream = new FakeStream<unknown>();
+    const pending = awaitStreamWithIdleTimeout(stream, { idleTimeoutMs: 1000, toolIdleTimeoutMs: 3000 });
+    const assertion = expect(pending).rejects.toMatchObject({ name: "StreamIdleTimeoutError", idleTimeoutMs: 3000 });
+    stream.emit("streamEvent", { type: "content_block_start", content_block: { type: "tool_use", name: "x" } });
+    await vi.advanceTimersByTimeAsync(3001);
+    await assertion;
+    expect(stream.abortCount).toBe(1);
+  });
+
+  it("keeps the short limit for a text stream even when a tool limit is set", async () => {
+    const stream = new FakeStream<unknown>();
+    const pending = awaitStreamWithIdleTimeout(stream, { idleTimeoutMs: 1000, toolIdleTimeoutMs: 10_000 });
+    const assertion = expect(pending).rejects.toMatchObject({ name: "StreamIdleTimeoutError", idleTimeoutMs: 1000 });
+    stream.emit("streamEvent", { type: "content_block_start", content_block: { type: "text" } });
+    await vi.advanceTimersByTimeAsync(1001);
+    await assertion;
+  });
+
   it("cancels on the caller's signal with the abort error, not an idle timeout", async () => {
     const stream = new FakeStream<unknown>();
     const controller = new AbortController();
@@ -125,6 +169,11 @@ describe("awaitStreamWithIdleTimeout", () => {
   it("tolerates a long pause before the first token, and still catches a stall far sooner than 10 minutes", () => {
     expect(ANTHROPIC_STREAM_IDLE_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
     expect(ANTHROPIC_STREAM_IDLE_TIMEOUT_MS).toBeLessThanOrEqual(5 * 60_000);
+  });
+
+  it("gives tool calls the same ten minutes they had before streaming", () => {
+    expect(ANTHROPIC_TOOL_IDLE_TIMEOUT_MS).toBe(10 * 60_000);
+    expect(ANTHROPIC_TOOL_IDLE_TIMEOUT_MS).toBeGreaterThan(ANTHROPIC_STREAM_IDLE_TIMEOUT_MS);
   });
 });
 
