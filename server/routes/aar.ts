@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { createHash } from "crypto";
 import { storage } from "../storage";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
+import { isMcpServerVisibleToOrg } from "../tenant-scope";
 import type { AarConfig, InsertAarConfig } from "../../shared/schema";
 import { buildMcpAuthHeaders } from "../mcp-client";
 import { gatherAvailableTools, executeTool } from "../tool-dispatcher";
@@ -612,15 +613,22 @@ async function invokeViaMcp(
   orgId?: string,
   agentId?: string,
 ): Promise<{ result: unknown; error?: string; matchedToolId?: string; credentialInjected: boolean }> {
-  // Resolve the target server: an explicit id, else the first server hosting the tool.
-  const allTools = await storage.getAllMcpServerTools();
+  // Resolve the target server: an explicit id, else the first server hosting the
+  // tool -- among servers this organization may see. Unscoped, a tool name
+  // resolved to whichever tenant's server hosted it first, and executeTool then
+  // called it with that server's stored credentials.
+  const effectiveOrgId = orgId ?? getDefaultOrgId();
+  const allTools = await storage.getAllMcpServerTools(effectiveOrgId);
   const matchedTool = serverId
     ? allTools.find(t => t.serverId === serverId && t.name === toolName)
     : allTools.find(t => t.name === toolName);
   const resolvedServerId = serverId ?? matchedTool?.serverId;
   if (!resolvedServerId) return { result: null, error: `No MCP server tool found for '${toolName}'`, credentialInjected: false };
   const mcpServer = await storage.getMcpServer(resolvedServerId);
-  if (!mcpServer) return { result: null, error: `MCP server '${resolvedServerId}' not found`, credentialInjected: false };
+  // An explicit serverId from another organization reads exactly like a missing one.
+  if (!mcpServer || !isMcpServerVisibleToOrg(mcpServer, effectiveOrgId)) {
+    return { result: null, error: `MCP server '${resolvedServerId}' not found`, credentialInjected: false };
+  }
 
   // Route execution through the SAME shared dispatcher the agent runtime uses
   // (gatherAvailableTools -> executeTool), so enterprise connectors (credential

@@ -6,8 +6,15 @@ import { getOrgId } from "../auth";
 import { jobEvents } from "../worker";
 import { handleZodError } from "./helpers";
 import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
+import { checkPermission } from "../permissions";
 
 const router = Router();
+
+// Every /api/admin/* route below (org settings, admin users, environments,
+// secret-rotation policies, webhooks) had no role check at all, so any
+// signed-in user could change them. Same permission the LLM provider key admin
+// routes in llm-providers.ts already require.
+router.use("/api/admin", checkPermission("manage_security"));
 
   // Tool Connectors
   router.get("/api/tool-connectors", async (_req, res) => {

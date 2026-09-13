@@ -1767,6 +1767,62 @@ export async function runStartupMigrations() {
         AND (t.annotations IS NULL OR t.annotations->>'enterpriseIntegration' IS NULL);
     `);
 
+    // Tenant isolation for the MCP server catalog and blueprints. Neither table
+    // had an owning organization, so every list endpoint returned every row to
+    // every tenant -- including other clients' connector names -- and a tenant
+    // could link, edit or invoke another tenant's connector by id. See
+    // server/tenant-scope.ts for how the column is read.
+    //
+    // mcp_servers.organization_id NULL is meaningful, not "unknown": an
+    // unclaimed seeded enterprise connector (integration_id set) is a platform
+    // catalog row visible to everyone; any other NULL row is legacy data that
+    // tenant-scope.ts treats as the default organization's. So the backfill
+    // below only assigns ownership where it is certain, never by guesswork.
+    await client.query(`
+      ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
+      CREATE INDEX IF NOT EXISTS idx_mcp_servers_org ON mcp_servers(organization_id);
+      ALTER TABLE blueprints ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
+      CREATE INDEX IF NOT EXISTS idx_blueprints_org ON blueprints(organization_id);
+
+      -- A row pinned to an integration connection (an adopted seeded row or a
+      -- sibling) belongs to that connection's organization.
+      UPDATE mcp_servers s
+      SET organization_id = c.organization_id
+      FROM integration_connections c
+      WHERE s.connection_id = c.id AND s.organization_id IS NULL;
+
+      -- Sibling rows recorded their org in industry_id, which is the wrong
+      -- column (enterprise-integrations.ts wrote orgId there). Move it.
+      UPDATE mcp_servers s
+      SET organization_id = s.industry_id
+      FROM organizations o
+      WHERE s.industry_id = o.id AND s.organization_id IS NULL;
+      UPDATE mcp_servers s
+      SET industry_id = NULL
+      FROM organizations o
+      WHERE s.industry_id = o.id AND s.organization_id = o.id;
+
+      -- A blueprint belongs to its agent's organization...
+      UPDATE blueprints b
+      SET organization_id = a.organization_id
+      FROM agents a
+      WHERE b.agent_id = a.id AND b.organization_id IS NULL AND a.organization_id IS NOT NULL;
+
+      -- ...or, failing that, to the one organization whose agents run on it.
+      -- Blueprints used by more than one tenant are left for the default-org
+      -- backfill in seedDefaultOrganization rather than assigned arbitrarily.
+      UPDATE blueprints b
+      SET organization_id = x.org
+      FROM (
+        SELECT blueprint_id, MIN(organization_id) AS org
+        FROM agents
+        WHERE blueprint_id IS NOT NULL AND organization_id IS NOT NULL
+        GROUP BY blueprint_id
+        HAVING COUNT(DISTINCT organization_id) = 1
+      ) x
+      WHERE b.id = x.blueprint_id AND b.organization_id IS NULL;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

@@ -62,6 +62,7 @@ import {
   redactWithOntologyKeys,
 } from "../permissions";
 import { getOrgId } from "../auth";
+import { resolveRequestOrgId, sanitizeMcpServerAuth, isMcpServerVisibleToOrg } from "../tenant-scope";
 import {
   resolveOntologyTags,
   handleZodError,
@@ -12448,9 +12449,9 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   // ── MCP Server Management ──
 
-  router.get("/api/mcp-servers", async (_req, res) => {
+  router.get("/api/mcp-servers", async (req, res) => {
     try {
-      const servers = await storage.getMcpServers();
+      const servers = await storage.getMcpServers(resolveRequestOrgId(req));
       res.json(servers);
     } catch (e) {
       res.status(500).json({ message: "Failed to fetch MCP servers" });
@@ -12470,10 +12471,20 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   router.post("/api/mcp-servers", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
       const data = insertMcpServerSchema.parse(req.body);
-      const server = await storage.createMcpServer(data);
+      // Ownership comes from the authenticated request, never the body -- a body
+      // organizationId would let a caller plant a connector in another tenant.
+      // Likewise status and allowlisted: accepting them from the body let a
+      // caller register a connector already "production-enabled" and skip the
+      // enable-production approval. Only a security admin may set them.
+      const orgId = resolveRequestOrgId(req);
+      const canSetTrust = hasPermission(getRequestRole(req), "manage_security");
+      const server = await storage.createMcpServer({
+        ...data,
+        organizationId: orgId ?? null,
+        ...(canSetTrust ? {} : { status: "registered", allowlisted: false }),
+      });
       res.status(201).json(server);
       // Audit event is fire-and-forget — must not block or fail the response
-      const orgId = (req.headers["x-organization-id"] as string) || undefined;
       storage.createAuditEvent({
         action: "mcp_server.created",
         objectType: "mcp_server",
@@ -12705,9 +12716,9 @@ async function performMcpServerInitialize(serverId: string): Promise<
     }
   });
 
-  router.get("/api/mcp-tools", async (_req, res) => {
+  router.get("/api/mcp-tools", async (req, res) => {
     try {
-      const tools = await storage.getAllMcpServerTools();
+      const tools = await storage.getAllMcpServerTools(resolveRequestOrgId(req));
       res.json(tools);
     } catch (e) {
       res.status(500).json({ message: "Failed to fetch MCP tools" });
@@ -12722,8 +12733,9 @@ async function performMcpServerInitialize(serverId: string): Promise<
       const toolIds: string[] = (toolIdsParam ? JSON.parse(toolIdsParam) : []).map((s: string) => s.trim()).filter(Boolean);
       const serverIds: string[] = (serverIdsParam ? JSON.parse(serverIdsParam) : []).map((s: string) => s.trim()).filter(Boolean);
 
-      const allTools = await storage.getAllMcpServerTools();
-      const allServers = await storage.getMcpServers();
+      const scopedOrgId = resolveRequestOrgId(req);
+      const allTools = await storage.getAllMcpServerTools(scopedOrgId);
+      const allServers = await storage.getMcpServers(scopedOrgId);
 
       const toolNameSet = new Set(allTools.map(t => t.name.toLowerCase()));
       const toolIdSet = new Set(allTools.map(t => t.id));
@@ -12916,6 +12928,8 @@ async function performMcpServerInitialize(serverId: string): Promise<
 
   router.get("/api/agents/:id/mcp-servers", async (req, res) => {
     try {
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
       const links = await storage.getAgentMcpServers(req.params.id);
       res.json(links);
     } catch (e) {
@@ -12923,18 +12937,23 @@ async function performMcpServerInitialize(serverId: string): Promise<
     }
   });
 
-  router.post("/api/agents/:id/mcp-servers", async (req, res) => {
+  // Linking a connector grants an agent the connector's tools and, through
+  // them, its credentials -- so it takes the connector permission, and the
+  // connector must be one the agent's own organization can see.
+  router.post("/api/agents/:id/mcp-servers", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id, getOrgId(req));
+      const agent = await storage.getAgent(String(req.params.id), getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const { serverId, acknowledgeWarnings } = req.body;
       if (!serverId) return res.status(400).json({ message: "serverId is required" });
 
       const server = await storage.getMcpServer(serverId);
-      if (!server) return res.status(404).json({ message: "MCP server not found" });
+      if (!server || !isMcpServerVisibleToOrg(server, agent.organizationId ?? resolveRequestOrgId(req))) {
+        return res.status(404).json({ message: "MCP server not found" });
+      }
 
-      const existing = await storage.getAgentMcpServerByIds(req.params.id, serverId);
+      const existing = await storage.getAgentMcpServerByIds(String(req.params.id), serverId);
       if (existing) return res.status(409).json({ message: "MCP server already linked to this agent" });
 
       const tools = await storage.getMcpServerTools(serverId);
@@ -13042,7 +13061,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
           await storage.createAuditEvent({
             action: "agent.mcp_policy_mismatch",
             objectType: "agent",
-            objectId: req.params.id,
+            objectId: String(req.params.id),
             actorId: "user",
             details: JSON.stringify({
               serverId,
@@ -13065,7 +13084,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
       }
 
       const link = await storage.createAgentMcpServer({
-        agentId: req.params.id,
+        agentId: String(req.params.id),
         serverId,
         assignedBy: "user",
       });
@@ -13075,7 +13094,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
           await storage.createAuditEvent({
             action: "agent.mcp_policy_mismatch",
             objectType: "agent",
-            objectId: req.params.id,
+            objectId: String(req.params.id),
             actorId: "user",
             details: JSON.stringify({
               serverId,
@@ -13094,7 +13113,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
       await storage.createAuditEvent({
         action: "agent.mcp_server_linked",
         objectType: "agent",
-        objectId: req.params.id,
+        objectId: String(req.params.id),
         actorId: "user",
         details: JSON.stringify({
           serverId,
@@ -13109,17 +13128,26 @@ async function performMcpServerInitialize(serverId: string): Promise<
     }
   });
 
-  router.delete("/api/agents/:agentId/mcp-servers/:linkId", async (req, res) => {
+  router.delete("/api/agents/:agentId/mcp-servers/:linkId", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const deleted = await storage.deleteAgentMcpServer(req.params.linkId);
+      // The link id alone used to be enough to delete any agent's link in any
+      // organization. Require the agent to be the caller's and the link to be
+      // that agent's.
+      const agent = await storage.getAgent(String(req.params.agentId), getOrgId(req));
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+      const agentLinks = await storage.getAgentMcpServers(String(req.params.agentId));
+      if (!agentLinks.some((l) => l.id === String(req.params.linkId))) {
+        return res.status(404).json({ message: "Link not found" });
+      }
+      const deleted = await storage.deleteAgentMcpServer(String(req.params.linkId));
       if (!deleted) return res.status(404).json({ message: "Link not found" });
 
       await storage.createAuditEvent({
         action: "agent.mcp_server_unlinked",
         objectType: "agent",
-        objectId: req.params.agentId,
+        objectId: String(req.params.agentId),
         actorId: "user",
-        details: JSON.stringify({ linkId: req.params.linkId }),
+        details: JSON.stringify({ linkId: String(req.params.linkId) }),
       });
 
       res.json({ success: true });
@@ -13130,8 +13158,9 @@ async function performMcpServerInitialize(serverId: string): Promise<
 
   router.get("/api/mcp-tools/by-risk", async (req, res) => {
     try {
-      const tools = await storage.getAllMcpServerTools();
-      const servers = await storage.getMcpServers();
+      const scopedOrgId = resolveRequestOrgId(req);
+      const tools = await storage.getAllMcpServerTools(scopedOrgId);
+      const servers = await storage.getMcpServers(scopedOrgId);
       const serverMap = new Map(servers.map(s => [s.id, s]));
       
       const enriched = tools.map(t => ({
@@ -13146,10 +13175,15 @@ async function performMcpServerInitialize(serverId: string): Promise<
     }
   });
 
-  router.get("/api/mcp-servers/:id/auth", async (req, res) => {
+  // Never returns credential values. This route used to return the decrypted
+  // config (OAuth access and refresh tokens, API keys, bearer tokens) to any
+  // signed-in user in any organization. The UI only needs to know which kind of
+  // auth is configured and which fields are set. Visibility of the server itself
+  // is enforced by mcpServerScope (server/tenant-scope.ts).
+  router.get("/api/mcp-servers/:id/auth", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const auth = await storage.getMcpServerAuth(req.params.id);
-      res.json(auth || { authType: "none", config: {} });
+      const auth = await storage.getMcpServerAuth(String(req.params.id));
+      res.json(sanitizeMcpServerAuth(auth, (auth?.config as Record<string, unknown> | null) ?? null));
     } catch (e) {
       res.status(500).json({ message: "Failed to fetch MCP server auth" });
     }
@@ -13166,7 +13200,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
         actorId: "system",
         details: JSON.stringify({ authType: data.authType }),
       });
-      res.json(auth);
+      res.json(sanitizeMcpServerAuth(auth, (data.config as Record<string, unknown> | null) ?? null));
     } catch (e: any) {
       if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
       res.status(500).json({ message: "Failed to update MCP server auth" });
@@ -13621,7 +13655,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
           console.warn("Assurance loop re-matching failed:", matchErr.message);
         }
 
-        const allBlueprints = await storage.getBlueprints();
+        const allBlueprints = await storage.getBlueprints(resolveRequestOrgId(req));
         for (const bp of allBlueprints) {
           const bpJson = bp.blueprintJson as any;
           const nodes = bpJson?.nodes || [];
@@ -13749,7 +13783,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
       }
 
       const affectedBlueprints: Array<{ id: string; name: string; newReadiness: number }> = [];
-      const allBlueprints = await storage.getBlueprints();
+      const allBlueprints = await storage.getBlueprints(resolveRequestOrgId(req));
       for (const bp of allBlueprints) {
         let agentMcpServerIds: string[] = [];
         if (bp.agentId) {
@@ -13824,10 +13858,11 @@ async function performMcpServerInitialize(serverId: string): Promise<
 
   // ── MCP Tool Registry (governed inventory across all MCP servers) ──
 
-  router.get("/api/tool-catalog", async (_req, res) => {
+  router.get("/api/tool-catalog", async (req, res) => {
     try {
-      const tools = await storage.getAllMcpServerTools();
-      const servers = await storage.getMcpServers();
+      const scopedOrgId = resolveRequestOrgId(req);
+      const tools = await storage.getAllMcpServerTools(scopedOrgId);
+      const servers = await storage.getMcpServers(scopedOrgId);
       const serverMap = new Map(servers.map(s => [s.id, s]));
       const enriched = tools.map(t => ({
         ...t,
@@ -14264,10 +14299,11 @@ async function performMcpServerInitialize(serverId: string): Promise<
     subscribed: z.boolean().optional(),
   }).strict();
 
-  router.get("/api/mcp-resources", async (_req, res) => {
+  router.get("/api/mcp-resources", async (req, res) => {
     try {
-      const resources = await storage.getAllMcpServerResources();
-      const servers = await storage.getMcpServers();
+      const scopedOrgId = resolveRequestOrgId(req);
+      const resources = await storage.getAllMcpServerResources(scopedOrgId);
+      const servers = await storage.getMcpServers(scopedOrgId);
       const serverMap = new Map(servers.map(s => [s.id, s]));
       const enriched = resources.map(r => ({
         ...r,
@@ -14402,10 +14438,11 @@ async function performMcpServerInitialize(serverId: string): Promise<
     owner: z.string().nullable().optional(),
   }).strict();
 
-  router.get("/api/mcp-prompts", async (_req, res) => {
+  router.get("/api/mcp-prompts", async (req, res) => {
     try {
-      const prompts = await storage.getAllMcpServerPrompts();
-      const servers = await storage.getMcpServers();
+      const scopedOrgId = resolveRequestOrgId(req);
+      const prompts = await storage.getAllMcpServerPrompts(scopedOrgId);
+      const servers = await storage.getMcpServers(scopedOrgId);
       const serverMap = new Map(servers.map(s => [s.id, s]));
       const enriched = prompts.map(p => ({
         ...p,

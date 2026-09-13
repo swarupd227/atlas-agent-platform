@@ -811,7 +811,8 @@ const router = Router();
       const [templates, allSkills, allMcpServers, allPolicies, allAgents, ragPipelines, allKnowledgeBases] = await Promise.all([
         storage.getAgentTemplates(),
         storage.getSkills(orgId),
-        storage.getMcpServers(),
+        // Only connectors this tenant can use -- the model proposes from this list.
+        storage.getMcpServers(orgId ?? getDefaultOrgId()),
         storage.getPolicies(orgId),
         storage.getAgents(orgId),
         storage.getRagPipelines(),
@@ -1908,7 +1909,8 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       }
 
       try {
-        const allBlueprints = await storage.getBlueprints();
+        // "Shared" means shared within this organization, not across tenants.
+        const allBlueprints = await storage.getBlueprints(getOrgId(req) ?? getDefaultOrgId());
         const sharedBlueprints = allBlueprints.filter(bp => bp.isShared || bp.status === "signed" || bp.status === "compiled");
 
         const allResultAgents = [
@@ -2119,7 +2121,9 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       const outcome = outcomeId ? await storage.getOutcome(outcomeId, getOrgId(req)) : null;
       if (outcomeId && !outcome) return res.status(404).json({ error: "Outcome not found" });
 
-      const allMcpServers = await storage.getMcpServers();
+      // The auto-matcher links whatever it finds here to the new agents, so it
+      // must never see another tenant's connectors.
+      const allMcpServers = await storage.getMcpServers(getOrgId(req) ?? getDefaultOrgId());
 
       // The AI proposal only names skills ("matchedSkills": exact skill names, per the
       // prompt schema above) -- resolve those against the real catalog so the created

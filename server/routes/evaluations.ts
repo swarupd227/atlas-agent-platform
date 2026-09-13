@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
 import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError, draftSingleAgent } from "./helpers";
 import { buildSourceDocuments } from "../attachment-context";
@@ -677,8 +677,11 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
   });
 
   // Blueprint Studio Routes
+  //
+  // Per-id routes (/api/blueprints/:id/...) are tenant-scoped by blueprintScope
+  // in server/tenant-scope.ts before they reach these handlers.
   router.get("/api/blueprints", async (req, res) => {
-    const allBlueprints = await storage.getBlueprints();
+    const allBlueprints = await storage.getBlueprints(getOrgId(req) ?? getDefaultOrgId());
     const allAgents = await storage.getAgents(getOrgId(req));
     const agentCountMap = new Map<string, number>();
     for (const a of allAgents) {
@@ -699,17 +702,18 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     res.json(blueprint);
   });
 
-  router.post("/api/blueprints", async (req, res) => {
+  router.post("/api/blueprints", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const validated = insertBlueprintSchema.parse(req.body);
-      const blueprint = await storage.createBlueprint({ ...validated, version: 0 });
+      // The owner is the caller's organization, whatever the body says.
+      const blueprint = await storage.createBlueprint({ ...validated, version: 0, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
       res.status(201).json(blueprint);
     } catch (e) {
       handleZodError(res, e);
     }
   });
 
-  router.patch("/api/blueprints/:id", async (req, res) => {
+  router.patch("/api/blueprints/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     const allowedFields = ["name", "description", "agentId", "blueprintJson", "status", "patternType", "tags", "isShared"];
     const sanitized: Record<string, any> = {};
     for (const key of allowedFields) {
@@ -721,15 +725,16 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     if (!("isShared" in sanitized) && !("patternType" in sanitized) && !("tags" in sanitized)) {
       sanitized.status = "draft";
     }
-    const updated = await storage.updateBlueprint(req.params.id, sanitized);
+    const updated = await storage.updateBlueprint(String(req.params.id), sanitized);
     if (!updated) return res.status(404).json({ error: "Blueprint not found" });
     res.json(updated);
   });
 
-  router.post("/api/blueprints/:id/clone", async (req, res) => {
-    const source = await storage.getBlueprint(req.params.id);
+  router.post("/api/blueprints/:id/clone", checkPermission("create_modify_blueprints"), async (req, res) => {
+    const source = await storage.getBlueprint(String(req.params.id));
     if (!source) return res.status(404).json({ error: "Blueprint not found" });
     const cloned = await storage.createBlueprint({
+      organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null,
       name: `${source.name} (Fork)`,
       description: source.description,
       agentId: source.agentId,
@@ -743,8 +748,8 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     res.status(201).json(cloned);
   });
 
-  router.post("/api/blueprints/:id/compile", async (req, res) => {
-    const blueprint = await storage.getBlueprint(req.params.id);
+  router.post("/api/blueprints/:id/compile", checkPermission("create_modify_blueprints"), async (req, res) => {
+    const blueprint = await storage.getBlueprint(String(req.params.id));
     if (!blueprint) return res.status(404).json({ error: "Blueprint not found" });
 
     // Team blueprints store their graph in team_blueprint_nodes/edges, not
@@ -849,7 +854,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
           warningCount: teamWarnings.length,
         },
       };
-      const teamUpdated = await storage.updateBlueprint(req.params.id, {
+      const teamUpdated = await storage.updateBlueprint(String(req.params.id), {
         validationResults: teamValidationResults,
         status: teamErrors.length === 0 ? "compiled" : "draft",
       });
@@ -1181,7 +1186,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
         compiledSnapshot,
       };
     }
-    const updated = await storage.updateBlueprint(req.params.id, updatePayload);
+    const updated = await storage.updateBlueprint(String(req.params.id), updatePayload);
 
     res.json({ ...updated, validationResults });
   });

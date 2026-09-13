@@ -1,4 +1,6 @@
 import type { Express } from "express";
+import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementScope } from "./tenant-scope";
+import { checkPermission } from "./permissions";
 import { createServer, type Server } from "http";
 import { startWorker, enqueueAuditChainCheck, enqueueAuditChainCheckpoint, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan, enqueueScheduleTriggerScan, enqueueDagResumeScan } from "./worker";
 import { runStartupMigrations } from "./db";
@@ -234,6 +236,19 @@ export async function registerRoutes(
   // ── Auth & OpenAPI router ─────────────────────────────────────
   app.use(authRouter);
 
+  // ── Tenant scoping (server/tenant-scope.ts) ──────────────────
+  // Registered before every feature router so no per-id route for a connector,
+  // its tools/resources/prompts, a blueprint or a blueprint's graph can act on
+  // another organization's row, whichever router ends up handling it.
+  app.use("/api/mcp-servers/:id", mcpServerScope);
+  app.use("/api/mcp-tools/:id", mcpServerChildScope("tool", ["by-risk"]));
+  app.use("/api/tool-catalog/:id", mcpServerChildScope("tool"));
+  app.use("/api/mcp-resources/:id", mcpServerChildScope("resource"));
+  app.use("/api/mcp-prompts/:id", mcpServerChildScope("prompt"));
+  app.use("/api/blueprints/:id", blueprintScope);
+  app.use("/api/team-blueprint-nodes", teamGraphElementScope("node"));
+  app.use("/api/team-blueprint-edges", teamGraphElementScope("edge"));
+
   // Public, API-key-authenticated surface for external automation (n8n, etc.)
   app.use(publicApiRouter);
 
@@ -343,7 +358,9 @@ export async function registerRoutes(
   app.get("/demo-api/blackbook/self-healing", getBBSelfHealingStatus);
   app.post("/demo-api/blackbook/reset",      resetBBDemo);
 
-  app.post("/api/mock-mcp/register", async (_req, res) => {
+  // Seeds platform-wide demo connectors, so it takes the same permission as
+  // changing any other platform catalog row.
+  app.post("/api/mock-mcp/register", checkPermission("manage_security"), async (_req, res) => {
     try {
       const result = await registerMockMcpServers();
       res.json({ success: true, ...result, message: `Registered ${result.servers.length} MCP servers with ${result.tools} tools` });
@@ -352,7 +369,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/mock-mcp/seed-demo", async (_req, res) => {
+  app.post("/api/mock-mcp/seed-demo", checkPermission("manage_security"), async (_req, res) => {
     try {
       const result = await registerMockMcpServers();
       res.json({

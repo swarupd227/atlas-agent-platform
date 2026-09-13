@@ -159,7 +159,7 @@ async function createOutcomeVersion(
       const [allAgents, allTemplates, allServers, allPolicies] = await Promise.all([
         storage.getAgents(orgId),
         storage.getAgentTemplates(),
-        storage.getMcpServers(),
+        storage.getMcpServers(orgId ?? getDefaultOrgId()),
         storage.getPolicies(orgId),
       ]);
       const toolsPerServer = await Promise.all(allServers.map((s) => storage.getMcpServerTools(s.id)));

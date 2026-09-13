@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { checkPermission } from "../permissions";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
 
 const router = Router();
 
@@ -244,7 +244,7 @@ router.get("/api/journeys/:id/health", async (req, res) => {
     const successRate = runCount > 0 ? completedCount / runCount : null;
     const lastRunAt = traces[0]?.startedAt || null; // getTracesByAgent orders desc by startedAt
 
-    const allServers = await storage.getMcpServers();
+    const allServers = await storage.getMcpServers(orgId ?? getDefaultOrgId());
     const serverNames = new Set<string>();
     for (const a of allAgents) {
       const rtConfig = (a.runtimeConfig as any) || {};

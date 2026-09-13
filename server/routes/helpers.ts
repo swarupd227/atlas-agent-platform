@@ -1,6 +1,7 @@
 import { ZodError, z } from "zod";
 import { completeWithFallback } from "../llm-provider";
 import { storage } from "../storage";
+import { getDefaultOrgId } from "../auth";
 import { callClaude, stripJsonFences } from "../claude";
 import { insertEvalTestCaseSchema } from "@shared/schema";
 
@@ -1567,7 +1568,7 @@ export async function draftSingleAgent(
   const [templates, allSkills, allMcpServers, allPolicies, ontologyConcepts] = await Promise.all([
     storage.getAgentTemplates(),
     storage.getSkills(orgId),
-    storage.getMcpServers(),
+    storage.getMcpServers(orgId ?? getDefaultOrgId()),
     storage.getPolicies(orgId),
     storage.getOntologyConcepts(industryId).catch(() => [] as any[]),
   ]);

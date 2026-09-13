@@ -995,6 +995,9 @@ export const blueprints = pgTable("blueprints", {
   tags: text("tags").array().default(sql`'{}'::text[]`),
   isShared: boolean("is_shared").default(false),
   forkedFromId: varchar("forked_from_id"),
+  /** Owning tenant. "Shared" (isShared) means shared within this organization,
+   *  never across tenants. */
+  organizationId: varchar("organization_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1217,6 +1220,11 @@ export const mcpServers = pgTable("mcp_servers", {
   capabilities: jsonb("capabilities"),
   serverInfo: jsonb("server_info"),
   industryId: text("industry_id"),
+  /** Owning tenant. NULL means a platform catalog row: an unclaimed seeded
+   *  enterprise connector (integrationId set) is visible to every tenant; any
+   *  other NULL row is legacy data owned by the default organization. See
+   *  server/tenant-scope.ts for the visibility and mutation rules. */
+  organizationId: varchar("organization_id"),
   healthStatus: text("health_status").default("unknown"),
   lastHealthCheck: timestamp("last_health_check"),
   addedBy: text("added_by"),

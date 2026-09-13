@@ -99,7 +99,8 @@ const router = Router();
       const mcpServerNames: string[] = Array.isArray(req.body.mcpServerNames) ? req.body.mcpServerNames : [];
       if (mcpServerIds.length > 0 || mcpServerNames.length > 0) {
         try {
-          const allServers = mcpServerNames.length > 0 ? await storage.getMcpServers() : [];
+          // Names resolve only among this tenant's connectors, never to another org's row.
+          const allServers = mcpServerNames.length > 0 ? await storage.getMcpServers(getOrgId(req) ?? getDefaultOrgId()) : [];
           for (const serverId of mcpServerIds) {
             const existing = await storage.getAgentMcpServerByIds(agent.id, serverId);
             if (!existing) await storage.createAgentMcpServer({ agentId: agent.id, serverId });

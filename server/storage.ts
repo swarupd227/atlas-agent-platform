@@ -399,7 +399,7 @@ export interface IStorage {
   createExperiment(experiment: InsertExperiment): Promise<Experiment>;
   updateExperiment(id: string, data: Partial<Experiment>): Promise<Experiment | undefined>;
 
-  getBlueprints(): Promise<Blueprint[]>;
+  getBlueprints(orgId?: string): Promise<Blueprint[]>;
   getBlueprint(id: string): Promise<Blueprint | undefined>;
   getBlueprintsByAgent(agentId: string): Promise<Blueprint[]>;
   createBlueprint(blueprint: InsertBlueprint): Promise<Blueprint>;
@@ -462,7 +462,7 @@ export interface IStorage {
   getPoliciesByScope(scopeType: string, scopeId?: string): Promise<Policy[]>;
   updateTrace(id: string, data: Partial<RunTrace>): Promise<RunTrace | undefined>;
 
-  getMcpServers(): Promise<McpServer[]>;
+  getMcpServers(orgId?: string): Promise<McpServer[]>;
   getMcpServer(id: string): Promise<McpServer | undefined>;
   getMcpServerByIntegrationId(integrationId: string): Promise<McpServer | undefined>;
   createMcpServer(server: InsertMcpServer): Promise<McpServer>;
@@ -470,20 +470,20 @@ export interface IStorage {
   deleteMcpServer(id: string): Promise<boolean>;
 
   getMcpServerTools(serverId: string): Promise<McpServerTool[]>;
-  getAllMcpServerTools(): Promise<McpServerTool[]>;
+  getAllMcpServerTools(orgId?: string): Promise<McpServerTool[]>;
   getMcpServerToolById(id: string): Promise<McpServerTool | undefined>;
   createMcpServerTool(tool: InsertMcpServerTool): Promise<McpServerTool>;
   updateMcpServerTool(id: string, data: Partial<McpServerTool>): Promise<McpServerTool | undefined>;
   deleteMcpServerToolsByServer(serverId: string): Promise<void>;
 
   getMcpServerResources(serverId: string): Promise<McpServerResource[]>;
-  getAllMcpServerResources(): Promise<McpServerResource[]>;
+  getAllMcpServerResources(orgId?: string): Promise<McpServerResource[]>;
   getMcpServerResourceById(id: string): Promise<McpServerResource | undefined>;
   createMcpServerResource(resource: InsertMcpServerResource): Promise<McpServerResource>;
   updateMcpServerResource(id: string, data: Partial<McpServerResource>): Promise<McpServerResource | undefined>;
   deleteMcpServerResourcesByServer(serverId: string): Promise<void>;
 
-  getAllMcpServerPrompts(): Promise<McpServerPrompt[]>;
+  getAllMcpServerPrompts(orgId?: string): Promise<McpServerPrompt[]>;
   getMcpServerPrompts(serverId: string): Promise<McpServerPrompt[]>;
   getMcpServerPromptById(id: string): Promise<McpServerPrompt | undefined>;
   createMcpServerPrompt(prompt: InsertMcpServerPrompt): Promise<McpServerPrompt>;
@@ -2278,8 +2278,18 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getBlueprints() {
-    return db.select().from(blueprints);
+  /**
+   * With an orgId, only that tenant's blueprints -- pass one on every path that
+   * answers a tenant's request. Without it, every row; that is for internal
+   * lookups that already select by agent or id (runtime, demo live-runs).
+   */
+  async getBlueprints(orgId?: string) {
+    if (!orgId) return db.select().from(blueprints);
+    const defaultOrgId = getDefaultOrgId();
+    // Legacy NULL rows are the default organization's (seedDefaultOrganization
+    // backfills them on boot; this covers the window before it runs).
+    const legacy = defaultOrgId && orgId === defaultOrgId ? isNull(blueprints.organizationId) : sql`false`;
+    return db.select().from(blueprints).where(or(eq(blueprints.organizationId, orgId), legacy));
   }
 
   async getBlueprint(id: string) {
@@ -2292,7 +2302,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createBlueprint(blueprint: InsertBlueprint) {
-    const [created] = await db.insert(blueprints).values(blueprint).returning();
+    // Every blueprint must have an owner. Seventeen call sites create
+    // blueprints (routes, team generation, journey clones, demo live-runs), and
+    // most don't know about tenancy -- so resolve it here rather than trusting
+    // each one: explicit org, else the owning agent's org, else the default org.
+    let organizationId = blueprint.organizationId ?? null;
+    if (!organizationId && blueprint.agentId) {
+      const [owner] = await db.select({ organizationId: agents.organizationId }).from(agents).where(eq(agents.id, blueprint.agentId));
+      organizationId = owner?.organizationId ?? null;
+    }
+    if (!organizationId) organizationId = getDefaultOrgId() ?? null;
+    const [created] = await db.insert(blueprints).values({ ...blueprint, organizationId }).returning();
     return created;
   }
 
@@ -2631,8 +2651,19 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getMcpServers() {
-    return db.select().from(mcpServers);
+  /**
+   * With an orgId, only the servers that tenant may see (its own rows, the
+   * platform catalog, and -- for the default org -- legacy unowned rows; the
+   * rule lives in server/tenant-scope.ts). Without it, every row; that is for
+   * startup registration, demo seeding and other non-tenant internals only.
+   */
+  async getMcpServers(orgId?: string) {
+    if (!orgId) return db.select().from(mcpServers);
+    const defaultOrgId = getDefaultOrgId();
+    const platformRow = defaultOrgId && orgId === defaultOrgId
+      ? isNull(mcpServers.organizationId)
+      : and(isNull(mcpServers.organizationId), sql`${mcpServers.integrationId} IS NOT NULL`);
+    return db.select().from(mcpServers).where(or(eq(mcpServers.organizationId, orgId), platformRow));
   }
 
   async getMcpServer(id: string) {
@@ -2664,8 +2695,12 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(mcpServerTools).where(eq(mcpServerTools.serverId, serverId));
   }
 
-  async getAllMcpServerTools() {
-    return db.select().from(mcpServerTools);
+  /** With an orgId, only tools on servers that tenant may see (see getMcpServers). */
+  async getAllMcpServerTools(orgId?: string) {
+    if (!orgId) return db.select().from(mcpServerTools);
+    const serverIds = (await this.getMcpServers(orgId)).map((s) => s.id);
+    if (serverIds.length === 0) return [];
+    return db.select().from(mcpServerTools).where(inArray(mcpServerTools.serverId, serverIds));
   }
 
   async getMcpServerToolById(id: string) {
@@ -2691,8 +2726,12 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(mcpServerResources).where(eq(mcpServerResources.serverId, serverId));
   }
 
-  async getAllMcpServerResources() {
-    return db.select().from(mcpServerResources);
+  /** With an orgId, only resources on servers that tenant may see. */
+  async getAllMcpServerResources(orgId?: string) {
+    if (!orgId) return db.select().from(mcpServerResources);
+    const serverIds = (await this.getMcpServers(orgId)).map((s) => s.id);
+    if (serverIds.length === 0) return [];
+    return db.select().from(mcpServerResources).where(inArray(mcpServerResources.serverId, serverIds));
   }
 
   async getMcpServerResourceById(id: string) {
@@ -2714,8 +2753,12 @@ export class DatabaseStorage implements IStorage {
     await db.delete(mcpServerResources).where(eq(mcpServerResources.serverId, serverId));
   }
 
-  async getAllMcpServerPrompts() {
-    return db.select().from(mcpServerPrompts);
+  /** With an orgId, only prompts on servers that tenant may see. */
+  async getAllMcpServerPrompts(orgId?: string) {
+    if (!orgId) return db.select().from(mcpServerPrompts);
+    const serverIds = (await this.getMcpServers(orgId)).map((s) => s.id);
+    if (serverIds.length === 0) return [];
+    return db.select().from(mcpServerPrompts).where(inArray(mcpServerPrompts.serverId, serverIds));
   }
 
   async getMcpServerPrompts(serverId: string) {
@@ -4525,6 +4568,10 @@ export class DatabaseStorage implements IStorage {
       db.update(incidents).set({ organizationId: orgId }).where(isNull(incidents.organizationId)),
       db.update(knowledgeBases).set({ organizationId: orgId }).where(isNull(knowledgeBases.organizationId)),
       db.update(skills).set({ organizationId: orgId }).where(isNull(skills.organizationId)),
+      // Deliberately NOT mcp_servers: a NULL owner there marks a platform
+      // catalog row (see tenant-scope.ts), so backfilling it would hide the
+      // enterprise connector catalog from every other tenant.
+      db.update(blueprints).set({ organizationId: orgId }).where(isNull(blueprints.organizationId)),
     ]);
     return org;
   }

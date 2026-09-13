@@ -6,6 +6,8 @@ import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault"
 import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registry";
 import { callN8nWorkflow } from "../integrations/n8n";
 import { getDefaultOrgId, getOrgId } from "../auth";
+import { checkPermission } from "../permissions";
+import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
 import { db } from "../db";
 import { mcpServers, auditEvents, integrationConnections, agentMcpServers } from "@shared/schema";
 import { eq, and, gte, like, isNull } from "drizzle-orm";
@@ -85,10 +87,10 @@ const connectSchema = z.object({
   createNew: z.boolean().optional(),
 });
 
-router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res: Response) => {
+router.post("/api/enterprise-integrations/:id/connect", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
-    const integrationId = req.params.id;
+    const integrationId = String(req.params.id);
     const def = getIntegrationDef(integrationId);
     if (!def) {
       return res.status(404).json({ error: `Integration '${integrationId}' not found in registry` });
@@ -195,7 +197,7 @@ router.get("/api/enterprise-integrations/:id/connections", async (req: Request, 
 const renameSchema = z.object({ name: z.string().trim().min(1).max(120) });
 
 // PATCH /api/enterprise-integrations/connections/:connectionId — rename
-router.patch("/api/enterprise-integrations/connections/:connectionId", async (req: Request, res: Response) => {
+router.patch("/api/enterprise-integrations/connections/:connectionId", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const parsed = renameSchema.safeParse(req.body);
@@ -255,7 +257,7 @@ router.get("/api/enterprise-integrations/connections/:connectionId/config", asyn
 
 const editConfigSchema = z.object({ credentials: z.record(z.string()) });
 
-router.patch("/api/enterprise-integrations/connections/:connectionId/config", async (req: Request, res: Response) => {
+router.patch("/api/enterprise-integrations/connections/:connectionId/config", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const parsed = editConfigSchema.safeParse(req.body);
@@ -312,7 +314,7 @@ router.patch("/api/enterprise-integrations/connections/:connectionId/config", as
 
 // POST /api/enterprise-integrations/connections/:connectionId/promote
 // Makes this the connection that type-only credential lookups resolve to.
-router.post("/api/enterprise-integrations/connections/:connectionId/promote", async (req: Request, res: Response) => {
+router.post("/api/enterprise-integrations/connections/:connectionId/promote", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const row = await storage.promoteIntegrationConnectionToDefault(orgId, req.params.connectionId);
@@ -336,7 +338,7 @@ router.post("/api/enterprise-integrations/connections/:connectionId/promote", as
 // POST /api/enterprise-integrations/connections/:connectionId/disconnect
 // Disconnects ONE connection, leaving its siblings untouched -- unlike the
 // type-level disconnect route below.
-router.post("/api/enterprise-integrations/connections/:connectionId/disconnect", async (req: Request, res: Response) => {
+router.post("/api/enterprise-integrations/connections/:connectionId/disconnect", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const connectionId = req.params.connectionId;
@@ -372,7 +374,7 @@ router.post("/api/enterprise-integrations/connections/:connectionId/disconnect",
 // Refuses by default when agents are still bound to the connection's MCP
 // server, since silently unbinding them would break those agents at their next
 // tool call. `?force=true` proceeds and reports how many bindings were removed.
-router.delete("/api/enterprise-integrations/connections/:connectionId", async (req: Request, res: Response) => {
+router.delete("/api/enterprise-integrations/connections/:connectionId", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const connectionId = req.params.connectionId;
@@ -422,8 +424,9 @@ router.delete("/api/enterprise-integrations/connections/:connectionId", async (r
       // the shared catalog row and leave it orphaned rather than deleted.
       const isSiblingRow = server.addedBy === SIBLING_SERVER_MARKER;
       if (!isSiblingRow) {
+        // Released back to the platform catalog, so ownership goes with it.
         await db.update(mcpServers)
-          .set({ connectionId: null, status: "inactive", updatedAt: new Date() })
+          .set({ connectionId: null, organizationId: null, status: "inactive", updatedAt: new Date() })
           .where(eq(mcpServers.id, server.id));
       } else {
         await db.delete(mcpServers).where(eq(mcpServers.id, server.id));
@@ -472,7 +475,7 @@ router.delete("/api/enterprise-integrations/connections/:connectionId", async (r
 });
 
 // ── POST /api/enterprise-integrations/:id/disconnect ─────────────────────────
-router.post("/api/enterprise-integrations/:id/disconnect", async (req: Request, res: Response) => {
+router.post("/api/enterprise-integrations/:id/disconnect", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
@@ -498,7 +501,7 @@ router.post("/api/enterprise-integrations/:id/disconnect", async (req: Request, 
 });
 
 // ── DELETE /api/enterprise-integrations/:id — alias for disconnect ────────────
-router.delete("/api/enterprise-integrations/:id", async (req: Request, res: Response) => {
+router.delete("/api/enterprise-integrations/:id", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
@@ -524,7 +527,7 @@ router.delete("/api/enterprise-integrations/:id", async (req: Request, res: Resp
 });
 
 // ── POST /api/enterprise-integrations/:id/test ───────────────────────────────
-router.post("/api/enterprise-integrations/:id/test", async (req: Request, res: Response) => {
+router.post("/api/enterprise-integrations/:id/test", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
@@ -572,7 +575,7 @@ router.get("/api/enterprise-integrations/:id/status", async (req: Request, res: 
 });
 
 // ── GET /api/enterprise-integrations/:id/credentials-hint ────────────────────
-router.get("/api/enterprise-integrations/:id/credentials-hint", async (req: Request, res: Response) => {
+router.get("/api/enterprise-integrations/:id/credentials-hint", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const integrationId = req.params.id;
@@ -622,7 +625,7 @@ function deriveCodeChallenge(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
-router.get("/api/integrations/oauth/start/:provider", async (req: Request, res: Response) => {
+router.get("/api/integrations/oauth/start/:provider", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const { provider } = req.params;
     const def = getIntegrationDef(provider);
@@ -948,8 +951,11 @@ router.get("/api/enterprise-integrations/:id/health", async (req: Request, res: 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function maskValue(value: string): string {
-  if (!value || value.length <= 6) return "••••••";
-  return value.slice(0, 4) + "••••" + value.slice(-2);
+  // The previous mask kept the first four and last two characters -- six of an
+  // eight-character password. Show only the last four, and only for values long
+  // enough (API keys, tokens) that four characters reveal nothing usable.
+  if (!value || value.length < 20) return "••••••••";
+  return "••••••••" + value.slice(-4);
 }
 
 /**
@@ -1023,6 +1029,10 @@ async function upsertIntegrationMcpServer(
         .update(mcpServers)
         .set({
           connectionId,
+          // Adopting the seeded catalog row makes it this organization's --
+          // otherwise every other tenant would still see (and could link) a
+          // connector now pinned to this tenant's connection.
+          organizationId: orgId,
           status: "registered",
           updatedAt: new Date(),
           ...(connectionName ? { name: `${integrationName} MCP (${connectionName})` } : {}),
@@ -1061,7 +1071,9 @@ async function upsertIntegrationMcpServer(
         riskTier: template?.riskTier ?? "MEDIUM",
         status: "registered",
         connectionId,
-        industryId: orgId,
+        // Owning tenant. This used to be written into industryId, which is a
+        // different field, so nothing ever scoped the row by it.
+        organizationId: orgId,
         // Marks this row as belonging to ONE connection, so deleting that
         // connection deletes the row. Identity cannot be inferred from the url
         // any more -- siblings deliberately copy the seeded row's url, so a
@@ -1197,11 +1209,30 @@ async function testConnectionHealth(
   }
 
   try {
+    // These tests fetch URLs the user supplied (instance_url, base_url, baseUrl),
+    // with the user's credentials attached. Refuse private, loopback, link-local
+    // and cloud-metadata addresses before any request is made, and don't follow
+    // redirects, which would otherwise route around that check.
+    const userSuppliedUrl =
+      integrationId === "salesforce" ? credentials.instance_url
+      : integrationId === "jira" ? credentials.base_url
+      : integrationId === "servicenow" ? credentials.instance_url
+      : integrationId === "n8n" ? credentials.baseUrl
+      : undefined;
+    if (userSuppliedUrl) {
+      try {
+        await assertSafeOutboundUrl(userSuppliedUrl);
+      } catch (e: any) {
+        return { ok: false, error: e instanceof UnsafeUrlError ? e.message : "That URL can't be reached from this test.", latencyMs: Date.now() - start };
+      }
+    }
+
     switch (integrationId) {
       case "salesforce": {
         const instanceUrl = credentials.instance_url ?? "https://login.salesforce.com";
         const r = await fetch(`${instanceUrl}/services/data/v59.0/`, {
           headers: { Authorization: `Bearer ${credentials.access_token}` },
+          redirect: "manual",
           signal: AbortSignal.timeout(5000),
         });
         return r.ok
@@ -1219,6 +1250,7 @@ async function testConnectionHealth(
       }
       case "jira": {
         const r = await fetch(`${credentials.base_url}/rest/api/3/myself`, {
+          redirect: "manual",
           headers: {
             Authorization: `Basic ${Buffer.from(`${credentials.email}:${credentials.api_token}`).toString("base64")}`,
           },
@@ -1248,6 +1280,7 @@ async function testConnectionHealth(
       }
       case "servicenow": {
         const r = await fetch(`${credentials.instance_url}/api/now/table/incident?sysparm_limit=1`, {
+          redirect: "manual",
           headers: {
             Authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`,
           },
@@ -1283,7 +1316,7 @@ async function testConnectionHealth(
         // n8n exposes /healthz on self-hosted instances; try it first, then fall back to root
         const headers: Record<string, string> = {};
         if (credentials.apiKey) headers["X-N8N-API-KEY"] = credentials.apiKey;
-        const r = await fetch(`${baseUrl}/healthz`, { headers, signal: AbortSignal.timeout(5000) });
+        const r = await fetch(`${baseUrl}/healthz`, { headers, redirect: "manual", signal: AbortSignal.timeout(5000) });
         if (r.ok || r.status === 404) {
           // 404 on /healthz means n8n is reachable but endpoint doesn't exist on older builds
           return { ok: true, latencyMs: Date.now() - start };
@@ -1300,6 +1333,8 @@ async function testConnectionHealth(
 }
 
 // ── Route aliases: /api/integrations → same handlers ─────────────────────────
+// connect / disconnect / delete below 307-redirect to the /api/enterprise-
+// integrations routes, so they inherit those routes' permission checks.
 // Provides the canonical /api/integrations API contract alongside /api/enterprise-integrations
 
 // GET /api/integrations — list all integrations with per-org connection status (mirrors /api/enterprise-integrations)
@@ -1358,9 +1393,9 @@ router.get("/api/integrations/:id/health", async (req, res) => {
       successRate: totalCalls > 0 ? +((totalCalls - totalErrors) / totalCalls).toFixed(4) : 1 } });
 });
 
-router.post("/api/integrations/:id/test", async (req, res) => {
+router.post("/api/integrations/:id/test", checkPermission("manage_mcp_servers"), async (req, res) => {
   const orgId = getOrgId(req) ?? getDefaultOrgId();
-  const integrationId = req.params.id;
+  const integrationId = String(req.params.id);
   const conn = await storage.getIntegrationConnection(orgId, integrationId).catch(() => null);
   if (!conn || !conn.credentialBlob) return res.status(404).json({ error: "No connection found" });
   try {
@@ -1376,7 +1411,7 @@ router.post("/api/integrations/:id/test", async (req, res) => {
 // Distinct from the public API endpoint which requires an agent API key.
 // This one uses the standard session auth so the in-app user can test without
 // needing to know the public key.
-router.post("/api/integrations/n8n/call", async (req: Request, res: Response) => {
+router.post("/api/integrations/n8n/call", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const conn = await storage.getIntegrationConnection(orgId, "n8n");
@@ -1399,6 +1434,11 @@ router.post("/api/integrations/n8n/call", async (req: Request, res: Response) =>
     }
 
     const webhookUrl = `${baseUrl}/${path}`;
+    try {
+      await assertSafeOutboundUrl(webhookUrl);
+    } catch (e: any) {
+      return res.status(400).json({ error: e instanceof UnsafeUrlError ? e.message : "That n8n URL isn't reachable from here." });
+    }
     const result = await callN8nWorkflow({
       webhookUrl,
       payload,

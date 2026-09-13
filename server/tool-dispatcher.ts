@@ -699,6 +699,20 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
     }
   }
 
+  // Everything below authenticates with the credentials stored on the MCP
+  // server record itself (mcp_server_auth), which -- unlike the enterprise path
+  // above -- are not resolved per organization. Refuse to use another tenant's
+  // server, so a tool id or name that resolves to someone else's connector can't
+  // borrow their credentials (the AAR invoke-tool route resolved tools by name
+  // across every organization). No org context means an internal caller.
+  if (orgId) {
+    const owningServer = await storage.getMcpServer(tool.serverId);
+    const { isMcpServerVisibleToOrg } = await import("./tenant-scope");
+    if (owningServer && !isMcpServerVisibleToOrg(owningServer, orgId)) {
+      throw new Error(`MCP server for tool '${tool.toolName}' is not available to this organization`);
+    }
+  }
+
   // Genuinely external MCP servers (someone else's endpoint) — speak the real
   // protocol over HTTP. Reached only when the tool is not one of our own
   // enterprise connectors, which are handled in-process above.
