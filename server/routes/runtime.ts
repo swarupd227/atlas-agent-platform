@@ -13,6 +13,8 @@ import { desc, eq, and, sql } from "drizzle-orm";
 import { conversations, messages as chatMessages, traceSpans, kpiDefinitions } from "@shared/schema";
 import { teamToManifest, upgradeV1AgentManifest, agentManifestToV1Shape, isV2Manifest, validateManifest as validateManifestV2 } from "@shared/manifest-v2";
 import { importTeamManifest, importFlowManifest } from "../manifest-import";
+import { callClaude } from "../claude";
+import { buildRunExplanationContext, buildExplanationPrompt, RUN_EXPLAINER_SYSTEM } from "../run-explainer";
 import { z, ZodError } from "zod";
 import { parseAIJsonResponse, AIResponseParseError } from "../claude";
 import {
@@ -21042,6 +21044,38 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   });
 
   // ── List recent standalone DAG runs for a team agent (monitoring view) ───
+  // Explainability (Initiative 05): a plain-English, step-cited account of what
+  // happened in a run, grounded ONLY in the run's own recorded facts. Read-only.
+  router.get("/api/dag-runs/:id/explain", async (req, res) => {
+    try {
+      const run = await storage.getDagExecutionRun(String(req.params.id));
+      if (!run) return res.status(404).json({ message: "Run not found" });
+      const orgId = getOrgId(req);
+      // Tenant boundary: the run must belong to a team agent in this org.
+      let labels: Record<string, string> = {};
+      if (run.teamAgentId) {
+        const agent = await storage.getAgent(run.teamAgentId, orgId);
+        if (!agent) return res.status(404).json({ message: "Run not found" });
+        const bpId = (agent as any).blueprintId as string | undefined;
+        if (bpId) {
+          const nodes = await storage.getTeamBlueprintNodes(bpId);
+          labels = Object.fromEntries(nodes.map((n) => [n.id, n.label]));
+        }
+      }
+      const ctx = buildRunExplanationContext(run as any, labels);
+      const explanation = (await callClaude({
+        system: RUN_EXPLAINER_SYSTEM,
+        user: buildExplanationPrompt(ctx),
+        maxTokens: 700,
+        model: "claude-haiku-4-5",
+      })).trim();
+      res.json({ runId: run.id, status: ctx.status, explanation, facts: ctx });
+    } catch (e: any) {
+      console.error("[dag-run explain] error:", e);
+      res.status(500).json({ message: "Failed to explain run" });
+    }
+  });
+
   router.get("/api/team-agents/:teamAgentId/dag-runs", async (req, res) => {
     try {
       const teamAgentId = req.params.teamAgentId as string;
