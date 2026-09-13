@@ -1689,6 +1689,12 @@ After receiving tool results, provide a structured analysis with key findings, s
     ? codeExecMaxTokens
     : (planCallInputChars > 8000 ? 16384 : 4096);
 
+  // Why the call that wrote the answer stopped. "max_tokens" means the answer
+  // was cut off at the output limit: a step reported as completed whose
+  // deliverable ends mid-table, which nothing downstream could see (live: three
+  // of four content-planning steps stopped at exactly 16,384 tokens in one run).
+  let finalStopReason: string | undefined;
+
   try {
     const planCallStartMs = performance.now();
     const planResult = await (onProgress
@@ -1726,6 +1732,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           [llmProvider, fallbackLlmProvider],
         ));
     const planCallLatencyMs = performance.now() - planCallStartMs;
+    finalStopReason = planResult.stopReason;
     // A code-execution run that gets served by the FALLBACK provider silently
     // loses its container: the model has no way to run anything, and (observed
     // live) reports a finished deliverable it never built. Make that visible
@@ -2182,6 +2189,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           currentContent = continueResult.content;
           currentToolCalls = continueResult.toolCalls;
           currentRawMessage = continueResult.rawAssistantMessage;
+          finalStopReason = continueResult.stopReason;
 
           if (currentToolCalls.length > 0) {
             steps.push({
@@ -2352,6 +2360,9 @@ After receiving tool results, provide a structured analysis with key findings, s
         totalTokens += analysisResult.tokensUsed.total;
         totalCostUsd += analysisResult.costUsd;
 
+        // In "answer" mode the returned text is the model's own last turn, whose
+        // stop reason is already recorded; otherwise it is this summarising call.
+        if (ownAnswer === undefined) finalStopReason = (analysisResult as { stopReason?: string }).stopReason;
         const rawContent = analysisResult.content || (isConversational ? "I couldn't generate a response." : "{}");
 
         // GAP5: Output Contract Enforcement
@@ -2842,6 +2853,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       totalCostUsd,
       costCapUsd: maxCostPerRunUsd,
       costCapReached,
+      truncated: finalStopReason === "max_tokens",
       ...(costCapReached ? { terminationReason: "cost_cap_reached" } : {}),
       ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
     },
@@ -3180,6 +3192,8 @@ export async function executeWorkerAgent(
   completionTokens?: number;
   toolCallCount?: number;
   generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>;
+  /** The final answer stopped at the model's output limit, so the output ends partway through. */
+  truncated?: boolean;
 }> {
   const startTime = Date.now();
   const workerAgent = await storage.getAgent(workerId);
@@ -3357,6 +3371,7 @@ export async function executeWorkerAgent(
       costUsd: result.summary.costUsd || 0,
       promptTokens: result.summary.tokenUsage?.promptTokens || 0,
       completionTokens: result.summary.tokenUsage?.completionTokens || 0,
+      truncated: !!(result.summary as { truncated?: boolean }).truncated,
       toolCallCount: Array.isArray(result.summary.toolsUsed) ? result.summary.toolsUsed.length : 0,
       ...(result.generatedFiles?.length ? { generatedFiles: result.generatedFiles } : {}),
     };

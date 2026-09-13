@@ -241,6 +241,8 @@ export interface NodeExecutionResult {
   childSkippedCount?: number;
   costUsd?: number;
   toolCallCount?: number;
+  /** Completed, but the final answer stopped at the model's output limit: the output ends partway through. */
+  truncated?: boolean;
 }
 
 export interface WaveExecutionResult {
@@ -637,6 +639,58 @@ export function upstreamFailureNotice(
   ].join("\n");
 }
 
+/** Every node upstream of nodeId, however indirectly. */
+function ancestorsOf(nodeId: string, edgeMap: Record<string, string[]>): string[] {
+  const reverse: Record<string, string[]> = {};
+  for (const [source, targets] of Object.entries(edgeMap)) {
+    for (const target of targets) (reverse[target] ??= []).push(source);
+  }
+  const seen = new Set<string>();
+  const queue = [...(reverse[nodeId] ?? [])];
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    queue.push(...(reverse[id] ?? []));
+  }
+  return Array.from(seen);
+}
+
+/**
+ * Upstream work a node received only PART of.
+ *
+ * A step whose final answer stopped at the model's output limit still counts
+ * as completed and its partial output flows on -- a calendar that stops
+ * mid-table, briefs that end partway through the third one. Nothing marked it,
+ * so every later step, reviewers included, treated a fragment as the whole
+ * deliverable (live: three of four content-planning steps in one run stopped
+ * at exactly 16,384 tokens, and the reviewer never mentioned it). Rendered as
+ * its own section, separate from steps that produced nothing, because the
+ * right response differs: here the work exists but is incomplete.
+ */
+export function upstreamTruncationNotice(
+  nodeId: string,
+  plan: Pick<ComputedWavePlan, "edgeMap" | "nodeConfig">,
+  outcomes: ReadonlyMap<string, { status: string; error?: string }>,
+): string | undefined {
+  if (outcomes.size === 0) return undefined;
+  const lines: string[] = [];
+  for (const id of ancestorsOf(nodeId, plan.edgeMap)) {
+    if (outcomes.get(id)?.status !== "truncated") continue;
+    const nc = plan.nodeConfig[id];
+    const name = nc?.label || id;
+    const key = nc?.stateKey ? ` (state key \`${nc.stateKey}\`)` : "";
+    lines.push(`- "${name}"${key} was CUT OFF at the model's output length limit. What you have from it ends partway through; everything it would have written after that point does not exist.`);
+  }
+  if (lines.length === 0) return undefined;
+  return [
+    `These earlier steps did not finish writing their output:`,
+    ...lines,
+    `Treat their output as incomplete. Do not assume the missing remainder exists, do not fill it in, and never judge it complete. ` +
+      `If your job depends on the missing part, say plainly what you could not do and why.`,
+  ].join("\n");
+}
+
 // For a Handoff-mode edge, the routing decision comes from the SOURCE
 // node's own output naming its target -- but the agent can only do that if
 // it's told which target labels are valid. Looks up, for a given node,
@@ -665,6 +719,7 @@ function buildAgentInput(
   handoffTargets?: string[],
   revisionFraming?: string,
   upstreamFailures?: string,
+  upstreamTruncations?: string,
 ): string {
   const sections: string[] = [];
   sections.push(`## DAG EXECUTION CONTEXT`);
@@ -689,6 +744,12 @@ function buildAgentInput(
   if (upstreamFailures) {
     sections.push(`## UPSTREAM STEPS THAT PRODUCED NOTHING`);
     sections.push(upstreamFailures);
+    sections.push(``);
+  }
+
+  if (upstreamTruncations) {
+    sections.push(`## UPSTREAM STEPS WHOSE OUTPUT WAS CUT OFF`);
+    sections.push(upstreamTruncations);
     sections.push(``);
   }
 
@@ -876,8 +937,9 @@ export class DAGExecutionEngine {
           totalCostUsd += nr.costUsd || 0;
           totalToolCalls += nr.toolCallCount || 0;
           if (nr.status === "skipped") skippedNodeIds.add(nr.nodeId);
-        if (nr.status === "completed") nodeOutcomes.delete(nr.nodeId);
-        else nodeOutcomes.set(nr.nodeId, { status: nr.status, error: nr.error });
+        // A completed step that was cut off is recorded too: its output exists but is partial.
+        if (nr.status === "completed" && !nr.truncated) nodeOutcomes.delete(nr.nodeId);
+        else nodeOutcomes.set(nr.nodeId, { status: nr.status === "completed" ? "truncated" : nr.status, error: nr.error });
           if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
           const nc = config.executionPlan.nodeConfig[nr.nodeId];
           if (nc && nr.status === "completed") {
@@ -979,8 +1041,9 @@ export class DAGExecutionEngine {
         totalCostUsd += nr.costUsd || 0;
         totalToolCalls += nr.toolCallCount || 0;
         if (nr.status === "skipped") skippedNodeIds.add(nr.nodeId);
-        if (nr.status === "completed") nodeOutcomes.delete(nr.nodeId);
-        else nodeOutcomes.set(nr.nodeId, { status: nr.status, error: nr.error });
+        // A completed step that was cut off is recorded too: its output exists but is partial.
+        if (nr.status === "completed" && !nr.truncated) nodeOutcomes.delete(nr.nodeId);
+        else nodeOutcomes.set(nr.nodeId, { status: nr.status === "completed" ? "truncated" : nr.status, error: nr.error });
         if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
         const nc = config.executionPlan.nodeConfig[nr.nodeId];
         if (nc && nr.status === "completed") {
@@ -1306,6 +1369,7 @@ export class DAGExecutionEngine {
       handoffTargets,
       revisionFraming(nodeId, currentState, config.executionPlan),
       upstreamFailureNotice(nodeId, config.executionPlan, nodeOutcomes),
+      upstreamTruncationNotice(nodeId, config.executionPlan, nodeOutcomes),
     );
 
     // A Tool Set node directly upstream of this agent node scopes which MCP
@@ -1368,6 +1432,7 @@ export class DAGExecutionEngine {
       costUsd: workerResult.costUsd || 0,
       toolCallCount: workerResult.toolCallCount || 0,
       traceId: workerResult.traceId || "",
+      ...(workerResult.truncated ? { truncated: true } : {}),
     };
   }
 
@@ -1968,7 +2033,7 @@ export class DAGExecutionEngine {
     timeoutMs: number,
     toolAllowlist?: string[],
     upstreamGeneratedFileIds?: string[],
-  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }> }> {
+  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean }> {
     const mockTeamAgent = {
       deploymentId: undefined,
       agentId: "__dag_orchestrator__",
@@ -2022,6 +2087,7 @@ export class DAGExecutionEngine {
         completionTokens: (result as any).completionTokens || 0,
         costUsd: (result as any).costUsd || 0,
         toolCallCount: (result as any).toolCallCount || 0,
+        truncated: !!(result as any).truncated,
         traceId: (result as any).step?.id || "",
         ...(Array.isArray((result as any).generatedFiles) && (result as any).generatedFiles.length ? { generatedFiles: (result as any).generatedFiles } : {}),
       };

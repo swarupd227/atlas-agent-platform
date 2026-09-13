@@ -432,6 +432,19 @@ export interface LLMProvider {
 // OpenAI provider
 // ---------------------------------------------------------------------------
 
+/**
+ * OpenAI's finish_reason in the canonical vocabulary the rest of the platform
+ * reads (Anthropic's stop_reason). Without it an OpenAI answer cut off at its
+ * output limit ("length") carried no stop reason at all, so a truncated
+ * deliverable from the fallback provider was indistinguishable from a finished one.
+ */
+export function canonicalStopReason(openAiFinishReason: string): string {
+  if (openAiFinishReason === "length") return "max_tokens";
+  if (openAiFinishReason === "stop") return "end_turn";
+  if (openAiFinishReason === "tool_calls" || openAiFinishReason === "function_call") return "tool_use";
+  return openAiFinishReason;
+}
+
 class OpenAIProvider implements LLMProvider {
   readonly providerName = "openai";
   private client: OpenAI | null = null;
@@ -566,6 +579,7 @@ class OpenAIProvider implements LLMProvider {
       tokensUsed: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
       costUsd: estimateCost(promptTokens, completionTokens, OPENAI_MODELS, model),
       rawAssistantMessage: choice?.message,
+      ...(choice?.finish_reason ? { stopReason: canonicalStopReason(choice.finish_reason) } : {}),
       ...(options?.jsonSchema ? { decodePath: usedStrictSchema ? "strict_native" as const : "legacy_prompted" as const } : {}),
       ...buildProviderResultFields(this.providerName, options),
     };
