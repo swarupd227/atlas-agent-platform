@@ -66,7 +66,7 @@ import { resolveRequestOrgId, sanitizeMcpServerAuth, isMcpServerVisibleToOrg } f
 import {
   resolveOntologyTags,
   handleZodError,
-  buildAgentSystemPrompt,
+  buildAgentSystemPromptWithGovernance,
   resolvePolicyBundle,
   extractResponseText,
   runParameterMatching,
@@ -1179,7 +1179,7 @@ function hashCode(str: string): number {
       const testMessage = `Test message from ${channel.channelType} channel integration`;
       const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
       const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
-      const richPrompt = buildAgentSystemPrompt(agent);
+      const richPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
 
       const result = await executePromptWithMcp(
         agent.id,
@@ -1282,7 +1282,7 @@ function hashCode(str: string): number {
 
       const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
       const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
-      const richPrompt = buildAgentSystemPrompt(agent);
+      const richPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
 
       const result = await executePromptWithMcp(
         agent.id,
@@ -1385,7 +1385,7 @@ function hashCode(str: string): number {
 
       const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
       const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
-      const richPrompt = buildAgentSystemPrompt(agent);
+      const richPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
 
       const result = await executePromptWithMcp(
         agent.id,
@@ -1487,7 +1487,7 @@ function hashCode(str: string): number {
 
       const agentMcpLinks = await storage.getAgentMcpServers(agent.id);
       const mcpServerIds = agentMcpLinks.map((l: any) => l.serverId);
-      const richPrompt = buildAgentSystemPrompt(agent);
+      const richPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
 
       const historyContext = conversationHistory.length > 0
         ? `## Conversation History\n${conversationHistory.join("\n\n")}\n\n## Current User Message\n${userMessage}`
@@ -1691,7 +1691,7 @@ function hashCode(str: string): number {
       let dagRunSuccess: boolean | null = null;
       let dagRunId: string | null = null;
 
-      const richAgentPrompt = buildAgentSystemPrompt(agent);
+      const richAgentPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
 
       if (agent.agentType === "team" && (agent as any).blueprintId) {
         // A team/orchestrator agent's real work is its compiled blueprint graph
@@ -2021,7 +2021,7 @@ function hashCode(str: string): number {
       const mcpServerIds = mcpLinks.map(l => l.serverId);
       const blueprints = await storage.getBlueprints();
       const agentBlueprint = blueprints.find(b => b.agentId === agent.id);
-      const richAgentPrompt = buildAgentSystemPrompt(agent);
+      const richAgentPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
 
       const trace = await storage.createTrace({
         agentId: agent.id,
