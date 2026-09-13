@@ -94,6 +94,7 @@ async function main() {
 
   let canaryServerId: string | null = null;
   let canaryBlueprintId: string | null = null;
+  let canaryThreadId: string | null = null;
   let userBId: string | null = null;
   let agentBId: string | null = null;
   let cookieB = "";
@@ -224,6 +225,28 @@ async function main() {
       check(`${method} ${path.replace(canaryBlueprintId!, "<canary>")} -> 404`, r.status === 404, `HTTP ${r.status} ${r.text.slice(0, 120)}`);
     }
 
+    console.log("\nOrg B must not reach org A's Astra conversations");
+    const astraOn = (await call(cookieA, "GET", "/api/astra/status")).status === 200;
+    if (!astraOn) {
+      console.log("  SKIP  Astra Workspace checks (ASTRA_WORKSPACE_ENABLED is not on for this deployment)");
+    } else {
+      const thread = await call(cookieA, "POST", "/api/astra/threads", { title: `Tenant isolation canary ${RUN}` });
+      canaryThreadId = thread.json?.id ?? null;
+      check("A can start an Astra conversation", thread.status === 201 && !!canaryThreadId, `HTTP ${thread.status} ${thread.text.slice(0, 120)}`);
+      const listB = await call(cookieB, "GET", "/api/astra/threads");
+      check("B's conversation list omits A's conversation", listB.status === 200 && !(listB.json ?? []).some((t: any) => t.id === canaryThreadId), `HTTP ${listB.status}`);
+      for (const [method, path, body] of [
+        ["GET", `/api/astra/threads/${canaryThreadId}`, undefined],
+        ["POST", `/api/astra/threads/${canaryThreadId}/messages/stream`, { text: "What agents are there?" }],
+        ["POST", `/api/astra/threads/${canaryThreadId}/actions/any/stream`, { decision: "confirm" }],
+      ] as const) {
+        const r = await call(cookieB, method, path, body);
+        check(`${method} ${path.replace(canaryThreadId!, "<canary>")} -> 404`, r.status === 404, `HTTP ${r.status} ${r.text.slice(0, 120)}`);
+      }
+      const ownA = await call(cookieA, "GET", `/api/astra/threads/${canaryThreadId}`);
+      check("A can still open its conversation", ownA.status === 200 && ownA.json?.thread?.id === canaryThreadId, `HTTP ${ownA.status}`);
+    }
+
     // ── 4. The owner still works ─────────────────────────────────────────
     console.log("\nOrg A keeps working, without secrets in responses");
     const authA = await call(cookieA, "GET", `/api/mcp-servers/${canaryServerId}/auth`);
@@ -241,6 +264,12 @@ async function main() {
     console.log("\nCleaning up");
     try { if (agentBId && cookieB) await call(cookieB, "DELETE", `/api/agents/${agentBId}`); } catch { /* best effort */ }
     try { if (canaryServerId) await call(cookieA, "DELETE", `/api/mcp-servers/${canaryServerId}`); } catch { /* best effort */ }
+    try {
+      if (canaryThreadId) {
+        await db.query(`DELETE FROM astra_messages WHERE thread_id = $1`, [canaryThreadId]);
+        await db.query(`DELETE FROM astra_threads WHERE id = $1`, [canaryThreadId]);
+      }
+    } catch (e: any) { console.log(`  note: conversation cleanup failed: ${e.message}`); }
     try {
       if (canaryBlueprintId) {
         await db.query(`DELETE FROM team_blueprint_nodes WHERE blueprint_id = $1`, [canaryBlueprintId]);
