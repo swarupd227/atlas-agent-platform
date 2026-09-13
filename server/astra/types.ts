@@ -74,8 +74,10 @@ export interface AstraToolContext extends AstraContext {
   onProgress?: (event: AstraEvent) => void;
   /** The role permission matrix, for tools whose options need a further permission. */
   can?: PermissionCheck;
-  /** Set only when this call runs because the user pressed Confirm on this action. */
+  /** Set only when this call runs because the user decided on this action. */
   confirmation?: PendingAction;
+  /** The user's decision on `confirmation`. "declined" reaches run() only for tools with resumesOnDecline. */
+  decision?: PendingDecision;
 }
 
 export interface ToolRunResult {
@@ -83,6 +85,12 @@ export interface ToolRunResult {
   payload: unknown;
   artifact?: ArtifactRef;
   proof?: Partial<ProofEnvelope>;
+  /**
+   * The tool reached a point only the user can decide (e.g. an agent run hit
+   * an approval gate). The turn pauses on a card; the user's decision calls
+   * run() again with ctx.confirmation and ctx.decision.
+   */
+  needsConfirmation?: { summary: string; details?: string[]; warnings?: ConfirmWarning[]; frozen?: Record<string, unknown> };
 }
 
 export interface AstraTool<I = any> {
@@ -104,6 +112,8 @@ export interface AstraTool<I = any> {
    * as ctx.confirmation.frozen, so run() can refuse if things changed.
    */
   preview?: (ctx: AstraToolContext, input: I) => Promise<ConfirmPreview>;
+  /** Not now calls run() with ctx.decision "declined" (so the tool can deny what it paused) instead of skipping it. */
+  resumesOnDecline?: boolean;
   run: (ctx: AstraToolContext, input: I) => Promise<ToolRunResult>;
 }
 
@@ -123,7 +133,8 @@ export type ConfirmPreview =
 
 export interface PendingAction {
   id: string;
-  kind: "tool_confirm";
+  /** tool_confirm: a platform change Astra proposes. agent_approval: an agent run paused at an approval gate. */
+  kind: "tool_confirm" | "agent_approval";
   toolName: string;
   toolCallId: string;
   /** The validated input, frozen when the turn paused. Confirm runs exactly this. */

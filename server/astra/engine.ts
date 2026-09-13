@@ -22,6 +22,7 @@ import type {
   CompleteFn,
   OnAstraEvent,
   PendingAction,
+  PendingDecision,
   PermissionCheck,
   Suggestion,
   ThreadState,
@@ -124,8 +125,9 @@ interface Session {
   threadId: string;
   cp: Checkpoint;
   emit: OnAstraEvent;
-  /** The action the user just confirmed, handed to the tool it resumes. */
+  /** The action the user just decided, handed to the tool it resumes. */
   approved?: PendingAction;
+  decision?: PendingDecision;
 }
 
 /** Send a user message and run the turn until it finishes, fails or pauses for confirmation. */
@@ -198,6 +200,16 @@ export async function resolveAction(
   onEvent({ type: "turn_started", threadId });
   const session: Session = { deps, ctx, threadId, cp, emit: onEvent };
 
+  const resumable = deps.registry.get(call.name, ctx.role);
+  if (decision === "cancel" && resumable?.resumesOnDecline) {
+    // The tool paused something outside Astra (an agent run's approval gate):
+    // let it record the denial there and report what happened next.
+    call.arguments = action.input;
+    session.approved = action;
+    session.decision = "declined";
+    return continueCalls(session, cp.pendingToolIndex);
+  }
+
   if (decision === "cancel") {
     cp.messages.push({
       role: "tool",
@@ -219,6 +231,7 @@ export async function resolveAction(
   // Confirm runs the input frozen when the turn paused -- never anything sent with the click.
   call.arguments = action.input;
   session.approved = action;
+  session.decision = "confirmed";
   return continueCalls(session, cp.pendingToolIndex);
 }
 
@@ -315,14 +328,15 @@ async function continueCalls(s: Session, approvedIndex: number | null, fromLoop 
         tool,
         rawInput: call.arguments,
         toolCallId: call.id,
-        approved: approvedIndex === i,
+        approved: approvedIndex === i && s.decision !== "declined",
+        declined: approvedIndex === i && s.decision === "declined",
         ctx: {
           ...ctx,
           threadId,
           services: deps.services,
           onProgress: emit,
           can: deps.can,
-          ...(approvedIndex === i && s.approved ? { confirmation: s.approved } : {}),
+          ...(approvedIndex === i && s.approved ? { confirmation: s.approved, decision: s.decision } : {}),
         },
       },
       { can: deps.can, audit: deps.audit, rateLimit: deps.rateLimit, now: deps.now },

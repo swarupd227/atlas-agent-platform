@@ -32,6 +32,8 @@ export interface DispatchRequest {
   toolCallId: string;
   /** True only when resuming after the user pressed Confirm on this exact action. */
   approved: boolean;
+  /** True only when resuming after the user pressed Not now on an action of a resumesOnDecline tool. */
+  declined?: boolean;
   ctx: AstraToolContext;
 }
 
@@ -82,7 +84,9 @@ export async function dispatchAstraTool(req: DispatchRequest, deps: DispatchDeps
   const parsed = tool.input.safeParse(req.rawInput ?? {});
   if (!parsed.success) return fail(`Invalid input for ${tool.name}: ${zodIssues(parsed.error)}`);
 
-  if (tool.confirm && !req.approved) {
+  if (req.declined && !tool.resumesOnDecline) return fail(`${tool.name} can't be resumed after Not now.`);
+
+  if (tool.confirm && !req.approved && !req.declined) {
     let preview: ConfirmPreview = {};
     if (tool.preview) {
       try {
@@ -115,12 +119,13 @@ export async function dispatchAstraTool(req: DispatchRequest, deps: DispatchDeps
     return fail(`Too many ${tool.name.replace(/_/g, " ")} requests in the last minute. Wait a moment and try again.`);
   }
 
+  const decided = tool.confirm || req.approved || !!req.declined;
   let result: ToolRunResult;
   try {
     result = await tool.run(ctx, parsed.data);
   } catch (err: any) {
     const message = err?.message ? String(err.message) : "The tool failed without a reason.";
-    if (tool.confirm) {
+    if (decided) {
       await deps.audit({
         orgId: ctx.orgId,
         userId: ctx.userId,
@@ -132,11 +137,31 @@ export async function dispatchAstraTool(req: DispatchRequest, deps: DispatchDeps
     return fail(message);
   }
 
+  if (result.needsConfirmation) {
+    const ask = result.needsConfirmation;
+    return {
+      kind: "needs_confirmation",
+      action: {
+        id: randomUUID(),
+        kind: "agent_approval",
+        toolName: tool.name,
+        toolCallId: req.toolCallId,
+        input: parsed.data as Record<string, unknown>,
+        summary: ask.summary,
+        ...(ask.details?.length ? { details: ask.details } : {}),
+        ...(ask.warnings?.length ? { warnings: ask.warnings } : {}),
+        ...(ask.frozen ? { frozen: ask.frozen } : {}),
+        messageId: null,
+        createdAt: new Date(now()).toISOString(),
+      },
+    };
+  }
+
   const latencyMs = now() - started;
   const permissionNote = tool.permission ? `permission ${tool.permission}` : "no special permission";
   let compliance: { status: "measured"; summary: string } = { status: "measured", summary: `Read only · ${permissionNote}` };
 
-  if (tool.confirm) {
+  if (decided) {
     // The change has already happened by now, so an audit failure must not be
     // reported as the tool failing -- but it must not be hidden either.
     try {
@@ -145,11 +170,11 @@ export async function dispatchAstraTool(req: DispatchRequest, deps: DispatchDeps
         userId: ctx.userId,
         action: "astra_shell.tool_executed",
         objectId: tool.name,
-        details: { threadId: ctx.threadId, toolCallId: req.toolCallId, input: parsed.data, latencyMs },
+        details: { threadId: ctx.threadId, toolCallId: req.toolCallId, input: parsed.data, latencyMs, ...(req.declined ? { decision: "declined" } : {}) },
       });
-      compliance = { status: "measured", summary: `Confirmed by you · ${permissionNote} · audit recorded` };
+      compliance = { status: "measured", summary: `${req.declined ? "Declined" : "Confirmed"} by you · ${permissionNote} · audit recorded` };
     } catch (err: any) {
-      compliance = { status: "measured", summary: `Confirmed by you · ${permissionNote} · audit record FAILED (${err?.message ?? "unknown error"})` };
+      compliance = { status: "measured", summary: `${req.declined ? "Declined" : "Confirmed"} by you · ${permissionNote} · audit record FAILED (${err?.message ?? "unknown error"})` };
     }
   }
 

@@ -7,7 +7,9 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { agentMcpServers, agents, type InsertPolicy } from "@shared/schema";
+import { agentMcpServers, agents, workspaceRuns, type InsertPolicy } from "@shared/schema";
+import { getWorkspaceAgents, getWorkspaceRun, resumeWorkspaceRun, startWorkspaceRun, type OnWorkspaceEvent } from "../workspace-run";
+import { getRedactionLevel, redactPayload, type RoleId } from "../permissions";
 import { getIndustryPack } from "@shared/industry-packs";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
@@ -180,6 +182,45 @@ async function recordAudit(
   });
 }
 
+// ── run_agent / get_run ──────────────────────────────────────────────────────
+
+/** The agents this role may run in the Workspace (runnable, in its audience, not a team's internal worker). */
+async function listRunnableAgents(orgId: string, role: RoleId) {
+  return getWorkspaceAgents(orgId, role);
+}
+
+/**
+ * Runs are addressed by id alone in workspace-run.ts; Astra only touches a run
+ * that belongs to the caller's organization (a run with no organization is
+ * treated as belonging to none).
+ */
+async function runInOrg(orgId: string, runId: string): Promise<boolean> {
+  const [row] = await db.select({ organizationId: workspaceRuns.organizationId }).from(workspaceRuns).where(eq(workspaceRuns.id, runId)).limit(1);
+  return !!row && row.organizationId === orgId;
+}
+
+/** Workspace semantics: the actor is the caller's role. */
+async function startAgentRun(orgId: string, role: RoleId, agentId: string, request: string, onEvent: OnWorkspaceEvent) {
+  return startWorkspaceRun({ agentId, input: request, orgId, actorId: role }, onEvent);
+}
+
+async function getAgentRun(orgId: string, runId: string) {
+  if (!(await runInOrg(orgId, runId))) return null;
+  return getWorkspaceRun(runId, orgId);
+}
+
+async function decideAgentRun(orgId: string, role: RoleId, runId: string, decision: "approve" | "deny", onEvent: OnWorkspaceEvent) {
+  if (!(await runInOrg(orgId, runId))) throw new Error("Run not found in this organization.");
+  return resumeWorkspaceRun({ runId, decision, orgId, actorId: role }, onEvent);
+}
+
+/** A run as the role may see it: payloads redacted to the role's level. */
+async function getRunForRole(orgId: string, role: RoleId, runId: string) {
+  const run = await getAgentRun(orgId, runId);
+  if (!run) return null;
+  return redactPayload(run, getRedactionLevel(role)) as typeof run;
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -202,5 +243,10 @@ export function createAstraServices(): AstraServices {
     deletePolicy,
     linkConnector,
     recordAudit,
+    listRunnableAgents,
+    startAgentRun,
+    getAgentRun,
+    decideAgentRun,
+    getRunForRole,
   };
 }
