@@ -11,7 +11,7 @@ export type RoleId =
   | "finance"
   | "domain_expert";
 
-type PermissionAction =
+export type PermissionAction =
   | "create_modify_outcomes"
   | "create_modify_blueprints"
   | "deploy_staging_pilot"

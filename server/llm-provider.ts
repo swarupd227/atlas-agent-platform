@@ -171,7 +171,7 @@ export interface LLMProviderInfo {
 // version is recorded in run provenance and exposed at
 // GET /api/llm-providers/pricing. Rates are provider list prices per 1k tokens.
 // ---------------------------------------------------------------------------
-export const PRICE_TABLE_VERSION = "2026-07-29";
+export const PRICE_TABLE_VERSION = "2026-09-13";
 
 // Conservative fallback when a model id is missing from the table — better to
 // overestimate spend than silently record $0 (rates ~ Claude Sonnet tier).
@@ -193,6 +193,7 @@ const OPENAI_EMBEDDING_MODELS: LLMProviderInfo["embeddingModels"] = [
 ];
 
 const ANTHROPIC_MODELS: LLMProviderInfo["models"] = [
+  { id: "claude-sonnet-5", name: "Claude Sonnet 5", contextWindow: 1000000, costPer1kInput: 0.002, costPer1kOutput: 0.01, supportsToolCalling: true, supportsJson: true },
   { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", contextWindow: 200000, costPer1kInput: 0.001, costPer1kOutput: 0.005, supportsToolCalling: true, supportsJson: true },
   { id: "claude-sonnet-4-5", name: "Claude Sonnet 4", contextWindow: 200000, costPer1kInput: 0.003, costPer1kOutput: 0.015, supportsToolCalling: true, supportsJson: true },
   { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", contextWindow: 200000, costPer1kInput: 0.003, costPer1kOutput: 0.015, supportsToolCalling: true, supportsJson: true },
