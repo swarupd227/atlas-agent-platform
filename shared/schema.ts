@@ -3910,3 +3910,43 @@ export const evalPersonas = pgTable("eval_personas", {
 export const insertEvalPersonaSchema = createInsertSchema(evalPersonas).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
 export type InsertEvalPersona = z.infer<typeof insertEvalPersonaSchema>;
 export type EvalPersona = typeof evalPersonas.$inferSelect;
+
+// ── Astra Workspace (docs/ux/agentic-modernization.md) ─────────────────────
+// Conversation threads with the Astra orchestrator. Unlike the older
+// conversations/messages tables these are organization- and user-scoped, and a
+// thread carries the model-facing checkpoint (message history, pending tool
+// calls) so a turn paused on a Confirm card resumes exactly where it stopped.
+// Created additively in server/db.ts runStartupMigrations().
+export const astraThreads = pgTable("astra_threads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull(),
+  actorUserId: varchar("actor_user_id"),
+  title: text("title").notNull().default("New conversation"),
+  outcomeId: varchar("outcome_id"),
+  status: text("status").notNull().default("idle"),
+  checkpoint: jsonb("checkpoint").notNull(),
+  pendingAction: jsonb("pending_action"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_astra_threads_org_actor").on(table.organizationId, table.actorUserId, table.updatedAt),
+]);
+export type AstraThread = typeof astraThreads.$inferSelect;
+
+export const astraMessages = pgTable("astra_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  threadId: varchar("thread_id").notNull(),
+  organizationId: varchar("organization_id").notNull(),
+  role: text("role").notNull(),
+  speakerAgentId: varchar("speaker_agent_id"),
+  markdown: text("markdown").notNull().default(""),
+  artifacts: jsonb("artifacts").notNull().default(sql`'[]'::jsonb`),
+  sources: jsonb("sources").notNull().default(sql`'[]'::jsonb`),
+  suggestions: jsonb("suggestions").notNull().default(sql`'[]'::jsonb`),
+  proof: jsonb("proof"),
+  pendingAction: jsonb("pending_action"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_astra_messages_thread").on(table.threadId, table.createdAt),
+]);
+export type AstraMessage = typeof astraMessages.$inferSelect;

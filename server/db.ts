@@ -1823,6 +1823,40 @@ export async function runStartupMigrations() {
       WHERE b.id = x.blueprint_id AND b.organization_id IS NULL;
     `);
 
+    // Astra Workspace threads and messages (docs/ux/agentic-modernization.md).
+    // New tables only -- nothing existing is altered. Kept in its own block so a
+    // problem here is easy to isolate from the migrations above.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS astra_threads (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR NOT NULL,
+        actor_user_id VARCHAR,
+        title TEXT NOT NULL DEFAULT 'New conversation',
+        outcome_id VARCHAR,
+        status TEXT NOT NULL DEFAULT 'idle',
+        checkpoint JSONB NOT NULL,
+        pending_action JSONB,
+        created_at TIMESTAMP DEFAULT now(),
+        updated_at TIMESTAMP DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_astra_threads_org_actor ON astra_threads(organization_id, actor_user_id, updated_at);
+      CREATE TABLE IF NOT EXISTS astra_messages (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        thread_id VARCHAR NOT NULL,
+        organization_id VARCHAR NOT NULL,
+        role TEXT NOT NULL,
+        speaker_agent_id VARCHAR,
+        markdown TEXT NOT NULL DEFAULT '',
+        artifacts JSONB NOT NULL DEFAULT '[]'::jsonb,
+        sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+        suggestions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        proof JSONB,
+        pending_action JSONB,
+        created_at TIMESTAMP DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_astra_messages_thread ON astra_messages(thread_id, created_at);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

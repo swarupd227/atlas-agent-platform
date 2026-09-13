@@ -8,6 +8,7 @@ import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
 import governanceProxyRouter from "./routes/governance-proxy";
 import workspaceRouter from "./routes/workspace";
+import astraRouter from "./routes/astra";
 import workspaceSlackRouter from "./routes/workspace-slack";
 import workspaceTeamsRouter from "./routes/workspace-teams";
 import openapiConnectorsRouter from "./routes/openapi-connectors";
@@ -396,6 +397,8 @@ export async function registerRoutes(
   app.use(improvementsRouter);
   app.use(runtimeRouter);
   app.use(workspaceRouter);
+  // Astra Workspace (behind the ASTRA_WORKSPACE_ENABLED setting) -- docs/ux/agentic-modernization.md
+  app.use(astraRouter);
   app.use(workspaceSlackRouter);
   app.use(workspaceTeamsRouter);
   app.use(openapiConnectorsRouter);

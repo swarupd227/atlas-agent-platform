@@ -25,7 +25,8 @@ export type PermissionAction =
   | "manage_security"
   | "manage_agents"
   | "view_agents"
-  | "manage_autonomy";
+  | "manage_autonomy"
+  | "use_astra";
 
 type AccessLevel = "full" | "conditional" | "denied";
 
@@ -45,6 +46,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_agents: "full",
     view_agents: "full",
     manage_autonomy: "full",
+    use_astra: "full",
   },
   outcome_owner: {
     create_modify_outcomes: "full",
@@ -61,6 +63,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_agents: "denied",
     view_agents: "conditional",
     manage_autonomy: "denied",
+    use_astra: "full",
   },
   agent_engineer: {
     create_modify_outcomes: "conditional",
@@ -77,6 +80,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_agents: "full",
     view_agents: "full",
     manage_autonomy: "conditional",
+    use_astra: "full",
   },
   ops_sre: {
     create_modify_outcomes: "denied",
@@ -93,6 +97,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_agents: "conditional",
     view_agents: "full",
     manage_autonomy: "denied",
+    use_astra: "full",
   },
   compliance_security: {
     create_modify_outcomes: "conditional",
@@ -109,6 +114,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_agents: "conditional",
     view_agents: "full",
     manage_autonomy: "full",
+    use_astra: "full",
   },
   expert_validator: {
     create_modify_outcomes: "conditional",
@@ -125,6 +131,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_agents: "conditional",
     view_agents: "full",
     manage_autonomy: "full",
+    use_astra: "full",
   },
   finance: {
     create_modify_outcomes: "denied",
@@ -141,6 +148,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_agents: "denied",
     view_agents: "denied",
     manage_autonomy: "denied",
+    use_astra: "full",
   },
   domain_expert: {
     create_modify_outcomes: "conditional",
@@ -157,6 +165,7 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     manage_agents: "denied",
     view_agents: "full",
     manage_autonomy: "denied",
+    use_astra: "full",
   },
 };
 
