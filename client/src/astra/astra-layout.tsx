@@ -112,14 +112,20 @@ function Workspace() {
   );
 }
 
-function NotEnabled() {
+function NotEnabled({ signedOut }: { signedOut: boolean }) {
   return (
     <div className="flex h-screen items-center justify-center bg-background p-6 text-foreground">
       <div className="max-w-sm space-y-3">
-        <h1 className="text-lg font-semibold [font-family:var(--astra-display)]">Astra Workspace isn't on here</h1>
-        <p className="text-sm text-muted-foreground">An administrator can turn on the preview for this deployment. Everything else works as before.</p>
+        <h1 className="text-lg font-semibold [font-family:var(--astra-display)]">
+          {signedOut ? "Your session has ended" : "Astra Workspace isn't on here"}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {signedOut
+            ? "Sign in again to continue. Your conversations are saved."
+            : "An administrator can turn on the preview for this deployment. Everything else works as before."}
+        </p>
         <Button asChild variant="outline" size="sm">
-          <Link href="~/dashboard">Back to the app</Link>
+          {signedOut ? <a href="/dashboard">Sign in</a> : <Link href="~/dashboard">Back to the app</Link>}
         </Button>
       </div>
     </div>
@@ -129,9 +135,9 @@ function NotEnabled() {
 /** /astra -- the conversation-first workspace (docs/ux/agentic-modernization.md). */
 export default function AstraLayout() {
   useAstraTheme();
-  const { enabled, isLoading } = useAstraEnabled();
+  const { enabled, isLoading, signedOut } = useAstraEnabled();
   if (isLoading) return <div className="h-screen bg-background" />;
-  if (!enabled) return <NotEnabled />;
+  if (!enabled) return <NotEnabled signedOut={signedOut} />;
   return (
     <IndustryProvider>
       <RoleProvider>

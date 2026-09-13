@@ -18,12 +18,12 @@ async function getJson<T>(url: string): Promise<T> {
  * without the global error toast. `almp-astra-shell=off` in localStorage hides
  * the entry point for one browser even when the server has it on.
  */
-export function useAstraEnabled(): { enabled: boolean; isLoading: boolean } {
-  const { data, isLoading } = useQuery<boolean>({
+export function useAstraEnabled(): { enabled: boolean; isLoading: boolean; signedOut: boolean } {
+  const { data, isLoading } = useQuery<number>({
     queryKey: ["/api/astra/status"],
     queryFn: async () => {
       const res = await fetch("/api/astra/status", { credentials: "include", headers: getApiHeaders() });
-      return res.ok;
+      return res.status;
     },
     staleTime: 60_000,
     retry: false,
@@ -34,7 +34,8 @@ export function useAstraEnabled(): { enabled: boolean; isLoading: boolean } {
   } catch {
     /* storage blocked */
   }
-  return { enabled: !!data && override !== "off", isLoading };
+  // 401: the session ended -- that says nothing about whether the preview is on.
+  return { enabled: data === 200 && override !== "off", isLoading, signedOut: data === 401 };
 }
 
 export function useThreads() {
