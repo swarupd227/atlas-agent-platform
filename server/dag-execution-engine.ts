@@ -243,6 +243,8 @@ export interface NodeExecutionResult {
   toolCallCount?: number;
   /** Completed, but the final answer stopped at the model's output limit: the output ends partway through. */
   truncated?: boolean;
+  /** Calls this step made to a file-producing tool that ended without a file, with the reason each gave. */
+  failedFileAttempts?: string[];
 }
 
 export interface WaveExecutionResult {
@@ -270,6 +272,10 @@ export interface DAGExecutionResult {
   // surfacing this hides the difference between "the whole pipeline ran" and
   // "only some of it did," which is exactly what deriveRunStatus is for.
   skippedNodeIds: string[];
+  // Nodes that tried to produce a file and ended the run without one (see
+  // missingDeliverableError). Any entry makes the run fail: the deliverable
+  // the run exists to produce is not there, whatever the steps' text says.
+  missingDeliverableNodeIds?: string[];
 }
 
 // The one place that decides what a finished run's DB status should say.
@@ -619,12 +625,17 @@ export function upstreamFailureNotice(
     const outcome = outcomes.get(id);
     // Only an absence is worth reporting. Anything else is a node that
     // produced its output, and saying so would just be noise.
-    if (!outcome || (outcome.status !== "failed" && outcome.status !== "skipped")) continue;
+    if (!outcome || (outcome.status !== "failed" && outcome.status !== "skipped" && outcome.status !== MISSING_FILE_STATUS)) continue;
     const nc = plan.nodeConfig[id];
     const name = nc?.label || id;
     const key = nc?.stateKey ? ` (state key \`${nc.stateKey}\`)` : "";
     if (outcome.status === "skipped") {
       lines.push(`- "${name}"${key} did not run on this path, so it has no output. This is a route the run did not take, not a defect.`);
+    } else if (outcome.status === MISSING_FILE_STATUS) {
+      lines.push(
+        `- "${name}"${key} was building a FILE and never produced it: ${outcome.error || "no file was created"}. ` +
+          `No file from this step exists. Its text output is not that file, and nothing in it proves the file was made.`,
+      );
     } else {
       lines.push(`- "${name}"${key} produced NO output: ${outcome.error || "it failed"}.`);
     }
@@ -792,6 +803,34 @@ export function collectUpstreamGeneratedFileIds(state: Record<string, any>): str
   return Array.from(new Set(ids));
 }
 
+/** nodeOutcomes status for a step that tried to produce a file and has none. */
+export const MISSING_FILE_STATUS = "missing_file";
+
+/**
+ * A deliverable file an earlier step tried to make and never made.
+ *
+ * The step itself still completes -- its text output exists -- so nothing used
+ * to mark it. Live: a deck assembler's two fill_document_template calls were
+ * both rejected, a revision pass made no tool call at all, and the reviewer
+ * after it returned "PASS -- the deck now exists" for a file that was never
+ * created; the run ended "completed". A step is expected to deliver a file
+ * once any of its calls to a file-producing tool in this run has failed, and
+ * it stays expected until a file from it is actually in shared state.
+ */
+export function missingDeliverableError(
+  nodeId: string,
+  plan: Pick<ComputedWavePlan, "nodeConfig">,
+  failedAttempts: ReadonlyMap<string, string[]>,
+  state: Record<string, any>,
+): string | undefined {
+  const attempts = failedAttempts.get(nodeId);
+  if (!attempts || attempts.length === 0) return undefined;
+  const stateKey = plan.nodeConfig[nodeId]?.stateKey;
+  const files = stateKey ? state[`${stateKey}${GENERATED_FILES_STATE_SUFFIX}`] : undefined;
+  if (Array.isArray(files) && files.length > 0) return undefined;
+  return attempts[attempts.length - 1];
+}
+
 /**
  * Apply reducer semantics when merging a node's output into shared state.
  */
@@ -922,6 +961,17 @@ export class DAGExecutionEngine {
     // succeeds on a revision re-run clears its earlier failure -- otherwise the
     // run would keep reporting a hole that has since been filled.
     const nodeOutcomes = new Map<string, { status: string; error?: string }>();
+    // Every failed attempt each node has made at producing a file, across all
+    // of its passes in this run (see missingDeliverableError).
+    const failedFileAttempts = new Map<string, string[]>();
+    const recordFileOutcome = (nr: NodeExecutionResult, state: Record<string, any>) => {
+      if (nr.failedFileAttempts?.length) {
+        failedFileAttempts.set(nr.nodeId, [...(failedFileAttempts.get(nr.nodeId) ?? []), ...nr.failedFileAttempts]);
+      }
+      if (nr.status !== "completed") return;
+      const missing = missingDeliverableError(nr.nodeId, config.executionPlan, failedFileAttempts, state);
+      if (missing) nodeOutcomes.set(nr.nodeId, { status: MISSING_FILE_STATUS, error: missing });
+    };
 
     // Resuming after a restart: replay already-completed waves' bookkeeping
     // (bumping the same totals/maps the main loop below updates) without
@@ -941,6 +991,7 @@ export class DAGExecutionEngine {
         if (nr.status === "completed" && !nr.truncated) nodeOutcomes.delete(nr.nodeId);
         else nodeOutcomes.set(nr.nodeId, { status: nr.status === "completed" ? "truncated" : nr.status, error: nr.error });
           if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
+          recordFileOutcome(nr, currentState);
           const nc = config.executionPlan.nodeConfig[nr.nodeId];
           if (nc && nr.status === "completed") {
             const value = nr.output[nc.stateKey];
@@ -1053,6 +1104,7 @@ export class DAGExecutionEngine {
       }
 
       currentState = mergeWaveOutputs(currentState, nodeResults, config.stateSchema);
+      for (const nr of nodeResults) recordFileOutcome(nr, currentState);
 
       const waveResult: WaveExecutionResult = {
         waveNumber: wave.wave_number,
@@ -1138,7 +1190,22 @@ export class DAGExecutionEngine {
       }
     }
 
-    return { finalState: currentState, waveResults, totalPromptTokens, totalCompletionTokens, totalCostUsd, totalToolCalls, success, skippedNodeIds: Array.from(skippedNodeIds) };
+    const missingDeliverableNodeIds = Array.from(nodeOutcomes.entries())
+      .filter(([, o]) => o.status === MISSING_FILE_STATUS)
+      .map(([id]) => id);
+    if (missingDeliverableNodeIds.length > 0) success = false;
+
+    return {
+      finalState: currentState,
+      waveResults,
+      totalPromptTokens,
+      totalCompletionTokens,
+      totalCostUsd,
+      totalToolCalls,
+      success,
+      skippedNodeIds: Array.from(skippedNodeIds),
+      ...(missingDeliverableNodeIds.length > 0 ? { missingDeliverableNodeIds } : {}),
+    };
   }
 
   /**
@@ -1433,6 +1500,7 @@ export class DAGExecutionEngine {
       toolCallCount: workerResult.toolCallCount || 0,
       traceId: workerResult.traceId || "",
       ...(workerResult.truncated ? { truncated: true } : {}),
+      ...(workerResult.failedFileAttempts?.length ? { failedFileAttempts: workerResult.failedFileAttempts } : {}),
     };
   }
 
@@ -2033,7 +2101,7 @@ export class DAGExecutionEngine {
     timeoutMs: number,
     toolAllowlist?: string[],
     upstreamGeneratedFileIds?: string[],
-  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean }> {
+  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean; failedFileAttempts?: string[] }> {
     const mockTeamAgent = {
       deploymentId: undefined,
       agentId: "__dag_orchestrator__",
@@ -2090,6 +2158,7 @@ export class DAGExecutionEngine {
         truncated: !!(result as any).truncated,
         traceId: (result as any).step?.id || "",
         ...(Array.isArray((result as any).generatedFiles) && (result as any).generatedFiles.length ? { generatedFiles: (result as any).generatedFiles } : {}),
+        ...(Array.isArray((result as any).failedFileAttempts) && (result as any).failedFileAttempts.length ? { failedFileAttempts: (result as any).failedFileAttempts } : {}),
       };
     } catch (err: any) {
       return { success: false, output: "", error: err.message };
@@ -2245,8 +2314,14 @@ async function executeTeamAgentDagRun(
       },
     });
 
+    const missingDeliverables = (result.missingDeliverableNodeIds ?? []).map(
+      (id) => wavePlan.nodeConfig[id]?.label || id,
+    );
     await storage.updateDagExecutionRun(dagRun.id, {
       status: deriveRunStatus(result),
+      ...(missingDeliverables.length > 0
+        ? { error: `No file was produced by: ${missingDeliverables.join(", ")}. Every attempt to create it failed.` }
+        : {}),
       finalState: result.finalState,
       currentState: result.finalState,
       waveResults: result.waveResults as any,

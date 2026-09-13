@@ -40,6 +40,14 @@ export const FILL_TEMPLATE_TOOL = "fill_document_template";
 export const INSPECT_DOCUMENT_TOOL = "inspect_document";
 
 /**
+ * The tools whose whole purpose is to produce a file. A call to one that ends
+ * without a file is a deliverable that was attempted and not made -- which the
+ * DAG engine tracks, so a run cannot finish "completed" on a missing file.
+ * inspect_document reads files and is deliberately not here.
+ */
+export const FILE_PRODUCING_TOOLS: ReadonlySet<string> = new Set([GENERATE_PPTX_TOOL, GENERATE_PDF_TOOL, FILL_TEMPLATE_TOOL]);
+
+/**
  * Marker the engines look for on a tool result to fold the new file into the
  * run's generatedFiles, the same list Anthropic-produced files land in.
  *

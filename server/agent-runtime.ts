@@ -8,7 +8,7 @@ import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } fr
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
-import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL } from "./builtin-document-tools";
+import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
@@ -1356,6 +1356,8 @@ export async function executePromptWithMcp(
   const makeUserTurn = (): LLMMessage => ({ role: "user", content: modelPrompt, ...brandAttachment });
   /** Every file this run produced, by either route -- returned to the caller so a DAG engine can pass deliverables downstream. */
   const runGeneratedFiles: Array<{ id: string; filename: string | null; mimeType: string | null }> = [];
+  // Why each call to a file-producing tool in this run ended without a file.
+  const failedFileAttempts: string[] = [];
   /** Fold a completion result's generatedFiles/containerId into this run -- call after every completeWithFallback/streamCompleteWithFallback. */
   const captureCodeExecResult = async (llmResult: { generatedFiles?: Array<{ fileId: string; toolUseId: string }>; containerId?: string }) => {
     if (llmResult.containerId) codeExecContainerId = llmResult.containerId;
@@ -2052,6 +2054,13 @@ After receiving tool results, provide a structured analysis with key findings, s
             // "sandbox:/<id>" link even when told explicitly not to.
             const producedFile = (dispatch.result as any)?.[GENERATED_FILE_MARKER];
             if (producedFile?.id) runGeneratedFiles.push({ id: producedFile.id, filename: producedFile.filename ?? null, mimeType: producedFile.mimeType ?? null });
+            else if (FILE_PRODUCING_TOOLS.has(matchedTool.toolName)) {
+              // Document tools report a bad spec as {ok:false} rather than an
+              // error, so the dispatch itself "succeeded" with no file made.
+              const r = dispatch.result as { error?: unknown; details?: unknown } | null;
+              const details = Array.isArray(r?.details) ? ` (${r!.details.slice(0, 3).join("; ")})` : "";
+              failedFileAttempts.push(`${matchedTool.toolName}: ${typeof r?.error === "string" ? r.error : "no file was produced"}${details}`);
+            }
             toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: stripGeneratedFileMarker(dispatch.result) });
             emitProgress("tool_call_result", {
               tool: matchedTool.toolName,
@@ -2076,6 +2085,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             lastStep.outcome = dispatch.outcome;
             lastStep.completedAt = new Date().toISOString();
             const resultError = dispatch.outcome === "gate_requires_approval" ? `[AAR] REQUIRE_APPROVAL: pending approval` : label;
+            if (FILE_PRODUCING_TOOLS.has(matchedTool.toolName)) failedFileAttempts.push(`${matchedTool.toolName}: ${label}`);
             // dispatch.result is non-null on outcome "tool_error" (the tool
             // itself returned {isError: true, ...} rather than throwing) --
             // keep it so the trace's Result panel still shows what the tool
@@ -2872,6 +2882,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     contextSectionMetrics: promptSectionMetrics,
     hardViolations: runtimeHardViolations,
     ...(runGeneratedFiles.length ? { generatedFiles: runGeneratedFiles } : {}),
+    ...(failedFileAttempts.length ? { failedFileAttempts } : {}),
     ...(conversationalResponse ? { conversationalResponse } : {}),
     ...(softPolicyViolations.length > 0 ? { softPolicyViolations } : {}),
     // GAP5: First-class contract enforcement result fields
@@ -3194,6 +3205,8 @@ export async function executeWorkerAgent(
   generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>;
   /** The final answer stopped at the model's output limit, so the output ends partway through. */
   truncated?: boolean;
+  /** Calls to a file-producing tool that ended without a file, with the reason each gave. */
+  failedFileAttempts?: string[];
 }> {
   const startTime = Date.now();
   const workerAgent = await storage.getAgent(workerId);
@@ -3374,6 +3387,9 @@ export async function executeWorkerAgent(
       truncated: !!(result.summary as { truncated?: boolean }).truncated,
       toolCallCount: Array.isArray(result.summary.toolsUsed) ? result.summary.toolsUsed.length : 0,
       ...(result.generatedFiles?.length ? { generatedFiles: result.generatedFiles } : {}),
+      ...((result as { failedFileAttempts?: string[] }).failedFileAttempts?.length
+        ? { failedFileAttempts: (result as { failedFileAttempts?: string[] }).failedFileAttempts }
+        : {}),
     };
   } catch (err: any) {
     const endTime = Date.now();
