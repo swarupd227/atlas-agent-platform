@@ -6,6 +6,7 @@ import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { recomputeOutcomeKpis } from "./routes/helpers";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
+import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 
@@ -1991,15 +1992,25 @@ export class DAGExecutionEngine {
       runtimeConfig: config.teamAgentRuntimeConfig || {},
     };
 
+    // The timeout used to stop only the WAITING: the worker's model calls ran on
+    // after the node had failed, still billing and competing for the account's
+    // token allowance with the next node. The worker now runs in an abort scope
+    // (llm-abort-context.ts) that the timeout cancels, and the provider stops the
+    // in-flight request when it does.
+    const workerAbort = new AbortController();
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<{ success: boolean; output: string; error: string }>(
-      (_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Agent ${agentId} timed out after ${timeoutMs}ms`)),
-          timeoutMs,
-        ),
+      (_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          workerAbort.abort();
+          reject(new Error(`Agent ${agentId} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      },
     );
 
-    const workerPromise = executeWorkerAgent(agentId, mockTeamAgent as any, contextInput, 0, toolAllowlist, upstreamGeneratedFileIds);
+    const workerPromise = runWithLlmAbortSignal(workerAbort.signal, () =>
+      executeWorkerAgent(agentId, mockTeamAgent as any, contextInput, 0, toolAllowlist, upstreamGeneratedFileIds),
+    );
 
     try {
       const result = await Promise.race([workerPromise, timeoutPromise]);
@@ -2016,6 +2027,9 @@ export class DAGExecutionEngine {
       };
     } catch (err: any) {
       return { success: false, output: "", error: err.message };
+    } finally {
+      // A worker that finishes in time must not leave its timer running.
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
   }
 }

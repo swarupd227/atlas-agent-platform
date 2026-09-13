@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { computeWaves, DAGExecutionEngine } from "../server/dag-execution-engine";
+import { currentLlmAbortSignal } from "../server/llm-abort-context";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 vi.mock("../server/agent-runtime", () => ({
@@ -110,6 +111,48 @@ describe("DAG worker input", () => {
     expect(occurrences(message, "THE-REQUEST-MARKER")).toBe(1);
     expect(occurrences(message, "## STATE: draft")).toBe(1);
     expect(occurrences(message, "## DAG EXECUTION CONTEXT")).toBe(1);
+  });
+
+  it("cancels the worker's model calls when the node times out", async () => {
+    let seen: AbortSignal | undefined;
+    executeWorkerAgent.mockImplementation(() => {
+      seen = currentLlmAbortSignal();
+      return new Promise(() => {}); // a model call that never answers
+    });
+
+    const plan = computeWaves([node({ id: "slow", label: "Slow", refAgentId: "ag-slow", stateKey: "out", timeoutMs: 50 })], []);
+    const result = await new DAGExecutionEngine().execute({
+      executionPlan: plan,
+      stateSchema: {},
+      initialState: { request: "go" },
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+    });
+
+    expect(result.waveResults[0].nodes[0].status).toBe("failed");
+    // The worker ran inside an abort scope, and the timeout cancelled it -- so
+    // the provider stops the request instead of letting it run on unattended.
+    expect(seen).toBeDefined();
+    expect(seen!.aborted).toBe(true);
+  });
+
+  it("leaves a worker that finishes in time uncancelled", async () => {
+    let seen: AbortSignal | undefined;
+    executeWorkerAgent.mockImplementation(async () => {
+      seen = currentLlmAbortSignal();
+      return { success: true, output: "done" };
+    });
+
+    const plan = computeWaves([node({ id: "quick", label: "Quick", refAgentId: "ag-quick", stateKey: "out", timeoutMs: 5000 })], []);
+    await new DAGExecutionEngine().execute({
+      executionPlan: plan,
+      stateSchema: {},
+      initialState: { request: "go" },
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+    });
+
+    expect(seen?.aborted).toBe(false);
   });
 
   it("still reaches the first worker, which has no upstream output at all", async () => {

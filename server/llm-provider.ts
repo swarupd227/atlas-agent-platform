@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropicRequestOptions } from "./anthropic-request-options";
+import { ANTHROPIC_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, awaitStreamWithIdleTimeout } from "./anthropic-stream";
+import { currentLlmAbortSignal } from "./llm-abort-context";
 import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import { resolveProviderKey } from "./llm-provider-keys";
 
@@ -258,7 +260,18 @@ function isRetryable(err: unknown): boolean {
   if (e.constructor.name === "RateLimitError") return true;
   if (e.constructor.name === "APIConnectionError") return true;
   if (e.constructor.name === "APIConnectionTimeoutError") return true;
+  if (err instanceof StreamIdleTimeoutError) return true;
   return false;
+}
+
+/**
+ * The caller cancelled the call (for example a DAG node that timed out). It is
+ * never retried, never cascaded to another provider, and never counted against
+ * the provider: nothing failed, the answer is simply no longer wanted.
+ */
+function isCallerAbort(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.constructor.name === "APIUserAbortError" || err.name === "AbortError";
 }
 
 async function withRetry<T>(fn: () => Promise<T>, providerName: string): Promise<T> {
@@ -1016,9 +1029,13 @@ class AnthropicProvider implements LLMProvider {
 
       let response: Anthropic.Message;
       try {
+        // Streamed and watched for silence, not awaited whole: a stalled
+        // non-streaming call is indistinguishable from a slow one for a full
+        // 10 minutes (see anthropic-stream.ts). finalMessage() yields the same
+        // Message a non-streaming call returns, so nothing below changes.
         response = await withRetry(
           () =>
-            client.messages.create(
+            awaitStreamWithIdleTimeout<Anthropic.Message>((client.messages.stream as any)(
               {
                 model,
                 max_tokens: options?.maxTokens || 4096,
@@ -1030,12 +1047,12 @@ class AnthropicProvider implements LLMProvider {
                 ...(container ? { container: container as any } : {}),
               },
               anthropicRequestOptions(options?.anthropicBetas),
-            ),
+            ), { idleTimeoutMs: ANTHROPIC_STREAM_IDLE_TIMEOUT_MS, signal: currentLlmAbortSignal() }),
           this.providerName,
         );
         cbRecordSuccess(this.providerName);
       } catch (err: any) {
-        cbRecordFailure(this.providerName);
+        if (!isCallerAbort(err)) cbRecordFailure(this.providerName);
         // A context overflow on a continuation is almost always the echoed
         // sandbox output, not the caller's prompt -- say so, or the caller
         // spends the afternoon shrinking a prompt that was never the problem.
@@ -1418,6 +1435,9 @@ const PERMANENT_ERROR_STATUSES = new Set([400, 401, 403, 404, 422]);
  */
 function isCascadable(err: unknown): boolean {
   if (!(err instanceof Error)) return true; // unknown errors: cascade defensively
+  // Without this, the "default: cascade" rule below would hand a cancelled
+  // call to the fallback provider and start the unwanted work over there.
+  if (isCallerAbort(err)) return false;
   const msg = err.message;
   // Circuit-breaker errors always cascade
   if (msg.includes("Circuit breaker OPEN") || msg.includes("Circuit HALF-OPEN")) return true;
@@ -1448,6 +1468,7 @@ function cascadeReason(err: unknown): string {
   if (e.status && [502, 503, 504].includes(e.status)) return "provider_unavailable";
   if (e.code && RETRYABLE_ERROR_CODES.has(e.code)) return "network_error";
   if (e.constructor.name === "APIConnectionError") return "connection_error";
+  if (err instanceof StreamIdleTimeoutError) return "timeout";
   if (e.constructor.name === "APIConnectionTimeoutError") return "timeout";
   return "transient_error";
 }
