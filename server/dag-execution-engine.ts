@@ -2293,6 +2293,9 @@ async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, re
     waveResults: [],
     totalPromptTokens: 0,
     totalCompletionTokens: 0,
+    // Set from the start, so a process that dies before its first heartbeat
+    // still leaves a run the recovery scan can find.
+    heartbeatAt: new Date(),
   });
 
   return { dagRun, wavePlan, stateSchema, initialState, nodeWave, teamAgentRuntimeConfig };
@@ -2315,6 +2318,11 @@ async function executeTeamAgentDagRun(
   // Registered for the strand's whole lifetime (cleared in `finally`), so a
   // same-process resume attempt defers to it -- see liveDagRunStrands.
   liveDagRunStrands.add(dagRun.id);
+  // Proof of life for the recovery scan (see resumeInterruptedTeamAgentDagRun).
+  const heartbeat = setInterval(() => {
+    storage.touchDagExecutionRunHeartbeat(dagRun.id).catch(() => {});
+  }, DAG_RUN_HEARTBEAT_INTERVAL_MS);
+  heartbeat.unref?.();
   try {
     const result = await engine.execute({
       executionPlan: wavePlan,
@@ -2421,6 +2429,7 @@ async function executeTeamAgentDagRun(
     execErr.dagRunId = dagRun.id;
     throw execErr;
   } finally {
+    clearInterval(heartbeat);
     liveDagRunStrands.delete(dagRun.id);
   }
 }
@@ -2569,7 +2578,10 @@ async function setupResumeForDagRun(dagRun: DagExecutionRun): Promise<DagRunSetu
     dagRun,
     wavePlan,
     stateSchema,
-    initialState: (dagRun.currentState as Record<string, any>) || {},
+    // A run interrupted during its first wave has no persisted currentState
+    // beyond the one written at creation; fall back to its initial state so the
+    // request itself is never lost.
+    initialState: (dagRun.currentState as Record<string, any>) || (dagRun.initialState as Record<string, any>) || {},
     nodeWave,
     teamAgentRuntimeConfig: (teamAgent.runtimeConfig as Record<string, any>) || {},
     // currentWave is the last wave that fully completed before the pause --
@@ -2636,6 +2648,84 @@ export async function resumeTeamAgentDagRun(dagRunId: string): Promise<void> {
     console.error(`[dag-resume] Failed to resume run ${dagRunId}:`, err.message);
     await storage.updateDagExecutionRun(dagRunId, { status: "failed", error: `Resume failed: ${err.message}`, completedAt: new Date() }).catch(() => {});
   }
+}
+
+/** How often a live run refreshes its heartbeat. */
+export const DAG_RUN_HEARTBEAT_INTERVAL_MS = 60 * 1000;
+/**
+ * A "running" run whose heartbeat is older than this has lost its process.
+ * Five missed beats: far beyond any event-loop pause, so a live run on another
+ * instance is never mistaken for a dead one.
+ */
+export const DAG_RUN_STALE_AFTER_MS = 5 * 60 * 1000;
+/**
+ * Interrupted runs older than this are failed, not resumed. Resuming work that
+ * stopped hours ago would surprise whoever started it and act on stale inputs.
+ */
+export const DAG_RUN_MAX_RESUME_AGE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Picks up a run whose process died mid-run (a deploy or restart), the
+ * counterpart of resumeTeamAgentDagRun for runs that were not paused at a gate.
+ *
+ * Before this, such a run stayed "running" forever: nothing resumed it and
+ * nothing failed it (live: five content-workbench runs lost to deploys, one
+ * showing "running" with no step recorded three hours after it started).
+ *
+ * Returns what happened. The claim is an atomic guarded UPDATE on the stale
+ * heartbeat, so a live run (whose heartbeat is fresh) and a run another scan
+ * already claimed are both left alone. A recent run resumes from the wave after
+ * its last completed one, exactly as an approval resume does -- the interrupted
+ * wave re-runs in full, so a side-effectful tool call in that wave can repeat
+ * (the idempotency cache did not survive the restart). An old run is failed
+ * with a reason instead.
+ */
+export async function resumeInterruptedTeamAgentDagRun(
+  dagRunId: string,
+  now: Date = new Date(),
+): Promise<"resumed" | "failed_too_old" | "skipped"> {
+  if (liveDagRunStrands.has(dagRunId)) return "skipped";
+  const before = await storage.getDagExecutionRun(dagRunId);
+  if (!before?.heartbeatAt) return "skipped";
+  const staleBefore = new Date(now.getTime() - DAG_RUN_STALE_AFTER_MS);
+  const lastBeat = new Date(before.heartbeatAt);
+  const claimed = await storage.claimStaleRunningDagExecutionRun(dagRunId, staleBefore);
+  if (!claimed) return "skipped";
+
+  if (now.getTime() - lastBeat.getTime() > DAG_RUN_MAX_RESUME_AGE_MS) {
+    await storage.updateDagExecutionRun(dagRunId, {
+      status: "failed",
+      error: `Interrupted by a server restart (last sign of life ${lastBeat.toISOString()}) and not resumed because that was more than ${Math.round(DAG_RUN_MAX_RESUME_AGE_MS / 3600000)} hours ago. Start the run again.`,
+      completedAt: now,
+    });
+    publishDagRunEvent(dagRunId, { type: "run_complete", runStatus: "failed", error: "interrupted by a server restart" });
+    return "failed_too_old";
+  }
+
+  const dagRun = (await storage.getDagExecutionRun(dagRunId)) ?? before;
+  let setup: DagRunSetup;
+  try {
+    setup = await setupResumeForDagRun(dagRun);
+  } catch (err: any) {
+    await storage.updateDagExecutionRun(dagRunId, { status: "failed", error: `Resume after restart failed: ${err.message}`, completedAt: new Date() }).catch(() => {});
+    return "skipped";
+  }
+  console.log(`[dag-resume] Run ${dagRunId} was interrupted (last heartbeat ${lastBeat.toISOString()}); resuming from wave ${setup.resumeFromWave}/${setup.wavePlan.totalWaves}`);
+  storage.createAuditEvent({
+    action: "dag_run.resumed_after_interruption",
+    objectType: "dag_execution_run",
+    objectId: dagRunId,
+    actorId: "dag-resume-poller",
+    actorType: "system",
+    details: JSON.stringify({ teamAgentId: dagRun.teamAgentId, lastHeartbeatAt: lastBeat.toISOString(), resumeFromWave: setup.resumeFromWave, totalWaves: setup.wavePlan.totalWaves }),
+  } as any).catch(() => {});
+  // Not awaited: a resumed run can take as long as the original, and the scan
+  // that found it must keep its one-minute cadence. executeTeamAgentDagRun
+  // records its own outcome, failures included.
+  void executeTeamAgentDagRun(setup, dagRun.teamAgentId!, {}).catch((err: any) => {
+    console.error(`[dag-resume] Resumed run ${dagRunId} ended with an error:`, err?.message);
+  });
+  return "resumed";
 }
 
 // Reads the last wave's node output(s) out of a finished run's finalState --

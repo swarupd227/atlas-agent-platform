@@ -1,4 +1,4 @@
-import { eq, ne, desc, inArray, and, like, or, sql, isNull, lte, gte, asc, lt } from "drizzle-orm";
+import { eq, ne, desc, inArray, and, like, or, sql, isNull, isNotNull, lte, gte, asc, lt } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
@@ -909,6 +909,13 @@ export interface IStorage {
   // (a live in-process poller and the recovery scan both waking up around
   // the same moment) can't both start executing the same paused wave.
   claimDagExecutionRunForResume(id: string): Promise<boolean>;
+  // Liveness for "running" runs (see dagExecutionRuns.heartbeatAt): the owning
+  // process refreshes the heartbeat; the recovery scan lists runs whose
+  // heartbeat went stale and claims each with a guarded UPDATE, so two scans
+  // (or two instances) can never both pick up the same interrupted run.
+  touchDagExecutionRunHeartbeat(id: string): Promise<void>;
+  listStaleRunningDagExecutionRuns(staleBefore: Date): Promise<DagExecutionRun[]>;
+  claimStaleRunningDagExecutionRun(id: string, staleBefore: Date): Promise<boolean>;
 
   getWorkflowStateSchema(id: string): Promise<WorkflowStateSchema | undefined>;
   getWorkflowStateSchemaByPipeline(pipelineId: string): Promise<WorkflowStateSchema | undefined>;
@@ -4769,8 +4776,44 @@ export class DatabaseStorage implements IStorage {
   async claimDagExecutionRunForResume(id: string): Promise<boolean> {
     const [row] = await db
       .update(dagExecutionRuns)
-      .set({ status: "running" })
+      .set({ status: "running", heartbeatAt: new Date() })
       .where(and(eq(dagExecutionRuns.id, id), eq(dagExecutionRuns.status, "waiting_approval")))
+      .returning();
+    return !!row;
+  }
+
+  async touchDagExecutionRunHeartbeat(id: string): Promise<void> {
+    await db
+      .update(dagExecutionRuns)
+      .set({ heartbeatAt: new Date() })
+      .where(and(eq(dagExecutionRuns.id, id), eq(dagExecutionRuns.status, "running")));
+  }
+
+  async listStaleRunningDagExecutionRuns(staleBefore: Date): Promise<DagExecutionRun[]> {
+    return db
+      .select()
+      .from(dagExecutionRuns)
+      .where(
+        and(
+          eq(dagExecutionRuns.status, "running"),
+          isNotNull(dagExecutionRuns.heartbeatAt),
+          lt(dagExecutionRuns.heartbeatAt, staleBefore),
+        ),
+      );
+  }
+
+  async claimStaleRunningDagExecutionRun(id: string, staleBefore: Date): Promise<boolean> {
+    const [row] = await db
+      .update(dagExecutionRuns)
+      .set({ heartbeatAt: new Date() })
+      .where(
+        and(
+          eq(dagExecutionRuns.id, id),
+          eq(dagExecutionRuns.status, "running"),
+          isNotNull(dagExecutionRuns.heartbeatAt),
+          lt(dagExecutionRuns.heartbeatAt, staleBefore),
+        ),
+      )
       .returning();
     return !!row;
   }

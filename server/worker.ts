@@ -18,7 +18,7 @@ import { readFile, unlink } from "fs/promises";
 import { pollDueResourceChangeTriggers } from "./connector-poller";
 import { pollDueScheduleTriggers } from "./schedule-trigger-poller";
 import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
-import { pollWaitingApprovalDagRuns } from "./dag-resume-poller";
+import { pollWaitingApprovalDagRuns, pollInterruptedDagRuns } from "./dag-resume-poller";
 
 // ── Meeting transcription (async long-meeting path) ─────────────────────────────
 async function processMeetingTranscription(job: Job): Promise<Record<string, unknown>> {
@@ -979,11 +979,13 @@ export async function enqueueScheduleTriggerScan() {
 const DAG_RESUME_SCAN_INTERVAL_MS = 60 * 1000;
 
 async function processDagResumeScan(job: Job): Promise<Record<string, unknown>> {
-  let scanResult: { checked: number; resumed: number; errors: number } | undefined;
+  let scanResult: { checked: number; resumed: number; errors: number; interrupted?: Record<string, number> } | undefined;
   let jobError: Error | undefined;
 
   try {
-    scanResult = await pollWaitingApprovalDagRuns();
+    // Runs whose process died mid-run first: finding them never waits on a resumed run.
+    const interrupted = await pollInterruptedDagRuns();
+    scanResult = { ...(await pollWaitingApprovalDagRuns()), interrupted };
   } catch (err: any) {
     jobError = err;
     console.error("[worker] DAG resume scan failed:", err.message);

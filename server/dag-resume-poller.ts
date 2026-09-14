@@ -9,7 +9,7 @@
  * connector-poller/schedule-trigger-poller cadence.
  */
 import { storage } from "./storage";
-import { resumeTeamAgentDagRun } from "./dag-execution-engine";
+import { resumeTeamAgentDagRun, resumeInterruptedTeamAgentDagRun, DAG_RUN_STALE_AFTER_MS } from "./dag-execution-engine";
 
 export async function pollWaitingApprovalDagRuns(): Promise<{ checked: number; resumed: number; errors: number }> {
   const runs = await storage.listDagExecutionRunsByStatus("waiting_approval");
@@ -30,4 +30,29 @@ export async function pollWaitingApprovalDagRuns(): Promise<{ checked: number; r
   }
 
   return { checked, resumed, errors };
+}
+
+/**
+ * Recovery scan for runs whose process died while they were "running" (a
+ * deploy or restart): their heartbeat has gone stale. Each is resumed, or
+ * failed with a reason when it is too old to resume -- see
+ * resumeInterruptedTeamAgentDagRun. Runs without a heartbeat are never listed.
+ */
+export async function pollInterruptedDagRuns(now: Date = new Date()): Promise<{ checked: number; resumed: number; failed: number; errors: number }> {
+  const staleBefore = new Date(now.getTime() - DAG_RUN_STALE_AFTER_MS);
+  const runs = await storage.listStaleRunningDagExecutionRuns(staleBefore);
+  let resumed = 0, failed = 0, errors = 0;
+
+  for (const run of runs) {
+    try {
+      const outcome = await resumeInterruptedTeamAgentDagRun(run.id, now);
+      if (outcome === "resumed") resumed++;
+      else if (outcome === "failed_too_old") failed++;
+    } catch (err: any) {
+      errors++;
+      console.error(`[dag-resume-poller] Unexpected error recovering interrupted run ${run.id}:`, err.message);
+    }
+  }
+
+  return { checked: runs.length, resumed, failed, errors };
 }

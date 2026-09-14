@@ -1492,6 +1492,11 @@ export const dagExecutionRuns = pgTable("dag_execution_runs", {
   // Without this, a server restart during the wait has no way to find which
   // approval a "waiting_approval" run is stuck on -- see dag-resume-poller.ts.
   pendingApprovalId: varchar("pending_approval_id"),
+  // Refreshed every minute by the process executing the run. A "running" run
+  // whose heartbeat has gone stale lost its process (a deploy or restart) and
+  // is resumed by dag-resume-poller.ts; null means a runner that never
+  // heartbeats, and such runs are left alone.
+  heartbeatAt: timestamp("heartbeat_at"),
 });
 
 export const insertDagExecutionRunSchema = createInsertSchema(dagExecutionRuns).omit({ id: true, createdAt: true });
