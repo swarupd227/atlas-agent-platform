@@ -22,7 +22,7 @@ import {
 } from "@shared/schema";
 
 import { callClaude, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 
 const router = Router();
 

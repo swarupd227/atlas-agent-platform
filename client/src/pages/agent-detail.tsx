@@ -108,9 +108,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger, Runbook } from "@shared/schema";
-import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp, HeartPulse, MoreHorizontal, UserPlus } from "lucide-react";
+import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp, HeartPulse, MoreHorizontal, UserPlus, Compass } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { useIndustry } from "@/components/industry-provider";
+import { useIndustry, INDUSTRIES } from "@/components/industry-provider";
 import { formatMs } from "@/components/shared-utils";
 import { OutputContractEditor } from "@/components/output-contract-editor";
 import { GenerationMetadataDashboard } from "@/components/generation-metadata-dashboard";
@@ -905,6 +905,9 @@ function AgentDetailInner() {
   const [addTeamMemberOpen, setAddTeamMemberOpen] = useState(false);
   const [addMemberAgentId, setAddMemberAgentId] = useState("");
   const [addMemberRole, setAddMemberRole] = useState("member");
+  const [promoteJourneyOpen, setPromoteJourneyOpen] = useState(false);
+  const [promoteIndustryId, setPromoteIndustryId] = useState("");
+  const [promoteSubVertical, setPromoteSubVertical] = useState("");
   const [attachSkillOpen, setAttachSkillOpen] = useState(false);
   const [skillSearchQuery, setSkillSearchQuery] = useState("");
   const [mcpPolicyWarnings, setMcpPolicyWarnings] = useState<Array<{
@@ -962,6 +965,41 @@ function AgentDetailInner() {
     },
     onError: (err: Error) => {
       toast({ title: "Failed to add member", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const promoteJourneyMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("PATCH", `/api/agents/${agentId}`, {
+        isCuratedJourney: true,
+        journeyIndustryId: promoteIndustryId,
+        journeySubVertical: promoteSubVertical,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/api/journeys") });
+      setPromoteJourneyOpen(false);
+      toast({ title: "Promoted to Journey Library", description: "This team is now discoverable as a curated journey." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to promote", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const demoteJourneyMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("PATCH", `/api/agents/${agentId}`, { isCuratedJourney: false });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/api/journeys") });
+      toast({ title: "Removed from Journey Library", description: "This team no longer appears as a curated journey." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to remove", description: err.message, variant: "destructive" });
     },
   });
 
@@ -5485,58 +5523,150 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
           <TabsContent value="team" className="flex flex-col gap-4 mt-0" data-testid="tab-content-team">
             <Card>
               <CardHeader className="pb-2 flex flex-row items-center justify-between gap-4 flex-wrap">
-                <CardTitle className="text-base">Team Composition</CardTitle>
-                <Dialog open={addTeamMemberOpen} onOpenChange={setAddTeamMemberOpen}>
-                  <Button size="sm" onClick={() => setAddTeamMemberOpen(true)} data-testid="button-add-team-member">
-                    <UserPlus className="w-4 h-4 mr-1.5" /> Add Member
-                  </Button>
-                  <DialogContent className="max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>Add Team Member</DialogTitle>
-                      <DialogDescription>Link an existing agent to this team's roster.</DialogDescription>
-                    </DialogHeader>
-                    <div className="flex flex-col gap-4">
-                      <div className="flex flex-col gap-1.5">
-                        <Label>Agent</Label>
-                        <Select value={addMemberAgentId} onValueChange={setAddMemberAgentId}>
-                          <SelectTrigger data-testid="select-add-team-member-agent">
-                            <SelectValue placeholder="Select an agent" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {allAgents
-                              ?.filter(a => a.agentType !== "team" && a.id !== agentId && !teamMembers?.some(tm => tm.memberAgentId === a.id))
-                              .map(a => (
-                                <SelectItem key={a.id} value={a.id}>
-                                  {a.agentType === "remote" ? "[A2A] " : ""}{a.name}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label>Role</Label>
-                        <Select value={addMemberRole} onValueChange={setAddMemberRole}>
-                          <SelectTrigger data-testid="select-add-team-member-role">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="lead">Lead</SelectItem>
-                            <SelectItem value="member">Member</SelectItem>
-                            <SelectItem value="observer">Observer</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-base">Team Composition</CardTitle>
+                  {agent.isCuratedJourney && (
+                    <Badge variant="secondary" className="gap-1" data-testid="badge-curated-journey">
+                      <Compass className="w-3 h-3" /> Journey{agent.journeySubVertical ? `: ${agent.journeySubVertical}` : ""}
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {agent.isCuratedJourney ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => demoteJourneyMutation.mutate()}
+                      disabled={demoteJourneyMutation.isPending}
+                      data-testid="button-remove-from-journey-library"
+                    >
+                      {demoteJourneyMutation.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Compass className="w-4 h-4 mr-1.5" />}
+                      Remove from Journey Library
+                    </Button>
+                  ) : (
+                    <Dialog open={promoteJourneyOpen} onOpenChange={setPromoteJourneyOpen}>
                       <Button
-                        onClick={() => addTeamMemberMutation.mutate()}
-                        disabled={!addMemberAgentId || addTeamMemberMutation.isPending}
-                        data-testid="button-confirm-add-team-member"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setPromoteIndustryId(agent.journeyIndustryId || industry?.id || "");
+                          setPromoteSubVertical(agent.journeySubVertical || "");
+                          setPromoteJourneyOpen(true);
+                        }}
+                        data-testid="button-promote-to-journey"
                       >
-                        {addTeamMemberMutation.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
-                        Add Member
+                        <Compass className="w-4 h-4 mr-1.5" /> Promote to Journey
                       </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                      <DialogContent className="max-w-md">
+                        <DialogHeader>
+                          <DialogTitle>Promote to Journey</DialogTitle>
+                          <DialogDescription>
+                            List this team on the Journey Library shelf for an industry, so it's discoverable without knowing its exact name.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="flex flex-col gap-4">
+                          <div className="flex flex-col gap-1.5">
+                            <Label>Industry</Label>
+                            <Select value={promoteIndustryId} onValueChange={(val) => { setPromoteIndustryId(val); setPromoteSubVertical(""); }}>
+                              <SelectTrigger data-testid="select-promote-journey-industry">
+                                <SelectValue placeholder="Select an industry" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {INDUSTRIES.filter(i => i.id !== "custom").map(i => (
+                                  <SelectItem key={i.id} value={i.id}>{i.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-1.5">
+                            <Label>Sub-vertical</Label>
+                            {(() => {
+                              const selectedIndustry = INDUSTRIES.find(i => i.id === promoteIndustryId);
+                              return selectedIndustry?.subVerticals?.length ? (
+                                <Select value={promoteSubVertical} onValueChange={setPromoteSubVertical}>
+                                  <SelectTrigger data-testid="select-promote-journey-subvertical">
+                                    <SelectValue placeholder="Select a sub-vertical" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {selectedIndustry.subVerticals.map(sv => (
+                                      <SelectItem key={sv} value={sv}>{sv}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <Input
+                                  value={promoteSubVertical}
+                                  onChange={(e) => setPromoteSubVertical(e.target.value)}
+                                  placeholder="e.g. Lending & Credit Servicing"
+                                  data-testid="input-promote-journey-subvertical"
+                                />
+                              );
+                            })()}
+                          </div>
+                          <Button
+                            onClick={() => promoteJourneyMutation.mutate()}
+                            disabled={!promoteIndustryId || !promoteSubVertical || promoteJourneyMutation.isPending}
+                            data-testid="button-confirm-promote-journey"
+                          >
+                            {promoteJourneyMutation.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <Compass className="w-4 h-4 mr-1.5" />}
+                            Promote to Journey
+                          </Button>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  )}
+                  <Dialog open={addTeamMemberOpen} onOpenChange={setAddTeamMemberOpen}>
+                    <Button size="sm" onClick={() => setAddTeamMemberOpen(true)} data-testid="button-add-team-member">
+                      <UserPlus className="w-4 h-4 mr-1.5" /> Add Member
+                    </Button>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Add Team Member</DialogTitle>
+                        <DialogDescription>Link an existing agent to this team's roster.</DialogDescription>
+                      </DialogHeader>
+                      <div className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5">
+                          <Label>Agent</Label>
+                          <Select value={addMemberAgentId} onValueChange={setAddMemberAgentId}>
+                            <SelectTrigger data-testid="select-add-team-member-agent">
+                              <SelectValue placeholder="Select an agent" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {allAgents
+                                ?.filter(a => a.agentType !== "team" && a.id !== agentId && !teamMembers?.some(tm => tm.memberAgentId === a.id))
+                                .map(a => (
+                                  <SelectItem key={a.id} value={a.id}>
+                                    {a.agentType === "remote" ? "[A2A] " : ""}{a.name}
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <Label>Role</Label>
+                          <Select value={addMemberRole} onValueChange={setAddMemberRole}>
+                            <SelectTrigger data-testid="select-add-team-member-role">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="lead">Lead</SelectItem>
+                              <SelectItem value="member">Member</SelectItem>
+                              <SelectItem value="observer">Observer</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button
+                          onClick={() => addTeamMemberMutation.mutate()}
+                          disabled={!addMemberAgentId || addTeamMemberMutation.isPending}
+                          data-testid="button-confirm-add-team-member"
+                        >
+                          {addTeamMemberMutation.isPending ? <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
+                          Add Member
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </CardHeader>
               <CardContent>
                 {teamMembers && teamMembers.length > 0 ? (
