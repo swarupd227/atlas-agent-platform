@@ -14,6 +14,8 @@ import { getIndustryPack } from "@shared/industry-packs";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
 import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
+import { assessOutcomeIntelligence } from "../outcome-intelligence";
+import { similarOutcomeNames } from "./outcome-names";
 import type { AstraServices } from "./types";
 
 export interface ConnectorSummary {
@@ -286,6 +288,105 @@ async function getUserDisplayName(userId: string | null) {
   return (user as any)?.username ?? null;
 }
 
+// ── discover_outcome / list_outcomes ────────────────────────────────────────
+
+async function outcomeGrounding(
+  orgId: string,
+  industryId: string | null | undefined,
+  draft: { name: string; description: string; riskTier?: string; roles?: string[]; tools?: string[] },
+) {
+  const [outcomes, agentsList, templates, servers, policies] = await Promise.all([
+    storage.getOutcomes(orgId),
+    storage.getAgents(orgId),
+    storage.getAgentTemplates(),
+    storage.getMcpServers(orgId),
+    storage.getPolicies(orgId),
+  ]);
+  const tools = (await Promise.all(servers.map((srv) => storage.getMcpServerTools(srv.id)))).flat();
+  const intel = assessOutcomeIntelligence(
+    { agents: agentsList, templates, servers, tools, policies },
+    {
+      industry: industryId ?? "",
+      toolNames: draft.tools ?? [],
+      roleNames: draft.roles ?? [],
+      autonomyModes: [],
+      riskTiers: draft.riskTier ? [draft.riskTier] : [],
+      proposedApprovalGatesCount: null,
+    },
+  );
+  const pack = industryId ? getIndustryPack(industryId) : undefined;
+
+  return {
+    possibleDuplicates: similarOutcomeNames(draft.name, outcomes),
+    industry: pack
+      ? {
+          selected: true as const,
+          pack: true as const,
+          id: pack.id,
+          label: pack.profile.label,
+          regulatoryFrameworks: pack.profile.regulatoryFrameworks,
+          kpiDimensions: pack.assurance.kpiDimensions.map((k) => ({ label: k.label, description: k.description })),
+          regulatoryChecks: pack.assurance.regulatoryTemplates.map((t) => `${t.regulation} ${t.section}: ${t.name}`),
+          policyPacks: pack.policyPacks.map((pp) => ({ name: pp.name, framework: pp.framework, riskLevel: pp.riskLevel })),
+        }
+      : { selected: !!industryId, pack: false as const, id: industryId ?? null },
+    // Catalog figures (template deployment counts, delivery rates, time to production)
+    // and health scores are left out: they aren't measured for this organization.
+    similarAgents: intel.matchedAgents.map((group) => ({
+      role: group.role,
+      matches: group.matches.map((a) => ({ id: a.id, name: a.name, status: a.status, totalRuns: a.totalRuns, riskTier: a.riskTier, autonomyMode: a.autonomyMode })),
+    })),
+    templates: intel.matchedTemplates.map((t) => ({ id: t.id, name: t.name, category: t.category, industry: t.industry, defaultRiskTier: t.defaultRiskTier })),
+    toolCoverage: intel.toolCoverage.map((t) => ({ proposed: t.proposedName, status: t.status, matched: t.matchedTool?.name ?? null, risk: t.matchedTool?.riskClassification ?? null })),
+    policies: intel.matchedPolicies.map((pol) => ({ id: pol.id, name: pol.name, domain: pol.domain, enforcement: pol.enforcementType })),
+    compositeRisk: intel.compositeRisk,
+    checked: { outcomes: outcomes.length, agents: agentsList.length, connectors: servers.length, policies: policies.length },
+  };
+}
+
+async function listOutcomes(orgId: string) {
+  const [outcomes, approvalsList, agentsList] = await Promise.all([
+    storage.getOutcomes(orgId),
+    storage.getApprovals(orgId),
+    storage.getAgents(orgId),
+  ]);
+  const pendingReviews = new Map(
+    approvalsList
+      .filter((a) => a.type === "outcome_review" && a.status === "pending" && a.objectId)
+      .map((a) => [a.objectId as string, a.id]),
+  );
+  const agentCount = new Map<string, number>();
+  for (const a of agentsList) if (a.outcomeId) agentCount.set(a.outcomeId, (agentCount.get(a.outcomeId) ?? 0) + 1);
+
+  return Promise.all(
+    outcomes.map(async (o) => {
+      const kpis = await storage.getKpisByOutcome(o.id);
+      return {
+        id: o.id,
+        name: o.name,
+        description: o.description,
+        status: o.status,
+        riskTier: o.riskTier,
+        pendingReviewApprovalId: pendingReviews.get(o.id) ?? null,
+        agentCount: agentCount.get(o.id) ?? 0,
+        createdAt: o.createdAt ? new Date(o.createdAt).toISOString() : null,
+        kpis: kpis.map((k) => ({
+          id: k.id,
+          name: k.name,
+          unit: k.unit,
+          target: k.target,
+          targetOperator: k.targetOperator,
+          baseline: k.baseline,
+          // A current value is only reported with its source; without one it isn't measured.
+          current: k.valueSource
+            ? { value: k.currentValue, source: k.valueSource, updatedAt: k.valueUpdatedAt ? new Date(k.valueUpdatedAt).toISOString() : null }
+            : null,
+        })),
+      };
+    }),
+  );
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -316,5 +417,7 @@ export function createAstraServices(): AstraServices {
     getApprovalForDecision,
     decideApprovalAs,
     getUserDisplayName,
+    outcomeGrounding,
+    listOutcomes,
   };
 }

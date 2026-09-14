@@ -3,23 +3,8 @@ import { ArrowUpRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "@/components/markdown";
 import type { ArtifactRef } from "./types";
-
-function StatusDot({ status }: { status?: string | null }) {
-  const s = (status ?? "").toLowerCase();
-  const tone =
-    s === "active" || s === "deployed" || s === "completed" || s === "connected"
-      ? "bg-[hsl(var(--astra-ok))]"
-      : s === "failed" || s === "error"
-        ? "bg-[hsl(var(--astra-fail))]"
-        : s === "awaiting_approval" || s === "running"
-          ? "bg-primary"
-          : "bg-muted-foreground/50";
-  return <span aria-hidden className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${tone}`} />;
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return <div className="mb-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{children}</div>;
-}
+import { Label, StatusDot } from "./renderers/parts";
+import { OutcomeDraft, OutcomeCard, OutcomeList } from "./renderers/outcome";
 
 function AgentList({ props }: { props: Record<string, any> }) {
   const agents: any[] = props.agents ?? [];
@@ -204,6 +189,9 @@ const RENDERERS: Record<string, (p: { props: Record<string, any> }) => JSX.Eleme
   agent: AgentDetail,
   connectorList: ConnectorList,
   run: Run,
+  outcomeDraft: OutcomeDraft,
+  outcome: OutcomeCard,
+  outcomeList: OutcomeList,
 };
 
 export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onClose: () => void }) {
