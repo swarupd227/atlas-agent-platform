@@ -74,7 +74,36 @@ function forwardProgress(ctx: AstraToolContext, agentName: string) {
   };
 }
 
+/**
+ * Many agents end their answer with a structured decision block (a JSON
+ * object, fenced or not). The card shows the prose and keeps the block as
+ * data instead of printing it as text.
+ */
+export function splitTrailingJson(text: string): { text: string; data: Record<string, unknown> | null } {
+  const trimmed = text.trimEnd();
+  const fenced = /```(?:json)?\s*(\{[\s\S]*\})\s*```$/.exec(trimmed);
+  const candidates: Array<{ start: number; json: string }> = [];
+  if (fenced) candidates.push({ start: fenced.index, json: fenced[1] });
+  else if (trimmed.endsWith("}")) {
+    // Try each "{" that starts a line, earliest first, so the whole block is taken.
+    for (const m of Array.from(trimmed.matchAll(/(^|\n)\{/g))) {
+      const start = m.index! + m[1].length;
+      candidates.push({ start, json: trimmed.slice(start) });
+    }
+  }
+  for (const c of candidates) {
+    try {
+      const data = JSON.parse(c.json);
+      if (data && typeof data === "object" && !Array.isArray(data)) return { text: trimmed.slice(0, c.start).trimEnd(), data };
+    } catch {
+      /* not a complete JSON object from here */
+    }
+  }
+  return { text, data: null };
+}
+
 export function runArtifact(run: RunView, agentName: string) {
+  const answer = splitTrailingJson(truncate(run.outputSummary, MAX_OUTPUT_CHARS));
   return {
     kind: "run",
     title: `${agentName} · ${run.status.replace(/_/g, " ")}`,
@@ -84,7 +113,8 @@ export function runArtifact(run: RunView, agentName: string) {
       agentName,
       status: run.status,
       request: run.requestText,
-      output: truncate(run.outputSummary, MAX_OUTPUT_CHARS),
+      output: answer.text,
+      structured: answer.data,
       costUsd: run.costUsd,
       traceId: run.traceId,
       steps: run.steps.slice(-20).map((s) => ({ name: s.name, status: s.status, outcome: s.outcome })),

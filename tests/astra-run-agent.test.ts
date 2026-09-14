@@ -287,3 +287,19 @@ describe("get_run", () => {
     expect(t.services.getRunForRole).toHaveBeenCalledWith(ORG, "agent_engineer", "run-1");
   });
 });
+
+describe("splitTrailingJson", () => {
+  it("keeps the prose and lifts a trailing decision block out as data", async () => {
+    const { splitTrailingJson } = await import("../server/astra/tools/run-agent");
+    const bare = splitTrailingJson('Open AR is $284,000.\n\n{\n  "title": "Open AR",\n  "confidence": 99,\n  "reasoning": ["a {b}"]\n}');
+    expect(bare).toEqual({ text: "Open AR is $284,000.", data: { title: "Open AR", confidence: 99, reasoning: ["a {b}"] } });
+    const fenced = splitTrailingJson('Done.\n```json\n{"outcome": "approved"}\n```');
+    expect(fenced).toEqual({ text: "Done.", data: { outcome: "approved" } });
+  });
+
+  it("leaves text alone when there is no complete trailing object", async () => {
+    const { splitTrailingJson } = await import("../server/astra/tools/run-agent");
+    expect(splitTrailingJson("Balance is {not json}")).toEqual({ text: "Balance is {not json}", data: null });
+    expect(splitTrailingJson("No block here.")).toEqual({ text: "No block here.", data: null });
+  });
+});

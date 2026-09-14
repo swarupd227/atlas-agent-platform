@@ -171,6 +171,12 @@ function Run({ props }: { props: Record<string, any> }) {
           <Markdown text={props.output} className="astra-md" />
         </div>
       )}
+      {props.structured && (
+        <details className="rounded border border-border">
+          <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">Structured result</summary>
+          <pre className="overflow-x-auto border-t border-border p-3 font-mono text-xs">{JSON.stringify(props.structured, null, 2)}</pre>
+        </details>
+      )}
       {props.steps?.length > 0 && (
         <div>
           <Label>Steps</Label>
