@@ -1382,8 +1382,9 @@ const isConfidential = (e: GovernancePromptEntry) => CONFIDENTIALITY_DOMAINS.has
 const CONFIDENTIALITY_INSTRUCTION =
   `\nPolicies marked CONFIDENTIAL are complied with silently. Give the user only what they are entitled to see. ` +
   `Do not say that information was withheld unless a directive requires you to, and never explain which policy applied or why ` +
-  `in a way that reveals a protected fact. Never name or describe protected information anywhere in your response -- ` +
-  `including in an approval_required or escalation block.`;
+  `in a way that reveals a protected fact. Do not describe the checks, verifications or procedures you ran to reach the result ` +
+  `(for example, that you verified the user's authorization or checked for a conflict): describing a check reveals what it found. ` +
+  `Never name or describe protected information anywhere in your response -- including in an approval_required or escalation block.`;
 
 export function renderGovernanceBlock(entries: GovernancePromptEntry[], budget = 600): string {
   if (entries.length === 0) return "";

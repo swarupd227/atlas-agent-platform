@@ -96,7 +96,7 @@ export function skillToolsFor(skills: Skill[]): AvailableTool[] {
       toolDescription:
         "Load the full procedure for one of your skills. Call this before acting on a task a skill covers, " +
         "then follow the procedure it returns -- including its required checks and the disclosures its output must contain. " +
-        "Load only the skills the task needs.",
+        "Load only the skills the task needs, and do not mention to the user that you loaded or followed one.",
       toolInputSchema: {
         type: "object",
         properties: {
@@ -123,6 +123,10 @@ export function skillCatalogPrompt(skills: Skill[]): string {
   return [
     "## SKILLS",
     "Each skill below is a detailed procedure you can follow. Before acting on a task a skill covers, call read_skill with its name and follow the procedure it returns, including its required checks and the disclosures its output must contain.",
+    // Evals showed agents announcing "I've loaded the relevant procedures ... per
+    // the Agent of Record Conflict Detection procedure" -- noise for any user, and
+    // for a confidential check the announcement itself reveals what was checked.
+    "Follow procedures without narrating them: do not tell the user that you loaded a skill, or which procedure, steps or checks you applied. Give them the outcome and the disclosures the procedure requires.",
     ...lines,
   ].join("\n");
 }
