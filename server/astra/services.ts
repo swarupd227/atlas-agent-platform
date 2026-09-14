@@ -7,7 +7,9 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { agentMcpServers, agents, workspaceRuns, type InsertPolicy } from "@shared/schema";
+import { agentMcpServers, agentProposals, agents, workspaceRuns, type InsertPolicy } from "@shared/schema";
+import { createHash } from "crypto";
+import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
 import { getWorkspaceAgents, getWorkspaceRun, resumeWorkspaceRun, startWorkspaceRun, type OnWorkspaceEvent } from "../workspace-run";
 import { getRedactionLevel, hasPermission, redactPayload, type RoleId } from "../permissions";
 import { getIndustryPack } from "@shared/industry-packs";
@@ -490,6 +492,48 @@ async function proposeTeamForOutcome(
   return { ok: true as const, outcome: { id: outcome.id, name: outcome.name, status: outcome.status, riskTier: outcome.riskTier }, plan: result, proposalId: result.proposalId ?? null, bindings };
 }
 
+// ── build_team ───────────────────────────────────────────────────────────────
+
+/** A fingerprint of a plan: the draft is overwritten when the outcome is proposed for again. */
+function planHash(row: { orchestrator: unknown; workers: unknown; pipeline: unknown }) {
+  return createHash("sha256").update(JSON.stringify([row.orchestrator ?? null, row.workers ?? null, row.pipeline ?? null])).digest("hex");
+}
+
+/** A saved proposal, only when its outcome belongs to the organization. */
+async function getProposalForBuild(orgId: string, proposalId: string) {
+  const [row] = await db.select().from(agentProposals).where(eq(agentProposals.id, proposalId)).limit(1);
+  if (!row) return null;
+  const outcome = await storage.getOutcome(row.outcomeId, orgId);
+  if (!outcome) return null;
+  const approvalsList = await storage.getApprovals(orgId);
+  const review = approvalsList.find((a) => a.type === "outcome_review" && a.status === "pending" && a.objectId === outcome.id);
+  const flow = outcome.processFlow as any;
+  return {
+    proposal: { id: row.id, status: row.status, orchestrator: row.orchestrator as any, workers: (row.workers as any[]) ?? [], pipeline: row.pipeline as any },
+    outcome: { id: outcome.id, name: outcome.name, status: outcome.status, riskTier: outcome.riskTier },
+    pendingReviewApprovalId: review?.id ?? null,
+    processFlowSteps: flow && Array.isArray(flow.nodes) && flow.nodes.length > 0 ? flattenGraphToSteps(flow) : undefined,
+    hash: planHash(row),
+  };
+}
+
+/** Which policy names in a plan match this organization's active policies. */
+async function resolvePolicyNames(orgId: string, names: string[]) {
+  const active = (await storage.getPolicies(orgId)).filter((pol) => pol.status === "active");
+  const byName = new Set(active.map((pol) => pol.name.toLowerCase().trim()));
+  const unique = Array.from(new Set(names.map((n) => n.trim()).filter(Boolean)));
+  return { resolved: unique.filter((n) => byName.has(n.toLowerCase())), unresolved: unique.filter((n) => !byName.has(n.toLowerCase())) };
+}
+
+/** Build the team in the organization (validates the body the same way the create-team route does). */
+async function buildTeam(orgId: string, body: unknown) {
+  return buildTeamFromProposal(teamBuildBodySchema.parse(body), { orgId });
+}
+
+async function markProposalBuilt(proposalId: string) {
+  await storage.updateAgentProposal(proposalId, { status: "created" });
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -528,5 +572,9 @@ export function createAstraServices(): AstraServices {
     needsMe,
     assessBindings,
     proposeTeamForOutcome,
+    getProposalForBuild,
+    resolvePolicyNames,
+    buildTeam,
+    markProposalBuilt,
   };
 }
