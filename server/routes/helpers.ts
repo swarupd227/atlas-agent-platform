@@ -1085,8 +1085,11 @@ export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): P
           ? newValue > kpi.slaThreshold
           : newValue < kpi.slaThreshold
       );
-      await storage.updateKpi(kpi.id, { currentValue: newValue, trend });
+      await storage.updateKpi(kpi.id, { currentValue: newValue, trend, valueSource: "agent_runs", valueUpdatedAt: new Date() });
       changes.push({ kpiId: kpi.id, kpiName: kpi.name, oldValue, newValue, trend, breached });
+    } else if (newValue !== null && kpi.valueSource !== "agent_runs") {
+      // Same number, but now we know it was derived from runs.
+      await storage.updateKpi(kpi.id, { valueSource: "agent_runs", valueUpdatedAt: new Date() });
     }
   }
 

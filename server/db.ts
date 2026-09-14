@@ -1858,6 +1858,13 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_astra_messages_thread ON astra_messages(thread_id, created_at);
     `);
 
+    // Where a KPI's current value came from. Values written before this existed
+    // have no source and are treated as not measured.
+    await client.query(`
+      ALTER TABLE kpi_definitions ADD COLUMN IF NOT EXISTS value_source TEXT;
+      ALTER TABLE kpi_definitions ADD COLUMN IF NOT EXISTS value_updated_at TIMESTAMP;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

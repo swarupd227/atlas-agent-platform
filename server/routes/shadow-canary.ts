@@ -930,17 +930,13 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           agentSharePct: Math.min(100, agentSharePct),
           agentTraces: agentTraceCount,
           status: progressPct >= 100 ? "met" : progressPct >= 80 ? "on_track" : progressPct >= 50 ? "at_risk" : "behind",
+          // No stored value: currentValue above is this route's estimate from targets and success rates.
+          estimated: kpi.currentValue == null,
         };
       });
 
-      for (const kc of kpiContributions) {
-        if (kc.currentValue > 0) {
-          const kpiRecord = kpis.find(k => k.id === kc.kpiId);
-          if (kpiRecord && (!kpiRecord.currentValue || kpiRecord.currentValue === 0)) {
-            await storage.updateKpi(kc.kpiId, { currentValue: kc.currentValue });
-          }
-        }
-      }
+      // Estimates are returned, never saved: a stored currentValue has to come
+      // from something that measured it (see kpi_definitions.value_source).
 
       const overallContribution = kpiContributions.length > 0
         ? Math.round(kpiContributions.reduce((sum, k) => sum + k.progressPct * (k.weight || 1), 0) / kpiContributions.reduce((sum, k) => sum + (k.weight || 1), 0) * 10) / 10

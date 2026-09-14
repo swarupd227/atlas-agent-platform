@@ -74,6 +74,9 @@ export const kpiDefinitions = pgTable("kpi_definitions", {
   trend: text("trend").default("stable"),
   expression: text("expression"),
   measurement: text("measurement"),
+  /** Where currentValue came from: "agent_runs" (derived from run traces), "manual". Null: unknown, not measured. */
+  valueSource: text("value_source"),
+  valueUpdatedAt: timestamp("value_updated_at"),
 });
 
 export const insertKpiDefinitionSchema = createInsertSchema(kpiDefinitions).omit({ id: true });

@@ -2403,6 +2403,9 @@ async function createOutcomeVersion(
   router.post("/api/kpis", async (req, res) => {
     try {
       const data = insertKpiDefinitionSchema.parse(req.body);
+      // Provenance is recorded by the writers that measure (recomputeOutcomeKpis, the KPI PATCH), not claimed by a request.
+      delete data.valueSource;
+      delete data.valueUpdatedAt;
       const kpi = await storage.createKpi(data);
       res.status(201).json(kpi);
     } catch (e) {
@@ -2413,6 +2416,13 @@ async function createOutcomeVersion(
   router.patch("/api/kpis/:id", async (req, res) => {
     try {
       const data = insertKpiDefinitionSchema.partial().parse(req.body);
+      // A value typed in by a person is recorded as such; the source can't be set from the body.
+      delete data.valueSource;
+      delete data.valueUpdatedAt;
+      if (data.currentValue !== undefined) {
+        data.valueSource = "manual";
+        data.valueUpdatedAt = new Date();
+      }
 
       // Fetch old KPI record before updating so we have true before/after values
       const existingKpi = await storage.getKpi(req.params.id);
