@@ -5,6 +5,7 @@ import { Markdown } from "@/components/markdown";
 import type { ArtifactRef } from "./types";
 import { Label, StatusDot } from "./renderers/parts";
 import { OutcomeDraft, OutcomeCard, OutcomeList } from "./renderers/outcome";
+import { NeedsMe } from "./renderers/needs-me";
 
 function AgentList({ props }: { props: Record<string, any> }) {
   const agents: any[] = props.agents ?? [];
@@ -192,6 +193,7 @@ const RENDERERS: Record<string, (p: { props: Record<string, any> }) => JSX.Eleme
   outcomeDraft: OutcomeDraft,
   outcome: OutcomeCard,
   outcomeList: OutcomeList,
+  needsMe: NeedsMe,
 };
 
 export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onClose: () => void }) {

@@ -13,7 +13,8 @@ import { getRedactionLevel, hasPermission, redactPayload, type RoleId } from "..
 import { getIndustryPack } from "@shared/industry-packs";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
-import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
+import { CONVERSATION_DECIDABLE_OBJECT_TYPES, decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
+import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 import { similarOutcomeNames } from "./outcome-names";
 import { createOutcomeFromProposal, prepareOutcomeFromProposal, type OutcomeProposalBody } from "../outcome-create";
@@ -405,6 +406,33 @@ async function createOutcome(orgId: string, actor: string, body: OutcomeProposal
   return createOutcomeFromProposal(orgId, actor, prepared, { source: "astra_workspace", evidence: body.evidence });
 }
 
+// ── list_needs_me ────────────────────────────────────────────────────────────
+
+/** My Actions for the organization, with whether this role can decide each approval in the conversation. */
+async function needsMe(orgId: string, role: RoleId) {
+  const rows = await loadMyActionsRows(orgId);
+  const built = buildMyActions(rows);
+  const approvalsById = new Map(rows.approvals.map((a) => [a.id, a]));
+  const decidable = new Set<string>(CONVERSATION_DECIDABLE_OBJECT_TYPES);
+  const annotate = (item: (typeof built.needsDecision)[number]) => {
+    const approval = item.source === "approval" ? approvalsById.get(item.sourceId) : undefined;
+    return {
+      ...item,
+      // An approval's "impact" line is derived from the requester's risk score, not measured.
+      businessImpact: item.source === "approval" ? null : item.businessImpact,
+      approvalKind: approval?.objectType ?? null,
+      canDecideHere: !!approval && approval.status === "pending" && decidable.has(approval.objectType) && whoMayDecide(role, approval).allowed,
+    };
+  };
+  return {
+    needsDecisionCount: built.needsDecisionCount,
+    fyiCount: built.fyiCount,
+    completedTodayCount: built.completedTodayCount,
+    needsDecision: built.needsDecision.map(annotate),
+    fyi: built.fyi.map(annotate),
+  };
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -440,5 +468,6 @@ export function createAstraServices(): AstraServices {
     findSimilarOutcomes,
     checkOutcomeDraft,
     createOutcome,
+    needsMe,
   };
 }
