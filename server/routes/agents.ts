@@ -36,6 +36,7 @@ import {
   generateOntologyEvalCases,
   resolvePolicyBundle,
   resolveGovernancePromptEntries,
+  renderGovernanceBlock,
 } from "./helpers";
 import * as nodeCrypto from "crypto";
 import {
@@ -870,11 +871,18 @@ const router = Router();
         const policyEntries = await resolveGovernancePromptEntries(req.params.id, getOrgId(req));
         const ontologyTags = Array.isArray((agent as any).ontologyTags) ? (agent as any).ontologyTags as Array<{ conceptId: string; conceptLabel: string }> : [];
         const lines: string[] = [];
-        lines.push(`## GOVERNANCE POLICIES`);
-        policyEntries.forEach(e => {
-          lines.push(`- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}] ${e.name} (${e.domain})${e.directives.length > 0 ? "" : `: ${e.description}`}`);
-          e.directives.slice(0, 4).forEach(d => lines.push(`  - ${d}`));
-        });
+        // Rendered by the same function agent-runtime and evaluated prompts use,
+        // so the inspector shows what the agent actually receives: CONFIDENTIAL
+        // tags, the silent-compliance instruction, and only the policies that fit
+        // the governance budget. A hand-rolled copy here had drifted on all three.
+        const governanceBlock = renderGovernanceBlock(policyEntries).trim();
+        if (governanceBlock) {
+          lines.push(governanceBlock);
+          const rendered = (governanceBlock.match(/^- \[/gm) || []).length;
+          if (rendered < policyEntries.length) {
+            lines.push(`\n(${rendered} of ${policyEntries.length} applicable policies fit the governance budget; bound policies are placed first.)`);
+          }
+        }
         if (ontologyTags.length > 0) {
           lines.push(`\n## ONTOLOGY CONCEPTS`);
           ontologyTags.forEach(t => lines.push(`- ${t.conceptLabel} (${t.conceptId})`));
