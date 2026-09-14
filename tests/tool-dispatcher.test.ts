@@ -21,6 +21,11 @@ vi.mock("../server/storage", () => ({
     // real default for every agent that hasn't defined coveredTools.
     listAgentTaskClasses: vi.fn().mockResolvedValue([]),
     getActiveWarrant: vi.fn().mockResolvedValue(undefined),
+    // On-demand skill loading (read_skill). Defaults describe an agent with no
+    // skills; the read_skill tests below set real assignments per test.
+    getAgentTeamMembers: vi.fn().mockResolvedValue([]),
+    getSkillsByIds: vi.fn().mockResolvedValue([]),
+    updateSkill: vi.fn().mockResolvedValue({}),
   },
 }));
 vi.mock("../server/mcp-client", () => ({
@@ -322,5 +327,107 @@ describe("idempotency for side-effectful calls", () => {
     expect(first.outcome).toBe("tool_error");
     expect(second.outcome).toBe("success");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * read_skill returns an agent's own assigned instructions. It is exempt from the
+ * gates that restrict what an agent may DO -- otherwise every pre-existing
+ * allowlist would silently disable skills -- while an explicit block that names
+ * it still wins. These tests pin both halves of that rule.
+ */
+describe("built-in read_skill", () => {
+  const SKILL_TOOL: AvailableTool = {
+    serverId: "builtin:skills",
+    serverName: "Skills",
+    serverUrl: "",
+    toolName: "read_skill",
+    toolDescription: "Load a skill",
+    toolInputSchema: { type: "object", properties: { skill: { type: "string" } }, required: ["skill"] },
+  };
+  const SKILL_ROW = {
+    id: "sk-1",
+    name: "Risk Clearance Rule Evaluation",
+    domain: "Risk Clearance and Screening",
+    version: "1.0.0",
+    status: "active",
+    description: "Evaluate clearance rules.",
+    markdownBody: "## Procedure\n1. Report every rule behind a non-cleared status.",
+    activationCount: 3,
+  };
+
+  const assignSkill = () => {
+    vi.mocked(storage.getAgent).mockResolvedValueOnce({ id: "agent-1", organizationId: null, preloadedSkills: [{ skillId: "sk-1" }] } as any);
+    vi.mocked(storage.getSkillsByIds).mockResolvedValueOnce([SKILL_ROW] as any);
+  };
+
+  it("returns the procedure even when a skill allowlist does not list it", async () => {
+    assignSkill();
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: SKILL_ROW.name }, policyBundle: emptyBundle(), skillAllowlist: new Set(["create_ticket"]) });
+    expect(res.outcome).toBe("success");
+    expect(res.result.ok).toBe(true);
+    expect(res.result.procedure).toContain("Report every rule");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("is not refused by a policy toolAllowlist written before it existed", async () => {
+    assignSkill();
+    const bundle = emptyBundle();
+    bundle.toolAllowlist = ["create_ticket"];
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: SKILL_ROW.name }, policyBundle: bundle });
+    expect(res.outcome).toBe("success");
+    expect(res.result.ok).toBe(true);
+  });
+
+  it("is still refused by a policy that blocks it by name", async () => {
+    const bundle = emptyBundle();
+    bundle.blockedTools = ["read_skill"];
+    vi.mocked(storage.getSkillsByIds).mockClear();
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: SKILL_ROW.name }, policyBundle: bundle });
+    expect(res.outcome).toBe("gate_blocked_policy");
+    expect(storage.getSkillsByIds).not.toHaveBeenCalled();
+  });
+
+  it("is still refused by an AAR deny that names it", async () => {
+    vi.mocked(storage.getAarConfig).mockResolvedValueOnce({ deniedTools: ["read_skill"], allowedTools: [], requireApprovalTools: [] } as any);
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: SKILL_ROW.name }, policyBundle: emptyBundle() });
+    expect(res.outcome).toBe("gate_blocked_aar");
+  });
+
+  it("is not refused by an AAR allowlist that omits it", async () => {
+    vi.mocked(storage.getAarConfig).mockResolvedValueOnce({ deniedTools: [], allowedTools: ["create_ticket"], requireApprovalTools: [] } as any);
+    assignSkill();
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: SKILL_ROW.name }, policyBundle: emptyBundle() });
+    expect(res.outcome).toBe("success");
+    expect(res.result.ok).toBe(true);
+  });
+
+  it("returns the real procedure in shadow mode instead of a dry run", async () => {
+    assignSkill();
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: SKILL_ROW.name }, policyBundle: emptyBundle(), shadow: true });
+    expect(res.outcome).toBe("success");
+    expect(res.result.procedure).toContain("Report every rule");
+  });
+
+  it("is not refused by a scope the run declared before it needed the skill", async () => {
+    assignSkill();
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: SKILL_ROW.name }, policyBundle: emptyBundle(), declaredScope: new Set(["create_ticket"]) });
+    expect(res.outcome).toBe("success");
+    expect(res.result.ok).toBe(true);
+  });
+
+  it("never returns a skill the agent is not assigned, whatever it asks for", async () => {
+    assignSkill();
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: "Some Other Agent's Skill" }, policyBundle: emptyBundle() });
+    expect(res.result.ok).toBe(false);
+    expect(res.result.procedure).toBeUndefined();
+    expect(res.result.availableSkills).toEqual([SKILL_ROW.name]);
+  });
+
+  it("counts an activation only when a skill is actually loaded", async () => {
+    vi.mocked(storage.updateSkill).mockClear();
+    assignSkill();
+    await dispatchToolCall({ agentId: "agent-1", tool: SKILL_TOOL, args: { skill: SKILL_ROW.name }, policyBundle: emptyBundle() });
+    expect(storage.updateSkill).toHaveBeenCalledWith("sk-1", { activationCount: 4 });
   });
 });

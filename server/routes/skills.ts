@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z, ZodError } from "zod";
+import { SKILL_CONTEXT_MODES } from "../builtin-skill-tools";
 import { storage } from "../storage";
 import { checkPermission, getOntologySensitivityKeys, invalidateOntologySensitivityCache } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
@@ -1155,6 +1156,12 @@ Return ONLY a valid JSON object with a "skills" array.`,
   router.post("/api/skills", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertSkillSchema.omit({ organizationId: true }).parse(req.body);
+      // Only "inline" and "full" are implemented. Any other value (the skill
+      // instruction builder proposes "fork"; imported frontmatter can carry it)
+      // used to be stored and then silently treated as inline.
+      if (data.contextMode != null && !(SKILL_CONTEXT_MODES as readonly string[]).includes(data.contextMode)) {
+        return res.status(400).json({ error: `contextMode must be one of: ${SKILL_CONTEXT_MODES.join(", ")}` });
+      }
       const skill = await storage.createSkill({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
 
       let ontologyTagValidation = undefined;
@@ -1272,6 +1279,12 @@ Return ONLY a valid JSON object with a "skills" array.`,
     try {
       const patchSchema = insertSkillSchema.partial();
       const data = patchSchema.parse(req.body);
+      // Only "inline" and "full" are implemented. Any other value (the skill
+      // instruction builder proposes "fork"; imported frontmatter can carry it)
+      // used to be stored and then silently treated as inline.
+      if (data.contextMode != null && !(SKILL_CONTEXT_MODES as readonly string[]).includes(data.contextMode)) {
+        return res.status(400).json({ error: `contextMode must be one of: ${SKILL_CONTEXT_MODES.join(", ")}` });
+      }
       const updated = await storage.updateSkill(req.params.id as string, data, getOrgId(req));
       if (!updated) return res.status(404).json({ error: "Skill not found" });
 

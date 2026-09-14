@@ -638,7 +638,7 @@ function hashCode(str: string): number {
       // ── Skill gate (mirrors agent-runtime.executePromptWithMcp) ─────────────
       // Preloaded skills grant tool capabilities: when any active skill declares
       // allowedTools, their union is enforced as an allowlist on this run's tool
-      // calls. Also records skill attribution on the trace and bumps telemetry.
+      // calls. Also records skill attribution on the trace.
       let skillAllowlist: Set<string> | null = null;
       try {
         const rawPre = (agent as any)?.preloadedSkills;
@@ -667,9 +667,8 @@ function hashCode(str: string): number {
             },
             durationMs: 0,
           });
-          for (const s of activeSkills) {
-            storage.updateSkill(s.id, { activationCount: (s.activationCount ?? 0) + 1 } as any).catch(() => {});
-          }
+          // activationCount counts actual read_skill loads (server/builtin-skill-tools.ts),
+          // not every assigned skill on every run.
         }
       } catch (sgErr: any) {
         console.warn(`[skill-gate] runtime/run enforcement skipped (non-fatal): ${(sgErr as any).message}`);

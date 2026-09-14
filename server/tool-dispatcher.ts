@@ -28,6 +28,7 @@ import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpA
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
 import { coerceToolArgsToSchema } from "./tool-arg-coercion";
+import { BUILTIN_SKILL_SERVER_ID } from "./builtin-skill-tools";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
 export type PolicyBundle = Awaited<ReturnType<typeof resolvePolicyBundle>>;
@@ -281,6 +282,18 @@ function computeApprovalRiskScore(riskLevel: string, sideEffectful: boolean): nu
 // "execute_code" tool name -- code execution never becomes a real tool_use
 // this dispatcher sees (Anthropic runs it server-side), so it can't go
 // through the normal per-dispatch pipeline below.
+/**
+ * AAR for the built-in read_skill tool: only an explicit entry in deniedTools
+ * refuses it. See dispatchToolCall for why the other lists do not apply.
+ */
+async function skillReadAarDecision(agentId: string, toolName: string): Promise<{ decision: string; reason: string; approvalId?: string }> {
+  const aarConfig = await storage.getAarConfig(agentId);
+  const deniedTools: string[] = (aarConfig?.deniedTools as string[] | null) ?? [];
+  return deniedTools.includes(toolName)
+    ? { decision: "BLOCK", reason: `Tool '${toolName}' is in the denied tools list` }
+    : { decision: "ALLOW", reason: "Built-in skill read: only an explicit AAR deny applies" };
+}
+
 export async function evaluateActionPolicy(
   agentId: string,
   tool: AvailableTool,
@@ -670,6 +683,13 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
     return executeBuiltinDocumentTool(tool.toolName, args, { orgId, agentId });
   }
 
+  // Built-in skill reading (server/builtin-skill-tools.ts): returns a skill's
+  // procedure, re-authorised against the agent's own assignments at call time.
+  const { isBuiltinSkillTool, executeBuiltinSkillTool } = await import("./builtin-skill-tools");
+  if (isBuiltinSkillTool(tool)) {
+    return executeBuiltinSkillTool(tool.toolName, args, { orgId, agentId });
+  }
+
   // Enterprise connectors (GitHub, Slack, Salesforce, the SQL family, …) are
   // OUR OWN code and must be dispatched in-process, so the agent's org context
   // and its connection pin select the right encrypted credentials.
@@ -906,6 +926,16 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   const { tool, agentId, policyBundle } = req;
   const toolNameLower = tool.toolName.toLowerCase();
   const redactedArgs = redactArgs(req.args, policyBundle?.redactPatterns ?? []);
+  // Built-in skill reading (server/builtin-skill-tools.ts) returns the agent's
+  // own assigned instructions: nothing leaves the platform and nothing changes.
+  // The gates that restrict what an agent may DO are skipped for it -- skill and
+  // policy allowlists, AAR, warrant, declared scope and shadow -- because each
+  // would silently disable skills: an existing allowlist predates the tool, a
+  // lazily-read skill is by definition outside a scope declared up front, and a
+  // shadow run would get "[DRY RUN]" instead of the procedure. An explicit policy
+  // block naming the tool still refuses it; rate limiting, spans and the audit
+  // trail still apply.
+  const skillRead = tool.serverId === BUILTIN_SKILL_SERVER_ID;
 
   const finish = (partial: Omit<DispatchResult, "redactedArgs" | "startedAt" | "completedAt" | "durationMs">): DispatchResult => ({
     ...partial,
@@ -917,7 +947,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
 
   // 1. Skill allowlist gate — skills grant tool capabilities; a declared
   //    allowlist that omits this tool refuses dispatch.
-  if (req.skillAllowlist && !req.skillAllowlist.has(toolNameLower)) {
+  if (!skillRead && req.skillAllowlist && !req.skillAllowlist.has(toolNameLower)) {
     const reason = `Tool "${tool.toolName}" is not granted by any active skill (skill allowlist enforcement)`;
     storage.createAuditEvent({
       actorType: "system",
@@ -936,7 +966,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   if (policyBundle) {
     const isHardBlocked = policyBundle.blockedTools.some(b => b.toLowerCase() === toolNameLower);
     const allowlistActive = policyBundle.toolAllowlist.length > 0;
-    const isAllowed = !allowlistActive || policyBundle.toolAllowlist.some(a => a.toLowerCase() === toolNameLower);
+    const isAllowed = skillRead || !allowlistActive || policyBundle.toolAllowlist.some(a => a.toLowerCase() === toolNameLower);
     if (isHardBlocked || (!isAllowed && allowlistActive)) {
       const reason = isHardBlocked
         ? `Tool "${tool.toolName}" is blocked by a strict/block-enforcement policy`
@@ -989,7 +1019,12 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   }
 
   // 3. AAR constraint-list gate.
-  const aar = await evaluateActionPolicy(agentId, tool);
+  // A skill read honours an AAR deny that names it explicitly -- the same
+  // "explicit block wins" rule as the policy gate above -- but not the allow or
+  // require-approval lists, which were written before the tool existed.
+  const aar = skillRead
+    ? await skillReadAarDecision(agentId, tool.toolName)
+    : await evaluateActionPolicy(agentId, tool);
   if (aar.decision === "BLOCK") {
     return finish({ outcome: "gate_blocked_aar", ok: false, result: null, error: aar.reason, reason: aar.reason, aarDecision: aar.decision, monitorFlagged });
   }
@@ -1016,7 +1051,9 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // existing fleet) -- see evaluateWarrantCondition for why that's provable,
   // not assumed. Only ever ADDS restriction on top of what AAR already
   // decided; it can never loosen an AAR block or approval requirement above.
-  const warrant = await evaluateWarrantCondition(agentId, tool);
+  const warrant = (skillRead
+    ? { decision: "ALLOW", reason: "Built-in skill read -- warrant gate not engaged" }
+    : await evaluateWarrantCondition(agentId, tool)) as Awaited<ReturnType<typeof evaluateWarrantCondition>>;
   if (warrant.decision === "BLOCK") {
     return finish({ outcome: "gate_blocked_warrant", ok: false, result: null, error: warrant.reason, reason: warrant.reason, warrantDecision: warrant.decision, monitorFlagged });
   }
@@ -1039,7 +1076,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // declared an upfront tool scope, a call outside it is blocked as drift —
   // even though skill/policy/AAR already allowed it — because the agent
   // itself never planned to make this call.
-  if (req.declaredScope && req.declaredScope.size > 0 && !req.declaredScope.has(toolNameLower)) {
+  if (!skillRead && req.declaredScope && req.declaredScope.size > 0 && !req.declaredScope.has(toolNameLower)) {
     const reason = `Tool "${tool.toolName}" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)`;
     storage.createAuditEvent({
       actorType: "system",
@@ -1068,7 +1105,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   }
 
   // 5. Shadow environment — log the intended call, never execute.
-  if (req.shadow) {
+  if (req.shadow && !skillRead) {
     storage.createAuditEvent({
       action: "tool_proxy_shadow_dry_run",
       objectType: "tool",

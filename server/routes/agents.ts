@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
+import { resolveReadableSkills, skillCatalogPrompt } from "../builtin-skill-tools";
 import { db } from "../db";
 import { ensureAarConfig } from "./aar";
 import { desc, and, eq } from "drizzle-orm";
@@ -933,7 +934,14 @@ const router = Router();
         const sourceTag = skillSource === "assigned" ? "[Assigned]" : "[Auto-matched]";
         const CAPABILITIES_BUDGET = 500;
         const lines: string[] = [];
-        if (relevantSkills.length > 0) {
+        // Assigned skills -- the agent's own and, for an orchestrator, its direct
+        // members' -- reach the model as the read_skill catalog and are loaded on
+        // demand (server/builtin-skill-tools.ts), so preview exactly that.
+        const readableSkills = await resolveReadableSkills(agentId, getOrgId(req));
+        if (readableSkills.length > 0) {
+          lines.push(skillCatalogPrompt(readableSkills));
+          lines.push("Procedures are loaded on demand with the read_skill tool.");
+        } else if (relevantSkills.length > 0) {
           const sectionHeader = `## AGENT SKILLS (${skillSource === "assigned" ? "explicitly assigned" : "auto-matched by industry/tags"})`;
           lines.push(sectionHeader);
           let skillTokensUsed = estimateTokens(sectionHeader);
@@ -977,10 +985,10 @@ const router = Router();
         const preview = lines.join("\n");
         layers.push({
           id: "capabilities", name: "Agent Capabilities", description: "Skills explicitly assigned or auto-matched, plus MCP server tools available to this agent",
-          status: relevantSkills.length > 0 || mcpLinks.length > 0 ? "populated" : "not_configured",
+          status: readableSkills.length > 0 || relevantSkills.length > 0 || mcpLinks.length > 0 ? "populated" : "not_configured",
           tokenEstimate: estimateTokens(preview), previewContent: preview,
           sourceLabel: "Skills", sourceUrl: "/skills",
-          itemCount: relevantSkills.length + mcpLinks.length,
+          itemCount: (readableSkills.length || relevantSkills.length) + mcpLinks.length,
         });
       } catch { layers.push({ id: "capabilities", name: "Agent Capabilities", description: "Linked skills and MCP server tools available to this agent", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load capabilities." }); }
 

@@ -32,6 +32,7 @@ import { searchKnowledgeBaseChunks } from "./embeddings";
 import type { RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
+import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt } from "./builtin-skill-tools";
 import type { Skill } from "@shared/schema";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds } from "./brand-assets";
@@ -329,7 +330,12 @@ export async function startWorkspaceRun(params: {
   // happens once, from the initial ask, mirroring how a single-turn RAG
   // chat is normally primed — the Workspace loop's later tool-calling
   // iterations don't re-query the KB.
-  const systemMessage = await buildSystemMessageWithKbContext(agentId, input, actorId as RoleId | undefined, baseSystemMessage);
+  const systemMessageWithKb = await buildSystemMessageWithKbContext(agentId, input, actorId as RoleId | undefined, baseSystemMessage);
+  // On-demand skills (server/builtin-skill-tools.ts): the catalog is fixed into
+  // this run's system message here; advance() offers the matching read_skill
+  // tool on every iteration, including after an approval pause.
+  const skillCatalog = skillCatalogPrompt(await resolveReadableSkills(agentId, orgId).catch(() => []));
+  const systemMessage = skillCatalog ? `${systemMessageWithKb}\n\n${skillCatalog}` : systemMessageWithKb;
 
   const checkpoint: Checkpoint = {
     messages: [
@@ -705,6 +711,9 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   const docMode = resolveDocumentMode((agentRow as any)?.documentGenerationMode);
   const documentTools = documentToolsForSkills(activeSkills, docMode);
   availableTools.push(...documentTools);
+  // read_skill is appended last so every earlier tool keeps its canonical
+  // (positional) name across a resume, whatever the skill set.
+  availableTools.push(...skillToolsFor(await resolveReadableSkills(agentId, orgId).catch(() => [])));
   const canonicalTools = buildCanonicalTools(availableTools);
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
   const codeExecConfig = codeExecAccess.enabled

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { resolveReadableSkills } from "../builtin-skill-tools";
 import { db } from "../db";
 import { eq, desc } from "drizzle-orm";
 import { getOrgId } from "../auth";
@@ -182,6 +183,10 @@ const router = Router();
       // ingested content, and with no execution trace to catch it.
       const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
       const hasKnowledgeBases = linkedKbs.length > 0;
+      // An agent whose capability is skills alone must still enter the tool loop
+      // below: only there is it offered read_skill, so on the plain-chat branch it
+      // would answer without ever seeing its procedures.
+      const hasReadableSkills = (await resolveReadableSkills(agentId, getOrgId(req)).catch(() => [])).length > 0;
       // web_search_preview (OpenAI-only tool) is retained as an explicit exception
       // for agents configured with the "web_search" built-in tool. All other non-MCP
       // chat uses Claude (claude-opus-4-5). Audio transcription also stays on OpenAI.
@@ -267,7 +272,7 @@ const router = Router();
           fullResponse = `I encountered an error while processing your request: ${err.message}`;
           res.write(`data: ${JSON.stringify({ type: "error", content: fullResponse })}\n\n`);
         }
-      } else if (hasMcpServers || hasKnowledgeBases) {
+      } else if (hasMcpServers || hasKnowledgeBases || hasReadableSkills) {
         res.write(`data: ${JSON.stringify({ content: "" })}\n\n`);
 
         const conversationHistory = existingMsgs.length > 1

@@ -10,6 +10,7 @@ import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCan
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import { resolveRequiredToolCalls, nextForcedToolChoice, missingRequiredToolCalls, requiredToolCallsError } from "./required-tool-calls";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
+import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt, isBuiltinSkillTool } from "./builtin-skill-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
@@ -381,6 +382,9 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
           if (skillTokensUsed + headerTokens > layerBudgets.capabilities) break;
           const remainingBudget = layerBudgets.capabilities - skillTokensUsed - headerTokens;
           if (remainingBudget <= 0) {
+            // Assigned skills are readable on demand via read_skill, so a body
+            // that does not fit is loaded when needed rather than summarised.
+            if (explicitSkillIds.length > 0) continue;
             // No room for markdown body — attempt inline fallback
             const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
             const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
@@ -399,6 +403,9 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
           skillLines.push(`${headerLine}\n${body}`);
           skillTokensUsed += headerTokens + estimateTokenCount(body);
         } else {
+          // Assigned skills appear in the read_skill catalog instead
+          // (executePromptWithMcp); listing them here too would duplicate it.
+          if (explicitSkillIds.length > 0) continue;
           const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
           const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
           const line = `${header}: ${s.description}${toolsNote}${mcpNote}`;
@@ -408,7 +415,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
           skillTokensUsed += lineTokens;
         }
       }
-      trackSection("skills", skillLines.join("\n"));
+      if (skillLines.length > 1) trackSection("skills", skillLines.join("\n"));
 
       const kgResultLines: string[] = [];
       for (const s of relevantSkills) {
@@ -1221,10 +1228,8 @@ export async function executePromptWithMcp(
           toolsFiltered: allowDeclared ? beforeSkillGate - availableTools.length : 0,
         },
       });
-      // Activation telemetry — fire-and-forget; counter races are acceptable.
-      for (const s of activeSkills) {
-        storage.updateSkill(s.id, { activationCount: (s.activationCount ?? 0) + 1 } as any).catch(() => {});
-      }
+      // activationCount is bumped when read_skill actually loads a skill
+      // (server/builtin-skill-tools.ts), not once per run for every assigned one.
     }
     // Provider-agnostic document generation: gated on the agent's skills rather
     // than its model, so it works where Anthropic code execution cannot.
@@ -1410,6 +1415,23 @@ export async function executePromptWithMcp(
     };
   }
 
+  // On-demand skills (server/builtin-skill-tools.ts). Appended after every
+  // filter above -- the skill and Tool Set allowlists restrict what an agent may
+  // DO, not which of its own instructions it may read -- and after the
+  // "no tools" check, so an agent with skills but no MCP tools is still treated
+  // as tool-less there.
+  let skillCatalog = "";
+  try {
+    const readableSkills = await resolveReadableSkills(agentId, orgId);
+    const skillTools = skillToolsFor(readableSkills);
+    if (skillTools.length > 0) {
+      availableTools.push(...skillTools);
+      skillCatalog = skillCatalogPrompt(readableSkills);
+    }
+  } catch (skErr: any) {
+    console.warn(`[skills] on-demand skill loading unavailable (non-fatal): ${skErr.message}`);
+  }
+
   steps[0].status = "completed";
   steps[0].completedAt = new Date().toISOString();
   steps[0].output = {
@@ -1570,7 +1592,8 @@ export async function executePromptWithMcp(
     promptSectionMetrics.push({ category: "task_prompt", tokenCount: estimateTokenCount(prompt) });
   }
 
-  const kbOnlyMode = availableTools.length === 0 && hasKnowledgeBases;
+  // The built-in skill tool alone must not switch a KB-only agent out of KB mode.
+  const kbOnlyMode = availableTools.filter(t => !isBuiltinSkillTool(t)).length === 0 && hasKnowledgeBases;
 
   // SQL tools (server/integrations/sql/mcp-server.ts) all register under the
   // "sql_" prefix. Text-to-SQL has a well-known failure class the generic
@@ -1607,7 +1630,13 @@ After receiving tool results, provide a structured analysis with key findings, s
   // Ordering respects lost-in-the-middle: instructions at the top, retrieved
   // reference docs in the middle, operational instructions last (adjacent to
   // the user turn). See server/agent-prompt-assembly.ts.
-  const systemMessage = assembleAgentSystemMessage({ agentSystemPrompt, industry, instructionHeader, baseInstructions, kbContext });
+  const systemMessage = assembleAgentSystemMessage({
+    agentSystemPrompt,
+    industry,
+    instructionHeader,
+    baseInstructions: skillCatalog ? `${baseInstructions}\n\n${skillCatalog}` : baseInstructions,
+    kbContext,
+  });
 
   let toolCallResults: Array<{
     toolName: string;
@@ -4578,6 +4607,10 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     rateLimitPerHour: rtConfig.rateLimitPerHour ?? null,
     timeoutSeconds: rtConfig.timeoutSeconds ?? null,
   };
+  // buildRuntimeContext reads preloadedSkills off this object; without it a
+  // scheduled run fell back to an unscoped industry match instead of the
+  // agent's own assigned skills.
+  (runtimeAgent as any).preloadedSkills = (agent as any).preloadedSkills;
 
   activeAgents.set(deploymentId, { agent: runtimeAgent });
 
@@ -4665,6 +4698,8 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
     orgId: agent.organizationId ?? null,
     triggeredBy: triggeredBy ?? "manual",
   };
+  // See startAgentRuntime: buildRuntimeContext needs the agent's assigned skills.
+  (runtimeAgent as any).preloadedSkills = (agent as any).preloadedSkills;
 
   try {
     const cycleResult = await executeAgentCycle(runtimeAgent, onProgress);
