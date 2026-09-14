@@ -331,3 +331,26 @@ describe("proof merging", () => {
     expect(summarizeParts(["Read only · no special permission"])).toBe("Read only");
   });
 });
+
+describe("turn keep-alive", () => {
+  it("refreshes the turn lock while a slow tool runs, and stops when it returns", async () => {
+    let release!: () => void;
+    const slowTool: AstraTool<{}> = {
+      name: "slow_read",
+      description: "A read that takes a while.",
+      input: z.object({}),
+      confirm: false,
+      run: () => new Promise((resolve) => { release = () => resolve({ payload: { ok: true } }); }),
+    };
+    const t = setup([{ toolCalls: [{ name: "slow_read", arguments: {} }] }, { reply: "done", toolCalls: [finish()] }], [slowTool], { keepAliveMs: 1000 });
+    const touch = vi.spyOn(t.store, "touchTurn");
+    const turn = runTurn(t.deps, ADMIN, t.threadId, "Go", t.onEvent);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    await vi.waitFor(() => expect(touch.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 4000 });
+    release();
+    expect(await turn).toBe("idle");
+    const calls = touch.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(touch.mock.calls.length).toBe(calls);
+  });
+});

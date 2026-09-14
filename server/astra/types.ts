@@ -204,6 +204,8 @@ export interface ThreadStore {
   loadThread(threadId: string, orgId: string): Promise<ThreadState | null>;
   /** Atomically mark the thread running. False when another turn holds it. */
   acquireTurn(threadId: string, orgId: string): Promise<boolean>;
+  /** Keep a running turn's lock fresh during a long tool call (a no-op unless it is running). */
+  touchTurn(threadId: string, orgId: string): Promise<void>;
   saveState(threadId: string, orgId: string, state: { status: ThreadStatus; checkpoint: Checkpoint; pendingAction: PendingAction | null }): Promise<void>;
   /**
    * Compare-and-swap: only if the thread is awaiting exactly this action, clear

@@ -100,6 +100,13 @@ export class DbThreadStore implements ThreadStore {
     return (result.rows?.length ?? 0) > 0;
   }
 
+  async touchTurn(threadId: string, orgId: string): Promise<void> {
+    await db.execute(sql`
+      UPDATE astra_threads SET updated_at = now()
+      WHERE id = ${threadId} AND organization_id = ${orgId} AND status = 'running'
+    `);
+  }
+
   async saveState(threadId: string, orgId: string, state: { status: ThreadStatus; checkpoint: Checkpoint; pendingAction: PendingAction | null }): Promise<void> {
     await db
       .update(astraThreads)

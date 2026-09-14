@@ -60,6 +60,11 @@ export class MemoryThreadStore implements ThreadStore {
     return true;
   }
 
+  async touchTurn(threadId: string, orgId: string): Promise<void> {
+    const t = this.scoped(threadId, orgId);
+    if (t && t.status === "running") t.updatedAt = this.now();
+  }
+
   async saveState(threadId: string, orgId: string, state: { status: ThreadStatus; checkpoint: Checkpoint; pendingAction: PendingAction | null }): Promise<void> {
     const t = this.scoped(threadId, orgId);
     if (!t) throw new Error("Thread not found");

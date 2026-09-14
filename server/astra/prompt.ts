@@ -14,6 +14,7 @@ export interface PromptGrounding {
 }
 
 export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGrounding): string {
+  const has = (tool: string) => grounding.toolNames.includes(tool);
   const industry = grounding.industryLabel
     ? `The user is working in: ${grounding.industryLabel}.${grounding.industryHighlights?.length ? ` Relevant context: ${grounding.industryHighlights.slice(0, 8).join(", ")}.` : ""}`
     : "No industry is selected for this user, so say so when industry context would matter.";
@@ -29,6 +30,13 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     "5. If the user asks for something none of your tools can do, or their role doesn't allow it, say that directly.",
     "6. Speak about the user's own agents by name. You are the platform; they are the user's team.",
     "7. End every turn by calling finish_turn with two to four suggestions, each phrased as the next thing the user would type.",
+    "8. Never state a figure a tool marked as estimated or not measured as if it were real. Say it isn't measured.",
+    ...(has("discover_outcome")
+      ? ["9. When the user describes a goal, draft the outcome yourself in the conversation (name, what success means, KPIs with targets and units). Call discover_outcome to ground the draft before create_outcome. Only use a baseline or current figure the user or a tool actually gave you."]
+      : []),
+    ...(has("run_team") && has("verify_wiring")
+      ? ["10. Before running a team for the first time, check its wiring with verify_wiring. Long steps narrate themselves; summarize the result rather than repeating the narration."]
+      : []),
     "",
     `Signed-in role: ${ctx.role}.${grounding.organizationName ? ` Organization: ${grounding.organizationName}.` : ""}`,
     industry,

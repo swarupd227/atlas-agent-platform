@@ -52,6 +52,8 @@ export interface EngineDeps {
   maxTokens?: number;
   rateLimit?: RateLimiter;
   now?: () => number;
+  /** How often a running tool call refreshes the turn lock (default 60s; the lock goes stale after 10 minutes). */
+  keepAliveMs?: number;
 }
 
 export class AstraBusyError extends Error {
@@ -69,6 +71,7 @@ export class AstraNotFoundError extends Error {
 }
 
 const DEFAULT_MAX_ITERATIONS = 8;
+const DEFAULT_KEEP_ALIVE_MS = 60_000;
 const DEFAULT_HISTORY_TURNS = 12;
 const DEFAULT_MAX_TOKENS = 8192;
 
@@ -328,6 +331,10 @@ async function continueCalls(s: Session, approvedIndex: number | null, fromLoop 
     }
 
     emit({ type: "tool_start", tool: tool.name, input: call.arguments });
+    // Proposals and team runs can take minutes: keep the turn from looking abandoned.
+    const keepAlive = setInterval(() => {
+      deps.store.touchTurn(threadId, ctx.orgId).catch(() => {});
+    }, deps.keepAliveMs ?? DEFAULT_KEEP_ALIVE_MS);
     const outcome = await dispatchAstraTool(
       {
         tool,
@@ -345,7 +352,7 @@ async function continueCalls(s: Session, approvedIndex: number | null, fromLoop 
         },
       },
       { can: deps.can, audit: deps.audit, rateLimit: deps.rateLimit, now: deps.now },
-    );
+    ).finally(() => clearInterval(keepAlive));
 
     if (outcome.kind === "needs_confirmation") {
       return pauseForConfirmation(s, outcome.action);
