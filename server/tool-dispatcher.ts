@@ -874,7 +874,19 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
   }
 
   if (contentType.includes("application/json")) return res.json();
-  return { status: res.status, message: await res.text() };
+  const body = await res.text();
+  // A 200 that serves an HTML page (a SPA fallback for an unmounted API path, a
+  // login or gateway error page) is not a tool result. Returned as data, the
+  // model reads "success" and reasons from nothing — e.g. "no duplicates found".
+  if (looksLikeHtmlPage(contentType, body)) {
+    throw new Error(`MCP API ${tool.serverName}/${tool.toolName} returned an HTML page instead of a tool result (the endpoint is likely not mounted or requires sign-in)`);
+  }
+  return { status: res.status, message: body };
+}
+
+export function looksLikeHtmlPage(contentType: string, body: string): boolean {
+  if (/text\/html|application\/xhtml/i.test(contentType)) return true;
+  return /^\s*(<!doctype html|<html[\s>])/i.test(body.slice(0, 512));
 }
 
 /** Ceiling for one async tool job — generous because the whole point of the

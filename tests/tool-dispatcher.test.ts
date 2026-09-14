@@ -170,6 +170,24 @@ describe("dispatchToolCall gates", () => {
     expect(res.ok).toBe(false);
     expect(res.error).toContain("502");
   });
+
+  it("a 200 that serves an HTML page is a tool_error, not a result the model reasons from", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => "text/html; charset=utf-8" }, text: async () => "<!DOCTYPE html><html><body><div id=\"root\"></div></body></html>" });
+
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: {}, policyBundle: emptyBundle() });
+
+    expect(res.outcome).toBe("tool_error");
+    expect(res.error).toContain("HTML page");
+  });
+
+  it("plain-text tool results still succeed", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => "text/plain" }, text: async () => "3 records updated" });
+
+    const res = await dispatchToolCall({ agentId: "agent-1", tool: TOOL, args: {}, policyBundle: emptyBundle() });
+
+    expect(res.outcome).toBe("success");
+    expect(res.result).toEqual({ status: 200, message: "3 records updated" });
+  });
 });
 
 describe("warrant gate", () => {

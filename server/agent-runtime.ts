@@ -3073,19 +3073,61 @@ export async function evaluateCondition(condition: string, workerOutput: string)
 // the three depending on the model. Returns null (not a throw) if nothing
 // parseable is found, so callers can fall back to treating the output as
 // opaque text.
+//
+// Every fenced block whose body is a JSON object counts, merged in order so the
+// closing block (where agents are told to put routing fields) wins a conflict.
+// Only reading the FIRST fence of any language lost those fields whenever an
+// agent opened with a ```markdown table or an illustrative snippet, and the old
+// greedy first-brace-to-last-brace fallback failed on any prose containing two
+// separate objects.
+function parseJsonObject(candidate: string): Record<string, any> | null {
+  try {
+    const parsed = JSON.parse(candidate.trim());
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Top-level {...} spans in prose, matched with string-aware brace counting.
+function balancedObjectSpans(text: string, maxSpans = 20): string[] {
+  const spans: string[] = [];
+  let i = 0;
+  while (i < text.length && spans.length < maxSpans) {
+    const start = text.indexOf("{", i);
+    if (start < 0) break;
+    let depth = 0, inString = false, escaped = false, end = -1;
+    for (let j = start; j < text.length; j++) {
+      const ch = text[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+      } else if (ch === '"') inString = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) { end = j; break; }
+    }
+    if (end < 0) break;
+    spans.push(text.slice(start, end + 1));
+    i = end + 1;
+  }
+  return spans;
+}
+
 export function extractStructuredOutput(text: string): Record<string, any> | null {
   if (!text) return null;
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidates = [fenceMatch ? fenceMatch[1] : text];
-  const braceMatch = text.match(/\{[\s\S]*\}/);
-  if (braceMatch) candidates.push(braceMatch[0]);
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate.trim());
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-    } catch { /* try next candidate */ }
-  }
-  return null;
+  const whole = parseJsonObject(text);
+  if (whole) return whole;
+  const merge = (candidates: string[]) => {
+    let merged: Record<string, any> | null = null;
+    for (const c of candidates) {
+      const parsed = parseJsonObject(c);
+      if (parsed) merged = { ...(merged || {}), ...parsed };
+    }
+    return merged;
+  };
+  const fences = Array.from(text.matchAll(/```[^\n`]*\n?([\s\S]*?)```/g), (m) => m[1]);
+  return merge(fences) ?? merge(balancedObjectSpans(text));
 }
 
 // Merges every upstream node's output (parsed where possible) into one flat

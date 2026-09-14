@@ -10,7 +10,7 @@
  * passes (OR), and is skipped (not failed) if none do.
  */
 import { describe, it, expect, vi } from "vitest";
-import { computeWaves, DAGExecutionEngine } from "../server/dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, getRoutingFieldSpecs, agentNodeTimeoutMs, AGENT_NODE_MIN_TIMEOUT_MS } from "../server/dag-execution-engine";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 vi.mock("../server/agent-runtime", () => ({
@@ -262,5 +262,62 @@ describe("DAGExecutionEngine — conditional node execution", () => {
     expect(nodes.find(n => n.nodeId === "gate")?.status).toBe("skipped");
     expect(nodes.find(n => n.nodeId === "payment")?.status).toBe("completed");
     expect(waitForApproval).not.toHaveBeenCalled();
+  });
+});
+
+describe("routing fields — the step before a rule-gated branch is told what to emit", () => {
+  const search = node({ id: "search", label: "Account Search", stateKey: "search_out", refAgentId: "agent-search" });
+  const create = node({ id: "create", label: "Record Creation", stateKey: "create_out", refAgentId: "agent-create" });
+  const screen = node({ id: "screen", label: "Risk Clearance", stateKey: "screen_out", refAgentId: "agent-screen" });
+  const edges = [
+    edge({ id: "e1", sourceNodeId: "search", targetNodeId: "create", evaluationMode: "deterministic", rule: { combinator: "AND", conditions: [{ field: "resolutionDecision", operator: "==", value: "create" }] } as any }),
+    edge({ id: "e2", sourceNodeId: "search", targetNodeId: "screen", evaluationMode: "deterministic", rule: { combinator: "OR", conditions: [{ combinator: "AND", conditions: [{ field: "resolutionDecision", operator: "==", value: "match" }] }] } as any }),
+    edge({ id: "e3", sourceNodeId: "create", targetNodeId: "screen" }),
+  ];
+
+  it("collects every tested field, including nested groups, per source node", () => {
+    const plan = computeWaves([search, create, screen], edges);
+    const specs = getRoutingFieldSpecs("search", plan);
+    expect(specs).toHaveLength(1);
+    expect(specs[0].field).toBe("resolutionDecision");
+    expect(specs[0].routes.map(r => `${r.targetLabel}:${r.value}`).sort()).toEqual(["Record Creation:create", "Risk Clearance:match"]);
+    expect(getRoutingFieldSpecs("create", plan)).toEqual([]);
+  });
+
+  it("puts a ROUTING FIELDS section in the source agent's input only", async () => {
+    const plan = computeWaves([search, create, screen], edges);
+    const { executeWorkerAgent } = await import("../server/agent-runtime");
+    const inputs = new Map<string, string>();
+    (executeWorkerAgent as any).mockReset();
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string, _t: any, contextInput: string) => {
+      inputs.set(agentId, contextInput);
+      return { success: true, output: agentId === "agent-search" ? JSON.stringify({ resolutionDecision: "create" }) : "done" };
+    });
+    const result = await new DAGExecutionEngine().execute({ executionPlan: plan, stateSchema: {}, initialState: {}, errorStrategy: "best_effort", teamAgentId: "team-1" });
+    expect(inputs.get("agent-search")).toContain("## ROUTING FIELDS (required)");
+    expect(inputs.get("agent-search")).toContain('"resolutionDecision": runs "Record Creation" when == "create"');
+    expect(inputs.get("agent-create") || "").not.toContain("ROUTING FIELDS");
+    const nodes = result.waveResults.flatMap(w => w.nodes);
+    expect(nodes.find(n => n.nodeId === "create")?.status).toBe("completed");
+  });
+
+  it("names the unproduced field when a branch is skipped", async () => {
+    const plan = computeWaves([search, create], [edges[0]]);
+    const { executeWorkerAgent } = await import("../server/agent-runtime");
+    (executeWorkerAgent as any).mockReset();
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "No duplicates found, proceed." });
+    const result = await new DAGExecutionEngine().execute({ executionPlan: plan, stateSchema: {}, initialState: {}, errorStrategy: "best_effort", teamAgentId: "team-1" });
+    const skipped = result.waveResults.flatMap(w => w.nodes).find(n => n.nodeId === "create");
+    expect(skipped?.status).toBe("skipped");
+    expect(skipped?.error).toContain("resolutionDecision");
+  });
+});
+
+describe("agent node timeout floor", () => {
+  it("lifts the 30s column default to the agent floor and keeps deliberate settings", () => {
+    expect(agentNodeTimeoutMs(30000)).toBe(AGENT_NODE_MIN_TIMEOUT_MS);
+    expect(agentNodeTimeoutMs(null)).toBe(AGENT_NODE_MIN_TIMEOUT_MS);
+    expect(agentNodeTimeoutMs(600000)).toBe(600000);
+    expect(agentNodeTimeoutMs(5000)).toBe(5000);
   });
 });

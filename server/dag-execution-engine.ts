@@ -8,7 +8,7 @@ import { recomputeOutcomeKpis } from "./routes/helpers";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
-import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
+import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup, RuleLeaf } from "@shared/schema";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
 // that isn't caught by the cycle check but would still nest indefinitely.
@@ -723,6 +723,70 @@ export function upstreamTruncationNotice(
 // it's told which target labels are valid. Looks up, for a given node,
 // which of its outgoing edges (via edgeMap) are handoff edges, returning
 // the target nodes' labels.
+// A deterministic branch rule tests fields of the pipeline state, and those
+// fields only exist if some step's output carries them as JSON. Nothing told
+// the step before the branch which fields its successors test: a team whose
+// proposer wrote `resolutionDecision == "create"` got a search agent that
+// reported its finding in prose, so every branch past it was skipped as "no
+// incoming edge condition was satisfied" and the rest of the journey never
+// ran. The source node of each rule-gated edge is the natural producer, so it
+// is told -- the same way HANDOFF ROUTING names valid handoff targets.
+export interface RoutingFieldSpec {
+  field: string;
+  routes: Array<{ targetLabel: string; operator: string; value: string | number | boolean }>;
+}
+
+export function collectRuleLeaves(rule: RuleGroup | null | undefined): RuleLeaf[] {
+  if (!rule || !Array.isArray(rule.conditions)) return [];
+  const leaves: RuleLeaf[] = [];
+  for (const c of rule.conditions) {
+    if (c && typeof c === "object" && "field" in c) leaves.push(c as RuleLeaf);
+    else leaves.push(...collectRuleLeaves(c as RuleGroup));
+  }
+  return leaves;
+}
+
+export function getRoutingFieldSpecs(nodeId: string, plan: ComputedWavePlan): RoutingFieldSpec[] {
+  const byField = new Map<string, RoutingFieldSpec>();
+  for (const targetId of plan.edgeMap[nodeId] || []) {
+    const targetLabel = plan.nodeConfig[targetId]?.label || targetId;
+    for (const edge of plan.incomingEdges[targetId] || []) {
+      if (edge.sourceNodeId !== nodeId || edge.evaluationMode !== "deterministic") continue;
+      for (const leaf of collectRuleLeaves(edge.rule)) {
+        if (!byField.has(leaf.field)) byField.set(leaf.field, { field: leaf.field, routes: [] });
+        byField.get(leaf.field)!.routes.push({ targetLabel, operator: leaf.operator, value: leaf.value });
+      }
+    }
+  }
+  return Array.from(byField.values());
+}
+
+function renderRoutingFields(specs: RoutingFieldSpec[]): string[] {
+  const lines = [
+    `## ROUTING FIELDS (required)`,
+    `The next steps are chosen by exact rules on fields of your output. End your response with a \`\`\`json block containing every field below, set to the value that reflects your actual finding (a dot in a name means a nested object). Use one of the values the rules test whenever it describes your finding; a missing field means the steps that depend on it do not run.`,
+  ];
+  for (const spec of specs) {
+    const routes = spec.routes.map((r) => `runs "${r.targetLabel}" when ${r.operator} ${JSON.stringify(r.value)}`).join("; ");
+    lines.push(`- "${spec.field}": ${routes}`);
+  }
+  lines.push(``);
+  return lines;
+}
+
+// A worker agent reads skills, calls tools and reasons over their results
+// across several model turns. The generic 30s node default -- sized for one
+// LLM call, and stamped onto every node by the timeout_ms column default, so
+// an explicit-looking 30000 is usually just the default -- timed such steps
+// out mid-work (a journey orchestrator reading two skills never finished).
+// Only the default is lifted: a timeout someone deliberately set to any other
+// value is theirs to keep.
+export const DEFAULT_NODE_TIMEOUT_MS = 30_000;
+export const AGENT_NODE_MIN_TIMEOUT_MS = 180_000;
+export function agentNodeTimeoutMs(configured: number | null | undefined): number {
+  return !configured || configured === DEFAULT_NODE_TIMEOUT_MS ? AGENT_NODE_MIN_TIMEOUT_MS : configured;
+}
+
 function getHandoffTargetLabels(nodeId: string, plan: ComputedWavePlan): string[] {
   const targets = plan.edgeMap[nodeId] || [];
   const labels: string[] = [];
@@ -747,6 +811,7 @@ function buildAgentInput(
   revisionFraming?: string,
   upstreamFailures?: string,
   upstreamTruncations?: string,
+  routingFields?: RoutingFieldSpec[],
 ): string {
   const sections: string[] = [];
   sections.push(`## DAG EXECUTION CONTEXT`);
@@ -761,6 +826,8 @@ function buildAgentInput(
     for (const label of handoffTargets) sections.push(`- "${label}"`);
     sections.push(``);
   }
+
+  if (routingFields && routingFields.length > 0) sections.push(...renderRoutingFields(routingFields));
 
   if (userInput) {
     sections.push(`## USER REQUEST`);
@@ -1382,6 +1449,7 @@ export class DAGExecutionEngine {
         continue;
       }
 
+      const missingFields = new Set<string>();
       const outcomes = await Promise.all(incoming.map(async (edge) => {
         if (!edge.isGating) return !skippedNodeIds.has(edge.sourceNodeId);
 
@@ -1411,7 +1479,11 @@ export class DAGExecutionEngine {
         }
 
         if (edge.evaluationMode === "deterministic" && edge.rule) {
-          return evaluateRule(edge.rule, pipelineState).result;
+          const trace = evaluateRule(edge.rule, pipelineState);
+          if (!trace.result) {
+            for (const [field, value] of Object.entries(trace.inputs)) if (value === undefined) missingFields.add(field);
+          }
+          return trace.result;
         }
         if (edge.evaluationMode === "handoff") {
           return isHandoffTarget(sourceOutput, nodeLabelById.get(nodeId) || "");
@@ -1427,7 +1499,9 @@ export class DAGExecutionEngine {
           agentId: "",
           status: "skipped",
           output: {},
-          error: "No incoming edge condition was satisfied",
+          error: missingFields.size > 0
+            ? `No incoming edge condition was satisfied (no upstream step output the routing field${missingFields.size > 1 ? "s" : ""} ${Array.from(missingFields).join(", ")})`
+            : "No incoming edge condition was satisfied",
           durationMs: 0,
           promptTokens: 0,
           completionTokens: 0,
@@ -1520,6 +1594,7 @@ export class DAGExecutionEngine {
       revisionFraming(nodeId, currentState, config.executionPlan),
       upstreamFailureNotice(nodeId, config.executionPlan, nodeOutcomes),
       upstreamTruncationNotice(nodeId, config.executionPlan, nodeOutcomes),
+      getRoutingFieldSpecs(nodeId, config.executionPlan),
     );
 
     // A Tool Set node directly upstream of this agent node scopes which MCP
@@ -1537,7 +1612,7 @@ export class DAGExecutionEngine {
     }
 
     const upstreamGeneratedFileIds = collectUpstreamGeneratedFileIds(currentState);
-    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInput, config, nc.timeoutMs, toolAllowlist, upstreamGeneratedFileIds);
+    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInput, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds);
 
     const durationMs = Date.now() - start;
 
