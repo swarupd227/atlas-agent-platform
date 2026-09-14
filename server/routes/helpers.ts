@@ -1367,21 +1367,47 @@ const estimateGovernanceTokens = (text: string): number => Math.ceil(text.length
  * behaviour, the description is context only, and one long policy is skipped
  * rather than allowed to crowd out the entries after it.
  */
+/**
+ * Policy domains whose subject is what a user may learn. For these, the usual
+ * hard-policy reflex -- stop, explain the violation, raise approval_required --
+ * is itself the breach. A golden eval showed it three runs out of three: an
+ * agent correctly refused to surface cross-sell opportunities to a producer who
+ * was not the agent of record, then explained that "the requesting producer is
+ * not the agent of record for this account", confirming both that the account
+ * exists and that someone else holds it.
+ */
+const CONFIDENTIALITY_DOMAINS = new Set(["content_boundaries"]);
+const isConfidential = (e: GovernancePromptEntry) => CONFIDENTIALITY_DOMAINS.has(String(e.domain || "").toLowerCase());
+
+const CONFIDENTIALITY_INSTRUCTION =
+  `\nPolicies marked CONFIDENTIAL are complied with silently. Give the user only what they are entitled to see. ` +
+  `Do not say that information was withheld unless a directive requires you to, and never explain which policy applied or why ` +
+  `in a way that reveals a protected fact. Never name or describe protected information anywhere in your response -- ` +
+  `including in an approval_required or escalation block.`;
+
 export function renderGovernanceBlock(entries: GovernancePromptEntry[], budget = 600): string {
   if (entries.length === 0) return "";
   const lines: string[] = [`\n## GOVERNANCE POLICIES (you must comply with these)`];
-  let used = estimateGovernanceTokens(lines[0]);
+  // Reserve room for the confidentiality instruction up front, so a
+  // confidential policy is never rendered without the rule for how to obey it.
+  const instructionTokens = entries.some(isConfidential) ? estimateGovernanceTokens(CONFIDENTIALITY_INSTRUCTION) : 0;
+  let used = estimateGovernanceTokens(lines[0]) + instructionTokens;
+  let renderedConfidential = false;
   for (const e of entries) {
     const body = e.directives.length > 0
       ? e.directives.slice(0, 4).map(d => `\n  - ${d}`).join("")
       : `: ${e.description}`;
-    const line = `- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}] ${e.name} (${e.domain})${body}`;
+    const confidential = isConfidential(e);
+    const line = `- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}${confidential ? ", CONFIDENTIAL" : ""}] ${e.name} (${e.domain})${body}`;
     const lineTokens = estimateGovernanceTokens(line);
     if (used + lineTokens > budget) continue;
     lines.push(line);
     used += lineTokens;
+    if (confidential) renderedConfidential = true;
   }
-  return lines.length > 1 ? lines.join("\n") : "";
+  if (lines.length === 1) return "";
+  if (renderedConfidential) lines.push(CONFIDENTIALITY_INSTRUCTION);
+  return lines.join("\n");
 }
 
 /**
@@ -1405,7 +1431,7 @@ export async function buildAgentSystemPromptWithGovernance(agent: any, orgId?: s
     const entries = await resolveGovernancePromptEntries(agentId, orgId);
     const block = renderGovernanceBlock(entries);
     if (!block) return base;
-    const governance = `\n<governance_policies>${block}\n\nFor HARD policies: if your response would violate one, stop and trigger an approval_required block instead of proceeding.\n</governance_policies>`;
+    const governance = `\n<governance_policies>${block}\n\nFor HARD policies: if your response would violate one, stop and trigger an approval_required block instead of proceeding -- except CONFIDENTIAL policies, which you comply with silently as described above.\n</governance_policies>`;
     // Replace the name-only block when present, otherwise append.
     return /<policies>[\s\S]*?<\/policies>/.test(base)
       ? base.replace(/\n?<policies>[\s\S]*?<\/policies>/, governance)
