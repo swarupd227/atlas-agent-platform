@@ -139,7 +139,7 @@ export function isBuiltinSkillTool(tool: AvailableTool): boolean {
 export async function executeBuiltinSkillTool(
   toolName: string,
   args: Record<string, any>,
-  ctx: { orgId?: string | null; agentId?: string },
+  ctx: { orgId?: string | null; agentId?: string; /** false for evaluation runs, which are not real usage. Defaults to true. */ countActivation?: boolean },
 ): Promise<any> {
   if (toolName !== READ_SKILL_TOOL) throw new Error(`Unknown skill tool "${toolName}"`);
   if (!ctx.agentId) return { ok: false, error: "No agent context to read a skill for." };
@@ -163,7 +163,9 @@ export async function executeBuiltinSkillTool(
   // activationCount means "an agent actually used this skill": bumped on a real
   // load, not once per run for every assigned skill. Fire-and-forget; counter
   // races are acceptable for telemetry.
-  storage.updateSkill(skill.id, { activationCount: (skill.activationCount ?? 0) + 1 } as any).catch(() => {});
+  if (ctx.countActivation !== false) {
+    storage.updateSkill(skill.id, { activationCount: (skill.activationCount ?? 0) + 1 } as any).catch(() => {});
+  }
 
   return {
     ok: true,

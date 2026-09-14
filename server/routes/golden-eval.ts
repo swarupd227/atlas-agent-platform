@@ -2,7 +2,10 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { buildAgentSystemPromptWithGovernance } from "./helpers";
-import { callClaude, stripJsonFences } from "../claude";
+import { callClaude, createClaudeMessage, stripJsonFences } from "../claude";
+import type Anthropic from "@anthropic-ai/sdk";
+import type { Skill } from "@shared/schema";
+import { resolveReadableSkills, skillCatalogPrompt, skillToolsFor, executeBuiltinSkillTool, READ_SKILL_TOOL } from "../builtin-skill-tools";
 
 const router = Router();
 
@@ -17,13 +20,15 @@ const router = Router();
  *
  * SCOPE, stated plainly because it determines what a passing score means:
  * this is a PROMPT-LEVEL evaluation. Each case is run against the agent's real
- * assembled system prompt -- which carries its ontology glossary, its bound
- * policies and their enforcement labels, and its preloaded skills -- and the
- * response is then judged against the case's expectedBehavior and
- * evaluationCriteria. It does NOT dispatch tools or execute a team graph, so
- * it verifies conduct, reasoning and policy adherence, not tool wiring or
- * end-to-end orchestration. Every run records mode: "prompt_level" so a score
- * is never mistaken for a full integration result.
+ * assembled system prompt -- its ontology glossary and its bound policies with
+ * their directives -- plus the same on-demand skills the runtime offers: the
+ * skill catalog in the prompt and read_skill as the ONLY tool, so a case shows
+ * whether the agent loads the procedure it needs (skillsLoaded is recorded per
+ * case). The response is then judged against the case's expectedBehavior and
+ * evaluationCriteria. It does NOT dispatch MCP tools or execute a team graph,
+ * so it verifies conduct, reasoning, policy adherence and skill use, not tool
+ * wiring or end-to-end orchestration. Every run records mode: "prompt_level"
+ * so a score is never mistaken for a full integration result.
  */
 
 interface JudgedCase {
@@ -35,7 +40,67 @@ interface JudgedCase {
   criteriaMissed: string[];
   reasoning: string;
   actualOutput: string;
+  /** Skills the agent loaded with read_skill while answering. */
+  skillsLoaded: string[];
   latencyMs: number;
+}
+
+/** Tool turns allowed before the agent must answer. */
+const MAX_SKILL_TURNS = 4;
+
+/**
+ * The agent answers under its own system prompt with read_skill as its only
+ * tool, exactly as the runtime offers it. The final turn forbids tool use so a
+ * model that keeps loading skills still has to produce an answer to judge.
+ */
+async function answerCase(p: {
+  systemPrompt: string;
+  scenario: string;
+  agentId: string;
+  orgId?: string | null;
+  readableSkills: Skill[];
+}): Promise<{ text: string; skillsLoaded: string[] }> {
+  const offered = skillToolsFor(p.readableSkills)[0];
+  const tools: Anthropic.Tool[] | undefined = offered
+    ? [{ name: READ_SKILL_TOOL, description: offered.toolDescription, input_schema: offered.toolInputSchema }]
+    : undefined;
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: p.scenario }];
+  const skillsLoaded: string[] = [];
+
+  for (let turn = 0; turn <= MAX_SKILL_TURNS; turn++) {
+    const lastTurn = turn === MAX_SKILL_TURNS;
+    const response = await createClaudeMessage({
+      model: "claude-opus-4-5",
+      system: p.systemPrompt,
+      messages,
+      max_tokens: 1500,
+      // Tools stay defined on the last turn (earlier turns hold tool_use
+      // blocks) but tool_choice "none" makes the model answer.
+      ...(tools ? { tools, ...(lastTurn ? { tool_choice: { type: "none" } as any } : {}) } : {}),
+    });
+
+    const toolUses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
+      const text = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map(b => b.text)
+        .join("\n")
+        .trim();
+      return { text, skillsLoaded };
+    }
+
+    messages.push({ role: "assistant", content: response.content });
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const use of toolUses) {
+      const out = use.name === READ_SKILL_TOOL
+        ? await executeBuiltinSkillTool(use.name, (use.input ?? {}) as Record<string, any>, { orgId: p.orgId, agentId: p.agentId, countActivation: false })
+        : { ok: false, error: `Tool "${use.name}" is not available in this evaluation.` };
+      if (out?.ok && typeof out.skill === "string" && !skillsLoaded.includes(out.skill)) skillsLoaded.push(out.skill);
+      results.push({ type: "tool_result", tool_use_id: use.id, content: JSON.stringify(out) });
+    }
+    messages.push({ role: "user", content: results });
+  }
+  return { text: "", skillsLoaded };
 }
 
 async function judgeCase(params: {
@@ -44,12 +109,18 @@ async function judgeCase(params: {
   expectedBehavior: string;
   criteria: string[];
   passingScore: number;
+  agentId: string;
+  orgId?: string | null;
+  readableSkills: Skill[];
 }): Promise<Omit<JudgedCase, "caseId" | "name" | "latencyMs">> {
-  // Step 1: the agent answers, under its own real system prompt.
-  const actualOutput = await callClaude({
-    system: params.systemPrompt,
-    user: params.scenario,
-    maxTokens: 1500,
+  // Step 1: the agent answers, under its own real system prompt, able to load
+  // its skills on demand.
+  const { text: actualOutput, skillsLoaded } = await answerCase({
+    systemPrompt: params.systemPrompt,
+    scenario: params.scenario,
+    agentId: params.agentId,
+    orgId: params.orgId,
+    readableSkills: params.readableSkills,
   });
 
   // Step 2: a separate judging call scores that answer against the case's own
@@ -93,6 +164,7 @@ ${actualOutput}`,
       criteriaMissed: params.criteria,
       reasoning: `Judge response could not be parsed (${err?.message}); scored as failed rather than assumed passing.`,
       actualOutput,
+      skillsLoaded,
     };
   }
 
@@ -104,6 +176,7 @@ ${actualOutput}`,
     criteriaMissed: missed,
     reasoning,
     actualOutput,
+    skillsLoaded,
   };
 }
 
@@ -137,6 +210,11 @@ router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
     // Judge against the policy text the runtime actually shows the agent, not
     // policy names alone -- see buildAgentSystemPromptWithGovernance.
     const systemPrompt = await buildAgentSystemPromptWithGovernance(agent, orgId);
+    // Offer the same on-demand skills the runtime does: the catalog in the
+    // prompt and read_skill as the only tool (server/builtin-skill-tools.ts).
+    const readableSkills = await resolveReadableSkills(agent.id, orgId).catch(() => [] as Skill[]);
+    const skillCatalog = skillCatalogPrompt(readableSkills);
+    const evalSystemPrompt = skillCatalog ? `${systemPrompt}\n\n${skillCatalog}` : systemPrompt;
 
     const run = await storage.createEvalRun({
       suiteId: suite.id,
@@ -157,7 +235,10 @@ router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
       let result: Awaited<ReturnType<typeof judgeCase>>;
       try {
         result = await judgeCase({
-          systemPrompt,
+          systemPrompt: evalSystemPrompt,
+          agentId: agent.id,
+          orgId,
+          readableSkills,
           scenario: tc.inputScenario,
           expectedBehavior: tc.expectedBehavior,
           criteria,
@@ -166,7 +247,7 @@ router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
       } catch (err: any) {
         result = {
           passed: false, score: 0, criteriaMet: [], criteriaMissed: criteria,
-          reasoning: `Execution failed: ${err?.message}`, actualOutput: "",
+          reasoning: `Execution failed: ${err?.message}`, actualOutput: "", skillsLoaded: [],
         };
       }
       const latencyMs = Date.now() - started;
@@ -176,7 +257,7 @@ router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
         runId: run.id,
         caseId: tc.id,
         passed: result.passed,
-        actualOutput: { response: result.actualOutput, scenarioCategory: tc.scenarioCategory, difficultyTier: tc.difficultyTier } as any,
+        actualOutput: { response: result.actualOutput, skillsLoaded: result.skillsLoaded, scenarioCategory: tc.scenarioCategory, difficultyTier: tc.difficultyTier } as any,
         scorerOutputs: {
           score: result.score,
           passingScore,
@@ -205,7 +286,11 @@ router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
       completedAt: new Date(),
       resultsJson: {
         mode: "prompt_level",
-        note: "Scored against the agent's assembled system prompt (ontology, bound policies, preloaded skills). Tools were not dispatched and no team graph was executed.",
+        note: "Scored against the agent's assembled system prompt (ontology, bound policies with directives) plus its on-demand skills: the skill catalog and read_skill as the only tool. MCP tools were not dispatched and no team graph was executed.",
+        skills: {
+          offered: readableSkills.map(s => s.name),
+          casesThatLoadedASkill: judged.filter(c => c.skillsLoaded.length > 0).length,
+        },
         goldenDatasetId: dataset.id,
         goldenDatasetName: dataset.name,
         byCategory: judged.reduce((acc: Record<string, { passed: number; total: number }>, c) => {
@@ -232,7 +317,7 @@ router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
       passRate,
       results: judged.map(c => ({
         name: c.name, passed: c.passed, score: c.score,
-        criteriaMissed: c.criteriaMissed, reasoning: c.reasoning,
+        criteriaMissed: c.criteriaMissed, reasoning: c.reasoning, skillsLoaded: c.skillsLoaded,
       })),
     });
   } catch (e: any) {

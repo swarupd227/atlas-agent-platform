@@ -37,6 +37,28 @@ function isTransientAIError(e: any): boolean {
   return false;
 }
 
+/**
+ * One Messages API call with callClaude's transient-error retry. For callers
+ * that need what callClaude deliberately hides: tools and multi-turn messages.
+ */
+export async function createClaudeMessage(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message> {
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const client = await getAnthropicClient();
+      return await client.messages.create(params);
+    } catch (e) {
+      lastErr = e;
+      if (attempt === MAX_ATTEMPTS - 1 || !isTransientAIError(e)) throw e;
+      const delayMs = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
+      console.warn(`[callClaude] transient AI error (attempt ${attempt + 1}/${MAX_ATTEMPTS}), retrying in ${delayMs}ms:`, (e as any)?.status ?? (e as any)?.message);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 export async function callClaude(opts: {
   system: string;
   user: string;
@@ -47,30 +69,16 @@ export async function callClaude(opts: {
   const systemPrompt = opts.jsonMode
     ? `${opts.system}\n\nReturn ONLY valid JSON with no markdown fences or prose.`
     : opts.system;
-  const MAX_ATTEMPTS = 3;
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    try {
-      const client = await getAnthropicClient();
-      const response = await client.messages.create({
-        model: opts.model ?? "claude-opus-4-5",
-        system: systemPrompt,
-        messages: [{ role: "user", content: opts.user }],
-        max_tokens: opts.maxTokens ?? 4096,
-      });
-      const textBlock = response.content.find(
-        (b): b is Anthropic.TextBlock => b.type === "text"
-      );
-      return textBlock?.text ?? "";
-    } catch (e) {
-      lastErr = e;
-      if (attempt === MAX_ATTEMPTS - 1 || !isTransientAIError(e)) throw e;
-      const delayMs = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 500);
-      console.warn(`[callClaude] transient AI error (attempt ${attempt + 1}/${MAX_ATTEMPTS}), retrying in ${delayMs}ms:`, (e as any)?.status ?? (e as any)?.message);
-      await new Promise(r => setTimeout(r, delayMs));
-    }
-  }
-  throw lastErr;
+  const response = await createClaudeMessage({
+    model: opts.model ?? "claude-opus-4-5",
+    system: systemPrompt,
+    messages: [{ role: "user", content: opts.user }],
+    max_tokens: opts.maxTokens ?? 4096,
+  });
+  const textBlock = response.content.find(
+    (b): b is Anthropic.TextBlock => b.type === "text"
+  );
+  return textBlock?.text ?? "";
 }
 
 // Strips a markdown code fence that WRAPS a JSON response. It must only do that
