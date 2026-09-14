@@ -16,6 +16,7 @@ import { isMcpServerVisibleToOrg } from "../tenant-scope";
 import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 import { similarOutcomeNames } from "./outcome-names";
+import { createOutcomeFromProposal, prepareOutcomeFromProposal, type OutcomeProposalBody } from "../outcome-create";
 import type { AstraServices } from "./types";
 
 export interface ConnectorSummary {
@@ -387,6 +388,23 @@ async function listOutcomes(orgId: string) {
   );
 }
 
+// ── create_outcome ───────────────────────────────────────────────────────────
+
+async function findSimilarOutcomes(orgId: string, name: string) {
+  return similarOutcomeNames(name, await storage.getOutcomes(orgId));
+}
+
+/** Validate a drafted outcome without writing it (throws with the reason). */
+async function checkOutcomeDraft(body: OutcomeProposalBody) {
+  return prepareOutcomeFromProposal(body, { baselineWhenMissing: null });
+}
+
+/** Create the outcome pending review. A baseline nobody gave is stored as unknown, not 0. */
+async function createOutcome(orgId: string, actor: string, body: OutcomeProposalBody) {
+  const prepared = prepareOutcomeFromProposal(body, { baselineWhenMissing: null });
+  return createOutcomeFromProposal(orgId, actor, prepared, { source: "astra_workspace", evidence: body.evidence });
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -419,5 +437,8 @@ export function createAstraServices(): AstraServices {
     getUserDisplayName,
     outcomeGrounding,
     listOutcomes,
+    findSimilarOutcomes,
+    checkOutcomeDraft,
+    createOutcome,
   };
 }
