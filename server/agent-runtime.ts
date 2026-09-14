@@ -8,6 +8,7 @@ import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } fr
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
+import { resolveRequiredToolCalls, nextForcedToolChoice, missingRequiredToolCalls, requiredToolCallsError } from "./required-tool-calls";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
@@ -1697,6 +1698,18 @@ After receiving tool results, provide a structured analysis with key findings, s
   // of four content-planning steps stopped at exactly 16,384 tokens in one run).
   let finalStopReason: string | undefined;
 
+  // Tools this agent must actually call before its answer counts (see
+  // required-tool-calls.ts): forced through tool_choice, checked at the end.
+  const requiredToolCalls = resolveRequiredToolCalls(runtimeConfig);
+  const availableToolNames = availableTools.map((t) => t.toolName);
+  const forcedToolChoices = new Map<string, number>();
+  const forcedChoiceFor = (): { toolChoice: { name: string } } | {} => {
+    if (requiredToolCalls.length === 0 || canonicalTools.length === 0) return {};
+    const name = nextForcedToolChoice(requiredToolCalls, availableToolNames, toolCallResults, forcedToolChoices);
+    return name ? { toolChoice: { name } } : {};
+  };
+  const planToolChoice = earlyJsonSchemaOption ? {} : forcedChoiceFor();
+
   try {
     const planCallStartMs = performance.now();
     const planResult = await (onProgress
@@ -1711,6 +1724,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             maxTokens: planCallMaxTokens,
             requestedProvider: providerName,
             ...(earlyJsonSchemaOption ? { jsonSchema: earlyJsonSchemaOption } : {}),
+            ...planToolChoice,
             ...(getCodeExecConfig() ?? {}),
           },
           (chunk) => {
@@ -1729,6 +1743,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             maxTokens: planCallMaxTokens,
             requestedProvider: providerName,
             ...(earlyJsonSchemaOption ? { jsonSchema: earlyJsonSchemaOption } : {}),
+            ...planToolChoice,
             ...(getCodeExecConfig() ?? {}),
           },
           [llmProvider, fallbackLlmProvider],
@@ -2139,6 +2154,7 @@ After receiving tool results, provide a structured analysis with key findings, s
 
       if (iterationsUsed < MAX_TOOL_ITERATIONS) {
         try {
+          const continueToolChoice = forcedChoiceFor();
           const continueCallStartMs = performance.now();
           const continueResult = await (onProgress
             ? streamCompleteWithFallback(
@@ -2149,6 +2165,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   // Same reason as planCallMaxTokens: a code-execution agent may
                   // still be writing a long program on a later iteration.
                   maxTokens: getCodeExecConfig() ? codeExecMaxTokens : continuationMaxTokens(resolveOutputMode(runtimeConfig)),
+                  ...continueToolChoice,
                   ...(getCodeExecConfig() ?? {}),
                 },
                 (chunk) => {
@@ -2164,6 +2181,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   // Same reason as planCallMaxTokens: a code-execution agent may
                   // still be writing a long program on a later iteration.
                   maxTokens: getCodeExecConfig() ? codeExecMaxTokens : continuationMaxTokens(resolveOutputMode(runtimeConfig)),
+                  ...continueToolChoice,
                   ...(getCodeExecConfig() ?? {}),
                 },
                 [llmProvider, fallbackLlmProvider],
@@ -2742,6 +2760,23 @@ After receiving tool results, provide a structured analysis with key findings, s
     }
   } catch {}
 
+  // An agent that must call a tool before answering and never did (or only
+  // failed to) has not done its job, however complete its answer reads.
+  const requiredToolCallsMissing = missingRequiredToolCalls(requiredToolCalls, toolCallResults);
+  if (requiredToolCallsMissing.length > 0) {
+    const at = new Date().toISOString();
+    steps.push({
+      id: `step_${steps.length + 1}`,
+      name: "Required tool calls",
+      type: "policy_check",
+      status: "failed",
+      startedAt: at,
+      completedAt: at,
+      error: requiredToolCallsError(requiredToolCallsMissing, availableToolNames),
+      output: { requiredToolCalls, missing: requiredToolCallsMissing },
+    } as any);
+  }
+
   const failedSteps = steps.filter(s => s.status === "failed");
   const latencyMs = Date.now() - startTime;
 
@@ -2864,6 +2899,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       costCapUsd: maxCostPerRunUsd,
       costCapReached,
       truncated: finalStopReason === "max_tokens",
+      ...(requiredToolCallsMissing.length > 0 ? { requiredToolCallsMissing } : {}),
       ...(costCapReached ? { terminationReason: "cost_cap_reached" } : {}),
       ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
     },
@@ -3337,7 +3373,8 @@ export async function executeWorkerAgent(
     // model's actual answer. result.success itself is left unchanged (other
     // callers may legitimately rely on its narrower "zero tool errors"
     // meaning) -- only this node's own reported outcome is widened.
-    const nodeSucceeded = result.success || hasUsableAnalysis;
+    const requiredMissing = (result.summary as { requiredToolCallsMissing?: string[] }).requiredToolCallsMissing ?? [];
+    const nodeSucceeded = (result.success || hasUsableAnalysis) && requiredMissing.length === 0;
 
     let enrichedOutput = outputText;
     if (Array.isArray(structuredOutput) && structuredOutput.length > 0) {

@@ -93,6 +93,14 @@ export interface LLMCompletionOptions {
    * paying for that round trip isn't necessary if checked up front.
    */
   jsonSchema?: { name: string; schema: Record<string, any> };
+  /**
+   * Forces the model to call this function tool on this turn (Anthropic
+   * tool_choice {type:"tool"}, OpenAI tool_choice {type:"function"}). Only
+   * applied when that tool is among `tools`; ignored when jsonSchema already
+   * forces its own schema tool. Used for agents that must call a tool before
+   * answering (see required-tool-calls.ts).
+   */
+  toolChoice?: { name: string };
 }
 
 export interface LLMCompletionResult {
@@ -434,6 +442,20 @@ export interface LLMProvider {
 // ---------------------------------------------------------------------------
 
 /**
+ * The Anthropic tool_choice for LLMCompletionOptions.toolChoice, or nothing when
+ * no such tool is on offer (forcing a tool the request does not define is an
+ * API error, and a missing tool should fall back to the model's own choice).
+ */
+export function anthropicToolChoice(
+  options: Pick<LLMCompletionOptions, "toolChoice"> | undefined,
+  tools: Array<{ name?: unknown } | Record<string, unknown>> | undefined,
+): { tool_choice?: { type: "tool"; name: string } } {
+  const name = options?.toolChoice?.name;
+  if (!name || !tools?.some((t) => (t as { name?: unknown }).name === name)) return {};
+  return { tool_choice: { type: "tool", name } };
+}
+
+/**
  * OpenAI's finish_reason in the canonical vocabulary the rest of the platform
  * reads (Anthropic's stop_reason). Without it an OpenAI answer cut off at its
  * output limit ("length") carried no stop reason at all, so a truncated
@@ -520,6 +542,7 @@ class OpenAIProvider implements LLMProvider {
             model,
             messages: openaiMessages,
             tools: openaiTools,
+            ...(options?.toolChoice && openaiTools ? { tool_choice: { type: "function" as const, function: { name: options.toolChoice.name } } } : {}),
             max_completion_tokens: options?.maxTokens || 4096,
             ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
             ...buildResponseFormat(true),
@@ -538,6 +561,7 @@ class OpenAIProvider implements LLMProvider {
                 model,
                 messages: openaiMessages,
                 tools: openaiTools,
+                ...(options?.toolChoice && openaiTools ? { tool_choice: { type: "function" as const, function: { name: options.toolChoice.name } } } : {}),
                 max_completion_tokens: options?.maxTokens || 4096,
                 ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...buildResponseFormat(false),
@@ -652,6 +676,7 @@ class OpenAIProvider implements LLMProvider {
               model,
               messages: openaiMessages,
               tools: openaiTools,
+              ...(options?.toolChoice && openaiTools ? { tool_choice: { type: "function" as const, function: { name: options.toolChoice.name } } } : {}),
               max_completion_tokens: options?.maxTokens || 4096,
               stream: true,
               stream_options: { include_usage: true },
@@ -670,6 +695,7 @@ class OpenAIProvider implements LLMProvider {
               model,
               messages: openaiMessages,
               tools: openaiTools,
+              ...(options?.toolChoice && openaiTools ? { tool_choice: { type: "function" as const, function: { name: options.toolChoice.name } } } : {}),
               max_completion_tokens: options?.maxTokens || 4096,
               stream: true,
               stream_options: { include_usage: true },
@@ -1057,7 +1083,9 @@ class AnthropicProvider implements LLMProvider {
                 ...(systemPrompt ? { system: systemPrompt } : {}),
                 messages: anthropicMessages,
                 ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
-                ...(forcedSchemaTool ? { tool_choice: { type: "tool" as const, name: forcedSchemaTool.name } } : {}),
+                ...(forcedSchemaTool
+                  ? { tool_choice: { type: "tool" as const, name: forcedSchemaTool.name } }
+                  : anthropicToolChoice(options, anthropicTools)),
                 ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...(container ? { container: container as any } : {}),
               },
@@ -1269,7 +1297,9 @@ class AnthropicProvider implements LLMProvider {
                 ...(systemPrompt ? { system: systemPrompt } : {}),
                 messages: anthropicMessages,
                 ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
-                ...(forcedSchemaTool ? { tool_choice: { type: "tool" as const, name: forcedSchemaTool.name } } : {}),
+                ...(forcedSchemaTool
+                  ? { tool_choice: { type: "tool" as const, name: forcedSchemaTool.name } }
+                  : anthropicToolChoice(options, anthropicTools)),
                 ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...(container ? { container: container as any } : {}),
               },
