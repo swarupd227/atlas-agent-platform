@@ -34,6 +34,53 @@ function kindOf(value: unknown): "array" | "object" | "other" {
   return value !== null && typeof value === "object" ? "object" : "other";
 }
 
+/**
+ * JSON text as a model writes it inside a string argument. Strict JSON first.
+ * If that fails, one lenient retry: raw line breaks and tabs inside string
+ * literals are escaped. That is the typical way nested JSON breaks. Tools ask
+ * for "a newline between paragraphs", and once the whole list is wrapped in a
+ * string those newlines land in it unescaped, which strict JSON forbids. Live:
+ * a deck assembler's fill map (30 slides of multi-paragraph text) was rejected
+ * twice with "slides: Expected array, received string" even with the strict
+ * parse in place. Anything still invalid returns undefined and goes to the
+ * tool's own validation.
+ */
+function parseJsonText(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // fall through to the lenient pass
+  }
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  let changed = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      } else if (ch === "\n" || ch === "\r" || ch === "\t") {
+        out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : "\\t";
+        changed = true;
+        continue;
+      }
+    } else if (ch === "\"") {
+      inString = true;
+    }
+    out += ch;
+  }
+  if (!changed) return undefined;
+  try {
+    return JSON.parse(out);
+  } catch {
+    return undefined;
+  }
+}
+
 function coerceValue(value: unknown, schema: JsonSchema | undefined): unknown {
   if (!schema || typeof schema !== "object") return value;
   const types = declaredTypes(schema);
@@ -42,13 +89,9 @@ function coerceValue(value: unknown, schema: JsonSchema | undefined): unknown {
   if (typeof current === "string" && !types.includes("string") && (types.includes("array") || types.includes("object"))) {
     const trimmed = current.trim();
     if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        const kind = kindOf(parsed);
-        if (kind !== "other" && types.includes(kind)) current = parsed;
-      } catch {
-        // Not valid JSON: leave it for the tool's own validation to report.
-      }
+      const parsed = parseJsonText(trimmed);
+      const kind = kindOf(parsed);
+      if (parsed !== undefined && kind !== "other" && types.includes(kind)) current = parsed;
     }
   }
 

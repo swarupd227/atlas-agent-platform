@@ -64,6 +64,25 @@ describe("coerceToolArgsToSchema", () => {
     expect(coerceToolArgsToSchema({ q: '["a"]' }, schema).q).toBe('["a"]');
   });
 
+  it("recovers JSON text whose string values contain raw line breaks", () => {
+    // What a model writes when paragraph newlines land inside a list wrapped in a string.
+    const raw = '[\n  {"slide": 1, "shapes": [{"name": "Body", "text": "First paragraph.\nSecond paragraph.\tTabbed"}]}\n]';
+    expect(() => JSON.parse(raw)).toThrow();
+    const out = coerceToolArgsToSchema({ outputTitle: "Plan", slides: raw }, FILL_SCHEMA);
+    expect(out.slides).toEqual([{ slide: 1, shapes: [{ name: "Body", text: "First paragraph.\nSecond paragraph.\tTabbed" }] }]);
+  });
+
+  it("keeps escaped characters exactly as written while recovering", () => {
+    const raw = '[{"slide": 2, "shapes": [{"name": "Quote", "text": "He said \\"go\\"\nC:\\\\path"}]}]';
+    const out = coerceToolArgsToSchema({ slides: raw }, FILL_SCHEMA);
+    expect(out.slides[0].shapes[0].text).toBe('He said "go"\nC:\\path');
+  });
+
+  it("still leaves text that is broken in other ways for the tool to reject", () => {
+    const raw = '[{"slide": 1, "shapes": [{"name": "Body", "text": "unterminated\n}]';
+    expect(coerceToolArgsToSchema({ slides: raw }, FILL_SCHEMA).slides).toBe(raw);
+  });
+
   it("returns the very same object when nothing needed parsing", () => {
     const args = { outputTitle: "Plan", slides: [{ slide: 1 }] };
     expect(coerceToolArgsToSchema(args, FILL_SCHEMA)).toBe(args);
