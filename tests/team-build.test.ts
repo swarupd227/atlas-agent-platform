@@ -186,3 +186,36 @@ describe("buildTeamFromProposal", () => {
     expect(state.outcomeUpdates).toEqual([expect.objectContaining({ outcomeId: "out-1", data: { status: "agents_assigned" } })]);
   });
 });
+
+describe("organization", () => {
+  it("every agent and blueprint the build creates belongs to the caller's organization", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("AR Team"),
+      workers: [worker("Gather AR", { workflowSteps: ["Pull invoices", "Summarize"] }), worker("Notify")],
+      pipeline: { pattern: "sequential" },
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(state.agents.length).toBe(3);
+    expect(state.agents.every((a) => a.organizationId === "org-a")).toBe(true);
+    expect(state.blueprints.length).toBe(2);
+    expect(state.blueprints.every((b) => b.organizationId === "org-a")).toBe(true);
+    expect(state.agentUpdates.length).toBeGreaterThan(0);
+    expect(state.agentUpdates.every((u) => u.orgId === "org-a")).toBe(true);
+  });
+
+  it("inherits the outcome's policies only from the caller's organization", async () => {
+    state.outcomes.push({ id: "out-1", organizationId: "org-a", status: "awaiting_agent_plan" });
+    state.outcomePolicies.push(
+      { id: "pol-a", name: "Ours", organizationId: "org-a", policyJson: { enforcement: "strict" } },
+      { id: "pol-b", name: "Someone else's", organizationId: "org-b", policyJson: {} },
+    );
+    const body = teamBuildBodySchema.parse({ outcomeId: "out-1", orchestrator: worker("T"), workers: [worker("W")] });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    const bindingUpdates = state.agentUpdates.filter((u) => u.data.policyBindings);
+    expect(bindingUpdates).toHaveLength(2);
+    for (const u of bindingUpdates) {
+      expect(u.data.policyBindings.map((b: any) => b.policyId)).toEqual(["pol-a"]);
+    }
+    expect(state.outcomeUpdates[0]).toMatchObject({ orgId: "org-a" });
+  });
+});

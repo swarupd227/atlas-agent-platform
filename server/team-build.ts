@@ -10,7 +10,6 @@
  */
 import { z } from "zod";
 import { storage } from "./storage";
-import { getDefaultOrgId } from "./auth";
 import { generateOntologyEvalCases } from "./routes/helpers";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
 
@@ -169,21 +168,23 @@ export const teamBuildBodySchema = z.object({
 export type TeamAgentProposal = z.infer<typeof teamAgentProposalSchema>;
 export type TeamBuildBody = z.infer<typeof teamBuildBodySchema>;
 
-export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: string | undefined }) {
+export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: string }) {
+  // Everything the build creates or reads belongs to this organization.
+  const orgId = opts.orgId;
   const { outcomeId, industry: reqIndustry, markAsCuratedJourney, journeySubVertical, orchestrator, workers, pipeline, processFlowSteps } = body;
 
-  const outcome = outcomeId ? await storage.getOutcome(outcomeId, opts.orgId) : null;
+  const outcome = outcomeId ? await storage.getOutcome(outcomeId, orgId) : null;
   if (outcomeId && !outcome) throw new TeamBuildNotFoundError("Outcome not found");
 
   // The auto-matcher links whatever it finds here to the new agents, so it
   // must never see another tenant's connectors.
-  const allMcpServers = await storage.getMcpServers(opts.orgId ?? getDefaultOrgId());
+  const allMcpServers = await storage.getMcpServers(orgId);
 
   // The AI proposal only names skills ("matchedSkills": exact skill names, per the
   // prompt schema above) -- resolve those against the real catalog so the created
   // agent's preloadedSkills (what agent-runtime.ts actually reads at prompt-assembly
   // time) is populated, not just the display-only runtimeConfig.matchedSkills below.
-  const orgSkills = (await storage.getSkills(opts.orgId)).filter(s => s.status === "active");
+  const orgSkills = (await storage.getSkills(orgId)).filter(s => s.status === "active");
   const skillsByLowerName = new Map(orgSkills.map(s => [s.name.toLowerCase().trim(), s]));
   const resolveMatchedSkills = function(names?: string[]): { skillId: string; skillName: string }[] {
     if (!names?.length) return [];
@@ -203,7 +204,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // bound to reached neither the prompt nor the enforcement path. Resolve
   // names against the real table into the array-of-{policyId} shape those
   // consumers actually read.
-  const orgPolicies = (await storage.getPolicies(opts.orgId)).filter(p => p.status === "active");
+  const orgPolicies = (await storage.getPolicies(orgId)).filter(p => p.status === "active");
   const policiesByLowerName = new Map(orgPolicies.map(p => [p.name.toLowerCase().trim(), p]));
   const resolvePolicyBindings = function(names?: string[]): Array<{ policyId: string; policyName: string; enforcement: string }> {
     if (!names?.length) return [];
@@ -264,7 +265,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // hallucinated id either violated the FK or silently pointed at nothing
   // (the surrounding try/catch swallowed both). Resolve against the real
   // table, same generate-then-post-validate discipline as everything else.
-  const orgKnowledgeBases = await storage.getKnowledgeBases(opts.orgId);
+  const orgKnowledgeBases = await storage.getKnowledgeBases(orgId);
   const kbById = new Map(orgKnowledgeBases.map(k => [k.id, k]));
   const kbByLowerName = new Map(orgKnowledgeBases.map(k => [k.name.toLowerCase().trim(), k]));
   const resolveKnowledgeBases = function(suggested?: Array<{ id: string; name: string }>): string[] {
@@ -282,7 +283,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // org -- see RealMcpBase.callTool ("Integration 'x' is not connected"),
   // which fails on missing credentials, NOT on mcp_servers.status. Servers
   // with no integrationId (mock/demo routers) aren't gated this way.
-  const connectionsOrgId = opts.orgId ?? getDefaultOrgId();
+  const connectionsOrgId = orgId;
   const connectedIntegrationIds = new Set(
     (connectionsOrgId
       ? await storage.listIntegrationConnections(connectionsOrgId).catch(() => [])
@@ -400,6 +401,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   }
 
   const teamAgent = await storage.createAgent({
+    organizationId: orgId,
     name: orchestrator.name,
     description: orchestrator.description,
     owner: "system",
@@ -470,12 +472,13 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     };
   };
 
-  storage.upsertAgentMandate(teamAgent.id, buildMandate(orchestrator, true), opts.orgId).catch(() => {});
+  storage.upsertAgentMandate(teamAgent.id, buildMandate(orchestrator, true), orgId).catch(() => {});
 
   const createdWorkers: any[] = [];
   const workerLinkResults: Array<{ linked: string[]; unresolved: string[]; unconnected: string[] }> = [];
   for (const worker of workers) {
     const workerAgent = await storage.createAgent({
+      organizationId: orgId,
       name: worker.name,
       description: worker.description,
       owner: "system",
@@ -505,7 +508,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     });
     createdWorkers.push(workerAgent);
 
-    storage.upsertAgentMandate(workerAgent.id, buildMandate(worker, false), opts.orgId).catch(() => {});
+    storage.upsertAgentMandate(workerAgent.id, buildMandate(worker, false), orgId).catch(() => {});
 
     workerLinkResults.push(await linkMcpBindings(workerAgent.id, worker.mcpToolBindings));
 
@@ -541,7 +544,8 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // Inherit outcome-scoped policies into all created agents so bound governance flows into execution
   if (outcomeId) {
     try {
-      const outcomePolicies = await storage.getPoliciesByScope("outcome", outcomeId);
+      // Scope lookup matches on the outcome id alone; keep only this organization's policies.
+      const outcomePolicies = (await storage.getPoliciesByScope("outcome", outcomeId)).filter(p => p.organizationId === orgId);
       if (outcomePolicies.length > 0) {
         const allCreated = [teamAgent, ...createdWorkers];
         for (const created of allCreated) {
@@ -565,7 +569,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
           if (additions.length > 0) {
             await storage.updateAgent(created.id, {
               policyBindings: [...existing, ...additions],
-            });
+            }, orgId);
           }
         }
       }
@@ -910,7 +914,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       });
       await storage.updateAgent(createdWorkers[i].id, {
         blueprintJson: workerBlueprint.blueprintJson,
-      });
+      }, orgId);
     }
   }
 
@@ -940,11 +944,11 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         blueprintId: blueprint.id,
       },
     },
-  });
+  }, orgId);
 
   if (outcome && (outcome.status === "awaiting_agent_plan" || outcome.status === "active" || outcome.status === "draft")) {
     try {
-      await storage.updateOutcome(outcomeId!, { status: "agents_assigned" });
+      await storage.updateOutcome(outcomeId!, { status: "agents_assigned" }, orgId);
     } catch {}
   }
 
@@ -972,7 +976,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         totalCases: 0,
       });
       evalSuiteIds[created.id] = suite.id;
-      generateOntologyEvalCases(suite.id, opts.orgId)
+      generateOntologyEvalCases(suite.id, orgId)
         .then(r => {
           if (r.count > 0) storage.updateEvalSuite(suite.id, { totalCases: r.count }).catch(() => {});
         })

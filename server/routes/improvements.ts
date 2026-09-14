@@ -1974,7 +1974,9 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
   router.post("/api/ai/create-team-from-proposals", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const body = teamBuildBodySchema.parse(req.body);
-      res.status(201).json(await buildTeamFromProposal(body, { orgId: getOrgId(req) }));
+      const orgId = getOrgId(req) ?? getDefaultOrgId();
+      if (!orgId) return res.status(400).json({ error: "No organization context" });
+      res.status(201).json(await buildTeamFromProposal(body, { orgId }));
     } catch (error) {
       if (error instanceof TeamBuildNotFoundError) return res.status(404).json({ error: error.message });
       if (error instanceof ZodError) return res.status(400).json({ error: error.errors });
