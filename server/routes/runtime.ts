@@ -4,7 +4,7 @@ import { storage } from "../storage";
 import { db } from "../db";
 import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
 import { llmInvokeRateLimiter } from "../rate-limits";
-import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun, runTeamAgentDag, extractFinalOutputText, deriveRunStatus, inferOrchestrationPattern } from "../dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun, runTeamAgentDag, extractFinalOutputText, deriveRunStatus, inferOrchestrationPattern, cancelTeamAgentDagRun } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
 import { getDagRunEventBuffer, subscribeDagRunEvents } from "../dag-run-events";
 import { startMagenticTeamAgent } from "../magentic-engine";
@@ -20877,6 +20877,30 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       res.json({ ...run, orchestrationPattern });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Cancel a team run that is running or waiting for approval (see
+  // cancelTeamAgentDagRun). Scoped to the caller's organisation through the
+  // run's team agent; a reason is required and recorded with the actor.
+  router.post("/api/dag-execution-runs/:id/cancel", checkPermission("manage_agents"), async (req, res) => {
+    try {
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (reason.length < 3 || reason.length > 500) {
+        return res.status(400).json({ message: "Give a reason for cancelling (3-500 characters)." });
+      }
+      const run = await storage.getDagExecutionRun(String(req.params.id));
+      const team = run?.teamAgentId ? await storage.getAgent(run.teamAgentId, getOrgId(req)) : undefined;
+      if (!run || !team) return res.status(404).json({ message: "Run not found" });
+
+      const actorId = req.authUser?.username || req.authUser?.userId || "user";
+      const outcome = await cancelTeamAgentDagRun(run.id, reason, actorId);
+      if (!outcome.cancelled) {
+        return res.status(409).json({ message: `Only a running or waiting run can be cancelled; this run is ${outcome.status ?? "unknown"}.`, status: outcome.status });
+      }
+      res.json({ cancelled: true, stoppedLiveExecution: outcome.stoppedLiveExecution, run: await storage.getDagExecutionRun(run.id) });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
     }
   });
 

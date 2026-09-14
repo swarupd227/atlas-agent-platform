@@ -36,6 +36,14 @@ vi.mock("../server/storage", () => ({
       runs.set(id, { ...runs.get(id), ...data });
       return runs.get(id);
     }),
+    updateActiveDagExecutionRun: vi.fn(async (id: string, data: any) => {
+      const r = runs.get(id);
+      if (!r || !["running", "waiting_approval"].includes(r.status)) return undefined;
+      runs.set(id, { ...r, ...data });
+      return runs.get(id);
+    }),
+    getDagExecutionRunStatus: vi.fn(async (id: string) => runs.get(id)?.status),
+    cancelActiveDagExecutionRun: vi.fn(async () => undefined),
     claimStaleRunningDagExecutionRun: vi.fn(async (id: string, staleBefore: Date) => {
       const r = runs.get(id);
       if (!claimAllowed || !r || r.status !== "running" || !r.heartbeatAt || !(new Date(r.heartbeatAt) < staleBefore)) return false;

@@ -6,7 +6,7 @@
  * person watching doesn't have to go hunt for it.
  */
 import { useQuery } from "@tanstack/react-query";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useRoute, Link } from "wouter";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -19,6 +19,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/status-badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import type { DagExecutionRun, Agent, Approval } from "@shared/schema";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
 
@@ -51,7 +54,9 @@ interface DagWaveResult {
   nodes: DagWaveNodeResult[];
 }
 
-const TERMINAL_STATUSES = new Set(["completed", "completed_with_skips", "failed"]);
+const TERMINAL_STATUSES = new Set(["completed", "completed_with_skips", "failed", "cancelled"]);
+/** Runs a person can still stop. */
+const CANCELLABLE_STATUSES = new Set(["running", "waiting_approval"]);
 
 function FileLinks({ files, testIdPrefix }: { files: RunFile[]; testIdPrefix: string }) {
   if (files.length === 0) return null;
@@ -192,6 +197,26 @@ export default function DagRunMonitor() {
   // finished in 4.2s" the moment it happens.
   const [liveEvents, setLiveEvents] = useState<DagRunLiveEvent[]>([]);
   const [streamOpen, setStreamOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+  const { toast } = useToast();
+
+  async function submitCancel() {
+    if (!runId) return;
+    setCancelling(true);
+    try {
+      await apiRequest("POST", `/api/dag-execution-runs/${runId}/cancel`, { reason: cancelReason.trim() });
+      toast({ title: "Run cancelled", description: "It will not run any further steps." });
+      setCancelOpen(false);
+      setCancelReason("");
+      queryClient.invalidateQueries({ queryKey: ["/api/dag-execution-runs", runId] });
+    } catch (err: any) {
+      toast({ title: "Could not cancel the run", description: err?.message || "Try again.", variant: "destructive" });
+    } finally {
+      setCancelling(false);
+    }
+  }
   const feedRef = useRef<HTMLDivElement>(null);
   const runIsTerminal = run ? TERMINAL_STATUSES.has(run.status) : false;
   useEffect(() => {
@@ -288,7 +313,45 @@ export default function DagRunMonitor() {
             </div>
           </div>
         </div>
+        {CANCELLABLE_STATUSES.has(run.status) && (
+          <Button variant="outline" size="sm" onClick={() => setCancelOpen(true)} data-testid="button-cancel-run">
+            <XCircle className="w-3.5 h-3.5 mr-1.5" /> Cancel run
+          </Button>
+        )}
       </div>
+
+      <Dialog open={cancelOpen} onOpenChange={(open) => { if (!cancelling) setCancelOpen(open); }}>
+        <DialogContent data-testid="dialog-cancel-run">
+          <DialogHeader>
+            <DialogTitle>Cancel this run?</DialogTitle>
+            <DialogDescription>
+              The step in progress stops, no further steps run, and any approval it is waiting on is closed. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.target.value)}
+            placeholder="Why are you cancelling it?"
+            maxLength={500}
+            data-testid="input-cancel-reason"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCancelOpen(false)} disabled={cancelling} data-testid="button-cancel-run-dismiss">Keep running</Button>
+            <Button variant="destructive" onClick={submitCancel} disabled={cancelling || cancelReason.trim().length < 3} data-testid="button-cancel-run-confirm">
+              {cancelling ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}Cancel run
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {run.status === "cancelled" && run.error && (
+        <Card className="border-slate-500/30 bg-slate-500/5" data-testid="card-run-cancelled">
+          <CardContent className="p-4 flex items-center gap-3">
+            <XCircle className="w-5 h-5 text-slate-500 shrink-0" />
+            <span className="text-sm">{run.error}</span>
+          </CardContent>
+        </Card>
+      )}
 
       {run.status === "waiting_approval" && (
         <Card className="border-amber-500/30 bg-amber-500/5" data-testid="card-awaiting-approval">

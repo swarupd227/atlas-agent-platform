@@ -220,6 +220,11 @@ export interface DAGExecutionConfig {
   // recurse until the process hangs or stack-overflows -- there was no
   // guard against this at all before.
   ancestorTeamAgentIds?: string[];
+  /**
+   * Aborts the run (see cancelTeamAgentDagRun): no further wave starts, and the
+   * in-flight wave's model calls, polled tool jobs and approval waits stop.
+   */
+  signal?: AbortSignal;
   /** Run and team identity, used to give each approval a name a human can tell apart. */
   dagRunId?: string;
   teamAgentName?: string;
@@ -315,6 +320,17 @@ export class DagRunSupersededError extends Error {
  * timeout from the abandoned strand flipping a successful run to "failed".
  */
 const liveDagRunStrands = new Set<string>();
+
+/** The abort controller of each run executing in THIS process, for cancellation. */
+const liveDagRunAborts = new Map<string, AbortController>();
+
+/** Thrown inside a run that was cancelled; the run's status is already "cancelled". */
+export class DagRunCancelledError extends Error {
+  constructor(message = "Run cancelled") {
+    super(message);
+    this.name = "DagRunCancelledError";
+  }
+}
 
 export class DAGExecutionError extends Error {
   constructor(
@@ -1070,6 +1086,7 @@ export class DAGExecutionEngine {
 
     for (let waveIndex = 0; waveIndex < waves.length; waveIndex++) {
       const wave = waves[waveIndex];
+      if (config.signal?.aborted) throw new DagRunCancelledError();
       if (execConfig.resumeFromWave && wave.wave_number < execConfig.resumeFromWave) continue;
       // Inside a revision loop only the loop's own nodes run again; every other
       // node keeps the result it already has.
@@ -1140,6 +1157,10 @@ export class DAGExecutionEngine {
         nodeResults = [...skippedResults, ...executedResults];
         if (nodeResults.some((r) => r.status === "failed")) success = false;
       }
+
+      // A cancellation during this wave: its nodes were stopped mid-work, so
+      // their results are not the run's output. Stop before recording them.
+      if (config.signal?.aborted) throw new DagRunCancelledError();
 
       // Skipped and executed results were assembled as two separate lists --
       // restore wave.nodes' original order so the wave display doesn't jumble
@@ -2318,13 +2339,22 @@ async function executeTeamAgentDagRun(
   // Registered for the strand's whole lifetime (cleared in `finally`), so a
   // same-process resume attempt defers to it -- see liveDagRunStrands.
   liveDagRunStrands.add(dagRun.id);
-  // Proof of life for the recovery scan (see resumeInterruptedTeamAgentDagRun).
+  // Cancellation (see cancelTeamAgentDagRun). Everything the run does runs in
+  // this abort scope: model calls, polled tool jobs and approval waits.
+  const abort = new AbortController();
+  liveDagRunAborts.set(dagRun.id, abort);
+  // Proof of life for the recovery scan (see resumeInterruptedTeamAgentDagRun),
+  // and the way a cancellation made on another instance reaches this strand.
   const heartbeat = setInterval(() => {
     storage.touchDagExecutionRunHeartbeat(dagRun.id).catch(() => {});
+    storage.getDagExecutionRunStatus(dagRun.id)
+      .then((status) => { if (status === "cancelled" && !abort.signal.aborted) abort.abort(); })
+      .catch(() => {});
   }, DAG_RUN_HEARTBEAT_INTERVAL_MS);
   heartbeat.unref?.();
   try {
-    const result = await engine.execute({
+    const result = await runWithLlmAbortSignal(abort.signal, () => engine.execute({
+      signal: abort.signal,
       executionPlan: wavePlan,
       stateSchema,
       initialState,
@@ -2357,7 +2387,7 @@ async function executeTeamAgentDagRun(
         // can find its way back to this exact approval after a restart --
         // cleared back to "running"/null below as soon as the wave (gate
         // included) finishes, since by then the decision has already been made.
-        storage.updateDagExecutionRun(dagRun.id, { status: "waiting_approval", pendingApprovalId: approvalId }).catch(() => {});
+        storage.updateActiveDagExecutionRun(dagRun.id, { status: "waiting_approval", pendingApprovalId: approvalId }).catch(() => {});
         const label = wavePlan.nodeConfig[nodeId]?.label || nodeId;
         publishDagRunEvent(dagRun.id, { type: "approval_pending", nodeId, label, wave: nodeWave[nodeId] ?? 0, totalWaves: wavePlan.totalWaves, approvalId });
         opts?.onApprovalPending?.(nodeId, nodeWave[nodeId] ?? 0, label, wavePlan.totalWaves, approvalId);
@@ -2373,21 +2403,22 @@ async function executeTeamAgentDagRun(
         return owned;
       },
       onWaveComplete: async (waveNum, state) => {
-        await storage.updateDagExecutionRun(dagRun.id, { status: "running", currentWave: waveNum, currentState: state, pendingApprovalId: null });
+        await storage.updateActiveDagExecutionRun(dagRun.id, { status: "running", currentWave: waveNum, currentState: state, pendingApprovalId: null });
         publishDagRunEvent(dagRun.id, { type: "wave_complete", wave: waveNum, totalWaves: wavePlan.totalWaves });
       },
       // Persist the timeline as it happens -- previously waveResults was only
       // written on the final update, so a mid-run refresh (or a post-crash
       // resume) had an empty wave-by-wave view.
       onWaveResult: async (_wave, allSoFar) => {
-        await storage.updateDagExecutionRun(dagRun.id, { waveResults: allSoFar as any }).catch(() => {});
+        await storage.updateActiveDagExecutionRun(dagRun.id, { waveResults: allSoFar as any }).catch(() => {});
       },
-    });
+    }));
+    if (abort.signal.aborted) throw new DagRunCancelledError();
 
     const missingDeliverables = (result.missingDeliverableNodeIds ?? []).map(
       (id) => wavePlan.nodeConfig[id]?.label || id,
     );
-    await storage.updateDagExecutionRun(dagRun.id, {
+    await storage.updateActiveDagExecutionRun(dagRun.id, {
       status: deriveRunStatus(result),
       ...(missingDeliverables.length > 0
         ? { error: `No file was produced by: ${missingDeliverables.join(", ")}. Every attempt to create it failed.` }
@@ -2414,8 +2445,17 @@ async function executeTeamAgentDagRun(
       execErr.dagRunId = dagRun.id;
       throw execErr;
     }
+    if (execErr instanceof DagRunCancelledError || abort.signal.aborted) {
+      // The cancel already wrote status, reason and completedAt; this only
+      // covers a strand that noticed first, and never overwrites the reason.
+      await storage.cancelActiveDagExecutionRun(dagRun.id, "Run cancelled").catch(() => undefined);
+      console.log(`[dag-run] ${dagRun.id}: cancelled -- execution stopped`);
+      const cancelled = execErr instanceof DagRunCancelledError ? execErr : new DagRunCancelledError();
+      (cancelled as any).dagRunId = dagRun.id;
+      throw cancelled;
+    }
     const isDagError = execErr instanceof DAGExecutionError;
-    await storage.updateDagExecutionRun(dagRun.id, {
+    await storage.updateActiveDagExecutionRun(dagRun.id, {
       status: "failed",
       error: execErr.message,
       waveResults: isDagError ? (execErr.context.waveResults as any) : [],
@@ -2431,6 +2471,7 @@ async function executeTeamAgentDagRun(
   } finally {
     clearInterval(heartbeat);
     liveDagRunStrands.delete(dagRun.id);
+    liveDagRunAborts.delete(dagRun.id);
   }
 }
 
@@ -2648,6 +2689,47 @@ export async function resumeTeamAgentDagRun(dagRunId: string): Promise<void> {
     console.error(`[dag-resume] Failed to resume run ${dagRunId}:`, err.message);
     await storage.updateDagExecutionRun(dagRunId, { status: "failed", error: `Resume failed: ${err.message}`, completedAt: new Date() }).catch(() => {});
   }
+}
+
+/**
+ * Cancels a team run that is running or waiting for approval.
+ *
+ * Before this, nothing could stop a run short of a redeploy: a 25-minute deck
+ * build going wrong ran to the end, and a run cut off before resume support
+ * existed stayed "running" forever.
+ *
+ * The row is marked cancelled first, with a guarded update, so a strand's
+ * later writes (all guarded the same way) can never flip it back. Then a
+ * strand executing in this process is aborted at once; one on another
+ * instance notices on its next heartbeat. A pending approval is closed so it
+ * does not sit in the queue for a run that no longer exists.
+ */
+export async function cancelTeamAgentDagRun(
+  dagRunId: string,
+  reason: string,
+  actorId: string,
+): Promise<{ cancelled: true; stoppedLiveExecution: boolean } | { cancelled: false; status: string | undefined }> {
+  const row = await storage.cancelActiveDagExecutionRun(dagRunId, `Cancelled by ${actorId}: ${reason}`);
+  if (!row) return { cancelled: false, status: await storage.getDagExecutionRunStatus(dagRunId) };
+
+  const live = liveDagRunAborts.get(dagRunId);
+  if (live && !live.signal.aborted) live.abort();
+
+  if (row.pendingApprovalId) {
+    await storage
+      .updateApproval(row.pendingApprovalId, { status: "rejected", decidedBy: actorId, decidedAt: new Date() } as any)
+      .catch(() => undefined);
+  }
+  storage.createAuditEvent({
+    action: "dag_run.cancelled",
+    objectType: "dag_execution_run",
+    objectId: dagRunId,
+    actorId,
+    actorType: "user",
+    details: JSON.stringify({ teamAgentId: row.teamAgentId, reason, stoppedLiveExecution: !!live, pendingApprovalId: row.pendingApprovalId ?? null }),
+  } as any).catch(() => {});
+  publishDagRunEvent(dagRunId, { type: "run_complete", runStatus: "cancelled", error: reason });
+  return { cancelled: true, stoppedLiveExecution: !!live };
 }
 
 /** How often a live run refreshes its heartbeat. */

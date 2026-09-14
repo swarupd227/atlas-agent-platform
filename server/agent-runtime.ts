@@ -9,6 +9,7 @@ import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import { resolveRequiredToolCalls, nextForcedToolChoice, missingRequiredToolCalls, requiredToolCallsError } from "./required-tool-calls";
+import { currentLlmAbortSignal } from "./llm-abort-context";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
 import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt, isBuiltinSkillTool } from "./builtin-skill-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
@@ -3024,6 +3025,8 @@ export async function waitForApproval(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, pollInterval));
+    // The run was cancelled while it waited (see cancelTeamAgentDagRun).
+    if (currentLlmAbortSignal()?.aborted) return { approved: false, reason: "Run cancelled while waiting for approval" };
     const updated = await storage.getApproval(approval.id);
     if (!updated) break;
     if (updated.status === "approved") {

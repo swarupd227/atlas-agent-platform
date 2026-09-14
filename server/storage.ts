@@ -916,6 +916,13 @@ export interface IStorage {
   touchDagExecutionRunHeartbeat(id: string): Promise<void>;
   listStaleRunningDagExecutionRuns(staleBefore: Date): Promise<DagExecutionRun[]>;
   claimStaleRunningDagExecutionRun(id: string, staleBefore: Date): Promise<boolean>;
+  // Cancellation (see cancelTeamAgentDagRun): a guarded running/waiting_approval
+  // -> cancelled transition, a write that only lands while the run is still
+  // active (so a late write from an executing strand can never flip a
+  // cancelled run back to "running"), and a status-only read for the heartbeat.
+  cancelActiveDagExecutionRun(id: string, reason: string): Promise<DagExecutionRun | undefined>;
+  updateActiveDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined>;
+  getDagExecutionRunStatus(id: string): Promise<string | undefined>;
 
   getWorkflowStateSchema(id: string): Promise<WorkflowStateSchema | undefined>;
   getWorkflowStateSchemaByPipeline(pipelineId: string): Promise<WorkflowStateSchema | undefined>;
@@ -4800,6 +4807,29 @@ export class DatabaseStorage implements IStorage {
           lt(dagExecutionRuns.heartbeatAt, staleBefore),
         ),
       );
+  }
+
+  async cancelActiveDagExecutionRun(id: string, reason: string): Promise<DagExecutionRun | undefined> {
+    const [row] = await db
+      .update(dagExecutionRuns)
+      .set({ status: "cancelled", error: reason, completedAt: new Date() })
+      .where(and(eq(dagExecutionRuns.id, id), inArray(dagExecutionRuns.status, ["running", "waiting_approval"])))
+      .returning();
+    return row;
+  }
+
+  async updateActiveDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined> {
+    const [row] = await db
+      .update(dagExecutionRuns)
+      .set(data)
+      .where(and(eq(dagExecutionRuns.id, id), inArray(dagExecutionRuns.status, ["running", "waiting_approval"])))
+      .returning();
+    return row;
+  }
+
+  async getDagExecutionRunStatus(id: string): Promise<string | undefined> {
+    const [row] = await db.select({ status: dagExecutionRuns.status }).from(dagExecutionRuns).where(eq(dagExecutionRuns.id, id));
+    return row?.status;
   }
 
   async claimStaleRunningDagExecutionRun(id: string, staleBefore: Date): Promise<boolean> {

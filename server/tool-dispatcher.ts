@@ -29,6 +29,7 @@ import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
 import { coerceToolArgsToSchema } from "./tool-arg-coercion";
 import { captureReturnedFile } from "./returned-file-capture";
+import { currentLlmAbortSignal } from "./llm-abort-context";
 import { BUILTIN_SKILL_SERVER_ID } from "./builtin-skill-tools";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
@@ -896,6 +897,8 @@ async function pollAsyncJob(
 
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, intervalMs));
+    // The run that started this job was cancelled or timed out: stop waiting on it.
+    if (currentLlmAbortSignal()?.aborted) throw new Error(`${toolLabel}: stopped waiting on the async job because the run was cancelled`);
     let payload: any;
     try {
       const res = await fetch(pollUrl, Object.keys(headers).length ? { headers } : undefined);
