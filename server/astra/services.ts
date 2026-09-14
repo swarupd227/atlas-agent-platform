@@ -15,6 +15,9 @@ import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
 import { CONVERSATION_DECIDABLE_OBJECT_TYPES, decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
+import { proposeTeam } from "../team-proposal";
+import { assessProposalBindings, resolveBindingServer } from "../team-bindings";
+import { flattenGraphToSteps } from "@shared/process-flow";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 import { similarOutcomeNames } from "./outcome-names";
 import { createOutcomeFromProposal, prepareOutcomeFromProposal, type OutcomeProposalBody } from "../outcome-create";
@@ -433,6 +436,60 @@ async function needsMe(orgId: string, role: RoleId) {
   };
 }
 
+// ── propose_team ─────────────────────────────────────────────────────────────
+
+/** How a plan's connector bindings resolve against this organization's connectors and their tools. */
+async function assessBindings(orgId: string, agentsInPlan: Array<{ name: string; mcpToolBindings?: Array<{ server: string; tool: string }> }>) {
+  const connectors = await listConnectors(orgId);
+  const toolNames = new Map<string, string[]>();
+  const named = new Set(agentsInPlan.flatMap((a) => (a.mcpToolBindings ?? []).map((b) => b.server)));
+  for (const serverName of Array.from(named)) {
+    const connector = resolveBindingServer(serverName, connectors);
+    if (connector && !toolNames.has(connector.id)) {
+      toolNames.set(connector.id, (await getConnectorTools(orgId, connector.id)).map((t) => t.name));
+    }
+  }
+  return { ...assessProposalBindings(agentsInPlan, connectors, toolNames), connectorsChecked: connectors.length };
+}
+
+/**
+ * Propose a team for one of the organization's outcomes. Progress messages
+ * go to onProgress; the plan is saved as the outcome's draft proposal.
+ */
+async function proposeTeamForOutcome(
+  orgId: string,
+  outcomeId: string,
+  industryId: string | null,
+  feedback: string | undefined,
+  onProgress: (message: string) => void,
+) {
+  const outcome = await storage.getOutcome(outcomeId, orgId);
+  if (!outcome) return { ok: false as const, error: "No outcome with that id in this organization." };
+  const kpis = await storage.getKpisByOutcome(outcome.id);
+  const flow = outcome.processFlow as any;
+  const processFlowSteps = flow && Array.isArray(flow.nodes) && flow.nodes.length > 0 ? flattenGraphToSteps(flow) : undefined;
+
+  let result: any = null;
+  let failure: { error: string; details?: string; timeout?: boolean } | null = null;
+  await proposeTeam(
+    { outcomeContract: outcome, kpis, feedback, industryContext: industryId ? { industryId } : null, processFlowSteps },
+    {
+      orgId,
+      onEvent: (event) => {
+        if (event.type === "progress") onProgress(event.message);
+        else if (event.type === "done") result = event.result;
+        else if (event.type === "error") failure = event;
+      },
+    },
+  );
+  if (failure) return { ok: false as const, error: (failure as any).error, details: (failure as any).details, timeout: (failure as any).timeout };
+  if (!result || result.error || !Array.isArray(result.agents) || result.agents.length === 0) {
+    return { ok: false as const, error: result?.error ?? "No team plan was produced.", likelyTooLarge: !!result?.likelyTooLarge };
+  }
+  const bindings = await assessBindings(orgId, [...(result.orchestrator ? [result.orchestrator] : []), ...result.agents]);
+  return { ok: true as const, outcome: { id: outcome.id, name: outcome.name, status: outcome.status, riskTier: outcome.riskTier }, plan: result, proposalId: result.proposalId ?? null, bindings };
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -469,5 +526,7 @@ export function createAstraServices(): AstraServices {
     checkOutcomeDraft,
     createOutcome,
     needsMe,
+    assessBindings,
+    proposeTeamForOutcome,
   };
 }

@@ -11,6 +11,7 @@
 import { z } from "zod";
 import { storage } from "./storage";
 import { generateOntologyEvalCases } from "./routes/helpers";
+import { resolveBindingServer } from "./team-bindings";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
 
 export class TeamBuildNotFoundError extends Error {
@@ -303,10 +304,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     if (!bindings?.length) return { linked, unresolved, unconnected };
     const serverNames = Array.from(new Set(bindings.map(b => b.server)));
     for (const serverName of serverNames) {
-      const matched = allMcpServers.find(s =>
-        s.name.toLowerCase().includes(serverName.toLowerCase()) ||
-        serverName.toLowerCase().includes(s.name.toLowerCase().split(" ")[0])
-      );
+      const matched = resolveBindingServer(serverName, allMcpServers);
       if (!matched) { unresolved.push(serverName); continue; }
       // Still linked (the binding is a real, intentional part of the plan and
       // the integration may be connected later) -- but recorded separately so

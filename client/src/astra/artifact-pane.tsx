@@ -6,6 +6,7 @@ import type { ArtifactRef } from "./types";
 import { Label, StatusDot } from "./renderers/parts";
 import { OutcomeDraft, OutcomeCard, OutcomeList } from "./renderers/outcome";
 import { NeedsMe } from "./renderers/needs-me";
+import { TeamCard, TeamProposal } from "./renderers/team";
 
 function AgentList({ props }: { props: Record<string, any> }) {
   const agents: any[] = props.agents ?? [];
@@ -194,6 +195,8 @@ const RENDERERS: Record<string, (p: { props: Record<string, any> }) => JSX.Eleme
   outcome: OutcomeCard,
   outcomeList: OutcomeList,
   needsMe: NeedsMe,
+  teamProposal: TeamProposal,
+  team: TeamCard,
 };
 
 export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onClose: () => void }) {
