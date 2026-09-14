@@ -28,6 +28,7 @@ import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpA
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
 import { coerceToolArgsToSchema } from "./tool-arg-coercion";
+import { captureReturnedFile } from "./returned-file-capture";
 import { BUILTIN_SKILL_SERVER_ID } from "./builtin-skill-tools";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
@@ -671,6 +672,30 @@ async function captureFileBasedScreenshot(result: unknown, tool: AvailableTool, 
 }
 
 export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
+  const result = await executeToolUnwrapped(tool, args, orgId, agentId);
+  // A document an external tool built comes back as bytes in its result: store
+  // it as a run file so it can be downloaded and inspected (see
+  // returned-file-capture.ts). Results without a file pass through unchanged.
+  const { GENERATED_FILE_MARKER } = await import("./builtin-document-tools");
+  return captureReturnedFile(result, { orgId, agentId, toolName: tool.toolName }, {
+    marker: GENERATED_FILE_MARKER,
+    createFile: (f) =>
+      storage.createAgentGeneratedFile({
+        organizationId: f.organizationId,
+        agentId: f.agentId,
+        workspaceRunId: null,
+        traceId: null,
+        filename: f.filename,
+        mimeType: f.mimeType,
+        sizeBytes: f.content.length,
+        source: "platform",
+        anthropicFileId: null,
+        content: f.content,
+      } as any),
+  });
+}
+
+async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
   // A list or object the model sent as JSON text is parsed back into the type
   // the tool's schema declares, for every kind of tool below.
   args = coerceToolArgsToSchema(args, tool.toolInputSchema);

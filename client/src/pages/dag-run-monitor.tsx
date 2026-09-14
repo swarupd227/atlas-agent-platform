@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, Network, Clock, Coins, Layers, CheckCircle2, XCircle,
   Loader2, ShieldQuestion, ArrowRight, MinusCircle, AlertTriangle,
-  Play, Radio, ChevronRight, ChevronDown, Copy, Check,
+  Play, Radio, ChevronRight, ChevronDown, Copy, Check, Download, FileText,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/status-badge";
 import type { DagExecutionRun, Agent, Approval } from "@shared/schema";
+import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
 
 // Mirrors computeWaves()'s real output shape (server/dag-execution-engine.ts)
 // -- GET /api/team-agents/:id/dag-waves returns this raw wave plan, where
@@ -51,6 +52,26 @@ interface DagWaveResult {
 }
 
 const TERMINAL_STATUSES = new Set(["completed", "completed_with_skips", "failed"]);
+
+function FileLinks({ files, testIdPrefix }: { files: RunFile[]; testIdPrefix: string }) {
+  if (files.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {files.map((f) => (
+        <a
+          key={f.id}
+          href={`/api/agent-files/${f.id}/download`}
+          className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs hover:bg-muted"
+          data-testid={`${testIdPrefix}-${f.id}`}
+        >
+          <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="truncate max-w-[260px]">{f.filename || "Download file"}</span>
+          <Download className="w-3.5 h-3.5 text-muted-foreground" />
+        </a>
+      ))}
+    </div>
+  );
+}
 
 // Mirror of server/dag-run-events.ts DagRunEvent -- the live SSE feed shape.
 interface DagRunLiveEvent {
@@ -154,7 +175,8 @@ export default function DagRunMonitor() {
     const out = node.output;
     if (!out || typeof out !== "object") return [];
     return Object.entries(out)
-      .filter(([k, v]) => !OUTPUT_NOISE_KEYS.has(k) && v != null && v !== "")
+      // File lists are shown as download links, not as raw JSON.
+      .filter(([k, v]) => !OUTPUT_NOISE_KEYS.has(k) && !k.endsWith(FILES_KEY_SUFFIX) && v != null && v !== "")
       .map(([key, value]) => ({
         key,
         text: typeof value === "string" ? value : JSON.stringify(value, null, 2),
@@ -224,6 +246,9 @@ export default function DagRunMonitor() {
 
   const waveResults = (run.waveResults as unknown as DagWaveResult[]) || [];
   const allNodes = waveResults.flatMap(w => w.nodes);
+  // The files the run currently stands behind: from its latest state, so a file
+  // a revision replaced (or withdrew) is not offered here as the deliverable.
+  const runFiles = collectRunFiles(run.finalState ?? run.currentState);
   const completedNodes = allNodes.filter(n => n.status === "completed").length;
   const errorNodes = allNodes.filter(n => n.status === "failed");
   const skippedNodes = allNodes.filter(n => n.status === "skipped");
@@ -429,6 +454,15 @@ export default function DagRunMonitor() {
         </div>
       )}
 
+      {runFiles.length > 0 && (
+        <Card data-testid="card-run-files">
+          <CardContent className="p-4 flex flex-col gap-2">
+            <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Files from this run</span>
+            <FileLinks files={runFiles} testIdPrefix="link-run-file" />
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex flex-col gap-3">
         <span className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">
           {isMagentic ? "Step-by-Step Progress" : "Wave-by-Wave Progress"}
@@ -464,6 +498,9 @@ export default function DagRunMonitor() {
                     {isMagentic && node.output?.managerReasoning && (
                       <span className="text-[11px] text-muted-foreground pl-5.5 truncate">Manager: {node.output.managerReasoning}</span>
                     )}
+                    <div className="pl-5.5">
+                      <FileLinks files={collectRunFiles(node.output)} testIdPrefix={`link-node-file-${node.nodeId}`} />
+                    </div>
                     <NodeOutput node={node} label={labelForNode(node)} entries={outputEntries(node)} />
                   </div>
                 ))}
