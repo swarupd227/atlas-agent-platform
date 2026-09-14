@@ -3004,7 +3004,16 @@ export async function waitForApproval(
     return { approved: false, reason: `Gate already ${approval.status}` };
   }
   if (!approval) {
+    // File the decision with the organization that owns the run's agent, so it
+    // appears in that organization's approvals rather than the default one.
+    let owner: { organizationId?: string | null } | undefined;
+    try {
+      owner = await storage.getAgent(agentId);
+    } catch {
+      owner = undefined; // no owner found: storage falls back to the default organization, as before
+    }
     approval = await storage.createApproval({
+      ...(owner?.organizationId ? { organizationId: owner.organizationId } : {}),
       type: "hitl_gate",
       objectType: "pipeline_gate",
       objectName: approvalMeta?.objectName || gateName,
