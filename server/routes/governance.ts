@@ -4,6 +4,7 @@ import { storage } from "../storage";
 import { db } from "../db";
 import { resumeTeamAgentDagRun } from "../dag-execution-engine";
 import { resumeWorkspaceRun } from "../workspace-run";
+import { applyOutcomeReviewDecision, resumeTeamRunWaitingOn } from "../approval-decision";
 import { promoteToBaseline } from "../services/screenshot-baseline";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { z, ZodError } from "zod";
@@ -1300,17 +1301,8 @@ Ontology: ${ontologyName || "industry standard"}`,
 
     // Real governance gate: approving an outcome review advances the outcome
     // out of pending_review; rejecting it parks the outcome as a draft.
-    if (approval.objectType === "outcome_contract" && approval.objectId && (status === "approved" || status === "rejected")) {
-      const oid = getOrgId(req) ?? getDefaultOrgId() ?? undefined;
-      const outcome = await storage.getOutcome(approval.objectId, getOrgId(req));
-      if (outcome && outcome.status === "pending_review") {
-        await storage.updateOutcome(
-          approval.objectId,
-          { status: status === "approved" ? "awaiting_agent_plan" : "draft" },
-          oid,
-        );
-      }
-    }
+    // (Shared with the Astra Workspace: server/approval-decision.ts.)
+    await applyOutcomeReviewDecision(approval, status, getOrgId(req) ?? getDefaultOrgId() ?? undefined);
 
     // Real governance gate: approving a code-execution enablement request is
     // what actually flips skills.codeExecutionApproved -- mirrors
@@ -1327,12 +1319,7 @@ Ontology: ${ontologyName || "industry standard"}`,
     // by pendingApprovalId rather than trusting any id threaded through the
     // request, since the client only ever sees the approval id, not the run's.
     if (approval.objectType === "pipeline_gate" && (status === "approved" || status === "rejected")) {
-      storage.listDagExecutionRunsByStatus("waiting_approval")
-        .then(runs => {
-          const match = runs.find(r => r.pendingApprovalId === approval.id);
-          if (match) resumeTeamAgentDagRun(match.id).catch(err => console.error(`[dag-resume] fast-path resume of ${match.id} failed:`, err.message));
-        })
-        .catch(() => {});
+      resumeTeamRunWaitingOn(approval.id);
     }
 
     // Mirrors the pipeline_gate branch above -- a warrant/AAR-gated tool call

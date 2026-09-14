@@ -13,6 +13,7 @@ import { getRedactionLevel, hasPermission, redactPayload, type RoleId } from "..
 import { getIndustryPack } from "@shared/industry-packs";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
+import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
 import type { AstraServices } from "./types";
 
 export interface ConnectorSummary {
@@ -241,6 +242,50 @@ async function getRunForRole(orgId: string, role: RoleId, runId: string) {
   return redactPayload(run, getRedactionLevel(role)) as typeof run;
 }
 
+// ── decide_approval ──────────────────────────────────────────────────────────
+
+/** One approval in the organization, with what deciding it affects. */
+async function getApprovalForDecision(orgId: string, role: RoleId, approvalId: string) {
+  const approval = await storage.getApproval(approvalId, orgId);
+  if (!approval) return null;
+  let outcome: { id: string; name: string; status: string } | null = null;
+  if (approval.objectType === "outcome_contract" && approval.objectId) {
+    const o = await storage.getOutcome(approval.objectId, orgId);
+    if (o) outcome = { id: o.id, name: o.name, status: o.status };
+  }
+  return {
+    id: approval.id,
+    type: approval.type,
+    objectType: approval.objectType,
+    objectName: approval.objectName,
+    status: approval.status,
+    description: approval.description,
+    requestedBy: approval.requestedBy,
+    createdAt: approval.createdAt ? new Date(approval.createdAt).toISOString() : null,
+    requiredReviewerRole: approval.requiredReviewerRole ?? null,
+    canDecide: whoMayDecide(role, approval),
+    outcome,
+  };
+}
+
+async function decideApprovalAs(
+  orgId: string,
+  role: RoleId,
+  userId: string | null,
+  decidedBy: string,
+  approvalId: string,
+  decision: ApprovalDecision,
+  note?: string,
+) {
+  return decideApproval({ orgId, role, userId, decidedBy, approvalId, decision, note, via: "Astra Workspace" });
+}
+
+async function getUserDisplayName(userId: string | null) {
+  if (!userId) return null;
+  const user = await storage.getUser(userId).catch(() => undefined);
+  return (user as any)?.username ?? null;
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -268,5 +313,8 @@ export function createAstraServices(): AstraServices {
     getAgentRun,
     decideAgentRun,
     getRunForRole,
+    getApprovalForDecision,
+    decideApprovalAs,
+    getUserDisplayName,
   };
 }
