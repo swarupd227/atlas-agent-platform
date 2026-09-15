@@ -321,3 +321,51 @@ describe("agent node timeout floor", () => {
     expect(agentNodeTimeoutMs(5000)).toBe(5000);
   });
 });
+
+describe("final answer when the last branch was skipped", () => {
+  it("returns the latest step that ran, named, instead of 'no text output'", async () => {
+    const { extractFinalOutputText } = await import("../server/dag-execution-engine");
+    const screen = node({ id: "screen", label: "Risk Clearance", stateKey: "screen_out", refAgentId: "agent-screen" });
+    const auth = node({ id: "auth", label: "Authorization", stateKey: "auth_out", refAgentId: "agent-auth" });
+    const plan = computeWaves([screen, auth], [edge({ sourceNodeId: "screen", targetNodeId: "auth", evaluationMode: "deterministic", rule: { combinator: "AND", conditions: [{ field: "riskClearanceStatus", operator: "!=", value: "CLEARED" }] } as any })]);
+    const result: any = { finalState: { screen_out: "Account is cleared to quote." }, waveResults: [], skippedNodeIds: ["auth"], success: true };
+    const text = extractFinalOutputText(result, plan);
+    expect(text).toContain("Account is cleared to quote.");
+    expect(text).toContain("Final answer from Risk Clearance");
+    expect(text).not.toContain("no text output");
+  });
+
+  it("still says so when nothing produced output", async () => {
+    const { extractFinalOutputText } = await import("../server/dag-execution-engine");
+    const a = node({ id: "a", stateKey: "a_out" });
+    const plan = computeWaves([a], []);
+    expect(extractFinalOutputText({ finalState: {}, waveResults: [], skippedNodeIds: [], success: true } as any, plan)).toContain("no text output");
+  });
+});
+
+describe("steps after yours — a step is told what has not run yet", () => {
+  it("names every later step (transitively) for the first step, and none for the last", async () => {
+    const { getLaterStepLabels } = await import("../server/dag-execution-engine");
+    const orch = node({ id: "orch", label: "Orchestrator", stateKey: "orch_out", refAgentId: "agent-orch" });
+    const search = node({ id: "search", label: "Search", stateKey: "search_out", refAgentId: "agent-search" });
+    const screen = node({ id: "screen", label: "Screening", stateKey: "screen_out", refAgentId: "agent-screen" });
+    const plan = computeWaves([orch, search, screen], [
+      edge({ id: "e1", sourceNodeId: "orch", targetNodeId: "search" }),
+      edge({ id: "e2", sourceNodeId: "search", targetNodeId: "screen" }),
+    ]);
+    expect(getLaterStepLabels("orch", plan).sort()).toEqual(["Screening", "Search"]);
+    expect(getLaterStepLabels("screen", plan)).toEqual([]);
+
+    const { executeWorkerAgent } = await import("../server/agent-runtime");
+    const inputs = new Map<string, string>();
+    (executeWorkerAgent as any).mockReset();
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string, _t: any, contextInput: string) => {
+      inputs.set(agentId, contextInput);
+      return { success: true, output: "done" };
+    });
+    await new DAGExecutionEngine().execute({ executionPlan: plan, stateSchema: {}, initialState: {}, errorStrategy: "best_effort", teamAgentId: "team-1" });
+    expect(inputs.get("agent-orch")).toContain("## STEPS AFTER YOURS");
+    expect(inputs.get("agent-orch")).toContain('"Search"');
+    expect(inputs.get("agent-screen") || "").not.toContain("STEPS AFTER YOURS");
+  });
+});

@@ -18,6 +18,7 @@ import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBl
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { RunSpanCollector } from "./run-spans";
 import { evaluateRule } from "./rule-evaluator";
+import { pipelineGuidanceFor, type GuidanceEdge } from "./pipeline-guidance";
 import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES } from "./services/pii/pii-masking-engine";
 import type { RuleGroup, OutputContract } from "@shared/schema";
 // Brand assets → worker container (see the "Brand assets" block in
@@ -3566,6 +3567,9 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
     evaluationMode: string; rule: RuleGroup | null;
   }>>();
   const nodeLabelById = new Map<string, string>();
+  // Same step guidance the Workspace DAG engine gives (pipeline-guidance.ts):
+  // the fields its branch rules test, and which steps are still to come.
+  const guidanceEdgeList: GuidanceEdge[] = [];
 
   if (blueprintId) {
     try {
@@ -3588,6 +3592,7 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
         );
         // Build conditional edge map for runtime routing
         for (const edge of edges) {
+          guidanceEdgeList.push({ sourceNodeId: edge.sourceNodeId, targetNodeId: edge.targetNodeId, evaluationMode: edge.evaluationMode || "ai", rule: (edge.rule as RuleGroup | null) ?? null });
           if (!conditionalEdgeMap.has(edge.sourceNodeId)) {
             conditionalEdgeMap.set(edge.sourceNodeId, []);
           }
@@ -3845,9 +3850,12 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
       });
     }
 
-    const workerPromises = activeAgents.map((agentEntry, idx) =>
-      executeWorkerAgent(agentEntry.agentId, teamAgent, previousContext, totalWorkersExecuted + idx)
-    );
+    const workerPromises = activeAgents.map((agentEntry, idx) => {
+      const guidance = agentEntry.nodeId
+        ? pipelineGuidanceFor(agentEntry.nodeId, guidanceEdgeList, (id) => nodeLabelById.get(id) || id)
+        : "";
+      return executeWorkerAgent(agentEntry.agentId, teamAgent, guidance ? `${previousContext}\n\n${guidance}` : previousContext, totalWorkersExecuted + idx);
+    });
 
     let results: Awaited<ReturnType<typeof executeWorkerAgent>>[];
 

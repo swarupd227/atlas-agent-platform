@@ -468,6 +468,25 @@ export function canonicalStopReason(openAiFinishReason: string): string {
   return openAiFinishReason;
 }
 
+/**
+ * Per-request options for OpenAI completions, which already sit inside
+ * withRetry -- the same reasoning as anthropicRequestOptions.
+ *
+ * Without them a call ignored the DAG node's abort scope and used the SDK's
+ * defaults: a 10-minute timeout retried silently twice. Seen live: a journey
+ * orchestrator step on gpt-4.1 got no response for 180s (zero tokens) while
+ * the same step took 7s when re-run, so the node timed out and the run was
+ * marked failed although every other step finished. Now a stalled request is
+ * cut at a ceiling sized to the output it may write, withRetry makes a fresh
+ * attempt (logged), and the node's timeout cancels the request itself.
+ */
+export const OPENAI_MIN_REQUEST_TIMEOUT_MS = 120_000;
+export function openaiRequestOptions(maxTokens?: number): { signal?: AbortSignal; timeout: number; maxRetries: number } {
+  // ~25ms per output token covers slow generation with room to spare.
+  const timeout = Math.max(OPENAI_MIN_REQUEST_TIMEOUT_MS, (maxTokens || 4096) * 25);
+  return { signal: currentLlmAbortSignal(), timeout, maxRetries: 0 };
+}
+
 class OpenAIProvider implements LLMProvider {
   readonly providerName = "openai";
   private client: OpenAI | null = null;
@@ -546,7 +565,7 @@ class OpenAIProvider implements LLMProvider {
             max_completion_tokens: options?.maxTokens || 4096,
             ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
             ...buildResponseFormat(true),
-          }),
+          }, openaiRequestOptions(options?.maxTokens)),
         this.providerName,
       );
       cbRecordSuccess(this.providerName);
@@ -565,16 +584,16 @@ class OpenAIProvider implements LLMProvider {
                 max_completion_tokens: options?.maxTokens || 4096,
                 ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
                 ...buildResponseFormat(false),
-              }),
+              }, openaiRequestOptions(options?.maxTokens)),
             this.providerName,
           );
           cbRecordSuccess(this.providerName);
         } catch (err2) {
-          cbRecordFailure(this.providerName);
+          if (!isCallerAbort(err2)) cbRecordFailure(this.providerName);
           throw err2;
         }
       } else {
-        cbRecordFailure(this.providerName);
+        if (!isCallerAbort(err)) cbRecordFailure(this.providerName);
         throw err;
       }
     }
@@ -682,7 +701,7 @@ class OpenAIProvider implements LLMProvider {
               stream_options: { include_usage: true },
               ...buildResponseFormat(true),
               ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-            }),
+            }, openaiRequestOptions(options?.maxTokens)),
           this.providerName,
         );
       } catch (err) {
@@ -701,7 +720,7 @@ class OpenAIProvider implements LLMProvider {
               stream_options: { include_usage: true },
               ...buildResponseFormat(false),
               ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-            }),
+            }, openaiRequestOptions(options?.maxTokens)),
           this.providerName,
         );
       }
@@ -731,7 +750,7 @@ class OpenAIProvider implements LLMProvider {
       }
       cbRecordSuccess(this.providerName);
     } catch (err) {
-      cbRecordFailure(this.providerName);
+      if (!isCallerAbort(err)) cbRecordFailure(this.providerName);
       throw err;
     }
 

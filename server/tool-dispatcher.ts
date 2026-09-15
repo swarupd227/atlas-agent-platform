@@ -844,7 +844,14 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
   }
 
   const res = await fetch(fetchUrl, fetchOpts);
-  if (!res.ok) throw new Error(`MCP API ${tool.serverName}/${tool.toolName} returned ${res.status}`);
+  if (!res.ok) {
+    // The API's own explanation ("fullName is required", "No account ACCT-1")
+    // is what lets the model correct its call; the status code alone does not.
+    // HTML error pages carry nothing useful and are left out.
+    const errBody = await res.text().catch(() => "");
+    const detail = errBody && !looksLikeHtmlPage(res.headers.get("content-type") || "", errBody) ? `: ${errBody.slice(0, 500)}` : "";
+    throw new Error(`MCP API ${tool.serverName}/${tool.toolName} returned ${res.status}${detail}`);
+  }
   const contentType = res.headers.get("content-type") || "";
 
   // Long-running tool convention: 202 Accepted with a job pointer in the body

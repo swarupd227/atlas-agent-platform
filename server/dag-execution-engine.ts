@@ -8,7 +8,8 @@ import { recomputeOutcomeKpis } from "./routes/helpers";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
-import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup, RuleLeaf } from "@shared/schema";
+import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
+import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
 // that isn't caught by the cycle check but would still nest indefinitely.
@@ -718,60 +719,21 @@ export function upstreamTruncationNotice(
   ].join("\n");
 }
 
-// For a Handoff-mode edge, the routing decision comes from the SOURCE
-// node's own output naming its target -- but the agent can only do that if
-// it's told which target labels are valid. Looks up, for a given node,
-// which of its outgoing edges (via edgeMap) are handoff edges, returning
-// the target nodes' labels.
-// A deterministic branch rule tests fields of the pipeline state, and those
-// fields only exist if some step's output carries them as JSON. Nothing told
-// the step before the branch which fields its successors test: a team whose
-// proposer wrote `resolutionDecision == "create"` got a search agent that
-// reported its finding in prose, so every branch past it was skipped as "no
-// incoming edge condition was satisfied" and the rest of the journey never
-// ran. The source node of each rule-gated edge is the natural producer, so it
-// is told -- the same way HANDOFF ROUTING names valid handoff targets.
-export interface RoutingFieldSpec {
-  field: string;
-  routes: Array<{ targetLabel: string; operator: string; value: string | number | boolean }>;
-}
-
-export function collectRuleLeaves(rule: RuleGroup | null | undefined): RuleLeaf[] {
-  if (!rule || !Array.isArray(rule.conditions)) return [];
-  const leaves: RuleLeaf[] = [];
-  for (const c of rule.conditions) {
-    if (c && typeof c === "object" && "field" in c) leaves.push(c as RuleLeaf);
-    else leaves.push(...collectRuleLeaves(c as RuleGroup));
+// Adapts the wave plan to pipeline-guidance's plain edge list.
+function guidanceEdges(plan: ComputedWavePlan): GuidanceEdge[] {
+  const edges: GuidanceEdge[] = [];
+  for (const [targetNodeId, incoming] of Object.entries(plan.incomingEdges)) {
+    for (const e of incoming) edges.push({ sourceNodeId: e.sourceNodeId, targetNodeId, evaluationMode: e.evaluationMode, rule: e.rule });
   }
-  return leaves;
+  return edges;
 }
 
 export function getRoutingFieldSpecs(nodeId: string, plan: ComputedWavePlan): RoutingFieldSpec[] {
-  const byField = new Map<string, RoutingFieldSpec>();
-  for (const targetId of plan.edgeMap[nodeId] || []) {
-    const targetLabel = plan.nodeConfig[targetId]?.label || targetId;
-    for (const edge of plan.incomingEdges[targetId] || []) {
-      if (edge.sourceNodeId !== nodeId || edge.evaluationMode !== "deterministic") continue;
-      for (const leaf of collectRuleLeaves(edge.rule)) {
-        if (!byField.has(leaf.field)) byField.set(leaf.field, { field: leaf.field, routes: [] });
-        byField.get(leaf.field)!.routes.push({ targetLabel, operator: leaf.operator, value: leaf.value });
-      }
-    }
-  }
-  return Array.from(byField.values());
+  return routingFieldSpecsFor(nodeId, guidanceEdges(plan), (id) => plan.nodeConfig[id]?.label || id);
 }
 
-function renderRoutingFields(specs: RoutingFieldSpec[]): string[] {
-  const lines = [
-    `## ROUTING FIELDS (required)`,
-    `The next steps are chosen by exact rules on fields of your output. End your response with a \`\`\`json block containing every field below, set to the value that reflects your actual finding (a dot in a name means a nested object). Use one of the values the rules test whenever it describes your finding; a missing field means the steps that depend on it do not run.`,
-  ];
-  for (const spec of specs) {
-    const routes = spec.routes.map((r) => `runs "${r.targetLabel}" when ${r.operator} ${JSON.stringify(r.value)}`).join("; ");
-    lines.push(`- "${spec.field}": ${routes}`);
-  }
-  lines.push(``);
-  return lines;
+export function getLaterStepLabels(nodeId: string, plan: ComputedWavePlan): string[] {
+  return laterStepIds(nodeId, guidanceEdges(plan)).map((id) => plan.nodeConfig[id]?.label || id);
 }
 
 // A worker agent reads skills, calls tools and reasons over their results
@@ -787,6 +749,11 @@ export function agentNodeTimeoutMs(configured: number | null | undefined): numbe
   return !configured || configured === DEFAULT_NODE_TIMEOUT_MS ? AGENT_NODE_MIN_TIMEOUT_MS : configured;
 }
 
+// For a Handoff-mode edge, the routing decision comes from the SOURCE
+// node's own output naming its target -- but the agent can only do that if
+// it's told which target labels are valid. Looks up, for a given node,
+// which of its outgoing edges (via edgeMap) are handoff edges, returning
+// the target nodes' labels.
 function getHandoffTargetLabels(nodeId: string, plan: ComputedWavePlan): string[] {
   const targets = plan.edgeMap[nodeId] || [];
   const labels: string[] = [];
@@ -812,6 +779,7 @@ function buildAgentInput(
   upstreamFailures?: string,
   upstreamTruncations?: string,
   routingFields?: RoutingFieldSpec[],
+  laterSteps?: string[],
 ): string {
   const sections: string[] = [];
   sections.push(`## DAG EXECUTION CONTEXT`);
@@ -828,6 +796,7 @@ function buildAgentInput(
   }
 
   if (routingFields && routingFields.length > 0) sections.push(...renderRoutingFields(routingFields));
+  if (laterSteps && laterSteps.length > 0) sections.push(...renderLaterSteps(laterSteps));
 
   if (userInput) {
     sections.push(`## USER REQUEST`);
@@ -1595,6 +1564,7 @@ export class DAGExecutionEngine {
       upstreamFailureNotice(nodeId, config.executionPlan, nodeOutcomes),
       upstreamTruncationNotice(nodeId, config.executionPlan, nodeOutcomes),
       getRoutingFieldSpecs(nodeId, config.executionPlan),
+      getLaterStepLabels(nodeId, config.executionPlan),
     );
 
     // A Tool Set node directly upstream of this agent node scopes which MCP
@@ -2900,12 +2870,26 @@ export function extractFinalOutputText(result: DAGExecutionResult, wavePlan: Com
     : "";
   const lastWave = wavePlan.waves[wavePlan.waves.length - 1];
   if (!lastWave) return (result.success ? "Team pipeline completed with no output." : "Team pipeline failed.") + skipNote;
-  const parts = lastWave.nodes.map((nodeId) => {
+  const outputsOf = (nodeIds: string[]) => nodeIds.map((nodeId) => {
     const nc = wavePlan.nodeConfig[nodeId];
     const value = nc ? result.finalState[nc.stateKey] : undefined;
     if (value == null) return null;
-    return typeof value === "string" ? value : JSON.stringify(value);
-  }).filter((v): v is string => !!v);
-  if (parts.length === 0) return (result.success ? "Team pipeline completed with no text output." : "Team pipeline failed.") + skipNote;
-  return parts.join("\n\n---\n\n") + skipNote;
+    return { label: nc?.label || nodeId, text: typeof value === "string" ? value : JSON.stringify(value) };
+  }).filter((v): v is { label: string; text: string } => !!v && !!v.text);
+  const parts = outputsOf(lastWave.nodes);
+  if (parts.length > 0) return parts.map((p) => p.text).join("\n\n---\n\n") + skipNote;
+  // The last wave can be empty for a correct reason: a branch that only runs
+  // when something needs escalating is skipped when nothing does (an account
+  // already cleared never reaches authorization). The answer is then the
+  // latest step that did run -- "no text output" hid a complete, correct
+  // result. The step is named, since it is not the end of the pipeline.
+  if (result.skippedNodeIds.length > 0) {
+    for (let i = wavePlan.waves.length - 2; i >= 0; i--) {
+      const earlier = outputsOf(wavePlan.waves[i].nodes);
+      if (earlier.length === 0) continue;
+      return `(Final answer from ${earlier.map((p) => p.label).join(", ")}: the steps after it did not run because their conditions were not met.)\n\n`
+        + earlier.map((p) => p.text).join("\n\n---\n\n") + skipNote;
+    }
+  }
+  return (result.success ? "Team pipeline completed with no text output." : "Team pipeline failed.") + skipNote;
 }
