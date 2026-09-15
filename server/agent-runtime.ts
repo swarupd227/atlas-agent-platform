@@ -2341,11 +2341,17 @@ After receiving tool results, provide a structured analysis with key findings, s
         // a contradictory conclusion drawn at another step (e.g. "none
         // qualify") -- without this, nothing prompts the model to notice the
         // two can't both be true before it answers.
+        // This analysis prompt names its own fields, and a model follows the
+        // latest instruction: a team step told (in its input) to emit routing
+        // fields such as resolutionDecision dropped them once it had called a
+        // tool, so every branch after it was skipped. Fields the instructions
+        // require are kept alongside the analysis fields.
+        const requiredFieldsNote = ` Also include, as top-level keys with the values your findings support, every field the instructions earlier in this conversation require in your output (for example the fields listed under ROUTING FIELDS).`;
         const reconciliationNote = ` Before finalizing your answer, check it against everything observed earlier in this conversation -- if an earlier step noted a fact (e.g. some records have no matching related data) that would contradict your conclusion (e.g. "none qualify"), resolve the contradiction or explain it rather than reporting a conclusion that contradicts an earlier observation.`;
 
         const analysisPrompt = isConversational
           ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.${reconciliationNote}`
-          : `Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).${structuredOutputInstructions}${reconciliationNote}`;
+          : `Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).${structuredOutputInstructions}${requiredFieldsNote}${reconciliationNote}`;
         const analysisMessages: LLMMessage[] = [
           ...conversationMessages,
           ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),
