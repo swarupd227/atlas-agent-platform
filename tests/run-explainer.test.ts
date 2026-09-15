@@ -14,7 +14,7 @@ const failedRun = {
   totalCostUsd: 0.0123,
   totalToolCalls: 5,
   waveResults: [
-    { waveNumber: 1, nodes: [{ nodeId: "n-intake", status: "completed", durationMs: 1200, output: { claimId: "C-9" } }] },
+    { waveNumber: 1, nodes: [{ nodeId: "n-intake", status: "completed", durationMs: 1200, costUsd: 0.0075, toolCallCount: 3, output: { claimId: "C-9" } }] },
     { waveNumber: 2, nodes: [
       { nodeId: "n-triage", status: "failed", durationMs: 800, error: "Integration 'sap' is not connected" },
       { nodeId: "n-notify", status: "skipped" },
@@ -34,6 +34,15 @@ describe("buildRunExplanationContext", () => {
     expect(triage).toMatchObject({ wave: 2, label: "Triage", status: "failed", error: "Integration 'sap' is not connected" });
     const intake = ctx.nodes.find(n => n.nodeId === "n-intake")!;
     expect(intake.outputPreview).toContain("C-9");
+    expect(intake.costUsd).toBeCloseTo(0.0075);
+    expect(intake.toolCalls).toBe(3);
+  });
+
+  it("renders per-step cost as a grounded fact (not inferred from output)", () => {
+    const facts = renderFactsForPrompt(buildRunExplanationContext(failedRun, labels));
+    expect(facts).toContain("$0.0075");        // per-step cost on the step line
+    expect(facts).toContain("3 tool calls");   // per-step tool count
+    expect(RUN_EXPLAINER_SYSTEM).toMatch(/never derive a cost from a step's output/i);
   });
 
   it("identifies the first failure and classifies failed/skipped", () => {

@@ -13,6 +13,8 @@ export interface NodeFact {
   error?: string;
   truncated?: boolean;
   durationMs?: number;
+  costUsd?: number;          // grounded per-step cost, so the model never infers one from output text
+  toolCalls?: number;
   outputPreview?: string;
 }
 
@@ -67,6 +69,8 @@ export function buildRunExplanationContext(
         error: n?.error || undefined,
         truncated: n?.truncated || undefined,
         durationMs: typeof n?.durationMs === "number" ? n.durationMs : undefined,
+        costUsd: typeof n?.costUsd === "number" ? n.costUsd : undefined,
+        toolCalls: typeof n?.toolCallCount === "number" ? n.toolCallCount : undefined,
         outputPreview: previewOutput(n?.output),
       });
     }
@@ -100,6 +104,8 @@ export function renderFactsForPrompt(ctx: RunExplanationContext): string {
   for (const n of ctx.nodes) {
     let l = `- wave ${n.wave} · ${ref(n)}: ${n.status}`;
     if (n.durationMs != null) l += ` (${Math.round(n.durationMs)}ms)`;
+    if (n.costUsd != null) l += `, $${n.costUsd.toFixed(4)}`;
+    if (n.toolCalls != null) l += `, ${n.toolCalls} tool calls`;
     if (n.truncated) l += " [output truncated at model limit]";
     if (n.error) l += ` — error: ${n.error}`;
     else if (n.outputPreview) l += ` — output: ${n.outputPreview}`;
@@ -112,6 +118,7 @@ export function renderFactsForPrompt(ctx: RunExplanationContext): string {
 export const RUN_EXPLAINER_SYSTEM =
   "You are a run-diagnostics assistant. Explain what happened in an agent DAG run in plain, business-readable English, in 3-6 sentences. " +
   "Use ONLY the facts provided — never invent steps, numbers, causes, or outputs. Cite the specific step(s) by name/id when you refer to them. " +
+  "For cost, cite ONLY the figures given: the run total is on the Run line, per-step costs are on each step line — never derive a cost from a step's output text. " +
   "If the run failed, name the first failing step and what its error says; if it completed with skips, note that untaken branches are normal, not errors. " +
   "Do not speculate beyond the recorded facts.";
 
