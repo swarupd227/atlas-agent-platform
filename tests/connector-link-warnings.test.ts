@@ -72,3 +72,18 @@ describe("assessConnectorLinkWarnings", () => {
     expect(assessConnectorLinkWarnings({ policyBindings: null }, [TOOLS[0]], POLICIES)).toEqual([]);
   });
 });
+
+describe("connectorLinkAuditEvent", () => {
+  it("files the event under the agent's organization, so it never depends on the process default", async () => {
+    const { connectorLinkAuditEvent } = await import("../server/connector-link");
+    const event = connectorLinkAuditEvent({ id: "agent-1", organizationId: "org-7" }, "agent.mcp_server_linked", { serverId: "srv-1" }, "org-from-request");
+    expect(event.organizationId).toBe("org-7");
+    expect(event.objectId).toBe("agent-1");
+    expect(JSON.parse(event.details)).toEqual({ serverId: "srv-1" });
+  });
+
+  it("falls back to the request's organization for an agent row without one", async () => {
+    const { connectorLinkAuditEvent } = await import("../server/connector-link");
+    expect(connectorLinkAuditEvent({ id: "a", organizationId: null }, "agent.mcp_server_unlinked", {}, "org-req").organizationId).toBe("org-req");
+  });
+});

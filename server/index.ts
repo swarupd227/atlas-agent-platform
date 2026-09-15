@@ -233,13 +233,23 @@ app.use((req, res, next) => {
       // Run all database seeding and background initialization AFTER the port
       // is open so health checks pass immediately on deployment
       (async () => {
-        const defaultOrg = await storage.seedDefaultOrganization().catch((err) => {
-          console.error("Default org seed error:", err);
+        // The default org id is what every write without an explicit
+        // organization resolves to (audit events included), so it is set as
+        // soon as the org is known. It used to wait for the legacy-row
+        // backfill below -- a dozen full-table updates -- and until that
+        // finished, or if it failed, those writes threw "organizationId is
+        // required" (seen live: connector link/unlink returned 500 an hour
+        // after a deploy).
+        const defaultOrg = await storage.ensureDefaultOrganization().catch((err) => {
+          console.error("Default org lookup error:", err);
           return undefined;
         });
         if (defaultOrg?.id) {
           setDefaultOrgId(defaultOrg.id);
         }
+        await storage.seedDefaultOrganization().catch((err) => {
+          console.error("Default org backfill error:", err);
+        });
         await seedDatabase().catch((err) => {
           console.error("Seed error:", err);
         });

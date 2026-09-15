@@ -64,6 +64,7 @@ import {
   redactWithOntologyKeys,
 } from "../permissions";
 import { getOrgId } from "../auth";
+import { connectorLinkAuditEvent } from "../connector-link";
 import { isValidHealthCheckPath } from "../connector-health-probe";
 import { resolveRequestOrgId, sanitizeMcpServerAuth, isMcpServerVisibleToOrg } from "../tenant-scope";
 import {
@@ -13072,21 +13073,15 @@ async function performMcpServerInitialize(serverId: string): Promise<
 
       if (policyWarnings.length > 0 && !acknowledgeWarnings) {
         for (const warning of policyWarnings) {
-          await storage.createAuditEvent({
-            action: "agent.mcp_policy_mismatch",
-            objectType: "agent",
-            objectId: String(req.params.id),
-            actorId: "user",
-            details: JSON.stringify({
-              serverId,
-              serverName: server.name,
-              toolName: warning.toolName,
-              toolId: warning.toolId,
-              riskClassification: warning.riskClassification,
-              requiredPolicyDomain: warning.requiredPolicyDomain,
-              issue: warning.issue,
-            }),
-          });
+          await storage.createAuditEvent(connectorLinkAuditEvent(agent, "agent.mcp_policy_mismatch", {
+            serverId,
+            serverName: server.name,
+            toolName: warning.toolName,
+            toolId: warning.toolId,
+            riskClassification: warning.riskClassification,
+            requiredPolicyDomain: warning.requiredPolicyDomain,
+            issue: warning.issue,
+          }, getOrgId(req)));
         }
 
         return res.status(200).json({
@@ -13105,39 +13100,28 @@ async function performMcpServerInitialize(serverId: string): Promise<
 
       if (policyWarnings.length > 0) {
         for (const warning of policyWarnings) {
-          await storage.createAuditEvent({
-            action: "agent.mcp_policy_mismatch",
-            objectType: "agent",
-            objectId: String(req.params.id),
-            actorId: "user",
-            details: JSON.stringify({
-              serverId,
-              serverName: server.name,
-              toolName: warning.toolName,
-              toolId: warning.toolId,
-              riskClassification: warning.riskClassification,
-              requiredPolicyDomain: warning.requiredPolicyDomain,
-              issue: warning.issue,
-              acknowledged: true,
-            }),
-          });
+          await storage.createAuditEvent(connectorLinkAuditEvent(agent, "agent.mcp_policy_mismatch", {
+            serverId,
+            serverName: server.name,
+            toolName: warning.toolName,
+            toolId: warning.toolId,
+            riskClassification: warning.riskClassification,
+            requiredPolicyDomain: warning.requiredPolicyDomain,
+            issue: warning.issue,
+            acknowledged: true,
+          }, getOrgId(req)));
         }
       }
 
-      await storage.createAuditEvent({
-        action: "agent.mcp_server_linked",
-        objectType: "agent",
-        objectId: String(req.params.id),
-        actorId: "user",
-        details: JSON.stringify({
-          serverId,
-          serverName: server.name,
-          policyWarningsAcknowledged: policyWarnings.length,
-        }),
-      });
+      await storage.createAuditEvent(connectorLinkAuditEvent(agent, "agent.mcp_server_linked", {
+        serverId,
+        serverName: server.name,
+        policyWarningsAcknowledged: policyWarnings.length,
+      }, getOrgId(req)));
 
       res.status(201).json({ ...link, policyWarnings: policyWarnings.length > 0 ? policyWarnings : undefined });
     } catch (e) {
+      console.error(`[agents] linking MCP server to agent ${req.params.id} failed:`, e);
       res.status(500).json({ message: "Failed to link MCP server to agent" });
     }
   });
@@ -13156,16 +13140,11 @@ async function performMcpServerInitialize(serverId: string): Promise<
       const deleted = await storage.deleteAgentMcpServer(String(req.params.linkId));
       if (!deleted) return res.status(404).json({ message: "Link not found" });
 
-      await storage.createAuditEvent({
-        action: "agent.mcp_server_unlinked",
-        objectType: "agent",
-        objectId: String(req.params.agentId),
-        actorId: "user",
-        details: JSON.stringify({ linkId: String(req.params.linkId) }),
-      });
+      await storage.createAuditEvent(connectorLinkAuditEvent(agent, "agent.mcp_server_unlinked", { linkId: String(req.params.linkId) }, getOrgId(req)));
 
       res.json({ success: true });
     } catch (e) {
+      console.error(`[agents] unlinking MCP server from agent ${req.params.agentId} failed:`, e);
       res.status(500).json({ message: "Failed to unlink MCP server from agent" });
     }
   });

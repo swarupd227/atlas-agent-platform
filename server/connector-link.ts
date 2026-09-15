@@ -117,3 +117,32 @@ export function assessConnectorLinkWarnings(
   }
   return warnings;
 }
+
+/**
+ * An audit event about an agent's connector link, filed under the agent's own
+ * organization.
+ *
+ * The route used to omit organizationId and let storage fall back to the
+ * process-wide default organization. That default is set by a startup task
+ * only after it has backfilled a dozen tables, so on an instance where that
+ * task was slow or failed, every link and unlink threw "organizationId is
+ * required" AFTER the link had been written: the caller got a 500 for a change
+ * that had happened, and a retry then hit the route's 409 for an existing
+ * link. The agent row always knows its organization.
+ */
+export function connectorLinkAuditEvent(
+  agent: { id: string; organizationId?: string | null },
+  action: string,
+  details: Record<string, unknown>,
+  fallbackOrgId?: string | null,
+) {
+  return {
+    organizationId: agent.organizationId ?? fallbackOrgId ?? undefined,
+    actorType: "user",
+    actorId: "user",
+    action,
+    objectType: "agent",
+    objectId: agent.id,
+    details: JSON.stringify(details),
+  };
+}

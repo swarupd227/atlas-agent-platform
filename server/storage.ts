@@ -876,6 +876,7 @@ export interface IStorage {
   getOrganizationBySlug(slug: string): Promise<Organization | undefined>;
   createOrganization(org: InsertOrganization): Promise<Organization>;
   updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined>;
+  ensureDefaultOrganization(): Promise<Organization>;
   seedDefaultOrganization(): Promise<Organization>;
 
   getAarConfig(agentId: string, orgId?: string): Promise<AarConfig | undefined>;
@@ -4556,17 +4557,21 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async seedDefaultOrganization(): Promise<Organization> {
+  /** Find or create the default organization, without the legacy-row backfill. */
+  async ensureDefaultOrganization(): Promise<Organization> {
     const slug = "default";
-    let org = await this.getOrganizationBySlug(slug);
-    if (!org) {
-      org = await this.createOrganization({
-        name: "Default Organization",
-        slug,
-        plan: "enterprise",
-        status: "active",
-      });
-    }
+    const existing = await this.getOrganizationBySlug(slug);
+    if (existing) return existing;
+    return this.createOrganization({
+      name: "Default Organization",
+      slug,
+      plan: "enterprise",
+      status: "active",
+    });
+  }
+
+  async seedDefaultOrganization(): Promise<Organization> {
+    const org = await this.ensureDefaultOrganization();
     const orgId = org.id;
     await Promise.all([
       db.update(agents).set({ organizationId: orgId }).where(isNull(agents.organizationId)),
