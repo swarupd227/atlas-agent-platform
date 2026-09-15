@@ -311,7 +311,21 @@ export async function startWorkspaceRun(params: {
   const modelInput = [attachmentContext, brandContext, input].filter(Boolean).join("\n\n");
 
   const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
-  const isTeamAgent = agent.agentType === "team" && Array.isArray(rtConfig.orchestration?.workerIds) && rtConfig.orchestration.workerIds.length > 0;
+  // A team agent's real work is its compiled blueprint graph -- the same one
+  // Blueprint Studio's "Run Team Graph" executes -- not this function's
+  // single-agent checkpoint loop. Gating solely on runtimeConfig.orchestration
+  // .workerIds missed every team built through Team Studio / the API (which
+  // never populates that field), silently falling through to a bare LLM
+  // completion that narrates a plausible-looking "approval_required" block
+  // with no real approvals row behind it. worker.ts and the gateway route
+  // (routes/runtime.ts) hit and fixed this identical gap already by checking
+  // agent.blueprintId directly; mirror that fix here. The workerIds check
+  // stays as a fallback for the rare team that has that field set but no
+  // blueprintId.
+  const isTeamAgent = agent.agentType === "team" && (
+    Boolean((agent as any).blueprintId) ||
+    (Array.isArray(rtConfig.orchestration?.workerIds) && rtConfig.orchestration.workerIds.length > 0)
+  );
   if (isTeamAgent) {
     return runTeamWorkspaceRun(agent, rtConfig, modelInput, orgId, actorId, onEvent);
   }

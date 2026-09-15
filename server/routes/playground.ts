@@ -224,7 +224,22 @@ const router = Router();
             deploymentId: "playground",
             agentId,
             agentName: agent.name,
-            blueprintId: rtConfig.orchestration?.blueprintId || undefined,
+            // A team's real work is its compiled blueprint graph -- the only
+            // place executeTeamPipeline's computeExecutionTiers() can see the
+            // Loan-Officer-style edge_gate nodes and the conditional edges
+            // routing into/around them. This previously read ONLY
+            // runtimeConfig.orchestration.blueprintId, which a blueprint
+            // built through Team Studio (or the API) never sets, so a real
+            // team with a real gate silently ran every member flat with zero
+            // gates and zero conditional routing -- the pipeline drafted and
+            // "sent" the human-execution-path output (e.g. borrower
+            // outreach) for a high-risk case with no approval ever created.
+            // agent.blueprintId is the same field Blueprint Studio's "Run
+            // Team Graph" and the DAG engine already trust; fall back to it
+            // first, mirroring the identical fix already applied to
+            // worker.ts, routes/runtime.ts's gateway route, and
+            // workspace-run.ts.
+            blueprintId: (agent as any).blueprintId || rtConfig.orchestration?.blueprintId || undefined,
             mcpServerIds,
             intervalMs: 0,
             industry: (agent as any).industry || undefined,

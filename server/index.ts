@@ -67,11 +67,18 @@ app.use(
       ? {
           directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"], // Tailwind/shadcn inject inline styles at runtime; googleapis.com serves the @font-face CSS.
+            // cdn.jsdelivr.net: @monaco-editor/react (agent-export.tsx's code
+            // preview, eval-metric-builder.tsx) loads the actual monaco-editor
+            // bundle from this CDN at runtime by default rather than through
+            // our own Vite build -- without it, every file preview in the
+            // code-export viewer hangs forever on "Rendering editor..." since
+            // the browser silently blocks the CDN <script> tag.
+            scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"], // Tailwind/shadcn inject inline styles at runtime; googleapis.com serves the @font-face CSS; jsdelivr serves monaco's editor.main.css.
             imgSrc: ["'self'", "data:", "blob:"],
             fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"], // actual font files Google Fonts CSS points at.
             connectSrc: ["'self'"],
+            workerSrc: ["'self'", "blob:"], // monaco spins up its language-service web workers from a blob: URL.
             objectSrc: ["'none'"],
             frameAncestors: ["'none'"],
             baseUri: ["'self'"],
