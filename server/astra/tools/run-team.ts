@@ -184,7 +184,7 @@ export const runTeamTool: AstraTool<Input> = {
         const decidedBy = (await ctx.services.getUserDisplayName(ctx.userId)) ?? ctx.role;
         const decision = ctx.decision === "declined" ? "rejected" : "approved";
         await ctx.services.decideApprovalAs(ctx.orgId, ctx.role, ctx.userId, decidedBy, f.approvalId, decision);
-        decided.push(`"${f.label}" ${decision} by you · audit recorded`);
+        decided.push(`"${f.label}" ${decision} by you on its approval card · audit recorded`);
       }
       const watch: WatchResult = await ctx.services.followTeamRun(ctx.orgId, f.dagRunId, { onEvent: narrate(ctx, f.teamName), maxWaitMs: WAIT_MS, ignoreApprovalId: f.approvalId });
       return report(ctx, f.dagRunId, watch, notes, decided);

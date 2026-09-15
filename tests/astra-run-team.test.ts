@@ -121,7 +121,7 @@ describe("run_team", () => {
     const t = setup(
       [runIt, (m) => {
         const r = lastTool(m).result;
-        expect(r).toMatchObject({ status: "completed", stepsDone: 2, answer: expect.stringContaining("3 excavators"), decisionsMadeHere: ['"Gate 1" approved by you · audit recorded'] });
+        expect(r).toMatchObject({ status: "completed", stepsDone: 2, answer: expect.stringContaining("3 excavators"), decisionsMadeHere: ['"Gate 1" approved by you on its approval card · audit recorded'] });
         return done("The team finished.");
       }],
       world({ gates: ["Manager Approval"] }),
@@ -138,7 +138,7 @@ describe("run_team", () => {
     expect(t.decisions[0]).toEqual([ORG, "admin", "u1", "admin", "apr-1", "approved"]);
     const final = t.store.threadMessages(t.threadId).at(-1)!;
     expect(final.artifacts[0]).toMatchObject({ kind: "teamRun", fullViewHref: "/dag-runs/run-1" });
-    expect(final.proof!.compliance).toMatchObject({ summary: expect.stringContaining('"Gate 1" approved by you') });
+    expect(final.proof!.compliance).toMatchObject({ summary: expect.stringContaining('"Gate 1" approved by you on its approval card') });
   });
 
   it("Not now at a gate rejects it and reports the stopped run", async () => {
