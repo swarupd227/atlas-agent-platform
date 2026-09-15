@@ -7,6 +7,7 @@ import { Label, StatusDot } from "./renderers/parts";
 import { OutcomeDraft, OutcomeCard, OutcomeList } from "./renderers/outcome";
 import { NeedsMe } from "./renderers/needs-me";
 import { TeamCard, TeamProposal } from "./renderers/team";
+import { Wiring } from "./renderers/wiring";
 
 function AgentList({ props }: { props: Record<string, any> }) {
   const agents: any[] = props.agents ?? [];
@@ -197,6 +198,7 @@ const RENDERERS: Record<string, (p: { props: Record<string, any> }) => JSX.Eleme
   needsMe: NeedsMe,
   teamProposal: TeamProposal,
   team: TeamCard,
+  wiring: Wiring,
 };
 
 export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onClose: () => void }) {

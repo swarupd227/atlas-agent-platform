@@ -10,6 +10,8 @@ import { storage } from "../storage";
 import { agentMcpServers, agentProposals, agents, workspaceRuns, type InsertPolicy } from "@shared/schema";
 import { createHash } from "crypto";
 import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
+import { computeWaves } from "../dag-execution-engine";
+import { assessTeamWiring, type WiringAgent, type WiringLink, type WiringSnapshot } from "./wiring-assess";
 import { getWorkspaceAgents, getWorkspaceRun, resumeWorkspaceRun, startWorkspaceRun, type OnWorkspaceEvent } from "../workspace-run";
 import { getRedactionLevel, hasPermission, redactPayload, type RoleId } from "../permissions";
 import { getIndustryPack } from "@shared/industry-packs";
@@ -549,6 +551,109 @@ async function markProposalBuilt(proposalId: string) {
   await storage.updateAgentProposal(proposalId, { status: "created" });
 }
 
+// ── verify_wiring ────────────────────────────────────────────────────────────
+
+/** Team agents in the organization, for finding a team by name. */
+async function listTeams(orgId: string) {
+  return (await storage.getAgents(orgId))
+    .filter((a) => a.agentType === "team")
+    .map((a) => ({ id: a.id, name: a.name, status: a.status, riskTier: a.riskTier, blueprintId: a.blueprintId ?? null }));
+}
+
+function toWiringAgent(a: any): WiringAgent {
+  const rc = (a.runtimeConfig ?? {}) as { mcpToolBindings?: Array<{ server: string; tool: string }> };
+  return {
+    id: a.id,
+    name: a.name,
+    status: a.status,
+    agentType: a.agentType,
+    organizationId: a.organizationId ?? null,
+    mcpToolBindings: Array.isArray(rc.mcpToolBindings) ? rc.mcpToolBindings : [],
+    policyBindings: Array.isArray(a.policyBindings) ? a.policyBindings : [],
+  };
+}
+
+/**
+ * Everything the wiring check looks at, for a team in the organization.
+ * Agents the team uses are loaded without organization scoping on purpose,
+ * so one belonging to another organization is reported instead of hidden.
+ */
+async function loadTeamWiring(orgId: string, teamAgentId: string): Promise<WiringSnapshot | null> {
+  const team = await storage.getAgent(teamAgentId, orgId);
+  if (!team || team.agentType !== "team") return null;
+
+  const blueprint = team.blueprintId ? await storage.getBlueprint(team.blueprintId) : undefined;
+  const [nodes, edges] = blueprint
+    ? await Promise.all([storage.getTeamBlueprintNodes(blueprint.id), storage.getTeamBlueprintEdges(blueprint.id)])
+    : [[], []];
+
+  const agentIds = new Set<string>([team.id]);
+  for (const m of await storage.getAgentTeamMembers(team.id)) agentIds.add(m.memberAgentId);
+  for (const n of nodes) {
+    if (n.refAgentId) agentIds.add(n.refAgentId);
+    if (n.refTeamAgentId) agentIds.add(n.refTeamAgentId);
+  }
+  const agentsLoaded = (await Promise.all(Array.from(agentIds).map((id) => storage.getAgent(id)))).filter(Boolean);
+
+  const connectors = await listConnectors(orgId);
+  const byId = new Map(connectors.map((c) => [c.id, c]));
+  const links: Record<string, WiringLink[]> = {};
+  const toolCache = new Map<string, string[]>();
+  for (const a of agentsLoaded as any[]) {
+    const rows: WiringLink[] = [];
+    for (const link of await storage.getAgentMcpServers(a.id)) {
+      const summary = byId.get(link.serverId);
+      if (!summary) {
+        const server = await storage.getMcpServer(link.serverId);
+        rows.push({ serverId: link.serverId, name: server?.name ?? "an unknown connector", visible: false, connected: null, toolNames: [] });
+        continue;
+      }
+      if (!toolCache.has(summary.id)) toolCache.set(summary.id, (await storage.getMcpServerTools(summary.id)).map((t) => t.name));
+      rows.push({ serverId: summary.id, name: summary.name, visible: true, connected: summary.connected, toolNames: toolCache.get(summary.id)! });
+    }
+    links[a.id] = rows;
+  }
+
+  let waves: WiringSnapshot["waves"];
+  try {
+    waves = { totalWaves: computeWaves(nodes as any, edges as any).totalWaves };
+  } catch (err: any) {
+    waves = { cycleError: err?.message ?? "cycle" };
+  }
+
+  const policies = await storage.getPolicies(orgId);
+  return {
+    orgId,
+    team: { id: team.id, name: team.name, riskTier: team.riskTier ?? null, organizationId: team.organizationId ?? null, blueprintId: team.blueprintId ?? null },
+    blueprint: blueprint ? { id: blueprint.id, organizationId: blueprint.organizationId ?? null, status: blueprint.status } : null,
+    nodes,
+    edges,
+    agents: (agentsLoaded as any[]).map(toWiringAgent),
+    links,
+    connectors: connectors.map((c) => ({ id: c.id, name: c.name, connected: c.connected })),
+    activePolicyIds: policies.filter((pol) => pol.status === "active").map((pol) => pol.id),
+    waves,
+  };
+}
+
+/** The wiring report for a team, with the steps in order for the card. */
+async function verifyTeamWiring(orgId: string, teamAgentId: string) {
+  const snapshot = await loadTeamWiring(orgId, teamAgentId);
+  if (!snapshot) return null;
+  const report = assessTeamWiring(snapshot);
+  let order: string[] = [];
+  if ("totalWaves" in snapshot.waves) {
+    try {
+      const plan = computeWaves(snapshot.nodes as any, snapshot.edges as any) as any;
+      const labelOf = new Map(snapshot.nodes.map((n) => [n.id, n.label]));
+      order = (plan.waves ?? []).map((w: any) => (w.nodeIds ?? w.nodes ?? []).map((id: any) => labelOf.get(typeof id === "string" ? id : id?.id) ?? "").filter(Boolean).join(" + "));
+    } catch {
+      order = [];
+    }
+  }
+  return { team: snapshot.team, report, steps: order };
+}
+
 async function getOrganizationName(orgId: string) {
   const org = await storage.getOrganization(orgId).catch(() => undefined);
   return org?.name ?? null;
@@ -591,5 +696,7 @@ export function createAstraServices(): AstraServices {
     resolvePolicyNames,
     buildTeam,
     markProposalBuilt,
+    listTeams,
+    verifyTeamWiring,
   };
 }
