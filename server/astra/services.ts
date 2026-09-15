@@ -19,7 +19,7 @@ import { CONVERSATION_DECIDABLE_OBJECT_TYPES, decideApproval, whoMayDecide, type
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
 import { proposeTeam } from "../team-proposal";
 import { assessProposalBindings, resolveBindingServer } from "../team-bindings";
-import { flattenGraphToSteps } from "@shared/process-flow";
+import { flattenGraphToSteps, isUntouchedStarterFlow } from "@shared/process-flow";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 import { similarOutcomeNames } from "./outcome-names";
 import { createOutcomeFromProposal, prepareOutcomeFromProposal, type OutcomeProposalBody } from "../outcome-create";
@@ -469,12 +469,27 @@ async function proposeTeamForOutcome(
   if (!outcome) return { ok: false as const, error: "No outcome with that id in this organization." };
   const kpis = await storage.getKpisByOutcome(outcome.id);
   const flow = outcome.processFlow as any;
-  const processFlowSteps = flow && Array.isArray(flow.nodes) && flow.nodes.length > 0 ? flattenGraphToSteps(flow) : undefined;
+  // The planner treats a process flow as authored by the business. The starter
+  // flow every new outcome gets is a placeholder, so it isn't passed as one.
+  const hasFlow = !!flow && Array.isArray(flow.nodes) && flow.nodes.length > 0;
+  const starterOnly = hasFlow && isUntouchedStarterFlow(flow, outcome.name, outcome.riskTier);
+  const processFlowSteps = hasFlow && !starterOnly ? flattenGraphToSteps(flow) : undefined;
+
+  // The planner applies feedback only against a previous plan. With no draft
+  // yet, the user's requirements travel with the outcome instead.
+  const draft = feedback ? await storage.getAgentProposalByOutcome(outcome.id).catch(() => undefined) : undefined;
+  const previousPlan = draft ? { orchestrator: draft.orchestrator, workers: draft.workers, pipeline: draft.pipeline } : undefined;
+  const outcomeContract: Record<string, unknown> = {
+    ...outcome,
+    // The whole outcome is shown to the planner; keep the placeholder flow out of it too.
+    ...(starterOnly ? { processFlow: null } : {}),
+    ...(feedback && !previousPlan ? { requirementsFromTheUser: feedback } : {}),
+  };
 
   let result: any = null;
   let failure: { error: string; details?: string; timeout?: boolean } | null = null;
   await proposeTeam(
-    { outcomeContract: outcome, kpis, feedback, industryContext: industryId ? { industryId } : null, processFlowSteps },
+    { outcomeContract, kpis, feedback: previousPlan ? feedback : undefined, previousPlan, industryContext: industryId ? { industryId } : null, processFlowSteps },
     {
       orgId,
       onEvent: (event) => {

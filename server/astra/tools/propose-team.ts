@@ -14,10 +14,10 @@ type Input = { outcomeId: string; feedback?: string };
 export const proposeTeamTool: AstraTool<Input> = {
   name: "propose_team",
   description:
-    "Propose an agent team (orchestrator, workers, pipeline, approval gates) for one of the organization's outcomes. Takes up to a few minutes and narrates progress. Saves the plan as the outcome's draft proposal, replacing any earlier draft; builds nothing. Reports connector bindings that won't work. Use feedback to revise a previous proposal.",
+    "Propose an agent team (orchestrator, workers, pipeline, approval gates) for one of the organization's outcomes. Takes up to a few minutes and narrates progress. Saves the plan as the outcome's draft proposal, replacing any earlier draft; builds nothing. Reports connector bindings that won't work. Pass the user's requirements for the team in feedback -- especially steps a person must approve -- both the first time and to revise a proposal.",
   input: z.object({
     outcomeId: z.string().min(1).describe("The outcome's id (from list_outcomes or create_outcome)."),
-    feedback: z.string().max(2000).optional().describe("What to change about the previous proposal."),
+    feedback: z.string().max(2000).optional().describe("The user's requirements for the team, or what to change about the previous proposal, in their words (e.g. 'a person approves before any equipment moves')."),
   }),
   permission: "create_modify_blueprints",
   confirm: false,

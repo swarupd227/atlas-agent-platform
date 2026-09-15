@@ -102,3 +102,18 @@ describe("propose_team", () => {
     expect(service).not.toHaveBeenCalled();
   });
 });
+
+describe("isUntouchedStarterFlow", () => {
+  it("recognizes the starter flow a new outcome gets, and not a flow someone edited", async () => {
+    const { starterFlow, stepsToGraph, isUntouchedStarterFlow } = await import("../shared/process-flow");
+    expect(isUntouchedStarterFlow(starterFlow("Fleet", "LOW"), "Fleet", "LOW")).toBe(true);
+    expect(isUntouchedStarterFlow(starterFlow("Fleet", "HIGH"), "Fleet", "HIGH")).toBe(true);
+    expect(isUntouchedStarterFlow(starterFlow("Fleet", "LOW"), "Fleet", "HIGH")).toBe(false);
+    const edited = stepsToGraph("Fleet", [
+      { type: "trigger", label: "Unit returned" },
+      { type: "expert_approval", label: "Branch manager approves transfer" },
+      { type: "end", label: "Done" },
+    ] as any);
+    expect(isUntouchedStarterFlow(edited, "Fleet", "LOW")).toBe(false);
+  });
+});

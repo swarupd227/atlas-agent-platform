@@ -94,6 +94,13 @@ export function starterFlow(name: string, riskTier?: string | null): ProcessFlow
   return stepsToGraph(name, steps);
 }
 
+/** True when a flow is still exactly the starter flow a new outcome was given (same steps, in order). */
+export function isUntouchedStarterFlow(g: ProcessFlowGraph, name: string, riskTier?: string | null): boolean {
+  const starter = starterFlow(name, riskTier);
+  const sig = (graph: ProcessFlowGraph) => graph.nodes.map((n) => `${n.type}:${n.label}`).join("|");
+  return g.nodes.length === starter.nodes.length && g.edges.length === starter.edges.length && sig(g) === sig(starter);
+}
+
 /** Build a graph from an ordered list of legacy steps (chain of edges). */
 export function stepsToGraph(name: string, steps: LegacyProcessStep[]): ProcessFlowGraph {
   const nodes: ProcessNode[] = steps.map((s, i) => ({
