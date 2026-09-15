@@ -61,7 +61,7 @@ full view) and Learning-Mode prompts ("you approve this a lot — automate it?")
 
 ### E-UX3 · Core lifecycle tools — increments 1–2
 - **Inc 1:** `list_agents`, `get_agent`, `find_connectors`, `get_industry_context`, `attach_connector` (confirm, optional read-only), `run_agent`, `get_run`, `finish_turn`.
-- **Inc 2:** `discover_outcome`, `create_outcome`, `propose_team`, `build_team`, `verify_wiring`, `list_needs_me`, `list_outcomes`.
+- **Inc 2:** `discover_outcome`, `create_outcome`, `list_outcomes`, `decide_approval`, `list_needs_me`, `propose_team`, `build_team`, `verify_wiring`, `run_team`, `get_team_run`.
 
 ### E-UX4 · Narration — increment 2
 Team-proposal progress, team (DAG) run events and job progress posted into the thread by the agent doing the work.
@@ -87,7 +87,7 @@ One run engine shared by Workspace, Playground and Astra; one workflow concept (
 - Team build assigns created agents to the caller's organization.
 - Deploy & Run no longer marks pipeline stages as passed on its own; Playground approvals are enforced, not conversational.
 
-## Increment 1 — walking skeleton (in progress)
+## Increment 1 — walking skeleton (done, live-verified)
 
 Proves the whole loop behind the flag without touching the live Workspace or Playground:
 
@@ -100,3 +100,39 @@ Proves the whole loop behind the flag without touching the live Workspace or Pla
 **Live acceptance:** ask which agents can reach Dealer Operations; attach it read-only through a Confirm card (link,
 policy and audit record verified); ask an agent for RIDGELINE CONTR LLC's open AR and get the $284,000 branch split;
 reload restores the thread; another organization cannot open it.
+
+## Increment 2 — outcome to running team, in one conversation
+
+The golden journey without leaving the thread: describe a goal, create the outcome, approve its review, propose and
+build a team, check its wiring, and run it through its approval gates.
+
+**Decisions.** A team is built only after its outcome's review is approved (`decide_approval` lets an approver do that
+in the conversation). Starting a team run asks for confirmation. A team whose wiring has blockers does not start.
+Astra never deploys anything.
+
+**Prerequisites delivered with it**
+
+- KPI current values record where they came from (`kpi_definitions.value_source`); estimates are no longer saved as
+  values, and a value without a source reads "not measured".
+- Team building, outcome creation, team proposal, My Actions and the team-graph rules moved out of their routes into
+  services the routes and Astra share (`server/team-build.ts`, `outcome-create.ts`, `team-proposal.ts`,
+  `my-actions-build.ts`, `team-graph-validate.ts`, `approval-decision.ts`).
+- A team built from a proposal, and a team run's approval gates, belong to the organization that owns them.
+- A proposal honours the user's stated requirements, and the placeholder starter flow of a new outcome isn't presented
+  to the planner as a business process.
+
+**Honesty rules applied.** Catalog figures and health scores stay out of outcome grounding; KPI baselines nobody gave
+are stored as unknown; planner impact estimates are labelled as estimates; run-derived KPI values are labelled as
+proxies; a step's raw output is never narrated, only its status.
+
+**Live acceptance** (as an admin in `/astra`)
+
+1. Describe a goal with KPIs and a rule ("a person approves before …"): `discover_outcome` grounds it, a Confirm card
+   creates it pending review with the rule as a constraint.
+2. Approve the review in the thread: the outcome moves to awaiting its agent plan.
+3. Propose a team: progress narrates; the plan includes the requested approval gate; connector issues are listed.
+4. Build it on Confirm: agents and blueprint in the organization, nothing deployed.
+5. `verify_wiring`: run order, blockers and warnings, where it pauses.
+6. Run it on Confirm: steps narrate; the gate appears as a card; Confirm continues to the answer; the run card links to
+   the run monitor.
+7. `list_outcomes` and `list_needs_me` show honest values.
