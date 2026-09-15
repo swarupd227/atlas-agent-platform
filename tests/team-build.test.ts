@@ -219,3 +219,19 @@ describe("organization", () => {
     expect(state.outcomeUpdates[0]).toMatchObject({ orgId: "org-a" });
   });
 });
+
+describe("explicit edges without the orchestrator", () => {
+  it("dispatches from the orchestrator to the first worker when the plan lists only worker handoffs", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("Fleet Team"),
+      workers: [worker("Gather"), worker("Decide"), worker("Approve", { isHumanCheckpoint: true }), worker("Execute")],
+      pipeline: {
+        pattern: "sequential",
+        edges: [{ from: "Gather", to: "Decide" }, { from: "Decide", to: "Approve" }, { from: "Approve", to: "Execute" }],
+      },
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(edgePairs()).toEqual(["Gather -> Decide", "Decide -> Approve", "Approve -> Execute", "Fleet Team -> Gather"]);
+    expect(computeWaves(state.nodes as any, state.edges as any).totalWaves).toBe(5);
+  });
+});

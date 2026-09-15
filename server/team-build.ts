@@ -870,6 +870,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       return best;
     };
 
+    const created: Array<{ sourceNodeId: string; targetNodeId: string }> = [];
     for (const edgeSpec of pipeline!.edges!) {
       const source = resolveNode(edgeSpec.from);
       const target = resolveNode(edgeSpec.to);
@@ -882,6 +883,25 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
         ...resolveEdgeRuleFromSpec(edgeSpec),
       });
+      created.push({ sourceNodeId: source.id, targetNodeId: target.id });
+    }
+
+    // Proposals often list only the handoffs between workers. Without an edge
+    // from the orchestrator it becomes a disconnected step that runs alongside
+    // the first worker instead of starting the flow: dispatch it to every
+    // worker nothing else leads into.
+    if (!created.some((e) => e.sourceNodeId === orchestratorNode.id)) {
+      const hasIncoming = new Set(created.map((e) => e.targetNodeId));
+      for (const node of workerNodes) {
+        if (hasIncoming.has(node.id)) continue;
+        await storage.createTeamBlueprintEdge({
+          blueprintId: blueprint.id,
+          sourceNodeId: orchestratorNode.id,
+          targetNodeId: node.id,
+          label: "dispatch",
+          failureMode: "escalate",
+        });
+      }
     }
   }
 
