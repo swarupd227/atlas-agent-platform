@@ -3308,6 +3308,21 @@ function buildVerifiedToolCallLog(steps: any[]): string {
   ].join("\n");
 }
 
+// The generic analysis shape (and the bookkeeping added to it), which a step's
+// output already carries as its summary text, records block and tool log.
+const GENERIC_ANALYSIS_KEYS = new Set([
+  "summary", "analysis", "severity", "riskFactors", "findings", "recommendedActions",
+  "processedRecords", "structuredOutput",
+  "contractValidationStatus", "contractRepairAttempts", "contractValidationErrors", "contractQualityScore", "contractTokenUsage",
+]);
+
+/** Top-level analysis fields beyond the generic shape, or null when there are none. */
+export function additionalAnalysisFields(analysis: unknown): Record<string, unknown> | null {
+  if (!analysis || typeof analysis !== "object" || Array.isArray(analysis)) return null;
+  const extra = Object.fromEntries(Object.entries(analysis as Record<string, unknown>).filter(([k, v]) => !GENERIC_ANALYSIS_KEYS.has(k) && v !== undefined));
+  return Object.keys(extra).length > 0 ? extra : null;
+}
+
 export async function executeWorkerAgent(
   workerId: string,
   teamAgent: RuntimeAgent,
@@ -3467,6 +3482,16 @@ export async function executeWorkerAgent(
     const nodeSucceeded = (result.success || hasUsableAnalysis) && requiredMissing.length === 0;
 
     let enrichedOutput = outputText;
+    // A step's output text is only the analysis summary, so any other field
+    // the model returned -- a routing field like resolutionDecision that a
+    // branch rule tests, an accountId the next step needs -- was dropped here
+    // and every rule-gated step after it was skipped ("no upstream step output
+    // the routing field"). Fields beyond the generic analysis shape are carried
+    // through as a JSON block, where buildPipelineState reads them.
+    const extraFields = hasUsableAnalysis ? additionalAnalysisFields(workerAnalysis) : null;
+    if (extraFields) {
+      enrichedOutput = `${enrichedOutput}\n\n\`\`\`json\n${JSON.stringify(extraFields, null, 2)}\n\`\`\``;
+    }
     if (Array.isArray(structuredOutput) && structuredOutput.length > 0) {
       enrichedOutput = `${outputText}\n\n## STRUCTURED RECORDS FROM ${workerAgent.name} (${structuredOutput.length} records)\nThese are the exact record IDs and details processed by this agent. Downstream agents MUST reference these same record IDs for traceability.\n\`\`\`json\n${JSON.stringify({ processedRecords: structuredOutput }, null, 2)}\n\`\`\``;
     }

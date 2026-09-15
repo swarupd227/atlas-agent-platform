@@ -65,6 +65,14 @@ describe("account administration mock", () => {
     expect(res.body.blockingReasons.join(" ")).toContain("non-payment");
   });
 
+  it("reset returns the book to the seeded accounts", async () => {
+    await post("/accounts", { legalName: "Reset Probe Holdings", address: "5 Probe Rd, Testville", producerCode: "HCB-014" });
+    expect((await get("/accounts?name=Reset%20Probe%20Holdings&producerCode=HCB-014")).results.length).toBe(1);
+    const res = await post("/reset", {});
+    expect(res.body.accounts).toBe(6);
+    expect((await get("/accounts?name=Reset%20Probe%20Holdings&producerCode=HCB-014")).results).toEqual([]);
+  });
+
   it("a legal block cannot be recorded as cleared", async () => {
     const created = await post("/accounts", { legalName: "Test Sanctioned Party Ltd", address: "1 Test St, Nowhere", producerCode: "HCB-014" });
     const id = created.body.account.accountId;

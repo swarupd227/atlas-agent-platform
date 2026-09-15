@@ -360,4 +360,13 @@ router.post("/account-links", (req: Request, res: Response) => {
   });
 });
 
+// Accounts created by earlier runs change what later runs find: a second run
+// of the same request matches the account the first one created. A demo or a
+// test pass starts from the seeded book by resetting it.
+router.post("/reset", (_req: Request, res: Response) => {
+  accounts.clear();
+  for (const a of SEED) accounts.set(a.accountId, structuredClone(a));
+  res.json({ reset: true, accounts: accounts.size, at: now() });
+});
+
 export default router;

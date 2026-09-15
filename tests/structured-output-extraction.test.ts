@@ -31,3 +31,17 @@ describe("extractStructuredOutput", () => {
     expect(extractStructuredOutput("No matching accounts found.")).toBeNull();
   });
 });
+
+describe("additionalAnalysisFields", () => {
+  it("keeps fields beyond the generic analysis shape, such as a routing field", async () => {
+    const { additionalAnalysisFields } = await import("../server/agent-runtime");
+    const analysis = { summary: "No duplicates.", severity: "low", findings: [], recommendedActions: [], resolutionDecision: "create", accountId: "ACCT-1", contractQualityScore: 0.9 };
+    expect(additionalAnalysisFields(analysis)).toEqual({ resolutionDecision: "create", accountId: "ACCT-1" });
+  });
+
+  it("returns null when the analysis has only generic fields", async () => {
+    const { additionalAnalysisFields } = await import("../server/agent-runtime");
+    expect(additionalAnalysisFields({ summary: "x", riskFactors: [] })).toBeNull();
+    expect(additionalAnalysisFields(null)).toBeNull();
+  });
+});
