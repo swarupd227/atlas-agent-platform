@@ -1271,6 +1271,7 @@ Ontology: ${ontologyName || "industry standard"}`,
 
     if (status === "rejected" && followUpTask) {
       const followUp = await storage.createApproval({
+        organizationId: approval.organizationId,
         type: "follow_up_task",
         objectType: approval.objectType,
         objectId: approval.objectId,
