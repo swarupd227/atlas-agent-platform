@@ -1007,6 +1007,40 @@ async function processDagResumeScan(job: Job): Promise<Record<string, unknown>> 
   return { ...scanResult, completedAt: new Date().toISOString() };
 }
 
+// ─── Connector Health Scan ───────────────────────────────────────────────────
+// Probes every connector that declares a health check path, and raises or
+// closes alerts for the agents that use it (see connector-health-probe.ts).
+
+async function processConnectorHealthScan(job: Job): Promise<Record<string, unknown>> {
+  const { runConnectorHealthScan } = await import("./connector-health-scan");
+  const { CONNECTOR_HEALTH_SCAN_INTERVAL_MS } = await import("./connector-health-probe");
+  let scanResult: Record<string, unknown> | undefined;
+  let jobError: Error | undefined;
+  try {
+    scanResult = await runConnectorHealthScan();
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] Connector health scan failed:", err.message);
+  } finally {
+    try {
+      await storage.createJob({
+        type: "connector_health_scan",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: new Date(Date.now() + CONNECTOR_HEALTH_SCAN_INTERVAL_MS),
+      });
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue connector health scan:", enqueueErr.message);
+    }
+  }
+  if (jobError) throw jobError;
+  return { ...scanResult, completedAt: new Date().toISOString() };
+}
+
+export async function enqueueConnectorHealthScan() {
+  await resetScanChain("connector_health_scan", "connector health scan", new Date(Date.now() + 60_000));
+}
+
 export async function enqueueDagResumeScan() {
   await resetScanChain("dag_resume_scan", "DAG resume scan", new Date());
 }
@@ -1781,6 +1815,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processScheduleTriggerScan(job);
           } else if (job.type === "dag_resume_scan") {
             result = await processDagResumeScan(job);
+          } else if (job.type === "connector_health_scan") {
+            result = await processConnectorHealthScan(job);
           } else {
             throw new Error(`Unknown job type: ${job.type}`);
           }

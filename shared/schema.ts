@@ -1230,6 +1230,13 @@ export const mcpServers = pgTable("mcp_servers", {
   organizationId: varchar("organization_id"),
   healthStatus: text("health_status").default("unknown"),
   lastHealthCheck: timestamp("last_health_check"),
+  /**
+   * Path on the connector's own host that reports whether it really works
+   * (e.g. "/health/figma"), probed on a schedule by connector-health-scan.ts.
+   * Null: not probed. healthDetail keeps the service's own message from the last probe.
+   */
+  healthCheckPath: text("health_check_path"),
+  healthDetail: text("health_detail"),
   addedBy: text("added_by"),
   approvedBy: text("approved_by"),
   connectionId: varchar("connection_id"),

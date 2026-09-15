@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementScope } from "./tenant-scope";
 import { checkPermission } from "./permissions";
 import { createServer, type Server } from "http";
-import { startWorker, enqueueAuditChainCheck, enqueueAuditChainCheckpoint, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan, enqueueScheduleTriggerScan, enqueueDagResumeScan } from "./worker";
+import { startWorker, enqueueAuditChainCheck, enqueueAuditChainCheckpoint, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan, enqueueScheduleTriggerScan, enqueueDagResumeScan, enqueueConnectorHealthScan } from "./worker";
 import { runStartupMigrations } from "./db";
 import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
@@ -487,6 +487,7 @@ export async function registerRoutes(
 
   // Enqueue DAG approval-gate resume scan (runs every minute, idempotent).
   await enqueueDagResumeScan();
+  await enqueueConnectorHealthScan();
 
   // Ensure Hearst NBA agents + MCP servers are registered
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));

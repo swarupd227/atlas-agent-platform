@@ -293,7 +293,10 @@ export default function McpServersPage() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div
+                    className="flex items-center gap-1.5 shrink-0"
+                    title={server.healthStatus !== "healthy" && server.healthDetail ? server.healthDetail : undefined}
+                  >
                     <div className={`w-2 h-2 rounded-full ${HEALTH_COLOR[server.healthStatus || "unknown"]}`} />
                     <span className="text-[10px] text-muted-foreground">{server.healthStatus || "unknown"}</span>
                   </div>

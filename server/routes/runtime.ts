@@ -62,6 +62,7 @@ import {
   redactWithOntologyKeys,
 } from "../permissions";
 import { getOrgId } from "../auth";
+import { isValidHealthCheckPath } from "../connector-health-probe";
 import { resolveRequestOrgId, sanitizeMcpServerAuth, isMcpServerVisibleToOrg } from "../tenant-scope";
 import {
   resolveOntologyTags,
@@ -12507,6 +12508,18 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       const sanitized: Record<string, unknown> = {};
       for (const key of allowedFields) {
         if (key in req.body) sanitized[key] = req.body[key];
+      }
+      // A path on the connector's own host that reports whether it really works;
+      // probed on a schedule (connector-health-scan.ts). null turns probing off.
+      if ("healthCheckPath" in req.body) {
+        const path = req.body.healthCheckPath;
+        if (path !== null && !isValidHealthCheckPath(path)) {
+          return res.status(400).json({ message: "healthCheckPath must be an absolute path such as /health, or null." });
+        }
+        sanitized.healthCheckPath = path;
+        if (path === null) {
+          sanitized.healthDetail = null;
+        }
       }
       const server = await storage.updateMcpServer(req.params.id as string, sanitized);
       if (!server) return res.status(404).json({ message: "MCP server not found" });

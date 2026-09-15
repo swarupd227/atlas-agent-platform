@@ -650,6 +650,11 @@ export default function McpServerDetail() {
                     {server.healthStatus || "unknown"}
                   </span>
                 </div>
+                {server.healthDetail && server.healthStatus !== "healthy" && (
+                  <span className="text-xs text-red-600 dark:text-red-400" data-testid="text-health-reason">
+                    {server.healthDetail}
+                  </span>
+                )}
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-xs text-muted-foreground">Last Health Check</span>
                   <span className="text-xs" data-testid="text-last-health-check">
@@ -658,6 +663,12 @@ export default function McpServerDetail() {
                       : "Never"}
                   </span>
                 </div>
+                {server.healthCheckPath && (
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs text-muted-foreground">Probed every 5 minutes</span>
+                    <span className="text-xs font-mono" data-testid="text-health-check-path">{server.healthCheckPath}</span>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

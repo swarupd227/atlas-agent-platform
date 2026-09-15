@@ -1211,6 +1211,8 @@ export async function runStartupMigrations() {
       ALTER TABLE dag_execution_runs ADD COLUMN IF NOT EXISTS total_tool_calls INTEGER DEFAULT 0;
       ALTER TABLE dag_execution_runs ADD COLUMN IF NOT EXISTS pending_approval_id VARCHAR;
       ALTER TABLE dag_execution_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP;
+      ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS health_check_path TEXT;
+      ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS health_detail TEXT;
       CREATE INDEX IF NOT EXISTS idx_dag_execution_runs_team_agent ON dag_execution_runs(team_agent_id);
 
       -- Remote agent cards for outbound A2A delegation (Gap 5). Same
