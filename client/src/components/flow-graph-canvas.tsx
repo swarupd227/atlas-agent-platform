@@ -28,20 +28,32 @@ import { layoutGraph, type ProcessNode, type ProcessEdge, type ProcessNodeType }
 import type { Skill, KnowledgeBase, Agent } from "@shared/schema";
 
 type NodeMeta = { label: string; icon: any; color: string; bg: string; border: string };
+// Full-strength outlines and a visible tint: at /40 outlines and /5 fills the steps faded into the dotted canvas.
 const NODE_META: Record<ProcessNodeType, NodeMeta> = {
-  trigger:           { label: "Trigger",      icon: Play,     color: "text-sky-600",     bg: "bg-sky-500/5",     border: "border-sky-500/40" },
-  get_info:          { label: "Get Info",     icon: Database, color: "text-cyan-600",    bg: "bg-cyan-500/5",    border: "border-cyan-500/40" },
-  ai_reasoning:      { label: "AI Reasoning", icon: Brain,    color: "text-violet-600",  bg: "bg-violet-500/5",  border: "border-violet-500/40" },
-  make_decision:     { label: "Decision",     icon: GitBranch,color: "text-amber-600",   bg: "bg-amber-500/5",   border: "border-amber-500/40" },
-  expert_approval:   { label: "Approval",     icon: UserCheck,color: "text-rose-600",    bg: "bg-rose-500/5",    border: "border-rose-500/40" },
-  take_action:       { label: "Action",       icon: Zap,      color: "text-emerald-600", bg: "bg-emerald-500/5", border: "border-emerald-500/40" },
-  send_notification: { label: "Notify",       icon: Bell,     color: "text-blue-600",    bg: "bg-blue-500/5",    border: "border-blue-500/40" },
-  parallel:          { label: "Parallel",     icon: GitFork,  color: "text-indigo-600",  bg: "bg-indigo-500/5",  border: "border-indigo-500/40" },
-  loop:              { label: "Loop / Retry", icon: RotateCcw,color: "text-orange-600",  bg: "bg-orange-500/5",  border: "border-orange-500/40" },
-  n8n:               { label: "External Workflow", icon: Workflow, color: "text-pink-600",    bg: "bg-pink-500/5",    border: "border-pink-500/40" },
-  sub_flow:          { label: "Sub-Flow",     icon: Network,  color: "text-indigo-600",  bg: "bg-indigo-500/5",  border: "border-indigo-500/40" },
-  expression:        { label: "Expression",   icon: SquareFunction, color: "text-slate-600", bg: "bg-slate-500/5", border: "border-slate-500/40" },
-  end:               { label: "End",          icon: Square,   color: "text-slate-600",   bg: "bg-slate-500/5",   border: "border-slate-500/40" },
+  trigger:           { label: "Trigger",      icon: Play,     color: "text-sky-700 dark:text-sky-300",         bg: "bg-sky-500/10",     border: "border-sky-500" },
+  get_info:          { label: "Get Info",     icon: Database, color: "text-cyan-700 dark:text-cyan-300",       bg: "bg-cyan-500/10",    border: "border-cyan-500" },
+  ai_reasoning:      { label: "AI Reasoning", icon: Brain,    color: "text-violet-700 dark:text-violet-300",   bg: "bg-violet-500/10",  border: "border-violet-500" },
+  make_decision:     { label: "Decision",     icon: GitBranch,color: "text-amber-700 dark:text-amber-300",     bg: "bg-amber-500/10",   border: "border-amber-500" },
+  expert_approval:   { label: "Approval",     icon: UserCheck,color: "text-rose-700 dark:text-rose-300",       bg: "bg-rose-500/10",    border: "border-rose-500" },
+  take_action:       { label: "Action",       icon: Zap,      color: "text-emerald-700 dark:text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500" },
+  send_notification: { label: "Notify",       icon: Bell,     color: "text-blue-700 dark:text-blue-300",       bg: "bg-blue-500/10",    border: "border-blue-500" },
+  parallel:          { label: "Parallel",     icon: GitFork,  color: "text-indigo-700 dark:text-indigo-300",   bg: "bg-indigo-500/10",  border: "border-indigo-500" },
+  loop:              { label: "Loop / Retry", icon: RotateCcw,color: "text-orange-700 dark:text-orange-300",   bg: "bg-orange-500/10",  border: "border-orange-500" },
+  n8n:               { label: "External Workflow", icon: Workflow, color: "text-pink-700 dark:text-pink-300", bg: "bg-pink-500/10",    border: "border-pink-500" },
+  sub_flow:          { label: "Sub-Flow",     icon: Network,  color: "text-indigo-700 dark:text-indigo-300",   bg: "bg-indigo-500/10",  border: "border-indigo-500" },
+  expression:        { label: "Expression",   icon: SquareFunction, color: "text-slate-700 dark:text-slate-300", bg: "bg-slate-500/10", border: "border-slate-500" },
+  end:               { label: "End",          icon: Square,   color: "text-slate-700 dark:text-slate-300",     bg: "bg-slate-500/10",   border: "border-slate-500" },
+};
+
+// Connections: darker and thicker than React Flow's default hairline, labels on an opaque chip so "Approved" /
+// "Rejected" stay readable where lines cross. Render-only; never written to the saved flow.
+const EDGE_STYLE = { stroke: "hsl(var(--foreground) / 0.55)", strokeWidth: 2 };
+const EDGE_SELECTED_STYLE = { stroke: "hsl(var(--primary))", strokeWidth: 2.5 };
+const EDGE_LABEL_PROPS = {
+  labelStyle: { fontSize: 11, fontWeight: 600, fill: "hsl(var(--foreground))" },
+  labelBgStyle: { fill: "hsl(var(--background))", stroke: "hsl(var(--foreground) / 0.3)", strokeWidth: 1 },
+  labelBgPadding: [6, 3] as [number, number],
+  labelBgBorderRadius: 4,
 };
 
 export const PALETTE_TYPES: ProcessNodeType[] = [
@@ -57,21 +69,24 @@ function ProcessFlowNode({ data, selected }: NodeProps) {
   const Icon = meta.icon;
   return (
     <div
-      className={`relative rounded-xl border ${meta.border} ${meta.bg} px-3 py-2 w-44 shadow-sm ${selected ? "ring-2 ring-primary" : d._issue ? "ring-2 ring-amber-500/70" : ""}`}
+      className={`relative rounded-xl border-2 ${meta.border} bg-background px-3 py-2 w-44 ${selected ? "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg" : d._issue ? "ring-2 ring-amber-500 ring-offset-1 ring-offset-background shadow-sm" : "shadow-sm"}`}
       title={d._issue || undefined}
+      data-testid={`flow-node-${d.ntype}`}
     >
+      {/* The tint sits on an opaque base so the canvas dots never show through the step. */}
+      <div className={`absolute inset-0 rounded-[10px] ${meta.bg} pointer-events-none`} />
       {d._issue && (
         <div className="absolute -top-2 -right-2 z-10" data-testid="node-issue-badge">
           <AlertTriangle className="w-4 h-4 text-amber-500 fill-amber-100 dark:fill-amber-950" />
         </div>
       )}
-      <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-muted-foreground" />
-      <div className={`flex items-center gap-1.5 mb-1 ${meta.color}`}>
+      <Handle type="target" position={Position.Left} className="!w-2.5 !h-2.5 !bg-foreground/60 !border-background" />
+      <div className={`relative flex items-center gap-1.5 mb-1 ${meta.color}`}>
         <Icon className="w-3.5 h-3.5 shrink-0" />
-        <span className="text-[9px] font-semibold uppercase tracking-wide truncate">{meta.label}</span>
+        <span className="text-[9px] font-bold uppercase tracking-wide truncate">{meta.label}</span>
       </div>
-      <p className="text-xs font-semibold text-foreground leading-snug line-clamp-2">{d.label || "Untitled"}</p>
-      {d.actor && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{d.actor}</p>}
+      <p className="relative text-xs font-semibold text-foreground leading-snug line-clamp-2">{d.label || "Untitled"}</p>
+      {d.actor && <p className="relative text-[10px] text-foreground/70 mt-0.5 truncate">{d.actor}</p>}
       {!!d.config?.skillName && (
         <p className="text-[9px] text-violet-600 dark:text-violet-400 mt-0.5 truncate flex items-center gap-0.5">
           <Sparkles className="w-2.5 h-2.5 shrink-0" /> {String(d.config.skillName)}
@@ -92,7 +107,7 @@ function ProcessFlowNode({ data, selected }: NodeProps) {
           <SquareFunction className="w-2.5 h-2.5 shrink-0" /> {d.config?.expression ? String(d.config.expression) : "Not configured"}
         </p>
       )}
-      <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-primary" />
+      <Handle type="source" position={Position.Right} className="!w-2.5 !h-2.5 !bg-primary !border-background" />
     </div>
   );
 }
@@ -499,10 +514,11 @@ function Canvas({ initialNodes, initialEdges, onChange, issues }: Omit<Props, "f
   }), [nodes, issuesByNode]);
   const displayEdges = useMemo(() => edges.map(e => {
     const edgeIssues = issuesByEdge[e.id];
+    const base = { ...e, ...EDGE_LABEL_PROPS, style: { ...(e.style || {}), ...(e.id === selectedEdgeId ? EDGE_SELECTED_STYLE : EDGE_STYLE) } };
     return edgeIssues?.length
-      ? { ...e, style: { ...(e.style || {}), stroke: "#f59e0b", strokeWidth: 2 }, label: e.label || "no condition" }
-      : e;
-  }), [edges, issuesByEdge]);
+      ? { ...base, style: { ...base.style, stroke: "#f59e0b", strokeWidth: 2.5 }, label: e.label || "no condition" }
+      : base;
+  }), [edges, issuesByEdge, selectedEdgeId]);
 
   const canUndo = pastRef.current.length > 0;
   const canRedo = futureRef.current.length > 0;

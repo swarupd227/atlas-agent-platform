@@ -21,6 +21,18 @@ export const NODE_COLOR_MAP: Record<string, string> = {
   expression: "bg-slate-500",
 };
 
+// Outline of a node card on the team canvas, in the same hue as its color bar (literal classes for Tailwind).
+export const NODE_BORDER_MAP: Record<string, string> = {
+  internal_agent: "border-blue-500",
+  tool_set: "border-amber-500",
+  edge_gate: "border-orange-500",
+  remote_agent: "border-purple-500",
+  skill: "border-teal-500",
+  knowledge_base: "border-emerald-500",
+  sub_flow: "border-indigo-500",
+  expression: "border-slate-500",
+};
+
 export const NODE_ICON_MAP: Record<string, typeof Brain> = {
   internal_agent: Brain,
   tool_set: Wrench,

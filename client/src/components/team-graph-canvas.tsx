@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/queryClient";
 import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Skill, KnowledgeBase } from "@shared/schema";
-import { NODE_COLOR_MAP, NODE_ICON_MAP, TRUST_TIER_COLORS } from "@/lib/team-graph-node-meta";
+import { NODE_BORDER_MAP, NODE_COLOR_MAP, NODE_ICON_MAP, TRUST_TIER_COLORS } from "@/lib/team-graph-node-meta";
 
 const COL_WIDTH = 280;
 const ROW_HEIGHT = 120;
@@ -72,13 +72,13 @@ function TeamFlowNode({ data, selected }: NodeProps) {
 
   return (
     <Card
-      className={`w-64 cursor-pointer ${selected ? "ring-2 ring-ring" : ""}`}
+      className={`w-64 cursor-pointer border-2 bg-background ${NODE_BORDER_MAP[node.nodeType] || "border-gray-500"} ${selected ? "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg" : "shadow-sm"}`}
       data-testid={`card-team-node-${node.id}`}
     >
-      <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-muted-foreground" />
+      <Handle type="target" position={Position.Left} className="!w-2.5 !h-2.5 !bg-foreground/60 !border-background" />
       <CardContent className="p-3 flex items-center gap-2.5 flex-wrap">
-        <div className={`w-1 h-6 rounded-full shrink-0 ${NODE_COLOR_MAP[node.nodeType] || "bg-gray-500"}`} />
-        <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
+        <div className={`w-1.5 h-7 rounded-full shrink-0 ${NODE_COLOR_MAP[node.nodeType] || "bg-gray-500"}`} />
+        <Icon className="w-4 h-4 text-foreground/70 shrink-0" />
         <span className="text-sm font-medium flex-1 truncate" data-testid={`text-node-label-${node.id}`}>{d.displayLabel}</span>
         <Badge variant="outline" className="text-[10px] shrink-0">{node.nodeType.replace("_", " ")}</Badge>
         {node.nodeType === "internal_agent" && d.refAgentName && !node.refTeamAgentId && (
@@ -251,9 +251,14 @@ function Canvas({
     animated: !!edge.condition,
     selected: edge.id === selectedEdgeId,
     style: {
-      stroke: edge.id === selectedEdgeId ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))",
-      strokeWidth: edge.id === selectedEdgeId ? 2 : 1.5,
+      stroke: edge.id === selectedEdgeId ? "hsl(var(--primary))" : "hsl(var(--foreground) / 0.55)",
+      strokeWidth: edge.id === selectedEdgeId ? 2.5 : 2,
     },
+    // Labels on an opaque chip so they stay readable where connections cross.
+    labelStyle: { fontSize: 11, fontWeight: 600, fill: "hsl(var(--foreground))" },
+    labelBgStyle: { fill: "hsl(var(--background))", stroke: "hsl(var(--foreground) / 0.3)", strokeWidth: 1 },
+    labelBgPadding: [6, 3] as [number, number],
+    labelBgBorderRadius: 4,
   })), [edges, selectedEdgeId]);
 
   // Scoped to position/select changes only -- node/edge existence is
