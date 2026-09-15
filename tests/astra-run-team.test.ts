@@ -121,7 +121,7 @@ describe("run_team", () => {
     const t = setup(
       [runIt, (m) => {
         const r = lastTool(m).result;
-        expect(r).toMatchObject({ status: "completed", stepsDone: 2, answer: expect.stringContaining("3 excavators") });
+        expect(r).toMatchObject({ status: "completed", stepsDone: 2, answer: expect.stringContaining("3 excavators"), decisionsMadeHere: ['"Gate 1" approved by you · audit recorded'] });
         return done("The team finished.");
       }],
       world({ gates: ["Manager Approval"] }),

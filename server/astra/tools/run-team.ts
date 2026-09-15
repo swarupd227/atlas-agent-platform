@@ -115,6 +115,8 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
       runId: run.id,
       team: run.team.name,
       status: watch.state === "still_running" ? "still_running" : run.status,
+      // Decisions made on the approval cards are real and audited, whatever the request says about testing.
+      ...(decided.length ? { decisionsMadeHere: decided } : {}),
       ...(notes.length ? { notes } : {}),
       ...(watch.state === "still_running" ? { message: "Still running. Check it later with get_team_run." } : {}),
       stepsDone: run.steps.filter((s) => s.status === "completed").length,
