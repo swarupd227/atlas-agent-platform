@@ -1,0 +1,91 @@
+# Self-host stack for the Astra Agents platform (Initiative 2, P1).
+#
+# First-time setup (fresh database):
+#   cp .env.example .env   # then fill in JWT_SECRET, INTEGRATION_VAULT_KEY, BOOTSTRAP_ADMIN_PASSWORD
+#   docker compose up -d db
+#   docker compose --profile init run --rm migrate   # create the base schema (once)
+#   docker compose up -d --build app
+#
+# Subsequent runs:
+#   docker compose up -d
+#
+# Brings up the app plus a Postgres with pgvector available. All configuration
+# is supplied via the environment (see .env.example → copy to .env). No values
+# are hard-coded here beyond safe local-dev defaults for the bundled database.
+#
+# The app creates the `vector` extension itself on first boot, so the database
+# only needs the extension available — hence the pgvector image.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-astra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-astra}
+      POSTGRES_DB: ${POSTGRES_DB:-astra}
+    volumes:
+      - astra_pgdata:/var/lib/postgresql/data
+    # Not published by default; the app reaches it over the compose network.
+    # Uncomment to inspect from the host:
+    # ports:
+    #   - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-astra} -d ${POSTGRES_DB:-astra}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot schema initialiser. Runs `drizzle-kit push` to create the base
+  # schema on a fresh database, then exits. The app's own boot then layers on
+  # the pgvector extension/column and additive tables. Run ONCE before the
+  # first `up`, against an empty database:
+  #     docker compose --profile init run --rm migrate
+  # Do NOT run it repeatedly against an established database — push would drop
+  # the raw pgvector embedding column (see server/db.ts). It is behind the
+  # `init` profile so a normal `docker compose up` never triggers it.
+  migrate:
+    profiles: ["init"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-astra}:${POSTGRES_PASSWORD:-astra}@db:5432/${POSTGRES_DB:-astra}}
+    command: ["npx", "drizzle-kit", "push", "--force"]
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-5000}
+      # Point the app at the bundled db service by default; override in .env to
+      # use an external/managed Postgres instead.
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-astra}:${POSTGRES_PASSWORD:-astra}@db:5432/${POSTGRES_DB:-astra}}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      # Encryption key for the integration credential vault (required in production).
+      INTEGRATION_VAULT_KEY: ${INTEGRATION_VAULT_KEY:?set INTEGRATION_VAULT_KEY in .env}
+      # `production` (default, enforced auth) or `demo` (auth bypass — never for real use).
+      SECURITY_MODE: ${SECURITY_MODE:-production}
+      # Seeds a `admin` user on first boot with this password (username is fixed to `admin`).
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in .env}
+      # Optional model/integration keys — pass through when set.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_INTEGRATIONS_ANTHROPIC_API_KEY: ${AI_INTEGRATIONS_ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    ports:
+      - "${PORT:-5000}:${PORT:-5000}"
+    restart: unless-stopped
+
+volumes:
+  astra_pgdata:

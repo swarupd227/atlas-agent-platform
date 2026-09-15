@@ -1,0 +1,40 @@
+# Build context hygiene for the self-host image.
+# Keep the host's (Windows) node_modules and prior build output OUT of the
+# context: the image runs a fresh `npm ci` on Linux so the correct
+# platform-specific prebuilt binaries (ssh2, @napi-rs/canvas, esbuild, …) are
+# fetched. Leaking a Windows/host tree in would break the runtime.
+node_modules
+dist
+dist-ssr
+
+# VCS / CI
+.git
+.gitignore
+.github
+
+# Local env & secrets — never bake into an image
+.env
+.env.*
+!.env.example
+
+# Tests, fixtures, and their artifacts (not needed to run the server)
+tests
+test-results
+playwright-report
+blob-report
+**/*.e2e.ts
+coverage
+.nyc_output
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+*.log
+npm-debug.log*
+
+# Docs & scratch that don't belong in the runtime image
+*.md
+!README.md
+tmp
+scratch
