@@ -8,6 +8,7 @@ import { OutcomeDraft, OutcomeCard, OutcomeList } from "./renderers/outcome";
 import { NeedsMe } from "./renderers/needs-me";
 import { TeamCard, TeamProposal } from "./renderers/team";
 import { Wiring } from "./renderers/wiring";
+import { TeamRun } from "./renderers/team-run";
 
 function AgentList({ props }: { props: Record<string, any> }) {
   const agents: any[] = props.agents ?? [];
@@ -199,6 +200,7 @@ const RENDERERS: Record<string, (p: { props: Record<string, any> }) => JSX.Eleme
   teamProposal: TeamProposal,
   team: TeamCard,
   wiring: Wiring,
+  teamRun: TeamRun,
 };
 
 export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onClose: () => void }) {

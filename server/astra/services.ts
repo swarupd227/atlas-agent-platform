@@ -10,7 +10,9 @@ import { storage } from "../storage";
 import { agentMcpServers, agentProposals, agents, workspaceRuns, type InsertPolicy } from "@shared/schema";
 import { createHash } from "crypto";
 import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
-import { computeWaves } from "../dag-execution-engine";
+import { computeWaves, extractFinalOutputText, startTeamAgentDagRun } from "../dag-execution-engine";
+import { getDagRunEventBuffer, subscribeDagRunEvents, type DagRunEvent } from "../dag-run-events";
+import { TERMINAL_RUN_STATUSES, watchTeamRun } from "./team-run-watch";
 import { assessTeamWiring, type WiringAgent, type WiringLink, type WiringSnapshot } from "./wiring-assess";
 import { getWorkspaceAgents, getWorkspaceRun, resumeWorkspaceRun, startWorkspaceRun, type OnWorkspaceEvent } from "../workspace-run";
 import { getRedactionLevel, hasPermission, redactPayload, type RoleId } from "../permissions";
@@ -609,7 +611,7 @@ async function loadTeamWiring(orgId: string, teamAgentId: string): Promise<Wirin
         continue;
       }
       if (!toolCache.has(summary.id)) toolCache.set(summary.id, (await storage.getMcpServerTools(summary.id)).map((t) => t.name));
-      rows.push({ serverId: summary.id, name: summary.name, visible: true, connected: summary.connected, toolNames: toolCache.get(summary.id)! });
+      rows.push({ serverId: summary.id, name: summary.name, visible: true, connected: summary.connected, toolNames: toolCache.get(summary.id)!, writeToolCount: summary.writeToolCount });
     }
     links[a.id] = rows;
   }
@@ -651,7 +653,102 @@ async function verifyTeamWiring(orgId: string, teamAgentId: string) {
       order = [];
     }
   }
-  return { team: snapshot.team, report, steps: order };
+  const connectors = new Map<string, { name: string; writeTools: number; connected: boolean | null }>();
+  for (const rows of Object.values(snapshot.links)) {
+    for (const l of rows) if (l.visible) connectors.set(l.serverId, { name: l.name, writeTools: l.writeToolCount ?? 0, connected: l.connected });
+  }
+  return { team: snapshot.team, report, steps: order, connectors: Array.from(connectors.values()) };
+}
+
+// ── run_team / get_team_run ─────────────────────────────────────────────────
+
+/** Start a team run, the same way the Run Flow button does. */
+async function startTeamRun(orgId: string, teamAgentId: string, request: string) {
+  const team = await storage.getAgent(teamAgentId, orgId);
+  if (!team || team.agentType !== "team") throw new Error("No team with that id in this organization.");
+  if (!team.blueprintId) throw new Error(`${team.name} has no team blueprint to run.`);
+  const { dagRunId, wavePlan } = await startTeamAgentDagRun(team.id, team.blueprintId, request, { errorStrategy: "best_effort" });
+  return { dagRunId, totalWaves: wavePlan.totalWaves };
+}
+
+/** A run's row, only when its team belongs to the organization (runs carry no organization of their own). */
+async function getTeamRunRow(orgId: string, dagRunId: string) {
+  const row = await storage.getDagExecutionRun(dagRunId);
+  if (!row?.teamAgentId) return null;
+  const team = await storage.getAgent(row.teamAgentId, orgId);
+  if (!team) return null;
+  return { row, team };
+}
+
+async function followTeamRun(
+  orgId: string,
+  dagRunId: string,
+  opts: { onEvent: (e: DagRunEvent) => void; maxWaitMs: number; ignoreApprovalId?: string | null },
+) {
+  return watchTeamRun(
+    { runId: dagRunId, onEvent: opts.onEvent, maxWaitMs: opts.maxWaitMs, ignoreApprovalId: opts.ignoreApprovalId },
+    {
+      subscribe: subscribeDagRunEvents,
+      buffer: getDagRunEventBuffer,
+      loadRow: async () => {
+        const found = await getTeamRunRow(orgId, dagRunId);
+        return found ? { status: found.row.status, pendingApprovalId: found.row.pendingApprovalId ?? null } : null;
+      },
+    },
+  );
+}
+
+/** What happened in a team run, step by step, with its answer once it's done. */
+async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
+  const found = await getTeamRunRow(orgId, dagRunId);
+  if (!found) return null;
+  const { row, team } = found;
+  const blueprintId = team.blueprintId;
+  const [nodes, edges] = blueprintId
+    ? await Promise.all([storage.getTeamBlueprintNodes(blueprintId), storage.getTeamBlueprintEdges(blueprintId)])
+    : [[], []];
+  const labelOf = new Map(nodes.map((n) => [n.id, n.label]));
+  const waveResults = (Array.isArray(row.waveResults) ? row.waveResults : []) as any[];
+  const steps = waveResults.flatMap((w) =>
+    (w.nodes ?? []).map((n: any) => ({
+      wave: w.waveNumber,
+      label: labelOf.get(n.nodeId) ?? n.nodeId,
+      status: n.status,
+      error: n.error ? String(n.error).slice(0, 300) : null,
+      durationMs: n.durationMs ?? null,
+    })),
+  );
+
+  let answer: string | null = null;
+  if (TERMINAL_RUN_STATUSES.has(row.status) && row.finalState && nodes.length > 0) {
+    try {
+      const plan = computeWaves(nodes as any, edges as any);
+      const skippedNodeIds = Array.from(new Set(waveResults.flatMap((w) => w.nodes ?? []).filter((n: any) => n.status === "skipped").map((n: any) => n.nodeId)));
+      answer = extractFinalOutputText({ success: row.status !== "failed", finalState: row.finalState as any, skippedNodeIds } as any, plan);
+    } catch {
+      answer = null;
+    }
+  }
+  let pending: { approvalId: string; label: string | null; description: string | null } | null = null;
+  if (row.status === "waiting_approval" && row.pendingApprovalId) {
+    const approval = await storage.getApproval(row.pendingApprovalId).catch(() => undefined);
+    pending = { approvalId: row.pendingApprovalId, label: approval?.objectName ?? null, description: approval?.description ?? null };
+  }
+  return {
+    id: row.id,
+    team: { id: team.id, name: team.name },
+    status: row.status,
+    currentWave: row.currentWave ?? 0,
+    totalWaves: row.totalWaves ?? 0,
+    startedAt: row.startedAt ? new Date(row.startedAt).toISOString() : null,
+    completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : null,
+    error: row.error ?? null,
+    costUsd: row.totalCostUsd ?? 0,
+    toolCalls: row.totalToolCalls ?? 0,
+    steps,
+    pending,
+    answer: answer == null ? null : redactPayload(answer, getRedactionLevel(role)),
+  };
 }
 
 async function getOrganizationName(orgId: string) {
@@ -698,5 +795,9 @@ export function createAstraServices(): AstraServices {
     markProposalBuilt,
     listTeams,
     verifyTeamWiring,
+    startTeamRun,
+    getTeamRunRow,
+    followTeamRun,
+    getTeamRun,
   };
 }

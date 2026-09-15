@@ -220,7 +220,7 @@ export const runAgentTool: AstraTool<Input> = {
           message: !existing
             ? "No agent you can run matches that. Use list_agents to see them."
             : existing.agentType === "team"
-              ? `${existing.name} is a team. Running teams from Astra isn't available yet; open it in the Workspace.`
+              ? `${existing.name} is a team: run it with run_team.`
               : !["active", "deployed"].includes(existing.status)
                 ? `${existing.name} is ${existing.status}. Only active or deployed agents can run.`
                 : `${existing.name} isn't offered to the ${ctx.role} role: its Workspace audience doesn't include this role.`,
@@ -233,7 +233,7 @@ export const runAgentTool: AstraTool<Input> = {
       return {
         payload: {
           ran: false,
-          message: `${agent.name} is a team. Running teams from Astra isn't available yet; open it in the Workspace.`,
+          message: `${agent.name} is a team: run it with run_team.`,
           href: "/workspace",
         },
       };

@@ -38,6 +38,8 @@ export interface WiringLink {
   /** null: not an enterprise integration, so there's no connection to check. */
   connected: boolean | null;
   toolNames: string[];
+  /** Tools on it that change something (the dispatcher's own rule). */
+  writeToolCount?: number;
 }
 
 export interface WiringSnapshot {

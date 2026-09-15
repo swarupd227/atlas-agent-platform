@@ -139,6 +139,16 @@ export async function dispatchAstraTool(req: DispatchRequest, deps: DispatchDeps
 
   if (result.needsConfirmation) {
     const ask = result.needsConfirmation;
+    // The decision that led here (a confirmed start, a decided gate) still gets its record.
+    if (decided) {
+      await deps.audit({
+        orgId: ctx.orgId,
+        userId: ctx.userId,
+        action: "astra_shell.tool_executed",
+        objectId: tool.name,
+        details: { threadId: ctx.threadId, toolCallId: req.toolCallId, input: parsed.data, pausedAgain: true, ...(req.declined ? { decision: "declined" } : {}) },
+      }).catch(() => {});
+    }
     return {
       kind: "needs_confirmation",
       action: {

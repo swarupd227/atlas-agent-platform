@@ -28,11 +28,12 @@ import { listNeedsMeTool } from "./tools/list-needs-me";
 import { proposeTeamTool } from "./tools/propose-team";
 import { buildTeamTool } from "./tools/build-team";
 import { verifyWiringTool } from "./tools/verify-wiring";
+import { getTeamRunTool, runTeamTool } from "./tools/run-team";
 
 /** Claude Sonnet 5 by default; override with ASTRA_MODEL. */
 export const ASTRA_MODEL = process.env.ASTRA_MODEL || "claude-sonnet-5";
 
-export const ASTRA_TOOLS: AstraTool[] = [finishTurnTool, listAgentsTool, getAgentTool, findConnectorsTool, getIndustryContextTool, attachConnectorTool, runAgentTool, getRunTool, decideApprovalTool, discoverOutcomeTool, listOutcomesTool, createOutcomeTool, listNeedsMeTool, proposeTeamTool, buildTeamTool, verifyWiringTool];
+export const ASTRA_TOOLS: AstraTool[] = [finishTurnTool, listAgentsTool, getAgentTool, findConnectorsTool, getIndustryContextTool, attachConnectorTool, runAgentTool, getRunTool, decideApprovalTool, discoverOutcomeTool, listOutcomesTool, createOutcomeTool, listNeedsMeTool, proposeTeamTool, buildTeamTool, verifyWiringTool, runTeamTool, getTeamRunTool];
 
 function modelCall(): CompleteFn {
   const primaryName = ASTRA_MODEL.startsWith("gpt") || ASTRA_MODEL.startsWith("o") ? "openai" : "anthropic";
