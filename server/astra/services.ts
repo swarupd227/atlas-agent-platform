@@ -398,6 +398,18 @@ async function listOutcomes(orgId: string) {
   );
 }
 
+/** Outcome counts for the home briefing, without loading each outcome's KPIs. */
+async function outcomeCounts(orgId: string) {
+  const [outcomes, approvalsList] = await Promise.all([storage.getOutcomes(orgId), storage.getApprovals(orgId)]);
+  const ids = new Set(outcomes.map((o) => o.id));
+  const pendingReview = new Set(
+    approvalsList
+      .filter((a) => a.type === "outcome_review" && a.status === "pending" && a.objectId && ids.has(a.objectId))
+      .map((a) => a.objectId as string),
+  ).size;
+  return { total: outcomes.length, pendingReview };
+}
+
 // ── create_outcome ───────────────────────────────────────────────────────────
 
 async function findSimilarOutcomes(orgId: string, name: string) {
@@ -783,6 +795,7 @@ export function createAstraServices(): AstraServices {
     getUserDisplayName,
     outcomeGrounding,
     listOutcomes,
+    outcomeCounts,
     findSimilarOutcomes,
     checkOutcomeDraft,
     createOutcome,

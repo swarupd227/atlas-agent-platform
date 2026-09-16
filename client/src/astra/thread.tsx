@@ -3,6 +3,7 @@ import { Check, CircleAlert, Loader2, PanelRight } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { Composer } from "./composer";
 import { ConfirmCard } from "./confirm-card";
+import { HomeBriefing } from "./home";
 import { STARTERS } from "./prompts";
 import { ProofStrip } from "./proof-strip";
 import type { LiveTurn } from "./api";
@@ -151,7 +152,7 @@ export function Thread({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
           {empty && (
-            <div className="pt-[10vh]">
+            <div className="pt-[6vh]">
               <h1 className="text-2xl font-semibold tracking-tight [font-family:var(--astra-display)] text-balance">
                 What should your agents do?
               </h1>
@@ -159,6 +160,7 @@ export function Thread({
                 Ask about your agents, connectors and industry context, or have an agent do the work. Anything that changes the platform
                 waits for your confirmation, and every answer shows what it's based on.
               </p>
+              <HomeBriefing onSend={onSend} />
               <div className="mt-6 grid gap-2 sm:grid-cols-2">
                 {STARTERS.map((s) => (
                   <button

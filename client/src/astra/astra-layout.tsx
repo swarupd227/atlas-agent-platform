@@ -23,7 +23,8 @@ function useAstraTheme() {
 function Workspace() {
   const [location, navigate] = useLocation();
   const threadId = location.startsWith("/t/") ? decodeURIComponent(location.slice(3)) : null;
-  const { industry } = useIndustry();
+  const { industry, industrySource, tenantIndustryId, organizationName } = useIndustry();
+  const personalView = industrySource === "local" && !!tenantIndustryId;
   const queryClient = useQueryClient();
   const { data: threads = [] } = useThreads();
   const [artifact, setArtifact] = useState<ArtifactRef | null>(null);
@@ -85,8 +86,18 @@ function Workspace() {
           </Link>
           <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{threadId ? thread.title || "Conversation" : "New conversation"}</h1>
           {industry && (
-            <span className="hidden shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline" title="Industry context sent with each message">
-              {industry.label}
+            <span
+              className="hidden shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline"
+              title={
+                personalView
+                  ? `Your own view. ${organizationName ?? "Your organization"}'s industry is set separately.`
+                  : industrySource === "tenant"
+                    ? `${organizationName ?? "Your organization"}'s industry`
+                    : "Industry chosen in this browser; not set for the organization"
+              }
+              data-testid="astra-industry-badge"
+            >
+              {personalView ? `Viewing as ${industry.label}` : industry.label}
             </span>
           )}
           <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs md:hidden" onClick={newConversation}>

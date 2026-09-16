@@ -10,12 +10,13 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { getDefaultOrgId, getOrgId } from "../auth";
-import { checkPermission, getRequestRole } from "../permissions";
+import { checkPermission, getRequestRole, hasPermission } from "../permissions";
 import { llmInvokeRateLimiter } from "../rate-limits";
 import { storage } from "../storage";
 import { AstraBusyError, AstraNotFoundError, resolveAction, runTurn } from "../astra/engine";
 import { getAstraRuntime } from "../astra/wiring";
 import { getTenantIndustry, resolveIndustry } from "../industry-context";
+import { buildHome, type HomeSection } from "../astra/home";
 import type { AstraContext, AstraEvent } from "../astra/types";
 
 const router = Router();
@@ -105,6 +106,67 @@ router.get("/api/astra/threads/:id", checkPermission("use_astra"), async (req, r
   const found = await store.getThreadForCaller(String(req.params.id), ctx.orgId, ctx.userId);
   if (!found) return res.status(404).json({ message: "Thread not found" });
   res.json(found);
+});
+
+/** A section that fails says so on its row; the rest of the briefing still loads. */
+async function section<T>(load: () => Promise<T>): Promise<HomeSection<T>> {
+  try {
+    return { ok: true, data: await load() };
+  } catch (err) {
+    console.error("[astra] home section failed:", err instanceof Error ? err.message : err);
+    return { ok: false, reason: "the data isn't available right now" };
+  }
+}
+
+/**
+ * The home briefing. Each section reads the same service as the tool its row
+ * asks, and is left out when the role can't use that tool.
+ */
+router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => {
+  const requested = typeof req.query.industryId === "string" ? req.query.industryId : null;
+  const ctx = await callerContext(req, requested);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  const { services } = getAstraRuntime().deps;
+  const can = (p: Parameters<typeof hasPermission>[1]) => hasPermission(ctx.role, p);
+  const labelOf = async (id: string | null | undefined) => {
+    if (!id) return null;
+    const c = await services.getIndustryContext(id);
+    return c.selected ? (c.pack ? c.label : String(c.industryId)) : null;
+  };
+
+  const [organizationName, industryLabel, organizationLabel, needs, agents, outcomes, connectors] = await Promise.all([
+    services.getOrganizationName(ctx.orgId).catch(() => null),
+    labelOf(ctx.industryId).catch(() => null),
+    (ctx.industrySource === "request" ? labelOf(ctx.organizationIndustryId) : Promise.resolve(null)).catch(() => null),
+    section(async () => {
+      const d = await services.needsMe(ctx.orgId, ctx.role);
+      const items = d.needsDecision as Array<{ urgency: string; canDecideHere: boolean }>;
+      return {
+        needsDecisionCount: d.needsDecisionCount as number,
+        urgentCount: items.filter((i) => i.urgency === "urgent").length,
+        decidableHere: items.filter((i) => i.canDecideHere).length,
+      };
+    }),
+    section(async () => ({ runnable: (await services.listRunnableAgents(ctx.orgId, ctx.role)).length })),
+    section(() => services.outcomeCounts(ctx.orgId)),
+    can("view_agents")
+      ? section(async () => {
+          const list = (await services.listConnectors(ctx.orgId)) as Array<{ connected: boolean | null }>;
+          return { total: list.length, connected: list.filter((c) => c.connected === true).length, notConnected: list.filter((c) => c.connected === false).length };
+        })
+      : Promise.resolve(null),
+  ]);
+
+  res.json(
+    buildHome({
+      organizationName,
+      industry: { label: industryLabel, source: ctx.industrySource ?? "none", organizationLabel },
+      needs,
+      agents,
+      outcomes,
+      connectors,
+    }),
+  );
 });
 
 const sendMessageSchema = z.object({

@@ -88,3 +88,19 @@ export interface LiveStep {
   state: "running" | "ok" | "failed";
   preview?: string;
 }
+
+/** GET /api/astra/home (server/astra/home.ts). */
+export interface HomeRow {
+  id: "needs" | "agents" | "outcomes" | "connectors" | "industry";
+  label: string;
+  count: number | null;
+  detail: string | null;
+  prompt: string;
+  tone: "attention" | "neutral" | "unavailable";
+}
+
+export interface HomeBriefing {
+  organizationName: string | null;
+  rows: HomeRow[];
+  notShown: string[];
+}
