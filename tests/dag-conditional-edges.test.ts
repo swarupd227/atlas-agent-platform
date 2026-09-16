@@ -369,3 +369,12 @@ describe("steps after yours — a step is told what has not run yet", () => {
     expect(inputs.get("agent-screen") || "").not.toContain("STEPS AFTER YOURS");
   });
 });
+
+describe("routing field instruction", () => {
+  it("asks for the field at the top level, not only inside a records array", async () => {
+    const { renderRoutingFields } = await import("../server/pipeline-guidance");
+    const text = renderRoutingFields([{ field: "resolutionDecision", routes: [{ targetLabel: "Record Creation", operator: "==", value: "create" }] }]).join("\n");
+    expect(text).toContain("TOP-LEVEL key");
+    expect(text).toContain("records array");
+  });
+});

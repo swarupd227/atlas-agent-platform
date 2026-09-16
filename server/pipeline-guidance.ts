@@ -53,6 +53,7 @@ export function renderRoutingFields(specs: RoutingFieldSpec[]): string[] {
   const lines = [
     `## ROUTING FIELDS (required)`,
     `The next steps are chosen by exact rules on fields of your output. End your response with a \`\`\`json block containing every field below, set to the value that reflects your actual finding (a dot in a name means a nested object). Use one of the values the rules test whenever it describes your finding; a missing field means the steps that depend on it do not run.`,
+    `Each field must be a TOP-LEVEL key of that block. Listing it only inside a records array is not enough: when you report several records, still give the one top-level value that describes the overall outcome.`,
   ];
   for (const spec of specs) {
     const routes = spec.routes.map((r) => `runs "${r.targetLabel}" when ${r.operator} ${JSON.stringify(r.value)}`).join("; ");
