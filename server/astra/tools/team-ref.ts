@@ -13,7 +13,7 @@ export async function resolveTeam(ctx: AstraToolContext, ref: string): Promise<{
   const teams: TeamRef[] = await ctx.services.listTeams(ctx.orgId);
   const byId = teams.find((t) => t.id === ref);
   if (byId) return { team: byId };
-  const needle = ref.trim().toLowerCase();
+  const needle = ref.trim().replace(/^@/, "").toLowerCase();
   const exact = teams.filter((t) => t.name.toLowerCase() === needle);
   if (exact.length === 1) return { team: exact[0] };
   const partial = exact.length > 1 ? exact : teams.filter((t) => t.name.toLowerCase().includes(needle));

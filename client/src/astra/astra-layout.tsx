@@ -5,7 +5,8 @@ import { ArrowLeft, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IndustryProvider, useIndustry } from "@/components/industry-provider";
 import { RoleProvider } from "@/components/role-provider";
-import { createThread, useAstraEnabled, useThread, useThreads } from "./api";
+import { createThread, useAstraEnabled, useMentionables, useThread, useThreads } from "./api";
+import type { ComposerInsert } from "./composer";
 import { Rail } from "./rail";
 import { Thread } from "./thread";
 import { ArtifactPane } from "./artifact-pane";
@@ -29,6 +30,9 @@ function Workspace() {
   const { data: threads = [] } = useThreads();
   const [artifact, setArtifact] = useState<ArtifactRef | null>(null);
   const [creating, setCreating] = useState(false);
+  const { data: mentionables = [] } = useMentionables();
+  const [composerInsert, setComposerInsert] = useState<ComposerInsert | null>(null);
+  const mention = useCallback((name: string) => setComposerInsert({ text: `@${name} `, nonce: Date.now() }), []);
 
   // A result opens by itself only where the pane sits beside the conversation;
   // on narrower screens it would cover the answer, so it waits for a tap.
@@ -76,6 +80,8 @@ function Workspace() {
           onSelect={(id) => navigate(`/t/${encodeURIComponent(id)}`)}
           onNew={newConversation}
           onAskAbout={(text) => void send(text)}
+          agents={mentionables}
+          onMention={mention}
         />
       </div>
 
@@ -115,6 +121,8 @@ function Workspace() {
             onSend={(text) => void send(text)}
             onDecide={(actionId, decision) => void thread.decide(actionId, decision)}
             onOpenArtifact={setArtifact}
+            mentionables={mentionables}
+            composerInsert={composerInsert}
           />
         </div>
       </main>

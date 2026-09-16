@@ -3,7 +3,7 @@ import type { AstraTool, ProofEnvelope } from "../types";
 import { summarizeAgent } from "./list-agents";
 
 function findByName(agents: Record<string, any>[], name: string): Record<string, any>[] {
-  const needle = name.trim().toLowerCase();
+  const needle = name.trim().replace(/^@/, "").toLowerCase();
   const exact = agents.filter((a) => String(a.name ?? "").toLowerCase() === needle);
   if (exact.length > 0) return exact;
   return agents.filter((a) => String(a.name ?? "").toLowerCase().includes(needle));

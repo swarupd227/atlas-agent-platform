@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Check, CircleAlert, Loader2, PanelRight } from "lucide-react";
 import { Markdown } from "@/components/markdown";
-import { Composer } from "./composer";
+import { Composer, type ComposerInsert } from "./composer";
+import type { Mentionable } from "./mention";
 import { ConfirmCard } from "./confirm-card";
 import { HomeBriefing } from "./home";
 import { STARTERS } from "./prompts";
@@ -125,6 +126,8 @@ export function Thread({
   onSend,
   onDecide,
   onOpenArtifact,
+  mentionables,
+  composerInsert,
 }: {
   messages: AstraMessage[];
   status: ThreadStatus;
@@ -135,6 +138,8 @@ export function Thread({
   onSend: (text: string) => void;
   onDecide: (actionId: string, decision: "confirm" | "cancel") => void;
   onOpenArtifact: (a: ArtifactRef) => void;
+  mentionables?: Mentionable[];
+  composerInsert?: ComposerInsert | null;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -231,7 +236,9 @@ export function Thread({
           <Composer
             disabled={streaming || waiting}
             onSend={onSend}
-            placeholder={waiting ? "Confirm or choose Not now above to continue" : hasThread ? "Reply to Astra" : "Ask Astra"}
+            mentionables={mentionables}
+            insert={composerInsert}
+            placeholder={waiting ? "Confirm or choose Not now above to continue" : hasThread ? "Reply to Astra" : "Ask Astra, or type @ for one of your agents"}
           />
         </div>
       </div>

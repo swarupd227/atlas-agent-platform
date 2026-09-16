@@ -169,6 +169,19 @@ router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => 
   );
 });
 
+/** The agents the composer's @ menu offers: exactly the ones run_agent accepts for this role. */
+router.get("/api/astra/mentionables", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  try {
+    const agents = (await getAstraRuntime().deps.services.listRunnableAgents(ctx.orgId, ctx.role)) as Array<{ id: string; name: string; description: string | null }>;
+    res.json(agents.map((a) => ({ id: a.id, name: a.name, description: a.description ?? null })));
+  } catch (err) {
+    console.error("[astra] mentionables failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ message: "Couldn't load your agents." });
+  }
+});
+
 /** Exactly what list_needs_me reads, so the rail and the conversation agree. */
 router.get("/api/astra/needs-you", checkPermission("use_astra"), async (req, res) => {
   const ctx = await callerContext(req);

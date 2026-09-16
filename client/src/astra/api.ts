@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getApiHeaders } from "@/lib/queryClient";
 import { postSse, SseHttpError } from "@/lib/sse";
 import type { ArtifactRef, AstraEvent, AstraMessage, LiveStep, ThreadStatus, ThreadSummary } from "./types";
+import type { Mentionable } from "./mention";
 
 const PREVIEW_OVERRIDE_KEY = "almp-astra-shell";
 
@@ -42,6 +43,16 @@ export function useThreads() {
   return useQuery<ThreadSummary[]>({
     queryKey: ["/api/astra/threads"],
     queryFn: () => getJson("/api/astra/threads"),
+  });
+}
+
+/** The agents the @ menu offers (the ones run_agent accepts). Fetched once per shell; filtered locally. */
+export function useMentionables() {
+  return useQuery<Mentionable[]>({
+    queryKey: ["/api/astra/mentionables"],
+    queryFn: () => getJson("/api/astra/mentionables"),
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }
 

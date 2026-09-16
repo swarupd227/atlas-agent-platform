@@ -39,10 +39,11 @@ function truncate(text: string | null | undefined, max: number): string {
   return t.length > max ? `${t.slice(0, max)}… (${t.length - max} more characters in the full run)` : t;
 }
 
-function resolveAgent(agents: RunnableAgent[], ref: string): { agent?: RunnableAgent; candidates?: RunnableAgent[] } {
+export function resolveAgent(agents: RunnableAgent[], ref: string): { agent?: RunnableAgent; candidates?: RunnableAgent[] } {
   const byId = agents.find((a) => a.id === ref);
   if (byId) return { agent: byId };
-  const needle = ref.trim().toLowerCase();
+  // "@Name" is how the composer mentions an agent; the @ isn't part of the name.
+  const needle = ref.trim().replace(/^@/, "").toLowerCase();
   const exact = agents.filter((a) => a.name.toLowerCase() === needle);
   if (exact.length === 1) return { agent: exact[0] };
   const partial = exact.length > 1 ? exact : agents.filter((a) => a.name.toLowerCase().includes(needle));
@@ -210,7 +211,7 @@ export const runAgentTool: AstraTool<Input> = {
         return { payload: { ran: false, ambiguous: true, candidates: candidates.slice(0, 8).map((a) => ({ id: a.id, name: a.name })) } };
       }
       // Say why it can't run, whether the model passed an id or a name.
-      const needle = input.agent.trim().toLowerCase();
+      const needle = input.agent.trim().replace(/^@/, "").toLowerCase();
       const existing =
         (await ctx.services.getAgent(ctx.orgId, input.agent)) ??
         ((await ctx.services.listAgents(ctx.orgId)) as Array<{ name?: string }>).find((a) => String(a.name ?? "").toLowerCase() === needle);

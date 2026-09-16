@@ -4,14 +4,9 @@ import { ArrowLeft, ArrowUpRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getApiHeaders } from "@/lib/queryClient";
 import type { NeedsYou, NeedsYouItem, ThreadSummary } from "./types";
+import type { Mentionable } from "./mention";
 
 const NEEDS_YOU_SHOWN = 6;
-
-async function getOptional<T>(url: string): Promise<T | null> {
-  // The rail is secondary: a role without access to a list simply doesn't see it.
-  const res = await fetch(url, { credentials: "include", headers: getApiHeaders() });
-  return res.ok ? res.json() : null;
-}
 
 function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
@@ -73,12 +68,18 @@ export function Rail({
   onSelect,
   onNew,
   onAskAbout,
+  agents,
+  onMention,
 }: {
   threads: ThreadSummary[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
   onAskAbout: (text: string) => void;
+  /** The agents the user can run (the @ menu's list). */
+  agents: Mentionable[];
+  /** Put "@Name " in the composer. */
+  onMention: (name: string) => void;
 }) {
   const { data: needsYou, isError: needsYouFailed } = useQuery<NeedsYou | null>({
     queryKey: ["/api/astra/needs-you"],
@@ -90,18 +91,10 @@ export function Rail({
     refetchInterval: 60_000,
     retry: false,
   });
-  const { data: agents } = useQuery<any[] | null>({
-    queryKey: ["astra-rail", "/api/agents"],
-    queryFn: () => getOptional("/api/agents"),
-    staleTime: 60_000,
-  });
 
   const waitingThreads = threads.filter((t) => t.status === "awaiting_confirmation");
   const items = needsYou?.needsDecision ?? [];
   const needsYouTotal = waitingThreads.length + (needsYou?.needsDecisionCount ?? 0);
-  const liveAgents = Array.isArray(agents)
-    ? agents.filter((a) => a.status === "active" || a.status === "deployed").slice(0, 8)
-    : [];
 
   return (
     <nav className="flex h-full min-h-0 flex-col bg-card/60" aria-label="Astra">
@@ -182,14 +175,15 @@ export function Rail({
           )}
         </Section>
 
-        {liveAgents.length > 0 && (
-          <Section title="Your live agents">
+        {agents.length > 0 && (
+          <Section title="Your agents">
             <ul className="space-y-0.5">
-              {liveAgents.map((a) => (
+              {agents.slice(0, 8).map((a) => (
                 <li key={a.id}>
                   <button
                     type="button"
-                    onClick={() => onAskAbout(`Tell me about the agent "${a.name}".`)}
+                    onClick={() => onMention(a.name)}
+                    title={`Mention @${a.name} in your message`}
                     className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-foreground/80 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
                     <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-[hsl(var(--astra-ok))]" />
