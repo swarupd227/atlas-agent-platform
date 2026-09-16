@@ -24,6 +24,7 @@ import { getOrgId, getDefaultOrgId } from "../auth";
 import {
   checkPermission,
   getRequestRole,
+  getRequestActorLabel,
   canDecideApproval,
   getOntologySensitivityKeys,
   invalidateOntologySensitivityCache,
@@ -1263,10 +1264,22 @@ Ontology: ${ontologyName || "industry standard"}`,
     return checkPermission("approve_changes")(req, res, next);
   }, async (req, res) => {
     const approval = (req as any).approval;
-    const { status, decidedBy, constraintsJson, followUpTask } = req.body;
+    // A decision already made (approved/rejected) already triggered its real side effects below -- resuming a
+    // run, promoting a baseline, flipping a skill's codeExecutionApproved flag. Redeciding it would re-trigger
+    // them, which is never correct. changes_requested/expired/pending can still be decided.
+    if (approval.status === "approved" || approval.status === "rejected") {
+      return res.status(409).json({
+        message: `This approval was already ${approval.status} by ${approval.decidedBy || "someone"}${approval.decidedAt ? ` on ${new Date(approval.decidedAt).toLocaleString()}` : ""} and cannot be decided again.`,
+        status: approval.status,
+      });
+    }
+    const { status, constraintsJson, followUpTask } = req.body;
+    // The real signed-in user (production) or the active demo role (demo mode) -- never a client-supplied
+    // "decidedBy" string, which any caller could set to whatever text it likes.
+    const decidedBy = getRequestActorLabel(req);
     const updateData: any = { decidedAt: new Date() };
     if (status) updateData.status = status;
-    if (decidedBy) updateData.decidedBy = decidedBy;
+    if (status) updateData.decidedBy = decidedBy;
     if (constraintsJson) updateData.constraintsJson = constraintsJson;
 
     if (status === "rejected" && followUpTask) {

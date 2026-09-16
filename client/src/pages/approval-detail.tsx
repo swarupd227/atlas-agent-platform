@@ -56,6 +56,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/status-badge";
+import { ApprovalDecisionBanner, ApprovalExpiredNote, isDecidable } from "@/components/approval-decision-banner";
+import { GateEvidenceCard, type GateEvidence } from "@/components/gate-evidence";
 import { DiffViewer } from "@/components/diff-viewer";
 import { PermissionGate, usePermission, useRole } from "@/components/role-provider";
 import type { Approval, Agent, EvalSuite, Policy, AuditEvent, McpApp } from "@shared/schema";
@@ -126,14 +128,15 @@ export default function ApprovalDetail() {
     },
   });
 
+  // decidedBy is never sent from here: the server derives who is deciding from the real signed-in session (or the
+  // active demo role) so it can't be spoofed by whatever the client happens to send.
   const handleApprove = () => {
-    decideMutation.mutate({ status: "approved", decidedBy: "Expert Validator" });
+    decideMutation.mutate({ status: "approved" });
   };
 
   const handleApproveWithConstraints = () => {
     decideMutation.mutate({
       status: "approved",
-      decidedBy: "Expert Validator",
       constraintsJson: {
         canaryPercent: Number(canaryPercent),
         duration,
@@ -146,7 +149,6 @@ export default function ApprovalDetail() {
   const handleRequestLabeling = () => {
     decideMutation.mutate({
       status: "pending",
-      decidedBy: "Expert Validator",
       constraintsJson: {
         requiresHumanLabeling: true,
         labelingDescription: labelingCases,
@@ -157,7 +159,6 @@ export default function ApprovalDetail() {
   const handleReject = () => {
     decideMutation.mutate({
       status: "rejected",
-      decidedBy: "Expert Validator",
       followUpTask: {
         reason: rejectReason,
         description: followUpDescription,
@@ -168,10 +169,8 @@ export default function ApprovalDetail() {
   const handleRequestChanges = () => {
     decideMutation.mutate({
       status: "changes_requested",
-      decidedBy: "Expert Validator",
       constraintsJson: {
         requestedChanges: requestChangesComment,
-        requestedBy: "Expert Validator",
       },
     } as any);
     setRequestChangesOpen(false);
@@ -276,6 +275,10 @@ export default function ApprovalDetail() {
           </Card>
         )}
 
+        <ApprovalDecisionBanner approval={approval} />
+        <ApprovalExpiredNote approval={approval} />
+
+        {isDecidable(approval.status) && (
         <PermissionGate action="approve_changes">
           <div className="flex items-center gap-2 flex-wrap" data-testid="action-buttons">
             <Button
@@ -481,7 +484,22 @@ export default function ApprovalDetail() {
             </Dialog>
           </div>
         </PermissionGate>
+        )}
       </div>
+
+      {approval.type === "hitl_gate" && (
+        <Card data-testid="panel-gate-evidence">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <ArrowRight className="w-4 h-4 text-muted-foreground" />
+              What's being decided
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <GateEvidenceCard evidence={evidence as GateEvidence} testIdPrefix={`full-gate-${approval.id}`} />
+          </CardContent>
+        </Card>
+      )}
 
       {approval.objectType === "export_package" && evidence.exportConfig && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="export-package-panels">

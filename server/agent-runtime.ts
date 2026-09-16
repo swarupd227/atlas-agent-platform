@@ -2994,7 +2994,7 @@ export async function waitForApproval(
    * IDs"). Callers that know the run supply a distinguishing name and a
    * description that leads with the artifact actually being approved.
    */
-  approvalMeta?: { objectName?: string; description?: string },
+  approvalMeta?: { objectName?: string; description?: string; evidenceJson?: Record<string, unknown> },
 ): Promise<{ approved: boolean; decidedBy?: string; reason?: string }> {
   // Resuming a DAG run re-runs the whole paused wave (see resumeTeamAgentDagRun
   // in dag-execution-engine.ts), including the gate node itself -- without
@@ -3031,6 +3031,7 @@ export async function waitForApproval(
       description: approvalMeta?.description
         || `Pipeline HITL checkpoint: ${gateName}\n\nContext:\n${context.slice(0, 2000)}`,
       riskScore: gateType === "approval" ? 0.7 : 0.4,
+      ...(approvalMeta?.evidenceJson ? { evidenceJson: approvalMeta.evidenceJson } : {}),
     });
   }
   onCreated?.(approval.id);

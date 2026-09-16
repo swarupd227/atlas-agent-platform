@@ -30,6 +30,7 @@ import {
   Inbox,
   Info,
   SlidersHorizontal,
+  Zap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status-badge";
+import { ApprovalDecisionBanner, ApprovalExpiredNote, isDecidable } from "@/components/approval-decision-banner";
+import { GateEvidenceCard, type GateEvidence } from "@/components/gate-evidence";
 import { PermissionGate, usePermission } from "@/components/role-provider";
 import { ConfigDiff } from "@/components/config-diff";
 import { BlastRadius } from "@/components/blast-radius";
@@ -57,6 +60,13 @@ const TYPE_META: Record<string, { label: string; icon: any; color: string }> = {
   blueprint_review:      { label: "Blueprint Review",      icon: FileText, color: "text-violet-500" },
   anomaly_review:        { label: "Anomaly Review",        icon: AlertTriangle, color: "text-amber-500" },
   config_change:         { label: "Config Change",         icon: Shield, color: "text-amber-500" },
+  hitl_gate:             { label: "Workflow Gate",         icon: ArrowRight, color: "text-indigo-500" },
+  "tool-invocation":     { label: "Tool Call",              icon: Zap, color: "text-cyan-500" },
+  retirement_review:     { label: "Retirement Review",      icon: FileText, color: "text-slate-500" },
+  handover_review:       { label: "Handover Review",        icon: FileText, color: "text-slate-500" },
+  code_execution_enablement: { label: "Code Execution",     icon: Shield, color: "text-amber-500" },
+  follow_up_task:        { label: "Follow-up",              icon: MessageSquare, color: "text-slate-500" },
+  export_package:        { label: "Export Package",         icon: FileText, color: "text-violet-500" },
 };
 
 function getTypeMeta(type: string) {
@@ -74,7 +84,7 @@ function riskColors(level: string) {
        : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
 }
 
-function SlaChip({ dueDate }: { dueDate: string | null | undefined }) {
+function SlaChip({ dueDate }: { dueDate: Date | string | null | undefined }) {
   if (!dueDate) return null;
   const hoursLeft = (new Date(dueDate).getTime() - Date.now()) / 3600000;
   const overdue = hoursLeft <= 0;
@@ -134,7 +144,9 @@ export default function Approvals() {
 
   const decideMutation = useMutation({
     mutationFn: async ({ id, status, constraintsJson }: { id: string; status: string; constraintsJson?: Record<string, unknown> }) => {
-      const res = await apiRequest("PATCH", `/api/approvals/${id}`, { status, decidedBy: "Expert Validator", constraintsJson });
+      // decidedBy is never sent: the server derives who is deciding from the real signed-in session (or the
+      // active demo role), so it can't be spoofed by whatever the client sends.
+      const res = await apiRequest("PATCH", `/api/approvals/${id}`, { status, constraintsJson });
       return res.json();
     },
     onSuccess: () => {
@@ -156,7 +168,10 @@ export default function Approvals() {
   };
 
   const filtered = (approvals ?? []).filter((a) => {
-    if (search && !(a.objectName || a.type || "").toLowerCase().includes(search.toLowerCase())) return false;
+    if (search) {
+      const haystack = [a.objectName, a.type, a.description, a.requestedBy, a.objectId].filter(Boolean).join(" ").toLowerCase();
+      if (!haystack.includes(search.toLowerCase())) return false;
+    }
     if (riskTierFilter !== "all") {
       if (riskLevel(a.riskScore) !== riskTierFilter) return false;
     }
@@ -344,7 +359,7 @@ export default function Approvals() {
 
           {/* Detail panel */}
           <div className="flex-1 min-h-0 min-w-0">
-            {selected && selected.status === "pending" ? (
+            {selected && isDecidable(selected.status) ? (
               <ApprovalDetail
                 approval={selected}
                 evalSuites={evalSuites}
@@ -499,6 +514,9 @@ function ApprovalDetail({ approval, evalSuites, driftSignals, outcomes, decideMu
           <StatusBadge status={approval.status} />
         </div>
 
+        <ApprovalDecisionBanner approval={approval} />
+        <ApprovalExpiredNote approval={approval} />
+
         {/* ── KPI strip ── */}
         <div className="grid grid-cols-4 divide-x border-b">
           {[
@@ -598,7 +616,7 @@ function ApprovalDetail({ approval, evalSuites, driftSignals, outcomes, decideMu
         </div>
 
         {/* ── Action bar ── */}
-        {approval.status === "pending" && (
+        {isDecidable(approval.status) && (
           <div className="sticky bottom-0 flex flex-col gap-2 px-6 py-3 border-t bg-background/95 backdrop-blur">
             {showRequestChanges && (
               <div className="flex flex-col gap-2 p-3 rounded-md bg-muted/30 border" data-testid={`request-changes-form-${approval.id}`}>
@@ -617,7 +635,7 @@ function ApprovalDetail({ approval, evalSuites, driftSignals, outcomes, decideMu
                   <Button variant="ghost" size="sm" onClick={() => { setShowRequestChanges(false); setRequestChangesComment(""); }} data-testid={`button-cancel-request-changes-${approval.id}`}>Cancel</Button>
                   <Button variant="outline" size="sm"
                     disabled={decideMutation.isPending || !requestChangesComment.trim()}
-                    onClick={() => decideMutation.mutate({ id: approval.id, status: "changes_requested", constraintsJson: { requestedChanges: requestChangesComment, requestedBy: "Expert Validator" } })}
+                    onClick={() => decideMutation.mutate({ id: approval.id, status: "changes_requested", constraintsJson: { requestedChanges: requestChangesComment } })}
                     data-testid={`button-submit-request-changes-${approval.id}`}
                   >Submit Feedback</Button>
                 </div>
@@ -695,6 +713,14 @@ function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }: {
 }) {
   const ev = approval.evidenceJson as any;
   if (!ev) return null;
+
+  if (approval.type === "hitl_gate") {
+    return (
+      <SectionBlock icon={CheckCircle} title="What's being decided">
+        <GateEvidenceCard evidence={ev as GateEvidence} testIdPrefix={`gate-${approval.id}`} />
+      </SectionBlock>
+    );
+  }
 
   if (approval.type === "outcome_review" && ev?.proposedKpis) {
     return (

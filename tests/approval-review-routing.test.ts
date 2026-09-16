@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { canDecideApproval, hasPermission } from "../server/permissions";
+import { describe, it, expect, afterEach } from "vitest";
+import { canDecideApproval, hasPermission, getRequestActorLabel } from "../server/permissions";
+import type { Request } from "express";
 
 /**
  * canDecideApproval (server/permissions.ts) is what PATCH /api/approvals/:id
@@ -61,5 +62,49 @@ describe("canDecideApproval: routed approvals (requiredReviewerRole set)", () =>
 
   it("refuses an unrelated role entirely", () => {
     expect(canDecideApproval("finance", "compliance_security").allowed).toBe(false);
+  });
+});
+
+/**
+ * getRequestActorLabel (server/permissions.ts) is what PATCH /api/approvals/:id now uses to record WHO decided an
+ * approval, instead of trusting a client-supplied "decidedBy" string (any caller could set that to anything --
+ * every mutation on both approval pages used to hardcode it to "Expert Validator" regardless of who was really
+ * acting). It must never fall back to the client's own claim.
+ */
+describe("getRequestActorLabel", () => {
+  const originalMode = process.env.SECURITY_MODE;
+  afterEach(() => {
+    if (originalMode === undefined) delete process.env.SECURITY_MODE;
+    else process.env.SECURITY_MODE = originalMode;
+  });
+
+  function req(headers: Record<string, string> = {}, authUser?: Request["authUser"]): Request {
+    return { headers, authUser } as unknown as Request;
+  }
+
+  it("in demo mode, labels the actor by the active demo role, not any authUser or client claim", () => {
+    process.env.SECURITY_MODE = "demo";
+    expect(getRequestActorLabel(req({ "x-role": "expert_validator" }))).toBe("Expert Validator");
+    expect(getRequestActorLabel(req({ "x-role": "compliance_security" }))).toBe("Compliance & Security");
+    // No X-Role header at all: getRequestRole's own demo-mode default (admin), not a made-up name.
+    expect(getRequestActorLabel(req({}))).toBe("Admin");
+  });
+
+  it("in demo mode, ignores a real authUser if one is somehow present -- there is no real per-person identity in demo mode", () => {
+    process.env.SECURITY_MODE = "demo";
+    const withUser = req({ "x-role": "finance" }, { userId: "u1", username: "real.person", role: "admin", email: null, organizationId: "org1" });
+    expect(getRequestActorLabel(withUser)).toBe("Finance");
+  });
+
+  it("in production mode, uses the real signed-in user's username", () => {
+    process.env.SECURITY_MODE = "production";
+    const authUser = { userId: "u1", username: "priya.n", role: "expert_validator", email: "priya@example.com", organizationId: "org1" };
+    expect(getRequestActorLabel(req({}, authUser))).toBe("priya.n");
+  });
+
+  it("in production mode, falls back to the user id when a session somehow has no username", () => {
+    process.env.SECURITY_MODE = "production";
+    const authUser = { userId: "u1", username: "", role: "expert_validator", email: null, organizationId: "org1" };
+    expect(getRequestActorLabel(req({}, authUser as any))).toBe("u1");
   });
 });

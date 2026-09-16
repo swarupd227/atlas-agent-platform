@@ -171,6 +171,30 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
 
 const VALID_ROLES = new Set<string>(Object.keys(PERMISSION_MATRIX));
 
+// Human label for a role id, for anywhere the platform records or displays WHO acted (approval decisions, audit
+// entries) -- mirrors client/src/components/role-provider.tsx's ROLES labels. Kept here, not derived from the
+// client bundle, since server code must never import client-side React modules.
+const ROLE_LABEL: Record<RoleId, string> = {
+  admin: "Admin",
+  outcome_owner: "Outcome Owner",
+  agent_engineer: "Agent Engineer",
+  ops_sre: "Ops / SRE",
+  compliance_security: "Compliance & Security",
+  expert_validator: "Expert Validator",
+  finance: "Finance",
+  domain_expert: "Domain Expert",
+};
+
+/** The human name for who is acting on this request: the real signed-in user in production, or the selected
+ * demo role in demo mode (there is no per-person identity in demo mode -- see authMiddleware). Use this instead
+ * of trusting a client-supplied "decided by" string, which the caller can set to anything. */
+export function getRequestActorLabel(req: Request): string {
+  if (getSecurityMode() === "production" && req.authUser) {
+    return req.authUser.username || req.authUser.userId || "user";
+  }
+  return ROLE_LABEL[getRequestRole(req)];
+}
+
 export function getRequestRole(req: Request): RoleId {
   if (getSecurityMode() === "production" && req.authUser) {
     const role = req.authUser.role;

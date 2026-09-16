@@ -180,7 +180,7 @@ export function NotificationCenter() {
                       icon={<CheckCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
                       title={a.objectName || a.type.replace(/_/g, " ")}
                       subtitle={`${a.type.replace(/_/g, " ")} \u00b7 ${a.requestedBy}`}
-                      onClick={() => navigate("/approvals")}
+                      onClick={() => navigate(`/approvals/${a.id}`)}
                       testId={`notification-approval-${a.id}`}
                     />
                   ))}

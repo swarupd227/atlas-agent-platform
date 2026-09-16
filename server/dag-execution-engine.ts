@@ -10,6 +10,7 @@ import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
+import { collectRunFiles } from "@shared/run-files";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
 // that isn't caught by the cycle check but would still nest indefinitely.
@@ -2017,6 +2018,34 @@ export class DAGExecutionEngine {
       .map(([k, v]) => `${k}: ${asText(v).slice(0, 1500)}`)
       .join("\n");
 
+    // Structured version of the same "what's up for decision" material, for the Approvals UI to render as a real
+    // run summary (steps, verdicts, files) instead of only the flattened text blob above. Best-effort: a step
+    // whose output doesn't look like a verdict or doesn't carry files just omits those fields.
+    const VERDICT_RE = /^##?\s*[\w :\/&-]{0,40}?(PASS|FAIL|BLOCKED|APPROVED|REJECTED)\b.*$/im;
+    const upstreamSteps = (config.executionPlan.incomingEdges[nodeId] || [])
+      .map((e) => config.executionPlan.nodeConfig[e.sourceNodeId])
+      .filter((nc): nc is NodePlanConfig => !!nc?.stateKey && currentState[nc.stateKey] !== undefined)
+      .map((nc) => {
+        const text = asText(currentState[nc.stateKey]);
+        const verdictLine = text.match(VERDICT_RE)?.[0]?.trim();
+        const files = collectRunFiles({ [`${nc.stateKey}_files`]: currentState[`${nc.stateKey}_files`] });
+        return {
+          label: nc.label,
+          stateKey: nc.stateKey,
+          preview: text.slice(0, 600),
+          ...(verdictLine ? { verdict: verdictLine } : {}),
+          ...(files.length ? { files } : {}),
+        };
+      });
+    const gateEvidence = {
+      runId: config.dagRunId,
+      teamAgentId: config.teamAgentId,
+      teamAgentName: config.teamAgentName,
+      gateLabel: nc.label || "Approval Gate",
+      upstreamSteps,
+      files: collectRunFiles(currentState),
+    };
+
     // A name a human can pick out of a list of pending rows: the gate, the team
     // it belongs to, the run, and the first line of the request that started it.
     const requestLabel = String(currentState.request ?? "")
@@ -2050,7 +2079,7 @@ export class DAGExecutionEngine {
         config.onApprovalPending?.(nodeId, id);
       },
       config.resumePendingApprovalId,
-      { objectName, description },
+      { objectName, description, evidenceJson: gateEvidence },
     );
 
     // The decision is in. Before this strand carries the run forward it must

@@ -260,6 +260,45 @@ describe("DAGExecutionEngine — approval identity on the Approvals page", () =>
     expect(meta.description.indexOf("FOR APPROVAL")).toBeLessThan(meta.description.indexOf("Other context") === -1 ? Infinity : meta.description.indexOf("Other context"));
     expect(meta.description).toContain("the outline");
     expect(meta.description).toContain("Run: 9721c414-d419-4d73-8c10-d88b9620638c");
+
+    // Structured evidence (evidenceJson) alongside the text description, so the Approvals UI can render a real
+    // run summary (client/src/components/gate-evidence.tsx) instead of only the flattened text blob above.
+    expect(meta.evidenceJson.runId).toBe("9721c414-d419-4d73-8c10-d88b9620638c");
+    expect(meta.evidenceJson.teamAgentId).toBe("team-1");
+    expect(meta.evidenceJson.teamAgentName).toBe("Marcom Deck Team");
+    expect(meta.evidenceJson.gateLabel).toBe("Manual Review");
+    expect(meta.evidenceJson.upstreamSteps).toEqual([
+      { label: "Node", stateKey: "slide_outline", preview: "the outline" },
+    ]);
+  });
+
+  it("captures a PASS/FAIL verdict line from an upstream step's output in the gate's evidenceJson", async () => {
+    const { waitForApproval, executeWorkerAgent } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "## Deck Build QA: PASS\nEvery slide checked." });
+
+    const qaNode = node({ id: "qa", refAgentId: "agent-qa", label: "Deck Build QA", stateKey: "qa_result" });
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Sign-off", stateKey: "gate_result" });
+    const edge = {
+      id: "e1", blueprintId: "bp1", sourceNodeId: "qa", targetNodeId: "gate-1", label: null, contentPartTypes: [],
+      allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge;
+
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves([qaNode, gateNode], [edge]),
+      stateSchema: {},
+      initialState: {},
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+      teamAgentName: "Deck Studio",
+      dagRunId: "run-2",
+    });
+
+    const evidence = (waitForApproval as any).mock.calls.at(-1)[7].evidenceJson;
+    expect(evidence.upstreamSteps).toEqual([
+      { label: "Deck Build QA", stateKey: "qa_result", preview: "## Deck Build QA: PASS\nEvery slide checked.", verdict: "## Deck Build QA: PASS" },
+    ]);
   });
 
   it("falls back to the bare gate label when the caller supplies no run identity", async () => {
