@@ -1867,6 +1867,18 @@ export async function runStartupMigrations() {
       ALTER TABLE kpi_definitions ADD COLUMN IF NOT EXISTS value_updated_at TIMESTAMP;
     `);
 
+    // An organization's industry, and each agent's. Nullable, no backfill: the
+    // only existing source (deployments.industry) holds invented values.
+    await client.query(`
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry_id TEXT;
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sub_vertical TEXT;
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS workspace_config JSONB;
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry_set_at TIMESTAMP;
+      ALTER TABLE organizations ADD COLUMN IF NOT EXISTS industry_set_by TEXT;
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS industry_id TEXT;
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS sub_vertical TEXT;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

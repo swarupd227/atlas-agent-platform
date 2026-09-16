@@ -10,6 +10,12 @@ export const organizations = pgTable("organizations", {
   plan: text("plan").notNull().default("starter"),
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at").defaultNow(),
+  /** The organization's industry: the default for its people, its agents and the server. Null until an admin sets it. */
+  industryId: text("industry_id"),
+  subVertical: text("sub_vertical"),
+  workspaceConfig: jsonb("workspace_config"),
+  industrySetAt: timestamp("industry_set_at"),
+  industrySetBy: text("industry_set_by"),
 });
 
 export const insertOrganizationSchema = createInsertSchema(organizations).omit({ id: true, createdAt: true });
@@ -160,6 +166,9 @@ export const agents = pgTable("agents", {
   isCuratedJourney: boolean("is_curated_journey").notNull().default(false),
   journeyIndustryId: text("journey_industry_id"),
   journeySubVertical: text("journey_sub_vertical"),
+  /** The agent's industry (defaults to its organization's when it is created). */
+  industryId: text("industry_id"),
+  subVertical: text("sub_vertical"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

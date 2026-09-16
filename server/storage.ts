@@ -876,6 +876,7 @@ export interface IStorage {
   getOrganizationBySlug(slug: string): Promise<Organization | undefined>;
   createOrganization(org: InsertOrganization): Promise<Organization>;
   updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined>;
+  setOrganizationIndustry(id: string, value: { industryId: string | null; subVertical: string | null; workspaceConfig?: unknown }, actor: string): Promise<Organization | undefined>;
   ensureDefaultOrganization(): Promise<Organization>;
   seedDefaultOrganization(): Promise<Organization>;
 
@@ -4554,6 +4555,18 @@ export class DatabaseStorage implements IStorage {
 
   async updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined> {
     const [updated] = await db.update(organizations).set(data).where(eq(organizations.id, id)).returning();
+    return updated;
+  }
+
+  /** The one place an organization's industry is written, recording who set it and when. */
+  async setOrganizationIndustry(id: string, value: { industryId: string | null; subVertical: string | null; workspaceConfig?: unknown }, actor: string): Promise<Organization | undefined> {
+    const [updated] = await db.update(organizations).set({
+      industryId: value.industryId,
+      subVertical: value.subVertical,
+      ...(value.workspaceConfig !== undefined ? { workspaceConfig: value.workspaceConfig as any } : {}),
+      industrySetAt: new Date(),
+      industrySetBy: actor,
+    }).where(eq(organizations.id, id)).returning();
     return updated;
   }
 
