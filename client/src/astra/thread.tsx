@@ -1,18 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Check, CircleAlert, Loader2, PanelRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useRef } from "react";
+import { Check, CircleAlert, Loader2, PanelRight } from "lucide-react";
 import { Markdown } from "@/components/markdown";
+import { Composer } from "./composer";
 import { ConfirmCard } from "./confirm-card";
+import { STARTERS } from "./prompts";
 import { ProofStrip } from "./proof-strip";
 import type { LiveTurn } from "./api";
-import type { ArtifactRef, AstraMessage, LiveStep, Suggestion, ThreadStatus } from "./types";
-
-const STARTERS: Suggestion[] = [
-  { label: "Which agents are live?", prompt: "Which of my agents are live right now?" },
-  { label: "What can my agents connect to?", prompt: "What connectors can my agents use, and which are connected?" },
-  { label: "Our industry context", prompt: "What industry and regulatory context applies to us?" },
-  { label: "Ask an agent to do something", prompt: "I want one of my agents to do a piece of work. Which ones can I run?" },
-];
+import type { ArtifactRef, AstraMessage, LiveStep, ThreadStatus } from "./types";
 
 function toolLabel(tool: string) {
   return tool.replace(/_/g, " ");
@@ -117,55 +111,6 @@ function MessageView({
         {message.proof && <ProofStrip proof={message.proof} />}
       </div>
     </div>
-  );
-}
-
-function Composer({ disabled, onSend, placeholder }: { disabled: boolean; onSend: (text: string) => void; placeholder: string }) {
-  const [text, setText] = useState("");
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  }, [text]);
-
-  const submit = () => {
-    const t = text.trim();
-    if (!t || disabled) return;
-    onSend(t);
-    setText("");
-  };
-
-  return (
-    <form
-      className="flex items-end gap-2 rounded-md border border-input bg-card p-2 focus-within:border-ring"
-      onSubmit={(e) => {
-        e.preventDefault();
-        submit();
-      }}
-    >
-      <textarea
-        ref={ref}
-        rows={1}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        placeholder={placeholder}
-        aria-label="Message Astra"
-        className="max-h-[200px] min-h-[36px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
-        data-testid="astra-composer"
-      />
-      <Button type="submit" size="icon" className="h-8 w-8 shrink-0" disabled={disabled || !text.trim()} aria-label="Send">
-        <ArrowUp className="h-4 w-4" />
-      </Button>
-    </form>
   );
 }
 
