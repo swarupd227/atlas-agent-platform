@@ -91,3 +91,28 @@ export function pickAgentIndustry(input: {
   if (isKnownIndustry(input.deploymentIndustry)) return input.deploymentIndustry!.trim();
   return null;
 }
+
+/**
+ * Should a browser adopt its organization's industry? Yes, unless the person
+ * is deliberately viewing another industry, or has just cleared their view to
+ * pick a new one (the setup wizard is open). Returns the industry to adopt.
+ */
+export function industryToAdopt(input: {
+  tenantIndustryId?: string | null;
+  localIndustryId?: string | null;
+  personalIndustryId?: string | null;
+  choosing?: boolean;
+}): string | null {
+  const tenant = input.tenantIndustryId?.trim();
+  if (!tenant || input.choosing) return null;
+  const local = input.localIndustryId?.trim() || null;
+  if (local === tenant) return null;
+  if (input.personalIndustryId && local && input.personalIndustryId === local) return null;
+  return tenant;
+}
+
+/** Where the industry a person sees comes from. */
+export function industrySourceOf(localIndustryId: string | null | undefined, tenantIndustryId: string | null | undefined): "tenant" | "local" | "none" {
+  if (!localIndustryId) return "none";
+  return tenantIndustryId && localIndustryId === tenantIndustryId ? "tenant" : "local";
+}

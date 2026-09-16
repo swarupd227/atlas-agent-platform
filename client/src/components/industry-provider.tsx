@@ -1,4 +1,7 @@
-import { createContext, useContext, useState, useMemo, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useMemo, useCallback, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest, getApiHeaders, queryClient } from "@/lib/queryClient";
+import { industrySourceOf, industryToAdopt } from "@shared/industry-filter";
 import {
   Landmark,
   HeartPulse,
@@ -776,7 +779,34 @@ interface IndustryContextType {
   setWorkspaceConfig: (config: WorkspaceConfig) => void;
   activeFrameworks: string[];
   activeDepartments: string[];
+  /** The organization's industry, when an admin has set one. */
+  tenantIndustryId: string | null;
+  /** "tenant": what you see is the organization's industry; "local": a personal view (or one only this browser holds). */
+  industrySource: "tenant" | "local" | "none";
+  canSetIndustryForOrg: boolean;
+  organizationName: string | null;
+  /** True until the organization's industry has been fetched (or found unavailable). */
+  organizationLoading: boolean;
+  /** Make an industry the organization's (admins and compliance). */
+  setIndustryForOrganization: (id: IndustryId, subVertical: string | null, config?: WorkspaceConfig) => Promise<void>;
+  /** Leave a personal view and see the organization's industry again. */
+  returnToOrganizationIndustry: () => void;
 }
+
+export interface CurrentOrganization {
+  id: string;
+  name: string;
+  industryId: string | null;
+  subVertical: string | null;
+  workspaceConfig: WorkspaceConfig | null;
+  industrySetAt: string | null;
+  industrySetBy: string | null;
+  canSetIndustry: boolean;
+}
+
+const ORG_KEY = ["/api/organizations/current"];
+/** The industry a person chose for themselves when it differs from their organization's. */
+const PERSONAL_KEY = "almp-industry-personal";
 
 const JURISDICTION_FRAMEWORKS: Record<string, Record<string, string[]>> = {
   financial_services: {
@@ -912,6 +942,53 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
     [industryId],
   );
 
+  // The organization's industry. Signed-out or older servers just answer
+  // non-200, and everything below behaves exactly as the browser-only version.
+  const { data: org, isLoading: organizationLoading } = useQuery<CurrentOrganization | null>({
+    queryKey: ORG_KEY,
+    queryFn: async () => {
+      const res = await fetch("/api/organizations/current", { credentials: "include", headers: getApiHeaders() });
+      return res.ok ? res.json() : null;
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const tenantIndustryId = org?.industryId ?? null;
+  // True between clearing the industry and picking a new one in the setup wizard.
+  const choosingRef = useRef(false);
+
+  const adoptOrganization = useCallback((adopt: string) => {
+    choosingRef.current = false;
+    setIndustryId(adopt as IndustryId);
+    localStorage.setItem("almp-industry", adopt);
+    localStorage.removeItem(PERSONAL_KEY);
+    const sub = org?.subVertical ?? null;
+    setSubVerticalState(sub);
+    if (sub) localStorage.setItem("almp-sub-vertical", sub);
+    else localStorage.removeItem("almp-sub-vertical");
+    if (org?.workspaceConfig) {
+      setWorkspaceConfigState(org.workspaceConfig);
+      localStorage.setItem("almp-workspace-config", JSON.stringify(org.workspaceConfig));
+    }
+  }, [org]);
+
+  // Before paint, so a browser that adopts never flashes the setup wizard.
+  useLayoutEffect(() => {
+    const adopt = industryToAdopt({
+      tenantIndustryId,
+      localIndustryId: industryId,
+      personalIndustryId: localStorage.getItem(PERSONAL_KEY),
+      choosing: choosingRef.current,
+    });
+    if (adopt) adoptOrganization(adopt);
+    // Only when the organization's value arrives or changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantIndustryId]);
+
+  const returnToOrganizationIndustry = useCallback(() => {
+    if (tenantIndustryId) adoptOrganization(tenantIndustryId);
+  }, [tenantIndustryId, adoptOrganization]);
+
   const setSubVertical = useCallback((name: string | null) => {
     setSubVerticalState(name);
     if (name) {
@@ -922,17 +999,22 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setIndustry = useCallback((id: IndustryId) => {
+    choosingRef.current = false;
     setIndustryId(id);
     localStorage.setItem("almp-industry", id);
+    // Choosing something other than the organization's industry is a personal view.
+    if (tenantIndustryId && id !== tenantIndustryId) localStorage.setItem(PERSONAL_KEY, id);
+    else localStorage.removeItem(PERSONAL_KEY);
     // A sub-vertical belongs to whichever industry was active when it was
     // picked (e.g. "Workers Compensation" only makes sense under Insurance)
     // -- switching industries invalidates it rather than silently carrying
     // it over to a different industry where it has no meaning.
     setSubVerticalState(null);
     localStorage.removeItem("almp-sub-vertical");
-  }, []);
+  }, [tenantIndustryId]);
 
   const clearIndustry = useCallback(() => {
+    choosingRef.current = true;
     setIndustryId(null);
     localStorage.removeItem("almp-industry");
     localStorage.removeItem("almp-workspace-config");
@@ -971,6 +1053,19 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
 
   const activeDepartments = workspaceConfig.departments || [];
 
+  const setIndustryForOrganization = useCallback(
+    async (id: IndustryId, sub: string | null, config?: WorkspaceConfig) => {
+      await apiRequest("PATCH", "/api/organizations/current", {
+        industryId: id,
+        subVertical: sub,
+        ...(config ? { workspaceConfig: config } : {}),
+      });
+      localStorage.removeItem(PERSONAL_KEY);
+      await queryClient.invalidateQueries({ queryKey: ORG_KEY });
+    },
+    [],
+  );
+
   const term = useCallback(
     (key: TermKey): string => {
       if (!industryId) return DEFAULT_TERMS[key];
@@ -994,6 +1089,13 @@ export function IndustryProvider({ children }: { children: ReactNode }) {
         setWorkspaceConfig,
         activeFrameworks,
         activeDepartments,
+        tenantIndustryId,
+        industrySource: industrySourceOf(industryId, tenantIndustryId),
+        canSetIndustryForOrg: !!org?.canSetIndustry,
+        organizationName: org?.name ?? null,
+        organizationLoading,
+        setIndustryForOrganization,
+        returnToOrganizationIndustry,
       }}
     >
       {children}

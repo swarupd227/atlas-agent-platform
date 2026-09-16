@@ -79,3 +79,27 @@ describe("known industries", () => {
     expect(clientIds).toEqual([...BUILT_IN_INDUSTRY_IDS]);
   });
 });
+
+describe("adopting the organization's industry in a browser", () => {
+  it("adopts it in a fresh browser and in one left on another industry", async () => {
+    const { industryToAdopt } = await import("../shared/industry-filter");
+    expect(industryToAdopt({ tenantIndustryId: "insurance", localIndustryId: null })).toBe("insurance");
+    expect(industryToAdopt({ tenantIndustryId: "insurance", localIndustryId: "healthcare" })).toBe("insurance");
+  });
+
+  it("leaves a deliberate personal view, an already-matching browser, and a person choosing a new one alone", async () => {
+    const { industryToAdopt } = await import("../shared/industry-filter");
+    expect(industryToAdopt({ tenantIndustryId: "insurance", localIndustryId: "healthcare", personalIndustryId: "healthcare" })).toBeNull();
+    expect(industryToAdopt({ tenantIndustryId: "insurance", localIndustryId: "insurance" })).toBeNull();
+    expect(industryToAdopt({ tenantIndustryId: "insurance", localIndustryId: null, choosing: true })).toBeNull();
+    expect(industryToAdopt({ tenantIndustryId: null, localIndustryId: "retail" })).toBeNull();
+  });
+
+  it("names where the industry comes from", async () => {
+    const { industrySourceOf } = await import("../shared/industry-filter");
+    expect(industrySourceOf("insurance", "insurance")).toBe("tenant");
+    expect(industrySourceOf("healthcare", "insurance")).toBe("local");
+    expect(industrySourceOf("healthcare", null)).toBe("local");
+    expect(industrySourceOf(null, "insurance")).toBe("none");
+  });
+});

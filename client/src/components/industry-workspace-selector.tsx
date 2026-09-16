@@ -52,7 +52,7 @@ export function IndustryWorkspaceSelector() {
     return () => obs.disconnect();
   }, []);
 
-  const { isSelected, setIndustry, setWorkspaceConfig } = useIndustry();
+  const { isSelected, setIndustry, setWorkspaceConfig, canSetIndustryForOrg, tenantIndustryId, organizationName, organizationLoading, setIndustryForOrganization } = useIndustry();
   const [selectedId, setSelectedId] = useState<IndustryId | null>(null);
   const [step, setStep] = useState<WizardStep>("select");
 
@@ -103,7 +103,12 @@ export function IndustryWorkspaceSelector() {
     return cats;
   }, [selected]);
 
-  if (isSelected) return null;
+  const forOrgDefault = canSetIndustryForOrg && !tenantIndustryId;
+  const [applyToOrg, setApplyToOrg] = useState<boolean | null>(null);
+  const setForOrganization = applyToOrg ?? forOrgDefault;
+
+  // Wait for the organization's industry: once it has one, the wizard isn't needed.
+  if (isSelected || organizationLoading) return null;
 
   const handleContinueToConfig = () => {
     if (selectedId === "custom") {
@@ -128,6 +133,12 @@ export function IndustryWorkspaceSelector() {
     };
     setWorkspaceConfig(config);
     setIndustry(selectedId);
+    // Only from the review step, where the choice is shown.
+    if (canSetIndustryForOrg && setForOrganization && step === "review") {
+      setIndustryForOrganization(selectedId, chosenSubVerticals[0] ?? null, config).catch((err) =>
+        console.error("[industry] couldn't set the organization's industry:", err?.message),
+      );
+    }
   };
 
   const toggleItem = (list: string[], item: string, setter: (v: string[]) => void) => {
@@ -581,6 +592,26 @@ export function IndustryWorkspaceSelector() {
                         ))}
                       </div>
                     </div>
+                  )}
+
+                  {canSetIndustryForOrg && (
+                    <label className="flex items-start gap-2 pt-3 border-t text-xs cursor-pointer" data-testid="label-set-industry-for-org">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={setForOrganization}
+                        onChange={(e) => setApplyToOrg(e.target.checked)}
+                        data-testid="checkbox-set-industry-for-org"
+                      />
+                      <span>
+                        Set this for everyone in {organizationName ?? "your organization"}
+                        <span className="block text-muted-foreground">
+                          {tenantIndustryId
+                            ? "Replaces the organization's current industry for presets, checks and new agents."
+                            : "It becomes the default for presets, checks and every new agent. Otherwise it applies only in this browser."}
+                        </span>
+                      </span>
+                    </label>
                   )}
 
                   <div className="flex items-center justify-between gap-3 pt-3 border-t">

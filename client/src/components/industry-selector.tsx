@@ -20,10 +20,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
-import { Check, ChevronDown } from "lucide-react";
+import { Building2, Check, ChevronDown } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export function IndustrySelector() {
-  const { industry, clearIndustry, subVertical, setSubVertical, isSelected } = useIndustry();
+  const {
+    industry, clearIndustry, subVertical, setSubVertical, isSelected, workspaceConfig,
+    tenantIndustryId, industrySource, canSetIndustryForOrg, organizationName,
+    setIndustryForOrganization, returnToOrganizationIndustry,
+  } = useIndustry();
+  const { toast } = useToast();
+  const [confirmSetForOrg, setConfirmSetForOrg] = useState(false);
+  const [savingForOrg, setSavingForOrg] = useState(false);
   // Switching industry runs clearIndustry(), which drops the whole workspace
   // configuration (sub-vertical, departments, jurisdictions, integrations, data
   // classification) and re-opens the 3-step setup wizard -- that is the
@@ -35,12 +43,34 @@ export function IndustrySelector() {
   if (!isSelected) return null;
 
   const hasSubVerticals = !!industry && industry.subVerticals.length > 0;
+  const orgName = organizationName ?? "your organization";
+  const tenantIndustry = tenantIndustryId ? INDUSTRIES.find((i) => i.id === tenantIndustryId) : null;
+  // A personal view: the organization has an industry and this person is looking at another.
+  const viewingAs = industrySource === "local" && !!tenantIndustryId;
+  const canMakeOrgIndustry = canSetIndustryForOrg && !!industry && industry.id !== tenantIndustryId;
+
+  const handleSetForOrg = async () => {
+    if (!industry) return;
+    setSavingForOrg(true);
+    try {
+      await setIndustryForOrganization(industry.id, subVertical, workspaceConfig);
+      toast({ title: `${industry.label} is now ${orgName}'s industry`, description: "It's the default for everyone, for presets, checks and new agents." });
+    } catch (err: any) {
+      toast({ title: "Couldn't set the organization's industry", description: err?.message ?? "Try again.", variant: "destructive" });
+    } finally {
+      setSavingForOrg(false);
+      setConfirmSetForOrg(false);
+    }
+  };
 
   return (
     <div className="flex items-center gap-1.5">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="sm" className="gap-1.5" data-testid="button-industry-selector">
+            {viewingAs && (
+              <span className="hidden md:inline text-xs text-muted-foreground" data-testid="text-viewing-as">Viewing as</span>
+            )}
             {industry && (
               <industry.icon className="h-3.5 w-3.5" style={{ color: industry.color }} />
             )}
@@ -52,6 +82,37 @@ export function IndustrySelector() {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64" data-testid="menu-industry-selector">
           <DropdownMenuLabel className="text-xs">Industry Workspace</DropdownMenuLabel>
+          <div className="px-2 pb-1.5 text-xs text-muted-foreground" data-testid="text-organization-industry">
+            {tenantIndustry
+              ? viewingAs
+                ? `${orgName} works in ${tenantIndustry.label}. You're viewing ${industry?.label} for yourself.`
+                : `${orgName}'s industry`
+              : `Not set for ${orgName} yet${canSetIndustryForOrg ? "" : " — an admin can set it"}.`}
+          </div>
+          {(viewingAs || canMakeOrgIndustry) && (
+            <>
+              {viewingAs && tenantIndustry && (
+                <DropdownMenuItem
+                  onClick={returnToOrganizationIndustry}
+                  className="flex items-center gap-2 cursor-pointer"
+                  data-testid="menu-item-use-organization-industry"
+                >
+                  <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="text-sm">Back to {tenantIndustry.label}</span>
+                </DropdownMenuItem>
+              )}
+              {canMakeOrgIndustry && (
+                <DropdownMenuItem
+                  onClick={() => setConfirmSetForOrg(true)}
+                  className="flex items-center gap-2 cursor-pointer"
+                  data-testid="menu-item-set-industry-for-org"
+                >
+                  <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="text-sm">Set {industry!.shortLabel} for everyone in {orgName}</span>
+                </DropdownMenuItem>
+              )}
+            </>
+          )}
           <DropdownMenuSeparator />
           {INDUSTRIES.map((ind) => {
             const Icon = ind.icon;
@@ -94,6 +155,7 @@ export function IndustrySelector() {
               departments, jurisdictions, integrations and default data classification —
               and re-opens the setup wizard so you can configure {pendingIndustry?.label}.
               Your agents, outcomes and data are not affected.
+              {tenantIndustry && ` Only your view changes; ${orgName} stays on ${tenantIndustry.label}.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -116,6 +178,30 @@ export function IndustrySelector() {
               data-testid="button-confirm-industry-switch"
             >
               Switch and reconfigure
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmSetForOrg} onOpenChange={(open) => { if (!open && !savingForOrg) setConfirmSetForOrg(false); }}>
+        <AlertDialogContent data-testid="dialog-confirm-set-industry-for-org">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Set {industry?.label} for everyone in {orgName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {tenantIndustry ? `This replaces ${tenantIndustry.label}. ` : ""}
+              It becomes the default industry for everyone in {orgName}, for Astra, presets,
+              design-time checks and every agent created from now on. Existing agents keep
+              theirs. People can still view another industry for themselves. The change is audited.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={savingForOrg} data-testid="button-cancel-set-industry-for-org">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={savingForOrg}
+              onClick={(e) => { e.preventDefault(); void handleSetForOrg(); }}
+              data-testid="button-confirm-set-industry-for-org"
+            >
+              {savingForOrg ? "Saving…" : `Set for ${orgName}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
