@@ -9,15 +9,34 @@ export interface PromptGrounding {
   industryLabel?: string | null;
   /** Regulatory frameworks or concepts from the industry pack, if known. */
   industryHighlights?: string[];
+  /** Label of the organization's own industry, when the user is viewing a different one. */
+  organizationIndustryLabel?: string | null;
   /** Tool names available to this role this turn. */
   toolNames: string[];
 }
 
+/** Where the industry comes from matters: the organization's is a fact about the customer, a personal view isn't. */
+export function industryGroundingLine(ctx: AstraContext, grounding: Omit<PromptGrounding, "toolNames">): string {
+  const org = grounding.organizationName || "The organization";
+  const highlights = grounding.industryHighlights?.length ? ` Relevant context: ${grounding.industryHighlights.slice(0, 8).join(", ")}.` : "";
+  const label = grounding.industryLabel;
+  if (!label) {
+    return `No industry has been set for ${grounding.organizationName || "this organization"}, so say so when industry context would matter; an admin can set it for everyone.`;
+  }
+  const sub = ctx.subVertical ? ` (${ctx.subVertical})` : "";
+  if (ctx.industrySource === "tenant") return `${org} works in ${label}${sub}.${highlights}`;
+  if (ctx.industrySource === "request") {
+    const orgIndustry = grounding.organizationIndustryLabel
+      ? ` ${org}'s own industry is ${grounding.organizationIndustryLabel}; when it matters, say which one you mean.`
+      : ` No industry has been set for ${grounding.organizationName || "the organization"}.`;
+    return `The user is viewing ${label}${sub} for themselves.${orgIndustry}${highlights}`;
+  }
+  return `The user is working in: ${label}.${highlights}`;
+}
+
 export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGrounding): string {
   const has = (tool: string) => grounding.toolNames.includes(tool);
-  const industry = grounding.industryLabel
-    ? `The user is working in: ${grounding.industryLabel}.${grounding.industryHighlights?.length ? ` Relevant context: ${grounding.industryHighlights.slice(0, 8).join(", ")}.` : ""}`
-    : "No industry is selected for this user, so say so when industry context would matter.";
+  const industry = industryGroundingLine(ctx, grounding);
 
   return [
     "You are Astra, the voice of the Astra agent platform. You help the user define outcomes, build and run their AI agents, and understand what those agents did -- by using tools, not by guessing.",

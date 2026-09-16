@@ -17,8 +17,13 @@ export interface AstraContext {
   orgId: string;
   userId: string | null;
   role: RoleId;
-  /** Industry the user has selected in the client, if any. Not yet stored on the tenant. */
+  /** The industry in effect: the organization's, or one the user is viewing for themselves. */
   industryId?: string | null;
+  subVertical?: string | null;
+  /** "tenant": the organization's industry; "request": a personal view that differs from it; "none": neither is set. */
+  industrySource?: "tenant" | "request" | "none";
+  /** The organization's own industry, when it has one (differs from industryId only for a personal view). */
+  organizationIndustryId?: string | null;
 }
 
 // ── Proof strip ─────────────────────────────────────────────────────────────

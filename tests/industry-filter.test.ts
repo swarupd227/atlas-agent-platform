@@ -20,7 +20,12 @@ describe("resolveIndustrySelection", () => {
 
   it("lets an explicit request win, and drops the organization's sub-vertical when the industry differs", () => {
     expect(resolveIndustrySelection({ requested: "healthcare", tenantIndustryId: "insurance", tenantSubVertical: "life" })).toEqual({ industryId: "healthcare", subVertical: null, source: "request" });
-    expect(resolveIndustrySelection({ requested: "Insurance", tenantIndustryId: "insurance", tenantSubVertical: "life" })).toEqual({ industryId: "Insurance", subVertical: "life", source: "request" });
+    expect(resolveIndustrySelection({ requested: "healthcare", requestedSubVertical: "hospital" })).toEqual({ industryId: "healthcare", subVertical: "hospital", source: "request" });
+  });
+
+  it("treats a request for the organization's own industry as the organization's", () => {
+    expect(resolveIndustrySelection({ requested: "Insurance", tenantIndustryId: "insurance", tenantSubVertical: "life" })).toEqual({ industryId: "insurance", subVertical: "life", source: "tenant" });
+    expect(resolveIndustrySelection({ requested: "insurance", requestedSubVertical: "p&c", tenantIndustryId: "insurance", tenantSubVertical: "life" })).toMatchObject({ subVertical: "p&c", source: "tenant" });
   });
 
   it("says none when neither is set", () => {

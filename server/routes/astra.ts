@@ -15,6 +15,7 @@ import { llmInvokeRateLimiter } from "../rate-limits";
 import { storage } from "../storage";
 import { AstraBusyError, AstraNotFoundError, resolveAction, runTurn } from "../astra/engine";
 import { getAstraRuntime } from "../astra/wiring";
+import { getTenantIndustry, resolveIndustry } from "../industry-context";
 import type { AstraContext, AstraEvent } from "../astra/types";
 
 const router = Router();
@@ -38,10 +39,20 @@ async function requireAstraEnabled(_req: Request, res: Response, next: NextFunct
 
 router.use("/api/astra", requireAstraEnabled);
 
-function callerContext(req: Request, industryId?: string | null): AstraContext | null {
+async function callerContext(req: Request, requestedIndustryId?: string | null): Promise<AstraContext | null> {
   const orgId = getOrgId(req) ?? getDefaultOrgId();
   if (!orgId) return null;
-  return { orgId, userId: req.authUser?.userId ?? null, role: getRequestRole(req), industryId: industryId ?? null };
+  // The organization's industry is the default; the browser's value only counts as a personal view.
+  const [selection, tenant] = await Promise.all([resolveIndustry(req, requestedIndustryId), getTenantIndustry(orgId)]);
+  return {
+    orgId,
+    userId: req.authUser?.userId ?? null,
+    role: getRequestRole(req),
+    industryId: selection.industryId,
+    subVertical: selection.subVertical,
+    industrySource: selection.source,
+    organizationIndustryId: tenant.industryId,
+  };
 }
 
 /** SSE writer with a heartbeat, so Azure's idle timeout doesn't cut a long turn. */
@@ -70,7 +81,7 @@ router.get("/api/astra/status", checkPermission("use_astra"), (_req, res) => {
 });
 
 router.get("/api/astra/threads", checkPermission("use_astra"), async (req, res) => {
-  const ctx = callerContext(req);
+  const ctx = await callerContext(req);
   if (!ctx) return res.status(403).json({ message: "No organization context." });
   const { store } = getAstraRuntime();
   res.json(await store.listThreads(ctx.orgId, ctx.userId));
@@ -79,7 +90,7 @@ router.get("/api/astra/threads", checkPermission("use_astra"), async (req, res) 
 const createThreadSchema = z.object({ title: z.string().max(200).optional() });
 
 router.post("/api/astra/threads", checkPermission("use_astra"), async (req, res) => {
-  const ctx = callerContext(req);
+  const ctx = await callerContext(req);
   if (!ctx) return res.status(403).json({ message: "No organization context." });
   const parsed = createThreadSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ message: "Invalid request", errors: parsed.error.issues });
@@ -88,7 +99,7 @@ router.post("/api/astra/threads", checkPermission("use_astra"), async (req, res)
 });
 
 router.get("/api/astra/threads/:id", checkPermission("use_astra"), async (req, res) => {
-  const ctx = callerContext(req);
+  const ctx = await callerContext(req);
   if (!ctx) return res.status(403).json({ message: "No organization context." });
   const { store } = getAstraRuntime();
   const found = await store.getThreadForCaller(String(req.params.id), ctx.orgId, ctx.userId);
@@ -104,7 +115,7 @@ const sendMessageSchema = z.object({
 router.post("/api/astra/threads/:id/messages/stream", llmInvokeRateLimiter, checkPermission("use_astra"), async (req, res) => {
   const parsed = sendMessageSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ message: "Invalid request", errors: parsed.error.issues });
-  const ctx = callerContext(req, parsed.data.industryId);
+  const ctx = await callerContext(req, parsed.data.industryId);
   if (!ctx) return res.status(403).json({ message: "No organization context." });
   const threadId = String(req.params.id);
   const { deps, store } = getAstraRuntime();
@@ -132,7 +143,7 @@ const decisionSchema = z.object({ decision: z.enum(["confirm", "cancel"]) });
 router.post("/api/astra/threads/:id/actions/:actionId/stream", llmInvokeRateLimiter, checkPermission("use_astra"), async (req, res) => {
   const parsed = decisionSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ message: "Invalid request", errors: parsed.error.issues });
-  const ctx = callerContext(req, typeof req.body?.industryId === "string" ? req.body.industryId : null);
+  const ctx = await callerContext(req, typeof req.body?.industryId === "string" ? req.body.industryId : null);
   if (!ctx) return res.status(403).json({ message: "No organization context." });
   const threadId = String(req.params.id);
   const { deps, store } = getAstraRuntime();

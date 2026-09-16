@@ -43,6 +43,7 @@ export function filterByIndustry<T>(rows: T[], wanted: string | null | undefined
   return rows.filter((row) => industryMatches(pick(row), wanted));
 }
 
+/** "request": the caller asked for an industry other than the organization's (a personal view). */
 export type IndustrySource = "request" | "tenant" | "none";
 
 export interface IndustrySelection {
@@ -64,13 +65,12 @@ export function resolveIndustrySelection(input: {
 }): IndustrySelection {
   const requested = input.requested?.trim() || null;
   const tenant = input.tenantIndustryId?.trim() || null;
-  if (requested) {
-    const sameAsTenant = !!tenant && norm(requested) === norm(tenant);
-    return {
-      industryId: requested,
-      subVertical: input.requestedSubVertical?.trim() || (sameAsTenant ? input.tenantSubVertical ?? null : null),
-      source: "request",
-    };
+  if (requested && !(tenant && norm(requested) === norm(tenant))) {
+    return { industryId: requested, subVertical: input.requestedSubVertical?.trim() || null, source: "request" };
+  }
+  if (requested && tenant) {
+    // Asking for the organization's own industry isn't an override.
+    return { industryId: tenant, subVertical: input.requestedSubVertical?.trim() || input.tenantSubVertical || null, source: "tenant" };
   }
   if (tenant) return { industryId: tenant, subVertical: input.tenantSubVertical ?? null, source: "tenant" };
   return { industryId: null, subVertical: null, source: "none" };

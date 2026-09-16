@@ -71,14 +71,18 @@ export function getAstraRuntime(): { deps: EngineDeps; store: DbThreadStore } {
     model: ASTRA_MODEL,
     rateLimit: new RateLimiter(30),
     grounding: async (ctx: AstraContext) => {
-      const [organizationName, industry] = await Promise.all([
+      const personalView = ctx.industrySource === "request" && !!ctx.organizationIndustryId;
+      const [organizationName, industry, orgIndustry] = await Promise.all([
         services.getOrganizationName(ctx.orgId),
         services.getIndustryContext(ctx.industryId ?? null),
+        personalView ? services.getIndustryContext(ctx.organizationIndustryId) : Promise.resolve(null),
       ]);
+      const labelOf = (c: typeof industry | null) => (!c || !c.selected ? null : c.pack ? c.label : String(c.industryId));
       return {
         organizationName,
-        industryLabel: industry.selected && industry.pack ? industry.label : industry.selected ? String(industry.industryId) : null,
+        industryLabel: labelOf(industry),
         industryHighlights: industry.selected && industry.pack ? industry.regulatoryFrameworks : undefined,
+        organizationIndustryLabel: labelOf(orgIndustry),
       };
     },
   };
