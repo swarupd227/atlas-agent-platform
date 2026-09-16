@@ -183,6 +183,9 @@ export function useThread(threadId: string | null, options: { industryId?: strin
           // Resync with what the server saved (the user message, the answer, the status).
           await load(id, true);
           queryClient.invalidateQueries({ queryKey: ["/api/astra/threads"] });
+          // A turn may have decided something or created an outcome.
+          queryClient.invalidateQueries({ queryKey: ["/api/astra/needs-you"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/astra/home"] });
         }
       }
     },

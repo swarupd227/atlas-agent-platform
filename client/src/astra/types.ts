@@ -89,6 +89,28 @@ export interface LiveStep {
   preview?: string;
 }
 
+/** GET /api/astra/needs-you (services.needsMe): the same data list_needs_me reads. */
+export interface NeedsYouItem {
+  id: string;
+  source: string;
+  category: string;
+  sourceId: string;
+  title: string;
+  context: string;
+  urgency: "urgent" | "today" | "this_week";
+  canDecideHere: boolean;
+  requiredReviewerRole: string | null;
+  elsewhere: { href: string; page: string; reason: string } | null;
+}
+
+export interface NeedsYou {
+  needsDecisionCount: number;
+  fyiCount: number;
+  completedTodayCount: number;
+  needsDecision: NeedsYouItem[];
+  fyi: NeedsYouItem[];
+}
+
 /** GET /api/astra/home (server/astra/home.ts). */
 export interface HomeRow {
   id: "needs" | "agents" | "outcomes" | "connectors" | "industry";

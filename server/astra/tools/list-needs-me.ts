@@ -22,6 +22,8 @@ interface Item {
   createdAt: string | null;
   approvalKind: string | null;
   canDecideHere: boolean;
+  requiredReviewerRole: string | null;
+  elsewhere: { href: string; page: string; reason: string } | null;
 }
 
 const compact = (i: Item) => ({
@@ -30,6 +32,7 @@ const compact = (i: Item) => ({
   urgency: i.urgency.replace(/_/g, " "),
   ...(i.businessImpact ? { impact: i.businessImpact } : {}),
   ...(i.source === "approval" ? { approvalId: i.sourceId, canDecideHere: i.canDecideHere } : {}),
+  ...(i.elsewhere ? { decidedOn: i.elsewhere.page, why: i.elsewhere.reason } : {}),
   createdAt: i.createdAt,
 });
 

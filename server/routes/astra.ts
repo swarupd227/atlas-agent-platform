@@ -169,6 +169,18 @@ router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => 
   );
 });
 
+/** Exactly what list_needs_me reads, so the rail and the conversation agree. */
+router.get("/api/astra/needs-you", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  try {
+    res.json(await getAstraRuntime().deps.services.needsMe(ctx.orgId, ctx.role));
+  } catch (err) {
+    console.error("[astra] needs-you failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ message: "Couldn't load what needs you." });
+  }
+});
+
 const sendMessageSchema = z.object({
   text: z.string().trim().min(1).max(8000),
   industryId: z.string().max(100).nullable().optional(),

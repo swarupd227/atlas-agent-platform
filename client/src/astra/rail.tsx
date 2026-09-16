@@ -1,9 +1,11 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Inbox, Plus } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getApiHeaders } from "@/lib/queryClient";
-import type { ThreadSummary } from "./types";
+import type { NeedsYou, NeedsYouItem, ThreadSummary } from "./types";
+
+const NEEDS_YOU_SHOWN = 6;
 
 async function getOptional<T>(url: string): Promise<T | null> {
   // The rail is secondary: a role without access to a list simply doesn't see it.
@@ -23,6 +25,48 @@ function Section({ title, children, action }: { title: string; children: React.R
   );
 }
 
+const URGENCY_DOT: Record<string, string> = {
+  urgent: "bg-[hsl(var(--astra-fail))]",
+  today: "bg-primary",
+  this_week: "bg-muted-foreground/50",
+};
+
+/** Decide here when Astra can finish it; otherwise say where it's decided and why. */
+function NeedsYouRow({ item, onAskAbout }: { item: NeedsYouItem; onAskAbout: (text: string) => void }) {
+  return (
+    <li className="rounded px-2 py-1.5 hover:bg-accent/40" data-testid="astra-needs-you-item">
+      <div className="flex items-start gap-2">
+        <span aria-hidden className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${URGENCY_DOT[item.urgency] ?? URGENCY_DOT.this_week}`} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm" title={item.title}>{item.title}</div>
+          {item.canDecideHere ? (
+            <button
+              type="button"
+              onClick={() => onAskAbout(`Show me "${item.title}" (approval ${item.sourceId}) so I can approve or reject it.`)}
+              className="mt-0.5 rounded text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              data-testid="astra-needs-you-decide"
+            >
+              Decide here
+            </button>
+          ) : item.elsewhere ? (
+            <Link
+              href={`~${item.elsewhere.href}`}
+              className="mt-0.5 flex items-start gap-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              data-testid="astra-needs-you-elsewhere"
+            >
+              <span className="min-w-0">
+                Open in {item.elsewhere.page}
+                <span className="block text-muted-foreground/80">{item.elsewhere.reason}</span>
+              </span>
+              <ArrowUpRight className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </li>
+  );
+}
+
 export function Rail({
   threads,
   activeId,
@@ -36,10 +80,15 @@ export function Rail({
   onNew: () => void;
   onAskAbout: (text: string) => void;
 }) {
-  const { data: approvals } = useQuery<any[] | null>({
-    queryKey: ["astra-rail", "/api/approvals?status=pending"],
-    queryFn: () => getOptional("/api/approvals?status=pending"),
+  const { data: needsYou, isError: needsYouFailed } = useQuery<NeedsYou | null>({
+    queryKey: ["/api/astra/needs-you"],
+    queryFn: async () => {
+      const res = await fetch("/api/astra/needs-you", { credentials: "include", headers: getApiHeaders() });
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json();
+    },
     refetchInterval: 60_000,
+    retry: false,
   });
   const { data: agents } = useQuery<any[] | null>({
     queryKey: ["astra-rail", "/api/agents"],
@@ -47,8 +96,9 @@ export function Rail({
     staleTime: 60_000,
   });
 
-  const waitingThreads = threads.filter((t) => t.status === "awaiting_confirmation").length;
-  const pendingApprovals = Array.isArray(approvals) ? approvals.length : 0;
+  const waitingThreads = threads.filter((t) => t.status === "awaiting_confirmation");
+  const items = needsYou?.needsDecision ?? [];
+  const needsYouTotal = waitingThreads.length + (needsYou?.needsDecisionCount ?? 0);
   const liveAgents = Array.isArray(agents)
     ? agents.filter((a) => a.status === "active" || a.status === "deployed").slice(0, 8)
     : [];
@@ -70,12 +120,15 @@ export function Rail({
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-2 pb-4">
-        {(waitingThreads > 0 || pendingApprovals > 0) && (
-          <Section title="Needs you">
-            <ul className="space-y-0.5">
-              {threads
-                .filter((t) => t.status === "awaiting_confirmation")
-                .map((t) => (
+        <Section
+          title="Needs you"
+          action={<span className="font-mono text-[11px] tabular-nums text-muted-foreground" data-testid="astra-needs-you-count">{needsYouTotal}</span>}
+        >
+          {needsYouTotal === 0 ? (
+            <p className="px-2 text-xs text-muted-foreground">{needsYouFailed ? "Couldn't load approvals and alerts." : "Nothing waiting on you."}</p>
+          ) : (
+            <ul className="space-y-0.5" data-testid="astra-needs-you">
+              {waitingThreads.map((t) => (
                   <li key={t.id}>
                     <button
                       type="button"
@@ -87,21 +140,22 @@ export function Rail({
                     </button>
                   </li>
                 ))}
-              {pendingApprovals > 0 && (
+              {items.slice(0, NEEDS_YOU_SHOWN).map((item) => (
+                <NeedsYouRow key={item.id} item={item} onAskAbout={onAskAbout} />
+              ))}
+              {(needsYou?.needsDecisionCount ?? 0) > NEEDS_YOU_SHOWN && (
                 <li>
                   <Link
                     href="~/my-actions"
-                    className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
-                    <Inbox className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="flex-1 truncate">Approvals elsewhere</span>
-                    <span className="font-mono text-xs tabular-nums text-muted-foreground">{pendingApprovals}</span>
+                    All {needsYou!.needsDecisionCount} in My Actions <ArrowUpRight className="h-3 w-3" aria-hidden />
                   </Link>
                 </li>
               )}
             </ul>
-          </Section>
-        )}
+          )}
+        </Section>
 
         <Section title="Conversations">
           {threads.length === 0 ? (

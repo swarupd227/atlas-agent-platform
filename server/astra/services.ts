@@ -26,6 +26,7 @@ import { assessProposalBindings, resolveBindingServer } from "../team-bindings";
 import { flattenGraphToSteps, isUntouchedStarterFlow } from "@shared/process-flow";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 import { similarOutcomeNames } from "./outcome-names";
+import { decisionRoute } from "./needs-you";
 import { createOutcomeFromProposal, prepareOutcomeFromProposal, type OutcomeProposalBody } from "../outcome-create";
 import type { AstraServices } from "./types";
 
@@ -429,20 +430,31 @@ async function createOutcome(orgId: string, actor: string, body: OutcomeProposal
 
 // ── list_needs_me ────────────────────────────────────────────────────────────
 
-/** My Actions for the organization, with whether this role can decide each approval in the conversation. */
+/**
+ * My Actions for the organization, with where this role decides each item: in
+ * the conversation, or on which page and why. The rail and list_needs_me both
+ * read this, so they can't disagree.
+ */
 async function needsMe(orgId: string, role: RoleId) {
   const rows = await loadMyActionsRows(orgId);
   const built = buildMyActions(rows);
   const approvalsById = new Map(rows.approvals.map((a) => [a.id, a]));
-  const decidable = new Set<string>(CONVERSATION_DECIDABLE_OBJECT_TYPES);
   const annotate = (item: (typeof built.needsDecision)[number]) => {
     const approval = item.source === "approval" ? approvalsById.get(item.sourceId) : undefined;
+    const route = decisionRoute({
+      source: item.source,
+      category: item.category,
+      sourceId: item.sourceId,
+      approval: approval ? { status: approval.status, objectType: approval.objectType, requiredReviewerRole: approval.requiredReviewerRole ?? null } : null,
+      decidableKinds: CONVERSATION_DECIDABLE_OBJECT_TYPES,
+      allowed: approval ? whoMayDecide(role, approval) : null,
+    });
     return {
       ...item,
       // An approval's "impact" line is derived from the requester's risk score, not measured.
       businessImpact: item.source === "approval" ? null : item.businessImpact,
       approvalKind: approval?.objectType ?? null,
-      canDecideHere: !!approval && approval.status === "pending" && decidable.has(approval.objectType) && whoMayDecide(role, approval).allowed,
+      ...route,
     };
   };
   return {

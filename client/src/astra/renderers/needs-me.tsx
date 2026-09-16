@@ -21,6 +21,11 @@ function Items({ items }: { items: any[] }) {
                 {i.businessImpact && <span>{i.businessImpact}</span>}
                 {i.canDecideHere && <span className="text-foreground">can decide here</span>}
               </div>
+              {!i.canDecideHere && i.elsewhere && (
+                <a href={i.elsewhere.href} className="mt-1 block text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+                  Decided in {i.elsewhere.page}: {i.elsewhere.reason}
+                </a>
+              )}
             </div>
           </div>
         </li>
