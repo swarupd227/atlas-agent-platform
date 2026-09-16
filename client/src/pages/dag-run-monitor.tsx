@@ -176,6 +176,29 @@ export default function DagRunMonitor() {
    */
   const OUTPUT_NOISE_KEYS = new Set(["selectedAgentName", "managerReasoning", "__meta"]);
 
+  /**
+   * A state-key value that's itself a flat bag of prose (every value a
+   * string, e.g. a research step's { request, market_analysis, ... }) reads
+   * as escaped-newline JSON under plain JSON.stringify. Render it the same
+   * "## key\n\ntext" way multi-entry output already is below, instead of
+   * falling back to JSON for anything that isn't a bare string.
+   */
+  function formatOutputValue(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (
+      value != null &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.values(value).length > 0 &&
+      Object.values(value).every((v) => typeof v === "string")
+    ) {
+      return Object.entries(value as Record<string, string>)
+        .map(([k, v]) => `## ${k}\n\n${v}`)
+        .join("\n\n");
+    }
+    return JSON.stringify(value, null, 2);
+  }
+
   function outputEntries(node: DagWaveNodeResult): Array<{ key: string; text: string }> {
     const out = node.output;
     if (!out || typeof out !== "object") return [];
@@ -184,7 +207,7 @@ export default function DagRunMonitor() {
       .filter(([k, v]) => !OUTPUT_NOISE_KEYS.has(k) && !k.endsWith(FILES_KEY_SUFFIX) && v != null && v !== "")
       .map(([key, value]) => ({
         key,
-        text: typeof value === "string" ? value : JSON.stringify(value, null, 2),
+        text: formatOutputValue(value),
       }));
   }
 
