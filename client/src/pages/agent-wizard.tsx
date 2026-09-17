@@ -6080,6 +6080,9 @@ interface GovernanceRequirement {
 
 interface DesignTimeCheckResult {
   passed: boolean;
+  /** False when no policy requirements are known for the industry: nothing was checked. */
+  checked?: boolean;
+  message?: string;
   requirements: GovernanceRequirement[];
 }
 
@@ -6198,6 +6201,12 @@ function StepReview({
             <span className="text-sm text-muted-foreground">Checking governance readiness...</span>
           </CardContent>
         </Card>
+      )}
+
+      {designTimeCheck && designTimeCheck.checked === false && (
+        <p className="text-xs text-muted-foreground" data-testid="text-governance-not-checked">
+          {designTimeCheck.message ?? "No policy requirements are known for this industry, so none were checked."}
+        </p>
       )}
 
       {designTimeCheck && designTimeCheck.requirements.length > 0 && (

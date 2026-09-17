@@ -7,6 +7,7 @@ import { jobEvents } from "../worker";
 import { handleZodError } from "./helpers";
 import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
 import { checkPermission } from "../permissions";
+import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-requirements";
 
 const router = Router();
 
@@ -172,38 +173,6 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
     }
   });
 
-  const INDUSTRY_POLICY_REQUIREMENTS: Record<string, Array<{ domain: string; regulation: string; description: string }>> = {
-    financial_services: [
-      { domain: "data_handling", regulation: "PCI-DSS", description: "Payment Card Industry Data Security Standard data handling policy" },
-      { domain: "data_handling", regulation: "GLBA", description: "Gramm-Leach-Bliley Act customer data privacy policy" },
-      { domain: "data_handling", regulation: "BSA/AML", description: "Bank Secrecy Act / Anti-Money Laundering data retention policy" },
-      { domain: "tool_permissions", regulation: "SOX", description: "Sarbanes-Oxley financial reporting controls" },
-      { domain: "output_control", regulation: "REG_DD", description: "Truth in Savings disclosure output controls" },
-    ],
-    healthcare: [
-      { domain: "data_handling", regulation: "HIPAA", description: "Health Insurance Portability and Accountability Act PHI handling policy" },
-      { domain: "data_handling", regulation: "HITECH", description: "HITECH Act breach notification and data protection policy" },
-      { domain: "output_control", regulation: "HIPAA", description: "HIPAA minimum necessary standard output filtering" },
-    ],
-    insurance: [
-      { domain: "data_handling", regulation: "NAIC", description: "NAIC model regulation data governance policy" },
-      { domain: "data_handling", regulation: "GDPR", description: "GDPR policyholder data processing policy" },
-      { domain: "output_control", regulation: "NAIC", description: "NAIC consumer communication compliance controls" },
-    ],
-    manufacturing: [
-      { domain: "tool_permissions", regulation: "OSHA", description: "OSHA safety interlock tool access controls" },
-      { domain: "data_handling", regulation: "ITAR", description: "ITAR export-controlled data handling policy" },
-    ],
-    retail: [
-      { domain: "data_handling", regulation: "PCI-DSS", description: "PCI-DSS payment card data handling policy" },
-      { domain: "data_handling", regulation: "CCPA", description: "CCPA consumer data privacy policy" },
-    ],
-    technology_saas: [
-      { domain: "data_handling", regulation: "SOC2", description: "SOC 2 Type II data handling and security controls" },
-      { domain: "data_handling", regulation: "GDPR", description: "GDPR data processing and residency policy" },
-      { domain: "output_control", regulation: "CCPA", description: "CCPA consumer data output controls" },
-    ],
-  };
 
   router.post("/api/governance/design-time-check", async (req, res) => {
     try {
@@ -213,39 +182,9 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
       });
       const { industryId, riskTier } = schema.parse(req.body);
 
-      const requirements = INDUSTRY_POLICY_REQUIREMENTS[industryId];
-      if (!requirements || requirements.length === 0) {
-        return res.json({ passed: true, requirements: [] });
-      }
-
-      const activePolicies = await storage.getPolicies(getOrgId(req));
-      const active = activePolicies.filter(p => p.status === "active");
-
-      const results = requirements.map(req => {
-        const isHighRisk = riskTier === "HIGH" || riskTier === "CRITICAL";
-        const matchingPolicy = active.find(p => {
-          const domainMatch = p.domain === req.domain;
-          if (!domainMatch) return false;
-          const regulationLower = req.regulation.toLowerCase().split("/")[0];
-          const nameOrDescMatch =
-            (p.name || "").toLowerCase().includes(regulationLower) ||
-            (p.description || "").toLowerCase().includes(regulationLower);
-          return nameOrDescMatch;
-        });
-
-        return {
-          domain: req.domain,
-          regulation: req.regulation,
-          description: req.description,
-          status: matchingPolicy ? "satisfied" as const : "missing" as const,
-          matchingPolicy: matchingPolicy?.name,
-          severity: isHighRisk ? "critical" : "warning",
-        };
-      });
-
-      const passed = results.every(r => r.status === "satisfied");
-
-      res.json({ passed, requirements: results });
+      const requirements = policyRequirementsFor(industryId);
+      const active = requirements.length ? (await storage.getPolicies(getOrgId(req))).filter((p) => p.status === "active") : [];
+      res.json(checkPolicyRequirements(industryId, requirements, active, riskTier));
     } catch (e: any) {
       if (e instanceof ZodError) {
         return res.status(400).json({ message: "Validation error", errors: e.errors });
