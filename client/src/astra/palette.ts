@@ -3,13 +3,14 @@
  *
  * The first row always sends what was typed to Astra as a message -- no intent
  * parsing. Then conversations and library items to go to, then suggested prompts.
- * Everything is filtered locally; the palette never searches per keystroke.
+ * Library items come from the server's search once typing pauses (sections are capped
+ * at 50, so a local filter would miss most agents); this ranks what comes back.
  */
 
 export type PaletteRow =
   | { kind: "ask"; key: string; label: string; text: string }
   | { kind: "conversation"; key: string; label: string; detail: string | null; href: string }
-  | { kind: "item"; key: string; label: string; detail: string | null; section: string; href: string; inShell: boolean }
+  | { kind: "item"; key: string; label: string; detail: string | null; section: string; href: string; inShell: boolean; duplicate?: boolean }
   | { kind: "prompt"; key: string; label: string; text: string };
 
 export interface PaletteSources {
@@ -53,8 +54,12 @@ export function buildPaletteRows(query: string, sources: PaletteSources): Palett
     const items = sources.library
       .filter((s) => s.id !== "conversations")
       .flatMap((s) => s.items.map((i) => ({ ...i, section: s.label })));
-    for (const i of best(items, (i) => i.name, q, PER_GROUP * 2)) {
-      rows.push({ kind: "item", key: `i:${i.section}:${i.id}`, label: i.name, detail: i.detail, section: i.section, href: i.href, inShell: !!i.inShell });
+    const picked = best(items, (i) => i.name, q, PER_GROUP * 2);
+    const count = new Map<string, number>();
+    for (const i of picked) count.set(`${i.section}:${i.name.toLowerCase()}`, (count.get(`${i.section}:${i.name.toLowerCase()}`) ?? 0) + 1);
+    for (const i of picked) {
+      const duplicate = (count.get(`${i.section}:${i.name.toLowerCase()}`) ?? 0) > 1;
+      rows.push({ kind: "item", key: `i:${i.section}:${i.id}`, label: i.name, detail: i.detail, section: i.section, href: i.href, inShell: !!i.inShell, ...(duplicate ? { duplicate } : {}) });
     }
   }
 

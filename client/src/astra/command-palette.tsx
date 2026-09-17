@@ -48,16 +48,25 @@ export function AstraCommandPalette({
     if (!open) setQuery("");
   }, [open]);
 
+  // The Library caps each section at 50, so matching has to happen on the server:
+  // ask once typing pauses, not on every keystroke.
+  const [searched, setSearched] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearched(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
   const { data: library } = useQuery<Library>({
-    queryKey: ["/api/astra/library", ""],
+    queryKey: ["/api/astra/library", searched],
     queryFn: async () => {
-      const res = await fetch("/api/astra/library", { credentials: "include", headers: getApiHeaders() });
+      const res = await fetch(`/api/astra/library?q=${encodeURIComponent(searched)}`, { credentials: "include", headers: getApiHeaders() });
       if (!res.ok) throw new Error(String(res.status));
       return res.json();
     },
-    enabled: open,
+    enabled: open && searched.length > 0,
     staleTime: 60_000,
     retry: false,
+    placeholderData: (previous) => previous,
   });
 
   const rows = useMemo(
@@ -102,6 +111,7 @@ export function AstraCommandPalette({
                         <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                       )}
                       <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                      {row.kind === "item" && row.duplicate && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{row.key.split(":").pop()!.slice(0, 8)}</span>}
                       {row.kind === "item" && <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{row.section}</span>}
                       {row.kind === "conversation" && row.detail && <span className="shrink-0 text-xs text-primary">{row.detail}</span>}
                       {row.kind === "ask" && <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}

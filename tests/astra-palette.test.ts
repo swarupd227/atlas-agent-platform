@@ -35,6 +35,12 @@ describe("buildPaletteRows", () => {
     expect(rows.map((r) => r.kind)).toEqual(["conversation", "conversation", "prompt", "prompt"]);
   });
 
+  it("marks same-named items in a section so they can be told apart", () => {
+    const lib = [{ id: "teams", label: "Teams", items: [{ id: "t-aaaa", name: "Rental Orchestrator", detail: null, href: "/agents/t-aaaa" }, { id: "t-bbbb", name: "Rental Orchestrator", detail: null, href: "/agents/t-bbbb" }, { id: "t-cccc", name: "Rental Billing", detail: null, href: "/agents/t-cccc" }] }];
+    const items = buildPaletteRows("rental", { ...sources, library: lib }).filter((r) => r.kind === "item") as Array<{ label: string; duplicate?: boolean }>;
+    expect(items.map((r) => [r.label, !!r.duplicate])).toEqual([["Rental Orchestrator", true], ["Rental Orchestrator", true], ["Rental Billing", false]]);
+  });
+
   it("works before the library has loaded", () => {
     expect(buildPaletteRows("invoice", { ...sources, library: null }).map((r) => r.kind)).toEqual(["ask"]);
   });
