@@ -40,6 +40,8 @@ export interface IntegrationDef {
   capabilities: string[];
   /** Indicates whether connecting this integration requires advanced admin steps (key-pair auth, tenant config, etc.) */
   setupComplexity?: "standard" | "advanced";
+  /** Industries this integration is specific to. Absent: it applies to every industry. */
+  industries?: string[];
 }
 
 export const INTEGRATION_REGISTRY: IntegrationDef[] = [

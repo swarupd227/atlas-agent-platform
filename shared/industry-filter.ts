@@ -44,6 +44,23 @@ export function filterByIndustry<T>(rows: T[], wanted: string | null | undefined
 }
 
 /** "request": the caller asked for an industry other than the organization's (a personal view). */
+/**
+ * Filter rows tagged with several industries (or none). A row with no industries
+ * applies to every industry and is always kept.
+ */
+export function filterByIndustries<T>(rows: T[], wanted: string | null | undefined, pick: (row: T) => string[] | null | undefined): T[] {
+  if (!norm(wanted) || NO_FILTER_INDUSTRY_IDS.includes(norm(wanted))) return rows;
+  return rows.filter((row) => {
+    const tags = pick(row);
+    return !tags?.length || tags.some((t) => industryMatches(t, wanted));
+  });
+}
+
+/** An optional ?industryId= query value. */
+export function industryQuery(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 export type IndustrySource = "request" | "tenant" | "none";
 
 export interface IndustrySelection {

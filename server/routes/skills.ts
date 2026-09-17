@@ -23,6 +23,7 @@ import {
 
 import { callClaude, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
 import * as yaml from "js-yaml";
+import { filterByIndustry, industryQuery } from "@shared/industry-filter";
 
 const router = Router();
 
@@ -1144,7 +1145,8 @@ Return ONLY a valid JSON object with a "skills" array.`,
   // Skills CRUD
   router.get("/api/skills", async (req, res) => {
     const allSkills = await storage.getSkills(getOrgId(req));
-    res.json(allSkills);
+    // Optional ?industryId=: that industry's skills plus the cross-industry ones.
+    res.json(filterByIndustry(allSkills, industryQuery(req.query.industryId), (s) => s.industry));
   });
 
   router.get("/api/skills/:id", async (req, res) => {

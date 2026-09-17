@@ -108,3 +108,14 @@ describe("adopting the organization's industry in a browser", () => {
     expect(industrySourceOf(null, "insurance")).toBe("none");
   });
 });
+
+describe("catalogue filtering by ?industryId=", () => {
+  it("keeps integrations tagged to the industry and every untagged one; no parameter changes nothing", async () => {
+    const { filterByIndustries, industryQuery } = await import("../shared/industry-filter");
+    const defs = [{ id: "sap" }, { id: "epic", industries: ["healthcare"] }, { id: "dealer-dms", industries: ["equipment_dealer", "manufacturing"] }];
+    expect(filterByIndustries(defs, "manufacturing", (d) => d.industries).map((d) => d.id)).toEqual(["sap", "dealer-dms"]);
+    expect(filterByIndustries(defs, industryQuery(undefined), (d) => d.industries)).toBe(defs);
+    expect(industryQuery(["a"])).toBeNull();
+    expect(industryQuery(" insurance ")).toBe("insurance");
+  });
+});

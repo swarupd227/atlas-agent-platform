@@ -15,13 +15,15 @@ import {
   insertBlueprintSchema,
 } from "@shared/schema";
 import { callClaude, stripJsonFences, getAnthropicClient } from "../claude";
+import { filterByIndustry, industryQuery } from "@shared/industry-filter";
 
 export default function createEvaluationsRouter(industryEvalFrameworks: Record<string, any>) {
   const router = Router();
 
-  router.get("/api/agent-templates", async (_req, res) => {
+  router.get("/api/agent-templates", async (req, res) => {
     const templates = await storage.getAgentTemplates();
-    res.json(templates);
+    // Optional ?industryId=: that industry's templates plus the cross-industry ones.
+    res.json(filterByIndustry(templates, industryQuery(req.query.industryId), (t) => t.industry));
   });
 
   router.get("/api/agent-templates/:id", async (req, res) => {

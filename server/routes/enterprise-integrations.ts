@@ -11,6 +11,7 @@ import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
 import { db } from "../db";
 import { mcpServers, auditEvents, integrationConnections, agentMcpServers } from "@shared/schema";
 import { eq, and, gte, like, isNull } from "drizzle-orm";
+import { filterByIndustries, industryQuery } from "@shared/industry-filter";
 
 const router = Router();
 
@@ -49,7 +50,9 @@ router.get("/api/enterprise-integrations", async (req: Request, res: Response) =
       tokenExpiresAt: c.tokenExpiresAt,
     });
 
-    const result = INTEGRATION_REGISTRY.map((def) => {
+    // Optional ?industryId= narrows the catalogue; integrations not tagged to an industry are always included.
+    const defs = filterByIndustries(INTEGRATION_REGISTRY, industryQuery(req.query.industryId), (def) => def.industries);
+    const result = defs.map((def) => {
       const conns = (connsByType.get(def.id) ?? [])
         .slice()
         .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
