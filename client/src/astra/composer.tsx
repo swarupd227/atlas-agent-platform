@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { applyMention, duplicateNames, findMentionQuery, rankMentionables, type Mentionable } from "./mention";
+import { applyMention, duplicateNames, findMentionQuery, isCompletedMention, rankMentionables, type Mentionable } from "./mention";
 
 /** Text to add to the composer from elsewhere (a rail row); a new nonce inserts it again. */
 export interface ComposerInsert {
@@ -58,9 +58,13 @@ export function Composer({
   const mention = findMentionQuery(text, caret);
   const matches = useMemo(() => (mention ? rankMentionables(mentionables, mention.query) : []), [mention?.query, mention?.start, mentionables]);
   const dupes = useMemo(() => duplicateNames(mentionables), [mentionables]);
-  const menuOpen = !!mention && matches.length > 0 && dismissedAt !== mention.start;
+  const menuOpen = !!mention && matches.length > 0 && dismissedAt !== mention.start && !isCompletedMention(mention.query, mentionables);
 
   useEffect(() => setHighlight(0), [mention?.query, mention?.start]);
+  // Escape closes the menu for that one mention; once it's gone, a new @ opens it again.
+  useEffect(() => {
+    if (!mention) setDismissedAt(null);
+  }, [mention?.start]);
 
   const choose = (agent: Mentionable) => {
     if (!mention) return;

@@ -56,6 +56,17 @@ export function rankMentionables(agents: Mentionable[], query: string, limit = 8
     .map((x) => x.a);
 }
 
+/**
+ * A mention that is already finished: the full name of an agent followed by a
+ * space, as applyMention leaves it. The menu stays closed for it, so Enter sends
+ * the message instead of picking the same agent again.
+ */
+export function isCompletedMention(query: string, agents: Mentionable[]): boolean {
+  if (!/\s$/.test(query)) return false;
+  const name = query.trim().toLowerCase();
+  return !!name && agents.some((a) => a.name.toLowerCase() === name);
+}
+
 /** Names shared by more than one agent, which the menu disambiguates with the id. */
 export function duplicateNames(agents: Mentionable[]): Set<string> {
   const seen = new Map<string, number>();

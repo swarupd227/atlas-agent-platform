@@ -3,7 +3,7 @@
  * server resolving "@Name" to the agent.
  */
 import { describe, it, expect } from "vitest";
-import { applyMention, duplicateNames, findMentionQuery, rankMentionables } from "../client/src/astra/mention";
+import { applyMention, duplicateNames, findMentionQuery, isCompletedMention, rankMentionables } from "../client/src/astra/mention";
 import { resolveAgent } from "../server/astra/tools/run-agent";
 
 const agents = [
@@ -49,6 +49,16 @@ describe("rankMentionables", () => {
   });
 });
 
+describe("isCompletedMention", () => {
+  it("treats a full agent name followed by a space as finished, so the menu doesn't reopen on it", () => {
+    const text = "Ask @Invoice Matcher ";
+    const m = findMentionQuery(text, text.length)!;
+    expect(m.query).toBe("Invoice Matcher ");
+    expect(isCompletedMention(m.query, agents)).toBe(true);
+    expect(isCompletedMention("Invoice Matcher", agents)).toBe(false);
+    expect(isCompletedMention("Invoice ", agents)).toBe(false);
+  });
+});
 describe("run_agent resolves an @-mention", () => {
   it("strips the @ before matching the name", () => {
     const runnable = [{ id: "a2", name: "Credit Risk Scorer", description: null, ontologyTags: [] }];
