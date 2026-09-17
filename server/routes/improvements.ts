@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
 import { desc, eq } from "drizzle-orm";
 import { z, ZodError } from "zod";
@@ -1878,7 +1879,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
           const replayResult = await executePromptWithMcp(
             agent.id, "", undefined, mcpServerIds,
             originalPrompt,
-            (agent as any).industry || "technology",
+            (await resolveAgentIndustry(agent as any)) ?? undefined,
             richPrompt,
             { maxToolIterations: agent.maxToolIterations ?? 5 },
             undefined,

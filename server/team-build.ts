@@ -10,6 +10,7 @@
  */
 import { z } from "zod";
 import { storage } from "./storage";
+import { isKnownIndustry } from "@shared/industry-filter";
 import { generateOntologyEvalCases } from "./routes/helpers";
 import { resolveBindingServer } from "./team-bindings";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
@@ -398,8 +399,11 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     return lines.join("\n");
   }
 
+  // The industry the plan was built for, when it's a real one; otherwise the organization's (storage default).
+  const planIndustryId = reqIndustry && isKnownIndustry(reqIndustry) ? reqIndustry : undefined;
   const teamAgent = await storage.createAgent({
     organizationId: orgId,
+    industryId: planIndustryId,
     name: orchestrator.name,
     description: orchestrator.description,
     owner: "system",
@@ -477,6 +481,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   for (const worker of workers) {
     const workerAgent = await storage.createAgent({
       organizationId: orgId,
+      industryId: planIndustryId,
       name: worker.name,
       description: worker.description,
       owner: "system",

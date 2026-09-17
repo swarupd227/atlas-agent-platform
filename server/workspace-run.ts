@@ -22,6 +22,7 @@ import { eq, desc, and } from "drizzle-orm";
 import { db } from "./db";
 import { workspaceRuns, uploadedFiles, type WorkspaceRun } from "@shared/schema";
 import { storage } from "./storage";
+import { resolveAgentIndustry } from "./agent-industry";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { resolvePolicyBundle, buildAgentSystemPromptWithGovernance, recomputeOutcomeKpis } from "./routes/helpers";
 import { getProvider, completeWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage } from "./llm-provider";
@@ -361,7 +362,7 @@ export async function startWorkspaceRun(params: {
     totalCostUsd: 0,
     totalTokens: { prompt: 0, completion: 0, total: 0 },
     mcpServerIds,
-    industry: (agent as any).industry || undefined,
+    industry: (await resolveAgentIndustry(agent as any)) ?? undefined,
     modelName: agent.modelName || "gpt-4.1",
     maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
     skillAllowlist,

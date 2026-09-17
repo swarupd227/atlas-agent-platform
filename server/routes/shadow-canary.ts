@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
+import { resolveAgentIndustry } from "../agent-industry";
 import { getOrgId } from "../auth";
 import { getRequestRole } from "../permissions";
 import { buildAgentSystemPromptWithGovernance } from "./helpers";
@@ -360,7 +361,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
             if (mcpLinks.length > 5) {
               secFindings.push(`Warning: Agent has access to ${mcpLinks.length} MCP servers — review for least-privilege`);
             }
-            const agentIndustry = (deployAgent as any)?.industry || deployment.industry || "";
+            const agentIndustry = (await resolveAgentIndustry(deployAgent as any, deployment.industry)) ?? "";
             const agentCompTags = (deployAgent as any)?.complianceTags || [];
             const regulatedIndustries = ["healthcare", "finance", "banking", "insurance", "government"];
             const isRegulated = regulatedIndustries.some(ri => agentIndustry.toLowerCase().includes(ri)) || agentCompTags.length > 0;
@@ -599,6 +600,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       });
 
       const execRichPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
+      const execIndustry = await resolveAgentIndustry(agent as any, deployment.industry);
       // Team agents must go through executeTeamPipeline (tiers, gates,
       // conditional/deterministic-rule edge routing) -- calling
       // executePromptWithMcp directly here silently ran them as a plain
@@ -615,7 +617,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
             blueprintId: rtConfig.orchestration?.blueprintId || undefined,
             mcpServerIds,
             intervalMs: 0,
-            industry: deployment.industry || (agent as any).industry,
+            industry: execIndustry ?? undefined,
             prompt,
             agentSystemPrompt: execRichPrompt,
             outcomeId: (agent as any).outcomeId || undefined,
@@ -629,7 +631,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
             undefined,
             mcpServerIds,
             prompt,
-            deployment.industry || (agent as any).industry,
+            execIndustry ?? undefined,
             execRichPrompt,
             { maxToolIterations: agent.maxToolIterations ?? 5 },
             undefined,
@@ -672,7 +674,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           systemPrompt: execRichPrompt || prompt,
           userMessage: prompt,
           contextVariables: {
-            industry: deployment.industry || (agent as any).industry || "general",
+            industry: execIndustry || "general",
             ...(isTeamAgent ? { teamExecution: true, workerCount: rtConfig.orchestration?.workerIds?.length || 0, pattern: rtConfig.orchestration?.pattern || "supervisor" } : {}),
           },
         },
@@ -710,7 +712,8 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       let deployment = deployments.find(d => d.agentId === req.params.id && (d.status === "deployed" || d.status === "pending"));
 
       if (!deployment) {
-        const industry = (agent as any).industry || req.body.industry || "technology";
+        // No invented default: an unknown industry stays unset.
+        const industry = (await resolveAgentIndustry(agent as any, typeof req.body.industry === "string" ? req.body.industry : null)) ?? undefined;
         deployment = await storage.createDeployment({
           agentId: req.params.id,
           agentName: agent.name,
@@ -780,7 +783,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           blueprintId: rtConfig.orchestration?.blueprintId || undefined,
           mcpServerIds,
           intervalMs: 0,
-          industry: (agent as any).industry || undefined,
+          industry: (await resolveAgentIndustry(agent as any)) ?? undefined,
           prompt,
           agentSystemPrompt: richSystemPrompt,
           outcomeId: (agent as any).outcomeId || undefined,
@@ -797,7 +800,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           undefined,
           mcpServerIds,
           prompt,
-          (agent as any).industry || undefined,
+          (await resolveAgentIndustry(agent as any)) ?? undefined,
           richSystemPrompt,
           { ontologyLabels: agentOntologyTags.map(t => t.conceptLabel), maxToolIterations: agent.maxToolIterations ?? 5 },
           undefined,
@@ -829,7 +832,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           systemPrompt: richSystemPrompt || prompt,
           userMessage: prompt,
           contextVariables: {
-            industry: (agent as any).industry || "general",
+            industry: (await resolveAgentIndustry(agent as any)) || "general",
             testRun: true,
             ...(isTeamAgent ? { teamExecution: true, workerCount: rtConfig.orchestration?.workerIds?.length || 0, pattern: rtConfig.orchestration?.pattern || "supervisor" } : {}),
           },

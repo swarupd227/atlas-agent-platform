@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { resolveAgentIndustry } from "../agent-industry";
 import { resolveReadableSkills } from "../builtin-skill-tools";
 import { db } from "../db";
 import { eq, desc } from "drizzle-orm";
@@ -242,7 +243,7 @@ const router = Router();
             blueprintId: (agent as any).blueprintId || rtConfig.orchestration?.blueprintId || undefined,
             mcpServerIds,
             intervalMs: 0,
-            industry: (agent as any).industry || undefined,
+            industry: (await resolveAgentIndustry(agent as any)) ?? undefined,
             prompt: teamPrompt,
             agentSystemPrompt: systemPrompt,
             outcomeId: (agent as any).outcomeId || undefined,
@@ -312,7 +313,7 @@ const router = Router();
             undefined,
             mcpServerIds,
             mcpPrompt,
-            (agent as any).industry || undefined,
+            (await resolveAgentIndustry(agent as any)) ?? undefined,
             systemPrompt,
             { conversational: true, ontologyLabels: playgroundOntologyTags.map(t => t.conceptLabel), maxToolIterations: agent.maxToolIterations ?? 5 },
             onProgress,

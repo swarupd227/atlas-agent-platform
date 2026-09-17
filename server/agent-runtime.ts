@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { resolveAgentIndustry } from "./agent-industry";
 import { db } from "./db";
 import { EventEmitter } from "events";
 import OpenAI from "openai";
@@ -4683,7 +4684,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     blueprintId: agentBlueprint?.id,
     mcpServerIds,
     intervalMs,
-    industry: deployment.industry || (agent as any).industry,
+    industry: (await resolveAgentIndustry(agent as any, deployment.industry)) ?? undefined,
     prompt,
     agentSystemPrompt,
     outcomeId: (agent as any).outcomeId || undefined,
@@ -4776,7 +4777,7 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
     blueprintId: undefined,
     mcpServerIds,
     intervalMs: 0,
-    industry: deployment.industry || (agent as any).industry,
+    industry: (await resolveAgentIndustry(agent as any, deployment.industry)) ?? undefined,
     prompt,
     agentSystemPrompt: undefined,
     outcomeId: (agent as any).outcomeId || undefined,

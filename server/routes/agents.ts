@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
+import { isKnownIndustry } from "@shared/industry-filter";
 import { resolveReadableSkills, skillCatalogPrompt } from "../builtin-skill-tools";
 import { db } from "../db";
 import { ensureAarConfig } from "./aar";
@@ -272,7 +273,7 @@ const router = Router();
       const testCases: Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[] }> = [];
 
       const oTags = Array.isArray(agent.ontologyTags) ? agent.ontologyTags as string[] : [];
-      const domainPrefix = oTags.length > 0 ? oTags[0] : ((agent as any).industry || agent.name);
+      const domainPrefix = oTags.length > 0 ? oTags[0] : (agent.industryId || agent.name);
       const domainTags = oTags.length > 0 ? oTags.slice(0, 3) : [];
 
       testCases.push({
@@ -562,7 +563,8 @@ const router = Router();
           autonomyMode: plan.autonomyMode || "assisted",
           modelProvider: plan.modelProvider || "openai",
           modelName: plan.modelName || "gpt-4.1",
-          industry: industry || undefined,
+          // Agents have no "industry" column; a known industry is stored, otherwise the organization's applies.
+          industryId: industry && isKnownIndustry(industry) ? industry : undefined,
           runtimeConfig: plan.runtimeConfig || null,
           blueprintId: plan.blueprintId || undefined,
           blueprintJson: blueprintJson || undefined,
@@ -920,7 +922,7 @@ const router = Router();
           skillSource = "assigned";
         } else {
           const allSkills = await storage.getSkills(getOrgId(req));
-          const agentIndustry = (agent as any).industry?.toLowerCase();
+          const agentIndustry = agent.industryId?.toLowerCase();
           const ontologyLabels = Array.isArray((agent as any).ontologyTags) ? ((agent as any).ontologyTags as Array<{ conceptLabel: string }>).map(t => t.conceptLabel.toLowerCase()) : [];
           relevantSkills = allSkills.filter((s: any) => {
             if (s.status !== "active") return false;

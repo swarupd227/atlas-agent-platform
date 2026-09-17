@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
+import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
 import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
 import { llmInvokeRateLimiter } from "../rate-limits";
@@ -1190,7 +1191,7 @@ function hashCode(str: string): number {
         undefined,
         mcpServerIds,
         testMessage,
-        (agent as any).industry || "technology",
+        (await resolveAgentIndustry(agent as any)) ?? undefined,
         richPrompt,
         { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
         undefined,
@@ -1293,7 +1294,7 @@ function hashCode(str: string): number {
         undefined,
         mcpServerIds,
         userMessage,
-        (agent as any).industry || "technology",
+        (await resolveAgentIndustry(agent as any)) ?? undefined,
         richPrompt,
         { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
         undefined,
@@ -1396,7 +1397,7 @@ function hashCode(str: string): number {
         undefined,
         mcpServerIds,
         userMessage,
-        (agent as any).industry || "technology",
+        (await resolveAgentIndustry(agent as any)) ?? undefined,
         richPrompt,
         { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
         undefined,
@@ -1520,7 +1521,7 @@ function hashCode(str: string): number {
         undefined,
         mcpServerIds,
         historyContext,
-        (agent as any).industry || "technology",
+        (await resolveAgentIndustry(agent as any)) ?? undefined,
         richPrompt,
         { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
         onProgress,
@@ -1744,7 +1745,7 @@ function hashCode(str: string): number {
           agentBlueprint?.id,
           mcpServerIds,
           input,
-          (agent as any).industry,
+          (await resolveAgentIndustry(agent as any)) ?? undefined,
           richAgentPrompt,
           { maxToolIterations: agent.maxToolIterations ?? 5 },
           undefined,
@@ -2042,7 +2043,7 @@ function hashCode(str: string): number {
         agentBlueprint?.id,
         mcpServerIds,
         inputText,
-        (agent as any).industry,
+        (await resolveAgentIndustry(agent as any)) ?? undefined,
         richAgentPrompt,
         { maxToolIterations: agent.maxToolIterations ?? 5 },
         undefined,
@@ -6249,7 +6250,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
       }
 
       const yamlExtras: AgentYamlExtras = {
-        industry: (agent as any).industry || null,
+        industry: (await resolveAgentIndustry(agent as any)),
         autonomyMode: agent.autonomyMode,
         riskTier: agent.riskTier,
         skills: matchedSkills,
@@ -6403,7 +6404,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
           format,
           llmProvider,
           generatedAt,
-          industry: (agent as any).industry || null,
+          industry: (await resolveAgentIndustry(agent as any)),
           autonomyMode: agent.autonomyMode || null,
           riskTier: agent.riskTier || null,
         };
@@ -10577,7 +10578,7 @@ clean:
         description: agent.description,
         modelProvider: agent.modelProvider,
         modelName: agent.modelName,
-        industry: (agent as any).industry || null,
+        industry: (await resolveAgentIndustry(agent as any)),
         outcomeId: agent.outcomeId,
         riskTier: agent.riskTier,
         autonomyMode: agent.autonomyMode,
@@ -13601,7 +13602,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
           if (mcpLinks.some(l => l.serverId === req.params.id)) {
             const agentOntologyTags = agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }> | null;
             if (agentOntologyTags && agentOntologyTags.length > 0) {
-              effectiveIndustryId = (agent as any).industry || null;
+              effectiveIndustryId = (await resolveAgentIndustry(agent as any));
             }
             break;
           }
@@ -13734,7 +13735,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
       for (const agent of allAgents) {
         const mcpLinks = await storage.getAgentMcpServers(agent.id);
         if (mcpLinks.some(l => l.serverId === req.params.id)) {
-          effectiveIndustryId = (agent as any).industry || null;
+          effectiveIndustryId = (await resolveAgentIndustry(agent as any));
           break;
         }
       }
@@ -20221,7 +20222,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       }
 
       let industryBenchmarks: Record<string, { avgTokenCount: number; avgQuality: number }> = {};
-      const agentIndustry = agent.department || (agent as any).industry;
+      const agentIndustry = agent.department || agent.industryId;
       if (agentIndustry) {
         const industryRecords = await storage.getContextEconomicsByIndustry(agentIndustry);
         const otherRecords = industryRecords.filter(r => r.agentId !== agentId);

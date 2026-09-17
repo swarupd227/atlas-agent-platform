@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { resolveAgentIndustry } from "./agent-industry";
 import type { Job, AuditChainTrigger } from "@shared/schema";
 import { agentAlerts } from "@shared/schema";
 import { EventEmitter } from "events";
@@ -180,7 +181,7 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
   let ontologyCaseCount = 0;
 
   const suiteIndustry = suite?.industry as string | null;
-  const agentIndustry = (agent as any).industry as string | null;
+  const agentIndustry = (await resolveAgentIndustry(agent as any));
   const detectedIndustry = suiteIndustry || agentIndustry || null;
   const industryFramework = detectedIndustry ? industryEvalFrameworks[detectedIndustry] : null;
   const industryDimensionTotals: Record<string, { total: number; count: number; weight: number }> = {};

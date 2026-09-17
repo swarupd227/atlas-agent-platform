@@ -1166,7 +1166,13 @@ export class DatabaseStorage implements IStorage {
 
   async createAgent(agent: InsertAgent) {
     const orgId = resolveOrgId(agent.organizationId);
-    const [created] = await db.insert(agents).values({ ...agent, organizationId: orgId }).returning();
+    // A new agent works in its organization's industry unless it was given one.
+    let industryId = agent.industryId;
+    if (industryId === undefined && orgId) {
+      const [org] = await db.select({ industryId: organizations.industryId }).from(organizations).where(eq(organizations.id, orgId)).limit(1);
+      industryId = org?.industryId ?? null;
+    }
+    const [created] = await db.insert(agents).values({ ...agent, industryId, organizationId: orgId }).returning();
     return created;
   }
 
