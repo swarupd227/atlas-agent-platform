@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight, Plus } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, House, Library as LibraryIcon, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getApiHeaders } from "@/lib/queryClient";
 import type { NeedsYou, NeedsYouItem, ThreadSummary } from "./types";
@@ -70,11 +70,17 @@ export function Rail({
   onAskAbout,
   agents,
   onMention,
+  view,
+  onLibrary,
 }: {
   threads: ThreadSummary[];
   activeId: string | null;
   onSelect: (id: string) => void;
+  /** Home: the briefing and a new conversation. */
   onNew: () => void;
+  /** Which of the rail's destinations is showing. */
+  view: "home" | "thread" | "library";
+  onLibrary: () => void;
   onAskAbout: (text: string) => void;
   /** The agents the user can run (the @ menu's list). */
   agents: Mentionable[];
@@ -106,9 +112,18 @@ export function Rail({
         <span className="rounded border border-border px-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Preview</span>
       </div>
 
-      <div className="p-2">
-        <Button onClick={onNew} variant="outline" className="h-8 w-full justify-start gap-2 text-sm" data-testid="astra-new-thread">
-          <Plus className="h-4 w-4" /> New conversation
+      <div className="flex items-center gap-1 p-2">
+        <button
+          type="button"
+          onClick={onNew}
+          aria-current={view === "home" ? "page" : undefined}
+          className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${view === "home" ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent/60"}`}
+          data-testid="astra-nav-home"
+        >
+          <House className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /> Home
+        </button>
+        <Button onClick={onNew} variant="outline" size="icon" className="h-8 w-8 shrink-0" aria-label="New conversation" title="New conversation" data-testid="astra-new-thread">
+          <Plus className="h-4 w-4" />
         </Button>
       </div>
 
@@ -175,8 +190,10 @@ export function Rail({
           )}
         </Section>
 
-        {agents.length > 0 && (
-          <Section title="Your agents">
+        <Section title="Your agents">
+          {agents.length === 0 ? (
+            <p className="px-2 text-xs text-muted-foreground">No agents you can run yet.</p>
+          ) : (
             <ul className="space-y-0.5">
               {agents.slice(0, 8).map((a) => (
                 <li key={a.id}>
@@ -191,12 +208,29 @@ export function Rail({
                   </button>
                 </li>
               ))}
+              {agents.length > 8 && (
+                <li>
+                  <button type="button" onClick={onLibrary} className="rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                    All {agents.length} in the Library
+                  </button>
+                </li>
+              )}
             </ul>
-          </Section>
-        )}
+          )}
+        </Section>
       </div>
 
-      <div className="shrink-0 border-t border-border p-2">
+      <div className="shrink-0 space-y-1 border-t border-border p-2">
+        <button
+          type="button"
+          onClick={onLibrary}
+          aria-current={view === "library" ? "page" : undefined}
+          className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${view === "library" ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent/60"}`}
+          data-testid="astra-nav-library"
+        >
+          <LibraryIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /> Library
+          <kbd className="ml-auto font-mono text-[10px] text-muted-foreground" title="Ask Astra or go to anything">{/Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘K" : "Ctrl K"}</kbd>
+        </button>
         <Link
           href="~/dashboard"
           className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"

@@ -10,6 +10,7 @@ import type { ComposerInsert } from "./composer";
 import { Rail } from "./rail";
 import { Thread } from "./thread";
 import { Library } from "./library";
+import { AstraCommandPalette } from "./command-palette";
 import { ArtifactPane } from "./artifact-pane";
 import type { ArtifactRef } from "./types";
 
@@ -84,6 +85,11 @@ function Workspace() {
           onAskAbout={(text) => void send(text)}
           agents={mentionables}
           onMention={mention}
+          view={onLibrary ? "library" : threadId ? "thread" : "home"}
+          onLibrary={() => {
+            setArtifact(null);
+            navigate("/library");
+          }}
         />
       </div>
 
@@ -107,6 +113,11 @@ function Workspace() {
             >
               {personalView ? `Viewing as ${industry.label}` : industry.label}
             </span>
+          )}
+          {!onLibrary && (
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs md:hidden" onClick={() => navigate("/library")}>
+              Library
+            </Button>
           )}
           <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs md:hidden" onClick={newConversation}>
             <Plus className="h-3.5 w-3.5" /> New
@@ -132,6 +143,12 @@ function Workspace() {
           )}
         </div>
       </main>
+
+      <AstraCommandPalette
+        threads={threads}
+        onSend={(text) => void send(text)}
+        onNavigate={(href, inShell) => navigate(inShell ? href : `~${href}`)}
+      />
 
       {artifact && (
         <div className="fixed inset-0 z-40 min-h-0 lg:static lg:z-auto">
