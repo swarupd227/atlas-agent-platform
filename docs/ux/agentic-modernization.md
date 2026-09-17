@@ -70,10 +70,10 @@ Team-proposal progress, team (DAG) run events and job progress posted into the t
 - **Inc 1:** proof envelope on every tool result; honest "not measured".
 - **Later:** per-layer context usage recorded for Workspace runs; tool-call audit records correlated to runs; "What it knew" card.
 
-### E-UX6 · Industry context — increment 3
+### E-UX6 · Industry context — increment 3 (done)
 Industry stored on the tenant and agent (not the browser); presets read industry packs; industry-filtered connector and template catalogs.
 
-### E-UX7 · Information architecture — increment 3
+### E-UX7 · Information architecture — increment 3 (done)
 Home briefing, Needs-you inbox, @-mentioning your agents, Library (one index of everything), five-item rail, natural-language ⌘K.
 
 ### E-UX8 · Studio packs — increment 4+
@@ -136,3 +136,61 @@ proxies; a step's raw output is never narrated, only its status.
 6. Run it on Confirm: steps narrate; the gate appears as a card; Confirm continues to the answer; the run card links to
    the run monitor.
 7. `list_outcomes` and `list_needs_me` show honest values.
+
+## Increment 3 — industry on the tenant, and one agentic shell
+
+Industry becomes a fact the platform holds, and `/astra` reads as one product rather than a conversation beside the
+classic pages.
+
+**Decisions (product owner, 2026-09-16).** The organization's industry is the default for everyone and for the server;
+a person may still view another industry for themselves, labelled "Viewing as". Admins and compliance
+(`manage_security`) set it; everyone reads it; changes are audited. Needs you shows every item: "Decide here" when Astra
+can finish it, otherwise a link out with the reason. The Library leaves out the catalogues that aren't
+organization-scoped yet.
+
+**Industry on the tenant (E-UX6)**
+
+- `organizations.industry_id`, `sub_vertical`, `workspace_config`, with who set it and when; `agents.industry_id`.
+  No backfill from `deployments.industry`, which held an invented `"technology"`.
+- `GET/PATCH /api/organizations/current`. Browsers adopt the organization's industry unless the person is viewing
+  another; the setup wizard stops appearing once the organization has one and offers admins "Set this for everyone";
+  the header shows "Viewing as" for a personal view.
+- Astra grounds on the server-side industry: "{Org} works in X", a personal view named as one, and "not set for the
+  organization" when there is none.
+- New agents take the organization's industry. Every runtime path resolves an agent's industry (its own, then the
+  organization's, then a real deployment industry) instead of reading a field that didn't exist and falling back to
+  `"technology"`.
+- Wizard presets and the design-time policy check read the industry packs. An industry with no known policy
+  requirements says nothing was checked rather than passing. `?outcomeId=` on dynamic presets no longer fails.
+- Agent templates, skills and enterprise integrations take an optional `?industryId=`; without it nothing changes.
+
+**One shell (E-UX7)**
+
+- Home briefing (`/api/astra/home`): counted rows for decisions waiting, runnable agents, outcomes, connectors and the
+  industry. Each row asks Astra, so the fact comes back from a tool with its proof.
+- Needs you (`/api/astra/needs-you`): the same data `list_needs_me` reads, with where each item is decided and why.
+- `@` in the composer mentions an agent you can run; mentions travel as plain text.
+- Library (`/astra/library`): conversations, agents, teams, outcomes, connectors, policies and process flows, each
+  section organization-scoped and gated by role on the server.
+- ⌘K / Ctrl+K: the first row sends what you typed; then conversations, library items and suggested prompts.
+- Rail: Home · Needs you · Conversations · Your agents · Library, with the way back to the classic app.
+
+**Left out on purpose**
+
+- Cost and business-value figures on the home briefing: the rates behind them are invented, not measured.
+- Agent templates, eval suites, eval runs and the full connector catalogue in the Library: they aren't scoped to an
+  organization yet.
+- Industry tags on integrations: the field exists, but tagging is a content decision.
+- A `set_industry` tool: changing a tenant-wide setting needs an approval story first.
+- Policies and process flows have no Astra tool yet, so their Library rows link out without "Ask".
+
+**Live acceptance** (after deploy)
+
+1. As admin in a browser with an old industry: the header offers "Set … for everyone"; setting it is audited.
+2. A second user in a clean browser sees the industry with no wizard; a non-admin can read it but not change it.
+3. Astra answers "what industry are we in" from the organization, and says plainly when none is set.
+4. Dynamic presets return pack presets for `equipment_dealer` and no longer fail with `?outcomeId=`.
+5. A wizard-created agent carries the organization's industry; an on-demand deployment no longer says "technology".
+6. `/astra`: five-item rail, a briefing with no invented figures, a Needs-you item decided in the conversation and
+   another that links out, `@` inserting a name without sending, a Library whose sections follow the role, and ⌘K
+   sending a typed question. With the flag off, every new `/api/astra/*` route answers 404.
