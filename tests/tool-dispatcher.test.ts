@@ -15,6 +15,9 @@ vi.mock("../server/storage", () => ({
     getAarConfig: vi.fn().mockResolvedValue(null),
     createAarActionDecision: vi.fn().mockResolvedValue({}),
     createApproval: vi.fn().mockResolvedValue({ id: "approval-1" }),
+    // Standing-grant check (ef9110e): no earlier decision on this agent + tool,
+    // so an approval gate still asks.
+    getLatestApprovalDecision: vi.fn().mockResolvedValue(undefined),
     getMcpServer: vi.fn().mockResolvedValue(null),
     getMcpServerTools: vi.fn().mockResolvedValue([]),
     // Warrant gate: no task classes means the gate is a no-op, same as the
