@@ -111,6 +111,31 @@ export interface NeedsYou {
   fyi: NeedsYouItem[];
 }
 
+/** GET /api/astra/library (server/astra/library.ts). */
+export interface LibraryItem {
+  id: string;
+  name: string;
+  detail: string | null;
+  status: string | null;
+  ask: string | null;
+  href: string;
+  inShell?: boolean;
+}
+
+export interface LibrarySection {
+  id: string;
+  label: string;
+  total: number;
+  items: LibraryItem[];
+  error?: string;
+}
+
+export interface Library {
+  query: string | null;
+  sections: LibrarySection[];
+  elsewhere: string[];
+}
+
 /** GET /api/astra/home (server/astra/home.ts). */
 export interface HomeRow {
   id: "needs" | "agents" | "outcomes" | "connectors" | "industry";

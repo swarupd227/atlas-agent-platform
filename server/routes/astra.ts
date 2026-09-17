@@ -17,6 +17,7 @@ import { AstraBusyError, AstraNotFoundError, resolveAction, runTurn } from "../a
 import { getAstraRuntime } from "../astra/wiring";
 import { getTenantIndustry, resolveIndustry } from "../industry-context";
 import { buildHome, type HomeSection } from "../astra/home";
+import { LIBRARY_ELSEWHERE, buildLibrarySection, normalizeQuery, visibleLibrarySections, type LibraryItem, type LibrarySection, type LibrarySectionId } from "../astra/library";
 import type { AstraContext, AstraEvent } from "../astra/types";
 
 const router = Router();
@@ -167,6 +168,105 @@ router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => 
       connectors,
     }),
   );
+});
+
+/**
+ * The Library: what the organization has, per section, for this role. Each
+ * section is organization-scoped and left out entirely when the role can't
+ * see it. At most 50 items per section, with the true number of matches.
+ */
+router.get("/api/astra/library", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  const q = normalizeQuery(req.query.q);
+  const { services, store } = { services: getAstraRuntime().deps.services, store: getAstraRuntime().store };
+  const can = (p: Parameters<typeof hasPermission>[1]) => hasPermission(ctx.role, p);
+  const orgId = ctx.orgId;
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+  const loaders: Record<LibrarySectionId, () => Promise<LibraryItem[]>> = {
+    conversations: async () =>
+      (await store.listThreads(orgId, ctx.userId, 1000)).map((t) => ({
+        id: t.id,
+        name: t.title,
+        detail: t.pendingAction?.summary ?? null,
+        status: t.status === "awaiting_confirmation" ? "waiting on you" : t.status === "failed" ? "failed" : null,
+        ask: null,
+        href: `/t/${encodeURIComponent(t.id)}`,
+        inShell: true,
+      })),
+    agents: async () => {
+      const rows: Array<{ id: string; name: string; description?: string | null; status?: string }> = can("view_agents")
+        ? (await storage.getAgents(orgId)).filter((a) => a.agentType !== "team")
+        : await services.listRunnableAgents(orgId, ctx.role);
+      return rows.map((a) => ({
+        id: a.id,
+        name: a.name,
+        detail: text(a.description),
+        status: a.status ?? null,
+        ask: can("view_agents") ? `Tell me about the agent "${a.name}".` : null,
+        href: `/agents/${encodeURIComponent(a.id)}`,
+      }));
+    },
+    teams: async () =>
+      (await services.listTeams(orgId)).map((t: { id: string; name: string; status: string }) => ({
+        id: t.id,
+        name: t.name,
+        detail: null,
+        status: t.status,
+        ask: `Check the wiring of the team "${t.name}".`,
+        href: `/agents/${encodeURIComponent(t.id)}`,
+      })),
+    outcomes: async () =>
+      (await storage.getOutcomes(orgId)).map((o) => ({
+        id: o.id,
+        name: o.name,
+        detail: text(o.description),
+        status: o.status ?? null,
+        ask: `Show me the outcome "${o.name}" and its KPIs.`,
+        href: `/outcomes/${encodeURIComponent(o.id)}`,
+      })),
+    connectors: async () =>
+      (await services.listConnectors(orgId)).map((c: { id: string; name: string; description: string | null; status: string; connected: boolean | null }) => ({
+        id: c.id,
+        name: c.name,
+        detail: text(c.description),
+        status: c.connected === false ? "not connected" : c.status,
+        ask: `Tell me about the connector "${c.name}" and which agents use it.`,
+        href: `/integrations/mcp-servers/${encodeURIComponent(c.id)}`,
+      })),
+    // No Astra tool reads policies or process flows yet, so these rows only link out.
+    policies: async () =>
+      (await storage.getPolicies(orgId)).map((p) => ({
+        id: p.id,
+        name: p.name,
+        detail: [p.domain?.replace(/_/g, " "), text(p.description)].filter(Boolean).join(" · ") || null,
+        status: p.status ?? null,
+        ask: null,
+        href: "/governance/policy-engine",
+      })),
+    processFlows: async () =>
+      (await storage.getProcessFlows(orgId)).map((f) => ({
+        id: f.id,
+        name: f.name,
+        detail: text(f.description),
+        status: null,
+        ask: null,
+        href: "/process-flows",
+      })),
+  };
+
+  const sections = await Promise.all(
+    visibleLibrarySections(can).map(async (id): Promise<LibrarySection & { error?: string }> => {
+      try {
+        return buildLibrarySection(id, await loaders[id](), q);
+      } catch (err) {
+        console.error(`[astra] library section ${id} failed:`, err instanceof Error ? err.message : err);
+        return { ...buildLibrarySection(id, [], null), error: "Couldn't load this section." };
+      }
+    }),
+  );
+  res.json({ query: q, sections, elsewhere: LIBRARY_ELSEWHERE });
 });
 
 /** The agents the composer's @ menu offers: exactly the ones run_agent accepts for this role. */
