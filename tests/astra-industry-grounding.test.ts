@@ -56,6 +56,13 @@ describe("get_industry_context reports the source", () => {
     expect((out.proof!.industry as any).summary).toContain("personal view");
   });
 
+  it("a built-in industry: its profile, measured, and honest that it has no policy packs", async () => {
+    const builtIn = { selected: true, industryId: "manufacturing", pack: false, builtIn: true, label: "Manufacturing & Supply Chain", description: "d", ontology: "ISA-95", regulatoryFrameworks: ["ISO 9001", "REACH"], subVerticals: ["Automotive"], policyPacks: [] };
+    const out = await getIndustryContextTool.run(ctx({ industryId: "manufacturing", industrySource: "tenant", organizationIndustryId: "manufacturing" }, builtIn), {});
+    expect(out.payload).toMatchObject({ label: "Manufacturing & Supply Chain", source: "organization", regulatoryFrameworks: ["ISO 9001", "REACH"] });
+    expect(out.proof!.industry).toMatchObject({ status: "measured", summary: expect.stringContaining("built-in profile, no policy packs") });
+  });
+
   it("nothing set", async () => {
     const out = await getIndustryContextTool.run(ctx({ industrySource: "none" }, { selected: false }), {});
     expect(out.payload).toMatchObject({ selected: false, source: "none", message: expect.stringContaining("No industry has been set for this organization") });

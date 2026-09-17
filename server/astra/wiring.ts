@@ -77,11 +77,11 @@ export function getAstraRuntime(): { deps: EngineDeps; store: DbThreadStore } {
         services.getIndustryContext(ctx.industryId ?? null),
         personalView ? services.getIndustryContext(ctx.organizationIndustryId) : Promise.resolve(null),
       ]);
-      const labelOf = (c: typeof industry | null) => (!c || !c.selected ? null : c.pack ? c.label : String(c.industryId));
+      const labelOf = (c: typeof industry | null) => (!c || !c.selected ? null : c.pack || c.builtIn ? c.label : String(c.industryId));
       return {
         organizationName,
         industryLabel: labelOf(industry),
-        industryHighlights: industry.selected && industry.pack ? industry.regulatoryFrameworks : undefined,
+        industryHighlights: industry.selected && (industry.pack || industry.builtIn) ? industry.regulatoryFrameworks : undefined,
         organizationIndustryLabel: labelOf(orgIndustry),
       };
     },

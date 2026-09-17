@@ -17,6 +17,7 @@ import { assessTeamWiring, type WiringAgent, type WiringLink, type WiringSnapsho
 import { getWorkspaceAgents, getWorkspaceRun, resumeWorkspaceRun, startWorkspaceRun, type OnWorkspaceEvent } from "../workspace-run";
 import { getRedactionLevel, hasPermission, redactPayload, type RoleId } from "../permissions";
 import { getIndustryPack } from "@shared/industry-packs";
+import { getBuiltInIndustry } from "@shared/built-in-industries";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
 import { CONVERSATION_DECIDABLE_OBJECT_TYPES, decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
@@ -121,11 +122,28 @@ async function agentsLinkedToConnectors(orgId: string, serverIds: string[]) {
 async function getIndustryContext(industryId: string | null | undefined) {
   if (!industryId) return { selected: false as const };
   const pack = getIndustryPack(industryId);
-  if (!pack) return { selected: true as const, industryId, pack: false as const };
+  if (!pack) {
+    // A built-in industry has a profile (ontology, frameworks, sub-verticals) but no policy packs.
+    const builtIn = getBuiltInIndustry(industryId);
+    if (!builtIn) return { selected: true as const, industryId, pack: false as const, builtIn: false as const };
+    return {
+      selected: true as const,
+      industryId: builtIn.id,
+      pack: false as const,
+      builtIn: true as const,
+      label: builtIn.label,
+      description: builtIn.description,
+      ontology: builtIn.ontology,
+      regulatoryFrameworks: builtIn.regulatoryFrameworks,
+      subVerticals: builtIn.subVerticals,
+      policyPacks: [] as string[],
+    };
+  }
   return {
     selected: true as const,
     industryId,
     pack: true as const,
+    builtIn: false as const,
     label: pack.profile.label,
     description: pack.profile.description,
     ontology: pack.profile.ontology,
@@ -327,6 +345,7 @@ async function outcomeGrounding(
     },
   );
   const pack = industryId ? getIndustryPack(industryId) : undefined;
+  const builtIn = !pack && industryId ? getBuiltInIndustry(industryId) : undefined;
 
   return {
     possibleDuplicates: similarOutcomeNames(draft.name, outcomes),
@@ -341,7 +360,9 @@ async function outcomeGrounding(
           regulatoryChecks: pack.assurance.regulatoryTemplates.map((t) => `${t.regulation} ${t.section}: ${t.name}`),
           policyPacks: pack.policyPacks.map((pp) => ({ name: pp.name, framework: pp.framework, riskLevel: pp.riskLevel })),
         }
-      : { selected: !!industryId, pack: false as const, id: industryId ?? null },
+      : builtIn
+        ? { selected: true as const, pack: false as const, builtIn: true as const, id: builtIn.id, label: builtIn.label, regulatoryFrameworks: builtIn.regulatoryFrameworks }
+        : { selected: !!industryId, pack: false as const, id: industryId ?? null },
     // Catalog figures (template deployment counts, delivery rates, time to production)
     // and health scores are left out: they aren't measured for this organization.
     similarAgents: intel.matchedAgents.map((group) => ({

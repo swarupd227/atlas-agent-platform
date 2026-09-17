@@ -26,6 +26,18 @@ export const getIndustryContextTool: AstraTool<Record<string, never>> = {
       };
     }
     const viewNote = ctx.industrySource === "request" ? " · personal view" : "";
+    if (context.builtIn) {
+      return {
+        payload: { ...context, ...source, note: "A built-in industry profile: ontology, regulatory frameworks and sub-verticals, without industry policy packs." },
+        artifact: { kind: "text", title: context.label, props: { lines: [context.description, `Ontology: ${context.ontology}`, `Regulatory frameworks: ${context.regulatoryFrameworks.join(", ")}`, `Sub-verticals: ${context.subVerticals.join(", ")}`] } },
+        proof: {
+          industry: {
+            status: "measured",
+            summary: `${context.label} · ${context.regulatoryFrameworks.length} regulatory frameworks · built-in profile, no policy packs${viewNote}`,
+          },
+        },
+      };
+    }
     if (!context.pack) {
       return {
         payload: { selected: true, ...source, industryId: context.industryId, pack: false, message: "This industry has no industry pack yet, so there is no curated regulatory or ontology context." },

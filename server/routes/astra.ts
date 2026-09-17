@@ -132,7 +132,7 @@ router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => 
   const labelOf = async (id: string | null | undefined) => {
     if (!id) return null;
     const c = await services.getIndustryContext(id);
-    return c.selected ? (c.pack ? c.label : String(c.industryId)) : null;
+    return c.selected ? (c.pack || c.builtIn ? c.label : String(c.industryId)) : null;
   };
 
   const [organizationName, industryLabel, organizationLabel, needs, agents, outcomes, connectors] = await Promise.all([

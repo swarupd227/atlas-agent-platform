@@ -119,3 +119,19 @@ describe("catalogue filtering by ?industryId=", () => {
     expect(industryQuery(" insurance ")).toBe("insurance");
   });
 });
+
+describe("built-in industry profiles the server knows", () => {
+  it("match the client's built-in industries field for field", async () => {
+    const { BUILT_IN_INDUSTRY_PROFILES, getBuiltInIndustry } = await import("../shared/built-in-industries");
+    const src = readFileSync(join(__dirname, "..", "client", "src", "components", "industry-provider.tsx"), "utf8").replace(/\r\n/g, "\n");
+    const start = src.indexOf("const BUILT_IN_INDUSTRIES");
+    const block = src.slice(start, src.indexOf("\n];\n", start));
+    const fields = ["id", "label", "shortLabel", "description", "ontology", "regulatoryFrameworks", "subVerticals"];
+    const client = block.split(/\n  \{\n/).slice(1).map((chunk) =>
+      Object.fromEntries(fields.map((f) => [f, Function(`return (${new RegExp(`\\n    ${f}: (.+),\\n`).exec("\n" + chunk)![1]})`)()])),
+    );
+    expect(BUILT_IN_INDUSTRY_PROFILES).toEqual(client);
+    expect(BUILT_IN_INDUSTRY_PROFILES.map((p) => p.id)).toEqual([...BUILT_IN_INDUSTRY_IDS]);
+    expect(getBuiltInIndustry("Manufacturing")?.label).toBe("Manufacturing & Supply Chain");
+  });
+});

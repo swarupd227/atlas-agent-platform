@@ -35,7 +35,9 @@ export const discoverOutcomeTool: AstraTool<Input> = {
             kpiDimensions: g.industry.kpiDimensions.map((k: { label: string }) => k.label),
             regulatoryChecks: g.industry.regulatoryChecks.slice(0, 8),
           }
-        : { note: g.industry.selected ? "No industry pack for this industry." : "No industry selected." },
+        : g.industry.builtIn
+          ? { label: g.industry.label, regulatoryFrameworks: g.industry.regulatoryFrameworks, note: "Built-in industry profile: no KPI dimensions or regulatory checks from a pack." }
+          : { note: g.industry.selected ? "No industry pack for this industry." : "No industry selected." },
       existingAgents: g.similarAgents.flatMap((r: any) => r.matches.map((m: any) => ({ role: r.role, name: m.name, status: m.status }))).slice(0, 10),
       toolCoverage: g.toolCoverage,
       policiesThatWouldApply: g.policies.map((p: any) => p.name),
@@ -53,7 +55,9 @@ export const discoverOutcomeTool: AstraTool<Input> = {
       },
       industry: g.industry.pack
         ? { status: "measured", summary: `${g.industry.label} · ${g.industry.regulatoryFrameworks.length} regulatory frameworks` }
-        : { status: "not_measured", reason: g.industry.selected ? "There is no industry pack for this industry yet." : "No industry is selected." },
+        : g.industry.builtIn
+          ? { status: "measured", summary: `${g.industry.label} · ${g.industry.regulatoryFrameworks.length} regulatory frameworks (built-in profile)` }
+          : { status: "not_measured", reason: g.industry.selected ? "There is no industry pack for this industry yet." : "No industry is selected." },
     };
 
     return {
