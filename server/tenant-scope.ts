@@ -331,7 +331,8 @@ export async function mcpElicitationScope(req: Request, res: Response, next: Nex
         const { agentId, serverId } = req.body ?? {};
         if (typeof agentId === "string" && agentId) {
           const agent = await storage.getAgent(agentId);
-          if (agent && !ownerMatches(agent.organizationId ?? getDefaultOrgId() ?? null, orgId)) return notFound(res, "Agent");
+          if (!agent) return res.status(400).json({ error: "Unknown agent" });
+          if (!ownerMatches(agent.organizationId ?? getDefaultOrgId() ?? null, orgId)) return notFound(res, "Agent");
         }
         if (typeof serverId === "string" && serverId) {
           const server = await storage.getMcpServer(serverId);

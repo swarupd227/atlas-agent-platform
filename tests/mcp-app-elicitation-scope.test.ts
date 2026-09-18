@@ -146,6 +146,7 @@ describe("MCP elicitations", () => {
   it("can't be created for another org's agent or server", async () => {
     expect((await run(mcpElicitationScope, fakeReq({ org: ORG_B, method: "POST", body: { agentId: "ag-a" } }))).status).toBe(404);
     expect((await run(mcpElicitationScope, fakeReq({ org: ORG_B, method: "POST", body: { serverId: "srv-a" } }))).status).toBe(404);
+    expect((await run(mcpElicitationScope, fakeReq({ org: ORG_A, method: "POST", body: { agentId: "ag-missing" } }))).status).toBe(400);
     expect((await run(mcpElicitationScope, fakeReq({ org: ORG_A, method: "POST", body: { agentId: "ag-a", serverId: "srv-catalog" } }))).status).toBe("next");
   });
 });
