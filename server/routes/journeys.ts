@@ -21,6 +21,9 @@ router.get("/api/journeys", async (req, res) => {
       .filter((a) => !industryId || a.journeyIndustryId === industryId)
       .filter((a) => !subVertical || a.journeySubVertical === subVertical);
 
+    // Process flows are org-wide: fetch once, not once per journey.
+    const flows = await storage.getProcessFlows(getOrgId(req));
+
     const journeys = await Promise.all(
       orchestrators.map(async (orchestrator) => {
         const members = await storage.getAgentTeamMembers(orchestrator.id);
@@ -35,7 +38,6 @@ router.get("/api/journeys", async (req, res) => {
         const ontologyConcepts = Array.from(new Map(allTags.map((t) => [t.conceptId, t])).values());
 
         // The journey's own process design, when one has been authored.
-        const flows = await storage.getProcessFlows(getOrgId(req));
         const ownFlow = flows.find((fl: any) => fl.teamAgentId === orchestrator.id);
 
         return {
@@ -59,6 +61,9 @@ router.get("/api/journeys", async (req, res) => {
                   : 0,
               }
             : null,
+          // The team's own runs (the run monitor's dag_execution_runs), so the
+          // library says what actually happened when this journey ran.
+          runs: await storage.summarizeDagExecutionRunsByTeamAgent(orchestrator.id),
           createdAt: orchestrator.createdAt,
         };
       }),
@@ -213,9 +218,8 @@ router.post("/api/journeys/:id/clone", checkPermission("create_modify_blueprints
  * Ontology roadmap Phase 4 ("close the loop"): real per-journey signal for
  * curation decisions, instead of a one-time audit. Two real sources, both
  * read-only and already used elsewhere for the same purpose:
- *  - run history from the orchestrator's own trace records (the same source
- *    the Agent Detail "Runs & Traces" tab reads -- team pipeline executions
- *    are recorded under the orchestrator's agentId, see shadow-canary.ts)
+ *  - run history from the team's own runs (dag_execution_runs, the records
+ *    the run monitor shows)
  *  - ontology alignment scores from mcp_parameter_matches, the same real
  *    50%-threshold computation that actually gates runtime start in
  *    agent-runtime.ts's resolveBlueprint, recomputed here read-only per MCP
@@ -238,11 +242,13 @@ router.get("/api/journeys/:id/health", async (req, res) => {
     ).filter((a): a is NonNullable<typeof a> => !!a);
     const allAgents = [orchestrator, ...workers];
 
-    const traces = await storage.getTracesByAgent(orchestrator.id, orgId);
-    const runCount = traces.length;
-    const completedCount = traces.filter((t) => t.status === "completed").length;
-    const successRate = runCount > 0 ? completedCount / runCount : null;
-    const lastRunAt = traces[0]?.startedAt || null; // getTracesByAgent orders desc by startedAt
+    // The team's own runs -- the same records the run monitor shows. (The
+    // orchestrator's trace records undercounted: a team run is not always
+    // traced under the orchestrator's agentId.)
+    const runs = await storage.summarizeDagExecutionRunsByTeamAgent(orchestrator.id);
+    const runCount = runs.total;
+    const successRate = runCount > 0 ? runs.completed / runCount : null;
+    const lastRunAt = runs.latest?.startedAt || null;
 
     const allServers = await storage.getMcpServers(orgId ?? getDefaultOrgId());
     const serverNames = new Set<string>();

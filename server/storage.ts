@@ -219,6 +219,14 @@ import {
 } from "@shared/schema";
 import { completeTransition, failTransition, type WorkerTaskState } from "./worker-tasks";
 
+/** A team's run history in brief (see summarizeDagExecutionRunsByTeamAgent). */
+export interface DagRunSummary {
+  total: number;
+  completed: number;
+  failed: number;
+  latest: { id: string; status: string; startedAt: Date | null; completedAt: Date | null } | null;
+}
+
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -904,6 +912,8 @@ export interface IStorage {
   getDagExecutionRun(id: string): Promise<DagExecutionRun | undefined>;
   listDagExecutionRuns(pipelineRunId?: string): Promise<DagExecutionRun[]>;
   listDagExecutionRunsByTeamAgent(teamAgentId: string, limit?: number): Promise<DagExecutionRun[]>;
+  /** Run counts by outcome plus the latest run, for one team -- without loading full run rows (their wave results are large). */
+  summarizeDagExecutionRunsByTeamAgent(teamAgentId: string): Promise<DagRunSummary>;
   listDagExecutionRunsByStatus(status: string): Promise<DagExecutionRun[]>;
   listDagExecutionRunsByOrg(orgId?: string, limit?: number): Promise<DagExecutionRun[]>;
   createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun>;
@@ -4778,6 +4788,27 @@ export class DatabaseStorage implements IStorage {
       .where(eq(dagExecutionRuns.teamAgentId, teamAgentId))
       .orderBy(desc(dagExecutionRuns.createdAt))
       .limit(limit);
+  }
+
+  async summarizeDagExecutionRunsByTeamAgent(teamAgentId: string): Promise<DagRunSummary> {
+    const counts = await db
+      .select({ status: dagExecutionRuns.status, n: sql<number>`count(*)::int` })
+      .from(dagExecutionRuns)
+      .where(eq(dagExecutionRuns.teamAgentId, teamAgentId))
+      .groupBy(dagExecutionRuns.status);
+    const [latest] = await db
+      .select({ id: dagExecutionRuns.id, status: dagExecutionRuns.status, startedAt: dagExecutionRuns.startedAt, completedAt: dagExecutionRuns.completedAt })
+      .from(dagExecutionRuns)
+      .where(eq(dagExecutionRuns.teamAgentId, teamAgentId))
+      .orderBy(desc(dagExecutionRuns.createdAt))
+      .limit(1);
+    const count = (pred: (s: string) => boolean) => counts.filter((c) => pred(c.status)).reduce((t, c) => t + Number(c.n), 0);
+    return {
+      total: count(() => true),
+      completed: count((s) => s === "completed" || s === "completed_with_skips"),
+      failed: count((s) => s === "failed"),
+      latest: latest ?? null,
+    };
   }
 
   async listDagExecutionRunsByStatus(status: string): Promise<DagExecutionRun[]> {
