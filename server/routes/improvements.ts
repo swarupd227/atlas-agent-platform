@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { applyRecommendationEffect } from "../action-decisions";
 import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
 import { desc, eq } from "drizzle-orm";
@@ -245,14 +246,8 @@ const router = Router();
   // same family. retrain/workflow_optimization recommendations don't have an
   // equivalent safe mechanical action (they require real engineering work),
   // so those still only flip status -- but this one genuinely applies.
-  const MODEL_DOWNGRADE_MAP: Record<string, string> = {
-    "gpt-4.1": "gpt-4.1-mini",
-    "gpt-4.1-mini": "gpt-4.1-nano",
-    "gpt-4o": "gpt-4o-mini",
-    "claude-sonnet-4-5": "claude-haiku-4-5",
-    "claude-3-5-sonnet-20241022": "claude-3-5-haiku-20241022",
-    "gemini-2.5-pro": "gemini-2.5-flash",
-  };
+  // The map and the change live in server/action-decisions.ts, shared with
+  // My Actions and the Astra Workspace.
 
   router.patch("/api/recommendations/:id", async (req, res) => {
     try {
@@ -262,23 +257,7 @@ const router = Router();
       if (!updated) return res.status(404).json({ message: "Recommendation not found" });
 
       if (req.body?.status === "applied" && before?.status !== "applied") {
-        const changes = updated.suggestedChanges as Record<string, unknown> | null;
-        const strategies = Array.isArray(changes?.strategies) ? changes!.strategies as string[] : [];
-        if (changes?.action === "cost_optimization" && strategies.includes("model_downgrade")) {
-          const agent = await storage.getAgent(updated.agentId, getOrgId(req));
-          const cheaperModel = agent?.modelName ? MODEL_DOWNGRADE_MAP[agent.modelName] : undefined;
-          if (agent && cheaperModel) {
-            await storage.updateAgent(agent.id, { modelName: cheaperModel });
-            await storage.createAuditEvent({
-              actorType: "system",
-              actorId: "improvement-recommendations",
-              action: "agent_model_downgraded",
-              objectType: "agent",
-              objectId: agent.id,
-              details: JSON.stringify({ recommendationId: updated.id, from: agent.modelName, to: cheaperModel }),
-            });
-          }
-        }
+        await applyRecommendationEffect(updated, getOrgId(req));
       }
 
       res.json(updated);

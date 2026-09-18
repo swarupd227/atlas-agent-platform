@@ -5,7 +5,9 @@ import { eq, inArray } from "drizzle-orm";
 import { agentAlerts, agents, improvementRecommendations, policyExceptions, mcpElicitations } from "@shared/schema";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
-import { getRequestRole, hasPermission } from "../permissions";
+import { getRequestActorLabel, getRequestRole, hasPermission } from "../permissions";
+import { ApprovalDecisionError, decideApproval } from "../approval-decision";
+import { ActionDecisionError, acknowledgeAlert, decideRecommendation } from "../action-decisions";
 
 const router = Router();
 
@@ -33,6 +35,48 @@ router.post("/api/my-actions/decide", async (req, res) => {
 
     if (!source || !sourceId || !decision) {
       return res.status(400).json({ error: "source, sourceId, and decision are required" });
+    }
+
+    // Approvals, alerts and recommendations are decided by the same code as the
+    // Approvals and Recommendations pages and the Astra Workspace: review
+    // routing, the real effects, and an audit record in the organization.
+    const decisionOrgId = orgId ?? getDefaultOrgId();
+    const actorLabel = getRequestActorLabel(req);
+    const actorId = req.authUser?.userId ?? actorLabel;
+    const failed = (err: unknown) => {
+      if (err instanceof ApprovalDecisionError || err instanceof ActionDecisionError) {
+        const status = err.code === "not_found" ? 404 : err.code === "not_allowed" ? 403 : 409;
+        res.status(status).json({ error: err.message });
+        return true;
+      }
+      return false;
+    };
+    if (decisionOrgId && (source === "approval" || source === "alert" || source === "recommendation")) {
+      try {
+        if (source === "approval") {
+          await decideApproval({
+            orgId: decisionOrgId,
+            role: getRequestRole(req),
+            userId: req.authUser?.userId ?? null,
+            decidedBy: actorLabel,
+            approvalId: sourceId,
+            decision: decision === "approved" ? "approved" : "rejected",
+            via: "My Actions",
+          });
+        } else if (source === "alert") {
+          await acknowledgeAlert({ orgId: decisionOrgId, actorId, actorLabel, via: "My Actions", alertId: sourceId });
+        } else {
+          await decideRecommendation({
+            orgId: decisionOrgId, actorId, actorLabel, via: "My Actions",
+            recommendationId: sourceId,
+            decision: decision === "approved" ? "accept" : "dismiss",
+          });
+        }
+        return res.json({ ok: true });
+      } catch (err) {
+        if (failed(err)) return;
+        throw err;
+      }
     }
 
     if (source === "approval" || source === "governance" || source === "autonomy") {
