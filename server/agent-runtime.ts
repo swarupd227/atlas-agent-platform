@@ -29,6 +29,7 @@ import { ensureContainerFiles, ensureGeneratedContainerFiles } from "./anthropic
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
 import { resolveOutputMode, ownFinalAnswer, continuationMaxTokens } from "./output-mode";
+import { finalAnswerInstructions, analysisCallPrompt, finalAnswerFromTurn, hasRecordListSchema, RECONCILIATION_NOTE } from "./final-answer";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -1361,8 +1362,11 @@ export async function executePromptWithMcp(
     }
   }
   const modelPrompt = [brandContext, upstreamContext, prompt].filter(Boolean).join("\n\n");
+  // Set once the tools are known (see server/final-answer.ts): the format the
+  // result must take, so the tool loop's last turn can be the result.
+  let finalAnswerBlock = "";
   /** The worker's user turn: the prompt plus any brand-asset container uploads. A fresh object per call site -- nothing downstream mutates it, this just keeps that true by construction. */
-  const makeUserTurn = (): LLMMessage => ({ role: "user", content: modelPrompt, ...brandAttachment });
+  const makeUserTurn = (): LLMMessage => ({ role: "user", content: [modelPrompt, finalAnswerBlock].filter(Boolean).join("\n\n"), ...brandAttachment });
   /** Every file this run produced, by either route -- returned to the caller so a DAG engine can pass deliverables downstream. */
   const runGeneratedFiles: Array<{ id: string; filename: string | null; mimeType: string | null }> = [];
   // Why each call to a file-producing tool in this run ended without a file.
@@ -1488,6 +1492,9 @@ export async function executePromptWithMcp(
   const fallbackProviderName = llmProvider.providerName === "openai" ? "anthropic" : "openai";
   const fallbackLlmProvider = getProvider(fallbackProviderName);
   const canonicalTools = buildCanonicalTools(availableTools);
+  if (canonicalTools.length > 0 && options?.conversational !== true && resolveOutputMode(options?.runtimeConfig) === "analysis") {
+    finalAnswerBlock = finalAnswerInstructions(options?.runtimeConfig?.outputSchema);
+  }
 
   let kbContext = "";
   const kbRetrievals: Array<{ kbId: string; kbName: string; embeddingModel: string; chunks: Array<{ chunkId: string; sourceDocId: string; similarityScore: number | null; contentHash: string }> }> = [];
@@ -2368,32 +2375,11 @@ After receiving tool results, provide a structured analysis with key findings, s
 
         const runtimeConfig = (options as any)?.runtimeConfig || {};
         const outputSchema = runtimeConfig?.outputSchema;
-        const hasOutputSchema = outputSchema && outputSchema.type === "record_list" && Array.isArray(outputSchema.fields) && outputSchema.fields.length > 0;
-
-        let structuredOutputInstructions = "";
-        if (hasOutputSchema) {
-          const fieldDescs = outputSchema.fields.map((f: any) => `${f.name} (${f.type}): ${f.description}`).join("; ");
-          structuredOutputInstructions = ` IMPORTANT: You MUST also include a "processedRecords" field as a JSON array where each element represents one ${outputSchema.description || "processed record"} with these fields: ${fieldDescs}. Process EVERY record from the data — do not skip or summarize them into fewer entries.`;
-        } else if (hasRecordData) {
-          structuredOutputInstructions = ` If the tool results contain multiple data records (e.g. leads, items, transactions), also include a "processedRecords" field as a JSON array where each element has: id, name (string identifier), score (number 0-100 if applicable), decision (string classification/action), reasoning (1-2 sentence explanation). Process every record from the data.`;
-        }
-
-        // Guards against a fact noticed at one tool-calling step (e.g. "some
-        // records have no matching related data") going unreconciled against
-        // a contradictory conclusion drawn at another step (e.g. "none
-        // qualify") -- without this, nothing prompts the model to notice the
-        // two can't both be true before it answers.
-        // This analysis prompt names its own fields, and a model follows the
-        // latest instruction: a team step told (in its input) to emit routing
-        // fields such as resolutionDecision dropped them once it had called a
-        // tool, so every branch after it was skipped. Fields the instructions
-        // require are kept alongside the analysis fields.
-        const requiredFieldsNote = ` Also include, as top-level keys with the values your findings support, every field the instructions earlier in this conversation require in your output (for example the fields listed under ROUTING FIELDS).`;
-        const reconciliationNote = ` Before finalizing your answer, check it against everything observed earlier in this conversation -- if an earlier step noted a fact (e.g. some records have no matching related data) that would contradict your conclusion (e.g. "none qualify"), resolve the contradiction or explain it rather than reporting a conclusion that contradicts an earlier observation.`;
+        const hasOutputSchema = hasRecordListSchema(outputSchema);
 
         const analysisPrompt = isConversational
-          ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.${reconciliationNote}`
-          : `Now analyze the tool results above. Respond in JSON format with fields: summary (string), severity (low/medium/high), riskFactors (array of strings), findings (array of key observations), and recommendedActions (array of strings).${structuredOutputInstructions}${requiredFieldsNote}${reconciliationNote}`;
+          ? `Now respond to the user's original question using the tool results above. Write a helpful, detailed, conversational response in natural language. Include specific data points (numbers, measurements, values) from the tool results. Format your response nicely — use line breaks for readability if the answer is long. Do NOT respond in JSON. Respond as a knowledgeable assistant speaking directly to the user.${RECONCILIATION_NOTE}`
+          : analysisCallPrompt(outputSchema, hasRecordData);
         const analysisMessages: LLMMessage[] = [
           ...conversationMessages,
           ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),
@@ -2435,9 +2421,15 @@ After receiving tool results, provide a structured analysis with key findings, s
         // through the contract enforcement, parsing and masking below; only
         // the second call that would rewrite it into a summary is skipped.
         const ownAnswer = ownFinalAnswer(resolveOutputMode(runtimeConfig), currentToolCalls, currentContent);
+        // Analysis mode: the loop's last turn, written in the format asked for
+        // up front (finalAnswerBlock), is the result -- see server/final-answer.ts.
+        const turnAnswer = ownAnswer === undefined && !isConversational && finalAnswerBlock
+          ? finalAnswerFromTurn(currentToolCalls, currentContent, parseModelJsonObject)
+          : undefined;
+        const directAnswer = ownAnswer ?? turnAnswer;
         const llmCallStartMs = performance.now();
-        const analysisResult = ownAnswer !== undefined
-          ? ({ content: ownAnswer, tokensUsed: { prompt: 0, completion: 0, total: 0 }, costUsd: 0 } as unknown as Awaited<ReturnType<typeof completeWithFallback>>)
+        const analysisResult = directAnswer !== undefined
+          ? ({ content: directAnswer, tokensUsed: { prompt: 0, completion: 0, total: 0 }, costUsd: 0 } as unknown as Awaited<ReturnType<typeof completeWithFallback>>)
           : await (onProgress && isConversational
           ? streamCompleteWithFallback(
               analysisMessages,
@@ -2461,7 +2453,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               providerChain,
             ));
         const llmCallLatencyMs = performance.now() - llmCallStartMs;
-        if (ownAnswer === undefined) recordLlmCallProvider(analysisResult, "analysis", steps[steps.length - 1]);
+        if (directAnswer === undefined) recordLlmCallProvider(analysisResult, "analysis", steps[steps.length - 1]);
 
         totalPromptTokens += analysisResult.tokensUsed.prompt;
         totalCompletionTokens += analysisResult.tokensUsed.completion;
@@ -2470,7 +2462,7 @@ After receiving tool results, provide a structured analysis with key findings, s
 
         // In "answer" mode the returned text is the model's own last turn, whose
         // stop reason is already recorded; otherwise it is this summarising call.
-        if (ownAnswer === undefined) finalStopReason = (analysisResult as { stopReason?: string }).stopReason;
+        if (directAnswer === undefined) finalStopReason = (analysisResult as { stopReason?: string }).stopReason;
         const rawContent = analysisResult.content || (isConversational ? "I couldn't generate a response." : "{}");
 
         // GAP5: Output Contract Enforcement
@@ -2556,6 +2548,7 @@ After receiving tool results, provide a structured analysis with key findings, s
 
         analysis.iterationsUsed = iterationsUsed;
         if (ownAnswer !== undefined) analysis.answerSource = "agent";
+        else if (turnAnswer !== undefined) analysis.answerSource = "final_turn";
 
         // Check if strict_with_interrupt triggered a non-success terminal state.
         // Uses the explicit shouldInterrupt flag from the enforcer — NOT validationStatus="failed"

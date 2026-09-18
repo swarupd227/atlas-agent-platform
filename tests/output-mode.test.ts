@@ -38,7 +38,7 @@ describe("ownFinalAnswer", () => {
 describe("continuationMaxTokens", () => {
   it("gives the call that writes an agent's deliverable room to write it", () => {
     expect(continuationMaxTokens("answer")).toBe(16384);
-    expect(continuationMaxTokens("analysis")).toBe(4096);
+    expect(continuationMaxTokens("analysis")).toBe(16384);
   });
 });
 

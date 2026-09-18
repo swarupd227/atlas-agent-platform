@@ -39,11 +39,12 @@ export function ownFinalAnswer(
 }
 
 /**
- * Output-token ceiling for the calls that continue a tool loop. In "answer"
- * mode the deliverable itself is written by one of them, so it gets the same
- * room the planning call gets for a large input; otherwise the old 4k, which
- * only ever had to hold a decision about the next tool call.
+ * Output-token ceiling for the calls that continue a tool loop. The
+ * deliverable itself is written by one of them in either mode -- in "answer"
+ * mode by design, in "analysis" mode since the result format is asked for up
+ * front (server/final-answer.ts) -- so both get the room the planning call
+ * gets for a large input. A ceiling only caps; it costs nothing unless reached.
  */
-export function continuationMaxTokens(mode: OutputMode): number {
-  return mode === "answer" ? 16384 : 4096;
+export function continuationMaxTokens(_mode: OutputMode): number {
+  return 16384;
 }
