@@ -76,7 +76,7 @@ Industry stored on the tenant and agent (not the browser); presets read industry
 ### E-UX7 · Information architecture — increment 3 (done)
 Home briefing, Needs-you inbox, @-mentioning your agents, Library (one index of everything), five-item rail, natural-language ⌘K.
 
-### E-UX8 · Studio packs — increment 4+
+### E-UX8 · Studio packs — increment 4 (done: Governance, Evaluation, Skills & Knowledge, Deploy & Operate)
 Tool packs loaded by context: Skills, Flows, Templates & Journeys, Ontology & Graph, Knowledge, Evaluation, Governance, Deploy & Operate, Publish.
 
 ### E-UX9 · Converge — increment 5+
@@ -194,3 +194,61 @@ organization-scoped yet.
 6. `/astra`: five-item rail, a briefing with no invented figures, a Needs-you item decided in the conversation and
    another that links out, `@` inserting a name without sending, a Library whose sections follow the role, and ⌘K
    sending a typed question. With the flag off, every new `/api/astra/*` route answers 404.
+
+## Decide more of Needs you (after increment 3)
+
+Everything waiting in Needs you was recommendations and alerts, which Astra could only link out to.
+
+- One decision path per kind, shared by the classic pages, My Actions and Astra: `server/approval-decision.ts` (every
+  approval's effects: resuming paused runs, activating deployments, rolling out patches, retiring agents, enabling code
+  execution, promoting screenshot baselines) and `server/action-decisions.ts` (recommendations and alerts).
+- Astra decides any pending approval; the card says what the decision does, or that it changes nothing else.
+- `decide_recommendation`: accepting is honest -- only a model downgrade changes the agent; retraining and workflow
+  changes are recorded as accepted with the work still to do. Impact lines are labelled as the recommender's estimate.
+- `acknowledge_alert`: says acknowledging doesn't fix anything.
+- My Actions now uses the same code, so its decisions follow review routing and leave an audit record.
+
+## Increment 4 — studio packs
+
+Everything after a team exists no longer means leaving the conversation. Tools come in **studio packs** that Astra
+loads only when the conversation needs them (`load_tools`, remembered on the thread), so the model isn't handed every
+tool on every turn.
+
+| Pack | Tools |
+|---|---|
+| Governance | `list_policies`, `explain_policies`, `check_governance_readiness`, `verify_audit_chain`, `regulatory_exam_package`, `install_policy_pack`, `bind_policy` |
+| Evaluation | `list_eval_datasets`, `list_eval_runs`, `get_eval_run`, `run_eval`, `compare_eval_runs`, `explain_eval_failures` |
+| Skills & Knowledge | `find_skills`, `attach_skill`, `list_knowledge_bases`, `create_knowledge_base`, `add_knowledge`, `search_knowledge`, `attach_knowledge_base` |
+| Deploy & Operate | `list_deployments`, `agent_health`, `list_incidents`, `deploy_agent`, `promote_deployment`, `change_rollout`, `rollback_deployment` |
+
+**Decisions (product owner, 2026-09-18).** All four packs. Deploy & Operate goes up to production, always behind a
+confirm card and the real approval gates; anything touching production also needs `deploy_prod`, which Astra checks.
+
+**How the tools stay honest and in the organization**
+
+- Changes use shared code with the routes, never a separate path: `server/policy-actions.ts`, `server/eval-runs.ts`,
+  `addTextSource`/`addUrlSource` in `server/kb-routes.ts`, `server/deployment-actions.ts` (create, promote, routing,
+  rollback moved out of the deployment routes with every gate intact).
+- Deployment approvals created by those hops now carry their organization, so they can be decided within it.
+- Evaluation uses Eval Studio only (the organization-scoped eval system), and only the caller's organization's rows.
+- The eval regression gate now finds its baseline in the run's own organization; before, it never fired for an
+  organization's runs.
+- Audit-chain verification checks the organization's own chain.
+- Health comes from the agent's own recent runs, with the sample size.
+
+**Left out on purpose**
+
+- Figures the platform generates rather than measures: canary blast radius, AI canary analysis, healing impact,
+  what-if results. No tool reports them.
+- Policy exceptions (an approved exception doesn't change enforcement yet), the legacy eval suites and golden datasets
+  (not organization-scoped), starting or stopping agent runtimes, and crawling websites into a knowledge base.
+- Any deployment route that marks stages passed or skips an approval.
+
+**Live acceptance** (after deploy, as admin)
+
+1. A natural request loads the right pack; its tools appear from the next step.
+2. Explain an agent's policies; verify the audit chain.
+3. Run an eval on a small dataset: progress narrates to the result; compare with the previous run; explain failures.
+4. Find and attach a skill; create a knowledge base, add text, search it, attach it.
+5. Deploy an agent to staging, promote to pilot (approval created and decided in the thread), start a canary, roll back
+   -- each change visible on the classic pages and in the audit trail. Test data is listed afterwards.
