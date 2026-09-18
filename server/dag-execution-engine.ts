@@ -736,7 +736,59 @@ export function getRoutingFieldSpecs(nodeId: string, plan: ComputedWavePlan): Ro
 }
 
 export function getLaterStepLabels(nodeId: string, plan: ComputedWavePlan): string[] {
-  return laterStepIds(nodeId, guidanceEdges(plan)).map((id) => plan.nodeConfig[id]?.label || id);
+  const later = new Set(laterStepIds(nodeId, guidanceEdges(plan)));
+  // Every node in a later wave runs after this one too, edge or no edge. A
+  // node the graph did not connect (the "orchestrator" a team builder placed
+  // beside the graph) was never told which steps still had to run, and
+  // narrated their work as done before any of them had started.
+  const ownWave = plan.waves.find((w) => w.nodes.includes(nodeId))?.wave_number;
+  if (ownWave !== undefined) {
+    for (const wave of plan.waves) {
+      if (wave.wave_number > ownWave) for (const id of wave.nodes) later.add(id);
+    }
+  }
+  return Array.from(later)
+    .filter((id) => id !== nodeId && plan.nodeConfig[id]?.nodeType !== "tool_set")
+    .map((id) => plan.nodeConfig[id]?.label || id);
+}
+
+/**
+ * The state a node may read: what flows to it along edges.
+ *
+ * buildAgentInput used to render every state key into every node, so a node
+ * with no edge to anything reached every later step through that dump. Live:
+ * a team "orchestrator" placed beside the graph narrated the whole journey as
+ * done before any step had run; later steps read that as corroboration, and a
+ * screening step skipped its own screening on the strength of it. A node now
+ * sees its ancestors' outputs (however indirect) and their files, its own
+ * previous output when it runs again, the request, and keys no node owns (a
+ * revision request); another node's output only if it is upstream -- or it
+ * is the reviewer whose findings sent this node back (a revision loop runs
+ * against the edges' direction).
+ */
+export function visibleStateKeys(
+  nodeId: string,
+  plan: Pick<ComputedWavePlan, "edgeMap" | "nodeConfig">,
+  state?: Record<string, any>,
+): { visible: Set<string>; owned: Set<string> } {
+  const owned = new Set<string>();
+  for (const nc of Object.values(plan.nodeConfig)) {
+    if (!nc.stateKey) continue;
+    owned.add(nc.stateKey);
+    owned.add(`${nc.stateKey}${GENERATED_FILES_STATE_SUFFIX}`);
+  }
+  const visible = new Set<string>();
+  const show = (id: string) => {
+    const key = plan.nodeConfig[id]?.stateKey;
+    if (!key) return;
+    visible.add(key);
+    visible.add(`${key}${GENERATED_FILES_STATE_SUFFIX}`);
+  };
+  for (const id of ancestorsOf(nodeId, plan.edgeMap)) show(id);
+  show(nodeId);
+  const loop = state ? readRevisionBookkeeping(state).active : undefined;
+  if (loop && loop.nodeIds.includes(nodeId)) show(loop.sourceNodeId);
+  return { visible, owned };
 }
 
 // A worker agent reads skills, calls tools and reasons over their results
@@ -783,6 +835,7 @@ function buildAgentInput(
   upstreamTruncations?: string,
   routingFields?: RoutingFieldSpec[],
   laterSteps?: string[],
+  stateScope?: { visible: Set<string>; owned: Set<string> },
 ): string {
   const sections: string[] = [];
   sections.push(`## DAG EXECUTION CONTEXT`);
@@ -832,6 +885,8 @@ function buildAgentInput(
     // dumping it again here sent every worker two copies of it. On a journey
     // fed a long brief that is the single largest line item in the prompt.
     if (key === "request" && userInput) continue;
+    // Another node's output reaches this node only along edges (see visibleStateKeys).
+    if (stateScope && stateScope.owned.has(key) && !stateScope.visible.has(key)) continue;
     sections.push(`## STATE: ${key}`);
     sections.push(typeof value === "object" ? JSON.stringify(value, null, 2) : String(value));
     sections.push(``);
@@ -1568,6 +1623,7 @@ export class DAGExecutionEngine {
       upstreamTruncationNotice(nodeId, config.executionPlan, nodeOutcomes),
       getRoutingFieldSpecs(nodeId, config.executionPlan),
       getLaterStepLabels(nodeId, config.executionPlan),
+      visibleStateKeys(nodeId, config.executionPlan, currentState),
     );
 
     // A Tool Set node directly upstream of this agent node scopes which MCP

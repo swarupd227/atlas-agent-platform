@@ -178,3 +178,56 @@ describe("DAG worker input", () => {
     expect(occurrences(message, "THE-REQUEST-MARKER")).toBe(1);
   });
 });
+
+/**
+ * What flows to a node is what its edges carry. A node the graph does not
+ * connect used to reach every later step through the all-state dump -- live, a
+ * team "orchestrator" beside the graph narrated the journey as done and a
+ * screening step skipped its own screening on the strength of it.
+ */
+describe("DAG worker input is scoped to the node's ancestors", () => {
+  let executeWorkerAgent: any;
+  beforeEach(async () => {
+    ({ executeWorkerAgent } = (await import("../server/agent-runtime")) as any);
+    executeWorkerAgent.mockReset();
+  });
+
+  const plan = () => computeWaves(
+    [
+      node({ id: "orchestrator", label: "Orchestrator", refAgentId: "ag-orch", stateKey: "plan" }),
+      node({ id: "first", label: "First", refAgentId: "ag-first", stateKey: "draft" }),
+      node({ id: "second", label: "Second", refAgentId: "ag-second", stateKey: "review" }),
+      node({ id: "third", label: "Third", refAgentId: "ag-third", stateKey: "final" }),
+    ],
+    [edge("first", "second"), edge("second", "third")],
+  );
+
+  it("passes an upstream output on, but not an unconnected node's", async () => {
+    const inputs: Record<string, string> = {};
+    executeWorkerAgent.mockImplementation(async (id: string, _team: any, previousContext: string) => {
+      inputs[id] = previousContext;
+      return { success: true, output: `${id} says: THE-JOURNEY-IS-DONE` };
+    });
+    await new DAGExecutionEngine().execute({
+      executionPlan: plan(), stateSchema: {}, initialState: { request: "THE-REQUEST-MARKER" }, errorStrategy: "best_effort", teamAgentId: "team-1",
+    });
+
+    expect(inputs["ag-second"]).toContain("## STATE: draft");
+    expect(inputs["ag-second"]).not.toContain("## STATE: plan");
+    expect(inputs["ag-second"]).not.toContain("ag-orch says");
+    // Indirect ancestors still flow: third sees first through second.
+    expect(inputs["ag-third"]).toContain("## STATE: draft");
+    expect(inputs["ag-third"]).toContain("## STATE: review");
+    expect(inputs["ag-third"]).not.toContain("## STATE: plan");
+    // The request is not a node's output and always flows.
+    expect(occurrences(inputs["ag-third"], "THE-REQUEST-MARKER")).toBe(1);
+  });
+
+  it("tells a node about every later wave's steps, edge or no edge", async () => {
+    const { getLaterStepLabels } = await import("../server/dag-execution-engine");
+    const p = plan();
+    expect(getLaterStepLabels("orchestrator", p)).toEqual(["Second", "Third"]);
+    expect(getLaterStepLabels("first", p)).toEqual(["Second", "Third"]);
+    expect(getLaterStepLabels("third", p)).toEqual([]);
+  });
+});
