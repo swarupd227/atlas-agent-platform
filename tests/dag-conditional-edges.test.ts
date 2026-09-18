@@ -378,3 +378,42 @@ describe("routing field instruction", () => {
     expect(text).toContain("records array");
   });
 });
+
+describe("a decision made only on the step's records", () => {
+  const parse = (text: string) => { try { return JSON.parse(text); } catch { return null; } };
+  const search = () => node({ id: "search", stateKey: "search_out", refAgentId: "agent-search" });
+  const create = () => node({ id: "create", stateKey: "create_out", refAgentId: "agent-create" });
+  const screen = () => node({ id: "screen", stateKey: "screen_out", refAgentId: "agent-screen" });
+  const rule = (value: string) => ({ combinator: "AND", conditions: [{ field: "resolutionDecision", operator: "==", value }] } as any);
+  const edges = () => [
+    edge({ id: "e-create", sourceNodeId: "search", targetNodeId: "create", evaluationMode: "deterministic", rule: rule("create") }),
+    edge({ id: "e-screen", sourceNodeId: "search", targetNodeId: "screen", evaluationMode: "deterministic", rule: rule("match") }),
+  ];
+
+  async function runWith(searchOutput: string) {
+    const { executeWorkerAgent, extractStructuredOutput } = await import("../server/agent-runtime");
+    (extractStructuredOutput as any).mockImplementation(parse);
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string) => ({ success: true, output: agentId === "agent-search" ? searchOutput : "ok" }));
+    const result = await new DAGExecutionEngine().execute({
+      executionPlan: computeWaves([search(), create(), screen()], edges()), stateSchema: {}, initialState: {}, errorStrategy: "best_effort", teamAgentId: "team-1",
+    });
+    (extractStructuredOutput as any).mockReturnValue(null);
+    const status = (id: string) => result.waveResults.flatMap((w) => w.nodes).find((n) => n.nodeId === id)?.status;
+    return { create: status("create"), screen: status("screen") };
+  }
+
+  it("routes on the one routed value the records name, ignoring per-candidate dispositions", async () => {
+    const out = JSON.stringify({ processedRecords: [{ accountId: "ACCT-100417", resolutionDecision: "match" }, { accountId: "ACCT-100522", resolutionDecision: "reject" }] });
+    expect(await runWith(out)).toEqual({ create: "skipped", screen: "completed" });
+  });
+
+  it("skips every branch when the records name two routed values", async () => {
+    const out = JSON.stringify({ processedRecords: [{ accountId: "A", resolutionDecision: "match" }, { accountId: "B", resolutionDecision: "create" }] });
+    expect(await runWith(out)).toEqual({ create: "skipped", screen: "skipped" });
+  });
+
+  it("never overrides a decision the step stated at the top level", async () => {
+    const out = JSON.stringify({ resolutionDecision: "create", processedRecords: [{ accountId: "A", resolutionDecision: "match" }] });
+    expect(await runWith(out)).toEqual({ create: "completed", screen: "skipped" });
+  });
+});

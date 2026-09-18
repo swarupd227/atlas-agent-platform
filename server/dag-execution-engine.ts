@@ -9,7 +9,7 @@ import { PRICE_TABLE_VERSION } from "./llm-provider";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
-import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
+import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, collectRuleLeaves, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
 import { collectRunFiles } from "@shared/run-files";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
@@ -668,6 +668,52 @@ export function upstreamFailureNotice(
     `Work with what you actually received. Never assume the missing content exists, never describe it, and never judge it complete or compliant. ` +
       `If your job depends on it, say plainly which part you could not do and why.`,
   ].join("\n");
+}
+
+/**
+ * A routing decision a step made only on its records. Asked for the field at
+ * the top level, a model listing candidates tends to put a disposition on
+ * each -- {"accountId": "ACCT-100417", "resolutionDecision": "match"},
+ * {"accountId": "ACCT-100522", "resolutionDecision": "reject"} -- and say
+ * "proceed on the existing account" only in prose; the branch rule then found
+ * no field and skipped the journey. The records name exactly one of the
+ * values the graph routes on ("reject" routes nowhere), so that is the
+ * decision. Records naming two routed values are ambiguous, and nothing is
+ * promoted: better a visible skip than two branches running.
+ */
+export function routedRecordValue(parsed: Record<string, any> | null, field: string, routedValues: ReadonlySet<unknown>): unknown {
+  const records = parsed?.processedRecords;
+  if (!Array.isArray(records)) return undefined;
+  const named = new Set(records.map((r) => (r && typeof r === "object" ? (r as Record<string, unknown>)[field] : undefined)).filter((v) => routedValues.has(v)));
+  return named.size === 1 ? Array.from(named)[0] : undefined;
+}
+
+function withRoutedRecordValues(
+  state: Record<string, any>,
+  sourceOutput: string,
+  sourceNodeId: string,
+  incomingEdges: Record<string, IncomingEdgeInfo[]>,
+): Record<string, any> {
+  // The values the graph routes on for each field, across every deterministic
+  // edge leaving this source -- so a set of records that names two of them is
+  // ambiguous for all of those edges, not just the one being evaluated.
+  const routed = new Map<string, Set<unknown>>();
+  for (const edges of Object.values(incomingEdges)) {
+    for (const e of edges) {
+      if (e.sourceNodeId !== sourceNodeId || e.evaluationMode !== "deterministic" || !e.rule) continue;
+      for (const leaf of collectRuleLeaves(e.rule)) (routed.get(leaf.field) ?? routed.set(leaf.field, new Set()).get(leaf.field)!).add(leaf.value);
+    }
+  }
+  const missing = Array.from(routed.keys()).filter((field) => state[field] === undefined);
+  if (missing.length === 0) return state;
+  const parsed = extractStructuredOutput(sourceOutput);
+  if (!parsed) return state;
+  const extra: Record<string, unknown> = {};
+  for (const field of missing) {
+    const value = routedRecordValue(parsed, field, routed.get(field)!);
+    if (value !== undefined) extra[field] = value;
+  }
+  return Object.keys(extra).length > 0 ? { ...state, ...extra } : state;
 }
 
 /** Every node upstream of nodeId, however indirectly. */
@@ -1506,7 +1552,7 @@ export class DAGExecutionEngine {
         }
 
         if (edge.evaluationMode === "deterministic" && edge.rule) {
-          const trace = evaluateRule(edge.rule, pipelineState);
+          const trace = evaluateRule(edge.rule, withRoutedRecordValues(pipelineState, sourceOutput, edge.sourceNodeId, incomingEdges));
           if (!trace.result) {
             for (const [field, value] of Object.entries(trace.inputs)) if (value === undefined) missingFields.add(field);
           }
