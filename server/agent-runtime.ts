@@ -1342,6 +1342,8 @@ export async function executePromptWithMcp(
   const makeUserTurn = (): LLMMessage => ({ role: "user", content: [modelPrompt, finalAnswerBlock].filter(Boolean).join("\n\n"), ...brandAttachment });
   /** Every file this run produced, by either route -- returned to the caller so a DAG engine can pass deliverables downstream. */
   const runGeneratedFiles: Array<{ id: string; filename: string | null; mimeType: string | null }> = [];
+  /** Ids in runGeneratedFiles that came from the code execution sandbox (see captureCodeExecResult). */
+  const sandboxFileIds = new Set<string>();
   // Why each call to a file-producing tool in this run ended without a file.
   const failedFileAttempts: string[] = [];
   /** Fold a completion result's generatedFiles/containerId into this run -- call after every completeWithFallback/streamCompleteWithFallback. */
@@ -1366,7 +1368,20 @@ export async function executePromptWithMcp(
     }
     if (llmResult.generatedFiles?.length) {
       const records = await persistGeneratedFiles(llmResult.generatedFiles, { organizationId: orgId ?? null, agentId, traceId: idempotencyScope });
-      runGeneratedFiles.push(...records.map(r => ({ id: r.id, filename: r.filename, mimeType: r.mimeType })));
+      // The sandbox reports a new file every time a path is written, so a
+      // worker that builds a workbook, recalculates it in place and then copies
+      // it to the output folder produced three records of one deliverable (live:
+      // two identical .xlsx on a workbook run). Within this run, a later sandbox
+      // file with the same name is the newer version of the same deliverable:
+      // it replaces the earlier one instead of sitting beside it. Only sandbox
+      // files are folded this way -- files from a tool call (e.g. several
+      // "image.png" from an image tool) are distinct deliverables.
+      for (const r of records) {
+        const file = { id: r.id, filename: r.filename, mimeType: r.mimeType };
+        const prior = r.filename ? runGeneratedFiles.findIndex(f => f.filename === r.filename && sandboxFileIds.has(f.id)) : -1;
+        if (prior >= 0) runGeneratedFiles[prior] = file; else runGeneratedFiles.push(file);
+        sandboxFileIds.add(r.id);
+      }
       // Piggyback on the existing tool_call_result event type -- ExecutionTracePanel
       // (client/src/pages/agent-playground.tsx) reads a generatedFiles field off any
       // tool_call_result event's data to render a download card, no new event type needed.

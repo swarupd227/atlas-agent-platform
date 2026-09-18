@@ -187,6 +187,46 @@ function gateDecision(node: DagWaveNodeResult | undefined): { approved: boolean;
   return null;
 }
 
+/** A run deliverable, with the step that produced it when that can be told from the state key it was saved under. */
+type DeliverableFile = RunFile & { from?: string };
+
+/**
+ * The run's deliverables: every file in its latest state, attributed to the
+ * step whose state key holds it. A later step's file with the same name as an
+ * earlier step's is the newer version of that deliverable (live: a QA step
+ * saving the corrected workbook under the builder's filename), so only the
+ * latest step's copy is offered. Several same-named files from ONE step (an
+ * image tool's "image.png" x8) are distinct deliverables and all kept.
+ */
+function runDeliverables(state: unknown, steps: Array<{ stateKey?: string; label: string }>): DeliverableFile[] {
+  const files = collectRunFiles(state);
+  if (!state || typeof state !== "object") return files;
+  // stateKey -> the latest step (timeline order) that writes it; a revision re-runs a step later.
+  const producer = new Map<string, { label: string; order: number }>();
+  steps.forEach((st, order) => { if (st.stateKey) producer.set(st.stateKey, { label: st.label, order }); });
+  const origin = new Map<string, { label: string; order: number }>();
+  const attribute = (key: string, value: unknown) => {
+    const who = producer.get(key);
+    if (!who || !Array.isArray(value)) return;
+    for (const f of value) if (f && typeof (f as RunFile).id === "string" && !origin.has((f as RunFile).id)) origin.set((f as RunFile).id, who);
+  };
+  for (const [key, value] of Object.entries(state as Record<string, unknown>)) {
+    if (key.endsWith(FILES_KEY_SUFFIX)) attribute(key.slice(0, -FILES_KEY_SUFFIX.length), value);
+    // A nested team step's whole state lands under its own key.
+    else if (value && typeof value === "object" && !Array.isArray(value)) {
+      for (const [k2, v2] of Object.entries(value as Record<string, unknown>)) if (k2.endsWith(FILES_KEY_SUFFIX)) attribute(key, v2);
+    }
+  }
+  const latestByName = new Map<string, number>();
+  for (const f of files) {
+    const o = origin.get(f.id)?.order ?? -1;
+    if (f.filename) latestByName.set(f.filename, Math.max(latestByName.get(f.filename) ?? -1, o));
+  }
+  return files
+    .filter((f) => !f.filename || (origin.get(f.id)?.order ?? -1) === latestByName.get(f.filename))
+    .map((f) => ({ ...f, from: origin.get(f.id)?.label }));
+}
+
 const isImage = (f: RunFile) => (f.mimeType ?? "").startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(f.filename ?? "");
 const fileHref = (f: RunFile) => `/api/agent-files/${f.id}/download`;
 
@@ -454,7 +494,7 @@ export default function DagRunMonitor() {
   const allNodes = waveResults.flatMap(w => w.nodes);
   // The files the run currently stands behind: from its latest state, so a file
   // a revision replaced (or withdrew) is not offered here as the deliverable.
-  const runFiles = collectRunFiles(run.finalState ?? run.currentState);
+  const runFiles = runDeliverables(run.finalState ?? run.currentState, steps);
   const completedCount = steps.filter(s => s.state === "completed").length;
   const failedCount = steps.filter(s => s.state === "failed").length;
   const skippedNodes = allNodes.filter(n => n.status === "skipped");
@@ -823,7 +863,7 @@ export default function DagRunMonitor() {
   );
 }
 
-function FileGallery({ files, testIdPrefix }: { files: RunFile[]; testIdPrefix: string }) {
+function FileGallery({ files, testIdPrefix }: { files: DeliverableFile[]; testIdPrefix: string }) {
   const images = files.filter(isImage);
   const others = files.filter((f) => !isImage(f));
   return (
@@ -839,6 +879,7 @@ function FileGallery({ files, testIdPrefix }: { files: RunFile[]; testIdPrefix: 
                 <span className="truncate">{f.filename === "image.png" || !f.filename ? `Image ${i + 1}` : f.filename}</span>
                 <Download className="w-3 h-3 shrink-0" />
               </span>
+              {f.from && <span className="-mt-1 truncate text-[11px] text-muted-foreground" title={`From ${f.from}`}>from {f.from}</span>}
             </a>
           ))}
         </div>
@@ -853,7 +894,10 @@ function FileGallery({ files, testIdPrefix }: { files: RunFile[]; testIdPrefix: 
               data-testid={`${testIdPrefix}-${f.id}`}
             >
               <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="truncate max-w-[260px]">{f.filename || "Download file"}</span>
+              <span className="flex flex-col min-w-0">
+                <span className="truncate max-w-[460px]">{f.filename || "Download file"}</span>
+                {f.from && <span className="truncate max-w-[460px] text-[11px] text-muted-foreground">from {f.from}</span>}
+              </span>
               <Download className="w-3.5 h-3.5 text-muted-foreground" />
             </a>
           ))}
