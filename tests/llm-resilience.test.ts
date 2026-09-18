@@ -473,3 +473,64 @@ describe("exhausted quota is not a rate limit", () => {
     expect(calls).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Rate-limit hints and pacing
+// ---------------------------------------------------------------------------
+
+import { parseDurationMs, parseRateLimitHint, TokenRatePacer, requestTokenCharge } from "../server/llm-provider";
+
+describe("parseDurationMs", () => {
+  it("reads OpenAI's duration spellings", () => {
+    expect(parseDurationMs("6ms")).toBe(6);
+    expect(parseDurationMs("1.5s")).toBe(1500);
+    expect(parseDurationMs("1m2.4s")).toBe(62400);
+    expect(parseDurationMs("2")).toBe(2000);
+    expect(parseDurationMs("soon")).toBeUndefined();
+  });
+});
+
+describe("parseRateLimitHint", () => {
+  it("takes the wait from the 429 message and the limit it names", () => {
+    const err = Object.assign(new Error("429 Rate limit reached for gpt-4.1 in organization org-x on tokens per min (TPM): Limit 30000, Used 28000, Requested 12000. Please try again in 14.2s. Visit https://platform.openai.com/account/rate-limits"), { status: 429 });
+    expect(parseRateLimitHint(err)).toEqual({ retryMs: 14200, limitTokensPerMinute: 30000 });
+    expect(retryDelayMs(err, 0, () => 0.5)).toBe(14450);
+  });
+
+  it("prefers the reset and limit headers when present", () => {
+    const headers = new Map([["x-ratelimit-reset-tokens", "350ms"], ["x-ratelimit-limit-tokens", "450000"]]);
+    const err = Object.assign(new Error("Too Many Requests"), { status: 429, headers });
+    expect(parseRateLimitHint(err)).toEqual({ retryMs: 350, limitTokensPerMinute: 450000 });
+  });
+});
+
+describe("TokenRatePacer", () => {
+  it("does nothing until a limit is known, then queues requests that would exceed the minute's budget", async () => {
+    const pacer = new TokenRatePacer("test");
+    const t0 = Date.now();
+    await pacer.acquire(1_000_000);
+    expect(Date.now() - t0).toBeLessThan(50);
+
+    pacer.learn(1000);
+    await pacer.acquire(600);
+    const start = Date.now();
+    // Over budget: waits for the first charge to age out of the window. The
+    // window is 60s, so instead of waiting, check that the call is pending.
+    let settled = false;
+    const p = pacer.acquire(600).then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(settled).toBe(false);
+    expect(Date.now() - start).toBeLessThan(1000);
+    // A request that fits goes straight through (the pending one holds the queue, so it is queued behind it: use a fresh pacer to show the fit case).
+    const fresh = new TokenRatePacer("fresh", 1000);
+    await fresh.acquire(400);
+    await fresh.acquire(400);
+    void p;
+  });
+
+  it("charges what the provider charges: max(max_tokens, prompt estimate)", () => {
+    const messages = [{ role: "user" as const, content: "x".repeat(40_000) }];
+    expect(requestTokenCharge(messages, undefined, 4096)).toBe(10_000);
+    expect(requestTokenCharge([{ role: "user" as const, content: "hi" }], undefined, 16384)).toBe(16384);
+  });
+});

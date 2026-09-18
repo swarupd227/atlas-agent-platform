@@ -304,24 +304,132 @@ export function isRateLimitError(err: unknown): boolean {
   return e.status === 429 || e.constructor.name === "RateLimitError";
 }
 
-/** The wait the provider asked for, from a retry-after(-ms) header, in ms. */
-function retryAfterMs(err: unknown): number | undefined {
+function readHeader(err: unknown, key: string): string | undefined {
   const headers = (err as { headers?: unknown })?.headers as { get?: (k: string) => unknown } | Record<string, unknown> | undefined;
   if (!headers) return undefined;
-  const read = (key: string): string | undefined => {
-    const raw = typeof (headers as { get?: unknown }).get === "function"
-      ? (headers as { get: (k: string) => unknown }).get(key)
-      : (headers as Record<string, unknown>)[key];
-    return raw == null ? undefined : String(raw);
-  };
-  const ms = Number(read("retry-after-ms"));
-  if (Number.isFinite(ms) && ms > 0) return ms;
-  const after = read("retry-after");
-  if (after === undefined) return undefined;
-  const seconds = Number(after);
-  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000;
-  const date = Date.parse(after);
-  return Number.isFinite(date) && date > Date.now() ? date - Date.now() : undefined;
+  const raw = typeof (headers as { get?: unknown }).get === "function"
+    ? (headers as { get: (k: string) => unknown }).get(key)
+    : (headers as Record<string, unknown>)[key];
+  return raw == null ? undefined : String(raw);
+}
+
+/** A duration as OpenAI writes it in reset headers and 429 messages: "6ms", "1.5s", "1m2.4s". */
+export function parseDurationMs(text: string | undefined): number | undefined {
+  if (!text) return undefined;
+  const t = text.trim();
+  if (/^\d+(\.\d+)?$/.test(t)) return Number(t) * 1000;
+  let total = 0, matched = false;
+  for (const m of t.matchAll(/(\d+(?:\.\d+)?)\s*(ms|s|m|h)(?![a-z])/gi)) {
+    matched = true;
+    const n = Number(m[1]);
+    total += m[2].toLowerCase() === "ms" ? n : m[2].toLowerCase() === "s" ? n * 1000 : m[2].toLowerCase() === "m" ? n * 60_000 : n * 3_600_000;
+  }
+  return matched ? total : undefined;
+}
+
+export interface RateLimitHint {
+  /** How long the provider asked us to wait. */
+  retryMs?: number;
+  /** The tokens-per-minute limit the provider named. */
+  limitTokensPerMinute?: number;
+}
+
+/**
+ * What a 429 tells us: the wait it asks for (retry-after headers, the token
+ * reset header, or the message's "Please try again in 1.35s") and the limit
+ * it named ("Limit 30000" / x-ratelimit-limit-tokens), which the pacer learns.
+ */
+export function parseRateLimitHint(err: unknown): RateLimitHint {
+  const hint: RateLimitHint = {};
+  const ms = Number(readHeader(err, "retry-after-ms"));
+  if (Number.isFinite(ms) && ms > 0) hint.retryMs = ms;
+  if (hint.retryMs === undefined) {
+    const after = readHeader(err, "retry-after");
+    const seconds = Number(after);
+    if (after !== undefined && Number.isFinite(seconds) && seconds > 0) hint.retryMs = seconds * 1000;
+    else if (after !== undefined) { const date = Date.parse(after); if (Number.isFinite(date) && date > Date.now()) hint.retryMs = date - Date.now(); }
+  }
+  const message = err instanceof Error ? err.message : "";
+  if (hint.retryMs === undefined) hint.retryMs = parseDurationMs(readHeader(err, "x-ratelimit-reset-tokens"));
+  if (hint.retryMs === undefined) {
+    const m = message.match(/try again in\s+([\d.]+\s*(?:ms|s|m))/i);
+    if (m) hint.retryMs = parseDurationMs(m[1]);
+  }
+  const limitHeader = Number(readHeader(err, "x-ratelimit-limit-tokens"));
+  if (Number.isFinite(limitHeader) && limitHeader > 0) hint.limitTokensPerMinute = limitHeader;
+  else {
+    const m = message.match(/tokens per min[^.]*?Limit\s+([\d,]+)/i);
+    if (m) hint.limitTokensPerMinute = Number(m[1].replace(/,/g, ""));
+  }
+  return hint;
+}
+
+function retryAfterMs(err: unknown): number | undefined {
+  return parseRateLimitHint(err).retryMs;
+}
+
+/**
+ * Paces a provider's requests to a tokens-per-minute limit so they queue in
+ * order instead of being fired, rejected and backed off. Live: with three
+ * team runs in flight, calls that produced 40 output tokens took 20-90s in
+ * 429 backoff and nodes timed out; the same calls took under 2s once load
+ * dropped. The limit is learned from the first 429 that names it (or set with
+ * <PROVIDER>_TPM, e.g. OPENAI_TPM); until then nothing is paced. A request is
+ * charged what the provider charges it: max(max_tokens, prompt estimate).
+ */
+export class TokenRatePacer {
+  private limit?: number;
+  private readonly window: Array<{ at: number; tokens: number }> = [];
+  private chain: Promise<void> = Promise.resolve();
+  constructor(readonly name: string, limit?: number) {
+    this.limit = limit && limit > 0 ? limit : undefined;
+  }
+  get limitTokensPerMinute(): number | undefined { return this.limit; }
+  learn(limit: number | undefined): void {
+    if (limit && limit > 0 && limit !== this.limit) {
+      this.limit = limit;
+      console.info(`[llm-provider] ${this.name} pacer: tokens-per-minute limit learned as ${limit}`);
+    }
+  }
+  private used(now: number): number {
+    while (this.window.length && now - this.window[0].at >= 60_000) this.window.shift();
+    return this.window.reduce((s, e) => s + e.tokens, 0);
+  }
+  /** Resolves when the request may be sent; waits at most 60s so a bad estimate cannot stall a caller. */
+  acquire(tokens: number, signal?: AbortSignal): Promise<void> {
+    if (!this.limit) return Promise.resolve();
+    const turn = this.chain.then(async () => {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const now = Date.now();
+        const used = this.used(now);
+        if (used + tokens <= this.limit! || used === 0 || now >= deadline) {
+          this.window.push({ at: now, tokens });
+          return;
+        }
+        // Wait for the oldest charge to leave the window, then re-check.
+        const wait = Math.min(Math.max(60_000 - (now - this.window[0].at), 50), deadline - now);
+        await abortableSleep(wait, signal);
+      }
+    });
+    this.chain = turn.catch(() => {});
+    return turn;
+  }
+}
+
+const pacers: Record<string, TokenRatePacer> = {};
+export function pacerFor(providerName: string): TokenRatePacer {
+  if (!pacers[providerName]) {
+    const configured = Number(process.env[`${providerName.toUpperCase()}_TPM`]);
+    pacers[providerName] = new TokenRatePacer(providerName, Number.isFinite(configured) ? configured : undefined);
+  }
+  return pacers[providerName];
+}
+
+/** What the provider will charge this request against its token-per-minute limit. */
+export function requestTokenCharge(messages: LLMMessage[], tools: unknown, maxTokens: number): number {
+  const promptChars = messages.reduce((s, m) => s + (typeof m.content === "string" ? m.content.length : 0), 0) + (tools ? JSON.stringify(tools).length : 0);
+  return Math.max(maxTokens, Math.ceil(promptChars / 4));
 }
 
 export function maxRetriesFor(err: unknown): number {
@@ -385,11 +493,13 @@ function isCallerAbort(err: unknown): boolean {
   return err.constructor.name === "APIUserAbortError" || err.name === "AbortError";
 }
 
-async function withRetry<T>(fn: () => Promise<T>, providerName: string): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, providerName: string, tokenCharge?: number): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
+      if (tokenCharge) await pacerFor(providerName).acquire(tokenCharge, currentLlmAbortSignal());
       return await fn();
     } catch (err) {
+      if (isRateLimitError(err)) pacerFor(providerName).learn(parseRateLimitHint(err).limitTokensPerMinute);
       const maxRetries = maxRetriesFor(err);
       if (attempt >= maxRetries || !isRetryable(err)) {
         throw err;
@@ -650,6 +760,7 @@ class OpenAIProvider implements LLMProvider {
     cbCheck(this.providerName);
 
     const client = await this.getClient();
+    const charge = requestTokenCharge(messages, openaiTools, options?.maxTokens || 4096);
     let response: OpenAI.ChatCompletion;
     let usedStrictSchema = !!options?.jsonSchema;
     try {
@@ -665,6 +776,7 @@ class OpenAIProvider implements LLMProvider {
             ...buildResponseFormat(true),
           }, openaiRequestOptions(options?.maxTokens)),
         this.providerName,
+        charge,
       );
       cbRecordSuccess(this.providerName);
     } catch (err) {
@@ -684,6 +796,7 @@ class OpenAIProvider implements LLMProvider {
                 ...buildResponseFormat(false),
               }, openaiRequestOptions(options?.maxTokens)),
             this.providerName,
+            charge,
           );
           cbRecordSuccess(this.providerName);
         } catch (err2) {
@@ -778,6 +891,7 @@ class OpenAIProvider implements LLMProvider {
     cbCheck(this.providerName);
 
     const client = await this.getClient();
+    const charge = requestTokenCharge(messages, openaiTools, options?.maxTokens || 4096);
     let fullContent = "";
     const toolCallsMap: Record<number, { id: string; name: string; arguments: string }> = {};
     let promptTokens = 0;
@@ -802,6 +916,7 @@ class OpenAIProvider implements LLMProvider {
               ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
             }, openaiRequestOptions(options?.maxTokens)),
           this.providerName,
+          charge,
         );
       } catch (err) {
         if (!(usedStrictSchema && isSchemaRejectionError(err))) throw err;
@@ -821,6 +936,7 @@ class OpenAIProvider implements LLMProvider {
               ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
             }, openaiRequestOptions(options?.maxTokens)),
           this.providerName,
+          charge,
         );
       }
 
