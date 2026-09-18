@@ -26,6 +26,7 @@ import { bindPolicyToAgent, bindPolicyToOutcome, installPolicyPack, policyPackCa
 import { resolvePolicyBundle } from "../routes/helpers";
 import { evalServices } from "./eval-services";
 import { knowledgeServices } from "./knowledge-services";
+import { deployServices } from "./deploy-services";
 import { resolveAgentIndustry } from "../agent-industry";
 import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-requirements";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
@@ -954,6 +955,7 @@ export function createAstraServices(): AstraServices {
   return {
     ...evalServices,
     ...knowledgeServices,
+    ...deployServices,
     listAgents,
     getAgent,
     listAgentConnectors,
