@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { pickRegressionBaseline, regressionCheck } from "./eval-regression";
 import { resolveAgentIndustry } from "./agent-industry";
 import type { Job, AuditChainTrigger } from "@shared/schema";
 import { agentAlerts } from "@shared/schema";
@@ -1715,20 +1716,15 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     // regardless of whether absolute threshold is met or per-metric checks passed.
     const regressionWindowPct = gate?.regressionWindowPct ?? 5;
     if (passRate !== null && regressionWindowPct > 0) {
-      const runHistory = await storage.getEvalTestRuns({ agentId });
-      const baselineRun = runHistory
-        .filter(r => r.id !== runId && r.status === "completed" && r.passRate != null)
-        .sort((a, b) =>
-          new Date(b.completedAt ?? b.startedAt ?? 0).getTime() -
-          new Date(a.completedAt ?? a.startedAt ?? 0).getTime()
-        )[0] ?? null;
-
-      if (baselineRun?.passRate != null) {
-        const dropPct = (baselineRun.passRate - passRate) * 100;
-        if (dropPct > regressionWindowPct) {
-          gateTag = "gate:fail";
-          console.log(`[eval-test-run] Regression window exceeded for run ${runId}: dropped ${dropPct.toFixed(1)}pp (window=${regressionWindowPct}%), forcing gate:fail`);
-        }
+      // The run's own organization: without it, getEvalTestRuns returns only
+      // organization-less runs, so an organization's runs never found a baseline
+      // and this gate silently never fired.
+      const runHistory = await storage.getEvalTestRuns({ agentId, organizationId: run.organizationId ?? undefined });
+      const baselineRun = pickRegressionBaseline(runHistory, runId);
+      const { dropPct, regressed } = regressionCheck(baselineRun?.passRate, passRate, regressionWindowPct);
+      if (regressed) {
+        gateTag = "gate:fail";
+        console.log(`[eval-test-run] Regression window exceeded for run ${runId}: dropped ${dropPct!.toFixed(1)}pp (window=${regressionWindowPct}%), forcing gate:fail`);
       }
     }
 
