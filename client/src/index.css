@@ -291,8 +291,10 @@
    Artizent agentic palette: sand neutrals, one volt accent, dark first.
    AstraLayout puts .astra on <html> while /astra is open, so dialogs and
    popovers rendered in portals pick the tokens up too. Nothing outside
-   /astra changes. */
-.astra {
+   /astra changes -- except a page that opts in by putting .astra-scope on
+   its own root (e.g. the team run view), which takes the same tokens for
+   itself and its children only. */
+.astra, .astra-scope {
   --astra-volt: 52 100% 50%;
   --astra-ok: 152 48% 40%;
   --astra-warn: 34 86% 46%;
@@ -322,7 +324,7 @@
   --radius: .375rem;
 }
 
-.astra.dark {
+.astra.dark, .dark .astra-scope {
   --astra-ok: 152 52% 52%;
   --astra-warn: 36 92% 58%;
   --astra-fail: 358 80% 64%;
@@ -368,3 +370,12 @@
 @media (prefers-reduced-motion: reduce) {
   .astra .animate-pulse, .astra .animate-spin { animation: none; }
 }
+
+/* Team run timeline bars (dag-run-monitor.tsx). */
+.run-bar-gate { background: repeating-linear-gradient(135deg, hsl(var(--astra-warn)) 0 5px, transparent 5px 9px); border: 1px solid hsl(var(--astra-warn)); }
+.run-bar-running { background: repeating-linear-gradient(90deg, hsl(var(--astra-volt)) 0 12px, hsl(var(--astra-volt) / .45) 12px 24px); background-size: 48px 100%; animation: run-bar-slide 1s linear infinite; }
+.run-bar-pending { background: transparent; border: 1px dashed hsl(var(--muted-foreground)); }
+.run-dot-live { box-shadow: 0 0 0 0 hsl(var(--astra-volt) / .6); animation: run-dot-pulse 1.6s infinite; }
+@keyframes run-bar-slide { to { background-position: 48px 0; } }
+@keyframes run-dot-pulse { 70% { box-shadow: 0 0 0 7px hsl(var(--astra-volt) / 0); } 100% { box-shadow: 0 0 0 0 hsl(var(--astra-volt) / 0); } }
+@media (prefers-reduced-motion: reduce) { .run-bar-running, .run-dot-live { animation: none; } }
