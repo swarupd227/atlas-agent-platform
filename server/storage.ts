@@ -358,7 +358,7 @@ export interface IStorage {
   getComplianceReports(): Promise<ComplianceReport[]>;
   createComplianceReport(report: InsertComplianceReport): Promise<ComplianceReport>;
 
-  verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number; signatureValid?: boolean; signatureBrokenAt?: number; signedEvents?: number; unsignedEvents?: number }>;
+  verifyAuditChainIntegrity(orgId?: string): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number; signatureValid?: boolean; signatureBrokenAt?: number; signedEvents?: number; unsignedEvents?: number }>;
   rebaselineAuditChain(actorId: string, reason?: string): Promise<{ relinked: number; repairedOrgs: number }>;
 
   createAuditChainHealthCheck(record: InsertAuditChainHealthCheck): Promise<AuditChainHealthCheck>;
@@ -1893,8 +1893,11 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async verifyAuditChainIntegrity() {
-    const events = await db.select().from(auditEvents);
+  /** With an organization, verifies only that organization's chain (each chain is written per organization). */
+  async verifyAuditChainIntegrity(orgId?: string) {
+    const events = orgId
+      ? await db.select().from(auditEvents).where(eq(auditEvents.organizationId, orgId))
+      : await db.select().from(auditEvents);
     const withSeq = events.filter(e => e.sequenceNum !== null);
 
     if (withSeq.length === 0) {

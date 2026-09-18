@@ -5,6 +5,7 @@ import { db } from "../db";
 import { resumeTeamAgentDagRun } from "../dag-execution-engine";
 import { resumeWorkspaceRun } from "../workspace-run";
 import { applyApprovalEffects } from "../approval-decision";
+import { bindPolicyToOutcome } from "../policy-actions";
 import { promoteToBaseline } from "../services/screenshot-baseline";
 import { desc, eq, and, sql } from "drizzle-orm";
 import { z, ZodError } from "zod";
@@ -988,36 +989,11 @@ Ontology: ${ontologyName || "industry standard"}`,
       const { outcomeId } = req.body as { outcomeId?: string };
       if (!outcomeId) return res.status(400).json({ error: "outcomeId is required" });
 
-      if (policy.scopeType === "outcome") {
-        // Same scope type — safe to update scopeId in-place
-        const updated = await storage.updatePolicy(policy.id, { scopeId: outcomeId }, getOrgId(req));
-        await storage.createAuditEvent({
-          actorType: "user", actorId: "system", action: "policy_bound",
-          objectType: "policy", objectId: policy.id,
-          details: `Policy "${policy.name}" re-bound to outcome ${outcomeId}`,
-        });
-        return res.json(updated);
-      }
-
-      // Policy is scoped elsewhere — clone with outcome scope to preserve original binding
-      const cloneData: any = {
-        name: `${policy.name} (Outcome: ${outcomeId})`,
-        description: policy.description,
-        domain: policy.domain,
-        status: policy.status,
-        policyJson: policy.policyJson,
-        scopeType: "outcome",
-        scopeId: outcomeId,
-        organizationId: policy.organizationId,
-        version: 1,
-      };
-      const clone = await storage.createPolicy(cloneData);
-      await storage.createAuditEvent({
-        actorType: "user", actorId: "system", action: "policy_bound",
-        objectType: "policy", objectId: clone.id,
-        details: `Policy "${policy.name}" cloned to outcome ${outcomeId} (original scope "${policy.scopeType}:${policy.scopeId}" preserved)`,
-      });
-      return res.status(201).json(clone);
+      // Shared with the Astra Workspace (server/policy-actions.ts): re-points an
+      // outcome-scoped policy, or clones one scoped elsewhere; audited in the org.
+      const actor = getRequestActorLabel(req);
+      const result = await bindPolicyToOutcome({ orgId: getOrgId(req), policy, outcomeId, actor, actorId: req.authUser?.userId ?? actor });
+      return res.status(result.cloned ? 201 : 200).json(result.policy);
     } catch (e: any) {
       return res.status(500).json({ error: e.message || "Failed to bind policy" });
     }

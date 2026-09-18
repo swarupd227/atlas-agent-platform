@@ -22,6 +22,10 @@ import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
 import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
 import { acknowledgeAlert, decideRecommendation, getAlertInOrg, getRecommendationInOrg, recommendationEffect } from "../action-decisions";
+import { bindPolicyToAgent, bindPolicyToOutcome, installPolicyPack, policyPackCatalog, type Enforcement } from "../policy-actions";
+import { resolvePolicyBundle } from "../routes/helpers";
+import { resolveAgentIndustry } from "../agent-industry";
+import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-requirements";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
 import { proposeTeam } from "../team-proposal";
 import { assessProposalBindings, resolveBindingServer } from "../team-bindings";
@@ -354,6 +358,100 @@ async function getAlertForDecision(orgId: string, alertId: string) {
 
 async function acknowledgeAlertAs(orgId: string, userId: string | null, actorLabel: string, alertId: string, note?: string) {
   return acknowledgeAlert({ orgId, actorId: userId ?? actorLabel, actorLabel, via: "Astra Workspace", alertId, note });
+}
+
+// ── Governance pack ─────────────────────────────────────────────────────────
+
+/** An agent only if it is in this organization (resolvePolicyBundle alone would fall back to org policies). */
+async function agentInOrg(orgId: string, agentId: string) {
+  const agent = await storage.getAgent(agentId, orgId);
+  return agent && agent.organizationId === orgId ? agent : null;
+}
+
+/** The policies that apply to an agent, by scope, and what they block at run time. */
+async function explainPolicies(orgId: string, agentId: string) {
+  const agent = await agentInOrg(orgId, agentId);
+  if (!agent) return null;
+  const bundle = await resolvePolicyBundle(agent.id, orgId);
+  return {
+    agent: { id: agent.id, name: agent.name },
+    applied: bundle.appliedPolicies,
+    blockedTools: bundle.blockedTools,
+    monitoredTools: bundle.monitorBlockedTools,
+    toolAllowlist: bundle.toolAllowlist,
+    guardrailCount: bundle.guardrails.length,
+    redactionPatternCount: bundle.redactPatterns.length,
+  };
+}
+
+/** The agent's industry requirements checked against the policies that actually apply to it. */
+async function governanceReadiness(orgId: string, agentId: string) {
+  const agent = await agentInOrg(orgId, agentId);
+  if (!agent) return null;
+  const industryId = await resolveAgentIndustry(agent);
+  if (!industryId) {
+    return { agent: { id: agent.id, name: agent.name }, industryId: null, passed: true, checked: false, message: "The agent has no industry (and the organization has none set), so no requirements were checked.", requirements: [] };
+  }
+  const bundle = await resolvePolicyBundle(agent.id, orgId);
+  const appliedIds = new Set(bundle.appliedPolicies.map((p) => p.id));
+  const applied = (await storage.getPolicies(orgId)).filter((p) => appliedIds.has(p.id));
+  const result = checkPolicyRequirements(industryId, policyRequirementsFor(industryId), applied, agent.riskTier ?? undefined);
+  return { agent: { id: agent.id, name: agent.name }, industryId, ...result };
+}
+
+async function verifyAuditChain(orgId: string) {
+  return storage.verifyAuditChainIntegrity(orgId);
+}
+
+/** What the signed regulatory exam package for an agent would contain, counted (the package itself is downloaded). */
+async function examPackageSummary(orgId: string, agentId: string, days: number) {
+  const agent = await agentInOrg(orgId, agentId);
+  if (!agent) return null;
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const inWindow = (d: Date | string | null | undefined) => !!d && new Date(d).getTime() >= since;
+  const [events, approvals, redteamRuns, bundle] = await Promise.all([
+    storage.getAuditEvents(orgId),
+    storage.getApprovals(orgId),
+    storage.getEvalRedteamRuns({ organizationId: orgId, agentId: agent.id }).catch(() => []),
+    resolvePolicyBundle(agent.id, orgId).catch(() => null),
+  ]);
+  return {
+    agent: { id: agent.id, name: agent.name },
+    days,
+    decisionLogEvents: events.filter((e) => e.objectId === agent.id && inWindow(e.createdAt)).length,
+    humanOverrides: approvals.filter((a) => a.agentId === agent.id && inWindow(a.decidedAt)).length,
+    redTeamRuns: redteamRuns.filter((r: any) => inWindow(r.startedAt)).length,
+    appliedPolicies: bundle?.appliedPolicies.length ?? 0,
+    downloadHref: `/api/agents/${encodeURIComponent(agent.id)}/regulatory-exam-package?timeWindowDays=${days}`,
+  };
+}
+
+async function listOutcomeNames(orgId: string) {
+  return (await storage.getOutcomes(orgId)).map((o) => ({ id: o.id, name: o.name }));
+}
+
+async function listPolicyPacks(industryId: string | null) {
+  return policyPackCatalog(industryId);
+}
+
+async function installPolicyPackAs(orgId: string, packId: string, actor: string, actorId: string) {
+  return installPolicyPack({ orgId, packId, actor, actorId, via: "Astra Workspace" });
+}
+
+async function bindPolicyAs(
+  orgId: string,
+  actor: string,
+  actorId: string,
+  target: { policyId: string; agentId?: string; outcomeId?: string; enforcement: Enforcement },
+) {
+  if (target.agentId) {
+    return { kind: "agent" as const, ...(await bindPolicyToAgent({ orgId, policyId: target.policyId, agentId: target.agentId, enforcement: target.enforcement, actor, actorId, via: "Astra Workspace" })) };
+  }
+  const [policy, outcome] = await Promise.all([storage.getPolicy(target.policyId, orgId), storage.getOutcome(target.outcomeId!, orgId)]);
+  if (!policy) throw new Error("No policy with that id in this organization.");
+  if (!outcome) throw new Error("No outcome with that id in this organization.");
+  const r = await bindPolicyToOutcome({ orgId, policy, outcomeId: outcome.id, actor, actorId });
+  return { kind: "outcome" as const, policy: { id: r.policy.id, name: r.policy.name }, outcome: { id: outcome.id, name: outcome.name }, cloned: r.cloned };
 }
 
 async function getUserDisplayName(userId: string | null) {
@@ -874,6 +972,14 @@ export function createAstraServices(): AstraServices {
     getRunForRole,
     getApprovalForDecision,
     decideApprovalAs,
+    explainPolicies,
+    governanceReadiness,
+    verifyAuditChain,
+    examPackageSummary,
+    listPolicyPacks,
+    listOutcomeNames,
+    installPolicyPackAs,
+    bindPolicyAs,
     getRecommendationForDecision,
     decideRecommendationAs,
     getAlertForDecision,
