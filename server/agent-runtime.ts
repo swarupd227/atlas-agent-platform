@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
-import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, providerFallbackAllowed, unwrapJsonFence, type LLMMessage, type LLMProvider, type LLMCompletionResult, type CanonicalToolCall } from "./llm-provider";
+import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, providerFallbackAllowed, unwrapJsonFence, type LLMMessage, type LLMProvider, type LLMCompletionResult, type CanonicalToolCall, type CodeExecutionTraceEntry } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import { resolveRequiredToolCalls, nextForcedToolChoice, missingRequiredToolCalls, requiredToolCallsError } from "./required-tool-calls";
 import { currentLlmAbortSignal } from "./llm-abort-context";
@@ -1345,8 +1345,25 @@ export async function executePromptWithMcp(
   // Why each call to a file-producing tool in this run ended without a file.
   const failedFileAttempts: string[] = [];
   /** Fold a completion result's generatedFiles/containerId into this run -- call after every completeWithFallback/streamCompleteWithFallback. */
-  const captureCodeExecResult = async (llmResult: { generatedFiles?: Array<{ fileId: string; toolUseId: string }>; containerId?: string }) => {
+  const captureCodeExecResult = async (llmResult: { generatedFiles?: Array<{ fileId: string; toolUseId: string }>; containerId?: string; codeExecutionTrace?: CodeExecutionTraceEntry[] }) => {
     if (llmResult.containerId) codeExecContainerId = llmResult.containerId;
+    // Sandbox calls never pass through dispatchToolCall, so without this step
+    // they left no record on the run and buildVerifiedToolCallLog reported
+    // "no tool calls" for a worker that had just edited a workbook in the
+    // sandbox. The trace comes from the provider's own response blocks, not
+    // the model's narrative. Status stays "completed": a failed sandbox command
+    // is the model's to recover from, and its outcome is kept per call.
+    if (llmResult.codeExecutionTrace?.length) {
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        name: `Code execution (${llmResult.codeExecutionTrace.length} sandbox call${llmResult.codeExecutionTrace.length === 1 ? "" : "s"})`,
+        type: "code_execution",
+        status: "completed",
+        codeExecutionTrace: llmResult.codeExecutionTrace,
+        filesProduced: llmResult.generatedFiles?.length ?? 0,
+        completedAt: new Date().toISOString(),
+      });
+    }
     if (llmResult.generatedFiles?.length) {
       const records = await persistGeneratedFiles(llmResult.generatedFiles, { organizationId: orgId ?? null, agentId, traceId: idempotencyScope });
       runGeneratedFiles.push(...records.map(r => ({ id: r.id, filename: r.filename, mimeType: r.mimeType })));
@@ -3295,8 +3312,15 @@ function buildTiersFromExecutionGraph(
  */
 function buildVerifiedToolCallLog(steps: any[]): string {
   const calls = (steps || []).filter((s: any) => s.type === "api_call");
+  const sandbox = sandboxCallLines(steps);
+  if (calls.length === 0 && sandbox.length === 0) {
+    return "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, not the model's narrative): no tool calls were dispatched and no sandbox code ran this run.";
+  }
   if (calls.length === 0) {
-    return "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, not the model's narrative): no tool calls were dispatched this run.";
+    return [
+      "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, not the model's narrative): no platform tool calls were dispatched this run.",
+      ...sandbox,
+    ].join("\n");
   }
 
   const lines = calls.map((s: any, i: number) => {
@@ -3331,7 +3355,36 @@ function buildVerifiedToolCallLog(steps: any[]): string {
   return [
     "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, generated directly from the dispatcher's own records -- NOT the model's narrative above):",
     ...lines,
+    ...sandbox,
   ].join("\n");
+}
+
+/**
+ * The sandbox half of the ledger: code the provider's code execution tool ran
+ * (bash commands, file views/edits), from the code_execution steps recorded by
+ * captureCodeExecResult. Empty when no sandbox code ran.
+ */
+function sandboxCallLines(steps: any[]): string[] {
+  const trace: CodeExecutionTraceEntry[] = (steps || [])
+    .filter((s: any) => s.type === "code_execution" && Array.isArray(s.codeExecutionTrace))
+    .flatMap((s: any) => s.codeExecutionTrace);
+  if (trace.length === 0) return [];
+  const MAX = 30;
+  const lines = trace.slice(0, MAX).map((c, i) => {
+    const input = (c.input ?? {}) as Record<string, unknown>;
+    const what = c.tool === "bash_code_execution"
+      ? String(input.command ?? c.summary)
+      : [input.command, input.path].filter(Boolean).join(" ") || c.summary;
+    const outcome = c.ok === undefined ? "NO RESULT" : c.ok ? "OK" : c.exitCode !== undefined ? `FAILED exit ${c.exitCode}` : "FAILED";
+    const tool = c.tool === "bash_code_execution" ? "bash" : "text_editor";
+    const oneLine = what.replace(/\s+/g, " ").trim();
+    return `S${i + 1}. ${tool} [${outcome}] ${oneLine.slice(0, 160)}${oneLine.length > 160 ? "..." : ""}`;
+  });
+  return [
+    `Sandbox code execution (${trace.length} call${trace.length === 1 ? "" : "s"}, from the model provider's own response records):`,
+    ...lines,
+    ...(trace.length > MAX ? [`...and ${trace.length - MAX} more sandbox call(s).`] : []),
+  ];
 }
 
 // The generic analysis shape (and the bookkeeping added to it), which a step's

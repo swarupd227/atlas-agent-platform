@@ -109,6 +109,21 @@ export interface LLMCompletionOptions {
   allowProviderFallback?: boolean;
 }
 
+/**
+ * One sandbox call the code execution tool made, as recorded in the provider's
+ * own response blocks (server_tool_use + its *_tool_result) -- not the model's
+ * narrative. `ok`/`exitCode` come from the paired result block when present.
+ */
+export interface CodeExecutionTraceEntry {
+  tool: string;
+  input: unknown;
+  summary: string;
+  toolUseId?: string;
+  /** False when the result block was an error or bash exited non-zero; undefined if no result was returned. */
+  ok?: boolean;
+  exitCode?: number;
+}
+
 export interface LLMCompletionResult {
   content: string;
   toolCalls: CanonicalToolCall[];
@@ -135,7 +150,7 @@ export interface LLMCompletionResult {
   /** Anthropic code-execution container id, if a server tool ran -- pass back via anthropicContainer.id to reuse. */
   containerId?: string;
   /** Truncated summary of code-execution commands/file ops run this turn, for audit -- not full stdout. */
-  codeExecutionTrace?: Array<{ tool: string; input: unknown; summary: string }>;
+  codeExecutionTrace?: CodeExecutionTraceEntry[];
   /**
    * Why the model stopped (Anthropic: "end_turn"/"tool_use"/"max_tokens"/...).
    * Never "pause_turn" on a returned result -- AnthropicProvider resolves paused
@@ -1063,16 +1078,27 @@ class OpenAIProvider implements LLMProvider {
  */
 function extractAnthropicServerToolData(content: Anthropic.ContentBlock[]): {
   generatedFiles: Array<{ fileId: string; toolUseId: string }>;
-  codeExecutionTrace: Array<{ tool: string; input: unknown; summary: string }>;
+  codeExecutionTrace: CodeExecutionTraceEntry[];
 } {
   const generatedFiles: Array<{ fileId: string; toolUseId: string }> = [];
-  const codeExecutionTrace: Array<{ tool: string; input: unknown; summary: string }> = [];
+  const codeExecutionTrace: CodeExecutionTraceEntry[] = [];
 
+  const byToolUseId = new Map<string, CodeExecutionTraceEntry>();
   for (const block of content as any[]) {
     if (block.type === "server_tool_use" && (block.name === "bash_code_execution" || block.name === "text_editor_code_execution")) {
-      codeExecutionTrace.push({ tool: block.name, input: block.input, summary: JSON.stringify(block.input ?? {}).slice(0, 500) });
+      const entry: CodeExecutionTraceEntry = { tool: block.name, input: block.input, summary: JSON.stringify(block.input ?? {}).slice(0, 500), toolUseId: block.id };
+      codeExecutionTrace.push(entry);
+      if (block.id) byToolUseId.set(block.id, entry);
     } else if (block.type === "bash_code_execution_tool_result" || block.type === "text_editor_code_execution_tool_result") {
       const result = block.content;
+      // Pair the outcome with its call: an *_error result type is a failed call,
+      // and bash reports its own exit code.
+      const call = byToolUseId.get(block.tool_use_id);
+      if (call && result && typeof result === "object") {
+        const code = typeof result.return_code === "number" ? result.return_code : undefined;
+        call.exitCode = code;
+        call.ok = !String(result.type ?? "").endsWith("_error") && (code === undefined || code === 0);
+      }
       if (result?.type === "bash_code_execution_result" && Array.isArray(result.content)) {
         for (const outputBlock of result.content) {
           if (outputBlock?.file_id) {
@@ -1287,7 +1313,7 @@ class AnthropicProvider implements LLMProvider {
     let textContent = "";
     const toolCalls: CanonicalToolCall[] = [];
     const generatedFiles: Array<{ fileId: string; toolUseId: string }> = [];
-    const codeExecutionTrace: Array<{ tool: string; input: unknown; summary: string }> = [];
+    const codeExecutionTrace: CodeExecutionTraceEntry[] = [];
     let promptTokens = 0;
     let completionTokens = 0;
     let costUsd = 0;
@@ -1505,7 +1531,7 @@ class AnthropicProvider implements LLMProvider {
     let fullContent = "";
     const toolCalls: CanonicalToolCall[] = [];
     const generatedFiles: Array<{ fileId: string; toolUseId: string }> = [];
-    const codeExecutionTrace: Array<{ tool: string; input: unknown; summary: string }> = [];
+    const codeExecutionTrace: CodeExecutionTraceEntry[] = [];
     let promptTokens = 0;
     let completionTokens = 0;
     let costUsd = 0;
