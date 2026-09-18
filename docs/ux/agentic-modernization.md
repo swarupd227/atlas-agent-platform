@@ -68,7 +68,8 @@ Team-proposal progress, team (DAG) run events and job progress posted into the t
 
 ### E-UX5 · Proof strip — increments 1–3
 - **Inc 1:** proof envelope on every tool result; honest "not measured".
-- **Later:** per-layer context usage recorded for Workspace runs; tool-call audit records correlated to runs; "What it knew" card.
+- **Done (586db32):** Workspace runs record what they put in front of the model (estimated tokens per layer, which knowledge bases were searched and how many passages each gave) on the run and its trace; the run card shows "What it knew" and the context proof is measured. Team runs still say "not measured".
+- **Later:** tool-call audit records correlated to runs.
 
 ### E-UX6 · Industry context — increment 3 (done)
 Industry stored on the tenant and agent (not the browser); presets read industry packs; industry-filtered connector and template catalogs.
