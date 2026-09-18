@@ -1223,6 +1223,116 @@ export class DAGExecutionEngine {
     // Replaced once a revision rewinds the run: see the comment there.
     let execConfig = config;
     const waves = config.executionPlan.waves;
+    const waveOf = new Map<string, number>();
+    for (const w of waves) for (const id of w.nodes) waveOf.set(id, w.wave_number);
+
+    // Early admission. A wave used to be a barrier: no node of wave N+1
+    // started until every node of wave N had finished, so a slow node held up
+    // steps that did not depend on it at all. Live: a team "orchestrator" with
+    // no edges took 134s in wave 1 while the search it shared the wave with
+    // finished in 35s, and the three steps that depended only on the search
+    // waited the remaining 99s. A node now starts as soon as every node
+    // feeding it has settled; the wave remains the unit of checkpointing,
+    // persistence, gate halts, budgets and revision, so a node that finishes
+    // early is collected -- not re-run -- when its wave's turn comes. Not
+    // under fail_fast (a failure must stop everything, and nothing may still
+    // be running), and never for an approval gate, which keeps its place.
+    const earlyAdmission = config.errorStrategy !== "fail_fast";
+    const inFlight = new Map<string, Promise<NodeExecutionResult>>();
+    const settledNodes = new Set<string>();
+    if (config.resumePriorWaveResults) for (const wr of config.resumePriorWaveResults) for (const nr of wr.nodes) settledNodes.add(nr.nodeId);
+    // State as every settled node so far has left it -- what an early start
+    // reads -- as opposed to currentState, the per-wave checkpoint.
+    let liveState = currentState;
+    // Bumped on a revision rewind: results of nodes started before it are stale.
+    let generation = 0;
+
+    const failedResult = (nodeId: string, err: unknown): NodeExecutionResult => {
+      const nc = config.executionPlan.nodeConfig[nodeId];
+      return {
+        nodeId,
+        agentId: nc?.agentId || "",
+        status: "failed" as const,
+        output: nc?.fallbackOutput ? { [nc.stateKey]: nc.fallbackOutput } : {},
+        error: (err as Error)?.message || "Unknown error",
+        durationMs: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        traceId: "",
+      };
+    };
+
+    // Bookkeeping for one node's result, done exactly once, when it settles.
+    const recordSettled = (nr: NodeExecutionResult, waveNumber: number) => {
+      settledNodes.add(nr.nodeId);
+      config.onNodeComplete?.(nr.nodeId, waveNumber, nr);
+      totalPromptTokens += nr.promptTokens;
+      totalCompletionTokens += nr.completionTokens;
+      totalCostUsd += nr.costUsd || 0;
+      totalToolCalls += nr.toolCallCount || 0;
+      if (nr.status === "skipped") skippedNodeIds.add(nr.nodeId);
+      // A completed step that was cut off is recorded too: its output exists but is partial.
+      if (nr.status === "completed" && !nr.truncated) nodeOutcomes.delete(nr.nodeId);
+      else nodeOutcomes.set(nr.nodeId, { status: nr.status === "completed" ? "truncated" : nr.status, error: nr.error });
+      if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
+      const nc = config.executionPlan.nodeConfig[nr.nodeId];
+      if (nc && nr.status === "completed") {
+        const value = nr.output[nc.stateKey];
+        if (value != null) nodeOutputText.set(nr.nodeId, typeof value === "string" ? value : JSON.stringify(value));
+      }
+      liveState = mergeWaveOutputs(liveState, [nr], config.stateSchema);
+    };
+
+    // Starts a node (or records its skip) and, once it settles, admits
+    // whatever that unblocks. The promise rejects only for a superseded gate,
+    // which the wave that collects it rethrows.
+    const launch = (nodeId: string, waveNumber: number, skipped?: NodeExecutionResult): Promise<NodeExecutionResult> => {
+      const startedIn = generation;
+      let promise: Promise<NodeExecutionResult>;
+      if (skipped) {
+        promise = Promise.resolve(skipped);
+      } else {
+        config.onNodeStart?.(nodeId, waveNumber);
+        promise = this.executeNode(nodeId, liveState, execConfig, nodeOutcomes).catch((err) => {
+          if (err instanceof DagRunSupersededError) throw err;
+          return failedResult(nodeId, err);
+        });
+      }
+      const tracked = promise.then(async (nr) => {
+        if (startedIn === generation) {
+          recordSettled(nr, waveNumber);
+          if (earlyAdmission) await admitReady(waveNumber);
+        }
+        return nr;
+      });
+      inFlight.set(nodeId, tracked);
+      tracked.catch(() => {});
+      return tracked;
+    };
+
+    // Every not-yet-started node of a later wave whose feeding nodes have all
+    // settled: gate it against the live state and start it, or record its skip.
+    const admitReady = async (afterWave: number) => {
+      if (config.signal?.aborted) return;
+      const loop = revision.active;
+      for (const w of waves) {
+        if (w.wave_number <= afterWave) continue;
+        if (execConfig.resumeFromWave && w.wave_number < execConfig.resumeFromWave) continue;
+        const ready = w.nodes.filter((id) => {
+          if (inFlight.has(id) || settledNodes.has(id)) return false;
+          if (loop && !loop.nodeIds.includes(id)) return false;
+          if (this.isGateNode(config.executionPlan.nodeConfig[id])) return false;
+          const sources = (config.executionPlan.incomingEdges[id] || []).map((e) => e.sourceNodeId);
+          return sources.length > 0 && sources.every((s) => settledNodes.has(s));
+        });
+        if (ready.length === 0) continue;
+        const { eligibleNodeIds, skippedResults } = await this.filterGatedNodes(
+          ready, config.executionPlan.incomingEdges, liveState, nodeOutputText, nodeLabelById, skippedNodeIds, config.executionPlan.nodeConfig,
+        );
+        for (const nodeId of eligibleNodeIds) launch(nodeId, w.wave_number);
+        for (const sr of skippedResults) launch(sr.nodeId, w.wave_number, sr);
+      }
+    };
 
     for (let waveIndex = 0; waveIndex < waves.length; waveIndex++) {
       const wave = waves[waveIndex];
@@ -1235,8 +1345,10 @@ export class DAGExecutionEngine {
       if (runNodes.length === 0) continue;
       const waveStart = Date.now();
 
+      // Nodes admitted early are collected; the rest start here, at the barrier.
+      const notStarted = runNodes.filter((id) => !inFlight.has(id));
       const { eligibleNodeIds, skippedResults } = await this.filterGatedNodes(
-        runNodes,
+        notStarted,
         config.executionPlan.incomingEdges,
         currentState,
         nodeOutputText,
@@ -1244,16 +1356,13 @@ export class DAGExecutionEngine {
         skippedNodeIds,
         config.executionPlan.nodeConfig,
       );
-
-      const nodePromises = eligibleNodeIds.map((nodeId) => {
-        config.onNodeStart?.(nodeId, wave.wave_number);
-        return this.executeNode(nodeId, currentState, execConfig, nodeOutcomes);
-      });
+      for (const nodeId of eligibleNodeIds) launch(nodeId, wave.wave_number);
+      for (const sr of skippedResults) launch(sr.nodeId, wave.wave_number, sr);
 
       let nodeResults: NodeExecutionResult[];
 
       if (config.errorStrategy === "fail_fast") {
-        nodeResults = [...skippedResults, ...(await Promise.all(nodePromises))];
+        nodeResults = await Promise.all(runNodes.map((id) => inFlight.get(id)!));
         const failed = nodeResults.find((r) => r.status === "failed");
         if (failed) {
           const waveResult: WaveExecutionResult = {
@@ -1270,7 +1379,7 @@ export class DAGExecutionEngine {
           );
         }
       } else {
-        const settled = await Promise.allSettled(nodePromises);
+        const settled = await Promise.allSettled(runNodes.map((id) => inFlight.get(id)!));
         // A superseded gate waiter is not a failed node -- it's this whole
         // strand being told to stand down. Letting allSettled fold it into a
         // "failed" gate result would trip the rejected-gate halt below and
@@ -1279,22 +1388,7 @@ export class DAGExecutionEngine {
           (s): s is PromiseRejectedResult => s.status === "rejected" && s.reason instanceof DagRunSupersededError,
         );
         if (superseded) throw superseded.reason;
-        const executedResults = settled.map((s, i) => {
-          if (s.status === "fulfilled") return s.value;
-          const nc = config.executionPlan.nodeConfig[eligibleNodeIds[i]];
-          return {
-            nodeId: eligibleNodeIds[i],
-            agentId: nc?.agentId || "",
-            status: "failed" as const,
-            output: nc?.fallbackOutput ? { [nc.stateKey]: nc.fallbackOutput } : {},
-            error: (s as PromiseRejectedResult).reason?.message || "Unknown error",
-            durationMs: 0,
-            promptTokens: 0,
-            completionTokens: 0,
-            traceId: "",
-          };
-        });
-        nodeResults = [...skippedResults, ...executedResults];
+        nodeResults = settled.map((s, i) => (s.status === "fulfilled" ? s.value : failedResult(runNodes[i], (s as PromiseRejectedResult).reason)));
         if (nodeResults.some((r) => r.status === "failed")) success = false;
       }
 
@@ -1302,29 +1396,8 @@ export class DAGExecutionEngine {
       // their results are not the run's output. Stop before recording them.
       if (config.signal?.aborted) throw new DagRunCancelledError();
 
-      // Skipped and executed results were assembled as two separate lists --
-      // restore wave.nodes' original order so the wave display doesn't jumble
-      // gated nodes to the front.
-      const resultByNodeId = new Map(nodeResults.map((r) => [r.nodeId, r]));
-      nodeResults = runNodes.map((id) => resultByNodeId.get(id)!);
-
-      for (const nr of nodeResults) {
-        config.onNodeComplete?.(nr.nodeId, wave.wave_number, nr);
-        totalPromptTokens += nr.promptTokens;
-        totalCompletionTokens += nr.completionTokens;
-        totalCostUsd += nr.costUsd || 0;
-        totalToolCalls += nr.toolCallCount || 0;
-        if (nr.status === "skipped") skippedNodeIds.add(nr.nodeId);
-        // A completed step that was cut off is recorded too: its output exists but is partial.
-        if (nr.status === "completed" && !nr.truncated) nodeOutcomes.delete(nr.nodeId);
-        else nodeOutcomes.set(nr.nodeId, { status: nr.status === "completed" ? "truncated" : nr.status, error: nr.error });
-        if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
-        const nc = config.executionPlan.nodeConfig[nr.nodeId];
-        if (nc && nr.status === "completed") {
-          const value = nr.output[nc.stateKey];
-          if (value != null) nodeOutputText.set(nr.nodeId, typeof value === "string" ? value : JSON.stringify(value));
-        }
-      }
+      // Per-node bookkeeping happened when each node settled (recordSettled).
+      for (const id of runNodes) inFlight.delete(id);
 
       currentState = mergeWaveOutputs(currentState, nodeResults, config.stateSchema);
       for (const nr of nodeResults) currentState = recordFileOutcome(nr, currentState);
@@ -1402,6 +1475,14 @@ export class DAGExecutionEngine {
         // gate must ask afresh: reusing that earlier approval would wave the
         // revised work through without a human ever seeing it.
         execConfig = { ...config, resumeFromWave: undefined, resumePriorWaveResults: undefined, resumePendingApprovalId: undefined };
+        // Nodes admitted early ran against the pre-revision state: their
+        // results are stale. Whatever is still in flight is ignored when it
+        // settles, and the loop's nodes run again from the checkpoint.
+        generation++;
+        inFlight.clear();
+        for (const id of revision.active?.nodeIds ?? []) settledNodes.delete(id);
+        for (const w of waves) if (w.wave_number >= rewind.targetWave) for (const id of w.nodes) settledNodes.delete(id);
+        liveState = currentState;
         waveIndex = rewind.targetWaveIndex - 1;
         continue;
       }
