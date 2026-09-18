@@ -7,12 +7,15 @@ import { z, ZodError } from "zod";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { handleZodError } from "./helpers";
+import { checkPermission } from "../permissions";
 
 const router = Router();
 
 // Enqueue a task. Mainly used by the engine (later slice) and for testing; a
 // worker never enqueues its own work.
-router.post("/api/worker-tasks", async (req, res) => {
+// Nothing in the platform produces or consumes these yet, so every write
+// needs manage_agents (a worker runs as a signed-in engineer or service user).
+router.post("/api/worker-tasks", checkPermission("manage_agents"), async (req, res) => {
   try {
     const body = z.object({
       taskType: z.string().min(1),
@@ -22,6 +25,7 @@ router.post("/api/worker-tasks", async (req, res) => {
       maxAttempts: z.number().int().min(1).max(20).optional(),
     }).parse(req.body);
     const task = await storage.createWorkerTask({
+      organizationId: getOrgId(req) ?? null,
       taskType: body.taskType,
       input: body.input ?? null,
       dagRunId: body.dagRunId ?? null,
@@ -34,7 +38,7 @@ router.post("/api/worker-tasks", async (req, res) => {
 });
 
 // A worker claims the next available task of a type (atomic; lease-based).
-router.post("/api/worker-tasks/poll", async (req, res) => {
+router.post("/api/worker-tasks/poll", checkPermission("manage_agents"), async (req, res) => {
   try {
     const body = z.object({
       taskType: z.string().min(1),
@@ -52,7 +56,7 @@ router.post("/api/worker-tasks/poll", async (req, res) => {
   } catch (e) { handleZodError(res, e); }
 });
 
-router.post("/api/worker-tasks/:id/complete", async (req, res) => {
+router.post("/api/worker-tasks/:id/complete", checkPermission("manage_agents"), async (req, res) => {
   try {
     const { output } = z.object({ output: z.any().optional() }).parse(req.body ?? {});
     const r = await storage.completeWorkerTask(String(req.params.id), output ?? null, getOrgId(req));
@@ -61,7 +65,7 @@ router.post("/api/worker-tasks/:id/complete", async (req, res) => {
   } catch (e) { handleZodError(res, e); }
 });
 
-router.post("/api/worker-tasks/:id/fail", async (req, res) => {
+router.post("/api/worker-tasks/:id/fail", checkPermission("manage_agents"), async (req, res) => {
   try {
     const { error } = z.object({ error: z.string().default("worker reported failure") }).parse(req.body ?? {});
     const r = await storage.failWorkerTask(String(req.params.id), error, getOrgId(req));
@@ -84,7 +88,7 @@ router.get("/api/worker-tasks", async (req, res) => {
   res.json(tasks);
 });
 
-router.delete("/api/worker-tasks/:id", async (req, res) => {
+router.delete("/api/worker-tasks/:id", checkPermission("manage_agents"), async (req, res) => {
   const ok = await storage.deleteWorkerTask(String(req.params.id), getOrgId(req));
   if (!ok) return res.status(404).json({ message: "Worker task not found" });
   res.status(204).send();

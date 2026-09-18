@@ -1242,8 +1242,8 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     res.json(updated);
   });
 
-  router.post("/api/blueprints/:id/submit-for-review", async (req, res) => {
-    const blueprint = await storage.getBlueprint(req.params.id);
+  router.post("/api/blueprints/:id/submit-for-review", checkPermission("create_modify_blueprints"), async (req, res) => {
+    const blueprint = await storage.getBlueprint(req.params.id as string);
     if (!blueprint) return res.status(404).json({ error: "Blueprint not found" });
 
     const orgId = getOrgId(req);

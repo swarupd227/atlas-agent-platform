@@ -273,7 +273,7 @@ async function getAgentRun(orgId: string, runId: string) {
 
 async function decideAgentRun(orgId: string, role: RoleId, runId: string, decision: "approve" | "deny", onEvent: OnWorkspaceEvent) {
   if (!(await runInOrg(orgId, runId))) throw new Error("Run not found in this organization.");
-  return resumeWorkspaceRun({ runId, decision, orgId, actorId: role }, onEvent);
+  return resumeWorkspaceRun({ runId, decision, orgId, actorId: role, role }, onEvent);
 }
 
 /** A run as the role may see it: payloads redacted to the role's level. */

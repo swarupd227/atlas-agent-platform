@@ -30,7 +30,7 @@ import { RunSpanCollector } from "./run-spans";
 import { canonicalJsonStringify } from "./agent-runtime";
 import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
-import type { RoleId } from "./permissions";
+import { canDecideApproval, type RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt } from "./builtin-skill-tools";
@@ -643,11 +643,20 @@ export async function resumeWorkspaceRun(params: {
   note?: string;
   actorId?: string;
   orgId?: string;
+  /** The decider's role. When given, an approval routed to a reviewer role is
+   *  decided by that role (or admin) only, as on the Approvals page. */
+  role?: RoleId;
 }, onEvent: OnWorkspaceEvent = NOOP): Promise<WorkspaceRunView> {
   const { runId, decision, edits, note, actorId, orgId } = params;
   const [run] = await db.select().from(workspaceRuns).where(eq(workspaceRuns.id, runId)).limit(1);
-  if (!run) throw new Error("Run not found");
+  // Same organization rule as getWorkspaceRun: another organization's run doesn't exist for this caller.
+  if (!run || (orgId && run.organizationId && run.organizationId !== orgId)) throw new Error("Run not found");
   if (run.status !== "awaiting_approval") throw new Error(`Run is ${run.status}, not awaiting approval`);
+  if (params.role && run.pendingApprovalId) {
+    const approval = await storage.getApproval(run.pendingApprovalId);
+    const verdict = approval?.requiredReviewerRole ? canDecideApproval(params.role, approval.requiredReviewerRole) : { allowed: true, reason: "" };
+    if (!verdict.allowed) throw Object.assign(new Error(verdict.reason), { status: 403 });
+  }
 
   const cp = run.checkpoint as Checkpoint;
   const pendingIdx = cp.pendingToolIndex ?? 0;

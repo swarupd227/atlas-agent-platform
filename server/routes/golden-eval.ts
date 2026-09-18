@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
+import { checkPermission } from "../permissions";
 import { buildAgentSystemPromptWithGovernance } from "./helpers";
 import { callClaude, createClaudeMessage, stripJsonFences } from "../claude";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -184,7 +185,7 @@ ${actualOutput}`,
  * POST /api/evals/:suiteId/run-golden
  * Executes the suite's linked golden dataset against the suite's agent.
  */
-router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
+router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blueprints"), async (req, res) => {
   try {
     const orgId = getOrgId(req);
     const suite = await storage.getEvalSuite(req.params.suiteId as string);
@@ -332,7 +333,7 @@ router.post("/api/evals/:suiteId/run-golden", async (req, res) => {
  * optionally sub-vertical), so an existing suite gains a regression baseline
  * without hand-editing each one.
  */
-router.post("/api/golden-datasets/link-suites", async (req, res) => {
+router.post("/api/golden-datasets/link-suites", checkPermission("create_modify_blueprints"), async (req, res) => {
   try {
     const orgId = getOrgId(req);
     const { goldenDatasetId, agentIds } = req.body || {};

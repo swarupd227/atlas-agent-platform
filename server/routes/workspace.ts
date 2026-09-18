@@ -97,7 +97,7 @@ router.post("/api/workspace/runs/:id/resume/stream", async (req, res) => {
   }
   const send = openSse(res);
   try {
-    const run = await resumeWorkspaceRun({ runId: req.params.id, decision, edits, note, orgId: getOrgId(req), actorId: getRequestRole(req) }, send);
+    const run = await resumeWorkspaceRun({ runId: req.params.id, decision, edits, note, orgId: getOrgId(req), actorId: getRequestRole(req), role: getRequestRole(req) }, send);
     send({ type: "done", run });
   } catch (e: any) {
     send({ type: "error", message: e.message });
@@ -132,12 +132,13 @@ router.post("/api/workspace/runs/:id/resume", async (req, res) => {
       decision, edits, note,
       orgId: getOrgId(req),
       actorId: getRequestRole(req),
+      role: getRequestRole(req),
     });
     res.json(result);
   } catch (e: any) {
     if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
     console.error("[workspace] resume error:", e);
-    res.status(/not found/i.test(e.message) ? 404 : 400).json({ message: e.message });
+    res.status(e.status ?? (/not found/i.test(e.message) ? 404 : 400)).json({ message: e.message });
   }
 });
 

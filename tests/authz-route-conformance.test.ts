@@ -83,7 +83,21 @@ function scanRoutes(): RouteEntry[] {
 // are still unguarded inside this number. The /api/admin/* routes are now
 // guarded by a router-level checkPermission in tool-connectors.ts, which this
 // per-route scanner can't see, so they are also still counted here.
-const BASELINE_UNGUARDED = 475;
+//
+// 466 (was 475): reviewed every mutating route that is unguarded now but was
+// not an unguarded route at the 483 baseline (49c129c). Guarded 8:
+// submit-for-review (create_modify_blueprints), golden run-golden and
+// link-suites (create_modify_blueprints), and the 5 worker-task writes
+// (manage_agents). Left unguarded on purpose, each with its own check:
+// Slack/Teams webhooks (signature), A2A message and /api/v1 KB search (API
+// key), PATCH /api/approvals/:id (reviewer routing, then approve_changes, in
+// the handler), Workspace run/stream/resume (the consumption surface every
+// role uses; runs are org-scoped and the agent's own gates apply; resume
+// honours reviewer routing), deployments/:id/trigger (runs an active,
+// org-scoped deployment, like a Workspace run), agent-files attach (org-scoped
+// file into the caller's own conversation) and output-contracts
+// check-strict-compat (computes an answer, changes nothing).
+const BASELINE_UNGUARDED = 466;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {
