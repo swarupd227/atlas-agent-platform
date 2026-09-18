@@ -24,6 +24,7 @@ import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval
 import { acknowledgeAlert, decideRecommendation, getAlertInOrg, getRecommendationInOrg, recommendationEffect } from "../action-decisions";
 import { bindPolicyToAgent, bindPolicyToOutcome, installPolicyPack, policyPackCatalog, type Enforcement } from "../policy-actions";
 import { resolvePolicyBundle } from "../routes/helpers";
+import { evalServices } from "./eval-services";
 import { resolveAgentIndustry } from "../agent-industry";
 import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-requirements";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
@@ -950,6 +951,7 @@ async function getOrganizationName(orgId: string) {
 
 export function createAstraServices(): AstraServices {
   return {
+    ...evalServices,
     listAgents,
     getAgent,
     listAgentConnectors,

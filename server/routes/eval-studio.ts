@@ -6,6 +6,7 @@ import * as path from "path";
 import * as os from "os";
 import { randomUUID } from "crypto";
 import { storage } from "../storage";
+import { startEvalRun, summarizeMetrics } from "../eval-runs";
 import { getOrgId } from "../auth";
 import type { Request } from "express";
 import { generateComplianceReport, REPORT_TEMPLATES } from "../eval-report-generator";
@@ -737,40 +738,20 @@ router.post("/api/eval/runs", async (req, res) => {
     const targetAgent = await storage.getAgent(body.agentId);
     if (targetAgent) assertOrgOwnership(targetAgent.organizationId, orgId);
 
-    const run = await storage.createEvalTestRun({
-      organizationId: orgId,
+    // Shared with the Astra Workspace (server/eval-runs.ts).
+    const run = await startEvalRun({
+      orgId,
       agentId: body.agentId,
-      agentVersion: body.agentVersion || "latest",
-      datasetId: body.datasetId,
-      datasetVersion: body.datasetVersion || dataset.version,
-      metricCollectionId: body.metricCollectionId || null,
+      dataset,
+      agentVersion: body.agentVersion,
+      datasetVersion: body.datasetVersion,
+      metricCollectionId: body.metricCollectionId,
       metricIds: body.metricIds,
-      judgeModelOverride: body.judgeModelOverride || null,
+      judgeModelOverride: body.judgeModelOverride,
       parallelism: body.parallelism,
       cacheEnabled: body.cacheEnabled,
       tags: body.tags,
-      status: "pending",
-      totalGoldens: dataset.goldenCount || 0,
-      pendingCount: dataset.goldenCount || 0,
-      runningCount: 0,
-      passedCount: 0,
-      failedCount: 0,
-      triggeredBy: body.triggeredBy || "user",
-    });
-
-    await storage.createJob({
-      type: "eval_test_run",
-      status: "queued",
-      agentId: body.agentId,
-      payload: {
-        runId: run.id,
-        agentId: body.agentId,
-        datasetId: body.datasetId,
-        metricIds: body.metricIds,
-        judgeModelOverride: body.judgeModelOverride || null,
-        parallelism: body.parallelism,
-        organizationId: orgId,
-      },
+      triggeredBy: body.triggeredBy,
     });
 
     res.status(201).json(run);
@@ -1246,35 +1227,8 @@ router.get("/api/eval/runs/:id/metric-summary", async (req, res) => {
     // Fetch all traces (up to 500 — enough for meaningful aggregation)
     const traces = await storage.getEvalTraces({ runId: run.id, limit: 500 });
 
-    // Aggregate per-metric scores from trace.scores (Record<string, number>)
-    const metricBuckets = new Map<string, { total: number; passed: number; scoreSum: number }>();
-    for (const trace of traces) {
-      const scores = trace.scores as Record<string, number> | null;
-      if (!scores) continue;
-      for (const [metric, score] of Object.entries(scores)) {
-        if (typeof score !== "number") continue;
-        const bucket = metricBuckets.get(metric) ?? { total: 0, passed: 0, scoreSum: 0 };
-        bucket.total++;
-        bucket.scoreSum += score;
-        if (score >= 0.5) bucket.passed++;
-        metricBuckets.set(metric, bucket);
-      }
-    }
-
-    const summary = Array.from(metricBuckets.entries()).map(([metric, b]) => ({
-      metric,
-      total: b.total,
-      passed: b.passed,
-      passRate: b.total > 0 ? b.passed / b.total : null,
-      avgScore: b.total > 0 ? Math.round((b.scoreSum / b.total) * 1000) / 1000 : null,
-    }));
-
-    // Put "overall" last, sort rest alphabetically
-    summary.sort((a, b) => {
-      if (a.metric === "overall") return 1;
-      if (b.metric === "overall") return -1;
-      return a.metric.localeCompare(b.metric);
-    });
+    // Per-metric pass rates (server/eval-runs.ts, shared with the Astra Workspace).
+    const summary = summarizeMetrics(traces);
 
     res.json({ runId: run.id, metrics: summary, traceCount: traces.length });
   } catch (err: any) {

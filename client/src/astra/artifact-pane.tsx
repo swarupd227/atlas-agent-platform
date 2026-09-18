@@ -10,6 +10,7 @@ import { TeamCard, TeamProposal } from "./renderers/team";
 import { Wiring } from "./renderers/wiring";
 import { TeamRun } from "./renderers/team-run";
 import { AuditChain, ExamPackage, Policies, Readiness } from "./renderers/governance";
+import { EvalCompare, EvalFailures, EvalRun } from "./renderers/evaluation";
 
 function AgentList({ props }: { props: Record<string, any> }) {
   const agents: any[] = props.agents ?? [];
@@ -206,6 +207,9 @@ const RENDERERS: Record<string, (p: { props: Record<string, any> }) => JSX.Eleme
   readiness: Readiness,
   auditChain: AuditChain,
   examPackage: ExamPackage,
+  evalRun: EvalRun,
+  evalCompare: EvalCompare,
+  evalFailures: EvalFailures,
 };
 
 export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onClose: () => void }) {
