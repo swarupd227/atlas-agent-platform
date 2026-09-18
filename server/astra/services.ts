@@ -228,10 +228,11 @@ const RUNNABLE_STATUSES = new Set(["active", "deployed"]);
  * and teams themselves are not included.
  */
 async function listRunnableAgents(orgId: string, role: RoleId) {
-  const offered = await getWorkspaceAgents(orgId, role);
+  const all = await storage.getAgents(orgId);
+  const offered = await getWorkspaceAgents(orgId, role, all);
   if (!hasPermission(role, "view_agents")) return offered;
   const ids = new Set(offered.map((a) => a.id));
-  const workers = (await storage.getAgents(orgId))
+  const workers = all
     .filter((a) => !ids.has(a.id) && RUNNABLE_STATUSES.has(a.status) && a.agentType !== "team")
     .filter((a) => {
       if (role === "admin") return true;

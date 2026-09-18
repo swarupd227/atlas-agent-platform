@@ -110,12 +110,15 @@ router.get("/api/astra/threads/:id", checkPermission("use_astra"), async (req, r
 });
 
 /** A section that fails says so on its row; the rest of the briefing still loads. */
-async function section<T>(load: () => Promise<T>): Promise<HomeSection<T>> {
+async function section<T>(load: () => Promise<T>, timings?: string[], name?: string): Promise<HomeSection<T>> {
+  const started = Date.now();
   try {
     return { ok: true, data: await load() };
   } catch (err) {
     console.error("[astra] home section failed:", err instanceof Error ? err.message : err);
     return { ok: false, reason: "the data isn't available right now" };
+  } finally {
+    if (timings && name) timings.push(`${name};dur=${Date.now() - started}`);
   }
 }
 
@@ -135,6 +138,8 @@ router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => 
     return c.selected ? (c.pack || c.builtIn ? c.label : String(c.industryId)) : null;
   };
 
+  // Per-section timings go out as a Server-Timing header, so a slow briefing says which part is slow.
+  const timings: string[] = [];
   const [organizationName, industryLabel, organizationLabel, needs, agents, outcomes, connectors] = await Promise.all([
     services.getOrganizationName(ctx.orgId).catch(() => null),
     labelOf(ctx.industryId).catch(() => null),
@@ -147,16 +152,17 @@ router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => 
         urgentCount: items.filter((i) => i.urgency === "urgent").length,
         decidableHere: items.filter((i) => i.canDecideHere).length,
       };
-    }),
-    section(async () => ({ runnable: (await services.listRunnableAgents(ctx.orgId, ctx.role)).length })),
-    section(() => services.outcomeCounts(ctx.orgId)),
+    }, timings, "needs"),
+    section(async () => ({ runnable: (await services.listRunnableAgents(ctx.orgId, ctx.role)).length }), timings, "agents"),
+    section(() => services.outcomeCounts(ctx.orgId), timings, "outcomes"),
     can("view_agents")
       ? section(async () => {
           const list = (await services.listConnectors(ctx.orgId)) as Array<{ connected: boolean | null }>;
           return { total: list.length, connected: list.filter((c) => c.connected === true).length, notConnected: list.filter((c) => c.connected === false).length };
-        })
+        }, timings, "connectors")
       : Promise.resolve(null),
   ]);
+  res.setHeader("Server-Timing", timings.join(", "));
 
   res.json(
     buildHome({

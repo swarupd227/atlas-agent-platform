@@ -517,6 +517,8 @@ export interface IStorage {
   updateMcpElicitation(id: string, data: Partial<McpElicitation>): Promise<McpElicitation | undefined>;
 
   getTeamBlueprintNodes(blueprintId: string): Promise<TeamBlueprintNode[]>;
+  /** Which agent each node of these blueprints refers to, in one query. */
+  getTeamBlueprintNodeRefs(blueprintIds: string[]): Promise<Array<{ blueprintId: string; refAgentId: string | null }>>;
   getTeamBlueprintNode(id: string): Promise<TeamBlueprintNode | undefined>;
   createTeamBlueprintNode(node: InsertTeamBlueprintNode): Promise<TeamBlueprintNode>;
   updateTeamBlueprintNode(id: string, data: Partial<TeamBlueprintNode>): Promise<TeamBlueprintNode | undefined>;
@@ -2912,6 +2914,13 @@ export class DatabaseStorage implements IStorage {
 
   async getTeamBlueprintNodes(blueprintId: string) {
     return db.select().from(teamBlueprintNodes).where(eq(teamBlueprintNodes.blueprintId, blueprintId));
+  }
+  async getTeamBlueprintNodeRefs(blueprintIds: string[]) {
+    if (blueprintIds.length === 0) return [];
+    return db
+      .select({ blueprintId: teamBlueprintNodes.blueprintId, refAgentId: teamBlueprintNodes.refAgentId })
+      .from(teamBlueprintNodes)
+      .where(inArray(teamBlueprintNodes.blueprintId, blueprintIds));
   }
   async getTeamBlueprintNode(id: string) {
     const [n] = await db.select().from(teamBlueprintNodes).where(eq(teamBlueprintNodes.id, id));

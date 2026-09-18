@@ -34,7 +34,7 @@ import type { RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt } from "./builtin-skill-tools";
-import type { Skill } from "@shared/schema";
+import type { Agent, Skill } from "@shared/schema";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds } from "./brand-assets";
 
@@ -644,17 +644,18 @@ const WORKSPACE_RUNNABLE_STATUSES = new Set(["active", "deployed"]);
  *    should address the team's orchestrator, not its implementation-detail
  *    sub-agents (UX audit F-4).
  */
-export async function getWorkspaceAgents(orgId: string | undefined, role: string): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string; canGenerateDocuments: boolean; documentGenerationMode: "auto" | "platform" | "sandbox"; ontologyTags: Array<{ conceptId: string; conceptLabel: string }>; toolsConfig: any[] }>> {
-  const all = await storage.getAgents(orgId);
+export async function getWorkspaceAgents(orgId: string | undefined, role: string, preloadedAgents?: Agent[]): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string; canGenerateDocuments: boolean; documentGenerationMode: "auto" | "platform" | "sandbox"; ontologyTags: Array<{ conceptId: string; conceptLabel: string }>; toolsConfig: any[] }>> {
+  const all = preloadedAgents ?? (await storage.getAgents(orgId));
   const isFullAccess = role === "admin";
 
-  const teamAgents = all.filter(a => a.agentType === "team" && !!(a as any).blueprintId);
+  // A team's internal workers aren't offered on their own. One query for every
+  // team's nodes -- this used to be one query per team, run in sequence, which
+  // made the list take seconds in an organization with ~80 teams.
+  const teamByBlueprint = new Map<string, string>();
+  for (const a of all) if (a.agentType === "team" && (a as any).blueprintId) teamByBlueprint.set((a as any).blueprintId, a.id);
   const subWorkerIds = new Set<string>();
-  for (const teamAgent of teamAgents) {
-    const nodes = await storage.getTeamBlueprintNodes((teamAgent as any).blueprintId);
-    for (const node of nodes) {
-      if (node.refAgentId && node.refAgentId !== teamAgent.id) subWorkerIds.add(node.refAgentId);
-    }
+  for (const node of await storage.getTeamBlueprintNodeRefs(Array.from(teamByBlueprint.keys()))) {
+    if (node.refAgentId && node.refAgentId !== teamByBlueprint.get(node.blueprintId)) subWorkerIds.add(node.refAgentId);
   }
 
   const visible = all
