@@ -20,7 +20,7 @@ import { getIndustryPack } from "@shared/industry-packs";
 import { getBuiltInIndustry } from "@shared/built-in-industries";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
-import { CONVERSATION_DECIDABLE_OBJECT_TYPES, decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
+import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
 import { proposeTeam } from "../team-proposal";
 import { assessProposalBindings, resolveBindingServer } from "../team-bindings";
@@ -468,7 +468,6 @@ async function needsMe(orgId: string, role: RoleId) {
       category: item.category,
       sourceId: item.sourceId,
       approval: approval ? { status: approval.status, objectType: approval.objectType, requiredReviewerRole: approval.requiredReviewerRole ?? null } : null,
-      decidableKinds: CONVERSATION_DECIDABLE_OBJECT_TYPES,
       allowed: approval ? whoMayDecide(role, approval) : null,
     });
     return {

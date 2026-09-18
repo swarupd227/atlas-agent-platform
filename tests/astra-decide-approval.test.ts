@@ -72,11 +72,10 @@ describe("decide_approval", () => {
     expect(t.services.decideApprovalAs).not.toHaveBeenCalled();
   });
 
-  it("refuses without a card when the role can't decide, it's already decided, or it's another kind of approval", async () => {
+  it("refuses without a card when the role can't decide or it's already decided", async () => {
     for (const [role, approval, expected] of [
       ["agent_engineer", review(), "can't decide this approval"],
       ["admin", { ...review(), status: "approved" }, "already approved"],
-      ["admin", { ...review(), objectType: "patch", type: "patch" }, "Approvals page"],
       ["expert_validator", { ...review(), requiredReviewerRole: "compliance_security" }, "routed to the compliance_security role"],
     ] as Array<[RoleId, any, string]>) {
       const t = setup([decide(), (m) => { expect(lastTool(m).error, role).toContain(expected); return done("Can't."); }], approval);
@@ -92,5 +91,22 @@ describe("decide_approval", () => {
     const action = (await t.store.loadThread(t.threadId, ORG))!.pendingAction!;
     expect(action.summary).toBe("Reject approval gate: Manager Approval");
     expect(action.details!.join(" ")).toContain("stops at this step");
+  });
+
+  it("decides other kinds too, and the card says what the decision does", async () => {
+    const toolCall = { ...review(), id: "apr-1", type: "tool-invocation", objectType: "mcp-tool", objectName: "post_journal_entry", outcome: null };
+    const t = setup([decide()], toolCall);
+    await runTurn(t.deps, as("admin"), t.threadId, "Approve it", t.onEvent);
+    const action = (await t.store.loadThread(t.threadId, ORG))!.pendingAction!;
+    expect(action.summary).toBe("Approve tool invocation: post_journal_entry");
+    expect(action.details!.join(" ")).toContain("later calls to post_journal_entry are allowed without asking again");
+  });
+
+  it("says plainly when a kind of approval changes nothing else", async () => {
+    const other = { ...review(), id: "apr-1", type: "follow_up_task", objectType: "outcome_task", objectName: "Check the KPI source", outcome: null };
+    const t = setup([decide()], other);
+    await runTurn(t.deps, as("admin"), t.threadId, "Approve it", t.onEvent);
+    const action = (await t.store.loadThread(t.threadId, ORG))!.pendingAction!;
+    expect(action.details!.join(" ")).toContain("doesn't change anything else");
   });
 });

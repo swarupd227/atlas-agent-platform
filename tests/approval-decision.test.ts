@@ -10,6 +10,8 @@ const db = vi.hoisted(() => ({
   audit: [] as any[],
   runs: [] as any[],
   resumed: [] as string[],
+  deployments: new Map<string, any>(),
+  agents: new Map<string, any>(),
 }));
 
 vi.mock("../server/storage", () => ({
@@ -30,8 +32,16 @@ vi.mock("../server/storage", () => ({
     }),
     updateOutcome: vi.fn(async (id: string, data: any) => { db.outcomes.set(id, { ...db.outcomes.get(id), ...data }); return {}; }),
     listDagExecutionRunsByStatus: vi.fn(async () => db.runs),
+    getDeployment: vi.fn(async (id: string) => (db.deployments.has(id) ? { ...db.deployments.get(id) } : undefined)),
+    updateDeployment: vi.fn(async (id: string, data: any) => { db.deployments.set(id, { ...db.deployments.get(id), ...data }); return {}; }),
+    getAgent: vi.fn(async (id: string) => (db.agents.has(id) ? { ...db.agents.get(id) } : undefined)),
+    updateAgent: vi.fn(async (id: string, data: any) => { db.agents.set(id, { ...db.agents.get(id), ...data }); return {}; }),
   },
 }));
+
+vi.mock("../server/workspace-run", () => ({ resumeWorkspaceRun: vi.fn() }));
+vi.mock("../server/services/screenshot-baseline", () => ({ promoteToBaseline: vi.fn() }));
+vi.mock("../server/db", () => ({ db: {} }));
 
 vi.mock("../server/dag-execution-engine", () => ({
   resumeTeamAgentDagRun: vi.fn(async (id: string) => { db.resumed.push(id); }),
@@ -47,6 +57,8 @@ beforeEach(() => {
   db.audit.length = 0;
   db.runs.length = 0;
   db.resumed.length = 0;
+  db.deployments.clear();
+  db.agents.clear();
   db.outcomes.set("out-1", { id: "out-1", organizationId: "org-a", name: "Reduce DSO", status: "pending_review" });
   db.approvals.set("apr-review", { id: "apr-review", organizationId: "org-a", type: "outcome_review", objectType: "outcome_contract", objectId: "out-1", objectName: "Reduce DSO", status: "pending" });
   db.approvals.set("apr-gate", { id: "apr-gate", organizationId: "org-a", type: "hitl_gate", objectType: "pipeline_gate", objectName: "Manager Approval", status: "pending" });
@@ -77,12 +89,26 @@ describe("decideApproval", () => {
     await vi.waitFor(() => expect(db.resumed).toEqual(["run-1"]));
   });
 
-  it("refuses another organization's approval, one already decided, and kinds decided on the Approvals page", async () => {
+  it("refuses another organization's approval and one already decided", async () => {
     expect(await code(decideApproval({ ...base, orgId: "org-b", role: "admin", approvalId: "apr-review", decision: "approved" }))).toBe("not_found");
     db.approvals.set("apr-review", { ...db.approvals.get("apr-review"), status: "approved" });
     expect(await code(decideApproval({ ...base, role: "admin", approvalId: "apr-review", decision: "approved" }))).toBe("not_pending");
-    expect(await code(decideApproval({ ...base, role: "admin", approvalId: "apr-patch", decision: "approved" }))).toBe("unsupported");
     expect(db.audit).toHaveLength(0);
+  });
+
+  it("applies the same per-kind effects as the Approvals page: approving a deployment activates it", async () => {
+    db.approvals.set("apr-dep", { id: "apr-dep", organizationId: "org-a", type: "deployment_review", objectType: "deployment", objectId: "dep-1", objectName: "Invoice Agent", status: "pending" });
+    db.deployments.set("dep-1", { id: "dep-1", agentName: "Invoice Agent", status: "pending", rolloutStrategy: "canary", canaryConfig: { startPercent: 10 } });
+    await decideApproval({ ...base, role: "admin", approvalId: "apr-dep", decision: "approved" });
+    expect(db.deployments.get("dep-1")).toMatchObject({ status: "canary", canaryPercent: 10, approvedBy: "admin" });
+    expect(db.audit.map((e) => e.action)).toEqual(["approval_approved", "deployment_activated"]);
+  });
+
+  it("approving a retirement review retires the agent", async () => {
+    db.approvals.set("apr-ret", { id: "apr-ret", organizationId: "org-a", type: "retirement_review", objectType: "agent", objectId: "ag-1", status: "pending" });
+    db.agents.set("ag-1", { id: "ag-1", status: "retiring" });
+    await decideApproval({ ...base, role: "admin", approvalId: "apr-ret", decision: "approved" });
+    expect(db.agents.get("ag-1").status).toBe("retired");
   });
 
   it("follows review routing: a routed role may decide, others may not, even with approve_changes", async () => {

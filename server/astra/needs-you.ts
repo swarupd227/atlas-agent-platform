@@ -2,8 +2,8 @@
  * Where an item that needs the user gets decided: right here in the
  * conversation, or on a classic page -- and, when it's elsewhere, why. Pure.
  *
- * Only approvals of kinds Astra knows how to finish (CONVERSATION_DECIDABLE_OBJECT_TYPES)
- * are decided here, and only by a role allowed to decide them.
+ * Any pending approval is decided here by a role allowed to decide it: the
+ * decision has the same effects as on the Approvals page (applyApprovalEffects).
  */
 
 export interface DecisionRoute {
@@ -26,7 +26,6 @@ export function decisionRoute(input: {
   category: string;
   sourceId: string;
   approval?: { status: string; objectType: string; requiredReviewerRole: string | null } | null;
-  decidableKinds: readonly string[];
   /** The caller's verdict from canDecideApproval for this approval. */
   allowed: { allowed: boolean; reason: string } | null;
 }): DecisionRoute {
@@ -47,13 +46,6 @@ export function decisionRoute(input: {
       ? `Routed to the ${requiredReviewerRole.replace(/_/g, " ")} role.`
       : "Your role can't decide approvals.";
     return { canDecideHere: false, requiredReviewerRole, elsewhere: { href, page: "Approvals", reason } };
-  }
-  if (!input.decidableKinds.includes(approval.objectType)) {
-    return {
-      canDecideHere: false,
-      requiredReviewerRole,
-      elsewhere: { href, page: "Approvals", reason: `A ${approval.objectType.replace(/_/g, " ")} approval is decided on its approval page.` },
-    };
   }
   return { canDecideHere: true, requiredReviewerRole, elsewhere: null };
 }

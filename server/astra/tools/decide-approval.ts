@@ -1,11 +1,13 @@
 import { z } from "zod";
+import { describeApprovalEffect } from "../../approval-decision";
 import type { AstraTool, ConfirmPreview, ProofEnvelope } from "../types";
 
 /**
- * Approve or reject an approval from the conversation: an outcome review, or
- * a team run waiting at an approval gate. Everything else stays on the
- * Approvals page. The routed reviewer role (or approve_changes) decides; the
- * decision is audited and has the same effect as deciding it on that page.
+ * Approve or reject any pending approval from the conversation. The routed
+ * reviewer role (or approve_changes) decides; the confirmation card says what
+ * the decision will do, and it has exactly the effect of deciding it on the
+ * Approvals page (server/approval-decision.ts). Rejecting with a follow-up
+ * task or approving with rollout constraints stays on that page.
  */
 
 type Input = { approvalId: string; decision: "approve" | "reject"; note?: string };
@@ -24,29 +26,25 @@ interface ApprovalView {
   outcome: { id: string; name: string; status: string } | null;
 }
 
-const DECIDABLE = new Set(["outcome_contract", "pipeline_gate"]);
-
 function effect(a: ApprovalView, decision: Input["decision"]): string {
-  if (a.objectType === "outcome_contract") {
-    const name = a.outcome?.name ?? a.objectName ?? "The outcome";
-    return decision === "approve"
-      ? `${name} moves out of review and is ready for its agent plan: a team can be proposed and built.`
-      : `${name} goes back to draft; it can be edited and submitted again.`;
-  }
-  return decision === "approve"
-    ? "The team run waiting at this step continues."
-    : "The team run stops at this step (a rejected gate fails it).";
+  return describeApprovalEffect(a, decision, { outcomeName: a.outcome?.name });
+}
+
+function kindOf(a: ApprovalView): string {
+  if (a.objectType === "outcome_contract") return "outcome review";
+  if (a.objectType === "pipeline_gate") return "approval gate";
+  return a.type.replace(/[-_]/g, " ");
 }
 
 function label(a: ApprovalView) {
-  return a.objectType === "outcome_contract" ? `outcome review: ${a.outcome?.name ?? a.objectName ?? a.id}` : `approval gate: ${a.objectName ?? a.id}`;
+  const name = a.objectType === "outcome_contract" ? a.outcome?.name ?? a.objectName : a.objectName;
+  return `${kindOf(a)}: ${name ?? a.id}`;
 }
 
 async function load(ctx: Parameters<NonNullable<AstraTool<Input>["preview"]>>[0], input: Input): Promise<{ refuse: string } | { approval: ApprovalView }> {
   const approval: ApprovalView | null = await ctx.services.getApprovalForDecision(ctx.orgId, ctx.role, input.approvalId);
   if (!approval) return { refuse: "No approval with that id in this organization." };
   if (approval.status !== "pending") return { refuse: `That approval is already ${approval.status}. Nothing to decide.` };
-  if (!DECIDABLE.has(approval.objectType)) return { refuse: "That kind of approval is decided on the Approvals page (/approvals), not in the conversation." };
   if (!approval.canDecide.allowed) {
     return { refuse: `The ${ctx.role} role can't decide this approval${approval.requiredReviewerRole ? `: it is routed to the ${approval.requiredReviewerRole} role` : " (it needs approve_changes)"}.` };
   }
@@ -56,7 +54,7 @@ async function load(ctx: Parameters<NonNullable<AstraTool<Input>["preview"]>>[0]
 export const decideApprovalTool: AstraTool<Input> = {
   name: "decide_approval",
   description:
-    "Approve or reject a pending approval: an outcome review (so its team can be built) or a team run waiting at an approval gate. The user confirms the decision first. Other kinds of approval are decided on the Approvals page.",
+    "Approve or reject any pending approval: an outcome review (so its team can be built), a team run waiting at an approval gate, a tool call an agent asked permission for, a deployment, a patch, an agent retirement, and others. The confirmation card says what the decision will do; the user confirms first. It has the same effect as deciding on the Approvals page.",
   input: z.object({
     approvalId: z.string().min(1).describe("The approval's id."),
     decision: z.enum(["approve", "reject"]).describe("approve or reject."),
@@ -98,7 +96,8 @@ export const decideApprovalTool: AstraTool<Input> = {
         decided: true,
         approvalId: a.id,
         decision,
-        kind: a.objectType === "outcome_contract" ? "outcome_review" : "approval_gate",
+        kind: a.objectType === "outcome_contract" ? "outcome_review" : a.objectType === "pipeline_gate" ? "approval_gate" : a.type,
+        effect: effect(a, input.decision),
         ...(result.outcomeStatus ? { outcome: { id: a.outcome?.id, name: a.outcome?.name, status: result.outcomeStatus } } : {}),
       },
       ...(a.outcome ? { artifact: { kind: "outcome", title: a.outcome.name, props: { outcome: { ...a.outcome, status: result.outcomeStatus ?? a.outcome.status } }, fullViewHref: `/outcomes/${a.outcome.id}` } } : {}),
