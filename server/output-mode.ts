@@ -42,9 +42,15 @@ export function ownFinalAnswer(
  * Output-token ceiling for the calls that continue a tool loop. The
  * deliverable itself is written by one of them in either mode -- in "answer"
  * mode by design, in "analysis" mode since the result format is asked for up
- * front (server/final-answer.ts) -- so both get the room the planning call
- * gets for a large input. A ceiling only caps; it costs nothing unless reached.
+ * front (server/final-answer.ts). A ceiling is not free: OpenAI charges each
+ * request max(max_tokens, prompt estimate) against the tokens-per-minute
+ * limit, so a 16K ceiling on a 5K prompt with a 300-token answer spends 16K
+ * of the minute's budget. Analysis answers are asked to be concise and run a
+ * few hundred tokens; 8K leaves ample room. A deliverable in "answer" mode
+ * (a report, an outline) keeps the larger ceiling it needs.
  */
-export function continuationMaxTokens(_mode: OutputMode): number {
-  return 16384;
+export const ANALYSIS_MAX_TOKENS = 8192;
+export const ANSWER_MAX_TOKENS = 16384;
+export function continuationMaxTokens(mode: OutputMode): number {
+  return mode === "answer" ? ANSWER_MAX_TOKENS : ANALYSIS_MAX_TOKENS;
 }

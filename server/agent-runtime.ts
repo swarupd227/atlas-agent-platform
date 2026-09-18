@@ -28,7 +28,7 @@ import type { RuleGroup, OutputContract } from "@shared/schema";
 import { ensureContainerFiles, ensureGeneratedContainerFiles } from "./anthropic-code-execution";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
-import { resolveOutputMode, ownFinalAnswer, continuationMaxTokens } from "./output-mode";
+import { resolveOutputMode, ownFinalAnswer, continuationMaxTokens, ANALYSIS_MAX_TOKENS } from "./output-mode";
 import { finalAnswerInstructions, analysisCallPrompt, finalAnswerFromTurn, hasRecordListSchema, RECONCILIATION_NOTE } from "./final-answer";
 
 export function canonicalJsonStringify(obj: any): string {
@@ -1744,9 +1744,12 @@ After receiving tool results, provide a structured analysis with key findings, s
   // did. Live 2026-09-09: a Deck Assembler "reported" a finished deck, with a
   // fabricated download link, in 9 seconds on the fallback model.
   const codeExecMaxTokens = onProgress ? 32768 : 21_000;
+  // 8K rather than 16K for a large input: the provider charges
+  // max(max_tokens, prompt) against its tokens-per-minute limit, so the
+  // ceiling itself spends budget (see output-mode.ts ANALYSIS_MAX_TOKENS).
   const planCallMaxTokens = getCodeExecConfig()
     ? codeExecMaxTokens
-    : (planCallInputChars > 8000 ? 16384 : 4096);
+    : (planCallInputChars > 8000 ? ANALYSIS_MAX_TOKENS : 4096);
 
   // Why the call that wrote the answer stopped. "max_tokens" means the answer
   // was cut off at the output limit: a step reported as completed whose
@@ -2377,7 +2380,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         // don't cover this case since Journey Runner isn't a record-processing
         // agent -- gate on the actual conversation size instead.
         const analysisInputSize = JSON.stringify(analysisMessages).length;
-        const analysisCallMaxTokens = hasRecordData || hasOutputSchema || analysisInputSize > 8000 ? 16384 : 4096;
+        const analysisCallMaxTokens = hasRecordData || hasOutputSchema || analysisInputSize > 8000 ? ANALYSIS_MAX_TOKENS : 4096;
 
         // Fetched here (before the generating call) rather than after, so its
         // schema can be attached as vendor-native strict decoding on the call
