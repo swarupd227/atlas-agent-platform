@@ -794,6 +794,11 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         result = await executeTeamPipeline(teamRuntimeAgent);
       } else {
         const agentOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
+        // The same options a DAG worker node gets (executeWorkerAgent): a test
+        // run used to omit the agent's runtimeConfig and model, so it ignored
+        // its required tool calls, output mode and schema, and ran on the
+        // default model -- live, an agent whose real runs are forced to call
+        // its screening tool "tested" fine by inventing the screening result.
         result = await executePromptWithMcp(
           req.params.id,
           "test-run",
@@ -802,7 +807,14 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           prompt,
           (await resolveAgentIndustry(agent as any)) ?? undefined,
           richSystemPrompt,
-          { ontologyLabels: agentOntologyTags.map(t => t.conceptLabel), maxToolIterations: agent.maxToolIterations ?? 5 },
+          {
+            ontologyLabels: agentOntologyTags.map(t => t.conceptLabel),
+            maxToolIterations: agent.maxToolIterations ?? 5,
+            runtimeConfig: rtConfig,
+            modelProvider: agent.modelProvider ?? undefined,
+            modelName: agent.modelName ?? undefined,
+            conversational: rtConfig.conversational === true,
+          },
           undefined,
           undefined,
           getRequestRole(req),
@@ -827,7 +839,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           : `Test Run: ${prompt.length > 120 ? prompt.substring(0, 117) + "..." : prompt}`,
         outputSummary: typeof testAnalysisText === "string" && testAnalysisText.length > 0 ? testAnalysisText : `${toolCalls.length} tools called | ${result.summary?.passedSteps}/${result.summary?.totalSteps} steps`,
         stepsJson: result.steps,
-        modelId: "gpt-4.1",
+        modelId: agent.modelName || "gpt-4.1",
         promptInputs: result.promptInputs || {
           systemPrompt: richSystemPrompt || prompt,
           userMessage: prompt,
