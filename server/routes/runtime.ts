@@ -15337,13 +15337,27 @@ async function performMcpServerInitialize(serverId: string): Promise<
     res.json(setting);
   });
 
-  router.put("/api/platform-settings/:key", async (req, res) => {
+  // A platform setting applies to the whole deployment, every organization
+  // included (feature flags such as ASTRA_WORKSPACE_ENABLED), so only an admin
+  // may change one, and every change is audited with its old and new value.
+  router.put("/api/platform-settings/:key", checkPermission("manage_platform_settings"), async (req, res) => {
+    const role = getRequestRole(req);
     try {
       const data = insertPlatformSettingSchema.parse({
-        key: req.params.key,
         ...req.body,
+        key: req.params.key,
       });
+      const previous = await storage.getPlatformSetting(data.key);
       const upserted = await storage.upsertPlatformSetting(data);
+      await storage.createAuditEvent({
+        organizationId: getOrgId(req) ?? undefined,
+        actorType: "user",
+        actorId: (req as any).authUser?.userId ?? undefined,
+        action: "platform_setting_changed",
+        objectType: "platform_setting",
+        objectId: data.key,
+        details: JSON.stringify({ key: data.key, from: previous?.value ?? null, to: upserted.value, role }),
+      }).catch((err: any) => console.error("[platform-settings] audit write failed:", err?.message));
       res.json(upserted);
     } catch (e) {
       handleZodError(res, e);
