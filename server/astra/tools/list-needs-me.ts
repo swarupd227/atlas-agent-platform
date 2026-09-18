@@ -32,6 +32,8 @@ const compact = (i: Item) => ({
   urgency: i.urgency.replace(/_/g, " "),
   ...(i.businessImpact ? { impact: i.businessImpact } : {}),
   ...(i.source === "approval" ? { approvalId: i.sourceId, canDecideHere: i.canDecideHere } : {}),
+  ...(i.source === "recommendation" ? { recommendationId: i.sourceId, canDecideHere: i.canDecideHere } : {}),
+  ...(i.source === "alert" ? { alertId: i.sourceId, canDecideHere: i.canDecideHere } : {}),
   ...(i.elsewhere ? { decidedOn: i.elsewhere.page, why: i.elsewhere.reason } : {}),
   createdAt: i.createdAt,
 });
@@ -39,7 +41,7 @@ const compact = (i: Item) => ({
 export const listNeedsMeTool: AstraTool<Input> = {
   name: "list_needs_me",
   description:
-    "What needs the user's attention: pending approvals and decisions (urgent first), with approval ids and whether they can be decided here with decide_approval; optionally the things-to-know list too.",
+    "What needs the user's attention: pending approvals, recommendations and alerts (urgent first), with their ids and whether they can be decided here (decide_approval, decide_recommendation, acknowledge_alert); optionally the things-to-know list too.",
   input: z.object({ includeFyi: z.boolean().optional().describe("Also list items that don't need a decision.") }),
   confirm: false,
   run: async (ctx, input) => {

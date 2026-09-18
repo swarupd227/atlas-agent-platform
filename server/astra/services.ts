@@ -21,6 +21,7 @@ import { getBuiltInIndustry } from "@shared/built-in-industries";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { isMcpServerVisibleToOrg } from "../tenant-scope";
 import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
+import { acknowledgeAlert, decideRecommendation, getAlertInOrg, getRecommendationInOrg, recommendationEffect } from "../action-decisions";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
 import { proposeTeam } from "../team-proposal";
 import { assessProposalBindings, resolveBindingServer } from "../team-bindings";
@@ -313,6 +314,48 @@ async function decideApprovalAs(
   return decideApproval({ orgId, role, userId, decidedBy, approvalId, decision, note, via: "Astra Workspace" });
 }
 
+// ── decide_recommendation / acknowledge_alert ───────────────────────────────
+
+/** A recommendation for an agent in the organization, with what accepting it would do. */
+async function getRecommendationForDecision(orgId: string, recommendationId: string) {
+  const found = await getRecommendationInOrg(recommendationId, orgId);
+  if (!found) return null;
+  const { rec, agent } = found;
+  const effect = recommendationEffect(rec, agent);
+  return {
+    id: rec.id,
+    title: rec.title,
+    description: rec.description ?? null,
+    status: rec.status,
+    severity: rec.severity,
+    // Written by the recommendation generator from a target, not measured.
+    estimatedImpact: rec.impact ?? null,
+    agent: { id: agent.id, name: agent.name },
+    effect: effect.kind === "model_downgrade" ? { kind: effect.kind, from: effect.from, to: effect.to } : effect,
+  };
+}
+
+async function decideRecommendationAs(orgId: string, userId: string | null, actorLabel: string, recommendationId: string, decision: "accept" | "dismiss", note?: string) {
+  return decideRecommendation({ orgId, actorId: userId ?? actorLabel, actorLabel, via: "Astra Workspace", recommendationId, decision, note });
+}
+
+async function getAlertForDecision(orgId: string, alertId: string) {
+  const alert = await getAlertInOrg(alertId, orgId);
+  if (!alert) return null;
+  return {
+    id: alert.id,
+    agentName: alert.agentName,
+    message: alert.message,
+    severity: alert.severity,
+    acknowledged: !!alert.acknowledgedAt,
+    triggeredAt: alert.triggeredAt ? new Date(alert.triggeredAt).toISOString() : null,
+  };
+}
+
+async function acknowledgeAlertAs(orgId: string, userId: string | null, actorLabel: string, alertId: string, note?: string) {
+  return acknowledgeAlert({ orgId, actorId: userId ?? actorLabel, actorLabel, via: "Astra Workspace", alertId, note });
+}
+
 async function getUserDisplayName(userId: string | null) {
   if (!userId) return null;
   const user = await storage.getUser(userId).catch(() => undefined);
@@ -468,7 +511,13 @@ async function needsMe(orgId: string, role: RoleId) {
       category: item.category,
       sourceId: item.sourceId,
       approval: approval ? { status: approval.status, objectType: approval.objectType, requiredReviewerRole: approval.requiredReviewerRole ?? null } : null,
-      allowed: approval ? whoMayDecide(role, approval) : null,
+      allowed: approval
+        ? whoMayDecide(role, approval)
+        : item.source === "recommendation"
+          ? { allowed: hasPermission(role, "approve_changes"), reason: "" }
+          : item.source === "alert"
+            ? { allowed: hasPermission(role, "view_agents"), reason: "" }
+            : null,
     });
     return {
       ...item,
@@ -825,6 +874,10 @@ export function createAstraServices(): AstraServices {
     getRunForRole,
     getApprovalForDecision,
     decideApprovalAs,
+    getRecommendationForDecision,
+    decideRecommendationAs,
+    getAlertForDecision,
+    acknowledgeAlertAs,
     getUserDisplayName,
     outcomeGrounding,
     listOutcomes,

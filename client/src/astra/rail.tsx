@@ -26,6 +26,13 @@ const URGENCY_DOT: Record<string, string> = {
   this_week: "bg-muted-foreground/50",
 };
 
+/** The message "Decide here" sends: shows the item with the choices for its kind. */
+function decidePrompt(item: NeedsYouItem): string {
+  if (item.source === "recommendation") return `Show me the recommendation "${item.title}" (recommendation ${item.sourceId}) so I can accept or dismiss it.`;
+  if (item.source === "alert") return `Show me the alert "${item.title}" (alert ${item.sourceId}) so I can acknowledge it.`;
+  return `Show me "${item.title}" (approval ${item.sourceId}) so I can approve or reject it.`;
+}
+
 /** Decide here when Astra can finish it; otherwise say where it's decided and why. */
 function NeedsYouRow({ item, onAskAbout }: { item: NeedsYouItem; onAskAbout: (text: string) => void }) {
   return (
@@ -37,7 +44,7 @@ function NeedsYouRow({ item, onAskAbout }: { item: NeedsYouItem; onAskAbout: (te
           {item.canDecideHere ? (
             <button
               type="button"
-              onClick={() => onAskAbout(`Show me "${item.title}" (approval ${item.sourceId}) so I can approve or reject it.`)}
+              onClick={() => onAskAbout(decidePrompt(item))}
               className="mt-0.5 rounded text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               data-testid="astra-needs-you-decide"
             >

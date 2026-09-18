@@ -4,6 +4,9 @@
  *
  * Any pending approval is decided here by a role allowed to decide it: the
  * decision has the same effects as on the Approvals page (applyApprovalEffects).
+ * Recommendations (accept or dismiss) and alerts (acknowledge) are decided here
+ * too (server/action-decisions.ts); policy exceptions and autonomy requests
+ * still go to My Actions.
  */
 
 export interface DecisionRoute {
@@ -26,11 +29,21 @@ export function decisionRoute(input: {
   category: string;
   sourceId: string;
   approval?: { status: string; objectType: string; requiredReviewerRole: string | null } | null;
-  /** The caller's verdict from canDecideApproval for this approval. */
+  /** Whether the caller may decide it: canDecideApproval for an approval, the role's permission otherwise. */
   allowed: { allowed: boolean; reason: string } | null;
 }): DecisionRoute {
   const { approval } = input;
   const requiredReviewerRole = approval?.requiredReviewerRole ?? null;
+
+  if (input.source === "recommendation" || input.source === "alert") {
+    if (input.allowed?.allowed) return { canDecideHere: true, requiredReviewerRole: null, elsewhere: null };
+    const noun = CATEGORY_NOUN[input.category] ?? "These items";
+    return {
+      canDecideHere: false,
+      requiredReviewerRole: null,
+      elsewhere: { href: "/my-actions", page: "My Actions", reason: `Your role can't decide ${noun.toLowerCase()}.` },
+    };
+  }
 
   if (input.source !== "approval" || !approval) {
     const noun = CATEGORY_NOUN[input.category] ?? "These items";
