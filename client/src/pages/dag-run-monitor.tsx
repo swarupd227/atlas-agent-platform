@@ -17,7 +17,7 @@ import { useRoute, Link } from "wouter";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, Network, XCircle, Loader2, ArrowRight, AlertTriangle, Bot, UserCheck,
-  Hand, CheckCircle2, Copy, Check, Download, FileText, Radio,
+  Hand, CheckCircle2, Copy, Check, Download, FileText, Radio, Maximize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -158,6 +158,25 @@ function outputEntries(node: DagWaveNodeResult | undefined): Array<{ key: string
   return Object.entries(out)
     .filter(([k, v]) => !OUTPUT_NOISE_KEYS.has(k) && !k.endsWith(FILES_KEY_SUFFIX) && v != null && v !== "")
     .map(([key, value]) => ({ key, text: formatOutputValue(value) }));
+}
+
+/**
+ * Agents often narrate their tool loop before the report itself ("Perfect! Now
+ * I'll count the placeholders…"), and a multi-turn run concatenates several
+ * such lines. When prose like that precedes the report's first heading or
+ * divider, split it off so the pane can fold it away instead of leading with it.
+ */
+function splitWorkingNotes(text: string): { notes: string | null; report: string } {
+  const lines = text.split("\n");
+  const start = lines.findIndex((l) => /^\s*(#{1,6}\s|---+\s*$|\*\*\*+\s*$)/.test(l));
+  if (start <= 0) return { notes: null, report: text };
+  const notes = lines.slice(0, start).join("\n").trim();
+  const report = lines.slice(start).join("\n").replace(/^\s*(---+|\*\*\*+)\s*\n/, "").trim();
+  // Only prose narration: no tables, lists or code before the report starts, and not most of the output.
+  if (!notes || !report || /(^|\n)\s*([|>*-]|\d+\.|```)/.test(notes) || notes.length > 2500 || notes.length > report.length) {
+    return { notes: null, report: text };
+  }
+  return { notes, report };
 }
 
 /** A gate's recorded decision ({ approved, decidedBy }) under whatever state key it writes. */
@@ -520,9 +539,6 @@ export default function DagRunMonitor() {
           </div>
           <div className="flex gap-2 flex-wrap">
             <Link href={teamHref}><Button variant="outline" size="sm" data-testid="button-open-team">Open team</Button></Link>
-            {runIsTerminal && (
-              <Link href={teamHref}><Button variant="outline" size="sm" data-testid="button-run-again">Run again</Button></Link>
-            )}
             {CANCELLABLE_STATUSES.has(run.status) && (
               <Button variant="outline" size="sm" onClick={() => setCancelOpen(true)} data-testid="button-cancel-run">
                 <XCircle className="w-3.5 h-3.5 mr-1.5" /> Cancel run
@@ -847,6 +863,33 @@ function FileGallery({ files, testIdPrefix }: { files: RunFile[]; testIdPrefix: 
   );
 }
 
+/** A step's output entries as readable markdown, with any leading tool-loop narration folded away. */
+function OutputEntries({ entries, testId }: { entries: Array<{ key: string; text: string }>; testId?: string }) {
+  return (
+    <div className="flex flex-col gap-5" data-testid={testId}>
+      {entries.map((e) => {
+        const { notes, report } = splitWorkingNotes(e.text);
+        return (
+          <div key={e.key} className="flex flex-col gap-2">
+            {/* The key is only worth showing when there is more than one. */}
+            {entries.length > 1 && <Eyebrow>{humanizeKey(e.key)}</Eyebrow>}
+            {notes && (
+              <details className="group rounded-md border bg-background/60 px-3 py-2 text-xs text-muted-foreground" data-testid="details-working-notes">
+                <summary className="cursor-pointer list-none select-none font-mono">
+                  <span className="group-open:hidden">Show the agent's working notes</span>
+                  <span className="hidden group-open:inline">Hide the agent's working notes</span>
+                </summary>
+                <p className="mt-2 whitespace-pre-wrap leading-relaxed">{notes}</p>
+              </details>
+            )}
+            <Markdown text={report} className="astra-md run-output text-sm" />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * The selected step's own contribution. The run merges every agent's output
  * into one final state, which answers "what did the team produce" but not
@@ -867,7 +910,8 @@ function StepDetail({
 }) {
   const [tab, setTab] = useState<"output" | "files">("output");
   const [copied, setCopied] = useState(false);
-  useEffect(() => { setTab("output"); setCopied(false); }, [step.key]);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => { setTab("output"); setCopied(false); setExpanded(false); }, [step.key]);
 
   const entries = outputEntries(step.result);
   const files = collectRunFiles(step.result?.output);
@@ -875,6 +919,11 @@ function StepDetail({
   const others = stage.steps.length - 1;
   const decision = step.kind === "gate" ? gateDecision(step.result) : null;
   const showTabs = step.kind === "agent" && step.state === "completed" && files.length > 0;
+  const canExpand = step.kind === "agent" && entries.length > 0 && tab === "output";
+  // An approval step's outcome is the decision itself, not "completed".
+  const pillLabel = step.kind === "gate" && step.state === "completed" && decision ? "Approved"
+    : step.kind === "gate" && step.state === "failed" ? "Not approved"
+    : STATE_LABEL[step.state];
 
   async function copyOutput() {
     try {
@@ -948,15 +997,7 @@ function StepDetail({
           </div>
         )}
         {entries.length > 0 ? (
-          <div className="flex flex-col gap-4" data-testid={`panel-node-output-${step.id}`}>
-            {entries.map((e) => (
-              <div key={e.key} className="flex flex-col gap-1.5">
-                {/* The key is only worth showing when there is more than one. */}
-                {entries.length > 1 && <Eyebrow>{humanizeKey(e.key)}</Eyebrow>}
-                <Markdown text={e.text} className="astra-md text-sm" />
-              </div>
-            ))}
-          </div>
+          <OutputEntries entries={entries} testId={`panel-node-output-${step.id}`} />
         ) : step.state === "completed" ? (
           <p className="text-sm text-muted-foreground">This step produced no text output.</p>
         ) : null}
@@ -975,10 +1016,15 @@ function StepDetail({
         <h3 className="text-[19px] font-semibold leading-snug" style={DISPLAY} data-testid="text-step-title">{step.label}</h3>
         <div className="flex items-center gap-3.5 flex-wrap font-mono text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-2 rounded-full border bg-background px-2.5 py-0.5 text-foreground">
-            <Dot state={step.state} /> {STATE_LABEL[step.state]}
+            <Dot state={step.state} /> {pillLabel}
           </span>
           {step.durationMs != null && step.state !== "pending" && <span>{durationLabel(step.durationMs)}</span>}
           <span>{step.kind === "gate" ? "Approval step" : "Agent"}</span>
+          {canExpand && (
+            <Button variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs font-sans" onClick={() => setExpanded(true)} data-testid="button-expand-output">
+              <Maximize2 className="w-3.5 h-3.5 mr-1.5" /> Expand
+            </Button>
+          )}
         </div>
         {showTabs && (
           <div className="flex gap-1 pt-1" role="tablist">
@@ -1010,6 +1056,24 @@ function StepDetail({
           )}
         </div>
       )}
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent className="astra-scope bg-background text-foreground font-sans max-w-[min(1100px,94vw)] w-full max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden" data-testid="dialog-step-output">
+          <DialogHeader className="px-6 pt-5 pb-3 border-b text-left space-y-1">
+            <Eyebrow>{stepWord} {stage.number}{stage.revisionRound ? ` · revision ${stage.revisionRound}` : ""} · {durationLabel(step.durationMs)}</Eyebrow>
+            <DialogTitle className="text-xl font-semibold" style={DISPLAY}>{step.label}</DialogTitle>
+            <DialogDescription className="sr-only">What this step produced</DialogDescription>
+          </DialogHeader>
+          <div className="px-6 py-5 overflow-y-auto">
+            <div className="max-w-[90ch]"><OutputEntries entries={entries} /></div>
+          </div>
+          <div className="border-t px-6 py-3 flex justify-end">
+            <Button variant="outline" size="sm" onClick={copyOutput} data-testid="button-copy-output-expanded">
+              {copied ? <Check className="w-3.5 h-3.5 mr-1.5" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
+              {copied ? "Copied" : "Copy output"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }

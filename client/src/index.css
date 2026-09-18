@@ -371,6 +371,18 @@
   .astra .animate-pulse, .astra .animate-spin { animation: none; }
 }
 
+/* Agent output in the team run view's side pane and reading view (dag-run-monitor.tsx).
+   .astra-md breaks words anywhere, which also shrinks table columns to a letter wide;
+   inside tables only whole words wrap and a wide table scrolls sideways instead. */
+.run-output h1 { font-size: 1.05rem; }
+.run-output h2 { font-size: 1rem; }
+.run-output h3, .run-output h4 { font-size: .9375rem; }
+.run-output table { max-width: 100%; font-size: .8125rem; overflow-wrap: break-word; word-break: normal; }
+.run-output th { white-space: nowrap; background: hsl(var(--muted)); font-weight: 600; }
+.run-output th, .run-output td { vertical-align: top; }
+.run-output td { min-width: 6ch; }
+.run-output hr { border: 0; border-top: 1px solid hsl(var(--border)); margin: 1rem 0; }
+
 /* Team run timeline bars (dag-run-monitor.tsx). */
 .run-bar-gate { background: repeating-linear-gradient(135deg, hsl(var(--astra-warn)) 0 5px, transparent 5px 9px); border: 1px solid hsl(var(--astra-warn)); }
 .run-bar-running { background: repeating-linear-gradient(90deg, hsl(var(--astra-volt)) 0 12px, hsl(var(--astra-volt) / .45) 12px 24px); background-size: 48px 100%; animation: run-bar-slide 1s linear infinite; }
