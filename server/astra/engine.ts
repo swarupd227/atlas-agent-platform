@@ -33,6 +33,7 @@ import { ToolRegistry } from "./registry";
 import { dispatchAstraTool, RateLimiter } from "./dispatch";
 import { buildAstraSystemPrompt, type PromptGrounding } from "./prompt";
 import { completeProof, mergeProof } from "./proof";
+import { LOAD_TOOLS, isPackId } from "./packs";
 
 export const FINISH_TURN = "finish_turn";
 
@@ -258,9 +259,13 @@ async function loop(s: Session, approvedIndex: number | null): Promise<ThreadSta
         : `I stopped before finishing: this turn reached its limit of ${maxIterations} steps. Tell me which part to continue.`);
     }
 
-    const tools = deps.registry.canonicalDefinitions(ctx.role);
+    const tools = deps.registry.canonicalDefinitions(ctx.role, cp.loadedPacks);
     const grounding = deps.grounding ? await deps.grounding(ctx).catch(() => ({})) : {};
-    const system = buildAstraSystemPrompt(ctx, { ...grounding, toolNames: tools.map((t) => t.name) });
+    const system = buildAstraSystemPrompt(ctx, {
+      ...grounding,
+      toolNames: tools.map((t) => t.name),
+      packs: deps.registry.packsFor(ctx.role, cp.loadedPacks),
+    });
 
     emit({ type: "working", label: cp.iterationsUsed === 0 ? "Thinking" : "Reading the results" });
     let completion;
@@ -300,6 +305,27 @@ async function loop(s: Session, approvedIndex: number | null): Promise<ThreadSta
 }
 
 /**
+ * load_tools: add a studio pack to the thread. Its tools are offered from the
+ * next model call on (definitions are rebuilt every iteration).
+ */
+function loadPack(s: Session, args: unknown): Record<string, unknown> {
+  const { deps, ctx, cp, emit } = s;
+  const pack = (args as { pack?: unknown } | null)?.pack;
+  const available = deps.registry.packsFor(ctx.role, cp.loadedPacks);
+  const entry = isPackId(pack) ? available.find((p) => p.id === pack) : undefined;
+  if (!entry) {
+    cp.turn.sources.push({ tool: LOAD_TOOLS, ok: false });
+    return { ok: false, error: `No pack "${String(pack)}" is available to the ${ctx.role} role. Available: ${available.map((p) => p.id).join(", ") || "none"}.` };
+  }
+  if (!entry.loaded) cp.loadedPacks = [...(cp.loadedPacks ?? []), entry.id];
+  const tools = deps.registry.forRole(ctx.role).filter((t) => t.pack === entry.id).map((t) => t.name);
+  emit({ type: "tool_start", tool: LOAD_TOOLS, input: { pack: entry.id } });
+  emit({ type: "tool_result", tool: LOAD_TOOLS, ok: true, preview: `${entry.label} tools loaded` });
+  cp.turn.sources.push({ tool: LOAD_TOOLS, ok: true });
+  return { ok: true, loaded: entry.id, tools };
+}
+
+/**
  * Execute pending tool calls from pendingToolIndex. Returns "running" when the
  * batch completed and the loop should ask the model again, or a final status
  * when the turn ended (finish_turn), paused or failed.
@@ -316,6 +342,11 @@ async function continueCalls(s: Session, approvedIndex: number | null, fromLoop 
       cp.turn.suggestions = parseSuggestions(call.arguments);
       cp.messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ ok: true }) });
       finished = true;
+      continue;
+    }
+
+    if (call.name === LOAD_TOOLS) {
+      cp.messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(loadPack(s, call.arguments)) });
       continue;
     }
 

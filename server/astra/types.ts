@@ -105,6 +105,8 @@ export interface AstraTool<I = any> {
   input: z.ZodType<I>;
   /** Server-side permission required to see and run the tool. */
   permission?: PermissionAction;
+  /** The studio pack this tool belongs to; absent for core tools, which are always offered. */
+  pack?: string;
   /** State-changing: the turn pauses on a Confirm / Not now card before it runs. */
   confirm: boolean;
   /** One sentence for the confirm card, built from the validated input. */
@@ -169,6 +171,8 @@ export interface TurnAccumulator {
 }
 
 export interface Checkpoint {
+  /** Studio packs loaded in this thread (server/astra/packs.ts). Absent on older threads: core tools only. */
+  loadedPacks?: string[];
   messages: LLMMessage[];
   pendingToolCalls: CanonicalToolCall[];
   pendingToolIndex: number;

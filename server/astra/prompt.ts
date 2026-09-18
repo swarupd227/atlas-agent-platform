@@ -13,6 +13,8 @@ export interface PromptGrounding {
   organizationIndustryLabel?: string | null;
   /** Tool names available to this role this turn. */
   toolNames: string[];
+  /** Studio packs this role can load, and whether each is loaded. */
+  packs?: Array<{ id: string; label: string; description: string; loaded: boolean }>;
 }
 
 /** Where the industry comes from matters: the organization's is a fact about the customer, a personal view isn't. */
@@ -32,6 +34,20 @@ export function industryGroundingLine(ctx: AstraContext, grounding: Omit<PromptG
     return `The user is viewing ${label}${sub} for themselves.${orgIndustry}${highlights}`;
   }
   return `The user is working in: ${label}.${highlights}`;
+}
+
+function packLines(packs: PromptGrounding["packs"]): string[] {
+  if (!packs?.length) return [];
+  const unloaded = packs.filter((p) => !p.loaded);
+  const loaded = packs.filter((p) => p.loaded);
+  return [
+    ...(loaded.length ? [`Studio packs loaded in this conversation: ${loaded.map((p) => p.label).join(", ")}.`] : []),
+    ...(unloaded.length
+      ? [
+          `Studio packs you can load with load_tools when the user asks for something in them (not speculatively): ${unloaded.map((p) => `${p.id} (${p.description})`).join(" ")}`,
+        ]
+      : []),
+  ];
 }
 
 export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGrounding): string {
@@ -60,5 +76,6 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     `Signed-in role: ${ctx.role}.${grounding.organizationName ? ` Organization: ${grounding.organizationName}.` : ""}`,
     industry,
     `Tools available to this role right now: ${grounding.toolNames.join(", ") || "none"}.`,
+    ...packLines(grounding.packs),
   ].join("\n");
 }

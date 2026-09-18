@@ -9,6 +9,7 @@ import type { CanonicalToolDefinition } from "../llm-provider";
 import type { RoleId } from "../permissions";
 import type { AstraTool, PermissionCheck } from "./types";
 import { toolInputJsonSchema } from "./json-schema";
+import { LOAD_TOOLS, PACKS, inLoadedPacks } from "./packs";
 
 const TOOL_NAME = /^[a-z][a-z0-9_]{1,62}$/;
 
@@ -41,8 +42,28 @@ export class ToolRegistry {
     return tool;
   }
 
-  canonicalDefinitions(role: RoleId): CanonicalToolDefinition[] {
-    return this.forRole(role).map((tool) => ({
+  /** Packs this role has at least one tool in, and whether each is loaded. */
+  packsFor(role: RoleId, loaded: readonly string[] | undefined): Array<{ id: string; label: string; description: string; loaded: boolean }> {
+    const roleTools = this.forRole(role);
+    return PACKS.filter((p) => roleTools.some((t) => t.pack === p.id)).map((p) => ({
+      id: p.id,
+      label: p.label,
+      description: p.description,
+      loaded: (loaded ?? []).includes(p.id),
+    }));
+  }
+
+  /**
+   * Definitions sent to the model: core tools plus loaded packs' tools.
+   * load_tools is offered only while this role has a pack left to load.
+   * (get() ignores packs, so a paused confirmation always resolves.)
+   */
+  canonicalDefinitions(role: RoleId, loadedPacks?: readonly string[]): CanonicalToolDefinition[] {
+    const unloaded = this.packsFor(role, loadedPacks).some((p) => !p.loaded);
+    return this.forRole(role)
+      .filter((tool) => inLoadedPacks(tool, loadedPacks))
+      .filter((tool) => tool.name !== LOAD_TOOLS || unloaded)
+      .map((tool) => ({
       name: tool.name,
       description: tool.confirm
         ? `${tool.description} (Changes the platform: the user is asked to confirm before it runs.)`
