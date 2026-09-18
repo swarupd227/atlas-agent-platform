@@ -68,3 +68,15 @@ describe("finalAnswerFromTurn", () => {
     expect(finalAnswerFromTurn([], null, parse)).toBeUndefined();
   });
 });
+
+describe("finalAnswerInstructions puts the work before the format", () => {
+  it("tells the agent to call its tools first and never report a check it did not run", () => {
+    const text = finalAnswerInstructions(undefined);
+    const work = text.indexOf("Do the work first");
+    const format = text.indexOf("reply with only a JSON object");
+    expect(work).toBeGreaterThan(-1);
+    expect(work).toBeLessThan(format);
+    expect(text).toContain("never report a check, lookup or record you did not actually perform");
+    expect(text).toContain("only after your tool calls are done");
+  });
+});

@@ -66,11 +66,18 @@ export function structuredOutputInstructions(outputSchema: unknown, hasRecordDat
   return "";
 }
 
-/** Stated in the user turn before the tool loop starts. */
+// Stated in the user turn before the tool loop starts. The first version
+// opened with the format, and a model read that as "answer now": a screening
+// agent replied in the planning call with a complete JSON "screening" it had
+// never run -- no tool called, every check reported clear. The work comes
+// first, in so many words, and the format applies only once it is done.
+export const WORK_FIRST_NOTE =
+  "Do the work first: call the tools the task needs and wait for their results. Do not answer before you have them, and never report a check, lookup or record you did not actually perform through a tool.";
+
 export function finalAnswerInstructions(outputSchema: unknown): string {
   return [
-    "## FINAL ANSWER FORMAT",
-    `When you have finished calling tools, reply with only a JSON object -- no prose before or after it -- with fields: ${ANALYSIS_FIELDS}.${structuredOutputInstructions(outputSchema, true)}${REQUIRED_FIELDS_NOTE}${RECONCILIATION_NOTE}${CONCISENESS_NOTE}`,
+    "## FINAL ANSWER FORMAT (only after your tool calls are done)",
+    `${WORK_FIRST_NOTE} Once the tool calls are done, reply with only a JSON object -- no prose before or after it -- with fields: ${ANALYSIS_FIELDS}.${structuredOutputInstructions(outputSchema, true)}${REQUIRED_FIELDS_NOTE}${RECONCILIATION_NOTE}${CONCISENESS_NOTE}`,
   ].join("\n");
 }
 
