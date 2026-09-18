@@ -64,15 +64,36 @@ function resolveRef(ref: string, doc: any): any {
   return node;
 }
 
-function schemaToProperty(schema: any, doc: any): any {
-  if (!schema || typeof schema !== "object") return { type: "string" };
-  if (schema.$ref) return schemaToProperty(resolveRef(schema.$ref, doc), doc);
+/** A tool argument's JSON schema from an OpenAPI schema. Nested objects keep
+ *  their own properties and required list (an array of {placeholder_id, text}
+ *  items is useless to a model as a bare "object"), and a nullable field
+ *  (anyOf [X, null], as FastAPI writes Optional[X]) reads as X. Depth-bounded
+ *  so a recursive schema can't loop. */
+function schemaToProperty(schema: any, doc: any, depth = 0): any {
+  if (!schema || typeof schema !== "object" || depth > 8) return { type: "string" };
+  if (schema.$ref) return schemaToProperty(resolveRef(schema.$ref, doc), doc, depth + 1);
+  if (Array.isArray(schema.anyOf) || Array.isArray(schema.oneOf)) {
+    const options = (schema.anyOf || schema.oneOf).filter((s: any) => s && s.type !== "null");
+    if (options.length === 1) {
+      const inner = schemaToProperty(options[0], doc, depth + 1);
+      if (schema.description && !inner.description) inner.description = schema.description;
+      if (schema.default !== undefined && inner.default === undefined) inner.default = schema.default;
+      return inner;
+    }
+  }
   const out: any = {};
   if (schema.type) out.type = schema.type;
   if (schema.description) out.description = schema.description;
   if (schema.enum) out.enum = schema.enum;
   if (schema.format) out.format = schema.format;
-  if (schema.items) out.items = schemaToProperty(schema.items, doc);
+  if (schema.default !== undefined) out.default = schema.default;
+  if (schema.items) out.items = schemaToProperty(schema.items, doc, depth + 1);
+  if (schema.properties && typeof schema.properties === "object") {
+    out.type = out.type || "object";
+    out.properties = {};
+    for (const [name, sub] of Object.entries<any>(schema.properties)) out.properties[name] = schemaToProperty(sub, doc, depth + 1);
+    if (Array.isArray(schema.required) && schema.required.length) out.required = schema.required;
+  }
   return out;
 }
 

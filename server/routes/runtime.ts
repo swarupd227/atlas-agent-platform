@@ -1,6 +1,8 @@
 import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
+import { parseOpenApiSpec, type ParsedOpenApiSpec } from "../openapi-import";
+import { assertSafeOutboundUrl } from "../url-safety";
 import { contextPriorityFor, wizardContextFor, wizardPresetFor } from "@shared/wizard-presets";
 import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
@@ -12547,16 +12549,27 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   });
 
 /**
- * Core MCP-server initialize handshake — connects (real streamable-http/SSE
- * protocol, or a canned fallback catalog for stdio/unreachable servers),
- * stores the discovered tools/resources/prompts, and runs parameter
- * matching. Extracted from the /initialize route so the marketplace
- * one-click install flow can chain it automatically instead of leaving a
- * newly-installed server with zero tools until a human separately clicks
- * "Initialize" — see performOneClickInstallInitialize below.
+ * Core MCP-server initialize handshake — discovers the server's catalog and
+ * stores it, then runs parameter matching. Extracted from the /initialize
+ * route so the marketplace one-click install flow can chain it automatically
+ * instead of leaving a newly-installed server with zero tools until a human
+ * separately clicks "Initialize" — see performOneClickInstallInitialize below.
+ *
+ * Where the catalog comes from, in order: one of our own connectors (known
+ * in-process); a real streamable-http/SSE MCP handshake; the service's own
+ * OpenAPI description (openapi.json/.yaml, swagger.json) for a plain HTTP
+ * service. When none of those yields anything, a server that already has
+ * tools keeps them untouched, and only a server with no tools at all gets the
+ * canned demo catalog. (Live 2026-09-18: Initialize on the Figma connector, an
+ * HTTP service whose tools had been imported from its OpenAPI, deleted all 14
+ * of them and stored the demo catalog in their place -- every team step bound
+ * to those tools broke while the server still showed "verified / healthy".)
+ *
+ * Tools are synced by name, not deleted and re-created: team blueprint steps
+ * reference tools by id (refToolIds), so an unchanged tool must keep its id.
  */
-async function performMcpServerInitialize(serverId: string): Promise<
-  | { ok: true; negotiatedVersion: string; capabilities: Record<string, unknown>; serverInfo: unknown; isRealProtocol: boolean; catalogs: { tools: number; resources: number; prompts: number }; parameterMatching: { totalParams: number; matched: number; partial: number; unmatched: number; alignmentScore: number } | null }
+async function performMcpServerInitialize(serverId: string, actorId: string = "system"): Promise<
+  | { ok: true; negotiatedVersion: string; capabilities: Record<string, unknown>; serverInfo: unknown; isRealProtocol: boolean; discoveredFrom: CatalogSource; catalogs: { tools: number; resources: number; prompts: number }; toolSync: ToolSyncResult | null; parameterMatching: { totalParams: number; matched: number; partial: number; unmatched: number; alignmentScore: number } | null }
   | { ok: false; status: number; message: string }
 > {
   const server = await storage.getMcpServer(serverId);
@@ -12565,10 +12578,11 @@ async function performMcpServerInitialize(serverId: string): Promise<
   let negotiatedVersion: string;
   let capabilities: Record<string, unknown>;
   let serverInfo: { name: string; version: string; protocolVersion?: string };
-  let toolsToStore: Array<{ serverId: string; name: string; description?: string; inputSchema?: object; annotations?: object }>;
+  let toolsToStore: DiscoveredTool[];
   let resourcesToStore: Array<{ serverId: string; uri: string; name: string; description?: string; mimeType?: string; sensitivityLevel?: string; approvalStatus?: string; freshnessStatus?: string; subscribed?: boolean; contentType?: string }>;
   let promptsToStore: InsertMcpServerPrompt[];
   let isRealProtocol = false;
+  let discoveredFrom: CatalogSource;
 
   const ownConnector = server.integrationId ? getEnterpriseServerById(server.integrationId) : undefined;
 
@@ -12585,6 +12599,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
     capabilities = { tools: { listChanged: false } };
     serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
     isRealProtocol = true;
+    discoveredFrom = "connector";
     toolsToStore = ownConnector.tools.map(t => ({
       serverId: server.id,
       name: t.name,
@@ -12605,6 +12620,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
       capabilities = initResult.capabilities;
       serverInfo = { name: initResult.serverInfo.name, version: initResult.serverInfo.version, protocolVersion: initResult.protocolVersion };
       isRealProtocol = true;
+      discoveredFrom = "mcp";
 
       toolsToStore = initResult.tools.map(t => ({
         serverId: server.id,
@@ -12644,29 +12660,43 @@ async function performMcpServerInitialize(serverId: string): Promise<
       return { ok: false, status: 502, message: `Real MCP handshake failed: ${realErr.message}` };
     }
   } else {
-    negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
-    capabilities = { tools: { listChanged: true }, resources: { subscribe: true, listChanged: true }, prompts: { listChanged: true }, logging: {} };
-    serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
-    toolsToStore = [
-      { serverId: server.id, name: "search", description: "Search across documents and knowledge bases", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
-      { serverId: server.id, name: "execute_query", description: "Execute a database query", inputSchema: { type: "object", properties: { sql: { type: "string" }, params: { type: "array" } }, required: ["sql"] } },
-    ];
-    resourcesToStore = [
-      { serverId: server.id, uri: `docs://runbooks/incident-response`, name: "Incident Response Runbook", description: "Standard operating procedures for incident response", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
-      { serverId: server.id, uri: `docs://faq/platform-usage`, name: "Platform FAQ", description: "Frequently asked questions about the platform", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
-      { serverId: server.id, uri: `repo://api/openapi-spec.yaml`, name: "API Specification", description: "OpenAPI specification for internal services", mimeType: "application/yaml", sensitivityLevel: "internal", approvalStatus: "approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
-      { serverId: server.id, uri: `db://exports/customer-data`, name: "Customer Data Export", description: "Aggregated customer data export for analytics", mimeType: "application/json", sensitivityLevel: "confidential", approvalStatus: "pending", freshnessStatus: "stale", subscribed: false, contentType: "blob" },
-      { serverId: server.id, uri: `db://tables/users-pii`, name: "PII Database Access", description: "Direct access to user personally identifiable information", mimeType: "application/json", sensitivityLevel: "restricted", approvalStatus: "denied", freshnessStatus: "unknown", subscribed: false, contentType: "blob" },
-      { serverId: server.id, uri: `docs://guides/deployment-checklist`, name: "Deployment Guide", description: "Step-by-step deployment checklist and procedures", mimeType: "text/markdown", sensitivityLevel: "internal", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
-    ];
-    promptsToStore = [
-      { serverId: server.id, name: "summarize", description: "Summarize a document or dataset into key points", arguments: [{ name: "content", description: "Content to summarize", required: true }, { name: "format", description: "Output format: bullets, paragraph, or executive", required: false }], messages: [{ role: "system", content: "You are a concise summarizer. Extract the key points from the provided content." }, { role: "user", content: "Summarize the following:\n\n{{content}}\n\nFormat: {{format}}" }], publishedStatus: "published", approvalStatus: "not_required" },
-      { serverId: server.id, name: "classify-ticket", description: "Classify a support ticket by priority and category", arguments: [{ name: "subject", required: true }, { name: "body", required: true }, { name: "customer_tier", required: false }], messages: [{ role: "system", content: "You are a ticket classification agent. Determine priority (P0-P3) and category (billing, technical, account, feature_request)." }, { role: "user", content: "Subject: {{subject}}\nBody: {{body}}\nCustomer Tier: {{customer_tier}}" }], publishedStatus: "published", approvalStatus: "not_required" },
-      { serverId: server.id, name: "generate-response", description: "Generate a customer-facing response using knowledge base context", arguments: [{ name: "query", required: true }, { name: "kb_context", required: true }, { name: "tone", required: false }], messages: [{ role: "system", content: "You are a support agent. Draft a response using the knowledge base context. Never fabricate information." }, { role: "user", content: "Customer query: {{query}}\n\nKnowledge base context:\n{{kb_context}}\n\nTone: {{tone}}" }], publishedStatus: "published", approvalStatus: "approved" },
-      { serverId: server.id, name: "analyze-sentiment", description: "Analyze customer sentiment from interaction history", arguments: [{ name: "messages", required: true }], messages: [{ role: "system", content: "Analyze the sentiment of the customer interaction. Return: overall_sentiment (positive/neutral/negative), confidence (0-1), escalation_recommended (boolean)." }, { role: "user", content: "Analyze sentiment for:\n{{messages}}" }], publishedStatus: "draft", approvalStatus: "not_required" },
-      { serverId: server.id, name: "pii-redaction-check", description: "Scan draft responses for PII before sending to customers", arguments: [{ name: "draft", required: true }, { name: "redaction_level", required: true }], messages: [{ role: "system", content: "Scan the text for PII (SSN, credit cards, addresses, phone numbers). Apply the specified redaction level. Return redacted text and a list of findings." }, { role: "user", content: "Redaction level: {{redaction_level}}\n\nDraft:\n{{draft}}" }], publishedStatus: "draft", approvalStatus: "pending_approval" },
-      { serverId: server.id, name: "escalation-decision", description: "Decide whether a ticket should be escalated to a human agent", arguments: [{ name: "ticket_summary", required: true }, { name: "confidence_score", required: true }, { name: "policy_violations", required: false }], messages: [{ role: "system", content: "Determine if this ticket requires human escalation. Consider: confidence below 0.7, policy violations, customer tier, and issue severity." }, { role: "user", content: "Ticket: {{ticket_summary}}\nConfidence: {{confidence_score}}\nViolations: {{policy_violations}}" }], publishedStatus: "published", approvalStatus: "not_required" },
-    ];
+    const existingTools = await storage.getMcpServerTools(server.id);
+    const openapi = server.url ? await discoverOpenApiOperations(server.url) : null;
+    if (openapi) {
+      discoveredFrom = "openapi";
+      negotiatedVersion = server.negotiatedProtocolVersion || server.expectedProtocolVersion || "2025-03-26";
+      capabilities = { tools: { listChanged: false } };
+      serverInfo = { name: openapi.title || server.name, version: openapi.version || "1.0.0", protocolVersion: negotiatedVersion };
+      toolsToStore = openapi.operations.map(op => ({
+        serverId: server.id,
+        name: op.name,
+        description: op.description,
+        inputSchema: op.inputSchema,
+        riskClassification: op.riskClassification,
+        annotations: { endpoint: op.path, method: op.method.toUpperCase(), source: "openapi_import" },
+      }));
+      resourcesToStore = [];
+      promptsToStore = [];
+    } else if (existingTools.length > 0) {
+      // Nothing to discover from, and the server already has tools (imported
+      // or registered earlier): leave its catalog exactly as it is.
+      discoveredFrom = "kept";
+      negotiatedVersion = server.negotiatedProtocolVersion || server.expectedProtocolVersion || "2025-03-26";
+      capabilities = (server.capabilities as Record<string, unknown>) || { tools: { listChanged: false } };
+      serverInfo = (server.serverInfo as any) || { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
+      toolsToStore = [];
+      resourcesToStore = [];
+      promptsToStore = [];
+    } else {
+      discoveredFrom = "canned";
+      negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
+      capabilities = { tools: { listChanged: true }, resources: { subscribe: true, listChanged: true }, prompts: { listChanged: true }, logging: {} };
+      serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
+      const canned = cannedDemoCatalog(server.id);
+      toolsToStore = canned.tools;
+      resourcesToStore = canned.resources;
+      promptsToStore = canned.prompts;
+    }
   }
 
   await storage.updateMcpServer(server.id, {
@@ -12678,20 +12708,28 @@ async function performMcpServerInitialize(serverId: string): Promise<
     lastHealthCheck: new Date(),
   });
 
-  await storage.deleteMcpServerToolsByServer(server.id);
-  await storage.deleteMcpServerResourcesByServer(server.id);
-  await storage.deleteMcpServerPromptsByServer(server.id);
-
-  for (const t of toolsToStore) await storage.createMcpServerTool({ ...t, enabled: true, riskClassification: "low" });
-  for (const r of resourcesToStore) await storage.createMcpServerResource(r);
-  for (const p of promptsToStore) await storage.createMcpServerPrompt(p);
+  let toolSync: ToolSyncResult | null = null;
+  if (discoveredFrom !== "kept") {
+    toolSync = await syncServerTools(server.id, toolsToStore);
+    if (discoveredFrom === "openapi") {
+      // An OpenAPI service has no MCP resources or prompts of its own; only the
+      // demo entries an earlier fallback Initialize stored are removed.
+      await removeCannedDemoEntries(server.id);
+    } else {
+      await storage.deleteMcpServerResourcesByServer(server.id);
+      await storage.deleteMcpServerPromptsByServer(server.id);
+      for (const r of resourcesToStore) await storage.createMcpServerResource(r);
+      for (const p of promptsToStore) await storage.createMcpServerPrompt(p);
+    }
+  }
+  const toolCount = discoveredFrom === "kept" ? (await storage.getMcpServerTools(server.id)).length : toolsToStore.length;
 
   await storage.createAuditEvent({
     action: "mcp_server.initialized",
     objectType: "mcp_server",
     objectId: server.id,
-    actorId: "system",
-    details: JSON.stringify({ negotiatedVersion, capabilities: Object.keys(capabilities), toolCount: toolsToStore.length, resourceCount: resourcesToStore.length, promptCount: promptsToStore.length, isRealProtocol }),
+    actorId,
+    details: JSON.stringify({ negotiatedVersion, capabilities: Object.keys(capabilities), discoveredFrom, toolCount, toolSync, resourceCount: resourcesToStore.length, promptCount: promptsToStore.length, isRealProtocol }),
   });
 
   let parameterMatching: { totalParams: number; matched: number; partial: number; unmatched: number; alignmentScore: number } | null = null;
@@ -12709,14 +12747,115 @@ async function performMcpServerInitialize(serverId: string): Promise<
     capabilities,
     serverInfo,
     isRealProtocol,
-    catalogs: { tools: toolsToStore.length, resources: resourcesToStore.length, prompts: promptsToStore.length },
+    discoveredFrom,
+    catalogs: { tools: toolCount, resources: resourcesToStore.length, prompts: promptsToStore.length },
+    toolSync,
     parameterMatching,
   };
 }
 
+type CatalogSource = "connector" | "mcp" | "openapi" | "kept" | "canned";
+type DiscoveredTool = { serverId: string; name: string; description?: string; inputSchema?: object; annotations?: object; riskClassification?: string };
+type ToolSyncResult = { added: string[]; updated: number; removed: string[] };
+
+/**
+ * A plain HTTP service's operations, from the OpenAPI description it publishes
+ * next to its base URL. Null when it publishes none (or the URL isn't safe to
+ * fetch), so Initialize falls back to keeping what the server already has.
+ */
+async function discoverOpenApiOperations(serverUrl: string): Promise<ParsedOpenApiSpec | null> {
+  const base = serverUrl.replace(/\/+$/, "") + "/";
+  for (const path of ["openapi.json", "openapi.yaml", "swagger.json"]) {
+    try {
+      const url = new URL(path, base).href;
+      await assertSafeOutboundUrl(url);
+      const resp = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: "application/json, application/yaml;q=0.9, */*;q=0.5" } });
+      if (!resp.ok) continue;
+      return parseOpenApiSpec(await resp.text());
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * Brings a server's stored tools in line with a discovered catalog, by name:
+ * a tool still offered is updated in place (its id -- which team blueprint
+ * steps reference -- is kept), a new one is added, and one no longer offered
+ * is removed.
+ */
+async function syncServerTools(serverId: string, discovered: DiscoveredTool[]): Promise<ToolSyncResult> {
+  const existing = await storage.getMcpServerTools(serverId);
+  const byName = new Map(existing.map(t => [t.name, t]));
+  const offered = new Set(discovered.map(t => t.name));
+  const result: ToolSyncResult = { added: [], updated: 0, removed: [] };
+  for (const t of discovered) {
+    const prior = byName.get(t.name);
+    if (prior) {
+      await storage.updateMcpServerTool(prior.id, {
+        description: t.description ?? prior.description,
+        inputSchema: (t.inputSchema ?? prior.inputSchema) as any,
+        ...(t.annotations ? { annotations: t.annotations as any } : {}),
+        ...(t.riskClassification ? { riskClassification: t.riskClassification } : {}),
+      });
+      result.updated++;
+    } else {
+      await storage.createMcpServerTool({ ...t, enabled: true, riskClassification: t.riskClassification || "low" } as any);
+      result.added.push(t.name);
+    }
+  }
+  for (const t of existing) {
+    if (!offered.has(t.name)) {
+      await storage.deleteMcpServerTool(t.id);
+      result.removed.push(t.name);
+    }
+  }
+  return result;
+}
+
+/** Removes the demo resources and prompts cannedDemoCatalog stores, leaving anything else on the server alone. */
+async function removeCannedDemoEntries(serverId: string): Promise<void> {
+  const canned = cannedDemoCatalog(serverId);
+  const uris = new Set(canned.resources.map(r => r.uri));
+  const names = new Set(canned.prompts.map(p => p.name));
+  for (const r of await storage.getMcpServerResources(serverId)) if (uris.has(r.uri)) await storage.deleteMcpServerResource(r.id);
+  for (const p of await storage.getMcpServerPrompts(serverId)) if (names.has(p.name)) await storage.deleteMcpServerPrompt(p.id);
+}
+
+/**
+ * The demo catalog Initialize stores only for a server with no tools and nothing to
+ * discover (a mock or stdio server). Named so a later real discovery can remove
+ * exactly these entries (removeCannedDemoEntries).
+ */
+function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resources: Array<{ serverId: string; uri: string; name: string; description?: string; mimeType?: string; sensitivityLevel?: string; approvalStatus?: string; freshnessStatus?: string; subscribed?: boolean; contentType?: string }>; prompts: InsertMcpServerPrompt[] } {
+  const server = { id: serverId };
+  const tools: DiscoveredTool[] = [
+      { serverId: server.id, name: "search", description: "Search across documents and knowledge bases", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+      { serverId: server.id, name: "execute_query", description: "Execute a database query", inputSchema: { type: "object", properties: { sql: { type: "string" }, params: { type: "array" } }, required: ["sql"] } },
+    ];;
+  const resources = [
+      { serverId: server.id, uri: `docs://runbooks/incident-response`, name: "Incident Response Runbook", description: "Standard operating procedures for incident response", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
+      { serverId: server.id, uri: `docs://faq/platform-usage`, name: "Platform FAQ", description: "Frequently asked questions about the platform", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
+      { serverId: server.id, uri: `repo://api/openapi-spec.yaml`, name: "API Specification", description: "OpenAPI specification for internal services", mimeType: "application/yaml", sensitivityLevel: "internal", approvalStatus: "approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
+      { serverId: server.id, uri: `db://exports/customer-data`, name: "Customer Data Export", description: "Aggregated customer data export for analytics", mimeType: "application/json", sensitivityLevel: "confidential", approvalStatus: "pending", freshnessStatus: "stale", subscribed: false, contentType: "blob" },
+      { serverId: server.id, uri: `db://tables/users-pii`, name: "PII Database Access", description: "Direct access to user personally identifiable information", mimeType: "application/json", sensitivityLevel: "restricted", approvalStatus: "denied", freshnessStatus: "unknown", subscribed: false, contentType: "blob" },
+      { serverId: server.id, uri: `docs://guides/deployment-checklist`, name: "Deployment Guide", description: "Step-by-step deployment checklist and procedures", mimeType: "text/markdown", sensitivityLevel: "internal", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
+    ];;
+  const prompts: InsertMcpServerPrompt[] = [
+      { serverId: server.id, name: "summarize", description: "Summarize a document or dataset into key points", arguments: [{ name: "content", description: "Content to summarize", required: true }, { name: "format", description: "Output format: bullets, paragraph, or executive", required: false }], messages: [{ role: "system", content: "You are a concise summarizer. Extract the key points from the provided content." }, { role: "user", content: "Summarize the following:\n\n{{content}}\n\nFormat: {{format}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+      { serverId: server.id, name: "classify-ticket", description: "Classify a support ticket by priority and category", arguments: [{ name: "subject", required: true }, { name: "body", required: true }, { name: "customer_tier", required: false }], messages: [{ role: "system", content: "You are a ticket classification agent. Determine priority (P0-P3) and category (billing, technical, account, feature_request)." }, { role: "user", content: "Subject: {{subject}}\nBody: {{body}}\nCustomer Tier: {{customer_tier}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+      { serverId: server.id, name: "generate-response", description: "Generate a customer-facing response using knowledge base context", arguments: [{ name: "query", required: true }, { name: "kb_context", required: true }, { name: "tone", required: false }], messages: [{ role: "system", content: "You are a support agent. Draft a response using the knowledge base context. Never fabricate information." }, { role: "user", content: "Customer query: {{query}}\n\nKnowledge base context:\n{{kb_context}}\n\nTone: {{tone}}" }], publishedStatus: "published", approvalStatus: "approved" },
+      { serverId: server.id, name: "analyze-sentiment", description: "Analyze customer sentiment from interaction history", arguments: [{ name: "messages", required: true }], messages: [{ role: "system", content: "Analyze the sentiment of the customer interaction. Return: overall_sentiment (positive/neutral/negative), confidence (0-1), escalation_recommended (boolean)." }, { role: "user", content: "Analyze sentiment for:\n{{messages}}" }], publishedStatus: "draft", approvalStatus: "not_required" },
+      { serverId: server.id, name: "pii-redaction-check", description: "Scan draft responses for PII before sending to customers", arguments: [{ name: "draft", required: true }, { name: "redaction_level", required: true }], messages: [{ role: "system", content: "Scan the text for PII (SSN, credit cards, addresses, phone numbers). Apply the specified redaction level. Return redacted text and a list of findings." }, { role: "user", content: "Redaction level: {{redaction_level}}\n\nDraft:\n{{draft}}" }], publishedStatus: "draft", approvalStatus: "pending_approval" },
+      { serverId: server.id, name: "escalation-decision", description: "Decide whether a ticket should be escalated to a human agent", arguments: [{ name: "ticket_summary", required: true }, { name: "confidence_score", required: true }, { name: "policy_violations", required: false }], messages: [{ role: "system", content: "Determine if this ticket requires human escalation. Consider: confidence below 0.7, policy violations, customer tier, and issue severity." }, { role: "user", content: "Ticket: {{ticket_summary}}\nConfidence: {{confidence_score}}\nViolations: {{policy_violations}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+    ];;
+  return { tools, resources, prompts };
+}
+
   router.post("/api/mcp-servers/:id/initialize", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const result = await performMcpServerInitialize(req.params.id as string);
+      const result = await performMcpServerInitialize(req.params.id as string, (req as any).authUser?.userId || "system");
       if (!result.ok) return res.status(result.status).json({ message: result.message });
       res.json({
         success: true,
@@ -12724,7 +12863,9 @@ async function performMcpServerInitialize(serverId: string): Promise<
         capabilities: result.capabilities,
         serverInfo: result.serverInfo,
         isRealProtocol: result.isRealProtocol,
+        discoveredFrom: result.discoveredFrom,
         catalogs: result.catalogs,
+        toolSync: result.toolSync,
         parameterMatching: result.parameterMatching || { note: "No industry context available, matching attempted with all concepts" },
       });
     } catch (e) {

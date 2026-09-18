@@ -179,3 +179,56 @@ describe("parseOpenApiSpec — malformed input", () => {
     expect(() => parseOpenApiSpec(JSON.stringify({ paths: { "/x": {} } }))).toThrow(OpenApiParseError);
   });
 });
+
+describe("parseOpenApiSpec — nested request bodies (FastAPI-style)", () => {
+  // Shape of a real service (the Figma board service): an array of objects
+  // behind a $ref, and Optional[X] written as anyOf [X, null]. A bare
+  // { type: "object" } item tells a model nothing about what to send.
+  const spec = {
+    openapi: "3.1.0",
+    info: { title: "Boards", version: "2.4.0" },
+    paths: {
+      "/boards/{board_id}/text": {
+        post: {
+          operationId: "fill_board_text",
+          parameters: [{ name: "board_id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/FillText" } } } },
+        },
+      },
+    },
+    components: {
+      schemas: {
+        FillText: {
+          type: "object",
+          required: ["items"],
+          properties: {
+            items: { type: "array", items: { $ref: "#/components/schemas/TextItem" } },
+            note: { anyOf: [{ type: "string" }, { type: "null" }], description: "Optional note", default: null },
+          },
+        },
+        TextItem: {
+          type: "object",
+          required: ["placeholder_id", "text"],
+          properties: { placeholder_id: { type: "string" }, text: { type: "string" } },
+        },
+      },
+    },
+  };
+  const op = parseOpenApiSpec(JSON.stringify(spec)).operations[0];
+  const props = op.inputSchema.properties as Record<string, any>;
+
+  it("keeps the fields of nested objects behind a $ref", () => {
+    expect(props.items.type).toBe("array");
+    expect(props.items.items.properties).toEqual({ placeholder_id: { type: "string" }, text: { type: "string" } });
+    expect(props.items.items.required).toEqual(["placeholder_id", "text"]);
+  });
+
+  it("reads a nullable field as its non-null type", () => {
+    expect(props.note).toEqual({ type: "string", description: "Optional note", default: null });
+  });
+
+  it("still marks the path parameter and merges required body fields", () => {
+    expect(props.board_id.in).toBe("path");
+    expect(op.inputSchema.required).toEqual(expect.arrayContaining(["board_id", "items"]));
+  });
+});

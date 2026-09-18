@@ -483,6 +483,7 @@ export interface IStorage {
   createMcpServerTool(tool: InsertMcpServerTool): Promise<McpServerTool>;
   updateMcpServerTool(id: string, data: Partial<McpServerTool>): Promise<McpServerTool | undefined>;
   deleteMcpServerToolsByServer(serverId: string): Promise<void>;
+  deleteMcpServerTool(id: string): Promise<void>;
 
   getMcpServerResources(serverId: string): Promise<McpServerResource[]>;
   getAllMcpServerResources(orgId?: string): Promise<McpServerResource[]>;
@@ -490,6 +491,7 @@ export interface IStorage {
   createMcpServerResource(resource: InsertMcpServerResource): Promise<McpServerResource>;
   updateMcpServerResource(id: string, data: Partial<McpServerResource>): Promise<McpServerResource | undefined>;
   deleteMcpServerResourcesByServer(serverId: string): Promise<void>;
+  deleteMcpServerResource(id: string): Promise<void>;
 
   getAllMcpServerPrompts(orgId?: string): Promise<McpServerPrompt[]>;
   getMcpServerPrompts(serverId: string): Promise<McpServerPrompt[]>;
@@ -497,6 +499,7 @@ export interface IStorage {
   createMcpServerPrompt(prompt: InsertMcpServerPrompt): Promise<McpServerPrompt>;
   updateMcpServerPrompt(id: string, data: Partial<McpServerPrompt>): Promise<McpServerPrompt | undefined>;
   deleteMcpServerPromptsByServer(serverId: string): Promise<void>;
+  deleteMcpServerPrompt(id: string): Promise<void>;
 
   getMcpServerAuth(serverId: string): Promise<McpServerAuth | undefined>;
   upsertMcpServerAuth(auth: InsertMcpServerAuth): Promise<McpServerAuth>;
@@ -2759,6 +2762,10 @@ export class DatabaseStorage implements IStorage {
     await db.delete(mcpServerTools).where(eq(mcpServerTools.serverId, serverId));
   }
 
+  async deleteMcpServerTool(id: string) {
+    await db.delete(mcpServerTools).where(eq(mcpServerTools.id, id));
+  }
+
   async getMcpServerResources(serverId: string) {
     return db.select().from(mcpServerResources).where(eq(mcpServerResources.serverId, serverId));
   }
@@ -2790,6 +2797,10 @@ export class DatabaseStorage implements IStorage {
     await db.delete(mcpServerResources).where(eq(mcpServerResources.serverId, serverId));
   }
 
+  async deleteMcpServerResource(id: string) {
+    await db.delete(mcpServerResources).where(eq(mcpServerResources.id, id));
+  }
+
   /** With an orgId, only prompts on servers that tenant may see. */
   async getAllMcpServerPrompts(orgId?: string) {
     if (!orgId) return db.select().from(mcpServerPrompts);
@@ -2819,6 +2830,10 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMcpServerPromptsByServer(serverId: string) {
     await db.delete(mcpServerPrompts).where(eq(mcpServerPrompts.serverId, serverId));
+  }
+
+  async deleteMcpServerPrompt(id: string) {
+    await db.delete(mcpServerPrompts).where(eq(mcpServerPrompts.id, id));
   }
 
   async getMcpServerAuth(serverId: string) {
