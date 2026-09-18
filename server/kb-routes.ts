@@ -693,6 +693,79 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
   }
 }
 
+/**
+ * Add a text source to a knowledge base: stored pending, scanned for
+ * sensitive content (non-blocking), then chunked and embedded in the
+ * background. Shared by the route and the Astra Workspace; the caller has
+ * already checked the knowledge base is in its organization.
+ */
+export async function addTextSource(input: { kb: { id: string; industry: string }; orgId: string | undefined; title?: string; content: string }) {
+  const source = await storage.createKnowledgeSource({
+    knowledgeBaseId: input.kb.id,
+    name: input.title || "Manual Entry",
+    sourceType: "text",
+    status: "pending",
+    content: input.content,
+    metadata: {},
+  });
+  const allSources = await storage.getKnowledgeSources(input.kb.id);
+  await storage.updateKnowledgeBase(input.kb.id, { totalSources: allSources.length });
+
+  let sensitivityWarnings: SensitivityWarning[] = [];
+  try {
+    sensitivityWarnings = await performSensitivityScan(input.content, input.kb.id, input.kb.industry, input.orgId, source.id);
+  } catch (err: any) {
+    console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
+  }
+
+  processSourceInBackground(source.id, input.kb.id);
+  return { source, sensitivityWarnings };
+}
+
+/**
+ * Add a URL source (optionally crawling linked pages): the URL must be safe to
+ * fetch from the server. Shared by the route and the Astra Workspace.
+ */
+export async function addUrlSource(input: { kb: { id: string }; url: string; name?: string; crawl?: boolean; crawlDepth?: number; maxPages?: number }) {
+  try {
+    await assertSafeOutboundUrl(input.url);
+  } catch (e: any) {
+    throw e instanceof UnsafeUrlError ? e : new UnsafeUrlError("That URL isn't reachable from this action.");
+  }
+  const enableCrawl = input.crawl === true;
+  const crawlDepth = Math.min(Math.max(input.crawlDepth || 1, 1), 3);
+  const maxPages = Math.min(Math.max(input.maxPages || 10, 1), 50);
+
+  const metadata: Record<string, any> = { url: input.url };
+  if (enableCrawl) {
+    metadata.crawl = true;
+    metadata.crawlDepth = crawlDepth;
+    metadata.maxPages = maxPages;
+    metadata.crawlStatus = "pending";
+    metadata.crawledPages = 0;
+    metadata.totalDiscovered = 0;
+  }
+
+  const source = await storage.createKnowledgeSource({
+    knowledgeBaseId: input.kb.id,
+    name: input.name || input.url,
+    sourceType: "url",
+    status: "pending",
+    url: input.url,
+    metadata,
+  });
+  const allSources = await storage.getKnowledgeSources(input.kb.id);
+  await storage.updateKnowledgeBase(input.kb.id, { totalSources: allSources.length });
+
+  processSourceInBackground(source.id, input.kb.id);
+  if (enableCrawl) {
+    crawlAndIngest(source.id, input.kb.id, input.url, crawlDepth, maxPages).catch((err) => {
+      console.error(`[kb-crawl] Crawl failed for ${input.url}:`, err.message);
+    });
+  }
+  return source;
+}
+
 export function registerKnowledgeBaseRoutes(app: Express) {
   app.get("/api/knowledge-bases", async (req, res) => {
     const kbs = await storage.getKnowledgeBases(getOrgId(req));
@@ -842,46 +915,13 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       const { url, name, crawl, crawlDepth: rawDepth, maxPages: rawMax } = req.body;
       if (!url) return res.status(400).json({ message: "URL is required" });
+      let source;
       try {
-        await assertSafeOutboundUrl(url);
+        source = await addUrlSource({ kb, url, name, crawl: crawl === true, crawlDepth: parseInt(rawDepth) || 1, maxPages: parseInt(rawMax) || 10 });
       } catch (e: any) {
-        return res.status(400).json({ message: e instanceof UnsafeUrlError ? e.message : "That URL isn't reachable from this action." });
+        if (e instanceof UnsafeUrlError) return res.status(400).json({ message: e.message });
+        throw e;
       }
-
-      const enableCrawl = crawl === true;
-      const crawlDepth = Math.min(Math.max(parseInt(rawDepth) || 1, 1), 3);
-      const maxPages = Math.min(Math.max(parseInt(rawMax) || 10, 1), 50);
-
-      const metadata: Record<string, any> = { url };
-      if (enableCrawl) {
-        metadata.crawl = true;
-        metadata.crawlDepth = crawlDepth;
-        metadata.maxPages = maxPages;
-        metadata.crawlStatus = "pending";
-        metadata.crawledPages = 0;
-        metadata.totalDiscovered = 0;
-      }
-
-      const source = await storage.createKnowledgeSource({
-        knowledgeBaseId: req.params.id as string,
-        name: name || url,
-        sourceType: "url",
-        status: "pending",
-        url,
-        metadata,
-      });
-
-      const allSources = await storage.getKnowledgeSources(req.params.id as string);
-      await storage.updateKnowledgeBase(req.params.id as string, { totalSources: allSources.length });
-
-      processSourceInBackground(source.id, req.params.id as string);
-
-      if (enableCrawl) {
-        crawlAndIngest(source.id, req.params.id as string, url, crawlDepth, maxPages).catch((err) => {
-          console.error(`[kb-crawl] Crawl failed for ${url}:`, err.message);
-        });
-      }
-
       res.status(201).json(source);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -896,26 +936,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const { title, content } = req.body;
       if (!content) return res.status(400).json({ message: "Content is required" });
 
-      const source = await storage.createKnowledgeSource({
-        knowledgeBaseId: req.params.id as string,
-        name: title || "Manual Entry",
-        sourceType: "text",
-        status: "pending",
-        content,
-        metadata: {},
-      });
-
-      const allSources = await storage.getKnowledgeSources(req.params.id as string);
-      await storage.updateKnowledgeBase(req.params.id as string, { totalSources: allSources.length });
-
-      let sensitivityWarnings: SensitivityWarning[] = [];
-      try {
-        sensitivityWarnings = await performSensitivityScan(content, req.params.id as string, kb.industry, getOrgId(req), source.id);
-      } catch (err: any) {
-        console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
-      }
-
-      processSourceInBackground(source.id, req.params.id as string);
+      const { source, sensitivityWarnings } = await addTextSource({ kb, orgId: getOrgId(req), title, content });
       res.status(201).json({ ...source, sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
