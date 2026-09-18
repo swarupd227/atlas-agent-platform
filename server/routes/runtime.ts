@@ -68,7 +68,7 @@ import {
 import { getOrgId } from "../auth";
 import { connectorLinkAuditEvent } from "../connector-link";
 import { isValidHealthCheckPath } from "../connector-health-probe";
-import { resolveRequestOrgId, sanitizeMcpServerAuth, isMcpServerVisibleToOrg } from "../tenant-scope";
+import { resolveRequestOrgId, sanitizeMcpServerAuth, isMcpServerVisibleToOrg, filterMcpAppsForOrg, filterElicitationsForOrg } from "../tenant-scope";
 import {
   resolveOntologyTags,
   handleZodError,
@@ -14644,13 +14644,14 @@ async function performMcpServerInitialize(serverId: string): Promise<
   });
 
   // ── MCP Elicitations & Approval Gates ──
-  router.get("/api/mcp-elicitations", async (_req, res) => {
-    const elicitations = await storage.getMcpElicitations();
+  // Per-elicitation routes are scoped by mcpElicitationScope (server/tenant-scope.ts).
+  router.get("/api/mcp-elicitations", async (req, res) => {
+    const elicitations = await filterElicitationsForOrg(await storage.getMcpElicitations(), resolveRequestOrgId(req));
     res.json(elicitations);
   });
 
-  router.get("/api/mcp-elicitations/pending", async (_req, res) => {
-    const elicitations = await storage.getMcpElicitationsByStatus("pending");
+  router.get("/api/mcp-elicitations/pending", async (req, res) => {
+    const elicitations = await filterElicitationsForOrg(await storage.getMcpElicitationsByStatus("pending"), resolveRequestOrgId(req));
     res.json(elicitations);
   });
 
@@ -14669,6 +14670,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
       const elicitation = await storage.createMcpElicitation(data);
       if (data.gateType === "tool_approval" || data.gateType === "scope_escalation" || data.gateType === "data_export") {
         const approval = await storage.createApproval({
+          organizationId: resolveRequestOrgId(req),
           type: "mcp_elicitation",
           objectType: "mcp_elicitation",
           objectId: elicitation.id,
@@ -14722,6 +14724,7 @@ async function performMcpServerInitialize(serverId: string): Promise<
         });
       }
       await storage.createAuditEvent({
+        organizationId: resolveRequestOrgId(req),
         actorType: "user",
         actorId: decidedBy || "expert_validator",
         action: `elicitation_${action}`,
@@ -15365,8 +15368,9 @@ async function performMcpServerInitialize(serverId: string): Promise<
   });
 
   // ───── MCP Apps ─────
-  router.get("/api/mcp-apps", async (_req, res) => {
-    const apps = await storage.getMcpApps();
+  // Per-app routes are scoped by mcpAppScope (server/tenant-scope.ts).
+  router.get("/api/mcp-apps", async (req, res) => {
+    const apps = await filterMcpAppsForOrg(await storage.getMcpApps(), resolveRequestOrgId(req));
     res.json(apps);
   });
 

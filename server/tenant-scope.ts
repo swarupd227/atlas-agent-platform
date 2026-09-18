@@ -27,7 +27,7 @@
  * other tenants can't be probed for existence.
  */
 import type { Request, Response, NextFunction } from "express";
-import type { Blueprint, McpServer, McpServerAuth } from "@shared/schema";
+import type { Blueprint, McpApp, McpElicitation, McpServer, McpServerAuth } from "@shared/schema";
 import { storage } from "./storage";
 import { getDefaultOrgId, getOrgId } from "./auth";
 import { getRequestRole, hasPermission } from "./permissions";
@@ -209,4 +209,145 @@ export function teamGraphElementScope(kind: "node" | "edge") {
       next(err);
     }
   };
+}
+
+// ── MCP apps and MCP elicitations ────────────────────────────────────────────
+//
+// Neither table has an organization column. An MCP app belongs to whoever owns
+// its MCP server (so a platform catalog server's apps are visible to everyone,
+// and changing one needs manage_security, like the server itself). An
+// elicitation belongs to its agent's organization, else its server's owner,
+// else the default org.
+
+function appVisibleWithServer(server: McpServer | undefined, orgId: string | undefined | null): boolean {
+  if (server) return isMcpServerVisibleToOrg(server, orgId);
+  // An app whose server is gone is treated as a legacy default-org row.
+  const fallback = getDefaultOrgId();
+  return !fallback || (!!orgId && orgId === fallback);
+}
+
+/** Only the apps whose MCP server the org can see. */
+export async function filterMcpAppsForOrg<T extends Pick<McpApp, "serverId">>(apps: T[], orgId: string | undefined | null): Promise<T[]> {
+  const servers = new Map<string, McpServer | undefined>();
+  for (const id of Array.from(new Set(apps.map((a) => a.serverId)))) servers.set(id, await storage.getMcpServer(id));
+  return apps.filter((a) => appVisibleWithServer(servers.get(a.serverId), orgId));
+}
+
+/** Mounted at /api/mcp-apps -- the create body, by-server lists and every per-app route. */
+export async function mcpAppScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const orgId = resolveRequestOrgId(req);
+    const [first, second, third] = req.path.split("/").filter(Boolean);
+    if (!first) {
+      // Create: the app hangs off a server the caller may change.
+      if (req.method === "POST" && typeof req.body?.serverId === "string") {
+        const server = await storage.getMcpServer(req.body.serverId);
+        if (server && !(await authorizeMcpServer(req, res, server))) return;
+      }
+      return next();
+    }
+    if (first === "by-server") {
+      const server = second ? await storage.getMcpServer(second) : undefined;
+      if (server && !isMcpServerVisibleToOrg(server, orgId)) return notFound(res, "MCP server");
+      return next();
+    }
+
+    const app = await storage.getMcpApp(first);
+    if (!app) return next();
+    const server = await storage.getMcpServer(app.serverId);
+    if (!appVisibleWithServer(server, orgId)) return notFound(res, "MCP App");
+
+    const editsApp = !second && (req.method === "PATCH" || req.method === "DELETE");
+    if (editsApp && server && !(await authorizeMcpServer(req, res, server))) return;
+    if (editsApp && typeof req.body?.serverId === "string" && req.body.serverId !== app.serverId) {
+      const target = await storage.getMcpServer(req.body.serverId);
+      if (target && !(await authorizeMcpServer(req, res, target))) return;
+    }
+    // A consent or session id in the path or body must belong to this app.
+    if (second === "consent" && third) {
+      const consents = await storage.getMcpAppConsents(app.id);
+      if (!consents.some((c) => c.id === third)) return notFound(res, "Consent");
+    }
+    if (second === "bridge" && typeof req.body?.sessionId === "string") {
+      const session = await storage.getMcpAppSession(req.body.sessionId);
+      if (session && session.appId !== app.id) return notFound(res, "Session");
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+type ElicitationOwnerFields = Pick<McpElicitation, "agentId" | "serverId">;
+
+/** Resolves elicitation owners, caching agent and server lookups across a list. */
+function elicitationOwnerResolver() {
+  const agentOrg = new Map<string, string | null | undefined>();
+  const serverOrg = new Map<string, string | null | undefined>();
+  return async (e: ElicitationOwnerFields): Promise<string | null> => {
+    if (e.agentId) {
+      if (!agentOrg.has(e.agentId)) {
+        const agent = await storage.getAgent(e.agentId);
+        agentOrg.set(e.agentId, agent ? (agent.organizationId ?? getDefaultOrgId() ?? null) : undefined);
+      }
+      const owner = agentOrg.get(e.agentId);
+      if (owner !== undefined) return owner;
+    }
+    if (e.serverId) {
+      if (!serverOrg.has(e.serverId)) {
+        const server = await storage.getMcpServer(e.serverId);
+        serverOrg.set(e.serverId, server ? mcpServerOwnerOrgId(server) : undefined);
+      }
+      const owner = serverOrg.get(e.serverId);
+      if (owner) return owner;
+    }
+    return getDefaultOrgId() ?? null;
+  };
+}
+
+function ownerMatches(owner: string | null, orgId: string | undefined | null): boolean {
+  // No owner at all only happens on a database with no organization seeded.
+  return owner === null || (!!orgId && owner === orgId);
+}
+
+/** Only the elicitations that belong to the org. */
+export async function filterElicitationsForOrg<T extends ElicitationOwnerFields>(rows: T[], orgId: string | undefined | null): Promise<T[]> {
+  const ownerOf = elicitationOwnerResolver();
+  const out: T[] = [];
+  for (const row of rows) if (ownerMatches(await ownerOf(row), orgId)) out.push(row);
+  return out;
+}
+
+const ELICITATION_RESERVED = new Set(["pending"]);
+
+/** Mounted at /api/mcp-elicitations -- the create body and every per-elicitation route. */
+export async function mcpElicitationScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const orgId = resolveRequestOrgId(req);
+    const [first] = req.path.split("/").filter(Boolean);
+    if (!first) {
+      if (req.method === "POST") {
+        // A new elicitation may only name the caller's own agent and a server it can see.
+        const { agentId, serverId } = req.body ?? {};
+        if (typeof agentId === "string" && agentId) {
+          const agent = await storage.getAgent(agentId);
+          if (agent && !ownerMatches(agent.organizationId ?? getDefaultOrgId() ?? null, orgId)) return notFound(res, "Agent");
+        }
+        if (typeof serverId === "string" && serverId) {
+          const server = await storage.getMcpServer(serverId);
+          if (server && !isMcpServerVisibleToOrg(server, orgId)) return notFound(res, "MCP server");
+        }
+      }
+      return next();
+    }
+    if (ELICITATION_RESERVED.has(first)) return next();
+    const elicitation = await storage.getMcpElicitation(first);
+    if (!elicitation) return next();
+    if (!ownerMatches(await elicitationOwnerResolver()(elicitation), orgId)) {
+      return res.status(404).json({ error: "Elicitation not found" });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
 }

@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementScope } from "./tenant-scope";
+import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementScope, mcpAppScope, mcpElicitationScope } from "./tenant-scope";
 import { checkPermission } from "./permissions";
 import { createServer, type Server } from "http";
 import { startWorker, enqueueAuditChainCheck, enqueueAuditChainCheckpoint, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan, enqueueScheduleTriggerScan, enqueueDagResumeScan, enqueueConnectorHealthScan } from "./worker";
@@ -248,6 +248,8 @@ export async function registerRoutes(
   app.use("/api/tool-catalog/:id", mcpServerChildScope("tool"));
   app.use("/api/mcp-resources/:id", mcpServerChildScope("resource"));
   app.use("/api/mcp-prompts/:id", mcpServerChildScope("prompt"));
+  app.use("/api/mcp-apps", mcpAppScope);
+  app.use("/api/mcp-elicitations", mcpElicitationScope);
   app.use("/api/blueprints/:id", blueprintScope);
   app.use("/api/team-blueprint-nodes", teamGraphElementScope("node"));
   app.use("/api/team-blueprint-edges", teamGraphElementScope("edge"));
