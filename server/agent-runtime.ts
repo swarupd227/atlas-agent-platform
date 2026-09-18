@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
-import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
+import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, providerFallbackAllowed, unwrapJsonFence, type LLMMessage, type LLMProvider, type LLMCompletionResult, type CanonicalToolCall } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
 import { resolveRequiredToolCalls, nextForcedToolChoice, missingRequiredToolCalls, requiredToolCallsError } from "./required-tool-calls";
 import { currentLlmAbortSignal } from "./llm-abort-context";
@@ -1667,6 +1667,44 @@ After receiving tool results, provide a structured analysis with key findings, s
   let costCapReached = false;
   const runtimeConfig = options?.runtimeConfig || {};
   const maxCostPerRunUsd: number = typeof runtimeConfig.maxCostPerRunUsd === "number" ? runtimeConfig.maxCostPerRunUsd : 1.0;
+
+  // Whether a call may be served by the other vendor's model when this
+  // agent's own provider fails (agents.runtimeConfig.providerFallback; on
+  // unless set to false, subject to the platform setting). When it happens it
+  // is recorded on the step, the run summary and the audit trail: a step
+  // answered by a different model used to be indistinguishable from any other.
+  const providerChain: LLMProvider[] = providerFallbackAllowed({ allowProviderFallback: runtimeConfig.providerFallback !== false })
+    ? [llmProvider, fallbackLlmProvider]
+    : [llmProvider];
+  let providerFallbacks = 0;
+  type ServedResult = Pick<LLMCompletionResult, "actualProvider" | "actualModel" | "providerFallback" | "fallbackReason">;
+  const servedBy = (result: ServedResult) => ({
+    provider: result.actualProvider ?? options?.modelProvider ?? "openai",
+    model: result.actualModel ?? modelName,
+  });
+  const recordLlmCallProvider = (result: ServedResult, call: string, step?: any) => {
+    const { provider, model } = servedBy(result);
+    if (step) {
+      step.llmProvider = provider;
+      step.llmModel = model;
+    }
+    if (!result.providerFallback) return;
+    providerFallbacks++;
+    if (step) {
+      step.providerFallback = true;
+      step.fallbackReason = result.fallbackReason;
+    }
+    console.warn(`[agent-runtime] Agent ${agentId}: ${call} call served by fallback provider "${provider}" (${model}) instead of "${providerName}" (${result.fallbackReason})`);
+    storage.createAuditEvent({
+      actorType: "system",
+      actorId: "llm-provider",
+      action: "llm_provider_fallback",
+      objectType: "agent",
+      objectId: agentId,
+      ...(orgId ? { organizationId: orgId } : {}),
+      details: JSON.stringify({ call, requestedProvider: providerName, requestedModel: modelName, actualProvider: provider, actualModel: model, reason: result.fallbackReason, deploymentId }),
+    } as any).catch(() => {});
+  };
   // GAP5 contract enforcement top-level result fields (hoisted for return-statement visibility)
   let contractValidationStatus: string | undefined;
   let contractRepairAttempts: number | undefined;
@@ -1762,7 +1800,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           (chunk) => {
             onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
           },
-          [llmProvider, fallbackLlmProvider],
+          providerChain,
         )
       : completeWithFallback(
           [
@@ -1778,7 +1816,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             ...planToolChoice,
             ...(getCodeExecConfig() ?? {}),
           },
-          [llmProvider, fallbackLlmProvider],
+          providerChain,
         ));
     const planCallLatencyMs = performance.now() - planCallStartMs;
     finalStopReason = planResult.stopReason;
@@ -1800,6 +1838,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       } as any);
     }
     await captureCodeExecResult(planResult);
+    recordLlmCallProvider(planResult, "planning", steps[steps.length - 1]);
 
     totalPromptTokens += planResult.tokensUsed.prompt;
     totalCompletionTokens += planResult.tokensUsed.completion;
@@ -1854,16 +1893,18 @@ After receiving tool results, provide a structured analysis with key findings, s
       toolCallsPlanned: currentToolCalls.length,
       reasoning: currentContent || "Tool calls planned",
       toolsSelected: currentToolCalls.map(tc => tc.name),
-      llmProvider: providerName,
-      llmModel: modelName,
+      llmProvider: servedBy(planResult).provider,
+      llmModel: servedBy(planResult).model,
+      ...(planResult.providerFallback ? { providerFallback: true, fallbackReason: planResult.fallbackReason } : {}),
     };
 
     emitProgress("planning", {
       toolCallsPlanned: currentToolCalls.length,
       reasoning: currentContent || "Tool calls planned",
       toolsSelected: currentToolCalls.map(tc => tc.name),
-      llmProvider: providerName,
-      llmModel: modelName,
+      llmProvider: servedBy(planResult).provider,
+      llmModel: servedBy(planResult).model,
+      ...(planResult.providerFallback ? { providerFallback: true, fallbackReason: planResult.fallbackReason } : {}),
     });
 
     if (currentToolCalls.length === 0 && currentContent) {
@@ -1901,8 +1942,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               originalPayload: { agentId, prompt },
               llmLatencyMs: planCallLatencyMs,
               tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
-              provider: options?.modelProvider ?? "openai",
-              model: modelName,
+              ...servedBy(planResult),
               decodePath: planResult.decodePath,
             });
             noToolsOutput = { ...noToolsEnforced.output };
@@ -1918,7 +1958,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             contractQualityScore = noToolsEnforced.qualityScore;
           } else {
             // No contract: parse best-effort and record planning metadata (one row, no duplication)
-            try { noToolsOutput = JSON.parse(currentContent); } catch { noToolsOutput = { analysis: currentContent }; }
+            noToolsOutput = parseModelJsonObject(currentContent) ?? { analysis: currentContent };
             outputContractEnforcer.recordLlmCallMetadata({
               agentId,
               pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
@@ -1927,8 +1967,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               originalPayload: { agentId, prompt },
               llmLatencyMs: planCallLatencyMs,
               tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
-              provider: options?.modelProvider ?? "openai",
-              model: modelName,
+              ...servedBy(planResult),
             }, "planning").catch(() => { /* non-fatal */ });
           }
         } else {
@@ -1936,7 +1975,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         }
       } catch (noToolsErr: unknown) {
         if (noToolsErr instanceof StructuredOutputValidationError) throw noToolsErr;
-        try { noToolsOutput = JSON.parse(currentContent); } catch { noToolsOutput = { analysis: currentContent }; }
+        noToolsOutput = parseModelJsonObject(currentContent) ?? { analysis: currentContent };
       }
 
       const maskedNoToolsOutput = maskPiiInOutputFields(noToolsOutput, runtimeConfig);
@@ -1962,8 +2001,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         originalPayload: { agentId, prompt },
         llmLatencyMs: planCallLatencyMs,
         tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
-        provider: options?.modelProvider ?? "openai",
-        model: modelName,
+        ...servedBy(planResult),
       }, "planning").catch(() => { /* non-fatal */ });
     }
 
@@ -2203,7 +2241,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                 (chunk) => {
                   onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
                 },
-                [llmProvider, fallbackLlmProvider],
+                providerChain,
               )
             : completeWithFallback(
                 conversationMessages,
@@ -2216,10 +2254,11 @@ After receiving tool results, provide a structured analysis with key findings, s
                   ...continueToolChoice,
                   ...(getCodeExecConfig() ?? {}),
                 },
-                [llmProvider, fallbackLlmProvider],
+                providerChain,
               ));
           const continueCallLatencyMs = performance.now() - continueCallStartMs;
           await captureCodeExecResult(continueResult);
+          recordLlmCallProvider(continueResult, "tool_continuation");
 
           totalPromptTokens += continueResult.tokensUsed.prompt;
           totalCompletionTokens += continueResult.tokensUsed.completion;
@@ -2235,8 +2274,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             originalPayload: { agentId, iterationsUsed },
             llmLatencyMs: continueCallLatencyMs,
             tokenUsage: { promptTokens: continueResult.tokensUsed.prompt, completionTokens: continueResult.tokensUsed.completion },
-            provider: options?.modelProvider ?? "openai",
-            model: modelName,
+            ...servedBy(continueResult),
           }, "tool_continuation").catch(() => { /* non-fatal */ });
 
           if (totalCostUsd >= maxCostPerRunUsd) {
@@ -2264,6 +2302,9 @@ After receiving tool results, provide a structured analysis with key findings, s
                 reasoning: currentContent || "Additional tool calls needed",
                 toolsSelected: currentToolCalls.map(tc => tc.name),
                 iteration: iterationsUsed + 1,
+                llmProvider: servedBy(continueResult).provider,
+                llmModel: servedBy(continueResult).model,
+                ...(continueResult.providerFallback ? { providerFallback: true, fallbackReason: continueResult.fallbackReason } : {}),
               },
             });
 
@@ -2407,7 +2448,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               (chunk) => {
                 onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
               },
-              [llmProvider, fallbackLlmProvider],
+              providerChain,
             )
           : completeWithFallback(
               analysisMessages,
@@ -2417,9 +2458,10 @@ After receiving tool results, provide a structured analysis with key findings, s
                 ...(isConversational ? {} : { responseFormat: "json" as const }),
                 ...(analysisJsonSchemaOption ? { jsonSchema: analysisJsonSchemaOption } : {}),
               },
-              [llmProvider, fallbackLlmProvider],
+              providerChain,
             ));
         const llmCallLatencyMs = performance.now() - llmCallStartMs;
+        if (ownAnswer === undefined) recordLlmCallProvider(analysisResult, "analysis", steps[steps.length - 1]);
 
         totalPromptTokens += analysisResult.tokensUsed.prompt;
         totalCompletionTokens += analysisResult.tokensUsed.completion;
@@ -2459,8 +2501,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   promptTokens: analysisResult.tokensUsed.prompt,
                   completionTokens: analysisResult.tokensUsed.completion,
                 },
-                provider: options?.modelProvider ?? "openai",
-                model: modelName,
+                ...servedBy(analysisResult),
                 decodePath: analysisResult.decodePath,
               });
               analysis = { ...enforcedResult.output };
@@ -2501,11 +2542,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           if (isConversational) {
             analysis = { summary: rawContent, conversational: true };
           } else {
-            try {
-              analysis = JSON.parse(rawContent);
-            } catch {
-              analysis = { summary: rawContent };
-            }
+            analysis = parseModelJsonObject(rawContent) ?? { summary: rawContent };
           }
         }
 
@@ -2937,6 +2974,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       costCapUsd: maxCostPerRunUsd,
       costCapReached,
       truncated: finalStopReason === "max_tokens",
+      ...(providerFallbacks > 0 ? { providerFallbacks } : {}),
       ...(requiredToolCallsMissing.length > 0 ? { requiredToolCallsMissing } : {}),
       ...(costCapReached ? { terminationReason: "cost_cap_reached" } : {}),
       ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
@@ -3096,6 +3134,17 @@ function parseJsonObject(candidate: string): Record<string, any> | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A model's JSON answer as an object -- bare, fenced, or embedded in prose --
+ * or null when there is none. A bare JSON.parse of the answer used to fail on
+ * a fenced one (the fallback provider's habit), leaving the whole blob as the
+ * "summary" string and every field inside it invisible to the pipeline.
+ */
+export function parseModelJsonObject(text: string): Record<string, any> | null {
+  if (typeof text !== "string" || text.trim().length === 0) return null;
+  return parseJsonObject(unwrapJsonFence(text)) ?? extractStructuredOutput(text);
 }
 
 // Top-level {...} spans in prose, matched with string-aware brace counting.
@@ -3345,6 +3394,8 @@ export async function executeWorkerAgent(
   promptTokens?: number;
   completionTokens?: number;
   toolCallCount?: number;
+  /** Model calls this step made that were served by a provider other than its own. */
+  providerFallbacks?: number;
   generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>;
   /** The final answer stopped at the model's output limit, so the output ends partway through. */
   truncated?: boolean;
@@ -3540,6 +3591,7 @@ export async function executeWorkerAgent(
       completionTokens: result.summary.tokenUsage?.completionTokens || 0,
       truncated: !!(result.summary as { truncated?: boolean }).truncated,
       toolCallCount: Array.isArray(result.summary.toolsUsed) ? result.summary.toolsUsed.length : 0,
+      providerFallbacks: (result.summary as { providerFallbacks?: number }).providerFallbacks || 0,
       ...(result.generatedFiles?.length ? { generatedFiles: result.generatedFiles } : {}),
       ...((result as { failedFileAttempts?: string[] }).failedFileAttempts?.length
         ? { failedFileAttempts: (result as { failedFileAttempts?: string[] }).failedFileAttempts }

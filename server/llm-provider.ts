@@ -101,6 +101,12 @@ export interface LLMCompletionOptions {
    * answering (see required-tool-calls.ts).
    */
   toolChoice?: { name: string };
+  /**
+   * False keeps this call on the provider it asked for: a failure is an error,
+   * never an answer from another vendor's model. Defaults to the platform
+   * setting (LLM_PROVIDER_FALLBACK, on unless set to "off").
+   */
+  allowProviderFallback?: boolean;
 }
 
 export interface LLMCompletionResult {
@@ -111,6 +117,10 @@ export interface LLMCompletionResult {
   rawAssistantMessage?: any;
   /** The provider that actually served this completion (e.g. "openai", "anthropic"). */
   actualProvider?: string;
+  /** The model that actually served it -- the fallback provider substitutes its own default. */
+  actualModel?: string;
+  /** Why the requested provider was passed over, when providerFallback is true (e.g. "rate_limited"). */
+  fallbackReason?: string;
   /**
    * The provider originally requested (from LLMCompletionOptions.requestedProvider),
    * when the caller supplied one. Compare against actualProvider to detect a
@@ -252,11 +262,103 @@ export function getPriceTable() {
 
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 1000;
+// A rate limit is the provider saying "not yet", not "not working": the same
+// request succeeds once the window clears, usually within seconds. Giving up
+// after three sub-second waits handed such calls to the fallback vendor -- in
+// one team run, 15 of 73 steps were quietly served by a different model that
+// way, each answering in a format the step's parser could not read. A 429 now
+// waits as long as the provider asks (retry-after), or backs off for real,
+// before any cascade is considered.
+const RATE_LIMIT_MAX_RETRIES = 5;
+const RATE_LIMIT_BASE_DELAY_MS = 2000;
+const RATE_LIMIT_MAX_DELAY_MS = 30_000;
 const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504, 529]); // 529 = Anthropic overloaded_error
+
+/**
+ * A JSON answer without the code fence Claude tends to wrap it in. OpenAI's
+ * json_object mode never fences; a prompt-instructed Claude often does, and a
+ * caller that JSON.parse()s the text then saw the whole fenced blob as its
+ * "summary" string instead of the fields inside it.
+ */
+export function unwrapJsonFence(text: string): string {
+  const match = text.trim().match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match ? match[1].trim() : text;
+}
+
+/**
+ * An exhausted quota/budget: OpenAI reports it as 429 "insufficient_quota",
+ * the same status as a rate limit, but no amount of waiting clears it. It is
+ * never retried; whether it cascades is the fallback policy's call.
+ */
+export function isQuotaExhaustedError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const e = err as Error & { status?: number; code?: string; type?: string; error?: { code?: string; type?: string } };
+  const code = e.code ?? e.error?.code ?? e.type ?? e.error?.type;
+  if (code === "insufficient_quota" || code === "billing_hard_limit_reached") return true;
+  return e.status === 429 && /insufficient_quota|exceeded your current quota|billing hard limit/i.test(e.message);
+}
+
+export function isRateLimitError(err: unknown): boolean {
+  if (!(err instanceof Error) || isQuotaExhaustedError(err)) return false;
+  const e = err as Error & { status?: number; constructor: { name: string } };
+  return e.status === 429 || e.constructor.name === "RateLimitError";
+}
+
+/** The wait the provider asked for, from a retry-after(-ms) header, in ms. */
+function retryAfterMs(err: unknown): number | undefined {
+  const headers = (err as { headers?: unknown })?.headers as { get?: (k: string) => unknown } | Record<string, unknown> | undefined;
+  if (!headers) return undefined;
+  const read = (key: string): string | undefined => {
+    const raw = typeof (headers as { get?: unknown }).get === "function"
+      ? (headers as { get: (k: string) => unknown }).get(key)
+      : (headers as Record<string, unknown>)[key];
+    return raw == null ? undefined : String(raw);
+  };
+  const ms = Number(read("retry-after-ms"));
+  if (Number.isFinite(ms) && ms > 0) return ms;
+  const after = read("retry-after");
+  if (after === undefined) return undefined;
+  const seconds = Number(after);
+  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000;
+  const date = Date.parse(after);
+  return Number.isFinite(date) && date > Date.now() ? date - Date.now() : undefined;
+}
+
+export function maxRetriesFor(err: unknown): number {
+  return isRateLimitError(err) ? RATE_LIMIT_MAX_RETRIES : MAX_RETRIES;
+}
+
+/**
+ * How long to wait before retry number `attempt` (0-based). A rate limit
+ * honours the provider's own hint when it gives one, otherwise backs off
+ * 2s, 4s, 8s, 16s, 30s (±25% jitter); any other transient error keeps the
+ * short 1s, 2s, 4s schedule.
+ */
+export function retryDelayMs(err: unknown, attempt: number, random: () => number = Math.random): number {
+  if (isRateLimitError(err)) {
+    const hinted = retryAfterMs(err);
+    if (hinted !== undefined) return Math.min(hinted + 250, RATE_LIMIT_MAX_DELAY_MS);
+    const base = Math.min(RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, attempt), RATE_LIMIT_MAX_DELAY_MS);
+    return Math.floor(base * (0.75 + random() * 0.5));
+  }
+  const base = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+  return Math.floor(base / 2 + random() * (base / 2));
+}
+
+/** Sleeps, or stops early when the caller's abort signal fires. */
+function abortableSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(Object.assign(new Error("Request aborted while waiting to retry"), { name: "AbortError" }));
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+    function onAbort() { clearTimeout(timer); reject(Object.assign(new Error("Request aborted while waiting to retry"), { name: "AbortError" })); }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 const RETRYABLE_ERROR_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "ECONNREFUSED"]);
 
 function isRetryable(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  if (isQuotaExhaustedError(err)) return false;
   const e = err as Error & { status?: number; code?: string; cause?: { code?: string }; constructor: { name: string } };
   if (e.status !== undefined && RETRYABLE_STATUS_CODES.has(e.status)) return true;
   if (e.code !== undefined && RETRYABLE_ERROR_CODES.has(e.code)) return true;
@@ -284,24 +386,20 @@ function isCallerAbort(err: unknown): boolean {
 }
 
 async function withRetry<T>(fn: () => Promise<T>, providerName: string): Promise<T> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      lastErr = err;
-      if (attempt === MAX_RETRIES || !isRetryable(err)) {
+      const maxRetries = maxRetriesFor(err);
+      if (attempt >= maxRetries || !isRetryable(err)) {
         throw err;
       }
-      const baseDelay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-      const jitter = Math.random() * baseDelay;
-      const delayMs = Math.floor(jitter);
+      const delayMs = retryDelayMs(err, attempt);
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[llm-provider] ${providerName} transient error (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${delayMs}ms: ${msg}`);
-      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      console.warn(`[llm-provider] ${providerName} ${isRateLimitError(err) ? "rate limited" : "transient error"} (attempt ${attempt + 1}/${maxRetries}), retrying in ${delayMs}ms: ${msg}`);
+      await abortableSleep(delayMs, currentLlmAbortSignal());
     }
   }
-  throw lastErr;
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +724,7 @@ class OpenAIProvider implements LLMProvider {
       ...(choice?.finish_reason ? { stopReason: canonicalStopReason(choice.finish_reason) } : {}),
       ...(options?.jsonSchema ? { decodePath: usedStrictSchema ? "strict_native" as const : "legacy_prompted" as const } : {}),
       ...buildProviderResultFields(this.providerName, options),
+      actualModel: model,
     };
   }
 
@@ -781,6 +880,7 @@ class OpenAIProvider implements LLMProvider {
       },
       ...(options?.jsonSchema ? { decodePath: usedStrictSchema ? "strict_native" as const : "legacy_prompted" as const } : {}),
       ...buildProviderResultFields(this.providerName, options),
+      actualModel: model,
     };
   }
 
@@ -1172,7 +1272,7 @@ class AnthropicProvider implements LLMProvider {
     const forcedToolCall = forcedSchemaTool ? toolCalls.find((tc) => tc.name === forcedSchemaTool.name) : undefined;
 
     return {
-      content: forcedToolCall ? JSON.stringify(forcedToolCall.arguments) : textContent,
+      content: forcedToolCall ? JSON.stringify(forcedToolCall.arguments) : (options?.responseFormat === "json" ? unwrapJsonFence(textContent) : textContent),
       toolCalls,
       tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
       costUsd,
@@ -1190,6 +1290,7 @@ class AnthropicProvider implements LLMProvider {
       ...(stopReason ? { stopReason } : {}),
       ...(options?.jsonSchema ? { decodePath: forcedToolCall ? "strict_native" as const : "legacy_prompted" as const } : {}),
       ...buildProviderResultFields(this.providerName, options),
+      actualModel: model,
     };
   }
 
@@ -1379,7 +1480,7 @@ class AnthropicProvider implements LLMProvider {
       const forcedToolCall = forcedSchemaTool ? toolCalls.find((tc) => tc.name === forcedSchemaTool.name) : undefined;
 
       return {
-        content: forcedToolCall ? JSON.stringify(forcedToolCall.arguments) : fullContent,
+        content: forcedToolCall ? JSON.stringify(forcedToolCall.arguments) : (options?.responseFormat === "json" ? unwrapJsonFence(fullContent) : fullContent),
         toolCalls,
         tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
         costUsd,
@@ -1397,6 +1498,7 @@ class AnthropicProvider implements LLMProvider {
         ...(stopReason ? { stopReason } : {}),
         ...(options?.jsonSchema ? { decodePath: forcedToolCall ? "strict_native" as const : "legacy_prompted" as const } : {}),
         ...buildProviderResultFields(this.providerName, options),
+      actualModel: model,
       };
     } catch (err) {
       cbRecordFailure(this.providerName);
@@ -1528,6 +1630,7 @@ function cascadeReason(err: unknown): string {
   if (msg.includes("Circuit breaker OPEN")) return "circuit_open";
   if (msg.includes("Circuit HALF-OPEN")) return "circuit_half_open";
   const e = err as Error & { status?: number; code?: string; constructor: { name: string } };
+  if (isQuotaExhaustedError(err)) return "quota_exhausted";
   if (e.status === 429 || e.constructor.name === "RateLimitError") return "rate_limited";
   if (e.status && [502, 503, 504].includes(e.status)) return "provider_unavailable";
   if (e.code && RETRYABLE_ERROR_CODES.has(e.code)) return "network_error";
@@ -1549,21 +1652,50 @@ function cascadeReason(err: unknown): string {
  *                   configured default provider followed by the other available
  *                   provider (OpenAI ↔ Anthropic).
  */
+/**
+ * Whether a call may be served by a provider other than the one it asked for.
+ * Off platform-wide with LLM_PROVIDER_FALLBACK=off, or per call/agent through
+ * LLMCompletionOptions.allowProviderFallback.
+ */
+export function providerFallbackAllowed(options?: Pick<LLMCompletionOptions, "allowProviderFallback">): boolean {
+  if (options?.allowProviderFallback === false) return false;
+  return (process.env.LLM_PROVIDER_FALLBACK || "on").trim().toLowerCase() !== "off";
+}
+
+function providerChain(providers: LLMProvider[] | undefined, options?: LLMCompletionOptions): LLMProvider[] {
+  let list: LLMProvider[];
+  if (providers && providers.length > 0) {
+    list = providers;
+  } else {
+    const primary = getDefaultProvider();
+    const fallbackName = primary.providerName === "openai" ? "anthropic" : "openai";
+    list = [primary, getProvider(fallbackName)];
+  }
+  return providerFallbackAllowed(options) ? list : list.slice(0, 1);
+}
+
+// A fallback used to be visible only as a console line: the result said which
+// provider served it, but nothing said it was not the one asked for, so a step
+// answered by another vendor's model looked like an ordinary step.
+function markFallback(result: LLMCompletionResult, requested: LLMProvider, served: LLMProvider, reason: string): LLMCompletionResult {
+  return {
+    ...result,
+    actualProvider: result.actualProvider ?? served.providerName,
+    requestedProvider: result.requestedProvider ?? requested.providerName,
+    providerFallback: true,
+    fallbackReason: reason,
+  };
+}
+
 export async function completeWithFallback(
   messages: LLMMessage[],
   options?: LLMCompletionOptions,
   providers?: LLMProvider[],
 ): Promise<LLMCompletionResult> {
-  let providerList: LLMProvider[];
-  if (providers && providers.length > 0) {
-    providerList = providers;
-  } else {
-    const primary = getDefaultProvider();
-    const fallbackName = primary.providerName === "openai" ? "anthropic" : "openai";
-    providerList = [primary, getProvider(fallbackName)];
-  }
+  const providerList = providerChain(providers, options);
 
   const errors: string[] = [];
+  let lastReason = "";
   for (let i = 0; i < providerList.length; i++) {
     const provider = providerList[i];
     // For fallback providers (not the primary), strip the model so each provider
@@ -1573,12 +1705,14 @@ export async function completeWithFallback(
     try {
       const result = await provider.complete(messages, effectiveOptions);
       if (i > 0) {
-        console.info(`[llm-provider] completeWithFallback: succeeded on fallback provider "${provider.providerName}"`);
+        console.info(`[llm-provider] completeWithFallback: succeeded on fallback provider "${provider.providerName}" (reason=${lastReason})`);
+        return markFallback(result, providerList[0], provider, lastReason);
       }
       return result;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const reason = cascadeReason(err);
+      lastReason = reason;
       errors.push(`${provider.providerName}[${reason}]: ${msg}`);
 
       if (!isCascadable(err)) {
@@ -1612,16 +1746,10 @@ export async function streamCompleteWithFallback(
   onChunk: (chunk: string) => void,
   providers?: LLMProvider[],
 ): Promise<LLMCompletionResult> {
-  let providerList: LLMProvider[];
-  if (providers && providers.length > 0) {
-    providerList = providers;
-  } else {
-    const primary = getDefaultProvider();
-    const fallbackName = primary.providerName === "openai" ? "anthropic" : "openai";
-    providerList = [primary, getProvider(fallbackName)];
-  }
+  const providerList = providerChain(providers, options);
 
   const errors: string[] = [];
+  let lastReason = "";
   for (let i = 0; i < providerList.length; i++) {
     const provider = providerList[i];
     const effectiveOptions: LLMCompletionOptions | undefined =
@@ -1635,12 +1763,14 @@ export async function streamCompleteWithFallback(
         if (result.content) onChunk(result.content);
       }
       if (i > 0) {
-        console.info(`[llm-provider] streamCompleteWithFallback: succeeded on fallback provider "${provider.providerName}"`);
+        console.info(`[llm-provider] streamCompleteWithFallback: succeeded on fallback provider "${provider.providerName}" (reason=${lastReason})`);
+        return markFallback(result, providerList[0], provider, lastReason);
       }
       return result;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const reason = cascadeReason(err);
+      lastReason = reason;
       errors.push(`${provider.providerName}[${reason}]: ${msg}`);
       if (!isCascadable(err)) {
         console.error(

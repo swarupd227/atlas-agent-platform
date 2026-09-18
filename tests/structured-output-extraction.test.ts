@@ -45,3 +45,14 @@ describe("additionalAnalysisFields", () => {
     expect(additionalAnalysisFields(null)).toBeNull();
   });
 });
+
+describe("parseModelJsonObject", () => {
+  it("reads bare, fenced and prose-embedded JSON answers as one object", async () => {
+    const { parseModelJsonObject } = await import("../server/agent-runtime");
+    expect(parseModelJsonObject('{"summary": "ok", "severity": "low"}')).toEqual({ summary: "ok", severity: "low" });
+    expect(parseModelJsonObject('```json\n{\n  "summary": "fenced",\n  "resolutionDecision": "create"\n}\n```')).toEqual({ summary: "fenced", resolutionDecision: "create" });
+    expect(parseModelJsonObject('Here is the result:\n```json\n{"summary": "after prose"}\n```')).toEqual({ summary: "after prose" });
+    expect(parseModelJsonObject("No JSON at all.")).toBeNull();
+    expect(parseModelJsonObject("")).toBeNull();
+  });
+});

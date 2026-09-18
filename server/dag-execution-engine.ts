@@ -248,6 +248,8 @@ export interface NodeExecutionResult {
   childSkippedCount?: number;
   costUsd?: number;
   toolCallCount?: number;
+  /** Model calls this node made that were served by a provider other than its agent's own. */
+  providerFallbacks?: number;
   /** Completed, but the final answer stopped at the model's output limit: the output ends partway through. */
   truncated?: boolean;
   /** Calls this step made to a file-producing tool that ended without a file, with the reason each gave. */
@@ -1627,6 +1629,7 @@ export class DAGExecutionEngine {
       completionTokens: workerResult.completionTokens || 0,
       costUsd: workerResult.costUsd || 0,
       toolCallCount: workerResult.toolCallCount || 0,
+      ...(workerResult.providerFallbacks ? { providerFallbacks: workerResult.providerFallbacks } : {}),
       traceId: workerResult.traceId || "",
       ...(workerResult.truncated ? { truncated: true } : {}),
       ...(workerResult.failedFileAttempts?.length ? { failedFileAttempts: workerResult.failedFileAttempts } : {}),
@@ -2258,7 +2261,7 @@ export class DAGExecutionEngine {
     timeoutMs: number,
     toolAllowlist?: string[],
     upstreamGeneratedFileIds?: string[],
-  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean; failedFileAttempts?: string[] }> {
+  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; providerFallbacks?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean; failedFileAttempts?: string[] }> {
     const mockTeamAgent = {
       deploymentId: undefined,
       agentId: "__dag_orchestrator__",
@@ -2312,6 +2315,7 @@ export class DAGExecutionEngine {
         completionTokens: (result as any).completionTokens || 0,
         costUsd: (result as any).costUsd || 0,
         toolCallCount: (result as any).toolCallCount || 0,
+        providerFallbacks: (result as any).providerFallbacks || 0,
         truncated: !!(result as any).truncated,
         traceId: (result as any).step?.id || "",
         ...(Array.isArray((result as any).generatedFiles) && (result as any).generatedFiles.length ? { generatedFiles: (result as any).generatedFiles } : {}),

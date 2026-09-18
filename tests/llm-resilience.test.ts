@@ -373,3 +373,103 @@ describe("completeWithFallback() integration (mock providers)", () => {
     expect(receivedOptions[0].temperature).toBe(0.5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Rate-limit patience, fallback visibility and control
+// ---------------------------------------------------------------------------
+
+import { retryDelayMs, maxRetriesFor, providerFallbackAllowed, unwrapJsonFence, isRateLimitError } from "../server/llm-provider";
+
+describe("retry schedule", () => {
+  const fixed = () => 0.5;
+
+  it("waits as long as a rate limit's retry-after header asks", () => {
+    const err = Object.assign(new Error("Too Many Requests"), { status: 429, headers: { "retry-after": "7" } });
+    expect(retryDelayMs(err, 0, fixed)).toBe(7250);
+  });
+
+  it("reads retry-after-ms and a Headers-like object", () => {
+    const headers = new Map([["retry-after-ms", "1200"]]);
+    const err = Object.assign(new Error("Too Many Requests"), { status: 429, headers });
+    expect(retryDelayMs(err, 0, fixed)).toBe(1450);
+  });
+
+  it("backs off 2s, 4s, 8s, 16s, 30s on a rate limit with no hint, and retries five times", () => {
+    const err = Object.assign(new Error("Too Many Requests"), { status: 429 });
+    expect([0, 1, 2, 3, 4].map((a) => retryDelayMs(err, a, fixed))).toEqual([2000, 4000, 8000, 16000, 30000]);
+    expect(maxRetriesFor(err)).toBe(5);
+    expect(isRateLimitError(err)).toBe(true);
+  });
+
+  it("keeps the short schedule for other transient errors", () => {
+    const err = Object.assign(new Error("Service unavailable"), { status: 503 });
+    expect([0, 1, 2].map((a) => retryDelayMs(err, a, fixed))).toEqual([750, 1500, 3000]);
+    expect(maxRetriesFor(err)).toBe(3);
+  });
+});
+
+describe("provider fallback visibility and control", () => {
+  const rateLimited = Object.assign(new Error("Too Many Requests"), { status: 429 });
+
+  it("marks a result served by the fallback provider, with the reason", async () => {
+    const primary = mockProvider("openai", async () => { throw rateLimited; });
+    const fallback = mockProvider("anthropic", async () => ({ ...makeResult("from-fallback"), actualProvider: "anthropic", actualModel: "claude-sonnet-4-5" }));
+    const result = await completeWithFallback(MESSAGES, { model: "gpt-4.1" }, [primary, fallback]);
+    expect(result.providerFallback).toBe(true);
+    expect(result.requestedProvider).toBe("openai");
+    expect(result.actualProvider).toBe("anthropic");
+    expect(result.actualModel).toBe("claude-sonnet-4-5");
+    expect(result.fallbackReason).toBe("rate_limited");
+  });
+
+  it("does not mark a result the requested provider served", async () => {
+    const primary = mockProvider("openai", async () => ({ ...makeResult("ok"), actualProvider: "openai" }));
+    const result = await completeWithFallback(MESSAGES, undefined, [primary, mockProvider("anthropic", async () => makeResult("no"))]);
+    expect(result.providerFallback).toBeUndefined();
+    expect(result.fallbackReason).toBeUndefined();
+  });
+
+  it("stays on the requested provider when the call disallows fallback", async () => {
+    const primary = mockProvider("openai", async () => { throw rateLimited; });
+    const fallbackCalled = vi.fn().mockResolvedValue(makeResult("fallback"));
+    await expect(completeWithFallback(MESSAGES, { allowProviderFallback: false }, [primary, mockProvider("anthropic", fallbackCalled)])).rejects.toThrow(/All providers failed/);
+    expect(fallbackCalled).not.toHaveBeenCalled();
+  });
+
+  it("LLM_PROVIDER_FALLBACK=off disables fallback platform-wide", () => {
+    const before = process.env.LLM_PROVIDER_FALLBACK;
+    try {
+      process.env.LLM_PROVIDER_FALLBACK = "off";
+      expect(providerFallbackAllowed()).toBe(false);
+      process.env.LLM_PROVIDER_FALLBACK = "on";
+      expect(providerFallbackAllowed()).toBe(true);
+      expect(providerFallbackAllowed({ allowProviderFallback: false })).toBe(false);
+    } finally {
+      if (before === undefined) delete process.env.LLM_PROVIDER_FALLBACK; else process.env.LLM_PROVIDER_FALLBACK = before;
+    }
+  });
+});
+
+describe("unwrapJsonFence", () => {
+  it("strips a ```json fence and leaves bare JSON alone", () => {
+    expect(unwrapJsonFence('```json\n{"a": 1}\n```')).toBe('{"a": 1}');
+    expect(unwrapJsonFence('{"a": 1}')).toBe('{"a": 1}');
+    expect(unwrapJsonFence("prose then ```json {} ```")).toBe("prose then ```json {} ```");
+  });
+});
+
+describe("exhausted quota is not a rate limit", () => {
+  it("is never retried and cascades with its own reason", async () => {
+    const { isQuotaExhaustedError } = await import("../server/llm-provider");
+    const quota = Object.assign(new Error("429 You exceeded your current quota, please check your plan and billing details."), { status: 429, code: "insufficient_quota" });
+    expect(isQuotaExhaustedError(quota)).toBe(true);
+    expect(isRateLimitError(quota)).toBe(false);
+    const calls = vi.fn(async () => { throw quota; });
+    const primary = mockProvider("openai", calls);
+    const fallback = mockProvider("anthropic", async () => ({ ...makeResult("from-fallback"), actualProvider: "anthropic" }));
+    const result = await completeWithFallback(MESSAGES, undefined, [primary, fallback]);
+    expect(result.providerFallback).toBe(true);
+    expect(result.fallbackReason).toBe("quota_exhausted");
+    expect(calls).toHaveBeenCalledTimes(1);
+  });
+});
