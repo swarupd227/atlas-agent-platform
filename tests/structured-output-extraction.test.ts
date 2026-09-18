@@ -56,3 +56,23 @@ describe("parseModelJsonObject", () => {
     expect(parseModelJsonObject("")).toBeNull();
   });
 });
+
+describe("buildPipelineState promotes a decision the step's records agree on", () => {
+  it("lifts a unanimous record field to the top level, leaves disagreements and explicit values alone", async () => {
+    const { buildPipelineState, unanimousRecordFields } = await import("../server/agent-runtime");
+    const labels = new Map([["n1", "Search"]]);
+    const recordsOnly = 'Exact match found.\n```json\n{"processedRecords": [{"accountId": "ACCT-1", "duplicateScore": 0.9, "resolutionDecision": "match"}]}\n```';
+    const state = buildPipelineState(new Map([["n1", recordsOnly]]), labels);
+    expect(state.resolutionDecision).toBe("match");
+    expect(state.accountId).toBe("ACCT-1");
+
+    const split = '```json\n{"processedRecords": [{"accountId": "A", "resolutionDecision": "match"}, {"accountId": "B", "resolutionDecision": "create"}]}\n```';
+    expect(buildPipelineState(new Map([["n1", split]]), labels).resolutionDecision).toBeUndefined();
+
+    const explicit = '```json\n{"resolutionDecision": "create", "processedRecords": [{"accountId": "A", "resolutionDecision": "match"}]}\n```';
+    expect(buildPipelineState(new Map([["n1", explicit]]), labels).resolutionDecision).toBe("create");
+
+    expect(unanimousRecordFields({ processedRecords: [] })).toEqual({});
+    expect(unanimousRecordFields({ processedRecords: [{ nested: { a: 1 } }] })).toEqual({});
+  });
+});

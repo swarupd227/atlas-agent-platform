@@ -2110,11 +2110,16 @@ After receiving tool results, provide a structured analysis with key findings, s
               details: JSON.stringify({ blockReason, toolName: funcName, enforcementMode: "strict/block", policyIds: causativePolicyIds, filteredFromAvailableTools: true, iteration: iterationsUsed, deploymentId }),
             }).catch(() => {});
           } else {
+            // The model invented a tool name (live: Salesforce-style names
+            // lifted from a procedure's wording, four in a row). Naming what
+            // it can call lets it correct on the next turn instead of guessing.
+            const callable = availableTools.map((t, idx) => `mcp_${idx}_${t.toolName.replace(/[^a-zA-Z0-9_]/g, "_")}`).join(", ");
+            const notFound = `Tool "${funcName}" does not exist. The tools you can call are: ${callable || "(none)"}.`;
             lastStep.status = "failed";
             lastStep.error = `Could not resolve tool: ${funcName}`;
             lastStep.completedAt = new Date().toISOString();
-            toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: "Tool not found" });
-            emitProgress("tool_call_result", { tool: funcName, server: "unknown", success: false, error: "Tool not found", iteration: iterationsUsed });
+            toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: notFound });
+            emitProgress("tool_call_result", { tool: funcName, server: "unknown", success: false, error: notFound, iteration: iterationsUsed });
           }
           continue;
         }
@@ -3201,13 +3206,34 @@ export function extractStructuredOutput(text: string): Record<string, any> | nul
 // node produced it, as long as some upstream node returned it as JSON.
 // Each node's output is also kept under its own label for disambiguation
 // when two nodes emit the same field name.
+/**
+ * Fields every record of a step's processedRecords agrees on, and the step's
+ * top level lacks. Asked for a routing field at the top level, a model
+ * reporting one record tends to put the decision on the record instead --
+ * seen on two models: {"processedRecords": [{"accountId": "ACCT-1",
+ * "resolutionDecision": "match"}]} and nothing above it -- and every branch
+ * after it was skipped for a decision the step had plainly made. When the
+ * records disagree there is no single answer, and nothing is promoted.
+ */
+export function unanimousRecordFields(parsed: Record<string, any>): Record<string, unknown> {
+  const records = parsed?.processedRecords;
+  if (!Array.isArray(records) || records.length === 0 || !records.every((r) => r && typeof r === "object" && !Array.isArray(r))) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(records[0] as Record<string, unknown>)) {
+    if (key in parsed) continue;
+    if (value === null || (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean")) continue;
+    if (records.every((r) => (r as Record<string, unknown>)[key] === value)) out[key] = value;
+  }
+  return out;
+}
+
 export function buildPipelineState(tierNodeOutputs: Map<string, string>, nodeLabelById: Map<string, string>): Record<string, any> {
   const state: Record<string, any> = {};
   for (const [nodeId, text] of Array.from(tierNodeOutputs.entries())) {
     const label = nodeLabelById.get(nodeId) || nodeId;
     const parsed = extractStructuredOutput(text);
     if (parsed) {
-      Object.assign(state, parsed);
+      Object.assign(state, parsed, unanimousRecordFields(parsed));
       state[label] = parsed;
     } else {
       state[label] = text;
