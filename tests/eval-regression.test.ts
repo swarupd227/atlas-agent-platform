@@ -39,4 +39,13 @@ describe("eval worker regression gate", () => {
     expect(src).toContain("storage.getEvalTestRuns({ agentId, organizationId: run.organizationId ?? undefined })");
     expect(src).toContain("pickRegressionBaseline(runHistory, runId)");
   });
+
+  it("writes the gate result in the same update that marks the run completed", () => {
+    const src = readFileSync(join(__dirname, "..", "server", "worker.ts"), "utf8").replace(/\r\n/g, "\n");
+    const gateAt = src.indexOf("let gateTags: string[] | null = null;");
+    const completeAt = src.indexOf("...(gateTags ? { tags: gateTags } : {}),");
+    expect(gateAt).toBeGreaterThan(0);
+    expect(completeAt).toBeGreaterThan(gateAt);
+    expect(src.slice(completeAt - 400, completeAt)).toContain('status: "completed"');
+  });
 });

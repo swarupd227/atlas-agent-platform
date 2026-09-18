@@ -1682,22 +1682,11 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   const passRate = goldens.length > 0 ? passedCount / goldens.length : null;
   const avgLatencyMs = goldens.length > 0 ? Math.round(totalLatencyMs / goldens.length) : null;
 
-  await storage.updateEvalTestRun(runId, {
-    status: "completed",
-    totalGoldens: goldens.length,
-    passedCount,
-    failedCount,
-    passRate,
-    pendingCount: 0,
-    runningCount: 0,
-    costUsd: Math.round(totalCostUsd * 10000) / 10000,
-    totalTokens,
-    avgLatencyMs,
-    completedAt: new Date(),
-  });
-
-  // ── Gate status propagation — tag the run with its gate result ───────────────
+  // ── Gate status — worked out before the run is marked completed, and written
+  // in the same update, so nothing reading a completed run sees it without its
+  // gate result (a watcher used to read "completed" a moment before the tag).
   let gateTag: string | null = null;
+  let gateTags: string[] | null = null;
   try {
     const gate = await storage.getEvalGate(agentId);
 
@@ -1729,15 +1718,29 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     }
 
     if (gateTag) {
-      const currentRun = await storage.getEvalTestRun(runId);
-      const currentTags = (currentRun?.tags as string[] | null) ?? [];
-      const filteredTags = currentTags.filter(t => !t.startsWith("gate:"));
-      await storage.updateEvalTestRun(runId, { tags: [...filteredTags, gateTag] });
+      const currentTags = (run.tags as string[] | null) ?? [];
+      gateTags = [...currentTags.filter(t => !t.startsWith("gate:")), gateTag];
     }
   } catch (gateErr: unknown) {
     const msg = gateErr instanceof Error ? gateErr.message : String(gateErr);
     console.warn(`[eval-test-run] Gate tag failed for run ${runId}:`, msg);
   }
+
+  await storage.updateEvalTestRun(runId, {
+    status: "completed",
+    totalGoldens: goldens.length,
+    passedCount,
+    failedCount,
+    passRate,
+    pendingCount: 0,
+    runningCount: 0,
+    costUsd: Math.round(totalCostUsd * 10000) / 10000,
+    totalTokens,
+    avgLatencyMs,
+    completedAt: new Date(),
+    ...(gateTags ? { tags: gateTags } : {}),
+  });
+
 
   await storage.updateJob(job.id, { progress: 100 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 100, step: "complete" });
