@@ -12,7 +12,7 @@ import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGen
 import { resolveRequiredToolCalls, nextForcedToolChoice, missingRequiredToolCalls, requiredToolCallsError } from "./required-tool-calls";
 import { currentLlmAbortSignal } from "./llm-abort-context";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
-import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt, isBuiltinSkillTool } from "./builtin-skill-tools";
+import { resolveReadableSkillSets, planSkillContext, skillProceduresPrompt, skillToolsFor, skillCatalogPrompt, isBuiltinSkillTool, DEFAULT_SKILL_INLINE_BUDGET_TOKENS } from "./builtin-skill-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
@@ -377,47 +377,20 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
       const skillLines: string[] = [];
       skillLines.push(`\n## AGENT SKILLS (capabilities you have)`);
       let skillTokensUsed = estimateTokenCount(skillLines[0]);
-      for (const s of relevantSkills) {
+      // Assigned skills reach the model through executePromptWithMcp -- their
+      // procedures inlined or in the read_skill catalog (builtin-skill-tools.ts)
+      // -- so listing them here too, or squeezing a body into this 500-token
+      // budget, would only duplicate them. This section keeps the one-line
+      // industry/ontology matches an agent with no assignments gets.
+      for (const s of explicitSkillIds.length > 0 ? [] : relevantSkills) {
         const header = `- ${s.name} (${s.domain}, v${s.version})`;
-        const useFullBody = s.contextMode === "full" && s.markdownBody && (s.markdownBody as string).trim().length > 0;
-        if (useFullBody) {
-          const headerLine = `${header}:`;
-          const headerTokens = estimateTokenCount(headerLine);
-          if (skillTokensUsed + headerTokens > layerBudgets.capabilities) break;
-          const remainingBudget = layerBudgets.capabilities - skillTokensUsed - headerTokens;
-          if (remainingBudget <= 0) {
-            // Assigned skills are readable on demand via read_skill, so a body
-            // that does not fit is loaded when needed rather than summarised.
-            if (explicitSkillIds.length > 0) continue;
-            // No room for markdown body — attempt inline fallback
-            const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
-            const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
-            const fallback = `${header}: ${s.description}${toolsNote}${mcpNote}`;
-            const fallbackTokens = estimateTokenCount(fallback);
-            if (skillTokensUsed + fallbackTokens <= layerBudgets.capabilities) {
-              skillLines.push(fallback);
-              skillTokensUsed += fallbackTokens;
-            }
-            continue;
-          }
-          const maxChars = remainingBudget * 4;
-          const body = (s.markdownBody as string).length > maxChars
-            ? (s.markdownBody as string).substring(0, maxChars) + "\n...[truncated]"
-            : (s.markdownBody as string);
-          skillLines.push(`${headerLine}\n${body}`);
-          skillTokensUsed += headerTokens + estimateTokenCount(body);
-        } else {
-          // Assigned skills appear in the read_skill catalog instead
-          // (executePromptWithMcp); listing them here too would duplicate it.
-          if (explicitSkillIds.length > 0) continue;
-          const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
-          const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
-          const line = `${header}: ${s.description}${toolsNote}${mcpNote}`;
-          const lineTokens = estimateTokenCount(line);
-          if (skillTokensUsed + lineTokens > layerBudgets.capabilities) break;
-          skillLines.push(line);
-          skillTokensUsed += lineTokens;
-        }
+        const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
+        const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
+        const line = `${header}: ${s.description}${toolsNote}${mcpNote}`;
+        const lineTokens = estimateTokenCount(line);
+        if (skillTokensUsed + lineTokens > layerBudgets.capabilities) break;
+        skillLines.push(line);
+        skillTokensUsed += lineTokens;
       }
       if (skillLines.length > 1) trackSection("skills", skillLines.join("\n"));
 
@@ -1428,15 +1401,20 @@ export async function executePromptWithMcp(
   // "no tools" check, so an agent with skills but no MCP tools is still treated
   // as tool-less there.
   let skillCatalog = "";
+  let skillProcedures = "";
   try {
-    const readableSkills = await resolveReadableSkills(agentId, orgId);
-    const skillTools = skillToolsFor(readableSkills);
+    const { own, team } = await resolveReadableSkillSets(agentId, orgId);
+    const inlineBudget = options?.runtimeConfig?.skillInlineBudgetTokens;
+    const { inline, onDemand } = planSkillContext(own, team, typeof inlineBudget === "number" ? inlineBudget : DEFAULT_SKILL_INLINE_BUDGET_TOKENS);
+    skillProcedures = skillProceduresPrompt(inline);
+    if (skillProcedures) promptSectionMetrics.push({ category: "skill_procedures", tokenCount: estimateTokenCount(skillProcedures) });
+    const skillTools = skillToolsFor(onDemand);
     if (skillTools.length > 0) {
       availableTools.push(...skillTools);
-      skillCatalog = skillCatalogPrompt(readableSkills);
+      skillCatalog = skillCatalogPrompt(onDemand);
     }
   } catch (skErr: any) {
-    console.warn(`[skills] on-demand skill loading unavailable (non-fatal): ${skErr.message}`);
+    console.warn(`[skills] skill loading unavailable (non-fatal): ${skErr.message}`);
   }
 
   steps[0].status = "completed";
@@ -1646,6 +1624,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     instructionHeader,
     baseInstructions: skillCatalog ? `${baseInstructions}\n\n${skillCatalog}` : baseInstructions,
     kbContext,
+    skillProcedures,
   });
 
   let toolCallResults: Array<{

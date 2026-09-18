@@ -23,14 +23,20 @@ export interface AgentSystemMessageParts {
   /** Retrieved KB/RAG context block (already carrying its own "## KNOWLEDGE
    *  BASE CONTEXT" header and leading newlines), or empty when none. */
   kbContext?: string;
+  /** The agent's own inlined skill procedures (already carrying its "## SKILL
+   *  PROCEDURES" header and leading newlines), or empty when none. They are
+   *  the agent's instructions, so they sit with them at the top, ahead of
+   *  the reference material. */
+  skillProcedures?: string;
 }
 
 export function assembleAgentSystemMessage(parts: AgentSystemMessageParts): string {
   const { agentSystemPrompt, industry, instructionHeader, baseInstructions } = parts;
   const kbContext = parts.kbContext ?? "";
+  const skillProcedures = parts.skillProcedures ?? "";
   // instructions (top) -> reference docs (middle) -> task instructions (bottom).
   if (agentSystemPrompt) {
-    return `${agentSystemPrompt}${kbContext}\n\n${instructionHeader}\n${baseInstructions}`;
+    return `${agentSystemPrompt}${skillProcedures}${kbContext}\n\n${instructionHeader}\n${baseInstructions}`;
   }
-  return `You are an autonomous agent executing a task.\nIndustry context: ${industry || "general"}.${kbContext}\n\n${baseInstructions}`;
+  return `You are an autonomous agent executing a task.\nIndustry context: ${industry || "general"}.${skillProcedures}${kbContext}\n\n${baseInstructions}`;
 }
