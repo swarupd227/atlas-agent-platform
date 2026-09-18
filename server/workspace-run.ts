@@ -116,6 +116,58 @@ interface Checkpoint {
    *  still put the files in the container -- the checkpoint is the only thing
    *  that survives an approval pause. */
   fileIds?: string[];
+  /** What the run put in front of the model, measured once at start. Absent
+   *  on runs started before this was recorded. */
+  contextUsage?: ContextUsage;
+}
+
+/** Retrieved passages from one linked knowledge base. similarity is null when
+ *  pgvector is off and retrieval fell back to the most recent chunks. */
+export interface KnowledgeRetrieval {
+  knowledgeBaseId: string;
+  name: string | null;
+  passages: number;
+  tokens: number;
+  topSimilarity: number | null;
+}
+
+export interface ContextUsage {
+  /** Estimated tokens per context layer (4 characters ≈ 1 token, the same
+   *  estimate agent-runtime.ts records), zero-token layers left out. */
+  layers: Array<{ layer: string; tokens: number }>;
+  totalTokens: number;
+  /** Linked knowledge bases that were searched (at most 3 per run). */
+  knowledgeSearched: number;
+  knowledge: KnowledgeRetrieval[];
+}
+
+const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+
+/** Pure: the layer breakdown of a run's opening context. */
+export function measureContextUsage(parts: {
+  instructions: string;
+  knowledge: string;
+  skillCatalog: string;
+  request: string;
+  attachments: string;
+  brandAssets: string;
+  knowledgeSearched: number;
+  retrievals: KnowledgeRetrieval[];
+}): ContextUsage {
+  const layers = [
+    { layer: "system_prompt", tokens: estimateTokens(parts.instructions) },
+    { layer: "kb_retrieval", tokens: estimateTokens(parts.knowledge) },
+    { layer: "skills", tokens: estimateTokens(parts.skillCatalog) },
+    { layer: "task_prompt", tokens: estimateTokens(parts.request) },
+    { layer: "attachments", tokens: estimateTokens(parts.attachments) },
+    { layer: "brand_assets", tokens: estimateTokens(parts.brandAssets) },
+  ].filter((l) => l.tokens > 0);
+  return {
+    layers,
+    totalTokens: layers.reduce((sum, l) => sum + l.tokens, 0),
+    knowledgeSearched: parts.knowledgeSearched,
+    knowledge: parts.retrievals,
+  };
 }
 
 export interface WorkspaceRunView {
@@ -135,6 +187,7 @@ export interface WorkspaceRunView {
   };
   steps: any[];
   generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>;
+  context?: ContextUsage | null;
 }
 
 function toolFuncName(idx: number, tool: AvailableTool): string {
@@ -167,26 +220,43 @@ async function buildContext(agentId: string, orgId: string | undefined, mcpServe
  *  context-stuffing pattern agent-runtime.ts's executePromptWithMcp uses.
  *  Never throws: a KB error degrades to "no KB context" rather than failing
  *  the whole run, matching this file's existing non-fatal-trace-write style. */
-async function buildSystemMessageWithKbContext(agentId: string, input: string, callerRole: RoleId | undefined, baseSystemMessage: string): Promise<string> {
+async function buildKbContext(agentId: string, input: string, callerRole: RoleId | undefined, orgId: string | undefined): Promise<{ section: string; searched: number; retrievals: KnowledgeRetrieval[] }> {
+  const none = { section: "", searched: 0, retrievals: [] as KnowledgeRetrieval[] };
   try {
     const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
-    if (linkedKbs.length === 0) return baseSystemMessage;
+    if (linkedKbs.length === 0) return none;
 
+    const searchedLinks = linkedKbs.slice(0, 3);
     const kbChunks: string[] = [];
-    for (const link of linkedKbs.slice(0, 3)) {
+    const retrievals: KnowledgeRetrieval[] = [];
+    for (const link of searchedLinks) {
       const linkConfig = (link.retrievalConfig as any) || {};
       const topK = typeof linkConfig.topK === "number" ? linkConfig.topK : 5;
       const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
       const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, input, topK, scoreThreshold, callerRole);
       if (chunks.length > 0) {
-        kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map(c => c.content).join("\n\n")}`);
+        const block = `--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map(c => c.content).join("\n\n")}`;
+        kbChunks.push(block);
+        const scores = chunks.map(c => c.similarity).filter((s): s is number => typeof s === "number");
+        const kb = await storage.getKnowledgeBase(link.knowledgeBaseId, orgId).catch(() => undefined);
+        retrievals.push({
+          knowledgeBaseId: link.knowledgeBaseId,
+          name: kb?.name ?? null,
+          passages: chunks.length,
+          tokens: estimateTokens(block),
+          topSimilarity: scores.length ? Math.max(...scores) : null,
+        });
       }
     }
-    if (kbChunks.length === 0) return baseSystemMessage;
-    return `${baseSystemMessage}\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}`;
+    if (kbChunks.length === 0) return { ...none, searched: searchedLinks.length };
+    return {
+      section: `\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}`,
+      searched: searchedLinks.length,
+      retrievals,
+    };
   } catch (e: any) {
     console.error("[workspace-run] KB retrieval failed (non-fatal):", e.message);
-    return baseSystemMessage;
+    return none;
   }
 }
 
@@ -267,6 +337,7 @@ function view(run: WorkspaceRun): WorkspaceRunView {
     pending,
     steps: (cp?.steps as any[]) ?? [],
     generatedFiles: cp?.generatedFiles,
+    context: cp?.contextUsage ?? null,
   };
 }
 
@@ -345,7 +416,8 @@ export async function startWorkspaceRun(params: {
   // happens once, from the initial ask, mirroring how a single-turn RAG
   // chat is normally primed — the Workspace loop's later tool-calling
   // iterations don't re-query the KB.
-  const systemMessageWithKb = await buildSystemMessageWithKbContext(agentId, input, actorId as RoleId | undefined, baseSystemMessage);
+  const kbContext = await buildKbContext(agentId, input, actorId as RoleId | undefined, orgId);
+  const systemMessageWithKb = baseSystemMessage + kbContext.section;
   // On-demand skills (server/builtin-skill-tools.ts): the catalog is fixed into
   // this run's system message here; advance() offers the matching read_skill
   // tool on every iteration, including after an approval pause.
@@ -367,6 +439,16 @@ export async function startWorkspaceRun(params: {
     maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
     skillAllowlist,
     fileIds: allFileIds,
+    contextUsage: measureContextUsage({
+      instructions: baseSystemMessage,
+      knowledge: kbContext.section,
+      skillCatalog: skillCatalog || "",
+      request: input,
+      attachments: attachmentContext || "",
+      brandAssets: brandContext || "",
+      knowledgeSearched: kbContext.searched,
+      retrievals: kbContext.retrievals,
+    }),
   };
 
   const [run] = await db.insert(workspaceRuns).values({
@@ -808,6 +890,11 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
           .map((s: any) => s.name),
         modelName: cp.modelName,
         iterationsUsed: cp.iterationsUsed,
+        // Same shape agent-runtime.ts records, so the agent's Context Profile
+        // tab shows Workspace runs too. No budgets: Workspace runs don't apply one.
+        ...(cp.contextUsage ? {
+          contextLayerUsage: cp.contextUsage.layers.map(l => ({ layer: l.layer, tokensUsed: l.tokens, budgetAllocated: null })),
+        } : {}),
         capturedAt: new Date().toISOString(),
       };
       const provenanceHash = createHash("sha256")

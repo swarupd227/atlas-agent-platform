@@ -28,6 +28,29 @@ interface RunView {
   traceId: string | null;
   pending: null | { approvalId: string | null; summary: string | null; toolName: string; args: Record<string, unknown> };
   steps: Array<{ name?: string; type?: string; status?: string; outcome?: string }>;
+  context?: RunContext | null;
+}
+
+/** What the run put in front of the model (workspace-run.ts ContextUsage). */
+interface RunContext {
+  layers: Array<{ layer: string; tokens: number }>;
+  totalTokens: number;
+  knowledgeSearched: number;
+  knowledge: Array<{ knowledgeBaseId: string; name: string | null; passages: number; tokens: number; topSimilarity: number | null }>;
+}
+
+const tokens = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "token" : "tokens"}`;
+
+/** Proof line for what the agent knew; "not measured" for runs that didn't record it. */
+export function contextProof(context: RunContext | null | undefined): ProofEnvelope["context"] {
+  if (!context) return { status: "not_measured", reason: "This run didn't record what the agent saw. Team runs and runs started before 18 Sep 2026 don't." };
+  const passages = context.knowledge.reduce((sum, k) => sum + k.passages, 0);
+  const knowledge = context.knowledgeSearched === 0
+    ? "no knowledge base linked"
+    : passages === 0
+      ? `${context.knowledgeSearched} knowledge ${context.knowledgeSearched === 1 ? "base" : "bases"} searched, nothing relevant found`
+      : `${passages} ${passages === 1 ? "passage" : "passages"} from ${context.knowledge.length} knowledge ${context.knowledge.length === 1 ? "base" : "bases"}`;
+  return { status: "measured", summary: `${tokens(context.totalTokens)} of context · ${knowledge}` };
 }
 
 type Input = { agent: string; request: string };
@@ -119,6 +142,7 @@ export function runArtifact(run: RunView, agentName: string) {
       costUsd: run.costUsd,
       traceId: run.traceId,
       steps: run.steps.slice(-20).map((s) => ({ name: s.name, status: s.status, outcome: s.outcome })),
+      context: run.context ?? null,
     },
     fullViewHref: run.traceId ? `/traces/${run.traceId}` : "/workspace",
   };
@@ -133,7 +157,7 @@ export function runProof(run: RunView, agent?: RunnableAgent): Partial<ProofEnve
       status: "measured",
       summary: `${toolSteps.length} tool ${toolSteps.length === 1 ? "call" : "calls"} through the agent's policy gate${denied ? ` · ${denied} denied` : ""} · ${run.traceId ? "signed trace recorded" : "no trace yet"}`,
     },
-    context: { status: "not_measured", reason: "What the agent retrieved isn't recorded for Workspace runs yet." },
+    context: contextProof(run.context),
     industry: concepts.length > 0
       ? { status: "measured", summary: concepts.slice(0, 4).join(" · ") }
       : { status: "not_measured", reason: "No industry concepts are tagged on this agent." },

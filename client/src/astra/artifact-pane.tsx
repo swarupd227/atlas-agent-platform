@@ -142,6 +142,60 @@ function ConnectorList({ props }: { props: Record<string, any> }) {
   );
 }
 
+const CONTEXT_LAYER_LABEL: Record<string, string> = {
+  system_prompt: "Instructions & policies",
+  kb_retrieval: "Retrieved knowledge",
+  skills: "Skill catalog",
+  task_prompt: "Your request",
+  attachments: "Attachments",
+  brand_assets: "Brand assets",
+};
+
+/** What the run put in front of the model: estimated tokens per layer and the
+ *  knowledge it retrieved. Only rendered when the run recorded it. */
+function WhatItKnew({ context }: { context: Record<string, any> }) {
+  const layers: Array<{ layer: string; tokens: number }> = context.layers ?? [];
+  const knowledge: any[] = context.knowledge ?? [];
+  const total = Math.max(context.totalTokens ?? 0, 1);
+  return (
+    <div>
+      <Label>What it knew · ~{(context.totalTokens ?? 0).toLocaleString()} tokens</Label>
+      <ul className="space-y-1.5">
+        {layers.map((l) => (
+          <li key={l.layer} className="grid grid-cols-[9.5rem_1fr_4.5rem] items-center gap-2 text-xs">
+            <span className="truncate text-muted-foreground">{CONTEXT_LAYER_LABEL[l.layer] ?? l.layer.replace(/_/g, " ")}</span>
+            <span className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <span className="block h-full rounded-full bg-primary/70" style={{ width: `${Math.max(2, Math.round((l.tokens / total) * 100))}%` }} />
+            </span>
+            <span className="text-right font-mono tabular-nums text-muted-foreground">{l.tokens.toLocaleString()}</span>
+          </li>
+        ))}
+      </ul>
+      {knowledge.length === 0 && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {context.knowledgeSearched === 0
+            ? "No knowledge base is linked to this agent."
+            : `Searched ${context.knowledgeSearched} knowledge ${context.knowledgeSearched === 1 ? "base" : "bases"}; nothing matched the request closely enough.`}
+        </p>
+      )}
+      {knowledge.length > 0 && (
+        <ul className="mt-1 space-y-1 font-mono text-xs">
+          {knowledge.map((k) => (
+            <li key={k.knowledgeBaseId} className="flex items-baseline gap-2">
+              <span className="min-w-0 flex-1 truncate">{k.name ?? k.knowledgeBaseId}</span>
+              <span className="shrink-0 text-muted-foreground tabular-nums">
+                {k.passages} {k.passages === 1 ? "passage" : "passages"}
+                {k.topSimilarity == null ? " · by recency" : ` · best match ${Math.round(k.topSimilarity * 100)}%`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 text-[11px] text-muted-foreground/80">Token counts are estimates (4 characters ≈ 1 token), taken when the run started.</p>
+    </div>
+  );
+}
+
 function Run({ props }: { props: Record<string, any> }) {
   return (
     <div className="space-y-4 text-sm">
@@ -169,6 +223,7 @@ function Run({ props }: { props: Record<string, any> }) {
           <pre className="overflow-x-auto border-t border-border p-3 font-mono text-xs">{JSON.stringify(props.structured, null, 2)}</pre>
         </details>
       )}
+      {props.context && <WhatItKnew context={props.context} />}
       {props.steps?.length > 0 && (
         <div>
           <Label>Steps</Label>
