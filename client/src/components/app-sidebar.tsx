@@ -107,7 +107,7 @@ export function AppSidebar() {
 function FullAppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
-  const { enabled: astraEnabled } = useAstraEnabled();
+  const { enabled: astraEnabled, isLoading: astraLoading } = useAstraEnabled();
 
   const { data: alertsData } = useQuery<any[]>({
     queryKey: ["/api/observability/alerts"],
@@ -150,7 +150,7 @@ function FullAppSidebar() {
         { title: "Process Flows", url: "/process-flows", icon: Workflow },
         { title: "Skills", url: "/skills", icon: Layers },
         { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
-        { title: "Business terms", url: "/ontology", icon: Network, testId: "ontology" },
+        { title: "Ontology", url: "/ontology", icon: Network },
         { title: "Connections", url: "/integrations", icon: Plug, testId: "integrations" },
       ],
     },
@@ -268,6 +268,8 @@ function FullAppSidebar() {
               <span className="font-mono text-[11px] text-muted-foreground">Agents platform</span>
             </span>
           </Link>
+          {/* Hold the button's space while the flag loads, so the menu below never jumps. */}
+          {astraLoading && <div className="h-9" aria-hidden="true" />}
           {astraEnabled && isRouteAllowed("/astra") && (
             <Link
               href="/astra"

@@ -103,6 +103,9 @@ const STARTER_TEMPLATES: Array<{ key: string; name: string; blurb: string; nodes
 
 // Staged status lines shown while the AI drafts a flow, so the ~6s round-trip
 // reads as visible progress instead of a blank canvas.
+// A question the studio asks before drawing (server/process-flow-clarify.ts).
+interface ClarifyQuestion { id: string; question: string; why: string; options: string[] }
+
 // Overlays on the canvas start past the step palette (FlowGraphCanvas's left rail).
 const PALETTE_OFFSET = "left-[76px]";
 
@@ -159,19 +162,30 @@ export default function ProcessFlows() {
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [genMsgIdx, setGenMsgIdx] = useState(0);
 
+  const outcomeContext = urlParams.outcomeName
+    ? { name: urlParams.outcomeName, kpis: urlParams.kpis.split(",").filter(Boolean).map(k => ({ name: k.trim() })) }
+    : undefined;
+
+  // Clarifying questions: before drawing, the studio asks about gaps that would
+  // change the flow's shape (a threshold with no value, an approval with no
+  // approver...). Null = not asked yet; the person can always skip.
+  const [clarify, setClarify] = useState<{ questions: ClarifyQuestion[]; answers: Record<string, string> } | null>(null);
+  // What the person told the studio for the flow currently drawn -- shown under the name.
+  const [drawnFrom, setDrawnFrom] = useState<Array<{ question: string; answer: string }>>([]);
+
   const generateMutation = useMutation({
-    mutationFn: async (description: string) => {
-      const outcomeContext = urlParams.outcomeName
-        ? { name: urlParams.outcomeName, kpis: urlParams.kpis.split(",").filter(Boolean).map(k => ({ name: k.trim() })) }
-        : undefined;
+    mutationFn: async ({ description, clarifications = [] }: { description: string; clarifications?: Array<{ question: string; answer: string }> }) => {
       const res = await apiRequest("POST", "/api/ai/generate-process-flow", {
         description,
         ...(outcomeContext ? { outcomeContext } : {}),
         fileIds: aiFiles.map(f => f.id),
+        ...(clarifications.length ? { clarifications } : {}),
       });
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: (data, vars) => {
+      setClarify(null);
+      setDrawnFrom(Array.isArray(data.clarifications) ? data.clarifications : (vars.clarifications || []));
       // Server now returns a real graph (nodes + edges, branches included)
       // rather than a flat step list -- normalizeToGraph handles both shapes,
       // so this also stays compatible if an older cached response ever shows up.
@@ -197,6 +211,37 @@ export default function ProcessFlows() {
       toast({ title: "Generation failed", description: "Could not generate flow. Please try again.", variant: "destructive" });
     },
   });
+
+  const clarifyMutation = useMutation({
+    mutationFn: async (description: string) => {
+      const res = await apiRequest("POST", "/api/ai/process-flow/clarify", {
+        description,
+        ...(outcomeContext ? { outcomeContext } : {}),
+        fileIds: aiFiles.map(f => f.id),
+      });
+      return res.json() as Promise<{ ready: boolean; questions: ClarifyQuestion[] }>;
+    },
+    onSuccess: (data, description) => {
+      if (!data.questions?.length) { generateMutation.mutate({ description }); return; }
+      setClarify({ questions: data.questions, answers: {} });
+    },
+    // Checking must never stand between someone and their flow: on any failure, just draw.
+    onError: (_e, description) => generateMutation.mutate({ description }),
+  });
+
+  // "Generate Flow": ask first, unless the questions are already on screen.
+  const startGenerate = () => {
+    if (clarify) { drawWithAnswers(); return; }
+    clarifyMutation.mutate(aiDescription);
+  };
+  const drawWithAnswers = (skip = false) => {
+    const clarifications = skip || !clarify ? [] : clarify.questions
+      .map(q => ({ question: q.question, answer: (clarify.answers[q.id] || "").trim() }))
+      .filter(c => c.answer);
+    generateMutation.mutate({ description: aiDescription, clarifications });
+  };
+  const setAnswer = (id: string, answer: string) =>
+    setClarify(c => (c ? { ...c, answers: { ...c.answers, [id]: answer } } : c));
 
   // Advance the generation status line while the draft is in flight.
   useEffect(() => {
@@ -342,6 +387,7 @@ export default function ProcessFlows() {
         setFlowName(rec.name || g.name || "Process Flow");
         setSavedFlowId(rec.id);
         setValidationIssues([]);
+        setDrawnFrom([]);
         setLibraryOpen(false);
         toast({ title: "Flow loaded" });
       }
@@ -375,6 +421,8 @@ export default function ProcessFlows() {
   // ---- Voice dictation for the "Describe Workflow" panel ----
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
+  // Where dictation lands: the description, or the answer to a clarifying question.
+  const voiceTargetRef = useRef<string | null>(null);
   const voiceSupported = typeof window !== "undefined" && (("SpeechRecognition" in window) || ("webkitSpeechRecognition" in window));
 
   const toggleVoice = useCallback(() => {
@@ -390,7 +438,10 @@ export default function ProcessFlows() {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) chunk += e.results[i][0].transcript;
       }
-      if (chunk) setAiDescription(prev => (prev ? prev.trimEnd() + " " : "") + chunk.trim());
+      if (!chunk) return;
+      const target = voiceTargetRef.current;
+      if (target) setClarify(c => (c ? { ...c, answers: { ...c.answers, [target]: ((c.answers[target] || "").trimEnd() + " " + chunk.trim()).trim() } } : c));
+      else setAiDescription(prev => (prev ? prev.trimEnd() + " " : "") + chunk.trim());
     };
     rec.onend = () => setListening(false);
     rec.onerror = () => setListening(false);
@@ -425,6 +476,8 @@ export default function ProcessFlows() {
   const decisionCount = graph.nodes.filter(n => n.type === "make_decision").length;
   const wordCount = aiDescription.trim() ? aiDescription.trim().split(/\s+/).length : 0;
   const describeOpen = aiPanelOpen && !generateMutation.isPending;
+  const checking = clarifyMutation.isPending;
+  const answeredCount = clarify ? clarify.questions.filter(q => (clarify.answers[q.id] || "").trim()).length : 0;
 
   return (
     <div className="astra-scope flex flex-col h-full bg-background text-foreground font-sans" data-testid="page-process-flows">
@@ -455,6 +508,18 @@ export default function ProcessFlows() {
                 {totalMins > 0 && <span>{totalMins >= 60 ? `~${Math.round(totalMins / 60)}h` : `~${totalMins}m`} total</span>}
                 {linkedTeamAgent && <span>runs as <a href={`/agents/teams/${linkedTeamAgent.id}`} className="text-foreground underline underline-offset-2">{linkedTeamAgent.name}</a></span>}
                 <span>{savedFlowId ? "saved in library" : "not saved yet"}</span>
+                {drawnFrom.length > 0 && (
+                  <details className="group relative font-sans" data-testid="details-drawn-from">
+                    <summary className="cursor-pointer list-none text-foreground underline decoration-dotted underline-offset-2">
+                      based on {drawnFrom.length} answer{drawnFrom.length !== 1 ? "s" : ""}
+                    </summary>
+                    <ul className="absolute left-0 top-6 z-40 flex w-[420px] max-w-[80vw] flex-col gap-2 rounded-lg border bg-card p-3 text-xs shadow-lg">
+                      {drawnFrom.map((c, i) => (
+                        <li key={i}><span className="text-muted-foreground">{c.question}</span><br /><span className="font-medium text-foreground">{c.answer}</span></li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </>
             ) : (
               <span className="font-sans text-sm">Describe how a process runs and the studio draws it. For a goal you're accountable for, start from Outcomes instead.</span>
@@ -591,11 +656,12 @@ export default function ProcessFlows() {
             <div className={`relative flex flex-col ${describeExpanded ? "flex-1 min-h-0" : ""}`}>
               <Textarea
                 value={aiDescription}
-                onChange={e => setAiDescription(e.target.value)}
+                onChange={e => { setAiDescription(e.target.value); if (clarify) setClarify(null); }}
+                onFocus={() => { voiceTargetRef.current = null; }}
                 onKeyDown={e => {
-                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && (aiDescription.trim() || aiFiles.length)) {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && (aiDescription.trim() || aiFiles.length) && !checking) {
                     e.preventDefault();
-                    generateMutation.mutate(aiDescription);
+                    startGenerate();
                   }
                 }}
                 placeholder={"e.g. When a new supplier invoice arrives, check it against our purchase order. Invoices over $10K need manager approval; the rest go straight through. Then schedule payment and notify the supplier."}
@@ -612,13 +678,58 @@ export default function ProcessFlows() {
               context="process_flow"
               value={aiFiles}
               onChange={setAiFiles}
-              disabled={generateMutation.isPending}
+              disabled={generateMutation.isPending || checking}
               label="Attach an SOP, runbook or policy"
             />
+            {clarify && (
+              <div className="flex max-h-[42vh] flex-col gap-3 overflow-y-auto rounded-xl border bg-background p-3" data-testid="panel-clarify">
+                <div>
+                  <p className="text-sm font-medium">A few details would change how this flow is drawn</p>
+                  <p className="text-xs text-muted-foreground">Answer what you can. Anything left blank, the studio decides.</p>
+                </div>
+                {clarify.questions.map(q => {
+                  const answer = clarify.answers[q.id] || "";
+                  return (
+                    <div key={q.id} className="flex flex-col gap-1.5" data-testid={`clarify-${q.id}`}>
+                      <p className="text-sm">{q.question}</p>
+                      {q.why && <p className="-mt-1 text-[11px] text-muted-foreground">{q.why}</p>}
+                      {q.options.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {q.options.map(o => (
+                            <button
+                              key={o}
+                              type="button"
+                              onClick={() => setAnswer(q.id, answer === o ? "" : o)}
+                              aria-pressed={answer === o}
+                              className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${answer === o ? "border-transparent bg-primary text-primary-foreground" : "bg-card hover:border-foreground/40"}`}
+                              data-testid={`clarify-option-${q.id}`}
+                            >
+                              {o}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <Input
+                        value={q.options.includes(answer) ? "" : answer}
+                        onChange={e => setAnswer(q.id, e.target.value)}
+                        onFocus={() => { voiceTargetRef.current = q.id; }}
+                        placeholder={q.options.length ? "Or type your own answer" : "Your answer"}
+                        className="h-8 bg-card text-sm"
+                        data-testid={`input-clarify-${q.id}`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11px] text-muted-foreground">
-                {wordCount > 0 ? `${wordCount} word${wordCount !== 1 ? "s" : ""}` : "Type, dictate, or attach a document"}
-                {aiFiles.length > 0 ? ` · ${aiFiles.length} file${aiFiles.length !== 1 ? "s" : ""}` : ""}
+                {clarify
+                  ? `${answeredCount} of ${clarify.questions.length} answered`
+                  : <>
+                      {wordCount > 0 ? `${wordCount} word${wordCount !== 1 ? "s" : ""}` : "Type, dictate, or attach a document"}
+                      {aiFiles.length > 0 ? ` · ${aiFiles.length} file${aiFiles.length !== 1 ? "s" : ""}` : ""}
+                    </>}
               </span>
               <div className="ml-auto flex items-center gap-2">
                 {voiceSupported && (
@@ -633,16 +744,28 @@ export default function ProcessFlows() {
                     {listening ? "Stop dictating" : "Dictate"}
                   </Button>
                 )}
-                <Button
-                  size="sm"
-                  onClick={() => generateMutation.mutate(aiDescription)}
-                  disabled={(!aiDescription.trim() && !aiFiles.length) || generateMutation.isPending}
-                  title="Generate the flow (Ctrl+Enter)"
-                  data-testid="button-ai-generate"
-                >
-                  {generateMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
-                  Generate Flow
-                </Button>
+                {clarify && (
+                  <Button size="sm" variant="outline" onClick={() => drawWithAnswers(true)} data-testid="button-clarify-skip">
+                    Skip questions, just draw it
+                  </Button>
+                )}
+                {clarify ? (
+                  <Button size="sm" onClick={() => drawWithAnswers()} data-testid="button-clarify-draw">
+                    <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                    Draw the flow
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={startGenerate}
+                    disabled={(!aiDescription.trim() && !aiFiles.length) || generateMutation.isPending || checking}
+                    title="Generate the flow (Ctrl+Enter)"
+                    data-testid="button-ai-generate"
+                  >
+                    {generateMutation.isPending || checking ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                    {checking ? "Checking details…" : "Generate Flow"}
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -709,7 +832,7 @@ export default function ProcessFlows() {
                     <button
                       key={tpl.key}
                       type="button"
-                      onClick={() => { replaceLaidOut({ nodes: tpl.nodes, edges: tpl.edges }); setFlowName(tpl.name); setSavedFlowId(null); setValidationIssues([]); }}
+                      onClick={() => { replaceLaidOut({ nodes: tpl.nodes, edges: tpl.edges }); setFlowName(tpl.name); setSavedFlowId(null); setValidationIssues([]); setDrawnFrom([]); }}
                       className="flex flex-col gap-1 rounded-xl border bg-card p-3 text-left transition-colors hover:border-foreground/40"
                       data-testid={`template-${tpl.key}`}
                     >
@@ -809,7 +932,7 @@ export default function ProcessFlows() {
             <Button variant="outline" onClick={() => setClearConfirmOpen(false)} data-testid="button-clear-cancel">Cancel</Button>
             <Button
               variant="destructive"
-              onClick={() => { replaceGraph({ nodes: [], edges: [] }); setFlowName(""); setSavedFlowId(null); setValidationIssues([]); setClearConfirmOpen(false); }}
+              onClick={() => { replaceGraph({ nodes: [], edges: [] }); setFlowName(""); setSavedFlowId(null); setValidationIssues([]); setDrawnFrom([]); setClearConfirmOpen(false); }}
               data-testid="button-clear-confirm"
             >
               Clear flow

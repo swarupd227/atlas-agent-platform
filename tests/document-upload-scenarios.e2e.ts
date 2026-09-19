@@ -382,6 +382,14 @@ test("DOC-3. Process Flow: a procedure PDF becomes a flow that keeps its branch"
 
   await expect(page.getByTestId("button-ai-generate"), "a document alone must enable generation").toBeEnabled();
   await page.getByTestId("button-ai-generate").click();
+  // The studio may first ask about gaps in the description; this test is about
+  // the document, so skip any questions and let it draw.
+  const skip = page.getByTestId("button-clarify-skip");
+  for (let i = 0; i < 90; i++) {
+    if (await page.locator(".react-flow__node").count()) break;
+    if (await skip.isVisible()) { await skip.click(); break; }
+    await page.waitForTimeout(1000);
+  }
 
   // A documented process must not be squashed into the 5-10 node shape that
   // suits a one-line description.

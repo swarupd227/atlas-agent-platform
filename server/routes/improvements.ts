@@ -54,6 +54,7 @@ import { getAnthropicClient, callClaude, stripJsonFences } from "../claude";
 import { runMeetingTranscription, aiConfigured } from "../meeting-transcription";
 import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError } from "../team-build";
 import { proposeTeam } from "../team-proposal";
+import { buildClarifyPrompt, parseClarifyResponse, readClarifications, formatClarifications } from "../process-flow-clarify";
 
 const openai = new OpenAI({
   // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
@@ -868,6 +869,35 @@ Revenue:
     }
   });
 
+  // Before a described workflow is drawn: ask about the gaps that would change
+  // the flow's shape (see server/process-flow-clarify.ts). Never blocks -- an
+  // unreadable reply is "nothing to ask", and the page always offers "skip".
+  router.post("/api/ai/process-flow/clarify", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+        return res.status(503).json({ error: "AI assistant is not configured" });
+      }
+      const { description, outcomeContext, fileIds } = req.body;
+      const ids: string[] = Array.isArray(fileIds) ? fileIds.filter((f: any) => typeof f === "string").slice(0, 5) : [];
+      const described = typeof description === "string" ? description.trim() : "";
+      if (!ids.length && !described) {
+        return res.status(400).json({ error: "description is required, or attach a process document" });
+      }
+      const sources = ids.length ? await buildSourceDocuments(ids, getOrgId(req)) : null;
+      const prompt = buildClarifyPrompt({
+        description: described,
+        sourcesText: sources?.text,
+        contextLine: outcomeContext ? `\nOutcome context: ${JSON.stringify(outcomeContext)}` : "",
+      });
+      const raw = await callClaude({ model: "claude-haiku-4-5", system: "", user: prompt, maxTokens: 1200, jsonMode: true });
+      const questions = parseClarifyResponse(stripJsonFences(raw));
+      res.json({ ready: questions.length === 0, questions });
+    } catch (e: any) {
+      console.error("[process-flow/clarify]", e?.message);
+      res.status(500).json({ error: "Could not check the description" });
+    }
+  });
+
   router.post("/api/ai/generate-process-flow", async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
@@ -876,6 +906,8 @@ Revenue:
       const { description, outcomeContext, fileIds } = req.body;
       const ids: string[] = Array.isArray(fileIds) ? fileIds.filter((f: any) => typeof f === "string").slice(0, 5) : [];
       const described = typeof description === "string" ? description.trim() : "";
+      // Answers to the clarifying questions, if the person gave any.
+      const clarifications = readClarifications(req.body.clarifications);
 
       // A process document IS the description — this is the case the client
       // actually starts from ("here is our SOP, build the flow"), so requiring
@@ -900,7 +932,7 @@ Revenue:
       const prompt = `You are a business process design assistant. Convert the following workflow description into a process flow GRAPH using only these step types: ${validTypes.join(", ")}.${contextLine}
 
 Workflow description: "${described || "See the attached process document(s) below — derive the workflow from them."}"
-${sources ? `\n${sources.text}\n` : ""}
+${sources ? `\n${sources.text}\n` : ""}${formatClarifications(clarifications)}
 Return a JSON object with:
 - "name": a short name for this process (max 5 words)
 - "nodes": an array of steps, each with: "id" (short unique string like "n1", "n2"), "type" (one of the valid types), "label" (plain English name max 5 words), "description" (1 sentence), "actor" (who does this: "System", "AI", "Customer", "Manager", or a relevant role)
@@ -980,7 +1012,7 @@ Respond ONLY with valid JSON, no markdown fences.`;
         edges = nodes.slice(0, -1).map((n, i) => ({ id: `e${i}`, from: n.id, to: nodes[i + 1].id }));
       }
 
-      res.json({ name: parsed.name || "Generated Flow", nodes, edges });
+      res.json({ name: parsed.name || "Generated Flow", nodes, edges, clarifications });
     } catch (e: any) {
       res.status(500).json({ error: "Failed to generate process flow" });
     }
