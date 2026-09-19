@@ -3029,6 +3029,18 @@ interface ExecutionTier {
 }
 
 // ── HITL gate: create approval record in DB and poll until resolved or timeout ─
+/**
+ * Why a reviewer rejected a gate: the reason they gave with the decision. The
+ * approval's description is the gate's own evidence text (what was up for
+ * decision), so it is never used as the reason -- it made a rejected step's
+ * error a copy of the whole evidence dump.
+ */
+function rejectionReason(approval: { decidedBy?: string | null; constraintsJson?: unknown }): string {
+  const c = (approval.constraintsJson ?? {}) as Record<string, unknown>;
+  const given = [c.rejectionReason, c.notes, c.requestedChanges].find((v) => typeof v === "string" && v.trim());
+  return `Rejected by ${approval.decidedBy || "a reviewer"}${given ? `: ${String(given).trim()}` : ""}`;
+}
+
 export async function waitForApproval(
   agentId: string,
   gateName: string,
@@ -3058,7 +3070,7 @@ export async function waitForApproval(
   if (approval && approval.status !== "pending") {
     console.log(`[agent-runtime] HITL gate "${gateName}" already decided (id=${approval.id}, status=${approval.status}) -- resuming without re-waiting`);
     if (approval.status === "approved") return { approved: true, decidedBy: approval.decidedBy || "human", reason: "Approved" };
-    if (approval.status === "rejected") return { approved: false, decidedBy: approval.decidedBy || "human", reason: approval.description || "Rejected" };
+    if (approval.status === "rejected") return { approved: false, decidedBy: approval.decidedBy || "human", reason: rejectionReason(approval) };
     return { approved: false, reason: `Gate already ${approval.status}` };
   }
   if (!approval) {
@@ -3103,7 +3115,7 @@ export async function waitForApproval(
     }
     if (updated.status === "rejected") {
       console.log(`[agent-runtime] HITL gate "${gateName}" rejected by ${updated.decidedBy}`);
-      return { approved: false, decidedBy: updated.decidedBy || "human", reason: updated.description || "Rejected" };
+      return { approved: false, decidedBy: updated.decidedBy || "human", reason: rejectionReason(updated) };
     }
   }
   await storage.updateApproval(approval.id, { status: "expired" } as any);

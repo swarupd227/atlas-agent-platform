@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import type { DagExecutionRun, Agent, Approval } from "@shared/schema";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
+import { splitWorkingNotes } from "@/lib/agent-output";
 
 // Mirrors computeWaves()'s real output shape (server/dag-execution-engine.ts)
 // -- GET /api/team-agents/:id/dag-waves returns this raw wave plan, where
@@ -158,25 +159,6 @@ function outputEntries(node: DagWaveNodeResult | undefined): Array<{ key: string
   return Object.entries(out)
     .filter(([k, v]) => !OUTPUT_NOISE_KEYS.has(k) && !k.endsWith(FILES_KEY_SUFFIX) && v != null && v !== "")
     .map(([key, value]) => ({ key, text: formatOutputValue(value) }));
-}
-
-/**
- * Agents often narrate their tool loop before the report itself ("Perfect! Now
- * I'll count the placeholders…"), and a multi-turn run concatenates several
- * such lines. When prose like that precedes the report's first heading or
- * divider, split it off so the pane can fold it away instead of leading with it.
- */
-function splitWorkingNotes(text: string): { notes: string | null; report: string } {
-  const lines = text.split("\n");
-  const start = lines.findIndex((l) => /^\s*(#{1,6}\s|---+\s*$|\*\*\*+\s*$)/.test(l));
-  if (start <= 0) return { notes: null, report: text };
-  const notes = lines.slice(0, start).join("\n").trim();
-  const report = lines.slice(start).join("\n").replace(/^\s*(---+|\*\*\*+)\s*\n/, "").trim();
-  // Only prose narration: no tables, lists or code before the report starts, and not most of the output.
-  if (!notes || !report || /(^|\n)\s*([|>*-]|\d+\.|```)/.test(notes) || notes.length > 2500 || notes.length > report.length) {
-    return { notes: null, report: text };
-  }
-  return { notes, report };
 }
 
 /** A gate's recorded decision ({ approved, decidedBy }) under whatever state key it writes. */

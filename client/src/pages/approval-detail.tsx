@@ -58,6 +58,7 @@ import {
 import { StatusBadge } from "@/components/status-badge";
 import { ApprovalDecisionBanner, ApprovalExpiredNote, isDecidable } from "@/components/approval-decision-banner";
 import { GateEvidenceCard, type GateEvidence } from "@/components/gate-evidence";
+import { WorkflowGateApproval } from "@/components/workflow-gate-approval";
 import { DiffViewer } from "@/components/diff-viewer";
 import { PermissionGate, usePermission, useRole } from "@/components/role-provider";
 import type { Approval, Agent, EvalSuite, Policy, AuditEvent, McpApp } from "@shared/schema";
@@ -205,6 +206,22 @@ export default function ApprovalDetail() {
 
   const evidence = (approval.evidenceJson || {}) as Record<string, any>;
   const requirements = requirementsData?.requirements || [];
+
+  // A team run paused at a human checkpoint has its own page: the run's steps, the output up for decision and a
+  // plain approve/reject -- none of the deployment panels below apply to it. An older gate approval recorded
+  // before it pointed at its run keeps the general layout.
+  if (approval.type === "hitl_gate" && evidence.runId) {
+    return (
+      <WorkflowGateApproval
+        approval={approval}
+        requirements={requirements}
+        auditTrail={approval.auditTrail || []}
+        deciding={decideMutation.isPending}
+        onApprove={handleApprove}
+        onReject={(reason) => decideMutation.mutate({ status: "rejected", constraintsJson: { rejectionReason: reason } })}
+      />
+    );
+  }
   const allRequirementsMet = requirements.length > 0 && requirements.every(r => r.met);
   const riskScore = approval.riskScore || 0;
 
@@ -726,304 +743,316 @@ export default function ApprovalDetail() {
         {(!isBusinessMode || showTechnical) && (
         <>
         {/* Diff Viewer Panel */}
-        <Card data-testid="panel-diff-viewer">
-          <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-              <FileCode className="w-4 h-4 text-muted-foreground" />
-              Diff Viewer
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-3">
-              {approval.diffSummary && (
-                <div className="flex flex-col gap-1" data-testid="diff-summary">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Summary</span>
-                  <p className="text-sm">{approval.diffSummary}</p>
-                </div>
-              )}
-              {evidence.configDiff && (
-                <DiffViewer
-                  mode="generic"
-                  configDiff={
-                    Array.isArray(evidence.configDiff)
-                      ? evidence.configDiff.map((l: any) => typeof l === "string" ? l : JSON.stringify(l))
-                      : [typeof evidence.configDiff === "string" ? evidence.configDiff : JSON.stringify(evidence.configDiff)]
-                  }
-                />
-              )}
-              {evidence.blueprintSummary && (
-                <DiffViewer
-                  mode="blueprint"
-                  title="Blueprint Changes"
-                  blueprintNodes={
-                    (Array.isArray(evidence.blueprintSummary) ? evidence.blueprintSummary : [evidence.blueprintSummary]).map((node: any, i: number) => ({
-                      nodeId: `node-${i}`,
-                      name: typeof node === "string" ? node : node.name || JSON.stringify(node),
-                      status: (node.change === "added" ? "added" : node.change === "removed" ? "removed" : node.change ? "modified" : "unchanged") as "added" | "removed" | "modified" | "unchanged",
-                      changes: node.change ? [node.change] : undefined,
-                    }))
-                  }
-                />
-              )}
-              {!approval.diffSummary && !evidence.configDiff && !evidence.blueprintSummary && (
-                <p className="text-xs text-muted-foreground">No diff data available</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Shown only when this approval carries the data it displays. */}
+        {!!(approval.diffSummary || evidence.configDiff || evidence.blueprintSummary) && (
+          <Card data-testid="panel-diff-viewer">
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <FileCode className="w-4 h-4 text-muted-foreground" />
+                Diff Viewer
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3">
+                {approval.diffSummary && (
+                  <div className="flex flex-col gap-1" data-testid="diff-summary">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Summary</span>
+                    <p className="text-sm">{approval.diffSummary}</p>
+                  </div>
+                )}
+                {evidence.configDiff && (
+                  <DiffViewer
+                    mode="generic"
+                    configDiff={
+                      Array.isArray(evidence.configDiff)
+                        ? evidence.configDiff.map((l: any) => typeof l === "string" ? l : JSON.stringify(l))
+                        : [typeof evidence.configDiff === "string" ? evidence.configDiff : JSON.stringify(evidence.configDiff)]
+                    }
+                  />
+                )}
+                {evidence.blueprintSummary && (
+                  <DiffViewer
+                    mode="blueprint"
+                    title="Blueprint Changes"
+                    blueprintNodes={
+                      (Array.isArray(evidence.blueprintSummary) ? evidence.blueprintSummary : [evidence.blueprintSummary]).map((node: any, i: number) => ({
+                        nodeId: `node-${i}`,
+                        name: typeof node === "string" ? node : node.name || JSON.stringify(node),
+                        status: (node.change === "added" ? "added" : node.change === "removed" ? "removed" : node.change ? "modified" : "unchanged") as "added" | "removed" | "modified" | "unchanged",
+                        changes: node.change ? [node.change] : undefined,
+                      }))
+                    }
+                  />
+                )}
+                {!approval.diffSummary && !evidence.configDiff && !evidence.blueprintSummary && (
+                  <p className="text-xs text-muted-foreground">No diff data available</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Eval Report Panel */}
-        <Card data-testid="panel-eval-report">
-          <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-              <FlaskConical className="w-4 h-4 text-muted-foreground" />
-              Eval Report
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-3">
-              {evidence.evalResults?.before && evidence.evalResults?.after ? (
-                <div className="flex flex-col gap-2" data-testid="eval-comparison">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Before / After Comparison</span>
-                  <div className="flex flex-col gap-2">
-                    {(evidence.evalResults.after as any[]).map((suite: any, i: number) => {
-                      const before = (evidence.evalResults.before as any[])?.[i];
-                      const passRate = suite.passRate ?? suite.pass_rate ?? 0;
-                      const beforeRate = before?.passRate ?? before?.pass_rate ?? 0;
-                      const delta = passRate - beforeRate;
+        {/* Shown only when this approval carries the data it displays. */}
+        {!!(evidence.evalResults || (approval.evalSuites?.length ?? 0) > 0) && (
+          <Card data-testid="panel-eval-report">
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <FlaskConical className="w-4 h-4 text-muted-foreground" />
+                Eval Report
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3">
+                {evidence.evalResults?.before && evidence.evalResults?.after ? (
+                  <div className="flex flex-col gap-2" data-testid="eval-comparison">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Before / After Comparison</span>
+                    <div className="flex flex-col gap-2">
+                      {(evidence.evalResults.after as any[]).map((suite: any, i: number) => {
+                        const before = (evidence.evalResults.before as any[])?.[i];
+                        const passRate = suite.passRate ?? suite.pass_rate ?? 0;
+                        const beforeRate = before?.passRate ?? before?.pass_rate ?? 0;
+                        const delta = passRate - beforeRate;
+                        const passColor = passRate >= 90 ? "text-emerald-600 dark:text-emerald-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+                        return (
+                          <div key={i} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`eval-comparison-${i}`}>
+                            <span className="text-sm">{suite.name || `Suite ${i + 1}`}</span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs text-muted-foreground">{beforeRate.toFixed(1)}%</span>
+                              <ArrowLeft className="w-3 h-3 text-muted-foreground rotate-180" />
+                              <span className={`text-sm font-medium ${passColor}`}>{passRate.toFixed(1)}%</span>
+                              {delta > 0 ? (
+                                <div className="flex items-center gap-1" data-testid={`eval-delta-improved-${i}`}>
+                                  <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                  >
+                                    +{delta.toFixed(1)}% improved
+                                  </Badge>
+                                </div>
+                              ) : delta < 0 ? (
+                                <div className="flex items-center gap-1" data-testid={`eval-delta-regressed-${i}`}>
+                                  <TrendingDown className="w-3.5 h-3.5 text-red-500" />
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] text-red-600 dark:text-red-400 border-red-500/20"
+                                  >
+                                    {delta.toFixed(1)}% regressed
+                                  </Badge>
+                                </div>
+                              ) : (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] text-muted-foreground"
+                                >
+                                  No change
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : approval.evalSuites && approval.evalSuites.length > 0 ? (
+                  <div className="flex flex-col gap-2" data-testid="eval-suites-list">
+                    {approval.evalSuites.map((suite, i) => {
+                      const passRate = suite.passRate || 0;
                       const passColor = passRate >= 90 ? "text-emerald-600 dark:text-emerald-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
                       return (
-                        <div key={i} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`eval-comparison-${i}`}>
-                          <span className="text-sm">{suite.name || `Suite ${i + 1}`}</span>
+                        <div key={suite.id} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`eval-suite-${suite.id}`}>
+                          <span className="text-sm">{suite.name}</span>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-muted-foreground">{beforeRate.toFixed(1)}%</span>
-                            <ArrowLeft className="w-3 h-3 text-muted-foreground rotate-180" />
                             <span className={`text-sm font-medium ${passColor}`}>{passRate.toFixed(1)}%</span>
-                            {delta > 0 ? (
-                              <div className="flex items-center gap-1" data-testid={`eval-delta-improved-${i}`}>
-                                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
-                                <Badge
-                                  variant="outline"
-                                  className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                                >
-                                  +{delta.toFixed(1)}% improved
-                                </Badge>
-                              </div>
-                            ) : delta < 0 ? (
-                              <div className="flex items-center gap-1" data-testid={`eval-delta-regressed-${i}`}>
-                                <TrendingDown className="w-3.5 h-3.5 text-red-500" />
-                                <Badge
-                                  variant="outline"
-                                  className="text-[10px] text-red-600 dark:text-red-400 border-red-500/20"
-                                >
-                                  {delta.toFixed(1)}% regressed
-                                </Badge>
-                              </div>
-                            ) : (
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] text-muted-foreground"
-                              >
-                                No change
-                              </Badge>
-                            )}
+                            <span className="text-xs text-muted-foreground">{suite.totalCases || 0} cases</span>
                           </div>
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              ) : approval.evalSuites && approval.evalSuites.length > 0 ? (
-                <div className="flex flex-col gap-2" data-testid="eval-suites-list">
-                  {approval.evalSuites.map((suite, i) => {
-                    const passRate = suite.passRate || 0;
-                    const passColor = passRate >= 90 ? "text-emerald-600 dark:text-emerald-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
-                    return (
-                      <div key={suite.id} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`eval-suite-${suite.id}`}>
-                        <span className="text-sm">{suite.name}</span>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-sm font-medium ${passColor}`}>{passRate.toFixed(1)}%</span>
-                          <span className="text-xs text-muted-foreground">{suite.totalCases || 0} cases</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">No eval data available</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No eval data available</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Shadow Replay Panel */}
-        <Card data-testid="panel-shadow-replay">
-          <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-              <Activity className="w-4 h-4 text-muted-foreground" />
-              Shadow Replay
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {evidence.shadowReplayResults ? (
-              <div className="flex flex-col gap-3" data-testid="shadow-replay-data">
-                <div className="flex items-center gap-4 flex-wrap">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Divergences</span>
-                    <span className="text-lg font-semibold" data-testid="text-divergence-count">
-                      {evidence.shadowReplayResults.divergenceCount ?? evidence.shadowReplayResults.divergences ?? 0}
-                    </span>
-                  </div>
-                  {evidence.shadowReplayResults.totalReplays && (
+        {/* Shown only when this approval carries the data it displays. */}
+        {!!evidence.shadowReplayResults && (
+          <Card data-testid="panel-shadow-replay">
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <Activity className="w-4 h-4 text-muted-foreground" />
+                Shadow Replay
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {evidence.shadowReplayResults ? (
+                <div className="flex flex-col gap-3" data-testid="shadow-replay-data">
+                  <div className="flex items-center gap-4 flex-wrap">
                     <div className="flex flex-col">
-                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total Replays</span>
-                      <span className="text-lg font-semibold">{evidence.shadowReplayResults.totalReplays}</span>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Divergences</span>
+                      <span className="text-lg font-semibold" data-testid="text-divergence-count">
+                        {evidence.shadowReplayResults.divergenceCount ?? evidence.shadowReplayResults.divergences ?? 0}
+                      </span>
+                    </div>
+                    {evidence.shadowReplayResults.totalReplays && (
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total Replays</span>
+                        <span className="text-lg font-semibold">{evidence.shadowReplayResults.totalReplays}</span>
+                      </div>
+                    )}
+                  </div>
+                  {evidence.shadowReplayResults.samples && (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Sample Comparisons</span>
+                      {(evidence.shadowReplayResults.samples as any[]).map((sample: any, i: number) => (
+                        <div key={i} className="rounded-md bg-muted/30 p-2 flex flex-col gap-1" data-testid={`shadow-sample-${i}`}>
+                          <span className="text-xs font-medium">{sample.input || sample.name || `Sample ${i + 1}`}</span>
+                          <div className="flex items-center gap-2 flex-wrap text-xs">
+                            <span className="text-muted-foreground">Expected: {sample.expected || "N/A"}</span>
+                            <span className={sample.matched === false ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
+                              Actual: {sample.actual || "N/A"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
-                {evidence.shadowReplayResults.samples && (
-                  <div className="flex flex-col gap-2">
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Sample Comparisons</span>
-                    {(evidence.shadowReplayResults.samples as any[]).map((sample: any, i: number) => (
-                      <div key={i} className="rounded-md bg-muted/30 p-2 flex flex-col gap-1" data-testid={`shadow-sample-${i}`}>
-                        <span className="text-xs font-medium">{sample.input || sample.name || `Sample ${i + 1}`}</span>
-                        <div className="flex items-center gap-2 flex-wrap text-xs">
-                          <span className="text-muted-foreground">Expected: {sample.expected || "N/A"}</span>
-                          <span className={sample.matched === false ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
-                            Actual: {sample.actual || "N/A"}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground" data-testid="text-no-shadow-replay">
-                No shadow replay data available
-              </p>
-            )}
-          </CardContent>
-        </Card>
+              ) : (
+                <p className="text-xs text-muted-foreground" data-testid="text-no-shadow-replay">
+                  No shadow replay data available
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Blast Radius Analysis Panel */}
-        <Card data-testid="panel-blast-radius">
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-              <Activity className="w-4 h-4 text-muted-foreground" />
-              Blast Radius Analysis
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {evidence.blastRadius ? (
-              <div className="flex flex-col gap-3" data-testid="blast-radius-data">
-                <div className="grid grid-cols-3 gap-2" data-testid="blast-radius-stats">
-                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-deployments">
-                    <span className="text-lg font-semibold">
-                      {(evidence.blastRadius as any).affectedDeployments?.length ?? (evidence.blastRadius as any).deploymentCount ?? 0}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Deployments</span>
+        {/* Shown only when this approval carries the data it displays. */}
+        {!!evidence.blastRadius && (
+          <Card data-testid="panel-blast-radius">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <Activity className="w-4 h-4 text-muted-foreground" />
+                Blast Radius Analysis
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {evidence.blastRadius ? (
+                <div className="flex flex-col gap-3" data-testid="blast-radius-data">
+                  <div className="grid grid-cols-3 gap-2" data-testid="blast-radius-stats">
+                    <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-deployments">
+                      <span className="text-lg font-semibold">
+                        {(evidence.blastRadius as any).affectedDeployments?.length ?? (evidence.blastRadius as any).deploymentCount ?? 0}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Deployments</span>
+                    </div>
+                    <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-outcomes">
+                      <span className="text-lg font-semibold">
+                        {(evidence.blastRadius as any).affectedOutcomes?.length ?? 0}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcomes</span>
+                    </div>
+                    <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-agents">
+                      <span className="text-lg font-semibold">
+                        {(evidence.blastRadius as any).affectedAgents?.length ?? (evidence.blastRadius as any).agentCount ?? 1}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agents</span>
+                    </div>
                   </div>
-                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-outcomes">
-                    <span className="text-lg font-semibold">
-                      {(evidence.blastRadius as any).affectedOutcomes?.length ?? 0}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcomes</span>
-                  </div>
-                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-agents">
-                    <span className="text-lg font-semibold">
-                      {(evidence.blastRadius as any).affectedAgents?.length ?? (evidence.blastRadius as any).agentCount ?? 1}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agents</span>
-                  </div>
-                </div>
 
-                {(evidence.blastRadius as any).affectedOutcomes?.length > 0 && (
+                  {(evidence.blastRadius as any).affectedOutcomes?.length > 0 && (
+                    <div className="flex flex-col gap-1.5">
+                      {((evidence.blastRadius as any).affectedOutcomes as Array<{ name: string; riskTier?: string; status?: string }>).map((outcome, idx) => (
+                        <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`blast-outcome-${idx}`}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Target className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <span className="text-xs font-medium">{outcome.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {outcome.riskTier && <StatusBadge status={outcome.riskTier} />}
+                            {outcome.status && <StatusBadge status={outcome.status} />}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {(evidence.blastRadius as any).affectedSegments?.length > 0 && (
+                    <div className="flex flex-col gap-1.5">
+                      {((evidence.blastRadius as any).affectedSegments as Array<{ name: string; userCount?: number }>).map((seg, idx) => (
+                        <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`blast-segment-${idx}`}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Layers className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <span className="text-xs font-medium">{seg.name}</span>
+                          </div>
+                          {seg.userCount && (
+                            <span className="text-[10px] text-muted-foreground">{seg.userCount.toLocaleString()} users</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {(evidence.blastRadius as any).riskSummary && (
+                    <div className="flex items-start gap-2 p-2.5 rounded-md bg-amber-500/5 border border-amber-500/10">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
+                      <span className="text-[11px]" data-testid="text-risk-summary">{(evidence.blastRadius as any).riskSummary}</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3" data-testid="blast-radius-derived">
+                  <div className="grid grid-cols-3 gap-2" data-testid="blast-radius-stats">
+                    <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-deployments">
+                      <span className="text-lg font-semibold">1</span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Deployments</span>
+                    </div>
+                    <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-outcomes">
+                      <span className="text-lg font-semibold">{approval.outcome ? 1 : 0}</span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcomes</span>
+                    </div>
+                    <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-agents">
+                      <span className="text-lg font-semibold">{approval.agent ? 1 : 0}</span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agents</span>
+                    </div>
+                  </div>
                   <div className="flex flex-col gap-1.5">
-                    {((evidence.blastRadius as any).affectedOutcomes as Array<{ name: string; riskTier?: string; status?: string }>).map((outcome, idx) => (
-                      <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`blast-outcome-${idx}`}>
+                    {approval.agent && (
+                      <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid="blast-derived-agent">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <Target className="w-3 h-3 text-muted-foreground shrink-0" />
-                          <span className="text-xs font-medium">{outcome.name}</span>
+                          <Users className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="text-xs font-medium">Agent: {approval.agent.name}</span>
                         </div>
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          {outcome.riskTier && <StatusBadge status={outcome.riskTier} />}
-                          {outcome.status && <StatusBadge status={outcome.status} />}
+                          {approval.environment && <StatusBadge status={approval.environment} />}
+                          {approval.agent.riskTier && <StatusBadge status={approval.agent.riskTier} />}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
-
-                {(evidence.blastRadius as any).affectedSegments?.length > 0 && (
-                  <div className="flex flex-col gap-1.5">
-                    {((evidence.blastRadius as any).affectedSegments as Array<{ name: string; userCount?: number }>).map((seg, idx) => (
-                      <div key={idx} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid={`blast-segment-${idx}`}>
+                    )}
+                    {approval.outcome && (
+                      <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid="blast-derived-outcome">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <Layers className="w-3 h-3 text-muted-foreground shrink-0" />
-                          <span className="text-xs font-medium">{seg.name}</span>
+                          <Target className="w-3 h-3 text-muted-foreground shrink-0" />
+                          <span className="text-xs font-medium">Outcome: {approval.outcome.name}</span>
                         </div>
-                        {seg.userCount && (
-                          <span className="text-[10px] text-muted-foreground">{seg.userCount.toLocaleString()} users</span>
-                        )}
+                        <StatusBadge status={approval.outcome.riskTier} />
                       </div>
-                    ))}
-                  </div>
-                )}
-
-                {(evidence.blastRadius as any).riskSummary && (
-                  <div className="flex items-start gap-2 p-2.5 rounded-md bg-amber-500/5 border border-amber-500/10">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" />
-                    <span className="text-[11px]" data-testid="text-risk-summary">{(evidence.blastRadius as any).riskSummary}</span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3" data-testid="blast-radius-derived">
-                <div className="grid grid-cols-3 gap-2" data-testid="blast-radius-stats">
-                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-deployments">
-                    <span className="text-lg font-semibold">1</span>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Deployments</span>
-                  </div>
-                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-outcomes">
-                    <span className="text-lg font-semibold">{approval.outcome ? 1 : 0}</span>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Outcomes</span>
-                  </div>
-                  <div className="rounded-md border p-2.5 flex flex-col items-center gap-1" data-testid="stat-agents">
-                    <span className="text-lg font-semibold">{approval.agent ? 1 : 0}</span>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Agents</span>
+                    )}
+                    {!approval.agent && !approval.outcome && (
+                      <p className="text-xs text-muted-foreground">No blast radius data available</p>
+                    )}
                   </div>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  {approval.agent && (
-                    <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid="blast-derived-agent">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Users className="w-3 h-3 text-muted-foreground shrink-0" />
-                        <span className="text-xs font-medium">Agent: {approval.agent.name}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {approval.environment && <StatusBadge status={approval.environment} />}
-                        {approval.agent.riskTier && <StatusBadge status={approval.agent.riskTier} />}
-                      </div>
-                    </div>
-                  )}
-                  {approval.outcome && (
-                    <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 flex-wrap" data-testid="blast-derived-outcome">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Target className="w-3 h-3 text-muted-foreground shrink-0" />
-                        <span className="text-xs font-medium">Outcome: {approval.outcome.name}</span>
-                      </div>
-                      <StatusBadge status={approval.outcome.riskTier} />
-                    </div>
-                  )}
-                  {!approval.agent && !approval.outcome && (
-                    <p className="text-xs text-muted-foreground">No blast radius data available</p>
-                  )}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* UI Baseline Diff Panel */}
         {approval.objectType === "ui_baseline_diff" && (evidence.newScreenshotFileId || evidence.baselineScreenshotFileId) && (
@@ -1089,53 +1118,56 @@ export default function ApprovalDetail() {
         )}
 
         {/* Policy Deltas Panel */}
-        <Card data-testid="panel-policy-deltas">
-          <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
-              <Shield className="w-4 h-4 text-muted-foreground" />
-              Policy Deltas
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-3">
-              {approval.effectivePolicies && approval.effectivePolicies.length > 0 ? (
-                <div className="flex flex-col gap-2" data-testid="policies-list">
-                  {approval.effectivePolicies.map((policy) => {
-                    const policyDelta = evidence.policyDeltas?.find?.((d: any) => d.policyId === policy.id || d.name === policy.name);
-                    return (
-                      <div key={policy.id} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`policy-${policy.id}`}>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm">{policy.name}</span>
-                          <Badge variant="outline" className="text-[10px]">{(policy as any).type || policy.domain}</Badge>
-                          <StatusBadge status={(policy as any).severity || "LOW"} />
+        {/* Shown only when this approval carries the data it displays. */}
+        {(approval.effectivePolicies?.length ?? 0) > 0 && (
+          <Card data-testid="panel-policy-deltas">
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                <Shield className="w-4 h-4 text-muted-foreground" />
+                Policy Deltas
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3">
+                {approval.effectivePolicies && approval.effectivePolicies.length > 0 ? (
+                  <div className="flex flex-col gap-2" data-testid="policies-list">
+                    {approval.effectivePolicies.map((policy) => {
+                      const policyDelta = evidence.policyDeltas?.find?.((d: any) => d.policyId === policy.id || d.name === policy.name);
+                      return (
+                        <div key={policy.id} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`policy-${policy.id}`}>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm">{policy.name}</span>
+                            <Badge variant="outline" className="text-[10px]">{(policy as any).type || policy.domain}</Badge>
+                            <StatusBadge status={(policy as any).severity || "LOW"} />
+                          </div>
+                          {policyDelta && (
+                            <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid={`badge-policy-changed-${policy.id}`}>
+                              Changed
+                            </Badge>
+                          )}
                         </div>
-                        {policyDelta && (
-                          <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/20" data-testid={`badge-policy-changed-${policy.id}`}>
-                            Changed
-                          </Badge>
-                        )}
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No effective policies</p>
+                )}
+                {evidence.policyDeltas && !approval.effectivePolicies?.length && (
+                  <div className="flex flex-col gap-2" data-testid="policy-deltas-standalone">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Policy Changes</span>
+                    {(Array.isArray(evidence.policyDeltas) ? evidence.policyDeltas : [evidence.policyDeltas]).map((delta: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 text-sm flex-wrap" data-testid={`policy-delta-${i}`}>
+                        <Tag className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <span>{delta.name || delta.policyId || `Policy ${i + 1}`}</span>
+                        <Badge variant="outline" className="text-[10px]">{delta.change || "modified"}</Badge>
                       </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">No effective policies</p>
-              )}
-              {evidence.policyDeltas && !approval.effectivePolicies?.length && (
-                <div className="flex flex-col gap-2" data-testid="policy-deltas-standalone">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Policy Changes</span>
-                  {(Array.isArray(evidence.policyDeltas) ? evidence.policyDeltas : [evidence.policyDeltas]).map((delta: any, i: number) => (
-                    <div key={i} className="flex items-center gap-2 text-sm flex-wrap" data-testid={`policy-delta-${i}`}>
-                      <Tag className="w-3 h-3 text-muted-foreground shrink-0" />
-                      <span>{delta.name || delta.policyId || `Policy ${i + 1}`}</span>
-                      <Badge variant="outline" className="text-[10px]">{delta.change || "modified"}</Badge>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Audit Preview Panel */}
         <Card data-testid="panel-audit-preview">
