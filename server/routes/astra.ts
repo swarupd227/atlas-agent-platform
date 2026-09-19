@@ -302,13 +302,24 @@ router.get("/api/astra/mentionables", checkPermission("use_astra"), async (req, 
   try {
     const services = getAstraRuntime().deps.services;
     const agents = (await services.listRunnableAgents(ctx.orgId, ctx.role)) as Array<{ id: string; name: string; description: string | null }>;
-    const teams = hasPermission(ctx.role, "manage_agents")
-      ? ((await services.listTeams(ctx.orgId)) as Array<{ id: string; name: string; status: string }>).filter((t) => !RETIRED_STATUSES.has(t.status))
-      : [];
-    res.json([
-      ...agents.map((a) => ({ id: a.id, name: a.name, description: a.description ?? null, kind: "agent" as const })),
-      ...teams.map((t) => ({ id: t.id, name: t.name, description: null, kind: "team" as const })),
-    ]);
+    const allTeams = (await services.listTeams(ctx.orgId)) as Array<{ id: string; name: string; status: string }>;
+    const teamIds = new Set(allTeams.map((t) => t.id));
+    // The Workspace's offer can itself include teams (and an entry twice): one entry per id, marked for what it is.
+    const seen = new Set<string>();
+    const out: Array<{ id: string; name: string; description: string | null; kind: "agent" | "team" }> = [];
+    for (const a of agents) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      out.push({ id: a.id, name: a.name, description: a.description ?? null, kind: teamIds.has(a.id) ? "team" : "agent" });
+    }
+    if (hasPermission(ctx.role, "manage_agents")) {
+      for (const t of allTeams) {
+        if (seen.has(t.id) || RETIRED_STATUSES.has(t.status)) continue;
+        seen.add(t.id);
+        out.push({ id: t.id, name: t.name, description: null, kind: "team" });
+      }
+    }
+    res.json(out);
   } catch (err) {
     console.error("[astra] mentionables failed:", err instanceof Error ? err.message : err);
     res.status(500).json({ message: "Couldn't load your agents." });
