@@ -628,6 +628,18 @@ function deriveCodeChallenge(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
+/**
+ * The OAuth redirect URI must be the public https URL. Behind Azure App
+ * Service TLS is terminated upstream, so req.protocol reports "http" and
+ * providers (Microsoft in particular) reject a non-localhost http redirect.
+ * Same x-forwarded-proto handling as routes/auth.ts's openapi.json.
+ */
+function oauthRedirectUri(req: Request): string {
+  const forwarded = req.headers["x-forwarded-proto"];
+  const proto = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0].trim() || req.protocol;
+  return `${proto}://${req.get("host")}/api/integrations/oauth/callback`;
+}
+
 router.get("/api/integrations/oauth/start/:provider", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const { provider } = req.params;
@@ -637,7 +649,7 @@ router.get("/api/integrations/oauth/start/:provider", checkPermission("manage_mc
     }
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const state = randomBytes(24).toString("hex");
-    const redirectUri = `${req.protocol}://${req.get("host")}/api/integrations/oauth/callback`;
+    const redirectUri = oauthRedirectUri(req);
 
     // Salesforce: caller may request sandbox mode via ?sandbox=true query param
     const isSandbox = provider === "salesforce" && req.query.sandbox === "true";
@@ -693,7 +705,7 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
   }
 
   try {
-    const redirectUri = `${req.protocol}://${req.get("host")}/api/integrations/oauth/callback`;
+    const redirectUri = oauthRedirectUri(req);
     const bodyParams: Record<string, string> = {
       grant_type: "authorization_code",
       code,
