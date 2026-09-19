@@ -38,6 +38,7 @@ import {
   Upload,
   Download,
   ChevronDown,
+  MoreHorizontal,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -351,6 +352,8 @@ export default function OntologyExplorer() {
   const [newSynonyms, setNewSynonyms] = useState("");
   const [newTags, setNewTags] = useState("");
   const [newRelateTo, setNewRelateTo] = useState("");
+  // The domain (ontologyName) a new concept joins; empty means the industry's default ontology.
+  const [newDomain, setNewDomain] = useState("");
   const [reconcileDialogOpen, setReconcileDialogOpen] = useState(false);
   const [reconcileResults, setReconcileResults] = useState<{ orphaned: any[]; total: number } | null>(null);
   const [kgPanelOpen, setKgPanelOpen] = useState(false);
@@ -648,7 +651,12 @@ export default function OntologyExplorer() {
       const res = await apiRequest("POST", "/api/ontology/concepts", {
         id,
         industryId,
-        ontologyName: industry?.ontology || "Custom",
+        ontologyName: newDomain || industry?.ontology || "Custom",
+        // Join the domain's sub-vertical too, so coverage by sub-vertical counts it.
+        ...(() => {
+          const sv = newDomain ? rawConcepts.find((c) => c.ontologyName === newDomain && c.subVerticals?.length) : undefined;
+          return sv ? { subVerticals: sv.subVerticals } : {};
+        })(),
         label: data.label,
         category: data.category,
         description: data.description,
@@ -1231,25 +1239,85 @@ export default function OntologyExplorer() {
 
   const relationshipCount = mapConcepts.reduce((s, c) => s + c.relationships.filter((r) => conceptIdSet.has(r.targetId)).length, 0);
   const nice = (s: string) => { const w = s.replace(/_/g, " "); return w.charAt(0).toUpperCase() + w.slice(1); };
+  // Relationship names arrive as "has", "measured_by" or "Contains Work Orders": read them all as one
+  // lowercase phrase inside a sentence ("Campaign has -> KPI"), keeping acronyms like KPI.
+  const verb = (s: string) => s.replace(/_/g, " ").split(" ").map((w) => (/^[A-Z0-9]{2,}$/.test(w) ? w : w.toLowerCase())).join(" ");
   const outgoingOf = (c: ConceptView) => c.relationships.filter((r) => conceptIdSet.has(r.targetId));
   const incomingOf = (id: string) => incomingMap.get(id) || [];
+  const linkCount = (c: ConceptView) => outgoingOf(c).length + incomingOf(c.id).length;
+  const conceptById = (id: string) => concepts.find((c) => c.id === id);
+
+  // Search: name and synonym matches first, then concepts that only mention the term.
+  const q = searchQuery.trim().toLowerCase();
+  const nameHits = q
+    ? filteredBySource
+        .filter((c) => c.label.toLowerCase().includes(q) || c.synonyms.some((s) => s.toLowerCase().includes(q)))
+        .sort((a, b) => Number(!a.label.toLowerCase().startsWith(q)) - Number(!b.label.toLowerCase().startsWith(q)) || a.label.localeCompare(b.label))
+    : [];
+  const otherHits = q
+    ? filteredBySource.filter((c) => !nameHits.includes(c) && (c.description.toLowerCase().includes(q) || c.tags.some((t) => t.toLowerCase().includes(q)) || c.category.toLowerCase().includes(q)))
+    : [];
+
+  const conceptRow = (concept: ConceptView, hint?: string) => {
+    const used = !unusedConceptIds.has(concept.id);
+    const links = linkCount(concept);
+    return (
+      <button
+        key={concept.id}
+        type="button"
+        onClick={() => handleConceptClick(concept.id)}
+        title={`${concept.label} · ${links} link${links !== 1 ? "s" : ""} · ${used ? "used by agents" : "not used by any agent yet"}`}
+        className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-1.5 text-left text-[13.5px] transition-colors ${
+          selectedConceptId === concept.id ? "bg-card font-medium shadow-[0_0_0_1px_hsl(var(--border))]" : "hover:bg-accent"
+        }`}
+        data-testid={`button-concept-${concept.id}`}
+      >
+        <span
+          className="h-2 w-2 shrink-0 rounded-full"
+          style={used ? { background: domainColorMap[concept.domain] } : { boxShadow: `inset 0 0 0 1.5px ${domainColorMap[concept.domain]}` }}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate">{concept.label}</span>
+          {hint && <span className="block truncate text-[11px] text-muted-foreground">{hint}</span>}
+        </span>
+        {concept.sensitivityClassification && (
+          <Badge variant="outline" className="shrink-0 px-1 text-[9px]" data-testid={`badge-sensitivity-${concept.id}`}>
+            {concept.sensitivityClassification.level.toUpperCase()}
+          </Badge>
+        )}
+        {isApplied(concept.id) && <Sparkles className="h-3 w-3 shrink-0 text-muted-foreground" />}
+        {isCustom(concept) && <span className="sr-only" data-testid={`badge-custom-${concept.id}`}>Custom</span>}
+      </button>
+    );
+  };
+  const groupHead = (text: string, count: number, testId?: string) => (
+    <div className="flex justify-between px-2 pb-1 pt-3 font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground" data-testid={testId}>
+      <span className="truncate">{text}</span>
+      <span>{count}</span>
+    </div>
+  );
+  const whyHit = (c: ConceptView) => (c.tags.some((t) => t.toLowerCase().includes(q)) ? "tagged" : c.category.toLowerCase().includes(q) ? `in ${nice(c.category)}` : "mentioned in its description");
+
+  const sourceLabel: Record<SourceFilter, string> = { all: "All concepts", unused: "Not used by agents", custom: "Added by you", standard: "Industry standard" };
+  const unusedList = concepts.filter((c) => unusedConceptIds.has(c.id));
+  const unlinkedList = concepts.filter((c) => linkCount(c) === 0);
 
   return (
     <div className="astra-scope flex h-full flex-col bg-background text-foreground font-sans" data-testid="ontology-explorer">
-      {/* Header: what this ontology is, then every action on it. */}
-      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 px-5 pt-4 pb-3 shrink-0">
-        <div className="min-w-[260px] flex-1">
-          <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Ontology</span>
-          <h1 className="mt-0.5 font-[family-name:var(--astra-display)] text-2xl font-semibold tracking-tight" title={ontologyName} data-testid="text-ontology-name">
-            {industry.label} business concepts
-          </h1>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground">
-            <span><b className="font-medium text-foreground" data-testid="text-total-concepts">{totalConcepts}</b> concepts</span>
-            <span><b className="font-medium text-foreground">{domainList.length}</b> domain{domainList.length !== 1 ? "s" : ""}</span>
-            <span><b className="font-medium text-foreground" data-testid="text-total-categories">{allCategories.length}</b> categories</span>
-            <span><b className="font-medium text-foreground">{relationshipCount}</b> relationships</span>
-            {coverage && <span data-testid="text-coverage-summary"><b className="font-medium text-foreground">{coverage.usedCount}</b> used by agents</span>}
-            {customCount > 0 && <span><b className="font-medium text-foreground" data-testid="text-custom-count">{customCount}</b> added by you</span>}
+      {/* Header: one line of identity and facts, the actions on the right. */}
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 px-5 pt-3 pb-3 shrink-0">
+        <div className="min-w-[240px] flex-1">
+          <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground" title={ontologyName}>{industry.label}</span>
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h1 className="font-[family-name:var(--astra-display)] text-2xl font-semibold tracking-tight" data-testid="text-ontology-name">Ontology</h1>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 font-mono text-xs text-muted-foreground">
+              <span><b className="font-medium text-foreground" data-testid="text-total-concepts">{totalConcepts}</b> concepts</span>
+              <span><b className="font-medium text-foreground">{domainList.length}</b> domain{domainList.length !== 1 ? "s" : ""}</span>
+              <span><b className="font-medium text-foreground">{relationshipCount}</b> links</span>
+              {coverage && <span data-testid="text-coverage-summary"><b className="font-medium text-foreground">{coverage.usedCount}</b> used by agents</span>}
+              {customCount > 0 && <span><b className="font-medium text-foreground" data-testid="text-custom-count">{customCount}</b> added by you</span>}
+              <span className="sr-only" data-testid="text-total-categories">{allCategories.length}</span>
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1270,27 +1338,26 @@ export default function OntologyExplorer() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => reconcileScanMutation.mutate()}
-            disabled={reconcileScanMutation.isPending}
-            title="Find relationships that point at concepts that don't exist, and fix them"
-            data-testid="button-reconcile-relationships"
-          >
-            {reconcileScanMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5 mr-1.5" />}
-            Fix broken links
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => { setKgBuilderOpen(true); setKgBuilderStep("configure"); }}
-            data-testid="button-kg-builder"
-          >
-            <Database className="w-3.5 h-3.5 mr-1.5" />
-            Knowledge graph builder
-          </Button>
-          <Button size="sm" onClick={() => setAddDialogOpen(true)} data-testid="button-add-custom-concept">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" aria-label="More actions" data-testid="button-more-actions">
+                {reconcileScanMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MoreHorizontal className="w-4 h-4" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="astra-scope font-sans">
+              <DropdownMenuItem
+                onClick={() => reconcileScanMutation.mutate()}
+                disabled={reconcileScanMutation.isPending}
+                data-testid="button-reconcile-relationships"
+              >
+                <RotateCcw className="w-3.5 h-3.5 mr-2" /> Fix broken links
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setKgBuilderOpen(true); setKgBuilderStep("configure"); }} data-testid="button-kg-builder">
+                <Database className="w-3.5 h-3.5 mr-2" /> Knowledge graph builder
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button size="sm" onClick={() => { setNewDomain(domainFilter || selectedConcept?.domain || (domainList.includes(industry.ontology || "") ? industry.ontology! : "")); setAddDialogOpen(true); }} data-testid="button-add-custom-concept">
             <Plus className="w-3.5 h-3.5 mr-1.5" />
             Add concept
           </Button>
@@ -1298,22 +1365,40 @@ export default function OntologyExplorer() {
       </div>
 
       <div className="flex flex-1 min-h-0 border-t">
+      {/* Left: search stays put; domains and the list scroll together so the list gets the height. */}
       <div className="w-[300px] border-r flex flex-col shrink-0" data-testid="ontology-sidebar">
-        <div className="p-3 border-b flex flex-col gap-3">
+        <div className="flex flex-col gap-2 border-b p-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Search concepts..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 bg-card"
+              className="pl-9 pr-8 bg-card"
               data-testid="input-search-concepts"
             />
+            {searchQuery && (
+              <button type="button" onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label="Clear search" data-testid="button-clear-search">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
-          {/* Domains, each with how much of it agents actually use. */}
-          <div>
-            <p className="px-0.5 pb-1.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Domains · used by agents</p>
-            <div className="flex flex-col gap-0.5" data-testid="domain-list">
+          <Select value={sourceFilter} onValueChange={(v) => setSourceFilter(v as SourceFilter)}>
+            <SelectTrigger className="h-8 bg-card text-[13px]" data-testid="filter-source-toggle">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="astra-scope font-sans">
+              <SelectItem value="all" data-testid="filter-all">All concepts</SelectItem>
+              <SelectItem value="unused" data-testid="filter-unused">Not used by agents{coverage ? ` (${coverage.unusedCount})` : ""}</SelectItem>
+              <SelectItem value="custom" data-testid="filter-custom">Added by you ({customCount})</SelectItem>
+              <SelectItem value="standard" data-testid="filter-standard">Industry standard</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="px-2 pb-4 pt-2">
+            <p className="px-2 pb-1 font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Domains · used by agents</p>
+            <div className="flex flex-col gap-px" data-testid="domain-list">
               {[null, ...domainList].map((d) => {
                 const inD = d ? concepts.filter((c) => c.domain === d) : concepts;
                 const used = inD.filter((c) => !unusedConceptIds.has(c.id)).length;
@@ -1324,14 +1409,15 @@ export default function OntologyExplorer() {
                     type="button"
                     onClick={() => setDomainFilter(d)}
                     aria-pressed={active}
-                    className={`grid grid-cols-[10px_1fr_auto] items-center gap-x-2 gap-y-1 rounded-[7px] border px-2 py-1.5 text-left text-[13px] transition-colors ${active ? "border-border bg-card font-medium" : "border-transparent hover:bg-accent"}`}
+                    title={d ?? "All domains"}
+                    className={`relative grid grid-cols-[10px_1fr_auto] items-center gap-x-2 overflow-hidden rounded-[7px] border px-2 py-1 text-left text-[13px] transition-colors ${active ? "border-border bg-card font-medium" : "border-transparent hover:bg-accent"}`}
                     data-testid={`button-domain-${d ? d.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "all"}`}
                   >
                     <i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: d ? domainColorMap[d] : "hsl(var(--foreground))" }} />
-                    <span className="truncate" title={d ?? "All domains"}>{d ?? "All domains"}</span>
+                    <span className="truncate">{d ?? "All domains"}</span>
                     <span className="font-mono text-[11px] text-muted-foreground">{coverage ? `${used}/` : ""}{inD.length}</span>
                     {coverage && (
-                      <span className="col-start-2 col-end-4 h-[3px] overflow-hidden rounded bg-muted">
+                      <span className="absolute bottom-0 left-2 right-2 h-[2px] overflow-hidden rounded bg-muted">
                         <span className="block h-full bg-emerald-600 dark:bg-emerald-400" style={{ width: `${inD.length ? (used / inD.length) * 100 : 0}%` }} />
                       </span>
                     )}
@@ -1339,84 +1425,44 @@ export default function OntologyExplorer() {
                 );
               })}
             </div>
-          </div>
-          <div className="flex flex-wrap gap-1.5" data-testid="filter-source-toggle">
-            {([
-              ["all", "All", "filter-all"],
-              ["unused", `Not used yet${coverage ? ` (${coverage.unusedCount})` : ""}`, "filter-unused"],
-              ["custom", "Added by you", "filter-custom"],
-              ["standard", "Industry standard", "filter-standard"],
-            ] as Array<[SourceFilter, string, string]>).map(([v, text, id]) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setSourceFilter(v)}
-                aria-pressed={sourceFilter === v}
-                className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${sourceFilter === v ? "border-foreground bg-foreground text-background" : "bg-card hover:border-foreground/40"}`}
-                data-testid={id}
-              >
-                {text}
-              </button>
-            ))}
-          </div>
-        </div>
-        <ScrollArea className="flex-1">
-          <div className="px-2 pb-4 pt-1">
-            {categoryNames.length === 0 && (
-              <p className="p-3 text-xs text-muted-foreground">No concepts match. Try another word or clear the filters.</p>
-            )}
-            {categoryNames
-              .sort((a, b) => filteredCategories[b].length - filteredCategories[a].length)
-              .map((category) => {
-                const catConcepts = filteredCategories[category];
-                const slug = category.toLowerCase().replace(/\s+/g, "-");
-                return (
-                  <div key={category} data-testid={`accordion-category-${slug}`}>
-                    <div className="flex justify-between px-2 pb-1 pt-3 font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                      <span className="truncate">{nice(category)}</span>
-                      <span data-testid={`badge-count-${slug}`}>{catConcepts.length}</span>
-                    </div>
-                    {catConcepts.map((concept) => {
-                      const used = !unusedConceptIds.has(concept.id);
-                      const links = outgoingOf(concept).length + incomingOf(concept.id).length;
+
+            <div className="mt-2 border-t pt-1">
+              {q ? (
+                <>
+                  {nameHits.length > 0 && groupHead(`Named "${searchQuery.trim()}"`, nameHits.length, "search-name-hits")}
+                  {nameHits.map((c) => conceptRow(c, c.label.toLowerCase().includes(q) ? undefined : `also called ${c.synonyms.find((s) => s.toLowerCase().includes(q))}`))}
+                  {otherHits.length > 0 && groupHead("Also mentions it", otherHits.length, "search-other-hits")}
+                  {otherHits.map((c) => conceptRow(c, whyHit(c)))}
+                  {nameHits.length + otherHits.length === 0 && (
+                    <p className="p-3 text-xs text-muted-foreground">No concept matches "{searchQuery.trim()}"{domainFilter || sourceFilter !== "all" ? " in this view. Try All domains or All concepts." : "."}</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  {categoryNames.length === 0 && (
+                    <p className="p-3 text-xs text-muted-foreground">No concepts in this view.</p>
+                  )}
+                  {categoryNames
+                    .sort((a, b) => filteredCategories[b].length - filteredCategories[a].length)
+                    .map((category) => {
+                      const slug = category.toLowerCase().replace(/\s+/g, "-");
                       return (
-                        <button
-                          key={concept.id}
-                          type="button"
-                          onClick={() => handleConceptClick(concept.id)}
-                          title={concept.description}
-                          className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-1.5 text-left text-[13.5px] transition-colors ${
-                            selectedConceptId === concept.id ? "bg-card font-medium shadow-[0_0_0_1px_hsl(var(--border))]" : "hover:bg-accent"
-                          }`}
-                          data-testid={`button-concept-${concept.id}`}
-                        >
-                          <span
-                            className="h-2 w-2 shrink-0 rounded-full"
-                            style={used ? { background: domainColorMap[concept.domain] } : { boxShadow: `inset 0 0 0 1.5px ${domainColorMap[concept.domain]}` }}
-                            title={used ? "Used by agents" : "Not used by any agent yet"}
-                          />
-                          <span className="truncate">{concept.label}</span>
-                          {concept.sensitivityClassification && (
-                            <Badge variant="outline" className="shrink-0 px-1 text-[9px]" data-testid={`badge-sensitivity-${concept.id}`}>
-                              {concept.sensitivityClassification.level.toUpperCase()}
-                            </Badge>
-                          )}
-                          {isApplied(concept.id) && <Sparkles className="h-3 w-3 shrink-0 text-muted-foreground" />}
-                          <span className="ml-auto font-mono text-[11px] text-muted-foreground">{links || ""}</span>
-                          {isCustom(concept) && <span className="sr-only" data-testid={`badge-custom-${concept.id}`}>Custom</span>}
-                        </button>
+                        <div key={category} data-testid={`accordion-category-${slug}`}>
+                          {groupHead(nice(category), filteredCategories[category].length, `badge-count-${slug}`)}
+                          {filteredCategories[category].map((c) => conceptRow(c))}
+                        </div>
                       );
                     })}
-                  </div>
-                );
-              })}
+                </>
+              )}
+            </div>
           </div>
         </ScrollArea>
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col" data-testid="ontology-detail">
-        <div className="flex items-center gap-3 border-b px-4 py-2.5">
-          <div className="inline-flex overflow-hidden rounded-[7px] border bg-card">
+        <div className="flex items-center gap-3 border-b px-4 py-2">
+          <div className="inline-flex shrink-0 overflow-hidden rounded-[7px] border bg-card">
             <button
               type="button"
               onClick={() => setViewMode("list")}
@@ -1436,18 +1482,19 @@ export default function OntologyExplorer() {
               Map
             </button>
           </div>
-          <span className="text-xs text-muted-foreground">
-            {viewMode === "list"
-              ? "Pick a concept on the left, or follow a relationship"
-              : selectedConcept
-              ? "Focused on one concept: click another to move the focus · scroll to zoom, drag to pan"
-              : "Click a concept to focus on it · scroll to zoom, drag to pan"}
+          <span className="hidden min-w-0 truncate text-xs text-muted-foreground lg:inline">
+            {viewMode === "list" ? (domainFilter ? `${domainFilter} · ${sourceLabel[sourceFilter]}` : sourceLabel[sourceFilter]) : selectedConcept ? "Click another concept to move the focus" : "Click a concept to focus on it"}
           </span>
           {viewMode === "graph" && selectedConcept && (
-            <div className="ml-auto flex gap-2">
+            <div className="ml-auto flex shrink-0 gap-2">
               <Button size="sm" variant="outline" onClick={() => setViewMode("list")} data-testid="button-open-concept">Open {selectedConcept.label}</Button>
               <Button size="sm" variant="ghost" onClick={() => setSelectedConceptId(null)} data-testid="button-clear-focus">Show everything</Button>
             </div>
+          )}
+          {viewMode === "list" && selectedConcept && (
+            <Button size="sm" variant="ghost" className="ml-auto shrink-0" onClick={() => setSelectedConceptId(null)} data-testid="button-back-to-overview">
+              Overview
+            </Button>
           )}
         </div>
         {viewMode === "graph" ? (
@@ -1463,18 +1510,18 @@ export default function OntologyExplorer() {
         ) : (
         <ScrollArea className="flex-1">
           {!selectedConcept ? (
-            <div className="mx-auto flex max-w-4xl flex-col gap-5 p-6">
+            <div className="flex max-w-6xl flex-col gap-6 p-6">
               <div>
                 <h2 className="font-[family-name:var(--astra-display)] text-xl font-semibold">How agents use this ontology</h2>
                 <p className="mt-1 max-w-[68ch] text-sm text-muted-foreground">
-                  Concepts give agents a shared vocabulary for your business. A concept an agent references shapes how it reasons; one no agent uses is only vocabulary so far. Pick a concept on the left, or open the map.
+                  Concepts give agents a shared vocabulary for your business. A concept an agent references shapes how it reasons; one no agent uses is only vocabulary so far.
                 </p>
               </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="domain-coverage">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-4" data-testid="domain-coverage">
                 {domainList.map((d) => {
                   const inD = concepts.filter((c) => c.domain === d);
                   const used = inD.filter((c) => !unusedConceptIds.has(c.id)).length;
-                  const linked = inD.filter((c) => outgoingOf(c).length + incomingOf(c.id).length > 0).length;
+                  const linked = inD.filter((c) => linkCount(c) > 0).length;
                   return (
                     <button
                       key={d}
@@ -1483,7 +1530,7 @@ export default function OntologyExplorer() {
                       className="flex flex-col gap-2 rounded-xl border bg-card p-4 text-left transition-colors hover:border-foreground/40"
                       data-testid={`card-domain-${d.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
                     >
-                      <span className="flex items-center gap-2 text-sm font-medium"><i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: domainColorMap[d] }} />{d}</span>
+                      <span className="flex items-center gap-2 text-sm font-medium"><i className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: domainColorMap[d] }} /><span className="truncate" title={d}>{d}</span></span>
                       <span className="font-[family-name:var(--astra-display)] text-2xl font-semibold">{coverage ? `${used} of ${inD.length}` : inD.length}<span className="ml-1.5 font-sans text-xs font-normal text-muted-foreground">{coverage ? "used by agents" : "concepts"}</span></span>
                       {coverage && (
                         <span className="h-1 overflow-hidden rounded bg-muted"><span className="block h-full bg-emerald-600 dark:bg-emerald-400" style={{ width: `${inD.length ? (used / inD.length) * 100 : 0}%` }} /></span>
@@ -1493,10 +1540,59 @@ export default function OntologyExplorer() {
                   );
                 })}
               </div>
+              {/* The two gaps worth acting on, each with a next step. */}
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                {unlinkedList.length > 0 && (
+                  <section data-testid="list-unlinked">
+                    <div className="mb-1 flex items-baseline justify-between gap-2">
+                      <h3 className="text-sm font-medium">Not linked to any other concept · {unlinkedList.length}</h3>
+                    </div>
+                    <p className="mb-2 text-xs text-muted-foreground">Agents can't reason about how these relate to anything. Ask for suggested links, then accept the ones that are right.</p>
+                    <div className="divide-y rounded-xl border bg-card">
+                      {unlinkedList.slice(0, 6).map((c) => (
+                        <div key={c.id} className="flex items-center gap-2 px-3 py-1 text-[13px]">
+                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: domainColorMap[c.domain] }} />
+                          <button type="button" className="min-w-0 flex-1 truncate text-left hover:underline" onClick={() => handleConceptClick(c.id)}>{c.label}</button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 shrink-0 text-xs"
+                            onClick={() => { setSelectedConceptId(c.id); suggestRelationshipsMutation.mutate(c); }}
+                            disabled={suggestRelationshipsMutation.isPending}
+                            data-testid={`button-suggest-links-${c.id}`}
+                          >
+                            Suggest links
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                    {unlinkedList.length > 6 && <p className="mt-1.5 text-xs text-muted-foreground">and {unlinkedList.length - 6} more. Open the map to see them.</p>}
+                  </section>
+                )}
+                {unusedList.length > 0 && (
+                  <section data-testid="list-unused">
+                    <h3 className="mb-1 text-sm font-medium">Not used by any agent · {unusedList.length}</h3>
+                    <p className="mb-2 text-xs text-muted-foreground">Vocabulary no agent reasons with yet. Attach them to the agents that work in that area.</p>
+                    <div className="divide-y rounded-xl border bg-card">
+                      {unusedList.slice(0, 6).map((c) => (
+                        <button key={c.id} type="button" onClick={() => handleConceptClick(c.id)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] hover:bg-accent/50">
+                          <span className="h-2 w-2 shrink-0 rounded-full" style={{ boxShadow: `inset 0 0 0 1.5px ${domainColorMap[c.domain]}` }} />
+                          <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                          <span className="shrink-0 truncate font-mono text-[11px] text-muted-foreground">{nice(c.category)}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {unusedList.length > 6 && (
+                      <button type="button" className="mt-1.5 text-xs underline underline-offset-2" onClick={() => setSourceFilter("unused")} data-testid="button-show-all-unused">
+                        Show all {unusedList.length} in the list
+                      </button>
+                    )}
+                  </section>
+                )}
+              </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-6 p-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="min-w-0 space-y-6">
+            <div className="max-w-4xl space-y-7 p-6">
               <div className="space-y-2">
                 <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: domainColorMap[selectedConcept.domain] }}>
                   {selectedConcept.domain} · <span data-testid="badge-concept-category">{nice(selectedConcept.category)}</span>
@@ -1523,21 +1619,61 @@ export default function OntologyExplorer() {
                     ))}
                   </div>
                 )}
+                <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 font-mono text-[11.5px] text-muted-foreground">
+                  <span data-testid={isCustom(selectedConcept) ? "badge-custom-extension" : undefined}>{isCustom(selectedConcept) ? "Added by your team" : "Industry standard"}</span>
+                  <span data-testid="badge-concept-version">v{selectedConcept.version}</span>
+                  <span>{selectedConcept.properties.length} field{selectedConcept.properties.length !== 1 ? "s" : ""}</span>
+                  {selectedConcept.usageCount > 0 && <span data-testid="text-usage-count">referenced {selectedConcept.usageCount} times in production</span>}
+                </div>
               </div>
 
-              <section>
-                <h3 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">How it connects</h3>
-                <OntologyNeighbourhood
-                  concept={mapConcepts.find((c) => c.id === selectedConcept.id)!}
-                  concepts={mapConcepts}
-                  colors={domainColorMap}
-                  onSelect={handleRelationshipClick}
-                />
+              {/* One answer to "which agents use this?": the agents themselves. */}
+              <section className="rounded-xl border bg-card p-4" data-testid="card-agent-usage">
+                <div data-testid="card-linked-agents">
+                  {linkedAgents === undefined ? (
+                    <p className="text-xs text-muted-foreground">Checking which agents use this concept…</p>
+                  ) : linkedAgents.length === 0 ? (
+                    <>
+                      <p className="text-sm font-medium">{unusedConceptIds.has(selectedConcept.id) ? "Not used by any agent yet" : "Referenced by agents, none tagged with it"}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {unusedConceptIds.has(selectedConcept.id)
+                          ? "It still grounds search and Ask Astra, but no agent reasons with it until one uses it."
+                          : "An agent's prompt, tools or skills mention it. Tag the agent with this concept to track it here."}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium">Used by {linkedAgents.length} agent{linkedAgents.length !== 1 ? "s" : ""}</p>
+                        {linkedAgents.some((a) => a.requiresRevalidation) && (
+                          <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-400">
+                            {linkedAgents.filter((a) => a.requiresRevalidation).length} need re-validation
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Changing this concept flags these agents for re-validation.</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {linkedAgents.map((a) => (
+                          <Link key={a.id} href={`/agents/${a.id}`}>
+                            <span className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs hover:border-foreground/40" data-testid={`linked-agent-${a.id}`}>
+                              <Bot className="h-3 w-3 text-muted-foreground" />
+                              {a.name}
+                              {a.status !== "active" && <span className="text-muted-foreground">· {a.status}</span>}
+                              {a.requiresRevalidation && <span className="text-amber-700 dark:text-amber-400">· re-validate</span>}
+                            </span>
+                          </Link>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </section>
+
+              {/* Links: the picture and the full list, together. */}
               <section data-testid="card-relationships">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                    Relationships · {outgoingOf(selectedConcept).length + incomingOf(selectedConcept.id).length}
+                    Links · {linkCount(selectedConcept)}
                   </h3>
                   <Button
                     size="sm"
@@ -1547,101 +1683,103 @@ export default function OntologyExplorer() {
                     data-testid="button-suggest-relationships"
                   >
                     {suggestRelationshipsMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Database className="w-3.5 h-3.5 mr-1.5" />}
-                    Suggest relationships
+                    Suggest links
                   </Button>
                 </div>
+                {linkCount(selectedConcept) > 0 && (
+                  <div className="mb-3 rounded-xl border bg-card">
+                    <OntologyNeighbourhood
+                      concept={mapConcepts.find((c) => c.id === selectedConcept.id)!}
+                      concepts={mapConcepts}
+                      colors={domainColorMap}
+                      onSelect={handleRelationshipClick}
+                    />
+                  </div>
+                )}
                 {selectedConcept.relationships.length === 0 && incomingOf(selectedConcept.id).length === 0 ? (
-                  <p className="text-xs text-muted-foreground">Not linked to any other concept yet. Linking it helps agents reason about it in context.</p>
+                  <p className="text-xs text-muted-foreground">Not linked to any other concept yet. Linking it helps agents reason about it in context. Use Suggest links to find candidates.</p>
                 ) : (
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    {selectedConcept.relationships.length > 0 && (
-                      <div>
-                        <p className="mb-1 text-xs font-medium">Points to</p>
-                        {selectedConcept.relationships.map((rel, idx) => {
-                          const target = concepts.find((c) => c.id === rel.targetId);
-                          return (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => target && handleRelationshipClick(rel.targetId)}
-                              disabled={!target}
-                              className="grid w-full grid-cols-[minmax(0,140px)_1fr] items-center gap-3 border-b py-1.5 text-left text-[13px] last:border-0 enabled:hover:bg-accent/50"
-                              data-testid={`button-relationship-${rel.targetId}`}
-                            >
-                              <span className="truncate font-mono text-xs text-muted-foreground" title={rel.label}>{rel.label || rel.type.replace(/_/g, " ")}</span>
-                              <span className="flex min-w-0 items-center gap-2">
-                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: target ? domainColorMap[target.domain] : "hsl(var(--muted-foreground))" }} />
-                                <span className="truncate">{target ? target.label : rel.targetId}</span>
-                                {!target && <span className="text-[11px] text-amber-600 dark:text-amber-400">missing</span>}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {incomingOf(selectedConcept.id).length > 0 && (
-                      <div>
-                        <p className="mb-1 text-xs font-medium">Pointed to by</p>
-                        {incomingOf(selectedConcept.id).map((r, idx) => {
-                          const from = concepts.find((c) => c.id === r.from)!;
-                          return (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => handleRelationshipClick(r.from)}
-                              className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,140px)] items-center gap-3 border-b py-1.5 text-left text-[13px] last:border-0 hover:bg-accent/50"
-                              data-testid={`button-incoming-${r.from}`}
-                            >
-                              <span className="flex min-w-0 items-center gap-2">
-                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: domainColorMap[from.domain] }} />
-                                <span className="truncate">{from.label}</span>
-                              </span>
-                              <span className="truncate font-mono text-xs text-muted-foreground" title={r.label}>{r.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                  <div className="divide-y rounded-xl border bg-card">
+                    {selectedConcept.relationships.map((rel, idx) => {
+                      const target = conceptById(rel.targetId);
+                      return (
+                        <button
+                          key={`o-${idx}`}
+                          type="button"
+                          onClick={() => target && handleRelationshipClick(rel.targetId)}
+                          disabled={!target}
+                          className="grid w-full grid-cols-[minmax(0,1fr)_16px_minmax(0,1.2fr)] items-center gap-3 px-3 py-2 text-left text-[13px] enabled:hover:bg-accent/50"
+                          data-testid={`button-relationship-${rel.targetId}`}
+                        >
+                          <span className="min-w-0 text-muted-foreground"><span className="text-foreground">{selectedConcept.label}</span> {verb(rel.label || rel.type)}</span>
+                          <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: target ? domainColorMap[target.domain] : "hsl(var(--muted-foreground))" }} />
+                            <span className="truncate font-medium">{target ? target.label : rel.targetId}</span>
+                            {!target && <span className="text-[11px] text-amber-600 dark:text-amber-400">missing</span>}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {incomingOf(selectedConcept.id).map((r, idx) => {
+                      const from = conceptById(r.from)!;
+                      return (
+                        <button
+                          key={`i-${idx}`}
+                          type="button"
+                          onClick={() => handleRelationshipClick(r.from)}
+                          className="grid w-full grid-cols-[minmax(0,1fr)_16px_minmax(0,1.2fr)] items-center gap-3 px-3 py-2 text-left text-[13px] hover:bg-accent/50"
+                          data-testid={`button-incoming-${r.from}`}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: domainColorMap[from.domain] }} />
+                            <span className="truncate font-medium">{from.label}</span>
+                          </span>
+                          <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="min-w-0 text-muted-foreground">{verb(r.label)} <span className="text-foreground">{selectedConcept.label}</span></span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </section>
 
-              <Card data-testid="card-properties">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <GitBranch className="w-4 h-4" />
-                    Properties
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {selectedConcept.properties.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No properties defined.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {selectedConcept.properties.map((prop) => (
-                        <div
-                          key={prop.name}
-                          className="flex items-start gap-3 text-xs py-1.5 border-b last:border-0"
-                          data-testid={`property-${prop.name}`}
-                        >
-                          <code className="font-mono text-foreground shrink-0 min-w-[120px]">{prop.name}</code>
-                          <Badge variant="outline" className="text-[10px] shrink-0">{prop.type}</Badge>
-                          <span className="text-muted-foreground">{prop.description}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              <section data-testid="card-properties">
+                <h3 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Fields · {selectedConcept.properties.length}</h3>
+                {selectedConcept.properties.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No fields defined.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border bg-card">
+                    <table className="w-full text-[13px]">
+                      <thead>
+                        <tr className="border-b text-left font-mono text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground">
+                          <th className="w-60 px-3 py-2 font-medium">Field</th>
+                          <th className="px-3 py-2 font-medium">Type</th>
+                          {selectedConcept.properties.some((p) => p.description) && <th className="px-3 py-2 font-medium">Meaning</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {selectedConcept.properties.map((prop) => (
+                          <tr key={prop.name} data-testid={`property-${prop.name}`}>
+                            <td className="whitespace-nowrap px-3 py-1.5 font-mono text-[12.5px]">{prop.name}</td>
+                            <td className="px-3 py-1.5 font-mono text-[12px] text-muted-foreground">{prop.type}</td>
+                            {selectedConcept.properties.some((p) => p.description) && <td className="px-3 py-1.5 text-muted-foreground">{prop.description}</td>}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
 
-              <Card data-testid="card-tags">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Tag className="w-4 h-4" />
+              {selectedConcept.tags.length > 0 && (
+              <section className="space-y-2" data-testid="card-tags">
+                <div>
+                  <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                     Tags
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
+                  </h3>
+                </div>
+                <div className="rounded-xl border bg-card p-4 space-y-3">
                   <div className="flex flex-wrap gap-2">
                     {selectedConcept.tags.map((tag) => (
                       <Badge key={tag} variant="outline" className="text-xs" data-testid={`badge-tag-${tag}`}>
@@ -1649,8 +1787,9 @@ export default function OntologyExplorer() {
                       </Badge>
                     ))}
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </section>
+              )}
 
               {(() => {
                 const appliedEnh = isApplied(selectedConcept.id) ? getEnrichment(selectedConcept.id) : null;
@@ -1661,19 +1800,19 @@ export default function OntologyExplorer() {
                 const skills = hasAiSkills ? appliedEnh!.agentSkills! : fallback?.skills || [];
                 const agentTypes = hasAiTypes ? appliedEnh!.agentTypes! : fallback?.agentTypes || [];
                 const hasData = skills.length > 0 || agentTypes.length > 0;
+                if (!hasData) return null;
 
                 return (
-                  <Card data-testid="card-agent-mapping">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Brain className="w-4 h-4" />
+                  <section className="space-y-2" data-testid="card-agent-mapping">
+                    <div>
+                      <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                         Agent Mapping
                         {hasAiAgent && (
                           <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
                         )}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
+                      </h3>
+                    </div>
+                    <div className="rounded-xl border bg-card p-4 space-y-3">
                       {hasData ? (
                         <>
                           {skills.length > 0 && (
@@ -1704,8 +1843,8 @@ export default function OntologyExplorer() {
                       ) : (
                         <p className="text-xs text-muted-foreground">No agent mapping available for this category.</p>
                       )}
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </section>
                 );
               })()}
 
@@ -1715,15 +1854,14 @@ export default function OntologyExplorer() {
                 return (
                   <>
                     {appliedEnrichment.agentUseCases && appliedEnrichment.agentUseCases.length > 0 && (
-                      <Card data-testid="card-applied-agent-use-cases">
-                        <CardHeader className="pb-3">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <Lightbulb className="w-4 h-4" />
+                      <section className="space-y-2" data-testid="card-applied-agent-use-cases">
+                        <div>
+                          <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                             Agent Use Cases
                             <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
+                          </h3>
+                        </div>
+                        <div className="rounded-xl border bg-card p-4 space-y-3">
                           <ul className="space-y-2">
                             {appliedEnrichment.agentUseCases.map((uc, i) => (
                               <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-applied-use-case-${i}`}>
@@ -1732,37 +1870,35 @@ export default function OntologyExplorer() {
                               </li>
                             ))}
                           </ul>
-                        </CardContent>
-                      </Card>
+                        </div>
+                      </section>
                     )}
 
                     {appliedEnrichment.regulatoryRelevance && (
-                      <Card data-testid="card-applied-regulatory-relevance">
-                        <CardHeader className="pb-3">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <Shield className="w-4 h-4" />
+                      <section className="space-y-2" data-testid="card-applied-regulatory-relevance">
+                        <div>
+                          <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                             Regulatory Relevance
                             <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
+                          </h3>
+                        </div>
+                        <div className="rounded-xl border bg-card p-4 space-y-3">
                           <p className="text-xs text-muted-foreground" data-testid="text-applied-regulatory-relevance">
                             {appliedEnrichment.regulatoryRelevance}
                           </p>
-                        </CardContent>
-                      </Card>
+                        </div>
+                      </section>
                     )}
 
                     {appliedEnrichment.riskFactors && appliedEnrichment.riskFactors.length > 0 && (
-                      <Card data-testid="card-applied-risk-factors">
-                        <CardHeader className="pb-3">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <AlertTriangle className="w-4 h-4" />
+                      <section className="space-y-2" data-testid="card-applied-risk-factors">
+                        <div>
+                          <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                             Risk Factors
                             <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
+                          </h3>
+                        </div>
+                        <div className="rounded-xl border bg-card p-4 space-y-3">
                           <ul className="space-y-1.5">
                             {appliedEnrichment.riskFactors.map((rf, i) => (
                               <li key={i} className="text-xs text-muted-foreground flex items-start gap-2" data-testid={`text-applied-risk-factor-${i}`}>
@@ -1771,20 +1907,19 @@ export default function OntologyExplorer() {
                               </li>
                             ))}
                           </ul>
-                        </CardContent>
-                      </Card>
+                        </div>
+                      </section>
                     )}
 
                     {appliedEnrichment.relatedStandards && appliedEnrichment.relatedStandards.length > 0 && (
-                      <Card data-testid="card-applied-related-standards">
-                        <CardHeader className="pb-3">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <BookOpen className="w-4 h-4" />
+                      <section className="space-y-2" data-testid="card-applied-related-standards">
+                        <div>
+                          <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                             Related Standards
                             <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
+                          </h3>
+                        </div>
+                        <div className="rounded-xl border bg-card p-4 space-y-3">
                           <div className="flex flex-wrap gap-1.5">
                             {appliedEnrichment.relatedStandards.map((std, i) => (
                               <Badge key={i} variant="outline" className="text-xs" data-testid={`badge-applied-standard-${i}`}>
@@ -1792,42 +1927,40 @@ export default function OntologyExplorer() {
                               </Badge>
                             ))}
                           </div>
-                        </CardContent>
-                      </Card>
+                        </div>
+                      </section>
                     )}
 
                     {appliedEnrichment.dataHandlingConsiderations && (
-                      <Card data-testid="card-applied-data-handling">
-                        <CardHeader className="pb-3">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <Shield className="w-4 h-4" />
+                      <section className="space-y-2" data-testid="card-applied-data-handling">
+                        <div>
+                          <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                             Data Handling Considerations
                             <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
+                          </h3>
+                        </div>
+                        <div className="rounded-xl border bg-card p-4 space-y-3">
                           <p className="text-xs text-muted-foreground" data-testid="text-applied-data-handling">
                             {appliedEnrichment.dataHandlingConsiderations}
                           </p>
-                        </CardContent>
-                      </Card>
+                        </div>
+                      </section>
                     )}
 
                     {appliedEnrichment.implementationGuidance && (
-                      <Card data-testid="card-applied-implementation-guidance">
-                        <CardHeader className="pb-3">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <GitBranch className="w-4 h-4" />
+                      <section className="space-y-2" data-testid="card-applied-implementation-guidance">
+                        <div>
+                          <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                             Implementation Guidance
                             <Badge variant="secondary" className="text-[10px]"><Sparkles className="w-2.5 h-2.5 mr-1" />AI</Badge>
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
+                          </h3>
+                        </div>
+                        <div className="rounded-xl border bg-card p-4 space-y-3">
                           <p className="text-xs text-muted-foreground" data-testid="text-applied-implementation-guidance">
                             {appliedEnrichment.implementationGuidance}
                           </p>
-                        </CardContent>
-                      </Card>
+                        </div>
+                      </section>
                     )}
                   </>
                 );
@@ -1841,16 +1974,16 @@ export default function OntologyExplorer() {
 
                 return (
                   <PermissionGate action="create_modify_policies">
-                    <Card data-testid="card-ai-enhance">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                          <Sparkles className="w-4 h-4" />
+                    <section className="space-y-2" data-testid="card-ai-enhance">
+                      <div>
+                        <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                           AI Enhancement
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
+                        </h3>
+                      </div>
+                      <div className="rounded-xl border bg-card p-4 space-y-3">
                         <div className="flex items-center gap-2 flex-wrap">
                           <Button
+                            variant="outline"
                             onClick={() => enhanceMutation.mutate(selectedConcept)}
                             disabled={enhanceMutation.isPending}
                             data-testid="button-ai-enhance"
@@ -2111,51 +2244,21 @@ export default function OntologyExplorer() {
                             )}
                           </div>
                         )}
-                      </CardContent>
-                    </Card>
+                      </div>
+                    </section>
                   </PermissionGate>
                 );
               })()}
-            </div>
-            <aside className="flex min-w-0 flex-col gap-4">
-              <div className="rounded-xl border bg-card p-4" data-testid="card-agent-usage">
-                <p className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Used by agents</p>
-                {unusedConceptIds.has(selectedConcept.id) ? (
-                  <>
-                    <p className="mt-1 font-[family-name:var(--astra-display)] text-lg font-semibold">Not used yet</p>
-                    <p className="mt-1 text-xs text-muted-foreground">No agent references this concept. It still grounds search and Ask Astra, but agents won't reason with it until one uses it.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="mt-1.5"><span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-600/40 px-2.5 py-0.5 text-xs text-emerald-700 dark:border-emerald-400/40 dark:text-emerald-400">● In use</span></p>
-                    <p className="mt-1.5 text-xs text-muted-foreground">Referenced by at least one agent. Changing it flags those agents for re-validation.</p>
-                  </>
-                )}
-                {selectedConcept.usageCount > 0 && (
-                  <p className="mt-1.5 font-mono text-[11px] text-muted-foreground" data-testid="text-usage-count">Referenced {selectedConcept.usageCount} times in production</p>
-                )}
-              </div>
-              <div className="grid grid-cols-[100px_1fr] gap-x-3 gap-y-1.5 rounded-xl border bg-card p-4 text-[13px]">
-                <span className="text-muted-foreground">Source</span>
-                <span data-testid={isCustom(selectedConcept) ? "badge-custom-extension" : undefined}>{isCustom(selectedConcept) ? "Added by your team" : "Industry standard"}</span>
-                <span className="text-muted-foreground">Version</span>
-                <span data-testid="badge-concept-version">v{selectedConcept.version}</span>
-                <span className="text-muted-foreground">Domain</span>
-                <span>{selectedConcept.domain}</span>
-                <span className="text-muted-foreground">Category</span>
-                <span>{nice(selectedConcept.category)}</span>
-              </div>
               {versionData && versionData.history.length > 0 && (
-                <Card data-testid="card-version-history">
-                  <CardHeader className="pb-3">
+                <section className="space-y-2" data-testid="card-version-history">
+                  <div>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <History className="w-4 h-4" />
+                      <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                         Version History
                         <Badge variant="secondary" className="text-[10px]">
                           {versionData.history.length} revision{versionData.history.length !== 1 ? "s" : ""}
                         </Badge>
-                      </CardTitle>
+                      </h3>
                       <Button
                         size="sm"
                         variant="outline"
@@ -2165,9 +2268,9 @@ export default function OntologyExplorer() {
                         {versionHistoryOpen ? "Hide" : "Show"} History
                       </Button>
                     </div>
-                  </CardHeader>
+                  </div>
                   {versionHistoryOpen && (
-                    <CardContent>
+                    <div className="rounded-xl border bg-card p-4 space-y-3">
                       <div className="space-y-3">
                         {[...versionData.history].reverse().map((entry, idx) => (
                           <div
@@ -2202,62 +2305,19 @@ export default function OntologyExplorer() {
                           </div>
                         ))}
                       </div>
-                    </CardContent>
+                    </div>
                   )}
-                </Card>
-              )}
-
-              {linkedAgents !== undefined && (
-                <Card data-testid="card-linked-agents">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Bot className="w-4 h-4" />
-                      Linked Agents
-                      <Badge variant="secondary" className="text-[10px]">
-                        {linkedAgents.length}
-                      </Badge>
-                      {linkedAgents.some(a => a.requiresRevalidation) && (
-                        <Badge variant="outline" className="text-[10px] bg-amber-500/15 text-amber-600 border-amber-500/20">
-                          {linkedAgents.filter(a => a.requiresRevalidation).length} need re-validation
-                        </Badge>
-                      )}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {linkedAgents.length === 0 ? (
-                      <p className="text-xs text-muted-foreground py-1">No agents tagged with this concept yet.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {linkedAgents.map(a => (
-                          <Link key={a.id} href={`/agents/${a.id}`}>
-                            <div className="flex items-center justify-between gap-2 p-2 rounded-md border hover:bg-muted/50 cursor-pointer" data-testid={`linked-agent-${a.id}`}>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium">{a.name}</span>
-                                <Badge variant="outline" className="text-[9px]">{a.status}</Badge>
-                              </div>
-                              {a.requiresRevalidation && (
-                                <Badge variant="outline" className="text-[9px] bg-amber-500/15 text-amber-600 border-amber-500/20">
-                                  Re-validation needed
-                                </Badge>
-                              )}
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                </section>
               )}
 
               {selectedConcept.linkedRegulations.length > 0 && (
-                <Card data-testid="card-linked-regulations">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <FileText className="w-4 h-4" />
+                <section className="space-y-2" data-testid="card-linked-regulations">
+                  <div>
+                    <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                       Linked Regulations
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
+                    </h3>
+                  </div>
+                  <div className="rounded-xl border bg-card p-4 space-y-3">
                     <div className="space-y-2">
                       {selectedConcept.linkedRegulations.map((reg, i) => (
                         <div key={i} className="flex items-center gap-2 text-xs" data-testid={`regulation-${i}`}>
@@ -2272,19 +2332,18 @@ export default function OntologyExplorer() {
                         </div>
                       ))}
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </section>
               )}
 
               {selectedConcept.sensitivityClassification && (
-                <Card data-testid="card-sensitivity-classification">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Shield className="w-4 h-4" />
+                <section className="space-y-2" data-testid="card-sensitivity-classification">
+                  <div>
+                    <h3 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
                       Data Sensitivity Classification
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
+                    </h3>
+                  </div>
+                  <div className="rounded-xl border bg-card p-4 space-y-3">
                     <div className="flex items-center gap-3 flex-wrap">
                       <div className="text-xs">
                         <span className="text-muted-foreground">Level: </span>
@@ -2332,8 +2391,8 @@ export default function OntologyExplorer() {
                         </div>
                       </div>
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
+                </section>
               )}
 
               <div>
@@ -2349,7 +2408,6 @@ export default function OntologyExplorer() {
                   Delete concept
                 </Button>
               </div>
-            </aside>
             </div>
           )}
         </ScrollArea>
@@ -2496,14 +2554,14 @@ export default function OntologyExplorer() {
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent className="astra-scope font-sans" data-testid="dialog-add-custom-concept">
           <DialogHeader>
-            <DialogTitle>Add Custom Concept</DialogTitle>
+            <DialogTitle className="font-[family-name:var(--astra-display)]">Add concept</DialogTitle>
             <DialogDescription>
-              Extend the ontology with your own domain-specific concept.
+              A business term your agents should share, and where it belongs.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="concept-label">Label</Label>
+              <Label htmlFor="concept-label">Name</Label>
               <Input
                 id="concept-label"
                 value={newLabel}
@@ -2511,6 +2569,22 @@ export default function OntologyExplorer() {
                 placeholder="e.g. Custom Risk Score"
                 data-testid="input-concept-label"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="concept-domain">Domain</Label>
+              <Select value={domainList.includes(newDomain) ? newDomain : "__default__"} onValueChange={(v) => setNewDomain(v === "__default__" ? "" : v)}>
+                <SelectTrigger id="concept-domain" data-testid="select-concept-domain">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="astra-scope font-sans">
+                  {!domainList.includes(industry?.ontology || "") && (
+                    <SelectItem value="__default__">{industry?.ontology || "Custom"}</SelectItem>
+                  )}
+                  {domainList.map((d) => (
+                    <SelectItem key={d} value={d}>{d}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="concept-category">Category</Label>
@@ -2593,7 +2667,7 @@ export default function OntologyExplorer() {
               ) : (
                 <Plus className="w-4 h-4 mr-2" />
               )}
-              Create Concept
+              Add concept
             </Button>
           </DialogFooter>
         </DialogContent>
