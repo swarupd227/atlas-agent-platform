@@ -132,7 +132,8 @@ function FullAppSidebar() {
       label: "",
       items: [
         { title: "Home", url: "/dashboard", icon: Home, testId: "overview" },
-        { title: "Workspace", url: "/workspace", icon: Sparkles },
+        // With Ask Astra on, running an agent starts there; Workspace moves to All tools.
+        ...(astraEnabled ? [] : [{ title: "Workspace", url: "/workspace", icon: Sparkles }]),
       ],
     },
     {
@@ -167,6 +168,7 @@ function FullAppSidebar() {
 
   // Everything else, still grouped the way it was, behind one toggle.
   const toolGroups: NavGroup[] = [
+    ...(astraEnabled ? [{ label: "Work", icon: Sparkles, items: [{ title: "Workspace", url: "/workspace", icon: Sparkles }] }] : []),
     {
       label: "Content",
       icon: FileText,

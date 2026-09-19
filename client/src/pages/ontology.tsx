@@ -37,6 +37,7 @@ import {
   Bot,
   Upload,
   Download,
+  ChevronDown,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -85,6 +86,8 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { OntologyNeighbourhood, OntologyDomainMap, domainColors, buildIncoming, type MapConcept } from "@/components/ontology-map";
 import { useIndustry } from "@/components/industry-provider";
 import { PermissionGate } from "@/components/role-provider";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -114,6 +117,8 @@ interface ConceptView {
   id: string;
   label: string;
   category: string;
+  /** The ontology (domain) the concept belongs to, e.g. "ISA-95 (Enterprise-Control Integration)". */
+  domain: string;
   description: string;
   industryId: string;
   properties: OntologyProperty[];
@@ -231,10 +236,18 @@ function toConceptView(c: DbOntologyConcept): ConceptView {
     id: c.id,
     label: c.label,
     category: c.category,
+    domain: c.ontologyName || "Ontology",
     description: c.description,
     industryId: c.industryId,
     properties: (c.properties as OntologyProperty[]) || [],
-    relationships: (c.relationships as OntologyRelationship[]) || [],
+    // Concepts store links as {targetId, label} or as {target, type}; read both so
+    // every link resolves and has readable text.
+    relationships: ((c.relationships as Array<Record<string, any>>) || []).map((r) => ({
+      ...r,
+      type: r.type || "related",
+      targetId: r.targetId ?? r.target,
+      label: r.label || String(r.type || "related").replace(/_/g, " "),
+    })) as OntologyRelationship[],
     tags: c.tags || [],
     synonyms: c.synonyms || [],
     source: c.source || "industry-standard",
@@ -328,6 +341,7 @@ export default function OntologyExplorer() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [domainFilter, setDomainFilter] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [newLabel, setNewLabel] = useState("");
@@ -418,11 +432,12 @@ export default function OntologyExplorer() {
   }, [enhancements]);
 
   const filteredBySource = useMemo(() => {
-    if (sourceFilter === "all") return concepts;
-    if (sourceFilter === "standard") return concepts.filter((c) => c.source !== "custom-extension");
-    if (sourceFilter === "unused") return concepts.filter((c) => unusedConceptIds.has(c.id));
-    return concepts.filter((c) => c.source === "custom-extension");
-  }, [concepts, sourceFilter, unusedConceptIds]);
+    const inDomain = domainFilter ? concepts.filter((c) => c.domain === domainFilter) : concepts;
+    if (sourceFilter === "all") return inDomain;
+    if (sourceFilter === "standard") return inDomain.filter((c) => c.source !== "custom-extension");
+    if (sourceFilter === "unused") return inDomain.filter((c) => unusedConceptIds.has(c.id));
+    return inDomain.filter((c) => c.source === "custom-extension");
+  }, [concepts, sourceFilter, unusedConceptIds, domainFilter]);
 
   const categories = useMemo(() => {
     const cats: Record<string, ConceptView[]> = {};
@@ -810,9 +825,6 @@ export default function OntologyExplorer() {
 
   const handleConceptClick = (conceptId: string) => {
     setSelectedConceptId(conceptId);
-    if (viewMode === "graph") {
-      setViewMode("list");
-    }
   };
 
   const handleRelationshipClick = (targetId: string) => {
@@ -1014,6 +1026,22 @@ export default function OntologyExplorer() {
     return map;
   }, [categories]);
 
+  // One colour per domain (a handful), not per category (dozens).
+  const domainList = useMemo(() => Array.from(new Set(concepts.map((c) => c.domain))), [concepts]);
+  const domainColorMap = useMemo(() => domainColors(domainList), [domainList]);
+  const conceptIdSet = useMemo(() => new Set(concepts.map((c) => c.id)), [concepts]);
+  const mapConcepts: MapConcept[] = useMemo(() => concepts.map((c) => ({
+    id: c.id, label: c.label, category: c.category, domain: c.domain,
+    used: !unusedConceptIds.has(c.id),
+    relationships: c.relationships.map((r) => ({ targetId: r.targetId, label: r.label, type: r.type })),
+  })), [concepts, unusedConceptIds]);
+  const incomingMap = useMemo(() => buildIncoming(mapConcepts), [mapConcepts]);
+  // The map follows the domain and source filters; search highlights rather than hides.
+  const visibleMapConcepts = useMemo(() => {
+    const ids = new Set(filteredBySource.map((c) => c.id));
+    return mapConcepts.filter((c) => ids.has(c.id));
+  }, [mapConcepts, filteredBySource]);
+
   if (!industry) {
     return (
       <div className="flex items-center justify-center h-full p-8" data-testid="ontology-no-industry">
@@ -1049,7 +1077,7 @@ export default function OntologyExplorer() {
           <Card className="max-w-lg w-full">
             <CardContent className="flex flex-col items-center gap-5 pt-8 pb-8 text-center">
               <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-                <Sparkles className="w-8 h-8 text-primary" />
+                <Sparkles className="w-8 h-8 text-foreground" />
               </div>
               <div className="space-y-2">
                 <h2 className="text-lg font-semibold" data-testid="text-generate-ontology-title">
@@ -1084,7 +1112,7 @@ export default function OntologyExplorer() {
           </Card>
         </div>
         <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-          <DialogContent data-testid="dialog-add-custom-concept">
+          <DialogContent className="astra-scope font-sans" data-testid="dialog-add-custom-concept">
             <DialogHeader>
               <DialogTitle>Add Custom Concept</DialogTitle>
               <DialogDescription>
@@ -1183,7 +1211,7 @@ export default function OntologyExplorer() {
       <div className="flex items-center justify-center h-full p-8" data-testid="ontology-generating">
         <Card className="max-w-lg w-full">
           <CardContent className="flex flex-col items-center gap-5 pt-8 pb-8 text-center">
-            <Loader2 className="w-10 h-10 animate-spin text-primary" />
+            <Loader2 className="w-10 h-10 animate-spin text-foreground" />
             <div className="space-y-2">
               <h2 className="text-lg font-semibold">Generating Ontology</h2>
               <p className="text-sm text-muted-foreground max-w-sm">
@@ -1201,568 +1229,382 @@ export default function OntologyExplorer() {
   const categoryNames = Object.keys(filteredCategories);
   const customCount = concepts.filter((c) => c.source === "custom-extension").length;
 
+  const relationshipCount = mapConcepts.reduce((s, c) => s + c.relationships.filter((r) => conceptIdSet.has(r.targetId)).length, 0);
+  const nice = (s: string) => { const w = s.replace(/_/g, " "); return w.charAt(0).toUpperCase() + w.slice(1); };
+  const outgoingOf = (c: ConceptView) => c.relationships.filter((r) => conceptIdSet.has(r.targetId));
+  const incomingOf = (id: string) => incomingMap.get(id) || [];
+
   return (
-    <div className="flex h-full" data-testid="ontology-explorer">
+    <div className="astra-scope flex h-full flex-col bg-background text-foreground font-sans" data-testid="ontology-explorer">
+      {/* Header: what this ontology is, then every action on it. */}
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 px-5 pt-4 pb-3 shrink-0">
+        <div className="min-w-[260px] flex-1">
+          <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Ontology</span>
+          <h1 className="mt-0.5 font-[family-name:var(--astra-display)] text-2xl font-semibold tracking-tight" title={ontologyName} data-testid="text-ontology-name">
+            {industry.label} business concepts
+          </h1>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground">
+            <span><b className="font-medium text-foreground" data-testid="text-total-concepts">{totalConcepts}</b> concepts</span>
+            <span><b className="font-medium text-foreground">{domainList.length}</b> domain{domainList.length !== 1 ? "s" : ""}</span>
+            <span><b className="font-medium text-foreground" data-testid="text-total-categories">{allCategories.length}</b> categories</span>
+            <span><b className="font-medium text-foreground">{relationshipCount}</b> relationships</span>
+            {coverage && <span data-testid="text-coverage-summary"><b className="font-medium text-foreground">{coverage.usedCount}</b> used by agents</span>}
+            {customCount > 0 && <span><b className="font-medium text-foreground" data-testid="text-custom-count">{customCount}</b> added by you</span>}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" data-testid="button-import-export">
+                <Upload className="w-3.5 h-3.5 mr-1.5" />
+                Import or export
+                <ChevronDown className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="astra-scope font-sans">
+              <DropdownMenuItem onClick={() => { setCsvImportOpen(true); setCsvRows([]); setCsvSelected(new Set()); }} data-testid="button-import-csv">
+                <Upload className="w-3.5 h-3.5 mr-2" /> Import concepts from CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportCsv} disabled={concepts.length === 0} data-testid="button-export-csv">
+                <Download className="w-3.5 h-3.5 mr-2" /> Export all concepts as CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => reconcileScanMutation.mutate()}
+            disabled={reconcileScanMutation.isPending}
+            title="Find relationships that point at concepts that don't exist, and fix them"
+            data-testid="button-reconcile-relationships"
+          >
+            {reconcileScanMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5 mr-1.5" />}
+            Fix broken links
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => { setKgBuilderOpen(true); setKgBuilderStep("configure"); }}
+            data-testid="button-kg-builder"
+          >
+            <Database className="w-3.5 h-3.5 mr-1.5" />
+            Knowledge graph builder
+          </Button>
+          <Button size="sm" onClick={() => setAddDialogOpen(true)} data-testid="button-add-custom-concept">
+            <Plus className="w-3.5 h-3.5 mr-1.5" />
+            Add concept
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex flex-1 min-h-0 border-t">
       <div className="w-[300px] border-r flex flex-col shrink-0" data-testid="ontology-sidebar">
-        <div className="p-3 border-b space-y-2">
-          {/* The name gets its own row. Sharing a justify-between row with the
-              five action buttons left it about a third of the 300px sidebar, so
-              anything real — "AEMP / ISO 15143-3 (Equipment Telematics) + AED
-              Dealer Operations Ontology" — truncated to "AEMP / ISO 1...".
-              Wraps rather than truncates so the full ontology name is readable. */}
-          <div className="flex items-start gap-2 min-w-0">
-            <BookOpen className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-            <h2 className="text-sm font-semibold leading-snug break-words min-w-0" title={ontologyName} data-testid="text-ontology-name">{ontologyName}</h2>
-          </div>
-          <div>
-            <div className="flex flex-row gap-1 flex-wrap">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setAddDialogOpen(true)}
-                data-testid="button-add-custom-concept"
-              >
-                <Plus className="w-4 h-4 mr-1" />
-                Add Custom
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => { setKgBuilderOpen(true); setKgBuilderStep("configure"); }}
-                data-testid="button-kg-builder"
-              >
-                <Database className="w-4 h-4 mr-1" />
-                KG Builder
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => { setCsvImportOpen(true); setCsvRows([]); setCsvSelected(new Set()); }}
-                data-testid="button-import-csv"
-              >
-                <Upload className="w-4 h-4 mr-1" />
-                Import CSV
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleExportCsv}
-                disabled={concepts.length === 0}
-                data-testid="button-export-csv"
-              >
-                <Download className="w-4 h-4 mr-1" />
-                Export CSV
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => reconcileScanMutation.mutate()}
-                disabled={reconcileScanMutation.isPending}
-                data-testid="button-reconcile-relationships"
-              >
-                {reconcileScanMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                ) : (
-                  <RotateCcw className="w-4 h-4 mr-1" />
-                )}
-                Reconcile
-              </Button>
-            </div>
-          </div>
+        <div className="p-3 border-b flex flex-col gap-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Search concepts..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+              className="pl-9 bg-card"
               data-testid="input-search-concepts"
             />
           </div>
-          {/* The coverage line used to sit beside the tabs in a justify-between
-              row. The Tabs carries w-full, so it claimed the whole row and left
-              the paragraph no width at all — it overflowed the 300px sidebar and
-              rendered on top of the concept detail panel. Its own row instead. */}
-          <div className="space-y-1.5">
-            <Tabs value={sourceFilter} onValueChange={(v) => setSourceFilter(v as SourceFilter)} className="w-full">
-              <TabsList className="w-full" data-testid="filter-source-toggle">
-                <TabsTrigger value="all" className="flex-1 text-xs" data-testid="filter-all">All</TabsTrigger>
-                <TabsTrigger value="standard" className="flex-1 text-xs" data-testid="filter-standard">Standard</TabsTrigger>
-                <TabsTrigger value="custom" className="flex-1 text-xs" data-testid="filter-custom">Custom</TabsTrigger>
-                <TabsTrigger value="unused" className="flex-1 text-xs" data-testid="filter-unused">
-                  Unused{coverage ? ` (${coverage.unusedCount})` : ""}
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            {coverage && coverage.unusedCount > 0 && (
-              <p className="text-[11px] text-muted-foreground leading-snug break-words" data-testid="text-coverage-summary">
-                {coverage.usedCount} of {coverage.totalConcepts} concepts are referenced by at least one agent — {coverage.unusedCount} never used.
-              </p>
-            )}
+          {/* Domains, each with how much of it agents actually use. */}
+          <div>
+            <p className="px-0.5 pb-1.5 font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Domains · used by agents</p>
+            <div className="flex flex-col gap-0.5" data-testid="domain-list">
+              {[null, ...domainList].map((d) => {
+                const inD = d ? concepts.filter((c) => c.domain === d) : concepts;
+                const used = inD.filter((c) => !unusedConceptIds.has(c.id)).length;
+                const active = domainFilter === d;
+                return (
+                  <button
+                    key={d ?? "__all"}
+                    type="button"
+                    onClick={() => setDomainFilter(d)}
+                    aria-pressed={active}
+                    className={`grid grid-cols-[10px_1fr_auto] items-center gap-x-2 gap-y-1 rounded-[7px] border px-2 py-1.5 text-left text-[13px] transition-colors ${active ? "border-border bg-card font-medium" : "border-transparent hover:bg-accent"}`}
+                    data-testid={`button-domain-${d ? d.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "all"}`}
+                  >
+                    <i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: d ? domainColorMap[d] : "hsl(var(--foreground))" }} />
+                    <span className="truncate" title={d ?? "All domains"}>{d ?? "All domains"}</span>
+                    <span className="font-mono text-[11px] text-muted-foreground">{coverage ? `${used}/` : ""}{inD.length}</span>
+                    {coverage && (
+                      <span className="col-start-2 col-end-4 h-[3px] overflow-hidden rounded bg-muted">
+                        <span className="block h-full bg-emerald-600 dark:bg-emerald-400" style={{ width: `${inD.length ? (used / inD.length) * 100 : 0}%` }} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant={viewMode === "list" ? "default" : "ghost"}
-              className="flex-1"
-              onClick={() => setViewMode("list")}
-              data-testid="button-view-list"
-            >
-              <List className="w-3.5 h-3.5 mr-1" />
-              List
-            </Button>
-            <Button
-              size="sm"
-              variant={viewMode === "graph" ? "default" : "ghost"}
-              className="flex-1"
-              onClick={() => setViewMode("graph")}
-              data-testid="button-view-graph"
-            >
-              <Share2 className="w-3.5 h-3.5 mr-1" />
-              Graph
-            </Button>
+          <div className="flex flex-wrap gap-1.5" data-testid="filter-source-toggle">
+            {([
+              ["all", "All", "filter-all"],
+              ["unused", `Not used yet${coverage ? ` (${coverage.unusedCount})` : ""}`, "filter-unused"],
+              ["custom", "Added by you", "filter-custom"],
+              ["standard", "Industry standard", "filter-standard"],
+            ] as Array<[SourceFilter, string, string]>).map(([v, text, id]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setSourceFilter(v)}
+                aria-pressed={sourceFilter === v}
+                className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${sourceFilter === v ? "border-foreground bg-foreground text-background" : "bg-card hover:border-foreground/40"}`}
+                data-testid={id}
+              >
+                {text}
+              </button>
+            ))}
           </div>
         </div>
-        {viewMode === "list" ? (
-          <ScrollArea className="flex-1">
-            <div className="p-2">
-              <Accordion type="multiple" defaultValue={Object.keys(categories)} className="space-y-1">
-                {categoryNames.map((category) => {
-                  const catConcepts = filteredCategories[category];
-                  return (
-                    <AccordionItem key={category} value={category} className="border-none">
-                      <AccordionTrigger
-                        className="py-2 px-2 text-xs font-medium rounded-md hover:no-underline"
-                        data-testid={`accordion-category-${category.toLowerCase().replace(/\s+/g, "-")}`}
-                      >
-                        <span className="flex items-center gap-2 flex-wrap">
-                          <span className="truncate">{category}</span>
-                          <Badge variant="secondary" className="text-[10px]" data-testid={`badge-count-${category.toLowerCase().replace(/\s+/g, "-")}`}>
-                            {catConcepts.length}
-                          </Badge>
-                        </span>
-                      </AccordionTrigger>
-                      <AccordionContent className="pb-1 pt-0">
-                        <div className="space-y-0.5 pl-1">
-                          {catConcepts.map((concept) => (
-                            <Tooltip key={concept.id}>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={() => handleConceptClick(concept.id)}
-                                  className={`w-full text-left text-xs py-1.5 px-2 rounded-md transition-colors flex items-center gap-1.5 ${
-                                    selectedConceptId === concept.id
-                                      ? "bg-primary/10 text-primary font-medium"
-                                      : "text-muted-foreground hover-elevate"
-                                  }`}
-                                  data-testid={`button-concept-${concept.id}`}
-                                >
-                                  <ChevronRight className="w-3 h-3 shrink-0" />
-                                  <span className="truncate">{concept.label}</span>
-                                  {concept.sensitivityClassification && (
-                                    <Badge
-                                      variant="outline"
-                                      className={`text-[9px] shrink-0 ${
-                                        concept.sensitivityClassification.level === "phi" || concept.sensitivityClassification.level === "pci"
-                                          ? "border-red-500/50 text-red-600 dark:text-red-400"
-                                          : concept.sensitivityClassification.level === "restricted" || concept.sensitivityClassification.level === "confidential"
-                                          ? "border-orange-500/50 text-orange-600 dark:text-orange-400"
-                                          : "border-yellow-500/50 text-yellow-600 dark:text-yellow-400"
-                                      }`}
-                                      data-testid={`badge-sensitivity-${concept.id}`}
-                                    >
-                                      {concept.sensitivityClassification.level.toUpperCase()}
-                                    </Badge>
-                                  )}
-                                  {isCustom(concept) && (
-                                    <Badge variant="outline" className="text-[9px] ml-auto shrink-0 border-amber-500/50 text-amber-600 dark:text-amber-400" data-testid={`badge-custom-${concept.id}`}>
-                                      Custom
-                                    </Badge>
-                                  )}
-                                  {!isCustom(concept) && isApplied(concept.id) && (
-                                    <Sparkles className="w-3 h-3 shrink-0 text-primary ml-auto" />
-                                  )}
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent side="right" className="max-w-[250px]">
-                                <p className="text-xs">{concept.description}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          ))}
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-                  );
-                })}
-              </Accordion>
-            </div>
-          </ScrollArea>
-        ) : (
-          <div className="flex-1 p-2 text-xs text-muted-foreground flex items-center justify-center">
-            <span>Graph view shown in main panel</span>
+        <ScrollArea className="flex-1">
+          <div className="px-2 pb-4 pt-1">
+            {categoryNames.length === 0 && (
+              <p className="p-3 text-xs text-muted-foreground">No concepts match. Try another word or clear the filters.</p>
+            )}
+            {categoryNames
+              .sort((a, b) => filteredCategories[b].length - filteredCategories[a].length)
+              .map((category) => {
+                const catConcepts = filteredCategories[category];
+                const slug = category.toLowerCase().replace(/\s+/g, "-");
+                return (
+                  <div key={category} data-testid={`accordion-category-${slug}`}>
+                    <div className="flex justify-between px-2 pb-1 pt-3 font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                      <span className="truncate">{nice(category)}</span>
+                      <span data-testid={`badge-count-${slug}`}>{catConcepts.length}</span>
+                    </div>
+                    {catConcepts.map((concept) => {
+                      const used = !unusedConceptIds.has(concept.id);
+                      const links = outgoingOf(concept).length + incomingOf(concept.id).length;
+                      return (
+                        <button
+                          key={concept.id}
+                          type="button"
+                          onClick={() => handleConceptClick(concept.id)}
+                          title={concept.description}
+                          className={`flex w-full items-center gap-2 rounded-[7px] px-2 py-1.5 text-left text-[13.5px] transition-colors ${
+                            selectedConceptId === concept.id ? "bg-card font-medium shadow-[0_0_0_1px_hsl(var(--border))]" : "hover:bg-accent"
+                          }`}
+                          data-testid={`button-concept-${concept.id}`}
+                        >
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={used ? { background: domainColorMap[concept.domain] } : { boxShadow: `inset 0 0 0 1.5px ${domainColorMap[concept.domain]}` }}
+                            title={used ? "Used by agents" : "Not used by any agent yet"}
+                          />
+                          <span className="truncate">{concept.label}</span>
+                          {concept.sensitivityClassification && (
+                            <Badge variant="outline" className="shrink-0 px-1 text-[9px]" data-testid={`badge-sensitivity-${concept.id}`}>
+                              {concept.sensitivityClassification.level.toUpperCase()}
+                            </Badge>
+                          )}
+                          {isApplied(concept.id) && <Sparkles className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                          <span className="ml-auto font-mono text-[11px] text-muted-foreground">{links || ""}</span>
+                          {isCustom(concept) && <span className="sr-only" data-testid={`badge-custom-${concept.id}`}>Custom</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
           </div>
-        )}
+        </ScrollArea>
       </div>
 
-      <div className="flex-1 overflow-hidden" data-testid="ontology-detail">
-        <ScrollArea className="h-full">
-          {viewMode === "graph" ? (
-            <GraphView
-              concepts={Object.values(filteredCategories).flat()}
-              categoryColorMap={categoryColorMap}
-              selectedConceptId={selectedConceptId}
-              onSelectConcept={handleConceptClick}
+      <div className="flex-1 min-w-0 flex flex-col" data-testid="ontology-detail">
+        <div className="flex items-center gap-3 border-b px-4 py-2.5">
+          <div className="inline-flex overflow-hidden rounded-[7px] border bg-card">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              aria-pressed={viewMode === "list"}
+              className={`px-3 py-1 text-[12.5px] ${viewMode === "list" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+              data-testid="button-view-list"
+            >
+              Concept
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("graph")}
+              aria-pressed={viewMode === "graph"}
+              className={`px-3 py-1 text-[12.5px] ${viewMode === "graph" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+              data-testid="button-view-graph"
+            >
+              Map
+            </button>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {viewMode === "list"
+              ? "Pick a concept on the left, or follow a relationship"
+              : selectedConcept
+              ? "Focused on one concept: click another to move the focus · scroll to zoom, drag to pan"
+              : "Click a concept to focus on it · scroll to zoom, drag to pan"}
+          </span>
+          {viewMode === "graph" && selectedConcept && (
+            <div className="ml-auto flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setViewMode("list")} data-testid="button-open-concept">Open {selectedConcept.label}</Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedConceptId(null)} data-testid="button-clear-focus">Show everything</Button>
+            </div>
+          )}
+        </div>
+        {viewMode === "graph" ? (
+          <div className="flex-1 min-h-0">
+            <OntologyDomainMap
+              concepts={visibleMapConcepts}
+              colors={domainColorMap}
+              focusId={selectedConceptId && visibleMapConcepts.some((c) => c.id === selectedConceptId) ? selectedConceptId : null}
+              onSelect={handleConceptClick}
               searchQuery={searchQuery}
             />
-          ) : !selectedConcept ? (
-            <div className="p-8 space-y-6">
-              <div className="text-center space-y-4 max-w-md mx-auto">
-                <Network className="w-16 h-16 text-muted-foreground mx-auto" />
-                <h2 className="text-xl font-semibold" data-testid="text-ontology-title">{ontologyName}</h2>
-                <p className="text-sm text-muted-foreground">{industry.description}</p>
-                <div className="flex items-center justify-center gap-6 flex-wrap">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold" data-testid="text-total-concepts">{totalConcepts}</div>
-                    <div className="text-xs text-muted-foreground">Total Concepts</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold" data-testid="text-total-categories">{Object.keys(categories).length}</div>
-                    <div className="text-xs text-muted-foreground">Categories</div>
-                  </div>
-                  {customCount > 0 && (
-                    <div className="text-center">
-                      <div className="text-2xl font-bold" data-testid="text-custom-count">{customCount}</div>
-                      <div className="text-xs text-muted-foreground">Custom Extensions</div>
-                    </div>
-                  )}
-                </div>
+          </div>
+        ) : (
+        <ScrollArea className="flex-1">
+          {!selectedConcept ? (
+            <div className="mx-auto flex max-w-4xl flex-col gap-5 p-6">
+              <div>
+                <h2 className="font-[family-name:var(--astra-display)] text-xl font-semibold">How agents use this ontology</h2>
+                <p className="mt-1 max-w-[68ch] text-sm text-muted-foreground">
+                  Concepts give agents a shared vocabulary for your business. A concept an agent references shapes how it reasons; one no agent uses is only vocabulary so far. Pick a concept on the left, or open the map.
+                </p>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-4xl mx-auto">
-                {/* Quality metrics render "—" until real interaction-to-concept
-                    telemetry exists — never invented percentages. */}
-                <Card data-testid="card-metric-coverage">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-xs flex items-center gap-2">
-                      <BarChart3 className="w-3.5 h-3.5" />
-                      Coverage
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="text-2xl font-bold text-muted-foreground" data-testid="text-coverage-value">—</div>
-                    <p className="text-[11px] text-muted-foreground">Awaiting measurement — requires agent interaction telemetry referencing concepts</p>
-                  </CardContent>
-                </Card>
-
-                <Card data-testid="card-metric-consistency">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-xs flex items-center gap-2">
-                      <Check className="w-3.5 h-3.5" />
-                      Consistency
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="text-2xl font-bold text-muted-foreground" data-testid="text-consistency-value">—</div>
-                    <p className="text-[11px] text-muted-foreground">Awaiting measurement — terminology alignment is scored per run, not yet aggregated</p>
-                  </CardContent>
-                </Card>
-
-                <Card data-testid="card-metric-freshness">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-xs flex items-center gap-2">
-                      <Clock className="w-3.5 h-3.5" />
-                      Freshness
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="text-2xl font-bold text-muted-foreground" data-testid="text-freshness-value">—</div>
-                    <p className="text-[11px] text-muted-foreground">Per-concept version history is tracked on each concept's detail view</p>
-                  </CardContent>
-                </Card>
-
-                <Card data-testid="card-metric-gaps">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-xs flex items-center gap-2">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      Gap Detection
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="text-2xl font-bold text-muted-foreground" data-testid="text-gaps-value">—</div>
-                    <p className="text-[11px] text-muted-foreground">Awaiting measurement — gap detection requires conversation-miss telemetry</p>
-                  </CardContent>
-                </Card>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="domain-coverage">
+                {domainList.map((d) => {
+                  const inD = concepts.filter((c) => c.domain === d);
+                  const used = inD.filter((c) => !unusedConceptIds.has(c.id)).length;
+                  const linked = inD.filter((c) => outgoingOf(c).length + incomingOf(c.id).length > 0).length;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setDomainFilter(d)}
+                      className="flex flex-col gap-2 rounded-xl border bg-card p-4 text-left transition-colors hover:border-foreground/40"
+                      data-testid={`card-domain-${d.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium"><i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: domainColorMap[d] }} />{d}</span>
+                      <span className="font-[family-name:var(--astra-display)] text-2xl font-semibold">{coverage ? `${used} of ${inD.length}` : inD.length}<span className="ml-1.5 font-sans text-xs font-normal text-muted-foreground">{coverage ? "used by agents" : "concepts"}</span></span>
+                      {coverage && (
+                        <span className="h-1 overflow-hidden rounded bg-muted"><span className="block h-full bg-emerald-600 dark:bg-emerald-400" style={{ width: `${inD.length ? (used / inD.length) * 100 : 0}%` }} /></span>
+                      )}
+                      <span className="font-mono text-[11px] text-muted-foreground">{linked} of {inD.length} linked to other concepts</span>
+                    </button>
+                  );
+                })}
               </div>
-
-              <p className="text-xs text-muted-foreground text-center">
-                Select a concept from the sidebar to explore its properties, relationships, and agent mapping.
-              </p>
             </div>
           ) : (
-            <div className="p-6 space-y-6 max-w-4xl">
+            <div className="grid grid-cols-1 gap-6 p-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="min-w-0 space-y-6">
               <div className="space-y-2">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <h1 className="text-xl font-semibold" data-testid="text-concept-label">{selectedConcept.label}</h1>
-                  <Badge variant="secondary" data-testid="badge-concept-category">{selectedConcept.category}</Badge>
-                  <Badge variant="outline" data-testid="badge-concept-version">
-                    v{selectedConcept.version}
-                  </Badge>
+                <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: domainColorMap[selectedConcept.domain] }}>
+                  {selectedConcept.domain} · <span data-testid="badge-concept-category">{nice(selectedConcept.category)}</span>
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-[family-name:var(--astra-display)] text-[22px] font-semibold leading-tight" data-testid="text-concept-label">{selectedConcept.label}</h2>
                   {selectedConcept.sensitivityClassification && (
-                    <Badge
-                      variant="outline"
-                      className={
-                        selectedConcept.sensitivityClassification.level === "phi" || selectedConcept.sensitivityClassification.level === "pci"
-                          ? "border-red-500/50 text-red-600 dark:text-red-400"
-                          : selectedConcept.sensitivityClassification.level === "restricted" || selectedConcept.sensitivityClassification.level === "confidential"
-                          ? "border-orange-500/50 text-orange-600 dark:text-orange-400"
-                          : selectedConcept.sensitivityClassification.level === "internal"
-                          ? "border-yellow-500/50 text-yellow-600 dark:text-yellow-400"
-                          : ""
-                      }
-                      data-testid="badge-sensitivity-level"
-                    >
+                    <Badge variant="outline" data-testid="badge-sensitivity-level">
                       <Shield className="w-3 h-3 mr-1" />
                       {selectedConcept.sensitivityClassification.level.toUpperCase()}
                     </Badge>
                   )}
-                  {isCustom(selectedConcept) && (
-                    <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" data-testid="badge-custom-extension">
-                      Custom Extension
+                  {isApplied(selectedConcept.id) && (
+                    <Badge variant="secondary" className="text-[10px]" data-testid="badge-ai-enhanced">
+                      <Sparkles className="w-2.5 h-2.5 mr-1" /> AI enhanced
                     </Badge>
                   )}
                 </div>
-                <p className="text-sm text-muted-foreground" data-testid="text-concept-description">
-                  {selectedConcept.description}
-                </p>
+                <p className="max-w-[68ch] text-sm" data-testid="text-concept-description">{selectedConcept.description}</p>
                 {selectedConcept.synonyms.length > 0 && (
                   <div className="flex flex-wrap gap-1.5" data-testid="concept-synonyms">
                     {selectedConcept.synonyms.map((syn) => (
-                      <Badge key={syn} variant="outline" className="text-[10px]" data-testid={`badge-synonym-${syn}`}>
-                        {syn}
-                      </Badge>
+                      <span key={syn} className="rounded-full bg-muted px-2.5 py-0.5 text-xs" data-testid={`badge-synonym-${syn}`}>also: {syn}</span>
                     ))}
                   </div>
                 )}
-                <div className="flex items-center gap-3 flex-wrap">
-                  {selectedConcept.usageCount > 0 && (
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="text-usage-count">
-                      <BarChart3 className="w-3.5 h-3.5" />
-                      Referenced {selectedConcept.usageCount} times in production
-                    </div>
-                  )}
-                  {isApplied(selectedConcept.id) && (
-                    <Badge variant="secondary" className="text-[10px]" data-testid="badge-ai-enhanced">
-                      <Sparkles className="w-2.5 h-2.5 mr-1" /> AI Enhanced
-                    </Badge>
-                  )}
-                </div>
-                <div className="pt-1">
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => setDeleteConfirmOpen(true)}
-                    disabled={deleteConceptMutation.isPending}
-                    data-testid="button-delete-concept"
-                  >
-                    {deleteConceptMutation.isPending ? (
-                      <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-3.5 h-3.5 mr-1" />
-                    )}
-                    Delete Concept
-                  </Button>
-                </div>
               </div>
 
-              {versionData && versionData.history.length > 0 && (
-                <Card data-testid="card-version-history">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <History className="w-4 h-4" />
-                        Version History
-                        <Badge variant="secondary" className="text-[10px]">
-                          {versionData.history.length} revision{versionData.history.length !== 1 ? "s" : ""}
-                        </Badge>
-                      </CardTitle>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setVersionHistoryOpen(!versionHistoryOpen)}
-                        data-testid="button-toggle-version-history"
-                      >
-                        {versionHistoryOpen ? "Hide" : "Show"} History
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  {versionHistoryOpen && (
-                    <CardContent>
-                      <div className="space-y-3">
-                        {[...versionData.history].reverse().map((entry, idx) => (
-                          <div
-                            key={idx}
-                            className="p-3 rounded-md border text-xs space-y-1.5"
-                            data-testid={`version-entry-${entry.version}`}
-                          >
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <Badge variant="outline" className="text-[10px]" data-testid={`badge-version-${entry.version}`}>
-                                v{entry.version}
-                              </Badge>
-                              <span className="text-muted-foreground text-[10px]">
-                                {new Date(entry.updatedAt).toLocaleString()}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="font-medium">Label:</span>{" "}
-                              <span className="text-muted-foreground">{entry.label}</span>
-                            </div>
-                            <div>
-                              <span className="font-medium">Description:</span>{" "}
-                              <span className="text-muted-foreground line-clamp-2">{entry.description}</span>
-                            </div>
-                            {Array.isArray(entry.synonyms) && entry.synonyms.length > 0 && (
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-medium">Synonyms:</span>
-                                {entry.synonyms.map((s: string) => (
-                                  <Badge key={s} variant="outline" className="text-[9px]">{s}</Badge>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  )}
-                </Card>
-              )}
-
-              {linkedAgents !== undefined && (
-                <Card data-testid="card-linked-agents">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Bot className="w-4 h-4" />
-                      Linked Agents
-                      <Badge variant="secondary" className="text-[10px]">
-                        {linkedAgents.length}
-                      </Badge>
-                      {linkedAgents.some(a => a.requiresRevalidation) && (
-                        <Badge variant="outline" className="text-[10px] bg-amber-500/15 text-amber-600 border-amber-500/20">
-                          {linkedAgents.filter(a => a.requiresRevalidation).length} need re-validation
-                        </Badge>
-                      )}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {linkedAgents.length === 0 ? (
-                      <p className="text-xs text-muted-foreground py-1">No agents tagged with this concept yet.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {linkedAgents.map(a => (
-                          <Link key={a.id} href={`/agents/${a.id}`}>
-                            <div className="flex items-center justify-between gap-2 p-2 rounded-md border hover:bg-muted/50 cursor-pointer" data-testid={`linked-agent-${a.id}`}>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium">{a.name}</span>
-                                <Badge variant="outline" className="text-[9px]">{a.status}</Badge>
-                              </div>
-                              {a.requiresRevalidation && (
-                                <Badge variant="outline" className="text-[9px] bg-amber-500/15 text-amber-600 border-amber-500/20">
-                                  Re-validation needed
-                                </Badge>
-                              )}
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
-              {selectedConcept.linkedRegulations.length > 0 && (
-                <Card data-testid="card-linked-regulations">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <FileText className="w-4 h-4" />
-                      Linked Regulations
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      {selectedConcept.linkedRegulations.map((reg, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs" data-testid={`regulation-${i}`}>
-                          <Shield className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          {reg.url ? (
-                            <a href={reg.url} target="_blank" rel="noopener noreferrer" className="text-primary underline" data-testid={`link-regulation-${i}`}>
-                              {reg.name}
-                            </a>
-                          ) : (
-                            <span className="text-muted-foreground">{reg.name}</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {selectedConcept.sensitivityClassification && (
-                <Card data-testid="card-sensitivity-classification">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Shield className="w-4 h-4" />
-                      Data Sensitivity Classification
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <div className="text-xs">
-                        <span className="text-muted-foreground">Level: </span>
-                        <Badge
-                          variant="outline"
-                          className={
-                            selectedConcept.sensitivityClassification.level === "phi" || selectedConcept.sensitivityClassification.level === "pci"
-                              ? "border-red-500/50 text-red-600 dark:text-red-400"
-                              : selectedConcept.sensitivityClassification.level === "restricted" || selectedConcept.sensitivityClassification.level === "confidential"
-                              ? "border-orange-500/50 text-orange-600 dark:text-orange-400"
-                              : selectedConcept.sensitivityClassification.level === "internal"
-                              ? "border-yellow-500/50 text-yellow-600 dark:text-yellow-400"
-                              : ""
-                          }
-                          data-testid="badge-sensitivity-detail-level"
-                        >
-                          {selectedConcept.sensitivityClassification.level.toUpperCase()}
-                        </Badge>
-                      </div>
-                      <div className="text-xs">
-                        <span className="text-muted-foreground">Redaction: </span>
-                        <Badge
-                          variant={selectedConcept.sensitivityClassification.redactionRequired ? "destructive" : "secondary"}
-                          data-testid="badge-sensitivity-redaction"
-                        >
-                          {selectedConcept.sensitivityClassification.redactionRequired ? "Required" : "Not Required"}
-                        </Badge>
-                      </div>
-                      {selectedConcept.sensitivityClassification.retentionDays != null && (
-                        <div className="text-xs" data-testid="text-sensitivity-retention">
-                          <span className="text-muted-foreground">Retention: </span>
-                          <span className="font-medium">{selectedConcept.sensitivityClassification.retentionDays} days</span>
-                        </div>
-                      )}
-                    </div>
-                    {selectedConcept.sensitivityClassification.dataTypes.length > 0 && (
+              <section>
+                <h3 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">How it connects</h3>
+                <OntologyNeighbourhood
+                  concept={mapConcepts.find((c) => c.id === selectedConcept.id)!}
+                  concepts={mapConcepts}
+                  colors={domainColorMap}
+                  onSelect={handleRelationshipClick}
+                />
+              </section>
+              <section data-testid="card-relationships">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    Relationships · {outgoingOf(selectedConcept).length + incomingOf(selectedConcept.id).length}
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => suggestRelationshipsMutation.mutate(selectedConcept)}
+                    disabled={suggestRelationshipsMutation.isPending}
+                    data-testid="button-suggest-relationships"
+                  >
+                    {suggestRelationshipsMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Database className="w-3.5 h-3.5 mr-1.5" />}
+                    Suggest relationships
+                  </Button>
+                </div>
+                {selectedConcept.relationships.length === 0 && incomingOf(selectedConcept.id).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Not linked to any other concept yet. Linking it helps agents reason about it in context.</p>
+                ) : (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {selectedConcept.relationships.length > 0 && (
                       <div>
-                        <div className="text-xs font-medium mb-1.5">Protected Data Types</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {selectedConcept.sensitivityClassification.dataTypes.map((dt) => (
-                            <Badge key={dt} variant="outline" className="text-[10px]" data-testid={`badge-data-type-${dt.toLowerCase().replace(/\s+/g, "-")}`}>
-                              {dt}
-                            </Badge>
-                          ))}
-                        </div>
+                        <p className="mb-1 text-xs font-medium">Points to</p>
+                        {selectedConcept.relationships.map((rel, idx) => {
+                          const target = concepts.find((c) => c.id === rel.targetId);
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => target && handleRelationshipClick(rel.targetId)}
+                              disabled={!target}
+                              className="grid w-full grid-cols-[minmax(0,140px)_1fr] items-center gap-3 border-b py-1.5 text-left text-[13px] last:border-0 enabled:hover:bg-accent/50"
+                              data-testid={`button-relationship-${rel.targetId}`}
+                            >
+                              <span className="truncate font-mono text-xs text-muted-foreground" title={rel.label}>{rel.label || rel.type.replace(/_/g, " ")}</span>
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: target ? domainColorMap[target.domain] : "hsl(var(--muted-foreground))" }} />
+                                <span className="truncate">{target ? target.label : rel.targetId}</span>
+                                {!target && <span className="text-[11px] text-amber-600 dark:text-amber-400">missing</span>}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
-                  </CardContent>
-                </Card>
-              )}
+                    {incomingOf(selectedConcept.id).length > 0 && (
+                      <div>
+                        <p className="mb-1 text-xs font-medium">Pointed to by</p>
+                        {incomingOf(selectedConcept.id).map((r, idx) => {
+                          const from = concepts.find((c) => c.id === r.from)!;
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => handleRelationshipClick(r.from)}
+                              className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,140px)] items-center gap-3 border-b py-1.5 text-left text-[13px] last:border-0 hover:bg-accent/50"
+                              data-testid={`button-incoming-${r.from}`}
+                            >
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: domainColorMap[from.domain] }} />
+                                <span className="truncate">{from.label}</span>
+                              </span>
+                              <span className="truncate font-mono text-xs text-muted-foreground" title={r.label}>{r.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
 
               <Card data-testid="card-properties">
                 <CardHeader className="pb-3">
@@ -1782,59 +1624,10 @@ export default function OntologyExplorer() {
                           className="flex items-start gap-3 text-xs py-1.5 border-b last:border-0"
                           data-testid={`property-${prop.name}`}
                         >
-                          <code className="font-mono text-primary shrink-0 min-w-[120px]">{prop.name}</code>
+                          <code className="font-mono text-foreground shrink-0 min-w-[120px]">{prop.name}</code>
                           <Badge variant="outline" className="text-[10px] shrink-0">{prop.type}</Badge>
                           <span className="text-muted-foreground">{prop.description}</span>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card data-testid="card-relationships">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Link2 className="w-4 h-4" />
-                      Relationships
-                    </CardTitle>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => suggestRelationshipsMutation.mutate(selectedConcept)}
-                      disabled={suggestRelationshipsMutation.isPending}
-                      data-testid="button-suggest-relationships"
-                    >
-                      {suggestRelationshipsMutation.isPending ? (
-                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                      ) : (
-                        <Database className="w-3.5 h-3.5 mr-1.5" />
-                      )}
-                      Suggest Relationships
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {selectedConcept.relationships.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No relationships defined.</p>
-                  ) : (
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {selectedConcept.relationships.map((rel, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => handleRelationshipClick(rel.targetId)}
-                          className="text-left p-3 rounded-md border hover-elevate transition-colors"
-                          data-testid={`button-relationship-${rel.targetId}`}
-                        >
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <Badge className={`text-[10px] ${relationshipTypeColors[rel.type] || ""}`}>
-                              {rel.type.replace("_", " ")}
-                            </Badge>
-                          </div>
-                          <div className="text-xs font-medium">{getConceptLabel(rel.targetId)}</div>
-                          <div className="text-[11px] text-muted-foreground mt-0.5">{rel.label}</div>
-                        </button>
                       ))}
                     </div>
                   )}
@@ -2081,7 +1874,7 @@ export default function OntologyExplorer() {
                           <div className="space-y-3" data-testid="enrichment-results">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="text-xs font-medium flex items-center gap-1.5">
-                                <Sparkles className="w-3.5 h-3.5 text-primary" />
+                                <Sparkles className="w-3.5 h-3.5 text-foreground" />
                                 AI Enrichment Results
                               </div>
                               <div className="flex items-center gap-1.5">
@@ -2249,7 +2042,7 @@ export default function OntologyExplorer() {
                                 <div className="space-y-2">
                                   {enrichment.suggestedProperties.map((prop, i) => (
                                     <div key={i} className="flex items-start gap-3 text-xs py-1.5 border-b last:border-0" data-testid={`preview-property-${i}`}>
-                                      <code className="font-mono text-primary shrink-0 min-w-[120px]">{prop.name}</code>
+                                      <code className="font-mono text-foreground shrink-0 min-w-[120px]">{prop.name}</code>
                                       <Badge variant="outline" className="text-[10px] shrink-0">{prop.type}</Badge>
                                       <span className="text-muted-foreground">{prop.description}</span>
                                     </div>
@@ -2324,8 +2117,243 @@ export default function OntologyExplorer() {
                 );
               })()}
             </div>
+            <aside className="flex min-w-0 flex-col gap-4">
+              <div className="rounded-xl border bg-card p-4" data-testid="card-agent-usage">
+                <p className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Used by agents</p>
+                {unusedConceptIds.has(selectedConcept.id) ? (
+                  <>
+                    <p className="mt-1 font-[family-name:var(--astra-display)] text-lg font-semibold">Not used yet</p>
+                    <p className="mt-1 text-xs text-muted-foreground">No agent references this concept. It still grounds search and Ask Astra, but agents won't reason with it until one uses it.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-1.5"><span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-600/40 px-2.5 py-0.5 text-xs text-emerald-700 dark:border-emerald-400/40 dark:text-emerald-400">● In use</span></p>
+                    <p className="mt-1.5 text-xs text-muted-foreground">Referenced by at least one agent. Changing it flags those agents for re-validation.</p>
+                  </>
+                )}
+                {selectedConcept.usageCount > 0 && (
+                  <p className="mt-1.5 font-mono text-[11px] text-muted-foreground" data-testid="text-usage-count">Referenced {selectedConcept.usageCount} times in production</p>
+                )}
+              </div>
+              <div className="grid grid-cols-[100px_1fr] gap-x-3 gap-y-1.5 rounded-xl border bg-card p-4 text-[13px]">
+                <span className="text-muted-foreground">Source</span>
+                <span data-testid={isCustom(selectedConcept) ? "badge-custom-extension" : undefined}>{isCustom(selectedConcept) ? "Added by your team" : "Industry standard"}</span>
+                <span className="text-muted-foreground">Version</span>
+                <span data-testid="badge-concept-version">v{selectedConcept.version}</span>
+                <span className="text-muted-foreground">Domain</span>
+                <span>{selectedConcept.domain}</span>
+                <span className="text-muted-foreground">Category</span>
+                <span>{nice(selectedConcept.category)}</span>
+              </div>
+              {versionData && versionData.history.length > 0 && (
+                <Card data-testid="card-version-history">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <History className="w-4 h-4" />
+                        Version History
+                        <Badge variant="secondary" className="text-[10px]">
+                          {versionData.history.length} revision{versionData.history.length !== 1 ? "s" : ""}
+                        </Badge>
+                      </CardTitle>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setVersionHistoryOpen(!versionHistoryOpen)}
+                        data-testid="button-toggle-version-history"
+                      >
+                        {versionHistoryOpen ? "Hide" : "Show"} History
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  {versionHistoryOpen && (
+                    <CardContent>
+                      <div className="space-y-3">
+                        {[...versionData.history].reverse().map((entry, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3 rounded-md border text-xs space-y-1.5"
+                            data-testid={`version-entry-${entry.version}`}
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <Badge variant="outline" className="text-[10px]" data-testid={`badge-version-${entry.version}`}>
+                                v{entry.version}
+                              </Badge>
+                              <span className="text-muted-foreground text-[10px]">
+                                {new Date(entry.updatedAt).toLocaleString()}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Label:</span>{" "}
+                              <span className="text-muted-foreground">{entry.label}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Description:</span>{" "}
+                              <span className="text-muted-foreground line-clamp-2">{entry.description}</span>
+                            </div>
+                            {Array.isArray(entry.synonyms) && entry.synonyms.length > 0 && (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-medium">Synonyms:</span>
+                                {entry.synonyms.map((s: string) => (
+                                  <Badge key={s} variant="outline" className="text-[9px]">{s}</Badge>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  )}
+                </Card>
+              )}
+
+              {linkedAgents !== undefined && (
+                <Card data-testid="card-linked-agents">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Bot className="w-4 h-4" />
+                      Linked Agents
+                      <Badge variant="secondary" className="text-[10px]">
+                        {linkedAgents.length}
+                      </Badge>
+                      {linkedAgents.some(a => a.requiresRevalidation) && (
+                        <Badge variant="outline" className="text-[10px] bg-amber-500/15 text-amber-600 border-amber-500/20">
+                          {linkedAgents.filter(a => a.requiresRevalidation).length} need re-validation
+                        </Badge>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {linkedAgents.length === 0 ? (
+                      <p className="text-xs text-muted-foreground py-1">No agents tagged with this concept yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {linkedAgents.map(a => (
+                          <Link key={a.id} href={`/agents/${a.id}`}>
+                            <div className="flex items-center justify-between gap-2 p-2 rounded-md border hover:bg-muted/50 cursor-pointer" data-testid={`linked-agent-${a.id}`}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium">{a.name}</span>
+                                <Badge variant="outline" className="text-[9px]">{a.status}</Badge>
+                              </div>
+                              {a.requiresRevalidation && (
+                                <Badge variant="outline" className="text-[9px] bg-amber-500/15 text-amber-600 border-amber-500/20">
+                                  Re-validation needed
+                                </Badge>
+                              )}
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {selectedConcept.linkedRegulations.length > 0 && (
+                <Card data-testid="card-linked-regulations">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      Linked Regulations
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {selectedConcept.linkedRegulations.map((reg, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs" data-testid={`regulation-${i}`}>
+                          <Shield className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          {reg.url ? (
+                            <a href={reg.url} target="_blank" rel="noopener noreferrer" className="text-foreground underline" data-testid={`link-regulation-${i}`}>
+                              {reg.name}
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">{reg.name}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {selectedConcept.sensitivityClassification && (
+                <Card data-testid="card-sensitivity-classification">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Shield className="w-4 h-4" />
+                      Data Sensitivity Classification
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="text-xs">
+                        <span className="text-muted-foreground">Level: </span>
+                        <Badge
+                          variant="outline"
+                          className={
+                            selectedConcept.sensitivityClassification.level === "phi" || selectedConcept.sensitivityClassification.level === "pci"
+                              ? "border-red-500/50 text-red-600 dark:text-red-400"
+                              : selectedConcept.sensitivityClassification.level === "restricted" || selectedConcept.sensitivityClassification.level === "confidential"
+                              ? "border-orange-500/50 text-orange-600 dark:text-orange-400"
+                              : selectedConcept.sensitivityClassification.level === "internal"
+                              ? "border-yellow-500/50 text-yellow-600 dark:text-yellow-400"
+                              : ""
+                          }
+                          data-testid="badge-sensitivity-detail-level"
+                        >
+                          {selectedConcept.sensitivityClassification.level.toUpperCase()}
+                        </Badge>
+                      </div>
+                      <div className="text-xs">
+                        <span className="text-muted-foreground">Redaction: </span>
+                        <Badge
+                          variant={selectedConcept.sensitivityClassification.redactionRequired ? "destructive" : "secondary"}
+                          data-testid="badge-sensitivity-redaction"
+                        >
+                          {selectedConcept.sensitivityClassification.redactionRequired ? "Required" : "Not Required"}
+                        </Badge>
+                      </div>
+                      {selectedConcept.sensitivityClassification.retentionDays != null && (
+                        <div className="text-xs" data-testid="text-sensitivity-retention">
+                          <span className="text-muted-foreground">Retention: </span>
+                          <span className="font-medium">{selectedConcept.sensitivityClassification.retentionDays} days</span>
+                        </div>
+                      )}
+                    </div>
+                    {selectedConcept.sensitivityClassification.dataTypes.length > 0 && (
+                      <div>
+                        <div className="text-xs font-medium mb-1.5">Protected Data Types</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedConcept.sensitivityClassification.dataTypes.map((dt) => (
+                            <Badge key={dt} variant="outline" className="text-[10px]" data-testid={`badge-data-type-${dt.toLowerCase().replace(/\s+/g, "-")}`}>
+                              {dt}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              <div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setDeleteConfirmOpen(true)}
+                  disabled={deleteConceptMutation.isPending}
+                  data-testid="button-delete-concept"
+                >
+                  {deleteConceptMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 mr-1.5" />}
+                  Delete concept
+                </Button>
+              </div>
+            </aside>
+            </div>
           )}
         </ScrollArea>
+        )}
       </div>
 
       {kgPanelOpen && selectedConcept && (
@@ -2463,8 +2491,10 @@ export default function OntologyExplorer() {
         </div>
       )}
 
+      </div>
+
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent data-testid="dialog-add-custom-concept">
+        <DialogContent className="astra-scope font-sans" data-testid="dialog-add-custom-concept">
           <DialogHeader>
             <DialogTitle>Add Custom Concept</DialogTitle>
             <DialogDescription>
@@ -2570,7 +2600,7 @@ export default function OntologyExplorer() {
       </Dialog>
 
       <Dialog open={kgBuilderOpen} onOpenChange={setKgBuilderOpen}>
-        <DialogContent className="max-w-3xl" data-testid="dialog-kg-builder">
+        <DialogContent className="astra-scope font-sans max-w-3xl" data-testid="dialog-kg-builder">
           {kgBuilderStep === "configure" && (
             <>
               <DialogHeader>
@@ -2644,7 +2674,7 @@ export default function OntologyExplorer() {
 
           {kgBuilderStep === "generating" && (
             <div className="flex flex-col items-center gap-4 py-12 text-center">
-              <Loader2 className="w-10 h-10 animate-spin text-primary" />
+              <Loader2 className="w-10 h-10 animate-spin text-foreground" />
               <div className="space-y-2">
                 <h2 className="text-lg font-semibold">Generating Knowledge Graph</h2>
                 <p className="text-sm text-muted-foreground max-w-sm">
@@ -2802,7 +2832,7 @@ export default function OntologyExplorer() {
       </Dialog>
 
       <Dialog open={reconcileDialogOpen} onOpenChange={setReconcileDialogOpen}>
-        <DialogContent data-testid="dialog-reconcile-relationships">
+        <DialogContent className="astra-scope font-sans" data-testid="dialog-reconcile-relationships">
           <DialogHeader>
             <DialogTitle>Reconcile Relationships</DialogTitle>
             <DialogDescription>
@@ -2871,7 +2901,7 @@ export default function OntologyExplorer() {
 
       {/* Delete concept confirmation */}
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <AlertDialogContent data-testid="dialog-delete-confirm">
+        <AlertDialogContent className="astra-scope font-sans" data-testid="dialog-delete-confirm">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Concept</AlertDialogTitle>
             <AlertDialogDescription>
@@ -2911,7 +2941,7 @@ export default function OntologyExplorer() {
 
       {/* CSV Import dialog */}
       <Dialog open={csvImportOpen} onOpenChange={(open) => { setCsvImportOpen(open); if (!open) { setCsvRows([]); setCsvSelected(new Set()); if (csvFileRef.current) csvFileRef.current.value = ""; } }}>
-        <DialogContent className="max-w-3xl" data-testid="dialog-csv-import">
+        <DialogContent className="astra-scope font-sans max-w-3xl" data-testid="dialog-csv-import">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Upload className="w-4 h-4" />
@@ -2935,7 +2965,7 @@ export default function OntologyExplorer() {
               </div>
               <button
                 onClick={handleDownloadTemplate}
-                className="text-xs text-primary underline underline-offset-2 whitespace-nowrap"
+                className="text-xs text-foreground underline underline-offset-2 whitespace-nowrap"
                 data-testid="link-download-template"
               >
                 Download template
@@ -3021,383 +3051,3 @@ export default function OntologyExplorer() {
   );
 }
 
-function GraphView({
-  concepts,
-  categoryColorMap,
-  selectedConceptId,
-  onSelectConcept,
-  searchQuery,
-}: {
-  concepts: ConceptView[];
-  categoryColorMap: Record<string, string>;
-  selectedConceptId: string | null;
-  onSelectConcept: (id: string) => void;
-  searchQuery: string;
-}) {
-  const width = 900;
-  const height = 700;
-  const centerX = width / 2;
-  const centerY = height / 2;
-
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-  const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
-  const [dragOffset, setDragOffset] = useState<Record<string, { x: number; y: number }>>({});
-  const didDragRef = useRef(false);
-  const svgRef = useRef<SVGSVGElement>(null);
-
-  const basePositions = useMemo(() => {
-    const catGroups: Record<string, ConceptView[]> = {};
-    for (const c of concepts) {
-      if (!catGroups[c.category]) catGroups[c.category] = [];
-      catGroups[c.category].push(c);
-    }
-    const cats = Object.keys(catGroups);
-    const pos: Record<string, { x: number; y: number }> = {};
-    const baseRadius = Math.min(width, height) * 0.3;
-
-    cats.forEach((cat, catIdx) => {
-      const catAngle = (2 * Math.PI * catIdx) / cats.length - Math.PI / 2;
-      const catConcepts = catGroups[cat];
-      const ringRadius = baseRadius + (catIdx % 2 === 0 ? 0 : 40);
-
-      catConcepts.forEach((concept, i) => {
-        const spread = catConcepts.length > 1 ? (Math.PI * 0.3) / catConcepts.length : 0;
-        const angle = catAngle + (i - (catConcepts.length - 1) / 2) * spread;
-        const r = ringRadius + i * 15;
-        pos[concept.id] = {
-          x: centerX + r * Math.cos(angle),
-          y: centerY + r * Math.sin(angle),
-        };
-      });
-    });
-    return pos;
-  }, [concepts, centerX, centerY, width, height]);
-
-  const positions = useMemo(() => {
-    const merged: Record<string, { x: number; y: number }> = {};
-    for (const [id, pos] of Object.entries(basePositions)) {
-      const offset = dragOffset[id];
-      merged[id] = offset ? { x: pos.x + offset.x, y: pos.y + offset.y } : pos;
-    }
-    return merged;
-  }, [basePositions, dragOffset]);
-
-  const edges = useMemo(() => {
-    const conceptIds = new Set(concepts.map((c) => c.id));
-    const result: { from: string; to: string; type: string; label: string }[] = [];
-    const seen = new Set<string>();
-    for (const c of concepts) {
-      for (const rel of c.relationships) {
-        if (conceptIds.has(rel.targetId)) {
-          const key = [c.id, rel.targetId].sort().join("-");
-          if (!seen.has(key)) {
-            seen.add(key);
-            result.push({ from: c.id, to: rel.targetId, type: rel.type, label: rel.label });
-          }
-        }
-      }
-    }
-    return result;
-  }, [concepts]);
-
-  const connectedIds = useMemo(() => {
-    if (!hoveredNodeId) return new Set<string>();
-    const ids = new Set<string>();
-    ids.add(hoveredNodeId);
-    for (const e of edges) {
-      if (e.from === hoveredNodeId) ids.add(e.to);
-      if (e.to === hoveredNodeId) ids.add(e.from);
-    }
-    return ids;
-  }, [hoveredNodeId, edges]);
-
-  const searchMatchIds = useMemo(() => {
-    if (!searchQuery.trim()) return new Set<string>();
-    const q = searchQuery.toLowerCase();
-    return new Set(
-      concepts
-        .filter(
-          (c) =>
-            c.label.toLowerCase().includes(q) ||
-            c.description.toLowerCase().includes(q) ||
-            c.tags.some((t) => t.toLowerCase().includes(q)) ||
-            c.synonyms.some((s) => s.toLowerCase().includes(q))
-        )
-        .map((c) => c.id)
-    );
-  }, [searchQuery, concepts]);
-
-  const maxUsage = useMemo(() => Math.max(1, ...concepts.map((c) => c.usageCount || 0)), [concepts]);
-
-  const visibleConcepts = useMemo(
-    () => concepts.filter((c) => !hiddenCategories.has(c.category)),
-    [concepts, hiddenCategories]
-  );
-  const visibleIds = useMemo(() => new Set(visibleConcepts.map((c) => c.id)), [visibleConcepts]);
-
-  const toggleCategory = (cat: string) => {
-    setHiddenCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat);
-      else next.add(cat);
-      return next;
-    });
-  };
-
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.08 : 0.08;
-    setZoom((prev) => Math.max(0.3, Math.min(3, prev + delta)));
-  }, []);
-
-  const getSvgPoint = useCallback((clientX: number, clientY: number) => {
-    if (!svgRef.current) return { x: clientX, y: clientY };
-    const rect = svgRef.current.getBoundingClientRect();
-    return {
-      x: ((clientX - rect.left) / rect.width) * width,
-      y: ((clientY - rect.top) / rect.height) * height,
-    };
-  }, [width, height]);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if ((e.target as Element).closest("[data-node-id]")) return;
-    setIsPanning(true);
-    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-  }, [pan]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (draggedNodeId) {
-      didDragRef.current = true;
-      const pt = getSvgPoint(e.clientX, e.clientY);
-      const base = basePositions[draggedNodeId];
-      if (base) {
-        setDragOffset((prev) => ({
-          ...prev,
-          [draggedNodeId]: {
-            x: (pt.x - pan.x) / zoom - base.x,
-            y: (pt.y - pan.y) / zoom - base.y,
-          },
-        }));
-      }
-    } else if (isPanning) {
-      setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
-    }
-  }, [draggedNodeId, isPanning, panStart, getSvgPoint, basePositions, pan, zoom]);
-
-  const handleMouseUp = useCallback(() => {
-    setIsPanning(false);
-    setDraggedNodeId(null);
-  }, []);
-
-  const handleNodeMouseDown = useCallback((e: React.MouseEvent, conceptId: string) => {
-    e.stopPropagation();
-    didDragRef.current = false;
-    setDraggedNodeId(conceptId);
-  }, []);
-
-  const handleReset = useCallback(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-    setDragOffset({});
-    setHiddenCategories(new Set());
-  }, []);
-
-  return (
-    <div className="p-4 space-y-3" data-testid="graph-view">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="text-xs text-muted-foreground">
-          Scroll to zoom | Drag background to pan | Drag nodes to reposition
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Button size="sm" variant="outline" onClick={() => setZoom((z) => Math.min(3, z + 0.2))} data-testid="button-zoom-in">
-            <ZoomIn className="w-3.5 h-3.5" />
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setZoom((z) => Math.max(0.3, z - 0.2))} data-testid="button-zoom-out">
-            <ZoomOut className="w-3.5 h-3.5" />
-          </Button>
-          <Button size="sm" variant="ghost" onClick={handleReset} data-testid="button-graph-reset">
-            <RotateCcw className="w-3.5 h-3.5 mr-1" />
-            Reset
-          </Button>
-        </div>
-      </div>
-      <div className="relative">
-        <svg
-          ref={svgRef}
-          width="100%"
-          height={height}
-          viewBox={`0 0 ${width} ${height}`}
-          className="border rounded-md bg-muted/20 select-none"
-          style={{ cursor: isPanning ? "grabbing" : draggedNodeId ? "grabbing" : "grab" }}
-          onWheel={handleWheel}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          data-testid="graph-svg"
-        >
-          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
-            {edges.map((edge, i) => {
-              const from = positions[edge.from];
-              const to = positions[edge.to];
-              if (!from || !to || !visibleIds.has(edge.from) || !visibleIds.has(edge.to)) return null;
-              const isHighlighted = hoveredNodeId && (connectedIds.has(edge.from) && connectedIds.has(edge.to));
-              const midX = (from.x + to.x) / 2;
-              const midY = (from.y + to.y) / 2;
-              return (
-                <g key={i}>
-                  <line
-                    x1={from.x}
-                    y1={from.y}
-                    x2={to.x}
-                    y2={to.y}
-                    stroke={isHighlighted ? "hsl(var(--primary))" : "currentColor"}
-                    strokeOpacity={isHighlighted ? 0.6 : hoveredNodeId ? 0.06 : 0.15}
-                    strokeWidth={isHighlighted ? 2 : 1}
-                  />
-                  {isHighlighted && (
-                    <text
-                      x={midX}
-                      y={midY - 4}
-                      textAnchor="middle"
-                      className="text-[7px] fill-muted-foreground"
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {edge.type.replace("_", " ")}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-            {visibleConcepts.map((concept) => {
-              const p = positions[concept.id];
-              if (!p) return null;
-              const isSelected = selectedConceptId === concept.id;
-              const isHovered = hoveredNodeId === concept.id;
-              const isConnected = hoveredNodeId ? connectedIds.has(concept.id) : false;
-              const isSearchMatch = searchMatchIds.has(concept.id);
-              const isDimmed = hoveredNodeId !== null && !isConnected;
-              const color = categoryColorMap[concept.category] || "hsl(210, 50%, 50%)";
-              const isCustomNode = concept.source === "custom-extension";
-              const usageRatio = (concept.usageCount || 0) / maxUsage;
-              const baseR = 14 + usageRatio * 10;
-              const r = isSelected ? baseR + 4 : isHovered ? baseR + 2 : baseR;
-
-              return (
-                <g
-                  key={concept.id}
-                  data-node-id={concept.id}
-                  onMouseDown={(e) => handleNodeMouseDown(e, concept.id)}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!didDragRef.current) onSelectConcept(concept.id);
-                  }}
-                  onMouseEnter={() => setHoveredNodeId(concept.id)}
-                  onMouseLeave={() => setHoveredNodeId(null)}
-                  className="cursor-pointer"
-                  style={{ opacity: isDimmed ? 0.2 : 1, transition: "opacity 0.2s" }}
-                  data-testid={`graph-node-${concept.id}`}
-                >
-                  {isSearchMatch && (
-                    <circle
-                      cx={p.x}
-                      cy={p.y}
-                      r={r + 6}
-                      fill="none"
-                      stroke="hsl(var(--primary))"
-                      strokeWidth={2}
-                      strokeDasharray="3 2"
-                      className="animate-pulse"
-                    />
-                  )}
-                  <circle
-                    cx={p.x}
-                    cy={p.y}
-                    r={r}
-                    fill={color}
-                    fillOpacity={isSelected ? 0.9 : isHovered ? 0.8 : 0.6}
-                    stroke={isSelected ? "hsl(var(--primary))" : isHovered ? "hsl(var(--foreground))" : color}
-                    strokeWidth={isSelected ? 3 : isHovered ? 2 : 1.5}
-                    strokeDasharray={isCustomNode ? "4 2" : undefined}
-                  />
-                  <text
-                    x={p.x}
-                    y={p.y + r + 12}
-                    textAnchor="middle"
-                    className="text-[9px] fill-foreground"
-                    style={{ pointerEvents: "none", fontWeight: isHovered || isSelected ? 600 : 400 }}
-                  >
-                    {concept.label.length > 18 ? concept.label.slice(0, 16) + "..." : concept.label}
-                  </text>
-                </g>
-              );
-            })}
-            {hoveredNodeId && (() => {
-              const concept = concepts.find((c) => c.id === hoveredNodeId);
-              const p = positions[hoveredNodeId];
-              if (!concept || !p) return null;
-              const tooltipW = 200;
-              const tooltipH = 58;
-              let tx = p.x + 24;
-              let ty = p.y - tooltipH / 2;
-              if (tx + tooltipW > width) tx = p.x - tooltipW - 24;
-              if (ty < 10) ty = 10;
-              if (ty + tooltipH > height - 10) ty = height - tooltipH - 10;
-              return (
-                <g style={{ pointerEvents: "none" }}>
-                  <rect
-                    x={tx}
-                    y={ty}
-                    width={tooltipW}
-                    height={tooltipH}
-                    rx={6}
-                    fill="hsl(var(--card))"
-                    stroke="hsl(var(--border))"
-                    strokeWidth={1}
-                  />
-                  <text x={tx + 8} y={ty + 16} className="text-[11px] fill-foreground" style={{ fontWeight: 600 }}>
-                    {concept.label.length > 28 ? concept.label.slice(0, 26) + "..." : concept.label}
-                  </text>
-                  <text x={tx + 8} y={ty + 28} className="text-[9px] fill-muted-foreground">
-                    {concept.category}
-                  </text>
-                  <text x={tx + 8} y={ty + 42} className="text-[8px] fill-muted-foreground">
-                    {concept.description.length > 45 ? concept.description.slice(0, 43) + "..." : concept.description}
-                  </text>
-                  {concept.usageCount > 0 && (
-                    <text x={tx + 8} y={ty + 53} className="text-[8px] fill-muted-foreground">
-                      {concept.usageCount} references
-                    </text>
-                  )}
-                </g>
-              );
-            })()}
-          </g>
-        </svg>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(categoryColorMap).map(([cat, color]) => {
-          const isHidden = hiddenCategories.has(cat);
-          return (
-            <button
-              key={cat}
-              onClick={() => toggleCategory(cat)}
-              className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition-opacity ${
-                isHidden ? "opacity-40 line-through" : "hover-elevate"
-              }`}
-              data-testid={`legend-toggle-${cat.toLowerCase().replace(/\s+/g, "-")}`}
-            >
-              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-              <span className="text-muted-foreground">{cat}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
