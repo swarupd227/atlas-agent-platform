@@ -150,3 +150,44 @@ describe("DAGExecutionEngine — team-reference (sub-flow) cycle guard", () => {
     expect(callBResult?.status).toBe("completed");
   });
 });
+
+describe("DAGExecutionEngine — sub-flow after a revision loop", () => {
+  // Live 2026-09-19 (Campaign Planning run cc2510fe): the parent's reviewer
+  // sent work back once, the loop closed, and the next step -- a sub-flow to
+  // the deck team -- handed the child the parent's still-"active" loop. The
+  // child only runs loop nodes, none of its own were listed, so it ran nothing
+  // and the step "completed" in 127ms with the parent's state as its result.
+  it("runs the child team's own steps after the parent's revision loop has closed", async () => {
+    const { executeWorkerAgent } = (await import("../server/agent-runtime")) as any;
+    let reviews = 0;
+    const called: string[] = [];
+    executeWorkerAgent.mockImplementation(async (agentId: string) => {
+      called.push(agentId);
+      if (agentId === "ag-reviewer") return { success: true, output: ++reviews === 1 ? "FAIL: thin" : "PASS" };
+      if (agentId === "ag-builder") return { success: true, output: "the deck" };
+      return { success: true, output: `${agentId} work` };
+    });
+
+    setTeamAgent("team-child", "bp-child");
+    blueprints["bp-child"] = { nodes: [node({ id: "builder", refAgentId: "ag-builder", stateKey: "deck_build" })], edges: [] };
+    const FAILS = { combinator: "AND", conditions: [{ field: "output", operator: "contains", value: "FAIL" }] };
+    const parentNodes = [
+      node({ id: "author", refAgentId: "ag-author", stateKey: "draft" }),
+      node({ id: "reviewer", refAgentId: "ag-reviewer", stateKey: "review", config: { revision: { targetNodeId: "author", when: FAILS, maxRounds: 2 } } as any }),
+      node({ id: "call-deck", refTeamAgentId: "team-child", stateKey: "deck_result" }),
+    ];
+    const e = (s: string, t: string) => ({ id: `${s}-${t}`, blueprintId: "bp-parent", sourceNodeId: s, targetNodeId: t, condition: null, evaluationMode: null, rule: null }) as any;
+    const plan = computeWaves(parentNodes, [e("author", "reviewer"), e("reviewer", "call-deck")]);
+
+    const result = await new DAGExecutionEngine().execute({
+      executionPlan: plan, stateSchema: {}, initialState: { request: "Plan it" }, errorStrategy: "best_effort", teamAgentId: "team-parent",
+    });
+
+    expect(reviews).toBe(2);
+    expect(called).toContain("ag-builder");
+    expect(result.success).toBe(true);
+    expect(result.finalState.deck_result.deck_build).toBe("the deck");
+    // The child never sees the parent's revision bookkeeping.
+    expect(result.finalState.deck_result.__revision).toBeUndefined();
+  });
+});

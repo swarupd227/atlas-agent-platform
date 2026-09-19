@@ -538,6 +538,12 @@ interface RevisionBookkeeping {
   active?: { sourceNodeId: string; targetNodeId: string; nodeIds: string[]; round: number };
 }
 
+/** A copy of the state without this run's revision bookkeeping, for a child team that keeps its own. */
+function withoutRevisionBookkeeping(state: Record<string, any>): Record<string, any> {
+  const { [REVISION_STATE_KEY]: _parentRevision, ...rest } = state;
+  return rest;
+}
+
 function readRevisionBookkeeping(state: Record<string, any>): RevisionBookkeeping {
   const raw = state[REVISION_STATE_KEY];
   const rounds: Record<string, number> = raw && typeof raw.rounds === "object" && raw.rounds ? { ...raw.rounds } : {};
@@ -1490,6 +1496,11 @@ export class DAGExecutionEngine {
         // The reviewer ran again and passed (or has no rounds left): the loop is over.
         revision.active = undefined;
         currentState = { ...currentState, [REVISION_STATE_KEY]: { rounds: revision.rounds } };
+        // Later nodes start from liveState, which still carried the loop: a
+        // Team Reference node then handed "only these nodes run" to its child
+        // team, whose own nodes are never in that list -- the child ran
+        // nothing and the step "completed" in milliseconds with no work done.
+        liveState = { ...liveState, [REVISION_STATE_KEY]: { rounds: revision.rounds } };
         await config.onWaveComplete?.(wave.wave_number, currentState);
       }
     }
@@ -2381,7 +2392,10 @@ export class DAGExecutionEngine {
     const childResult = await this.execute({
       executionPlan: childPlan,
       stateSchema: childSchema,
-      initialState: { ...currentState },
+      // The child is a separate DAG with its own revision loops: the parent's
+      // revision bookkeeping names the PARENT's nodes, and an active parent
+      // loop would restrict the child to nodes it doesn't have (it ran none).
+      initialState: withoutRevisionBookkeeping(currentState),
       errorStrategy: config.errorStrategy,
       teamAgentId,
       teamAgentRuntimeConfig: (teamAgent.runtimeConfig as Record<string, any>) || {},
