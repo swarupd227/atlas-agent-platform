@@ -463,7 +463,34 @@ function chunkText(text: string, chunkSize: number = 512, overlap: number = 50):
     }
   }
 
-  return chunks;
+  return chunks.flatMap((c) => splitOversizedChunk(c, chunkSize));
+}
+
+/**
+ * Sentence splitting only breaks on ". ", "! ", "? " or a newline followed by
+ * whitespace, so text with none of those -- a CSV, one line per row -- came out
+ * as a single chunk of the whole file, too long to embed (the embedding model
+ * takes at most 8,192 tokens) and too long to be a useful passage. A chunk more
+ * than twice the target size is split at line breaks, and a single overlong
+ * line into target-size pieces; normal chunks are returned unchanged.
+ */
+export function splitOversizedChunk(chunk: string, chunkSize: number): string[] {
+  const size = Math.max(chunkSize, 64);
+  if (chunk.length <= size * 2) return [chunk];
+  const pieces: string[] = [];
+  let current = "";
+  const flush = () => { if (current.trim()) pieces.push(current.trim()); current = ""; };
+  for (const line of chunk.split("\n")) {
+    if (line.length > size) {
+      flush();
+      for (let i = 0; i < line.length; i += size) pieces.push(line.slice(i, i + size));
+      continue;
+    }
+    if (current && current.length + line.length + 1 > size) flush();
+    current = current ? `${current}\n${line}` : line;
+  }
+  flush();
+  return pieces;
 }
 
 // Text extraction lives in server/file-extract.ts so every upload surface

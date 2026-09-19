@@ -53,6 +53,8 @@ export async function ensurePgVector(): Promise<boolean> {
   return (pgvectorState as string) === "available";
 }
 
+export const MAX_EMBEDDING_INPUT_CHARS = 20_000;
+
 export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   if (!openai) {
     throw new Error(
@@ -64,7 +66,12 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   const allEmbeddings: number[][] = [];
 
   for (let i = 0; i < texts.length; i += batchSize) {
-    const batch = texts.slice(i, i + batchSize);
+    // The model rejects any input over 8,192 tokens, and one such input fails
+    // the whole batch. Chunks are split well below that (splitOversizedChunk in
+    // kb-routes.ts); this cap only protects a batch from an older oversized chunk
+    // or an unusually long query. 20,000 characters stays under the limit even
+    // for dense text such as CSV or code.
+    const batch = texts.slice(i, i + batchSize).map((t) => (t.length > MAX_EMBEDDING_INPUT_CHARS ? t.slice(0, MAX_EMBEDDING_INPUT_CHARS) : t));
     const response = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: batch,
