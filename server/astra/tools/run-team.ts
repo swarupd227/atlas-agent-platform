@@ -17,7 +17,8 @@ import { resolveTeam } from "./team-ref";
 
 type Input = { team: string; request: string };
 
-const WAIT_MS = 4 * 60_000;
+// Long enough for a multi-stage content team to reach its approval step; the stream sends a heartbeat meanwhile.
+const WAIT_MS = 10 * 60_000;
 
 interface RunView {
   id: string;
@@ -122,7 +123,7 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
       // Decisions made on the approval cards are real and audited, whatever the request says about testing.
       ...(decided.length ? { decisionsMadeHere: decided } : {}),
       ...(notes.length ? { notes } : {}),
-      ...(watch.state === "still_running" ? { message: "Still running. Check it later with get_team_run." } : {}),
+      ...(watch.state === "still_running" ? { message: "Still running, and no longer followed in this conversation: nothing will appear here by itself when it finishes or reaches an approval. The run pane beside the conversation keeps updating; the user can ask for its status (get_team_run), and an approval step shows up in Needs you." } : {}),
       stepsDone: run.steps.filter((s) => s.status === "completed").length,
       failedSteps: run.steps.filter((s) => s.status === "failed" || s.status === "timeout").map((s) => `${s.label}${s.error ? `: ${s.error}` : ""}`),
       skippedSteps: run.steps.filter((s) => s.status === "skipped").map((s) => s.label),

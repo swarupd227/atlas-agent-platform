@@ -35,7 +35,7 @@ export function TeamRun({ props }: { props: Record<string, any> }) {
       <div className="flex items-center gap-2">
         {run.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden /> : <StatusDot status={run.status} />}
         <span className="font-mono text-xs tabular-nums text-muted-foreground" data-testid="astra-team-run-status">
-          {[human(run.status), run.totalWaves ? `stage ${Math.min(run.totalWaves, (run.currentWave ?? 0) + (run.status === "running" ? 1 : 0))} of ${run.totalWaves}` : null, typeof run.costUsd === "number" ? `$${run.costUsd.toFixed(4)}` : null].filter(Boolean).join(" · ")}
+          {[human(run.status), run.totalWaves ? `stage ${Math.min(run.totalWaves, (run.currentWave ?? 0) + (run.status === "running" ? 1 : 0))} of ${run.totalWaves}` : null, typeof run.costUsd === "number" && run.costUsd > 0 ? `$${run.costUsd.toFixed(4)}` : null].filter(Boolean).join(" · ")}
         </span>
       </div>
       {steps.length > 0 && (

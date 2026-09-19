@@ -225,6 +225,12 @@ export function useThread(threadId: string | null, options: { industryId?: strin
   const decide = useCallback(
     (actionId: string, decision: "confirm" | "cancel") => {
       if (!threadId) return;
+      // The card shows the decision straight away, not "No longer pending", while the turn it resumes runs.
+      setMessages((ms) =>
+        ms.map((m) =>
+          m.pendingAction?.id === actionId ? { ...m, pendingAction: { ...m.pendingAction, decision: decision === "confirm" ? "confirmed" : "declined" } } : m,
+        ),
+      );
       return stream(threadId, `actions/${actionId}/stream`, { decision, industryId: options.industryId ?? null }, null);
     },
     [stream, threadId, options.industryId],
