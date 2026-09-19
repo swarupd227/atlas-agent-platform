@@ -2713,6 +2713,17 @@ export class DatabaseStorage implements IStorage {
     return server;
   }
 
+  // The org's private "custom API tools" server for one integration (see
+  // integrations/custom-rest.ts). Identified by addedBy, not integrationId, so
+  // it never competes with the catalog row in getMcpServerByIntegrationId.
+  async getCustomToolsServer(orgId: string, integrationId: string) {
+    const [server] = await db.select().from(mcpServers).where(and(
+      eq(mcpServers.organizationId, orgId),
+      eq(mcpServers.addedBy, `custom-tools:${integrationId}`),
+    )).limit(1);
+    return server;
+  }
+
   async getMcpServerByIntegrationId(integrationId: string) {
     const [server] = await db.select().from(mcpServers).where(eq(mcpServers.integrationId, integrationId));
     return server;

@@ -5,6 +5,7 @@ import { storage } from "../storage";
 import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault";
 import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registry";
 import { resolveOAuthApp, withTenant } from "../integrations/oauth-app";
+import { customToolInputSchema, validateCustomDef, toDef, buildInputSchema, riskFor, readDef } from "../integrations/custom-rest";
 import { callN8nWorkflow } from "../integrations/n8n";
 import { getDefaultOrgId, getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
@@ -640,6 +641,226 @@ function oauthRedirectUri(req: Request): string {
   const proto = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0].trim() || req.protocol;
   return `${proto}://${req.get("host")}/api/integrations/oauth/callback`;
 }
+
+// ── Custom API tools (per organization) ──────────────────────────────────────
+// An admin defines an API call (method + path template + parameters) for a
+// connected integration; it becomes a tool agents can use, run with that
+// connection's saved token. See integrations/custom-rest.ts.
+
+async function getConnectorOr400(id: string, res: Response) {
+  const def = getIntegrationDef(id);
+  if (!def?.apiBaseUrl) {
+    res.status(400).json({ error: `${id} does not support custom API tools yet` });
+    return null;
+  }
+  const { getEnterpriseServerById } = await import("../integrations/register");
+  const connector = getEnterpriseServerById(id);
+  if (!connector) {
+    res.status(400).json({ error: `${id} has no runtime connector` });
+    return null;
+  }
+  return { def, connector };
+}
+
+async function ensureCustomToolsServer(orgId: string, integrationId: string, integrationName: string) {
+  const existing = await storage.getCustomToolsServer(orgId, integrationId);
+  if (existing) return existing;
+  const publicBase = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 5000}`;
+  return storage.createMcpServer({
+    name: `${integrationName} - Custom API tools`,
+    description: `API tools defined by this organization for ${integrationName}. They run with the connected ${integrationName} account.`,
+    // Same routing as a connector sibling row: "enterprise" keeps the runtime
+    // on the in-process dispatch path instead of a live MCP handshake.
+    transportType: "enterprise",
+    url: `${publicBase}/api/integrations/${integrationId}`,
+    riskTier: "MEDIUM",
+    status: "registered",
+    organizationId: orgId,
+    addedBy: `custom-tools:${integrationId}`,
+    capabilities: { tools: true, resources: false, prompts: false },
+  } as any);
+}
+
+function summarizeCustomTool(t: any) {
+  const def = readDef(t.annotations);
+  return {
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    enabled: t.enabled !== false,
+    riskClassification: t.riskClassification,
+    method: def?.method ?? null,
+    path: def?.path ?? null,
+    params: def?.params ?? [],
+    fixedQuery: def?.fixedQuery ?? {},
+  };
+}
+
+router.get("/api/enterprise-integrations/:id/custom-tools", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const def = getIntegrationDef(id);
+    if (!def) return res.status(404).json({ error: "Unknown integration" });
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    if (!def.apiBaseUrl || !orgId) return res.json({ supported: false, tools: [], serverId: null, apiBaseUrl: null });
+    const server = await storage.getCustomToolsServer(orgId, id);
+    const tools = server ? await storage.getMcpServerTools(server.id) : [];
+    res.json({
+      supported: true,
+      apiBaseUrl: def.apiBaseUrl,
+      serverId: server?.id ?? null,
+      tools: tools.map(summarizeCustomTool),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/enterprise-integrations/:id/custom-tools", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const resolved = await getConnectorOr400(req.params.id as string, res);
+    if (!resolved) return;
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    if (!orgId) return res.status(400).json({ error: "No organization context" });
+
+    const parsed = customToolInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid tool definition" });
+    const input = parsed.data;
+    const problem = validateCustomDef(input);
+    if (problem) return res.status(400).json({ error: problem });
+    if (resolved.connector.tools.some((t) => t.name === input.name)) {
+      return res.status(400).json({ error: `'${input.name}' is already a built-in ${resolved.def.name} tool. Choose another name.` });
+    }
+
+    const server = await ensureCustomToolsServer(orgId, resolved.def.id, resolved.def.name);
+    const siblings = await storage.getMcpServerTools(server.id);
+    if (siblings.some((t) => t.name === input.name)) {
+      return res.status(409).json({ error: `A custom tool named '${input.name}' already exists` });
+    }
+
+    const restDef = toDef(input);
+    const tool = await storage.createMcpServerTool({
+      serverId: server.id,
+      name: input.name,
+      description: input.description,
+      inputSchema: buildInputSchema(restDef) as any,
+      enabled: true,
+      riskClassification: riskFor(restDef.method),
+      annotations: {
+        endpoint: `/tools/${input.name}`,
+        method: "POST",
+        enterpriseIntegration: resolved.def.id,
+        requiresCredentials: true,
+        customRest: restDef,
+      } as any,
+    });
+
+    storage.createAuditEvent({
+      organizationId: orgId,
+      actorType: "user",
+      actorId: (req as any).authUser?.username ?? "unknown",
+      action: "custom_tool_created",
+      objectType: "mcp_server_tool",
+      objectId: tool.id,
+      details: `Custom ${resolved.def.id} tool '${input.name}' (${restDef.method} ${restDef.path}) created`,
+    }).catch(() => {});
+
+    res.status(201).json({ ...summarizeCustomTool(tool), serverId: server.id });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function findOwnedCustomTool(req: Request, res: Response) {
+  const resolved = await getConnectorOr400(req.params.id as string, res);
+  if (!resolved) return null;
+  const orgId = getOrgId(req) ?? getDefaultOrgId();
+  if (!orgId) { res.status(400).json({ error: "No organization context" }); return null; }
+  const server = await storage.getCustomToolsServer(orgId, resolved.def.id);
+  const tool = server ? (await storage.getMcpServerTools(server.id)).find((t) => t.id === req.params.toolId) : undefined;
+  if (!tool) { res.status(404).json({ error: "Custom tool not found" }); return null; }
+  return { ...resolved, orgId, tool };
+}
+
+router.put("/api/enterprise-integrations/:id/custom-tools/:toolId", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const found = await findOwnedCustomTool(req, res);
+    if (!found) return;
+    const parsed = customToolInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid tool definition" });
+    const input = parsed.data;
+    if (input.name !== found.tool.name) return res.status(400).json({ error: "A tool's name cannot be changed. Delete it and create a new one." });
+    const problem = validateCustomDef(input);
+    if (problem) return res.status(400).json({ error: problem });
+
+    const restDef = toDef(input);
+    const updated = await storage.updateMcpServerTool(found.tool.id, {
+      description: input.description,
+      inputSchema: buildInputSchema(restDef) as any,
+      riskClassification: riskFor(restDef.method),
+      annotations: {
+        ...((found.tool.annotations as Record<string, unknown> | null) ?? {}),
+        enterpriseIntegration: found.def.id,
+        customRest: restDef,
+      } as any,
+    });
+    storage.createAuditEvent({
+      organizationId: found.orgId, actorType: "user", actorId: (req as any).authUser?.username ?? "unknown",
+      action: "custom_tool_updated", objectType: "mcp_server_tool", objectId: found.tool.id,
+      details: `Custom ${found.def.id} tool '${input.name}' updated (${restDef.method} ${restDef.path})`,
+    }).catch(() => {});
+    res.json(summarizeCustomTool(updated));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/api/enterprise-integrations/:id/custom-tools/:toolId", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const found = await findOwnedCustomTool(req, res);
+    if (!found) return;
+    if (typeof req.body?.enabled !== "boolean") return res.status(400).json({ error: "enabled (true/false) is required" });
+    const updated = await storage.updateMcpServerTool(found.tool.id, { enabled: req.body.enabled });
+    storage.createAuditEvent({
+      organizationId: found.orgId, actorType: "user", actorId: (req as any).authUser?.username ?? "unknown",
+      action: req.body.enabled ? "custom_tool_enabled" : "custom_tool_disabled", objectType: "mcp_server_tool", objectId: found.tool.id,
+      details: `Custom ${found.def.id} tool '${found.tool.name}' ${req.body.enabled ? "enabled" : "disabled"}`,
+    }).catch(() => {});
+    res.json(summarizeCustomTool(updated));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete("/api/enterprise-integrations/:id/custom-tools/:toolId", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const found = await findOwnedCustomTool(req, res);
+    if (!found) return;
+    await storage.deleteMcpServerTool(found.tool.id);
+    storage.createAuditEvent({
+      organizationId: found.orgId, actorType: "user", actorId: (req as any).authUser?.username ?? "unknown",
+      action: "custom_tool_deleted", objectType: "mcp_server_tool", objectId: found.tool.id,
+      details: `Custom ${found.def.id} tool '${found.tool.name}' deleted`,
+    }).catch(() => {});
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Runs the tool once with the given arguments, through the same path an agent uses.
+router.post("/api/enterprise-integrations/:id/custom-tools/:toolId/test", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const found = await findOwnedCustomTool(req, res);
+    if (!found) return;
+    if (found.tool.enabled === false) return res.status(400).json({ error: "Enable the tool before testing it" });
+    const args = (req.body?.args && typeof req.body.args === "object") ? req.body.args : {};
+    const result = await found.connector.callTool(found.tool.name, args, found.orgId);
+    res.json({ ok: !result.isError, output: result.content?.map((c) => c.text).join("\n") ?? "" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── OAuth app setup (per organization) ───────────────────────────────────────
 // Lets an admin register the org's own OAuth app (client id, secret, tenant)

@@ -164,7 +164,14 @@ export abstract class RealMcpBase {
     const startMs = Date.now();
     let result: McpToolResult;
     try {
-      result = await this.handleTool(toolName, args, credentials, orgId);
+      // A tool the connector does not define itself may be a custom API tool
+      // an admin added from the UI for this org (integrations/custom-rest.ts).
+      const custom = this.tools.some((t) => t.name === toolName)
+        ? null
+        : await this.loadCustomTool(orgId, toolName);
+      result = custom
+        ? await this.runCustomTool(custom, args, credentials, orgId)
+        : await this.handleTool(toolName, args, credentials, orgId);
     } catch (err: any) {
       result = this.err(`Tool '${toolName}' failed: ${err?.message ?? "Unknown error"}`);
     }
@@ -189,6 +196,35 @@ export abstract class RealMcpBase {
     }).catch(() => {});
 
     return result;
+  }
+
+  // ── Custom API tools (admin-defined, per organization) ────────────────────
+
+  private async loadCustomTool(orgId: string, toolName: string) {
+    const { readDef } = await import("./integrations/custom-rest");
+    const server = await storage.getCustomToolsServer(orgId, this.integrationId);
+    if (!server) return null;
+    const tool = (await storage.getMcpServerTools(server.id)).find((t) => t.name === toolName && t.enabled);
+    const def = tool ? readDef(tool.annotations) : null;
+    return def ? { def } : null;
+  }
+
+  private async runCustomTool(
+    custom: { def: import("./integrations/custom-rest").CustomRestDef },
+    args: Record<string, unknown>,
+    credentials: Record<string, string>,
+    orgId: string,
+  ): Promise<McpToolResult> {
+    const { getIntegrationDef } = await import("./integrations/registry");
+    const { runCustomRest } = await import("./integrations/custom-rest");
+    const apiBaseUrl = getIntegrationDef(this.integrationId)?.apiBaseUrl;
+    if (!apiBaseUrl) return this.err(`Integration '${this.integrationId}' does not support custom API tools.`);
+    const token = credentials.access_token ?? credentials.token;
+    if (!token) return this.err(`Integration '${this.integrationId}' has no access token. Reconnect it in Integrations.`);
+    const out = await runCustomRest(custom.def, args, apiBaseUrl, (url, init) =>
+      this.fetchWithAuth(url, { ...init, bearerToken: token, orgId }),
+    );
+    return out.ok ? this.ok(out.text) : this.err(out.text);
   }
 
   // ── Response helpers ──────────────────────────────────────────────────────

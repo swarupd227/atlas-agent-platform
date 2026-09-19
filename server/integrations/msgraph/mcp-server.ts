@@ -23,6 +23,7 @@ import {
   graph_get_teams_channel_messages,
   graph_list_teams,
   graph_search_sharepoint,
+  graph_read_document,
   graph_get_sharepoint_file,
   graph_read_sharepoint_page,
   graph_get_onedrive_file,
@@ -180,6 +181,19 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       },
     },
     {
+      name: "graph_read_document",
+      description: "Read the text of a SharePoint or OneDrive document (Word, PDF, Excel, PowerPoint, text, CSV). Pass the drive_id and item_id, or the web_url, returned by graph_search_sharepoint. Long documents are cut to max_chars.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          drive_id:  { type: "string", description: "Drive ID from a search result" },
+          item_id:   { type: "string", description: "Item ID from a search result" },
+          web_url:   { type: "string", description: "The file's web_url from a search result (alternative to drive_id + item_id)" },
+          max_chars: { type: "number", description: "Maximum characters of text to return (default 20000, max 60000)" },
+        },
+      },
+    },
+    {
       name: "graph_get_sharepoint_file",
       description: "Get metadata and download URL for a SharePoint file. Returns a permission error (not a crash) if the service account cannot read the file.",
       inputSchema: {
@@ -254,6 +268,7 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       case "graph_get_teams_channel_messages":result = await graph_get_teams_channel_messages(client, args); break;
       case "graph_list_teams":                result = await graph_list_teams(client, args); break;
       case "graph_search_sharepoint":         result = await graph_search_sharepoint(client, args); break;
+      case "graph_read_document":             result = await graph_read_document(client, args); break;
       case "graph_get_sharepoint_file":       result = await graph_get_sharepoint_file(client, args); break;
       case "graph_read_sharepoint_page":      result = await graph_read_sharepoint_page(client, args); break;
       case "graph_get_onedrive_file":         result = await graph_get_onedrive_file(client, args); break;

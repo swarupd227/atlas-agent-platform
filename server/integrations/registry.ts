@@ -42,6 +42,12 @@ export interface IntegrationDef {
   setupComplexity?: "standard" | "advanced";
   /** Industries this integration is specific to. Absent: it applies to every industry. */
   industries?: string[];
+  /**
+   * Fixed API root, e.g. https://graph.microsoft.com/v1.0. Setting it lets an
+   * admin add custom API tools to this connector from the UI (see
+   * integrations/custom-rest.ts); the request host is always this value.
+   */
+  apiBaseUrl?: string;
 }
 
 export const INTEGRATION_REGISTRY: IntegrationDef[] = [
@@ -234,6 +240,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     description: "Microsoft Graph API v1.0 — unified API surface for Exchange email, Outlook Calendar, Teams channels, SharePoint, OneDrive, and Azure AD user directory",
     category: "collaboration",
     logoColor: "#00A4EF",
+    apiBaseUrl: "https://graph.microsoft.com/v1.0",
     authMethod: "oauth2",
     oauthConfig: {
       authorizationUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",

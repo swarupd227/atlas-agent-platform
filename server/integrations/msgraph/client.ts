@@ -44,6 +44,21 @@ export class MicrosoftGraphClient {
     return parseGraph(await this.fetch(path));
   }
 
+  /** GET a Graph path and parse the JSON body. */
+  async getAt(path: string): Promise<unknown> {
+    return this.get(path);
+  }
+
+  /** GET a Graph path and return the raw bytes (file content; Graph 302s to a pre-authenticated URL). */
+  async getBytesAt(path: string): Promise<Buffer> {
+    const res = await this.fetch(path);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Graph API error (HTTP ${res.status}) downloading content: ${text.slice(0, 200)}`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   private async post(path: string, body: unknown): Promise<unknown> {
     return parseGraph(await this.fetch(path, {
       method: "POST",

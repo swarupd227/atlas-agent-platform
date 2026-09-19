@@ -366,6 +366,9 @@ export async function graph_search_sharepoint(
     query,
     results: hits.map((h: any) => ({
       id:           h.hitId,
+      // Pass drive_id + item_id (or web_url) to graph_read_document to read the file's text.
+      drive_id:     h.resource?.parentReference?.driveId ?? null,
+      item_id:      h.resource?.id ?? h.hitId,
       name:         h.resource?.name ?? h.resource?.displayName,
       web_url:      h.resource?.webUrl,
       type:         h.resource?.["@odata.type"]?.replace("#microsoft.graph.", ""),
@@ -374,6 +377,63 @@ export async function graph_search_sharepoint(
       file_type:    h.resource?.file?.mimeType ?? null,
       summary:      h.summary ?? null,
     })),
+  });
+}
+
+// ── Tool: graph_read_document ────────────────────────────────────────────────
+// Downloads a SharePoint/OneDrive file and returns its text, using the same
+// extraction every upload surface uses (server/file-extract.ts): Word, PDF,
+// Excel, PowerPoint, text, CSV, JSON.
+
+const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+const DEFAULT_DOCUMENT_CHARS = 20_000;
+const MAX_DOCUMENT_CHARS = 60_000;
+
+export async function graph_read_document(
+  client: MicrosoftGraphClient,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  const driveId = args.drive_id as string | undefined;
+  const itemId  = args.item_id as string | undefined;
+  const webUrl  = args.web_url as string | undefined;
+  const maxChars = Math.min(Math.max(Number(args.max_chars ?? DEFAULT_DOCUMENT_CHARS) || DEFAULT_DOCUMENT_CHARS, 500), MAX_DOCUMENT_CHARS);
+
+  let base: string;
+  if (driveId && itemId) {
+    base = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`;
+  } else if (webUrl) {
+    // Graph's sharing-URL form: "u!" + base64url of the (properly encoded) URL.
+    let safe = webUrl;
+    try { safe = encodeURI(decodeURI(webUrl)); } catch { /* keep as given */ }
+    base = `/shares/u!${Buffer.from(safe).toString("base64url")}/driveItem`;
+  } else {
+    throw new Error("Provide drive_id and item_id, or web_url (all are returned by graph_search_sharepoint)");
+  }
+
+  const meta = await client.getAt(base) as any;
+  const name: string = meta?.name ?? "document";
+  const mime: string | undefined = meta?.file?.mimeType;
+  const size: number = Number(meta?.size ?? 0);
+  if (meta?.folder) throw new Error(`'${name}' is a folder, not a file`);
+  if (size > MAX_DOCUMENT_BYTES) {
+    throw new Error(`'${name}' is ${(size / (1024 * 1024)).toFixed(1)} MB, above the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit for reading a document`);
+  }
+
+  const bytes = await client.getBytesAt(`${base}/content`);
+  const { extractTextFromFile } = await import("../../file-extract");
+  const extracted = await extractTextFromFile(bytes, mime, name);
+
+  const full = extracted.text ?? "";
+  const truncated = full.length > maxChars || Boolean(extracted.meta?.truncated);
+  return ok({
+    name,
+    web_url: meta?.webUrl ?? webUrl ?? null,
+    mime_type: mime ?? null,
+    size,
+    last_modified: meta?.lastModifiedDateTime ?? null,
+    total_characters: full.length,
+    truncated,
+    text: full.slice(0, maxChars),
   });
 }
 

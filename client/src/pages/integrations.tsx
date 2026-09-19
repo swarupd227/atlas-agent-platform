@@ -1355,6 +1355,8 @@ interface IntegrationDef {
   docsUrl?: string;
   wave: 1 | 2 | 3 | 4 | 5;
   capabilities: string[];
+  /** Present when admins can add custom API tools to this connector. */
+  apiBaseUrl?: string;
   // The org's DEFAULT connection for this integration -- the one type-only
   // credential lookups resolve to. Null when nothing is connected.
   connection: IntegrationConnectionSummary | null;
@@ -1984,6 +1986,7 @@ function EnterpriseIntegrationCard({
   onTest,
   onN8nTestCall,
   onManageConnections,
+  onCustomTools,
 }: {
   integration: IntegrationDef;
   onConnect: () => void;
@@ -1991,6 +1994,7 @@ function EnterpriseIntegrationCard({
   onTest: () => void;
   onN8nTestCall?: () => void;
   onManageConnections?: () => void;
+  onCustomTools?: () => void;
 }) {
   const catMeta = ENT_CATEGORY_META[integration.category];
   const CatIcon = catMeta.icon;
@@ -2103,6 +2107,18 @@ function EnterpriseIntegrationCard({
                   Test Call
                 </Button>
               )}
+              {onCustomTools && integration.apiBaseUrl && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-xs"
+                  onClick={onCustomTools}
+                  data-testid={`button-custom-tools-${integration.id}`}
+                >
+                  <Wrench className="w-3.5 h-3.5 mr-1.5" />
+                  API tools
+                </Button>
+              )}
               {onManageConnections && (
                 <Button
                   size="sm"
@@ -2140,6 +2156,253 @@ function EnterpriseIntegrationCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ── Custom API tools ─────────────────────────────────────────────────────────
+// An admin defines an API call for a connected integration; agents can then use
+// it as a tool, run with that connection's saved token. No code per tool.
+interface CustomToolParam { name: string; in: "path" | "query" | "body"; type: "string" | "number" | "boolean"; description?: string; required?: boolean }
+interface CustomToolRow {
+  id: string; name: string; description: string | null; enabled: boolean; riskClassification: string | null;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | null; path: string | null; params: CustomToolParam[]; fixedQuery: Record<string, string>;
+}
+interface CustomToolDraft {
+  name: string; description: string; method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; path: string; params: CustomToolParam[]; fixedQueryText: string;
+}
+
+const EMPTY_TOOL_DRAFT: CustomToolDraft = { name: "", description: "", method: "GET", path: "/", params: [], fixedQueryText: "" };
+
+// Starting points for Microsoft Graph, so the common SharePoint calls are one click away.
+const GRAPH_TOOL_EXAMPLES: Array<{ label: string; draft: CustomToolDraft }> = [
+  {
+    label: "Find SharePoint sites by name",
+    draft: { name: "find_sharepoint_sites", description: "Find SharePoint sites whose name matches a search term. Returns each site's id.", method: "GET", path: "/sites",
+      params: [{ name: "search", in: "query", type: "string", description: "Part of the site name", required: true }], fixedQueryText: "" },
+  },
+  {
+    label: "List files in a site's document library",
+    draft: { name: "list_site_library_files", description: "List the files and folders at the top of a SharePoint site's default document library.", method: "GET", path: "/sites/{site_id}/drive/root/children",
+      params: [{ name: "site_id", in: "path", type: "string", description: "SharePoint site id", required: true }], fixedQueryText: "$top=50" },
+  },
+  {
+    label: "List the contents of a folder",
+    draft: { name: "list_folder_items", description: "List the files and sub-folders inside a SharePoint or OneDrive folder.", method: "GET", path: "/drives/{drive_id}/items/{item_id}/children",
+      params: [
+        { name: "drive_id", in: "path", type: "string", description: "Drive id", required: true },
+        { name: "item_id", in: "path", type: "string", description: "Folder item id", required: true },
+      ], fixedQueryText: "$top=100" },
+  },
+];
+
+function parseFixedQuery(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const i = line.indexOf("=");
+    if (i > 0) out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return out;
+}
+
+function CustomToolsDialog({ integration, open, onOpenChange }: { integration: IntegrationDef | null; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { toast } = useToast();
+  const key = [`/api/enterprise-integrations/${integration?.id}/custom-tools`];
+  const { data, isLoading } = useQuery<{ supported: boolean; apiBaseUrl: string | null; tools: CustomToolRow[] }>({ queryKey: key, enabled: open && !!integration });
+  const [draft, setDraft] = useState<CustomToolDraft | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [testing, setTesting] = useState<{ tool: CustomToolRow; argsText: string; output: string | null; ok?: boolean; busy: boolean } | null>(null);
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: key });
+  const base = `/api/enterprise-integrations/${integration?.id}/custom-tools`;
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const body = {
+        name: draft!.name.trim(), description: draft!.description.trim(), method: draft!.method, path: draft!.path.trim(),
+        params: draft!.params, fixedQuery: parseFixedQuery(draft!.fixedQueryText),
+      };
+      return editingId ? apiRequest("PUT", `${base}/${editingId}`, body) : apiRequest("POST", base, body);
+    },
+    onSuccess: () => {
+      toast({ title: editingId ? "Tool updated" : "Tool added", description: "Assign the custom API tools server to an agent to let it use this tool." });
+      setDraft(null); setEditingId(null); refresh();
+    },
+    onError: (err: any) => toast({ title: "Could not save the tool", description: err.message, variant: "destructive" }),
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: (t: CustomToolRow) => apiRequest("PATCH", `${base}/${t.id}`, { enabled: !t.enabled }),
+    onSuccess: refresh,
+    onError: (err: any) => toast({ title: "Could not update the tool", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (t: CustomToolRow) => apiRequest("DELETE", `${base}/${t.id}`),
+    onSuccess: () => { toast({ title: "Tool deleted" }); refresh(); },
+  });
+
+  async function runTest() {
+    if (!testing) return;
+    let args: Record<string, unknown> = {};
+    try { args = testing.argsText.trim() ? JSON.parse(testing.argsText) : {}; }
+    catch { toast({ title: "Arguments must be valid JSON", variant: "destructive" }); return; }
+    setTesting({ ...testing, busy: true, output: null });
+    try {
+      const res = await apiRequest("POST", `${base}/${testing.tool.id}/test`, { args });
+      const out = await res.json();
+      setTesting((t) => (t ? { ...t, busy: false, output: out.output ?? "", ok: out.ok } : t));
+    } catch (err: any) {
+      setTesting((t) => (t ? { ...t, busy: false, output: err.message, ok: false } : t));
+    }
+  }
+
+  function startEdit(t: CustomToolRow) {
+    setEditingId(t.id);
+    setDraft({
+      name: t.name, description: t.description ?? "", method: t.method ?? "GET", path: t.path ?? "/", params: t.params,
+      fixedQueryText: Object.entries(t.fixedQuery ?? {}).map(([k, v]) => `${k}=${v}`).join("\n"),
+    });
+  }
+
+  const setParam = (i: number, patch: Partial<CustomToolParam>) =>
+    setDraft((d) => (d ? { ...d, params: d.params.map((p, idx) => (idx === i ? { ...p, ...patch } : p)) } : d));
+
+  if (!integration) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { setDraft(null); setEditingId(null); setTesting(null); } onOpenChange(o); }}>
+      <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto" data-testid="dialog-custom-tools">
+        <DialogHeader>
+          <DialogTitle>{integration.name} - custom API tools</DialogTitle>
+          <DialogDescription>
+            Add API calls as tools for agents. They run against {data?.apiBaseUrl ?? integration.apiBaseUrl} using this connection's saved sign-in.
+            Calls other than GET change data and are marked high risk.
+          </DialogDescription>
+        </DialogHeader>
+
+        {!draft && (
+          <div className="flex flex-col gap-3">
+            {isLoading && <Skeleton className="h-16 w-full" />}
+            {!isLoading && (data?.tools?.length ?? 0) === 0 && (
+              <p className="text-sm text-muted-foreground" data-testid="text-no-custom-tools">No custom tools yet.</p>
+            )}
+            {data?.tools?.map((t) => (
+              <div key={t.id} className="rounded-md border p-3 flex flex-col gap-2" data-testid={`row-custom-tool-${t.name}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-sm">{t.name}</span>
+                      <Badge variant="outline" className="text-[10px]">{t.method}</Badge>
+                      {t.riskClassification === "high" && <Badge variant="destructive" className="text-[10px]">high risk</Badge>}
+                      {!t.enabled && <Badge variant="secondary" className="text-[10px]">disabled</Badge>}
+                    </div>
+                    <div className="font-mono text-[11px] text-muted-foreground break-all">{t.path}</div>
+                    <p className="text-xs text-muted-foreground mt-1">{t.description}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="sm" variant="outline" disabled={!t.enabled} onClick={() => setTesting({ tool: t, argsText: "{}", output: null, busy: false })}>Test</Button>
+                    <Button size="sm" variant="outline" onClick={() => startEdit(t)}>Edit</Button>
+                    <Button size="sm" variant="outline" onClick={() => toggleMutation.mutate(t)}>{t.enabled ? "Disable" : "Enable"}</Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => deleteMutation.mutate(t)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                  </div>
+                </div>
+                {testing?.tool.id === t.id && (
+                  <div className="flex flex-col gap-2 border-t pt-2">
+                    <Label className="text-xs">Arguments (JSON)</Label>
+                    <Textarea value={testing.argsText} onChange={(e) => setTesting({ ...testing, argsText: e.target.value })} className="font-mono text-xs min-h-[60px]" data-testid="input-custom-tool-test-args" />
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" onClick={runTest} disabled={testing.busy} data-testid="button-custom-tool-run-test">
+                        {testing.busy ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}Run
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setTesting(null)}>Close</Button>
+                    </div>
+                    {testing.output !== null && (
+                      <pre className={`text-[11px] rounded-md p-2 max-h-56 overflow-auto whitespace-pre-wrap break-all ${testing.ok ? "bg-muted" : "bg-destructive/10 text-destructive"}`} data-testid="text-custom-tool-test-output">{testing.output}</pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+            <div>
+              <Button size="sm" onClick={() => { setEditingId(null); setDraft({ ...EMPTY_TOOL_DRAFT }); }} data-testid="button-add-custom-tool">
+                <Plus className="w-3.5 h-3.5 mr-1.5" />Add a tool
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {draft && (
+          <div className="flex flex-col gap-3" data-testid="form-custom-tool">
+            {!editingId && integration.id === "msgraph" && (
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs">Start from an example</Label>
+                <Select onValueChange={(v) => { const ex = GRAPH_TOOL_EXAMPLES[Number(v)]; if (ex) setDraft({ ...ex.draft }); }}>
+                  <SelectTrigger data-testid="select-custom-tool-example"><SelectValue placeholder="Choose an example (optional)" /></SelectTrigger>
+                  <SelectContent>
+                    {GRAPH_TOOL_EXAMPLES.map((ex, i) => <SelectItem key={ex.label} value={String(i)}>{ex.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2 flex flex-col gap-1.5">
+                <Label className="text-xs">Tool name</Label>
+                <Input value={draft.name} disabled={!!editingId} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="list_site_library_files" data-testid="input-custom-tool-name" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs">Method</Label>
+                <Select value={draft.method} onValueChange={(v) => setDraft({ ...draft, method: v as CustomToolDraft["method"] })}>
+                  <SelectTrigger data-testid="select-custom-tool-method"><SelectValue /></SelectTrigger>
+                  <SelectContent>{["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs">What it does (agents read this to decide when to use it)</Label>
+              <Textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} className="min-h-[56px]" data-testid="input-custom-tool-description" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs">Path (relative to {data?.apiBaseUrl ?? integration.apiBaseUrl}; use {"{name}"} for values an agent supplies)</Label>
+              <Input value={draft.path} onChange={(e) => setDraft({ ...draft, path: e.target.value })} className="font-mono text-xs" placeholder="/sites/{site_id}/drive/root/children" data-testid="input-custom-tool-path" />
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Parameters</Label>
+                <Button type="button" size="sm" variant="outline" onClick={() => setDraft({ ...draft, params: [...draft.params, { name: "", in: "query", type: "string", required: false }] })}>
+                  <Plus className="w-3 h-3 mr-1" />Add parameter
+                </Button>
+              </div>
+              {draft.params.map((p, i) => (
+                <div key={i} className="grid grid-cols-12 gap-1.5 items-center">
+                  <Input className="col-span-3 h-8 text-xs" placeholder="name" value={p.name} onChange={(e) => setParam(i, { name: e.target.value })} />
+                  <Select value={p.in} onValueChange={(v) => setParam(i, { in: v as CustomToolParam["in"], ...(v === "path" ? { required: true } : {}) })}>
+                    <SelectTrigger className="col-span-2 h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="path">in path</SelectItem><SelectItem value="query">query</SelectItem><SelectItem value="body">body</SelectItem></SelectContent>
+                  </Select>
+                  <Select value={p.type} onValueChange={(v) => setParam(i, { type: v as CustomToolParam["type"] })}>
+                    <SelectTrigger className="col-span-2 h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="string">text</SelectItem><SelectItem value="number">number</SelectItem><SelectItem value="boolean">true/false</SelectItem></SelectContent>
+                  </Select>
+                  <Input className="col-span-3 h-8 text-xs" placeholder="description" value={p.description ?? ""} onChange={(e) => setParam(i, { description: e.target.value })} />
+                  <label className="col-span-1 flex items-center gap-1 text-[10px]"><Checkbox checked={!!p.required || p.in === "path"} disabled={p.in === "path"} onCheckedChange={(c) => setParam(i, { required: c === true })} />req</label>
+                  <Button type="button" size="icon" variant="ghost" className="col-span-1 h-8 w-8" onClick={() => setDraft({ ...draft, params: draft.params.filter((_, idx) => idx !== i) })}><Trash2 className="w-3.5 h-3.5" /></Button>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs">Fixed query parameters (one key=value per line, optional)</Label>
+              <Textarea value={draft.fixedQueryText} onChange={(e) => setDraft({ ...draft, fixedQueryText: e.target.value })} className="font-mono text-xs min-h-[44px]" placeholder="$top=50" />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending || !draft.name.trim() || !draft.description.trim() || !draft.path.trim()} data-testid="button-save-custom-tool">
+                {saveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}{editingId ? "Save changes" : "Add tool"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => { setDraft(null); setEditingId(null); }}>Cancel</Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2452,6 +2715,7 @@ function EnterpriseConnectorsSection() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [n8nTestCallOpen, setN8nTestCallOpen] = useState(false);
   const [manageConnectionsTarget, setManageConnectionsTarget] = useState<IntegrationDef | null>(null);
+  const [customToolsTarget, setCustomToolsTarget] = useState<IntegrationDef | null>(null);
   // Set when the connect dialog is opened to ADD a sibling rather than
   // re-authenticate the existing default -- the two post different bodies.
   const [connectAsNew, setConnectAsNew] = useState(false);
@@ -2587,6 +2851,7 @@ function EnterpriseConnectorsSection() {
                   onTest={() => testMutation.mutate(integration.id)}
                   onN8nTestCall={integration.id === "n8n" ? () => setN8nTestCallOpen(true) : undefined}
                   onManageConnections={() => setManageConnectionsTarget(integration)}
+                  onCustomTools={() => setCustomToolsTarget(integration)}
                 />
               ))}
             </div>
@@ -2607,6 +2872,11 @@ function EnterpriseConnectorsSection() {
         onAddConnection={(intg) => { setConnectAsNew(true); setConnectTarget(intg); }}
       />
       <N8nTestCallDialog open={n8nTestCallOpen} onOpenChange={setN8nTestCallOpen} />
+      <CustomToolsDialog
+        integration={customToolsTarget}
+        open={!!customToolsTarget}
+        onOpenChange={(open) => { if (!open) setCustomToolsTarget(null); }}
+      />
     </div>
   );
 }
