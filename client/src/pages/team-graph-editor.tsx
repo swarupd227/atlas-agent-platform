@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema, Skill, KnowledgeBase, RuleLeaf, RuleGroup, RuleOperator, DagExecutionRun } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,12 +13,13 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/status-badge";
-import TeamGraphCanvas from "@/components/team-graph-canvas";
+import TeamGraphCanvas, { type WavePlan, type StepMeta } from "@/components/team-graph-canvas";
 import { NODE_COLOR_MAP, TRUST_TIER_COLORS } from "@/lib/team-graph-node-meta";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
   Save, Sparkles, Play, Loader2, CheckCircle2, XCircle, History, SquareFunction,
+  LayoutGrid, Maximize2, Minimize2,
 } from "lucide-react";
 
 interface McpServerTool {
@@ -99,6 +100,9 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [runDialogOpen, setRunDialogOpen] = useState(false);
+  // The inspector floats over the canvas and only opens for a step, a link, or Runs / Schema.
+  const [panelTab, setPanelTab] = useState<"step" | "runs" | "schema" | null>(null);
+  const [fullScreen, setFullScreen] = useState(false);
 
   const graphQueryKey = ["/api/blueprints", blueprintId, "team-graph"];
 
@@ -107,15 +111,59 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
     enabled: !!blueprintId,
   });
 
-  const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
+  const nodes = graphData?.nodes || [];
+  const edges = graphData?.edges || [];
+
+  // Only the agents this flow uses, one by one -- not the whole (large) agent list, which made
+  // this screen take many seconds to appear. The full list loads only when a step is being
+  // edited and needs its agent picker.
+  const referencedIds = useMemo(
+    () => Array.from(new Set(nodes.flatMap((n) => [n.refAgentId, n.refTeamAgentId]).filter((x): x is string => !!x))),
+    [nodes],
+  );
+  const referenced = useQueries({ queries: referencedIds.map((id) => ({ queryKey: ["/api/agents", id], staleTime: 60000 })) });
+  const referencedAgents = useMemo(
+    () => referenced.map((q) => q.data as Agent | undefined).filter((a): a is Agent => !!a),
+    [referenced.map((q) => q.dataUpdatedAt).join(",")], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const { data: allAgents } = useQuery<Agent[]>({ queryKey: ["/api/agents"], enabled: !!selectedNodeId });
+  const agents = useMemo(() => {
+    const byId = new Map<string, Agent>();
+    for (const a of [...referencedAgents, ...(allAgents || [])]) byId.set(a.id, a);
+    return Array.from(byId.values());
+  }, [referencedAgents, allAgents]);
+
   const { data: remoteAgents } = useQuery<RemoteAgent[]>({ queryKey: ["/api/remote-agents"] });
-  const { data: mcpTools } = useQuery<McpServerTool[]>({ queryKey: ["/api/mcp-tools"] });
-  const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"] });
+  const { data: mcpTools } = useQuery<McpServerTool[]>({ queryKey: ["/api/mcp-tools"], enabled: !!selectedNodeId });
+  const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"], enabled: !!selectedNodeId });
   const { data: skills } = useQuery<Skill[]>({ queryKey: ["/api/skills"] });
   const { data: knowledgeBases } = useQuery<KnowledgeBase[]>({ queryKey: ["/api/knowledge-bases"] });
 
-  const nodes = graphData?.nodes || [];
-  const edges = graphData?.edges || [];
+  // The run order (stages) and the latest runs, for the stage layout and each step's last result.
+  const { data: wavePlan } = useQuery<WavePlan>({
+    queryKey: ["/api/team-agents", teamAgentId, "dag-waves"],
+    enabled: !!teamAgentId && nodes.length > 0,
+  });
+  const { data: runs } = useQuery<DagExecutionRun[]>({
+    queryKey: ["/api/team-agents", teamAgentId, "dag-runs"],
+    enabled: !!teamAgentId,
+  });
+
+  const stepMeta = useMemo(() => {
+    const byId = new Map(agents.map((a) => [a.id, a] as const));
+    const last = (runs || []).find((r) => r.status === "completed") || (runs || [])[0];
+    const results: Record<string, { status: string; durationMs?: number | null }> = {};
+    for (const w of ((last as any)?.waveResults || []) as Array<{ nodes: Array<{ nodeId: string; status: string; durationMs?: number }> }>) {
+      for (const n of w.nodes) results[n.nodeId] = { status: n.status, durationMs: n.durationMs };
+    }
+    const meta: Record<string, StepMeta> = {};
+    for (const n of nodes) {
+      const a = n.refAgentId ? byId.get(n.refAgentId) : undefined;
+      meta[n.id] = { agentName: a?.name, model: a?.modelName || undefined, lastRun: results[n.id] };
+    }
+    return meta;
+  }, [agents, runs, nodes]);
+  const teamNames = useMemo(() => Object.fromEntries(agents.map((a) => [a.id, a.name])), [agents]);
 
   const getNodeDisplayLabel = useCallback((node: TeamBlueprintNode) => {
     if (!businessView || !processFlowSteps?.length) return node.label;
@@ -124,8 +172,8 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
     return node.label;
   }, [businessView, processFlowSteps, nodes]);
 
-  const singleAgents = useMemo(() => (agents || []).filter(a => a.agentType === "single"), [agents]);
-  const teamAgents = useMemo(() => (agents || []).filter(a => !!a.blueprintId), [agents]);
+  const singleAgents = useMemo(() => agents.filter(a => a.agentType === "single"), [agents]);
+  const teamAgents = useMemo(() => agents.filter(a => !!a.blueprintId), [agents]);
 
   const stateKeyConflictIds = useMemo(() => {
     const keyCounts: Record<string, string[]> = {};
@@ -144,20 +192,20 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
 
   const invalidateGraph = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: graphQueryKey });
-  }, [blueprintId]);
+    if (teamAgentId) queryClient.invalidateQueries({ queryKey: ["/api/team-agents", teamAgentId, "dag-waves"] });
+  }, [blueprintId, teamAgentId]);
 
   const createNodeMutation = useMutation({
     mutationFn: async (nodeType: string) => {
       const def = TEAM_NODE_TYPES.find(t => t.type === nodeType);
-      // Next open grid slot -- same shape as flow-graph-canvas.tsx's addNode.
-      // Appropriate for a free-form 2D canvas; the old vertical-list-only
-      // positionY: nodes.length * 120 made no sense once nodes can branch.
+      // Created at x=0 like every new step: an unarranged canvas keeps showing the stage layout.
+      const arranged = nodes.some((n) => (n.positionX ?? 0) !== 0);
       const res = await apiRequest("POST", "/api/team-blueprint-nodes", {
         blueprintId,
         nodeType,
         label: def?.label || nodeType,
-        positionX: (nodes.length % 5) * 280,
-        positionY: Math.floor(nodes.length / 5) * 120 + 40,
+        positionX: arranged ? (nodes.length % 5) * 280 : 0,
+        positionY: arranged ? Math.floor(nodes.length / 5) * 120 + 40 : 0,
       });
       return res.json() as Promise<TeamBlueprintNode>;
     },
@@ -165,9 +213,10 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
       invalidateGraph();
       setSelectedNodeId(created.id);
       setSelectedEdgeId(null);
-      toast({ title: "Step added", description: `"${created.label}" was added at the end of the flow.` });
+      setPanelTab("step");
+      toast({ title: "Step added", description: `"${created.label}" was added. Connect it by dragging from a step's right dot.` });
     },
-    onError: (err: Error) => toast({ title: "Failed to add node", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Failed to add step", description: err.message, variant: "destructive" }),
   });
 
   const updateNodeMutation = useMutation({
@@ -175,7 +224,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
       await apiRequest("PATCH", `/api/team-blueprint-nodes/${id}`, updates);
     },
     onSuccess: () => invalidateGraph(),
-    onError: (err: Error) => toast({ title: "Failed to update node", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Failed to update step", description: err.message, variant: "destructive" }),
   });
 
   const deleteNodeMutation = useMutation({
@@ -185,9 +234,10 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
     onSuccess: () => {
       invalidateGraph();
       setSelectedNodeId(null);
-      toast({ title: "Node deleted" });
+      setPanelTab(null);
+      toast({ title: "Step removed" });
     },
-    onError: (err: Error) => toast({ title: "Failed to delete node", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Failed to remove step", description: err.message, variant: "destructive" }),
   });
 
   const createEdgeMutation = useMutation({
@@ -201,9 +251,9 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
     },
     onSuccess: () => {
       invalidateGraph();
-      toast({ title: "Edge created" });
+      toast({ title: "Steps connected" });
     },
-    onError: (err: Error) => toast({ title: "Failed to create edge", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Failed to connect steps", description: err.message, variant: "destructive" }),
   });
 
   const updateEdgeMutation = useMutation({
@@ -211,7 +261,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
       await apiRequest("PATCH", `/api/team-blueprint-edges/${id}`, updates);
     },
     onSuccess: () => invalidateGraph(),
-    onError: (err: Error) => toast({ title: "Failed to update edge", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Failed to update link", description: err.message, variant: "destructive" }),
   });
 
   const deleteEdgeMutation = useMutation({
@@ -221,29 +271,40 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
     onSuccess: () => {
       invalidateGraph();
       setSelectedEdgeId(null);
-      toast({ title: "Edge deleted" });
+      setPanelTab(null);
+      toast({ title: "Link removed" });
     },
-    onError: (err: Error) => toast({ title: "Failed to delete edge", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Failed to remove link", description: err.message, variant: "destructive" }),
+  });
+
+  // "Tidy up": back to the stage layout. Every step at (0,0) is what the canvas reads as
+  // "not arranged", so it lays the flow out by stage again.
+  const tidyMutation = useMutation({
+    mutationFn: async () => {
+      await Promise.all(nodes.map((n) => apiRequest("PATCH", `/api/team-blueprint-nodes/${n.id}`, { positionX: 0, positionY: 0 })));
+    },
+    onSuccess: () => invalidateGraph(),
+    onError: (err: Error) => toast({ title: "Couldn't tidy the layout", description: err.message, variant: "destructive" }),
   });
 
   const handleNodeSelect = useCallback((nodeId: string) => {
     setSelectedNodeId(nodeId);
     setSelectedEdgeId(null);
+    setPanelTab("step");
   }, []);
 
   const handleEdgeSelect = useCallback((edgeId: string) => {
     setSelectedEdgeId(edgeId);
     setSelectedNodeId(null);
+    setPanelTab("step");
   }, []);
 
   const handlePaneClick = useCallback(() => {
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
+    setPanelTab((t) => (t === "step" ? null : t));
   }, []);
 
-  // Drag-to-connect from the canvas -- replaces the old click-source/
-  // click-target "Add Edge" mode. Duplicate-edge guard preserved from the
-  // old handleNodeClick edge-mode branch.
   const handleConnect = useCallback((sourceNodeId: string, targetNodeId: string) => {
     const alreadyExists = edges.some(e => e.sourceNodeId === sourceNodeId && e.targetNodeId === targetNodeId);
     if (!alreadyExists) {
@@ -257,149 +318,187 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
   const selectedEdge = edges.find(e => e.id === selectedEdgeId);
+  const closePanel = () => { setPanelTab(null); setSelectedNodeId(null); setSelectedEdgeId(null); };
+
+  // Esc leaves full screen.
+  useEffect(() => {
+    if (!fullScreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullScreen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullScreen]);
 
   if (isLoading) {
     return (
       <div className="flex h-full" data-testid="team-graph-loading">
-        <div className="w-[220px] border-r p-3 flex flex-col gap-2">
-          <Skeleton className="h-6 w-32" />
-          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+        <div className="w-16 border-r p-2 flex flex-col gap-2">
+          {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-10 w-full" />)}
         </div>
-        <div className="flex-1 p-6 flex flex-col items-center gap-4">
-          {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full max-w-md" />)}
-        </div>
-        <div className="w-[320px] border-l p-4">
-          <Skeleton className="h-6 w-40" />
+        <div className="flex-1 p-8 grid grid-cols-4 gap-6 content-center">
+          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-20 w-full" />)}
         </div>
       </div>
     );
   }
 
+  const PALETTE: Array<[string, string[]]> = [
+    ["Work", ["internal_agent", "tool_set", "remote_agent", "expression"]],
+    ["Knows", ["skill", "knowledge_base"]],
+    ["Control", ["sub_flow"]],
+    ["People", ["edge_gate"]],
+  ];
+  const PALETTE_NAME: Record<string, string> = {
+    internal_agent: "Agent", tool_set: "Tool set", remote_agent: "Remote agent", expression: "Expression",
+    skill: "Skill", knowledge_base: "Knowledge", sub_flow: "Sub-flow", edge_gate: "Person approves",
+  };
+  const toolBtn = "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40";
+
   return (
-    <div className="flex h-full" data-testid="team-graph-editor">
-      {/* Left Panel - Node Palette */}
-      <div className="w-[220px] border-r shrink-0 flex flex-col">
-        <div className="p-3 border-b">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Team Node Palette</span>
-        </div>
-        <ScrollArea className="flex-1">
-          <div className="flex flex-col gap-2 p-3">
-            {TEAM_NODE_TYPES.map(nt => {
-              const Icon = nt.icon;
+    <div
+      className={fullScreen ? "fixed inset-0 z-50 flex astra-scope bg-background text-foreground font-sans" : "relative flex h-full min-h-0 flex-1"}
+      data-testid="team-graph-editor"
+    >
+      {/* Step rail: click a step type to add it. */}
+      <div className="flex w-16 shrink-0 flex-col overflow-y-auto border-r bg-background px-1 pb-3" aria-label="Add a step">
+        {PALETTE.map(([group, types]) => (
+          <div key={group} className="flex flex-col gap-0.5">
+            <span className="pb-0.5 pt-2.5 text-center font-mono text-[9.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">{group}</span>
+            {types.map((t) => {
+              const def = TEAM_NODE_TYPES.find((x) => x.type === t)!;
+              const Icon = def.icon;
               return (
-                <div
-                  key={nt.type}
-                  className="flex items-center gap-2.5 p-2.5 rounded-md border cursor-pointer hover-elevate"
-                  onClick={() => createNodeMutation.mutate(nt.type)}
-                  data-testid={`button-add-team-node-${nt.type}`}
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => createNodeMutation.mutate(t)}
+                  disabled={createNodeMutation.isPending}
+                  title={`Add a ${PALETTE_NAME[t].toLowerCase()} step`}
+                  className="flex flex-col items-center gap-1 rounded-[7px] border border-transparent px-0.5 py-1 text-center text-[10.5px] leading-tight transition-colors hover:border-border hover:bg-card"
+                  data-testid={`button-add-team-node-${t}`}
                 >
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${nt.color}`} />
-                  <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
-                  <span className="text-sm flex-1">{nt.label}</span>
-                  <Plus className="w-3 h-3 text-muted-foreground shrink-0" />
-                </div>
+                  <span className={`grid h-6 w-6 place-items-center rounded-md text-white ${NODE_COLOR_MAP[t] || "bg-slate-500"}`}><Icon className="h-3.5 w-3.5" /></span>
+                  {PALETTE_NAME[t]}
+                </button>
               );
             })}
           </div>
-        </ScrollArea>
-        <div className="p-3 border-t">
-          <p className="text-[10px] text-muted-foreground mb-2">Drag from a node's right dot to a target node to connect them.</p>
-          {teamAgentId && (
-            <Button
-              variant="default"
-              size="sm"
-              className="w-full"
-              disabled={nodes.length === 0}
-              onClick={() => setRunDialogOpen(true)}
-              data-testid="button-run-team-graph"
-            >
-              <Play className="w-3.5 h-3.5 mr-1.5" /> Run Team Graph
-            </Button>
-          )}
-        </div>
-        {teamAgentId && <RecentExecutions teamAgentId={teamAgentId} />}
+        ))}
       </div>
 
       {teamAgentId && runDialogOpen && (
         <RunDagDialog teamAgentId={teamAgentId} open={runDialogOpen} onClose={() => setRunDialogOpen(false)} />
       )}
 
-      {/* Center Panel - Graph Canvas */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-0" data-testid="team-graph-canvas-container">
-        <TeamGraphCanvas
-          blueprintId={blueprintId}
-          teamAgentId={teamAgentId}
-          nodes={nodes}
-          edges={edges}
-          selectedNodeId={selectedNodeId}
-          selectedEdgeId={selectedEdgeId}
-          stateKeyConflictIds={stateKeyConflictIds}
-          getNodeDisplayLabel={getNodeDisplayLabel}
-          agents={agents || []}
-          remoteAgents={remoteAgents || []}
-          skills={skills || []}
-          knowledgeBases={knowledgeBases || []}
-          onNodeSelect={handleNodeSelect}
-          onEdgeSelect={handleEdgeSelect}
-          onPaneClick={handlePaneClick}
-          onConnect={handleConnect}
-          onNodeDragStop={handleNodeDragStop}
-          onNodeDelete={(id) => deleteNodeMutation.mutate(id)}
-        />
-      </div>
+      {/* Canvas, with its tools floating over it. */}
+      <div className="relative min-h-0 min-w-0 flex-1" data-testid="team-graph-canvas-container">
+        <div className={`h-full ${panelTab ? "pr-[372px]" : ""}`}>
+          <TeamGraphCanvas
+            blueprintId={blueprintId}
+            teamAgentId={teamAgentId}
+            nodes={nodes}
+            edges={edges}
+            selectedNodeId={selectedNodeId}
+            selectedEdgeId={selectedEdgeId}
+            stateKeyConflictIds={stateKeyConflictIds}
+            getNodeDisplayLabel={getNodeDisplayLabel}
+            stepMeta={stepMeta}
+            teamNames={teamNames}
+            remoteAgents={remoteAgents || []}
+            skills={skills || []}
+            knowledgeBases={knowledgeBases || []}
+            wavePlan={wavePlan}
+            businessView={businessView}
+            fitKey={`${!!panelTab}-${fullScreen}`}
+            onNodeSelect={handleNodeSelect}
+            onEdgeSelect={handleEdgeSelect}
+            onPaneClick={handlePaneClick}
+            onConnect={handleConnect}
+            onNodeDragStop={handleNodeDragStop}
+            onNodeDelete={(id) => deleteNodeMutation.mutate(id)}
+          />
+        </div>
 
-      {/* Right Panel - Config */}
-      <div className="w-[320px] border-l shrink-0 flex flex-col">
-        <ScrollArea className="flex-1">
-          <div className="p-4 flex flex-col gap-4">
-            {selectedNode ? (
-              <NodeConfigPanel
-                node={selectedNode}
-                allNodes={nodes}
-                singleAgents={singleAgents}
-                teamAgentsList={teamAgents}
-                remoteAgents={remoteAgents || []}
-                mcpTools={mcpTools || []}
-                policies={policies || []}
-                skills={skills || []}
-                knowledgeBases={knowledgeBases || []}
-                onUpdate={(updates) => updateNodeMutation.mutate({ id: selectedNode.id, updates })}
-                isPending={updateNodeMutation.isPending}
-              />
-            ) : selectedEdge ? (
-              <EdgeConfigPanel
-                edge={selectedEdge}
-                nodes={nodes}
-                onUpdate={(updates) => updateEdgeMutation.mutate({ id: selectedEdge.id, updates })}
-                onDelete={() => deleteEdgeMutation.mutate(selectedEdge.id)}
-                isPending={updateEdgeMutation.isPending}
-                isDeletePending={deleteEdgeMutation.isPending}
-              />
-            ) : (
-              <div className="flex flex-col gap-4" id="dag-state-schema-section">
-                <div className="flex items-center gap-2">
-                  <Database className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">DAG State Schema</span>
-                  <a
-                    href="#dag-state-schema-section"
-                    className="inline-flex items-center rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors no-underline"
-                    data-testid="badge-schema-panel"
-                  >
-                    Schema
-                  </a>
-                </div>
-                {teamAgentId ? (
-                  <DagStateSchemaEditor teamAgentId={teamAgentId} />
+        <div className={`absolute top-3 z-10 flex items-center gap-1 rounded-lg border bg-card/95 p-1 shadow-sm ${panelTab ? "right-[384px]" : "right-3"}`}>
+          {teamAgentId && (
+            <button type="button" className={toolBtn} disabled={nodes.length === 0} onClick={() => setRunDialogOpen(true)} data-testid="button-run-team-graph">
+              <Play className="h-3.5 w-3.5" /> Run a test
+            </button>
+          )}
+          <button type="button" className={toolBtn} disabled={nodes.length === 0 || tidyMutation.isPending} onClick={() => tidyMutation.mutate()} title="Lay the flow out by stage" data-testid="button-tidy-team-graph">
+            {tidyMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LayoutGrid className="h-3.5 w-3.5" />} Tidy up
+          </button>
+          {teamAgentId && (
+            <button type="button" className={toolBtn} onClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPanelTab(panelTab === "runs" ? null : "runs"); }} data-testid="button-team-graph-runs">
+              <History className="h-3.5 w-3.5" /> Runs
+            </button>
+          )}
+          <button type="button" className={toolBtn} onClick={() => setFullScreen((v) => !v)} data-testid={fullScreen ? "button-exit-fullscreen" : "button-expand-canvas"}>
+            {fullScreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            {fullScreen ? "Exit full screen" : "Full screen"}
+          </button>
+        </div>
+
+        {/* Inspector: a step, a link, recent runs, or the shared-state schema. */}
+        {panelTab && (
+          <div className="absolute bottom-3 right-3 top-3 z-20 flex w-[360px] flex-col overflow-hidden rounded-xl border bg-card shadow-[0_12px_40px_hsl(0_0%_0%/0.12)]" data-testid="team-graph-inspector">
+            <div className="flex items-center gap-1 border-b px-2">
+              {(selectedNode || selectedEdge) && (
+                <button type="button" onClick={() => setPanelTab("step")} className={`border-b-2 px-2 py-2.5 text-[13px] ${panelTab === "step" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground"}`}>
+                  {selectedEdge ? "Link" : "Step"}
+                </button>
+              )}
+              {teamAgentId && (
+                <button type="button" onClick={() => setPanelTab("runs")} className={`border-b-2 px-2 py-2.5 text-[13px] ${panelTab === "runs" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground"}`}>Runs</button>
+              )}
+              {teamAgentId && (
+                <button type="button" onClick={() => setPanelTab("schema")} className={`border-b-2 px-2 py-2.5 text-[13px] ${panelTab === "schema" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground"}`} data-testid="badge-schema-panel">Shared state</button>
+              )}
+              <button type="button" onClick={closePanel} className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Close" data-testid="button-close-inspector">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <ScrollArea className="flex-1">
+              <div className="flex flex-col gap-4 p-4">
+                {panelTab === "step" && selectedNode ? (
+                  <NodeConfigPanel
+                    node={selectedNode}
+                    allNodes={nodes}
+                    singleAgents={singleAgents}
+                    teamAgentsList={teamAgents}
+                    remoteAgents={remoteAgents || []}
+                    mcpTools={mcpTools || []}
+                    policies={policies || []}
+                    skills={skills || []}
+                    knowledgeBases={knowledgeBases || []}
+                    onUpdate={(updates) => updateNodeMutation.mutate({ id: selectedNode.id, updates })}
+                    isPending={updateNodeMutation.isPending}
+                  />
+                ) : panelTab === "step" && selectedEdge ? (
+                  <EdgeConfigPanel
+                    edge={selectedEdge}
+                    nodes={nodes}
+                    onUpdate={(updates) => updateEdgeMutation.mutate({ id: selectedEdge.id, updates })}
+                    onDelete={() => deleteEdgeMutation.mutate(selectedEdge.id)}
+                    isPending={updateEdgeMutation.isPending}
+                    isDeletePending={deleteEdgeMutation.isPending}
+                  />
+                ) : panelTab === "runs" && teamAgentId ? (
+                  <RecentExecutions teamAgentId={teamAgentId} />
+                ) : panelTab === "schema" && teamAgentId ? (
+                  <div className="flex flex-col gap-3" id="dag-state-schema-section">
+                    <p className="text-xs text-muted-foreground">The fields steps write to and read from as the flow runs.</p>
+                    <DagStateSchemaEditor teamAgentId={teamAgentId} />
+                  </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center py-8 gap-3">
-                    <MousePointer className="w-8 h-8 text-muted-foreground/50" />
-                    <p className="text-sm text-muted-foreground text-center" data-testid="text-no-selection">Select a node or edge to configure</p>
+                  <div className="flex flex-col items-center justify-center gap-3 py-8">
+                    <MousePointer className="h-8 w-8 text-muted-foreground/50" />
+                    <p className="text-center text-sm text-muted-foreground" data-testid="text-no-selection">Click a step or a link to see and change it</p>
                   </div>
                 )}
               </div>
-            )}
+            </ScrollArea>
           </div>
-        </ScrollArea>
+        )}
       </div>
     </div>
   );
@@ -475,16 +574,16 @@ function RecentExecutions({ teamAgentId }: { teamAgentId: string }) {
     },
   });
 
-  if (!runs || runs.length === 0) return null;
+  if (!runs || runs.length === 0) return <p className="text-sm text-muted-foreground">No runs yet. Use "Run a test" to try the flow.</p>;
 
   return (
-    <div className="border-t p-3 flex flex-col gap-2 min-h-0">
+    <div className="flex flex-col gap-2 min-h-0">
       <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-        <History className="w-3 h-3" /> Recent Executions
+        <History className="w-3 h-3" /> Recent runs
       </span>
-      <ScrollArea className="max-h-[220px]">
+      <ScrollArea>
         <div className="flex flex-col gap-1 pr-2">
-          {runs.slice(0, 8).map(run => (
+          {runs.slice(0, 20).map(run => (
             <button
               key={run.id}
               type="button"
@@ -493,10 +592,10 @@ function RecentExecutions({ teamAgentId }: { teamAgentId: string }) {
               data-testid={`link-recent-execution-${run.id}`}
             >
               <div className="flex flex-col flex-1 min-w-0">
-                <span className="text-[10px] text-muted-foreground truncate">
+                <span className="text-xs truncate">
                   {run.startedAt ? new Date(run.startedAt).toLocaleString() : run.id.substring(0, 8)}
                 </span>
-                <span className="text-[10px] text-muted-foreground">Wave {run.currentWave ?? 0}/{run.totalWaves ?? 0}</span>
+                <span className="text-[11px] text-muted-foreground">stage {run.currentWave ?? 0} of {run.totalWaves ?? 0}</span>
               </div>
               <StatusBadge status={run.status} className="text-[9px] px-1.5 py-0 shrink-0" />
             </button>

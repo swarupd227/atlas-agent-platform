@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import type { Blueprint, Agent } from "@shared/schema";
@@ -71,8 +71,9 @@ import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
   CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server, Network,
-  Scale, BookMarked, Diff, Crown, Copy, Eye, Code2, SendHorizontal,
+  Scale, BookMarked, Diff, Crown, Copy, Eye, Code2, SendHorizontal, Loader2,
 } from "lucide-react";
+import { useSidebar } from "@/components/ui/sidebar";
 
 import {
   Tooltip,
@@ -131,11 +132,8 @@ export default function BlueprintDetail() {
     queryKey: ["/api/blueprints", id],
     enabled: !!id,
   });
-  const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
-  const { data: mcpResources } = useQuery<McpResourceBrief[]>({ queryKey: ["/api/mcp-resources"] });
-  const { data: mcpPrompts } = useQuery<McpPromptBrief[]>({ queryKey: ["/api/mcp-prompts"] });
-  const { data: mcpServers } = useQuery<McpServerBrief[]>({ queryKey: ["/api/mcp-servers"] });
-  const { data: mcpTools } = useQuery<McpToolBrief[]>({ queryKey: ["/api/mcp-tools"] });
+  // Start loading a team flow straight away, alongside the blueprint (same cache key the editor reads).
+  useQuery({ queryKey: ["/api/blueprints", id, "team-graph"], enabled: !!id });
   const { data: ontologyReadiness, isLoading: ontologyReadinessLoading } = useQuery<{
     ready: boolean;
     overallScore: number;
@@ -213,10 +211,30 @@ export default function BlueprintDetail() {
     }
   }, [blueprint]);
 
-  const linkedAgent = useMemo(() => {
-    if (!blueprint?.agentId || !agents) return null;
-    return agents.find(a => a.id === blueprint.agentId);
-  }, [blueprint, agents]);
+  // Just the agent this blueprint belongs to. (Loading the whole agent list to find it kept this
+  // screen on "Loading flow..." for many seconds.)
+  const { data: linkedAgentData, isLoading: linkedAgentLoading } = useQuery<Agent>({
+    queryKey: ["/api/agents", blueprint?.agentId],
+    enabled: !!blueprint?.agentId,
+  });
+  const linkedAgent = linkedAgentData ?? null;
+  // The MCP catalogues feed only the single-agent canvas; a team flow doesn't need them.
+  const singleAgentCanvas = !!blueprint && (!blueprint.agentId || (!linkedAgentLoading && linkedAgent?.agentType !== "team"));
+  const { data: mcpResources } = useQuery<McpResourceBrief[]>({ queryKey: ["/api/mcp-resources"], enabled: singleAgentCanvas });
+  const { data: mcpPrompts } = useQuery<McpPromptBrief[]>({ queryKey: ["/api/mcp-prompts"], enabled: singleAgentCanvas });
+  const { data: mcpServers } = useQuery<McpServerBrief[]>({ queryKey: ["/api/mcp-servers"], enabled: singleAgentCanvas });
+  const { data: mcpTools } = useQuery<McpToolBrief[]>({ queryKey: ["/api/mcp-tools"], enabled: singleAgentCanvas });
+
+  // A team flow needs the width: fold the main menu away while it's open, and restore it after.
+  const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
+  const sidebarWasOpen = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (linkedAgent?.agentType !== "team") return;
+    sidebarWasOpen.current = sidebarOpen;
+    setSidebarOpen(false);
+    return () => { if (sidebarWasOpen.current) setSidebarOpen(true); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedAgent?.agentType]);
 
   const invalidNodeIds = useMemo(() => {
     const ids = new Set<string>();
@@ -400,152 +418,127 @@ export default function BlueprintDetail() {
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
   const currentStatus = blueprint.status;
 
+  const isTeam = linkedAgent?.agentType === "team";
+  // Where this blueprint is: drafted -> checked (compiled) -> approved (signed) -> deployed.
+  const stage = currentStatus === "signed" ? 3 : currentStatus === "compiled" ? 2 : 1;
+  const steps = ["Drafted", "Checked", "Approved", "Deploy"];
+
   return (
-    <div className="flex flex-col h-full" data-testid="page-blueprint-detail">
-      <div className="flex items-center gap-3 p-3 border-b shrink-0 sticky top-0 z-50 bg-background flex-wrap">
-        <Link href="/blueprints">
-          <Button variant="ghost" size="icon" data-testid="button-back">
-            <ArrowLeft className="w-4 h-4" />
+    <div className="astra-scope flex h-full flex-col bg-background text-foreground font-sans" data-testid="page-blueprint-detail">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-2">
+        <Link href={isTeam ? `/agents/${linkedAgent!.id}` : "/blueprints"}>
+          <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs text-muted-foreground" data-testid="button-back">
+            <ArrowLeft className="h-3.5 w-3.5" /> {isTeam ? "Team" : "Blueprints"}
           </Button>
         </Link>
         <Input
           value={blueprintName}
           onChange={e => { setBlueprintName(e.target.value); setDirty(true); }}
-          className="w-48 text-sm font-medium"
+          className="h-8 w-auto min-w-[200px] max-w-[360px] border-transparent bg-transparent px-1 font-[family-name:var(--astra-display)] text-lg font-semibold shadow-none hover:border-border focus-visible:border-border"
+          aria-label="Blueprint name"
           data-testid="input-blueprint-name"
         />
-        <StatusBadgeForBlueprint status={currentStatus} />
-        <Badge variant="outline" className="text-xs" data-testid="badge-version">v{blueprint.version}</Badge>
-        {linkedAgent && (
-          <Badge variant="outline" className="text-xs" data-testid="badge-agent">{linkedAgent.name}</Badge>
-        )}
-        {ontologyReadiness && (
-          <Badge
-            variant="outline"
-            className={`text-xs ${
-              ontologyReadiness.ready
-                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                : ontologyReadiness.overallScore >= 0.5
-                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                  : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-            }`}
-            data-testid="badge-ontology-readiness"
-          >
-            <Shield className="w-3 h-3 mr-0.5" />
-            Ontology {ontologyReadiness.ready ? "Ready" : `${Math.round(ontologyReadiness.overallScore * 100)}%`}
-          </Badge>
-        )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={blueprint.isShared ? "default" : "ghost"}
-              size="sm"
-              className="h-7 text-xs gap-1"
-              onClick={() => shareMutation.mutate()}
-              disabled={shareMutation.isPending}
-              data-testid="button-toggle-share"
-            >
-              <Crown className="w-3 h-3" />
-              {blueprint.isShared ? "Shared" : "Share"}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            {blueprint.isShared ? "This blueprint is shared to the org. Click to unshare." : "Share this blueprint with the org."}
-          </TooltipContent>
-        </Tooltip>
-        {blueprint.forkedFromId && (
-          <Badge variant="outline" className="text-[10px]" data-testid="badge-forked">
-            <Copy className="w-2.5 h-2.5 mr-0.5" /> Forked
-          </Badge>
-        )}
-        {dirty && <span className="text-xs text-amber-500" data-testid="text-unsaved">Unsaved changes</span>}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground">
+          <span data-testid="badge-version">v{blueprint.version}</span>
+          <span className="sr-only"><StatusBadgeForBlueprint status={currentStatus} /></span>
+          {ontologyReadiness && (
+            <span className={ontologyReadiness.ready ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"} data-testid="badge-ontology-readiness">
+              business terms {ontologyReadiness.ready ? "ready" : `${Math.round(ontologyReadiness.overallScore * 100)}%`}
+            </span>
+          )}
+          {blueprint.forkedFromId && <span data-testid="badge-forked">forked</span>}
+          {dirty && <span className="text-amber-600" data-testid="text-unsaved">unsaved changes</span>}
+        </div>
         <div className="flex-1" />
-        <div className="flex items-center rounded-md border overflow-hidden" data-testid="toggle-view-mode">
-          <button
-            type="button"
-            onClick={() => setBusinessView(false)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${!businessView ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
-            data-testid="button-technical-view"
-          >
-            <Code2 className="w-3 h-3" /> Technical
-          </button>
+        {/* Lifecycle */}
+        <div className="flex overflow-hidden rounded-full border bg-card text-xs" aria-label="Lifecycle" data-testid="blueprint-lifecycle">
+          {steps.map((label, i) => {
+            const n = i + 1;
+            const done = n < stage + 1 && n <= stage;
+            const now = n === stage + 1;
+            return (
+              <span
+                key={label}
+                className={`whitespace-nowrap border-r px-2.5 py-1 last:border-r-0 ${done ? "text-emerald-700 dark:text-emerald-400" : now ? "bg-primary/30 font-medium text-foreground" : "text-muted-foreground"}`}
+              >
+                {done ? "✓" : n} {label}
+              </span>
+            );
+          })}
+        </div>
+        <div className="flex overflow-hidden rounded-md border bg-card" data-testid="toggle-view-mode">
           <button
             type="button"
             onClick={() => setBusinessView(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${businessView ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
+            className={`px-2.5 py-1 text-xs ${businessView ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
             data-testid="button-business-view"
           >
-            <Eye className="w-3 h-3" /> Business
+            Business
+          </button>
+          <button
+            type="button"
+            onClick={() => setBusinessView(false)}
+            className={`px-2.5 py-1 text-xs ${!businessView ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+            data-testid="button-technical-view"
+          >
+            Technical
           </button>
         </div>
-        {!businessView && (
-          <>
-            {/* Team blueprints save every graph edit immediately (per-node/edge
-                API calls in TeamGraphEditor) -- this Save only writes the
-                legacy single-agent canvas, so showing it for a team blueprint
-                invites a no-op that historically clobbered blueprintJson. */}
-            {linkedAgent?.agentType !== "team" && (
-            <Button variant="outline" size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save">
-              <Save className="w-3.5 h-3.5 mr-1.5" /> {saveMutation.isPending ? "Saving..." : "Save"}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs" onClick={() => shareMutation.mutate()} disabled={shareMutation.isPending} data-testid="button-toggle-share">
+              <Crown className="h-3.5 w-3.5" /> {blueprint.isShared ? "Shared" : "Share"}
             </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={() => compileMutation.mutate()} disabled={compileMutation.isPending} data-testid="button-compile">
-              <Play className="w-3.5 h-3.5 mr-1.5" /> {compileMutation.isPending ? "Compiling..." : "Compile"}
-            </Button>
-            <Button size="sm" onClick={() => setSignDialogOpen(true)} disabled={currentStatus !== "compiled"} data-testid="button-sign">
-              <PenTool className="w-3.5 h-3.5 mr-1.5" /> Sign & Version
-            </Button>
-          </>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            {blueprint.isShared ? "Shared with your organisation. Click to stop sharing." : "Share this blueprint with your organisation."}
+          </TooltipContent>
+        </Tooltip>
+        {/* Team blueprints save every edit as it's made; this Save is for the single-agent canvas only. */}
+        {!isTeam && !businessView && (
+          <Button variant="outline" size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save">
+            <Save className="mr-1.5 h-3.5 w-3.5" /> {saveMutation.isPending ? "Saving..." : "Save"}
+          </Button>
         )}
-        {businessView && (
+        <Button variant="outline" size="sm" onClick={() => compileMutation.mutate()} disabled={compileMutation.isPending} data-testid="button-compile">
+          {compileMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="mr-1.5 h-3.5 w-3.5" />}
+          {compileMutation.isPending ? "Checking..." : "Check flow"}
+        </Button>
+        {businessView && !isTeam ? (
+          <Button size="sm" variant="outline" onClick={() => submitForReviewMutation.mutate()} disabled={submitForReviewMutation.isPending} data-testid="button-submit-it-review">
+            <SendHorizontal className="mr-1.5 h-3.5 w-3.5" /> {submitForReviewMutation.isPending ? "Submitting..." : "Submit for IT review"}
+          </Button>
+        ) : (
           <Button
             size="sm"
-            variant="outline"
-            onClick={() => submitForReviewMutation.mutate()}
-            disabled={submitForReviewMutation.isPending}
-            data-testid="button-submit-it-review"
+            onClick={() => setSignDialogOpen(true)}
+            disabled={currentStatus !== "compiled"}
+            title={currentStatus === "signed" ? "Already approved and versioned" : currentStatus !== "compiled" ? "Check the flow first" : "Approve this version"}
+            data-testid="button-sign"
           >
-            <SendHorizontal className="w-3.5 h-3.5 mr-1.5" /> {submitForReviewMutation.isPending ? "Submitting..." : "Submit for IT Review"}
+            <PenTool className="mr-1.5 h-3.5 w-3.5" /> {currentStatus === "signed" ? "Approved" : "Approve & version"}
           </Button>
         )}
       </div>
-      {businessView && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-primary/5 border-b text-xs text-muted-foreground" data-testid="banner-business-view">
-          <Eye className="w-3.5 h-3.5 text-primary shrink-0" />
-          <span><strong className="text-foreground">Business View</strong> — showing plain-English step names. Switch to Technical view to edit nodes, compile, or sign.</span>
-        </div>
-      )}
 
-      {/* A team blueprint's flow lives in team_blueprint_nodes/edges -- the
-          legacy single-agent canvas has nothing to show for it, and its Save
-          historically clobbered blueprintJson keys the team flow depends on.
-          So for team blueprints the Team Flow editor is the ONLY editor: no
-          tab to wander into an empty palette. While the linked agent is still
-          loading we show a placeholder rather than flashing the legacy canvas. */}
-      {linkedAgent?.agentType === "team" && (
-        <div className="flex items-center gap-2 border-b shrink-0 bg-muted/30 px-4 py-2" data-testid="team-flow-header">
-          <Network className="w-3.5 h-3.5 text-primary" />
-          <span className="text-xs font-medium">Team Flow</span>
-          <span className="text-[11px] text-muted-foreground">— the steps below run as a live automation; edit here, then run or promote from the team's page</span>
-        </div>
-      )}
-
-      {linkedAgent?.agentType === "team" && (
+      {isTeam && (
+        <div className="flex min-h-0 flex-1 flex-col" data-testid="team-flow-header">
         <TeamGraphEditor
           blueprintId={id!}
           teamAgentId={linkedAgent?.id}
           businessView={businessView}
           processFlowSteps={(blueprint?.blueprintJson as any)?.processFlowSteps}
         />
+        </div>
       )}
 
-      {blueprint?.agentId && !agents && (
+      {blueprint?.agentId && linkedAgentLoading && (
         <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground" data-testid="loading-linked-agent">
           Loading flow…
         </div>
       )}
 
-      {linkedAgent?.agentType !== "team" && !(blueprint?.agentId && !agents) && (
+      {!isTeam && !(blueprint?.agentId && linkedAgentLoading) && (
       <div className="flex flex-1 min-h-0">
         {!businessView && (
         <div className="w-[220px] border-r shrink-0 flex flex-col">
@@ -706,7 +699,7 @@ export default function BlueprintDetail() {
               <div className="flex flex-col gap-1.5">
                 {nodes.map((n, i) => (
                   <div key={n.id} className="flex items-center gap-2" data-testid={`review-step-${n.id}`}>
-                    <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center font-semibold shrink-0">{i + 1}</span>
+                    <span className="w-5 h-5 rounded-full bg-primary/10 text-foreground text-[10px] flex items-center justify-center font-semibold shrink-0">{i + 1}</span>
                     <span className="text-foreground truncate">{getNodeDisplayLabel(n)}</span>
                   </div>
                 ))}
@@ -1180,7 +1173,7 @@ export default function BlueprintDetail() {
                                   <Badge variant="outline" className="text-[9px]">{s.status}</Badge>
                                 </div>
                               </div>
-                              {isDep && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />}
+                              {isDep && <CheckCircle className="w-3.5 h-3.5 text-foreground shrink-0 mt-0.5" />}
                             </div>
                           );
                         })}
@@ -1267,7 +1260,7 @@ export default function BlueprintDetail() {
                                     {r.mimeType && <Badge variant="outline" className="text-[9px]">{r.mimeType.split("/").pop()}</Badge>}
                                   </div>
                                 </div>
-                                {attached && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />}
+                                {attached && <CheckCircle className="w-3.5 h-3.5 text-foreground shrink-0 mt-0.5" />}
                               </div>
                               {attached && (
                                 <div className="ml-5 flex items-center gap-1.5 mt-1">
@@ -1278,7 +1271,7 @@ export default function BlueprintDetail() {
                                     return (
                                       <button
                                         key={strat}
-                                        className={`text-[9px] px-1.5 py-0.5 rounded ${isActive ? "bg-primary/20 text-primary font-medium" : "bg-muted text-muted-foreground"}`}
+                                        className={`text-[9px] px-1.5 py-0.5 rounded ${isActive ? "bg-primary/20 text-foreground font-medium" : "bg-muted text-muted-foreground"}`}
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setContextPlan(prev => {
@@ -1477,7 +1470,7 @@ export default function BlueprintDetail() {
                                     {p.arguments && <Badge variant="outline" className="text-[9px]">{p.arguments.length} args</Badge>}
                                   </div>
                                 </div>
-                                {isBound && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />}
+                                {isBound && <CheckCircle className="w-3.5 h-3.5 text-foreground shrink-0 mt-0.5" />}
                               </div>
                               {isBound && p.arguments && p.arguments.length > 0 && (
                                 <div className="ml-5 flex flex-col gap-1 pb-1">
