@@ -86,15 +86,15 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
     // The pane beside the conversation shows the run waiting at the gate.
     ctx.onProgress?.({ type: "artifact", artifact: runArtifact(run) });
     if (approval?.canDecide?.allowed) {
-      const description = approval.description ?? run.pending?.description;
       return {
         payload: { runId: run.id, status: "waiting_approval", waitingOn: label, ...(notes.length ? { notes } : {}) },
         needsConfirmation: {
           summary: `${run.team.name} is waiting for approval: ${label}`,
+          // The gate's own text is the raw step output (checklists, markup); the approval page shows it
+          // properly, so the card stays short and links there.
           details: [
             ...notes,
-            ...(description ? [description.length > 400 ? `${description.slice(0, 400)}…` : description] : []),
-            `${run.steps.filter((s) => s.status === "completed").length} steps done so far.`,
+            `${run.steps.filter((s) => s.status === "completed").length} steps done so far. Open approval shows the checks and the work in full.`,
             "Confirm approves this step and the run continues. Not now rejects it, and the run stops here.",
           ],
           frozen: { dagRunId: run.id, approvalId: watch.approvalId, teamAgentId: run.team.id, teamName: run.team.name, label },

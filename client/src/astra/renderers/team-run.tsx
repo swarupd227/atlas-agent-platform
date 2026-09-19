@@ -49,7 +49,6 @@ export function TeamRun({ props }: { props: Record<string, any> }) {
           <Hand className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <div className="min-w-0 flex-1">
             <div className="font-medium">Waiting for approval{run.pending.label ? `: ${run.pending.label}` : ""}</div>
-            {run.pending.description && <p className="mt-1 text-xs text-muted-foreground line-clamp-4">{run.pending.description}</p>}
             {run.pending.approvalId && (
               <Button asChild size="sm" variant="outline" className="mt-2 h-7 gap-1 px-2 text-xs">
                 <Link href={`~/approvals/${run.pending.approvalId}`} data-testid="astra-team-run-open-approval">

@@ -62,6 +62,8 @@ interface TeamNodeRFData {
   refSkillName?: string;
   refKbName?: string;
   toolCount: number;
+  /** The flow reads top to bottom, so links leave a card's bottom and enter the next one's top. */
+  vertical: boolean;
   onDelete: (nodeId: string) => void;
   [key: string]: unknown;
 }
@@ -97,7 +99,7 @@ function TeamFlowNode({ data, selected }: NodeProps) {
       style={{ width: NODE_W }}
       data-testid={`card-team-node-${node.id}`}
     >
-      <Handle type="target" position={Position.Left} className="!w-2.5 !h-2.5 !bg-foreground/60 !border-background" />
+      <Handle type="target" position={d.vertical ? Position.Top : Position.Left} className="!w-2.5 !h-2.5 !bg-foreground/60 !border-background" />
       <div className="flex items-center gap-1.5">
         <span className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-[5px] text-white ${NODE_COLOR_MAP[node.nodeType] || "bg-slate-500"}`}>
           <Icon className="h-3 w-3" />
@@ -132,7 +134,7 @@ function TeamFlowNode({ data, selected }: NodeProps) {
           last run {fmtDuration(meta.lastRun.durationMs) || meta.lastRun.status}
         </p>
       )}
-      <Handle type="source" position={Position.Right} className="!w-2.5 !h-2.5 !bg-foreground !border-background" />
+      <Handle type="source" position={d.vertical ? Position.Bottom : Position.Right} className="!w-2.5 !h-2.5 !bg-foreground !border-background" />
     </div>
   );
 }
@@ -197,6 +199,20 @@ function Canvas({
     return { x: node.positionX ?? 0, y: node.positionY ?? 0 };
   }, [dragOverlay, neverArranged, layoutPositions]);
 
+  // Links follow the way the steps are laid out: a canvas arranged top to bottom (as a team built
+  // from a process flow is) connects bottom to top; the stage layout and most hand layouts run left to right.
+  const vertical = useMemo(() => {
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    let down = 0, across = 0;
+    for (const e of edges) {
+      const a = byId.get(e.sourceNodeId), b = byId.get(e.targetNodeId);
+      if (!a || !b) continue;
+      const pa = resolvePosition(a), pb = resolvePosition(b);
+      if (Math.abs(pb.y - pa.y) > Math.abs(pb.x - pa.x)) down++; else across++;
+    }
+    return down > across;
+  }, [nodes, edges, resolvePosition]);
+
   const waveOf = useMemo(() => {
     const m: Record<string, number> = {};
     wavePlan?.waves?.forEach((w) => w.nodes.forEach((id) => (m[id] = w.wave_number)));
@@ -218,6 +234,7 @@ function Canvas({
         refSkillName: refSkill?.name,
         refKbName: refKb?.name,
         toolCount: (node.refToolIds || []).length,
+        vertical,
         onDelete: onNodeDelete,
       };
       return {
@@ -225,8 +242,8 @@ function Canvas({
         type: "team_node",
         position: resolvePosition(node),
         selected: node.id === selectedNodeId,
-        sourcePosition: Position.Right,
-        targetPosition: Position.Left,
+        sourcePosition: vertical ? Position.Bottom : Position.Right,
+        targetPosition: vertical ? Position.Top : Position.Left,
         data: data as unknown as Record<string, unknown>,
         // An immediate box so edges route on first paint, before React Flow measures the node.
         initialWidth: NODE_W,
@@ -252,7 +269,7 @@ function Canvas({
       }
     }
     return steps;
-  }, [nodes, remoteAgents, skills, knowledgeBases, getNodeDisplayLabel, stateKeyConflictIds, stepMeta, teamNames, selectedNodeId, resolvePosition, onNodeDelete, neverArranged, wavePlan]);
+  }, [nodes, remoteAgents, skills, knowledgeBases, getNodeDisplayLabel, stateKeyConflictIds, stepMeta, teamNames, selectedNodeId, resolvePosition, onNodeDelete, neverArranged, wavePlan, vertical]);
 
   const rfEdges: RFEdge[] = useMemo(() => edges.flatMap((edge) => {
     const a = waveOf[edge.sourceNodeId], b = waveOf[edge.targetNodeId];

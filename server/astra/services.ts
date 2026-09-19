@@ -947,7 +947,9 @@ async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
   let pending: { approvalId: string; label: string | null; description: string | null } | null = null;
   if (row.status === "waiting_approval" && row.pendingApprovalId) {
     const approval = await storage.getApproval(row.pendingApprovalId).catch(() => undefined);
-    pending = { approvalId: row.pendingApprovalId, label: approval?.objectName ?? null, description: approval?.description ?? null };
+    // The step's own name ("Email Approval") reads better than the approval record's long title.
+    const gateStep = steps.find((s) => s.status === "waiting_approval");
+    pending = { approvalId: row.pendingApprovalId, label: gateStep?.label ?? approval?.objectName ?? null, description: approval?.description ?? null };
   }
   return {
     id: row.id,
