@@ -17,7 +17,7 @@ import { useRoute, Link } from "wouter";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, Network, XCircle, Loader2, ArrowRight, AlertTriangle, Bot, UserCheck,
-  Hand, CheckCircle2, Copy, Check, Download, FileText, Radio, Maximize2,
+  Hand, CheckCircle2, Copy, Check, Download, FileText, Radio, Maximize2, ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,7 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import type { DagExecutionRun, Agent, Approval } from "@shared/schema";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
-import { splitWorkingNotes } from "@/lib/agent-output";
+import { splitWorkingNotes, extractHtmlDocument, openHtmlInBrowser } from "@/lib/agent-output";
 
 // Mirrors computeWaves()'s real output shape (server/dag-execution-engine.ts)
 // -- GET /api/team-agents/:id/dag-waves returns this raw wave plan, where
@@ -951,6 +951,9 @@ function StepDetail({
     : step.kind === "gate" && step.state === "failed" ? "Not approved"
     : STATE_LABEL[step.state];
 
+  // A step that built a web page or an email can be seen as one, in its own tab.
+  const htmlDoc = useMemo(() => (step.kind === "agent" ? extractHtmlDocument(plain) : null), [plain, step.kind]);
+
   async function copyOutput() {
     try {
       await navigator.clipboard.writeText(plain);
@@ -1075,10 +1078,17 @@ function StepDetail({
         <div className="border-t px-5 py-2.5 flex items-center justify-between gap-2 font-mono text-[11px] text-muted-foreground">
           <span>{step.stateKey ? `saved as ${step.stateKey}` : ""}</span>
           {entries.length > 0 && tab === "output" && step.kind === "agent" && (
+            <span className="flex items-center gap-2">
+            {htmlDoc && (
+              <Button size="sm" className="h-7 px-2.5 text-xs" onClick={() => openHtmlInBrowser(htmlDoc)} data-testid={`button-preview-html-${step.id}`}>
+                <ExternalLink className="w-3 h-3 mr-1" /> Open in browser
+              </Button>
+            )}
             <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" onClick={copyOutput} data-testid={`button-copy-output-${step.id}`}>
               {copied ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
               {copied ? "Copied" : "Copy output"}
             </Button>
+            </span>
           )}
         </div>
       )}
@@ -1092,7 +1102,12 @@ function StepDetail({
           <div className="px-6 py-5 overflow-y-auto">
             <div className="max-w-[90ch]"><OutputEntries entries={entries} /></div>
           </div>
-          <div className="border-t px-6 py-3 flex justify-end">
+          <div className="border-t px-6 py-3 flex justify-end gap-2">
+            {htmlDoc && (
+              <Button size="sm" onClick={() => openHtmlInBrowser(htmlDoc)} data-testid="button-preview-html-expanded">
+                <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Open in browser
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={copyOutput} data-testid="button-copy-output-expanded">
               {copied ? <Check className="w-3.5 h-3.5 mr-1.5" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
               {copied ? "Copied" : "Copy output"}

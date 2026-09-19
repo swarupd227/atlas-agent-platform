@@ -18,3 +18,27 @@ export function splitWorkingNotes(text: string): { notes: string | null; report:
   }
   return { notes, report };
 }
+
+/**
+ * The last complete HTML document in an agent's output (a fenced ```html block, or a bare
+ * document), for steps that build web pages or emails. Null when there is none.
+ */
+export function extractHtmlDocument(text: string): string | null {
+  const fenced = Array.from(text.matchAll(/```(?:html|htm)?\s*\n([\s\S]*?)```/gi)).map((m) => m[1].trim());
+  const candidates = fenced.length ? fenced : [text];
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const c = candidates[i];
+    const start = c.search(/<!doctype html|<html[\s>]/i);
+    const end = c.toLowerCase().lastIndexOf("</html>");
+    if (start >= 0 && end > start) return c.slice(start, end + "</html>".length);
+  }
+  return null;
+}
+
+/** Open an HTML document in a new browser tab, rendered as the page itself. */
+export function openHtmlInBrowser(html: string): void {
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  window.open(url, "_blank", "noopener");
+  // The new tab has already read it by the time this fires.
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
