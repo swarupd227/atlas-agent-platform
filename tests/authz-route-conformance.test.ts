@@ -104,7 +104,11 @@ function scanRoutes(): RouteEntry[] {
 // 455 (was 459): the outcome-authoring AI helpers (outcome-discover,
 // enhance-outcome, generate-kpis, regulatory-constraints) need
 // create_modify_outcomes. Every /api/ai/* POST is also rate-limited per user.
-const BASELINE_UNGUARDED = 455;
+//
+// 454 (was 455, briefly 456): the process-flow drafting helpers
+// (process-flow/clarify, added unguarded in ac5ba87, and generate-process-flow)
+// need create_modify_outcomes, like saving a process flow.
+const BASELINE_UNGUARDED = 454;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {

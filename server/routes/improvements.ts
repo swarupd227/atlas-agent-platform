@@ -872,7 +872,8 @@ Revenue:
   // Before a described workflow is drawn: ask about the gaps that would change
   // the flow's shape (see server/process-flow-clarify.ts). Never blocks -- an
   // unreadable reply is "nothing to ask", and the page always offers "skip".
-  router.post("/api/ai/process-flow/clarify", async (req, res) => {
+  // Drafting a process flow needs the permission that saving one needs.
+  router.post("/api/ai/process-flow/clarify", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
@@ -898,7 +899,7 @@ Revenue:
     }
   });
 
-  router.post("/api/ai/generate-process-flow", async (req, res) => {
+  router.post("/api/ai/generate-process-flow", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
