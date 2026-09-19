@@ -208,7 +208,19 @@ export function WorkflowGateApproval({
   const runFiles = collectRunFiles(run?.finalState ?? run?.currentState ?? {});
   const files = runFiles.length ? runFiles : evidence.files ?? [];
 
-  const verdicts = upstream.filter((u) => u.verdict).map((u) => ({ label: u.label, verdict: u.verdict!.replace(/^#+\s*/, "") }));
+  // The server records a verdict only when a step's output leads with one it recognises; otherwise
+  // read it from the step's own opening lines ("## Board QA: PASS"). Uppercase only, so prose such as
+  // "passed to the next step" never counts.
+  const verdictFromText = (text?: string) => {
+    for (const raw of (text || "").split("\n").slice(0, 12)) {
+      const line = raw.replace(/^[\s#>*_-]+/, "").replace(/[*_`]+/g, "").trim();
+      if (line && line.length <= 120 && /\b(PASS|PASSED|FAIL|FAILED|BLOCKED)\b/.test(line)) return line;
+    }
+    return undefined;
+  };
+  const verdicts = upstream
+    .map((u) => ({ label: u.label, verdict: (u.verdict || verdictFromText(u.text))?.replace(/^#+\s*/, "") }))
+    .filter((v): v is { label: string; verdict: string } => !!v.verdict);
   const failing = verdicts.some((v) => FAILING.test(v.verdict)) || failedSteps.length > 0;
   const request = String(run?.initialState?.request ?? "");
   const risk = approval.riskScore ?? 0;
