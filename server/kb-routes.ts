@@ -7,7 +7,7 @@ import { sql, eq, desc, and, inArray } from "drizzle-orm";
 import OpenAI from "openai";
 import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
 import { getOrgId, getDefaultOrgId } from "./auth";
-import { getRequestRole } from "./permissions";
+import { checkPermission, getRequestRole } from "./permissions";
 import { assertSafeOutboundUrl, UnsafeUrlError } from "./url-safety";
 
 interface OntologyAlignmentResult {
@@ -778,7 +778,10 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     res.json(kb);
   });
 
-  app.post("/api/knowledge-bases", async (req, res) => {
+  // Per-knowledge-base and agent-link routes are scoped by knowledgeBaseScope /
+  // agentKnowledgeLinkScope (server/tenant-scope.ts); every write below needs
+  // create_modify_blueprints, the permission building an agent needs.
+  app.post("/api/knowledge-bases", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertKnowledgeBaseSchema.omit({ organizationId: true }).parse(req.body);
       const kb = await storage.createKnowledgeBase({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
@@ -788,7 +791,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/knowledge-bases/:id", async (req, res) => {
+  app.patch("/api/knowledge-bases/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     const kb = await storage.updateKnowledgeBase(req.params.id as string, req.body, getOrgId(req));
     if (!kb) {
       // updateKnowledgeBase scopes its WHERE clause by organizationId
@@ -807,7 +810,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     res.json(kb);
   });
 
-  app.delete("/api/knowledge-bases/:id", async (req, res) => {
+  app.delete("/api/knowledge-bases/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     const success = await storage.deleteKnowledgeBase(req.params.id as string, getOrgId(req));
     if (!success) return res.status(404).json({ message: "Not found" });
     res.json({ success: true });
@@ -820,7 +823,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     res.json(sources);
   });
 
-  app.post("/api/knowledge-bases/:id/sources/upload", upload.single("file"), async (req, res) => {
+  app.post("/api/knowledge-bases/:id/sources/upload", checkPermission("create_modify_blueprints"), upload.single("file"), async (req, res) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
@@ -908,7 +911,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/:id/sources/url", async (req, res) => {
+  app.post("/api/knowledge-bases/:id/sources/url", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
@@ -928,7 +931,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/:id/sources/text", async (req, res) => {
+  app.post("/api/knowledge-bases/:id/sources/text", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
@@ -943,7 +946,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/:id/sources/structured", async (req, res) => {
+  app.post("/api/knowledge-bases/:id/sources/structured", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
@@ -988,7 +991,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/knowledge-bases/:id/sources/:sourceId", async (req, res) => {
+  app.patch("/api/knowledge-bases/:id/sources/:sourceId", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const source = await storage.getKnowledgeSource(req.params.sourceId as string, getOrgId(req));
       if (!source) return res.status(404).json({ message: "Source not found" });
@@ -1004,7 +1007,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/:id/sources/:sourceId/reprocess", async (req, res) => {
+  app.post("/api/knowledge-bases/:id/sources/:sourceId/reprocess", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const source = await storage.getKnowledgeSource(req.params.sourceId as string, getOrgId(req));
       if (!source) return res.status(404).json({ message: "Source not found" });
@@ -1019,7 +1022,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/:id/embed", async (req, res) => {
+  app.post("/api/knowledge-bases/:id/embed", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
@@ -1084,7 +1087,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/knowledge-bases/:kbId/sources/:sourceId", async (req, res) => {
+  app.delete("/api/knowledge-bases/:kbId/sources/:sourceId", checkPermission("create_modify_blueprints"), async (req, res) => {
     const success = await storage.deleteKnowledgeSource(req.params.sourceId as string, getOrgId(req));
     if (!success) return res.status(404).json({ message: "Not found" });
 
@@ -1098,7 +1101,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     res.json({ success: true });
   });
 
-  app.post("/api/knowledge-bases/:id/refresh-stats", async (req, res) => {
+  app.post("/api/knowledge-bases/:id/refresh-stats", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
@@ -1140,12 +1143,12 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   app.get("/api/agents/:agentId/knowledge-bases", async (req, res) => {
     const links = await storage.getAgentKnowledgeBases(req.params.agentId as string);
     const kbIds = links.map((l) => l.knowledgeBaseId);
-    const allKbs = await storage.getKnowledgeBases();
+    const allKbs = await storage.getKnowledgeBases(getOrgId(req));
     const linkedKbs = allKbs.filter((kb) => kbIds.includes(kb.id));
     res.json({ links, knowledgeBases: linkedKbs });
   });
 
-  app.post("/api/agents/:agentId/knowledge-bases", async (req, res) => {
+  app.post("/api/agents/:agentId/knowledge-bases", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertAgentKnowledgeBaseSchema.parse({
         ...req.body,
@@ -1158,8 +1161,8 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/agents/:agentId/knowledge-bases/:linkId", async (req, res) => {
-    const success = await storage.deleteAgentKnowledgeBase(req.params.linkId);
+  app.delete("/api/agents/:agentId/knowledge-bases/:linkId", checkPermission("create_modify_blueprints"), async (req, res) => {
+    const success = await storage.deleteAgentKnowledgeBase((req.params.linkId as string));
     if (!success) return res.status(404).json({ message: "Not found" });
     res.json({ success: true });
   });
@@ -1336,7 +1339,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/:id/check-staleness", async (req: Request, res: Response) => {
+  app.post("/api/knowledge-bases/:id/check-staleness", checkPermission("create_modify_blueprints"), async (req: Request, res: Response) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
@@ -1440,9 +1443,9 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/check-all-staleness", async (_req: Request, res: Response) => {
+  app.post("/api/knowledge-bases/check-all-staleness", checkPermission("create_modify_blueprints"), async (req: Request, res: Response) => {
     try {
-      const allKbs = await storage.getKnowledgeBases();
+      const allKbs = await storage.getKnowledgeBases(getOrgId(req));
       const activeKbs = allKbs.filter(kb => kb.status === "active");
       const results: Array<{ kbId: string; kbName: string; fresh: number; stale: number; critical: number }> = [];
       let totalFresh = 0, totalStale = 0, totalCritical = 0;
@@ -1584,7 +1587,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/:id/auto-tune", async (req: Request, res: Response) => {
+  app.post("/api/knowledge-bases/:id/auto-tune", checkPermission("create_modify_blueprints"), async (req: Request, res: Response) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
@@ -1740,7 +1743,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
-  app.post("/api/knowledge-bases/:id/apply-tuning", async (req: Request, res: Response) => {
+  app.post("/api/knowledge-bases/:id/apply-tuning", checkPermission("create_modify_blueprints"), async (req: Request, res: Response) => {
     try {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });

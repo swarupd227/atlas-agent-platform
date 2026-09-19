@@ -467,3 +467,90 @@ export async function filterDagRunsForOrg<T extends { teamAgentId: string | null
   }
   return out;
 }
+
+// ── Knowledge bases and agent links ──────────────────────────────────────────
+//
+// A knowledge base belongs to its organizationId (a legacy NULL row to the
+// default org). A source belongs to its knowledge base; a link between an
+// agent and a knowledge base needs both in the caller's organization.
+
+async function authorizeKnowledgeBaseId(res: Response, kbId: string | undefined, orgId: string | undefined): Promise<boolean> {
+  if (!kbId) return true;
+  const kb = await storage.getKnowledgeBase(kbId);
+  if (!kb) return true; // the route answers its own not-found
+  if (!ownerMatches(kb.organizationId ?? getDefaultOrgId() ?? null, orgId)) {
+    notFound(res, "Knowledge base");
+    return false;
+  }
+  return true;
+}
+
+const KB_RESERVED = new Set(["check-all-staleness"]);
+
+/** Mounted at /api/knowledge-bases/:id -- every per-knowledge-base route, and a source id in the path. */
+export async function knowledgeBaseScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id || KB_RESERVED.has(id)) return next();
+    if (!(await authorizeKnowledgeBaseId(res, id, resolveRequestOrgId(req)))) return;
+    // /sources/:sourceId must be a source of this knowledge base.
+    const [section, sourceId] = req.path.split("/").filter(Boolean);
+    if (section === "sources" && sourceId && !["upload", "url", "text", "structured"].includes(sourceId)) {
+      const source = await storage.getKnowledgeSource(sourceId);
+      if (source && source.knowledgeBaseId !== id) return notFound(res, "Source");
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Mounted at /api/agents/:agentId/knowledge-bases -- list, link and unlink. */
+export async function agentKnowledgeLinkScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const orgId = resolveRequestOrgId(req);
+    const agentId = typeof req.params.agentId === "string" ? req.params.agentId : undefined;
+    const agent = agentId ? await storage.getAgent(agentId) : undefined;
+    if (!agent || !ownerMatches(agent.organizationId ?? getDefaultOrgId() ?? null, orgId)) return notFound(res, "Agent");
+    if (req.method === "POST") {
+      const kbId = typeof req.body?.knowledgeBaseId === "string" ? req.body.knowledgeBaseId : undefined;
+      if (!kbId) return res.status(400).json({ message: "knowledgeBaseId is required" });
+      if (!(await storage.getKnowledgeBase(kbId))) return notFound(res, "Knowledge base");
+      if (!(await authorizeKnowledgeBaseId(res, kbId, orgId))) return;
+    }
+    const [linkId] = req.path.split("/").filter(Boolean);
+    if (linkId) {
+      const links = await storage.getAgentKnowledgeBases(agent.id);
+      if (!links.some((l) => l.id === linkId)) return notFound(res, "Link");
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── Skill versions ───────────────────────────────────────────────────────────
+//
+// A version belongs to its skill. An org-owned skill's versions are visible
+// and changeable by that org only; a platform skill (no organization) is
+// shared, and changing one of its versions needs manage_security, like a
+// platform catalog connector.
+
+/** Mounted at /api/skill-versions/:id -- every per-version route. */
+export async function skillVersionScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    const version = id ? await storage.getSkillVersion(id) : undefined;
+    if (!version) return next();
+    const skill = await storage.getSkill(version.skillId);
+    if (!skill) return next();
+    const orgId = resolveRequestOrgId(req);
+    if (skill.organizationId && skill.organizationId !== orgId) return notFound(res, "Skill version");
+    if (!skill.organizationId && !READ_METHODS.has(req.method) && !hasPermission(getRequestRole(req), "manage_security")) {
+      return res.status(403).json({ message: "This is a platform skill shared by every organization. Changing it requires the manage_security permission." });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}

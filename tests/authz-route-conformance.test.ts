@@ -111,7 +111,11 @@ function scanRoutes(): RouteEntry[] {
 //
 // 452 (was 454): proposing a team (/api/ai/propose-agents) needs
 // create_modify_blueprints; Deploy & Run needs deploy_staging_pilot.
-const BASELINE_UNGUARDED = 452;
+//
+// 430 (was 452): every knowledge-base write (create/edit/delete, sources,
+// embed, stats, staleness checks, tuning, agent link/unlink), skill-version
+// PATCH and skill-chain create/edit/delete need create_modify_blueprints.
+const BASELINE_UNGUARDED = 430;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {

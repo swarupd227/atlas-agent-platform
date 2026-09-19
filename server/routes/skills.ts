@@ -1455,7 +1455,8 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
-  router.patch("/api/skill-versions/:id", async (req, res) => {
+  // Per-version routes are scoped by skillVersionScope (server/tenant-scope.ts).
+  router.patch("/api/skill-versions/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const updated = await storage.updateSkillVersion(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Version not found" });
@@ -1585,7 +1586,9 @@ Return ONLY a valid JSON object with a "skills" array.`,
     res.json(chain);
   });
 
-  router.post("/api/skill-chains", async (req, res) => {
+  // skill_chains has no organization column yet, so chains are shared across
+  // organizations; changing one at least needs create_modify_blueprints.
+  router.post("/api/skill-chains", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertSkillChainSchema.parse(req.body);
       const chain = await storage.createSkillChain(data);
@@ -1596,7 +1599,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
-  router.patch("/api/skill-chains/:id", async (req, res) => {
+  router.patch("/api/skill-chains/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertSkillChainSchema.partial().parse(req.body);
       const updated = await storage.updateSkillChain(req.params.id as string, data);
@@ -1608,7 +1611,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
-  router.delete("/api/skill-chains/:id", async (req, res) => {
+  router.delete("/api/skill-chains/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const deleted = await storage.deleteSkillChain(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Chain not found" });
