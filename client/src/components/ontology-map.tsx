@@ -213,11 +213,26 @@ export function OntologyDomainMap({ concepts, focusId, onSelect, searchQuery }: 
   }, [shown, categories, hidden, maxUsage, size]);
   useEffect(() => { setMoved({}); }, [layout]);
 
+  // A focused concept moves to the middle with its neighbours in a ring round it, so every link
+  // and its name has room; everything else stays in place, faded.
+  const near = useMemo(() => {
+    if (!focusId || !byId.has(focusId)) return null;
+    return new Set([focusId, ...neighboursOf(focusId, byId, incoming).map((n) => n.id)]);
+  }, [focusId, byId, incoming]);
   const pos = useMemo(() => {
-    const p = new Map(layout.placed.map((n) => [n.c.id, { x: n.x, y: n.y }]));
+    const p = new Map<string, { x: number; y: number; a?: number }>(layout.placed.map((n) => [n.c.id, { x: n.x, y: n.y }]));
+    if (near && focusId) {
+      p.set(focusId, { x: 0, y: 0 });
+      const ring = Array.from(near).filter((id) => id !== focusId);
+      const rx = Math.min(size.w / 2 - 190, 400), ry = Math.min((size.h - 28) / 2 - 70, 250);
+      ring.forEach((id, i) => {
+        const a = (i / ring.length) * Math.PI * 2 - Math.PI / 2;
+        p.set(id, { x: Math.cos(a) * rx, y: Math.sin(a) * ry, a });
+      });
+    }
     for (const [id, m] of Object.entries(moved)) if (p.has(id)) p.set(id, m);
     return p;
-  }, [layout, moved]);
+  }, [layout, moved, near, focusId, size]);
   const node = useMemo(() => new Map(layout.placed.map((n) => [n.c.id, n])), [layout]);
 
   const links = useMemo(() => {
@@ -252,9 +267,11 @@ export function OntologyDomainMap({ concepts, focusId, onSelect, searchQuery }: 
     const boxes: Array<[number, number, number, number]> = [];
     const prio = (n: Placed) => (n.c.id === hoverId || n.c.id === focusId ? 1e6 : 0) + (litSet?.has(n.c.id) ? 1e5 : 0) + (isMatch(n.c) ? 1e4 : 0) + (n.c.usageCount ?? 0);
     for (const n of [...layout.placed].sort((a, b) => prio(b) - prio(a))) {
+      if (near && !near.has(n.c.id)) continue;
       const p = pos.get(n.c.id)!;
-      const dir = n.row === 1 ? -1 : 1;
-      const dx = Math.cos(n.a) * dir, dy = Math.sin(n.a) * dir;
+      const ang = p.a ?? n.a;
+      const dir = p.a === undefined && n.row === 1 ? -1 : 1;
+      const dx = Math.cos(ang) * dir, dy = Math.sin(ang) * dir;
       const anchor: "start" | "end" | "middle" = Math.abs(dx) < 0.3 ? "middle" : dx > 0 ? "start" : "end";
       const gap = n.r + 6 / K;
       const lx = p.x + dx * gap, ly = p.y + dy * gap + (Math.abs(dx) < 0.3 ? (dy > 0 ? 10 / K : -2 / K) : 4 / K);
@@ -269,7 +286,7 @@ export function OntologyDomainMap({ concepts, focusId, onSelect, searchQuery }: 
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, pos, K, hoverId, focusId, litSet, q]);
+  }, [layout, pos, K, hoverId, focusId, litSet, q, near]);
 
   const onMove = (e: React.PointerEvent) => {
     const nd = nodeDrag.current;
@@ -310,7 +327,7 @@ export function OntologyDomainMap({ concepts, focusId, onSelect, searchQuery }: 
         <g transform={`translate(${size.w / 2 + view.x},${28 + (size.h - 28) / 2 + view.y}) scale(${K})`} style={{ transition: nodeDrag.current || pan.current ? undefined : "transform .5s ease" }}>
           {links.map((l, i) => {
             const a = pos.get(l.a), b = pos.get(l.b);
-            if (!a || !b) return null;
+            if (!a || !b || (near && !(near.has(l.a) && near.has(l.b)))) return null;
             const hot = touches(l);
             return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={hot ? catColor[byId.get(lit!)!.category] : "hsl(var(--foreground))"}
               strokeOpacity={hot ? 0.85 : lit ? 0.05 : 0.14} strokeWidth={ts(hot ? 2.2 : 1)} />;
@@ -319,10 +336,10 @@ export function OntologyDomainMap({ concepts, focusId, onSelect, searchQuery }: 
             const p = pos.get(n.c.id)!;
             const col = catColor[n.c.category];
             const sel = n.c.id === focusId, hov = n.c.id === hoverId;
-            const dim = litSet ? !litSet.has(n.c.id) : q ? !isMatch(n.c) : false;
+            const dim = near ? !near.has(n.c.id) : litSet ? !litSet.has(n.c.id) : q ? !isMatch(n.c) : false;
             const r = n.r + (sel ? 4 : hov ? 2 : 0);
             return (
-              <g key={n.c.id} opacity={dim ? 0.2 : 1} style={{ transition: "opacity .2s" }} className="cursor-pointer"
+              <g key={n.c.id} opacity={dim ? (near ? 0.1 : 0.2) : 1} style={{ transition: "opacity .2s" }} className="cursor-pointer"
                 onPointerDown={(e) => { e.stopPropagation(); nodeDrag.current = { id: n.c.id, x: e.clientX, y: e.clientY, ox: p.x, oy: p.y, moved: false }; }}
                 onClick={() => { if (!draggedLast.current) onSelect(n.c.id); draggedLast.current = false; }}
                 onPointerEnter={() => setHoverId(n.c.id)} onPointerLeave={() => setHoverId(null)} data-testid={`map-node-${n.c.id}`}>
