@@ -53,6 +53,24 @@ const llmInvokeLimiter = rateLimit({
 });
 export const llmInvokeRateLimiter = asMiddleware(llmInvokeLimiter);
 
+// Every /api/ai/* assist call (outcome discovery, KPI and policy drafting, …)
+// is an LLM call too. Separate budget from agent runs, keyed by the signed-in
+// user where there is one so a whole office behind one address doesn't share
+// it. GETs are job polls (a long transcription polls for minutes), not calls.
+const aiAssistLimiter = rateLimit({
+  windowMs: 10 * 60_000,
+  limit: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many AI assist requests. Try again shortly." },
+  skip: (req) => req.method === "GET",
+  keyGenerator: (req) => {
+    const userId = (req as any).authUser?.userId as string | undefined;
+    return userId ? `user:${userId}` : `${ipKeyGenerator(req.ip || "")}:${(req.headers["x-role"] as string) || "anon"}`;
+  },
+});
+export const aiAssistRateLimiter = asMiddleware(aiAssistLimiter);
+
 const mcpToolCallLimiter = rateLimit({
   windowMs: 5 * 60_000,
   limit: 300,

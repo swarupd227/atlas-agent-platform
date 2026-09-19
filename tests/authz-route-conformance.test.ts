@@ -100,7 +100,11 @@ function scanRoutes(): RouteEntry[] {
 //
 // 459 (was 466): outcome edits (PATCH, versions, regenerate-constraint-graph,
 // sync-eval-feedback) and KPI create/update/delete need create_modify_outcomes.
-const BASELINE_UNGUARDED = 459;
+//
+// 455 (was 459): the outcome-authoring AI helpers (outcome-discover,
+// enhance-outcome, generate-kpis, regulatory-constraints) need
+// create_modify_outcomes. Every /api/ai/* POST is also rate-limited per user.
+const BASELINE_UNGUARDED = 455;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {

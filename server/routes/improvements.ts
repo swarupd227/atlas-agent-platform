@@ -27,6 +27,7 @@ import {
   getRequestRole,
 } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
+import { resolveRequestOrgId } from "../tenant-scope";
 import { buildSourceDocuments } from "../attachment-context";
 import {
   resolveOntologyTags,
@@ -985,7 +986,9 @@ Respond ONLY with valid JSON, no markdown fences.`;
     }
   });
 
-  router.post("/api/ai/outcome-discover", async (req, res) => {
+  // Outcome-authoring helpers: each one is an LLM call on behalf of someone
+  // shaping an outcome, so it needs the permission that saving one needs.
+  router.post("/api/ai/outcome-discover", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
@@ -1139,7 +1142,7 @@ Rules:
     }
   });
 
-  router.post("/api/ai/enhance-outcome", async (req, res) => {
+  router.post("/api/ai/enhance-outcome", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
@@ -1164,7 +1167,7 @@ Rules:
     }
   });
 
-  router.post("/api/ai/generate-kpis", async (req, res) => {
+  router.post("/api/ai/generate-kpis", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
@@ -1200,7 +1203,7 @@ Rules:
     }
   });
 
-  router.post("/api/ai/regulatory-constraints", async (req, res) => {
+  router.post("/api/ai/regulatory-constraints", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
@@ -1402,6 +1405,9 @@ Return ONLY this exact JSON structure (no other text, no markdown fences):
         type: "meeting_transcription",
         status: "queued",
         payload: {
+          // The jobs table has no owner columns; the poll route checks these.
+          ownerOrgId: resolveRequestOrgId(req) ?? null,
+          ownerUserId: req.authUser?.userId ?? null,
           filePath: req.file.path,
           originalname: req.file.originalname || "recording.webm",
           industry,
@@ -1419,7 +1425,15 @@ Return ONLY this exact JSON structure (no other text, no markdown fences):
   router.get("/api/ai/transcribe-meeting/:jobId", async (req, res) => {
     try {
       const job = await storage.getJob(req.params.jobId);
-      if (!job) return res.status(404).json({ error: "Job not found" });
+      // Only the organization (and, when signed in, the person) that uploaded
+      // the recording may read its transcript; any other job id is not found.
+      const owner = (job?.payload ?? {}) as { ownerOrgId?: string | null; ownerUserId?: string | null };
+      const callerUserId = req.authUser?.userId;
+      if (
+        !job || job.type !== "meeting_transcription" ||
+        !owner.ownerOrgId || owner.ownerOrgId !== resolveRequestOrgId(req) ||
+        (owner.ownerUserId && callerUserId && owner.ownerUserId !== callerUserId)
+      ) return res.status(404).json({ error: "Job not found" });
       res.json({
         status: job.status,
         progress: job.progress ?? 0,
