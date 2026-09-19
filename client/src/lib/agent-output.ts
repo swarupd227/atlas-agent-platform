@@ -19,26 +19,15 @@ export function splitWorkingNotes(text: string): { notes: string | null; report:
   return { notes, report };
 }
 
-/**
- * The last complete HTML document in an agent's output (a fenced ```html block, or a bare
- * document), for steps that build web pages or emails. Null when there is none.
- */
-export function extractHtmlDocument(text: string): string | null {
-  const fenced = Array.from(text.matchAll(/```(?:html|htm)?\s*\n([\s\S]*?)```/gi)).map((m) => m[1].trim());
-  const candidates = fenced.length ? fenced : [text];
-  for (let i = candidates.length - 1; i >= 0; i--) {
-    const c = candidates[i];
-    const start = c.search(/<!doctype html|<html[\s>]/i);
-    const end = c.toLowerCase().lastIndexOf("</html>");
-    if (start >= 0 && end > start) return c.slice(start, end + "</html>".length);
-  }
-  return null;
-}
+export { extractHtmlDocument } from "@shared/html-document";
 
-/** Open an HTML document in a new browser tab, rendered as the page itself. */
-export function openHtmlInBrowser(html: string): void {
-  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-  window.open(url, "_blank", "noopener");
-  // The new tab has already read it by the time this fires.
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
+/**
+ * Open a team-run step's HTML output as a page in a new tab. Served by the platform with the
+ * document's own locked-down policy (no scripts), so its images load from wherever they live.
+ */
+export function openRunStepHtml(runId: string, nodeId: string, wave?: number, revision?: number): void {
+  const q = new URLSearchParams({ node: nodeId });
+  if (wave !== undefined) q.set("wave", String(wave));
+  if (revision) q.set("revision", String(revision));
+  window.open(`/api/dag-execution-runs/${encodeURIComponent(runId)}/html-preview?${q}`, "_blank", "noopener");
 }

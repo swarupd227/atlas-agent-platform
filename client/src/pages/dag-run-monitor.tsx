@@ -27,7 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import type { DagExecutionRun, Agent, Approval } from "@shared/schema";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
-import { splitWorkingNotes, extractHtmlDocument, openHtmlInBrowser } from "@/lib/agent-output";
+import { splitWorkingNotes, extractHtmlDocument, openRunStepHtml } from "@/lib/agent-output";
 
 // Mirrors computeWaves()'s real output shape (server/dag-execution-engine.ts)
 // -- GET /api/team-agents/:id/dag-waves returns this raw wave plan, where
@@ -953,6 +953,8 @@ function StepDetail({
 
   // A step that built a web page or an email can be seen as one, in its own tab.
   const htmlDoc = useMemo(() => (step.kind === "agent" ? extractHtmlDocument(plain) : null), [plain, step.kind]);
+  const [, routeParams] = useRoute("/dag-runs/:runId");
+  const openHtml = () => { if (routeParams?.runId) openRunStepHtml(routeParams.runId, step.id, stage.number, stage.revisionRound); };
 
   async function copyOutput() {
     try {
@@ -1080,7 +1082,7 @@ function StepDetail({
           {entries.length > 0 && tab === "output" && step.kind === "agent" && (
             <span className="flex items-center gap-2">
             {htmlDoc && (
-              <Button size="sm" className="h-7 px-2.5 text-xs" onClick={() => openHtmlInBrowser(htmlDoc)} data-testid={`button-preview-html-${step.id}`}>
+              <Button size="sm" className="h-7 px-2.5 text-xs" onClick={openHtml} data-testid={`button-preview-html-${step.id}`}>
                 <ExternalLink className="w-3 h-3 mr-1" /> Open in browser
               </Button>
             )}
@@ -1104,7 +1106,7 @@ function StepDetail({
           </div>
           <div className="border-t px-6 py-3 flex justify-end gap-2">
             {htmlDoc && (
-              <Button size="sm" onClick={() => openHtmlInBrowser(htmlDoc)} data-testid="button-preview-html-expanded">
+              <Button size="sm" onClick={openHtml} data-testid="button-preview-html-expanded">
                 <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Open in browser
               </Button>
             )}

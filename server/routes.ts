@@ -15,6 +15,7 @@ import workspaceSlackRouter from "./routes/workspace-slack";
 import workspaceTeamsRouter from "./routes/workspace-teams";
 import openapiConnectorsRouter from "./routes/openapi-connectors";
 import agentFilesRouter from "./routes/agent-files";
+import htmlPreviewRouter from "./routes/html-preview";
 import mandatesRouter from "./routes/mandates";
 import llmProvidersRouter from "./routes/llm-providers";
 import publicApiRouter from "./routes/public-api";
@@ -421,6 +422,7 @@ export async function registerRoutes(
   app.use(workspaceTeamsRouter);
   app.use(openapiConnectorsRouter);
   app.use(agentFilesRouter);
+  app.use(htmlPreviewRouter);
   app.use(mandatesRouter);
   app.use(playgroundRouter);
   app.use(aarRouter);
