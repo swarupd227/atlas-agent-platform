@@ -5,6 +5,8 @@ import { getDefaultOrgId } from "./auth";
 import { buildCanonicalAuditPayload, computeEventHash, computeMerkleRoot, signAuditPayload, verifyAuditSignature } from "./audit-signing";
 import {
   integrationConnections,
+  integrationOAuthApps,
+  type IntegrationOAuthApp,
   type IntegrationConnection, type InsertIntegrationConnection,
   agentIntegrationCredentials,
   type AgentIntegrationCredential, type InsertAgentIntegrationCredential,
@@ -5927,6 +5929,58 @@ export class DatabaseStorage implements IStorage {
   async createEvalPersona(persona: InsertEvalPersona): Promise<EvalPersona> {
     const [row] = await db.insert(evalPersonas).values(persona).returning();
     return row;
+  }
+
+  // ── Per-organization OAuth app (client id / encrypted secret / tenant) ────
+  async getIntegrationOAuthApp(orgId: string, integrationId: string): Promise<IntegrationOAuthApp | null> {
+    const [row] = await db.select().from(integrationOAuthApps)
+      .where(and(
+        eq(integrationOAuthApps.organizationId, orgId),
+        eq(integrationOAuthApps.integrationId, integrationId),
+      ))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async upsertIntegrationOAuthApp(
+    orgId: string,
+    integrationId: string,
+    data: { clientId: string; clientSecretEncrypted?: string | null; tenantId?: string | null; updatedBy?: string | null },
+  ): Promise<IntegrationOAuthApp> {
+    const existing = await this.getIntegrationOAuthApp(orgId, integrationId);
+    if (existing) {
+      const [row] = await db.update(integrationOAuthApps)
+        .set({
+          clientId: data.clientId,
+          // undefined keeps the stored secret; only an explicit value replaces it.
+          ...(data.clientSecretEncrypted !== undefined ? { clientSecretEncrypted: data.clientSecretEncrypted } : {}),
+          tenantId: data.tenantId ?? null,
+          updatedBy: data.updatedBy ?? null,
+          updatedAt: new Date(),
+        })
+        .where(eq(integrationOAuthApps.id, existing.id))
+        .returning();
+      return row;
+    }
+    const [row] = await db.insert(integrationOAuthApps).values({
+      organizationId: orgId,
+      integrationId,
+      clientId: data.clientId,
+      clientSecretEncrypted: data.clientSecretEncrypted ?? null,
+      tenantId: data.tenantId ?? null,
+      updatedBy: data.updatedBy ?? null,
+    }).returning();
+    return row;
+  }
+
+  async deleteIntegrationOAuthApp(orgId: string, integrationId: string): Promise<boolean> {
+    const rows = await db.delete(integrationOAuthApps)
+      .where(and(
+        eq(integrationOAuthApps.organizationId, orgId),
+        eq(integrationOAuthApps.integrationId, integrationId),
+      ))
+      .returning({ id: integrationOAuthApps.id });
+    return rows.length > 0;
   }
 
   // ── Enterprise Integration Connections ────────────────────────────────────

@@ -94,14 +94,16 @@ export abstract class RealMcpBase {
     if (!credentials?.refresh_token) return null;
 
     try {
-      const res = await fetch(def.oauthConfig.tokenUrl, {
+      const { resolveOAuthApp, withTenant } = await import("./integrations/oauth-app");
+      const oauthApp = await resolveOAuthApp(orgId, this.integrationId);
+      const res = await fetch(withTenant(def.oauthConfig.tokenUrl, oauthApp.tenantId), {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           grant_type: "refresh_token",
           refresh_token: credentials.refresh_token,
-          client_id: process.env[`OAUTH_${this.integrationId.toUpperCase()}_CLIENT_ID`] ?? "",
-          client_secret: process.env[`OAUTH_${this.integrationId.toUpperCase()}_CLIENT_SECRET`] ?? "",
+          client_id: oauthApp.clientId,
+          client_secret: oauthApp.clientSecret,
         }).toString(),
         signal: AbortSignal.timeout(10_000),
       });

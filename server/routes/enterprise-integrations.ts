@@ -4,6 +4,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault";
 import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registry";
+import { resolveOAuthApp, withTenant } from "../integrations/oauth-app";
 import { callN8nWorkflow } from "../integrations/n8n";
 import { getDefaultOrgId, getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
@@ -640,6 +641,112 @@ function oauthRedirectUri(req: Request): string {
   return `${proto}://${req.get("host")}/api/integrations/oauth/callback`;
 }
 
+// ── OAuth app setup (per organization) ───────────────────────────────────────
+// Lets an admin register the org's own OAuth app (client id, secret, tenant)
+// from the Integrations screen. The secret is stored encrypted and is never
+// returned; GET only reports whether one is set.
+
+const oauthAppSchema = z.object({
+  clientId: z.string().trim().min(1, "Client ID is required").max(200),
+  // Omit to keep the stored secret; send a value to replace it.
+  clientSecret: z.string().trim().min(1).max(1000).optional(),
+  tenantId: z.string().trim().regex(/^[A-Za-z0-9.\-]{3,100}$/, "Tenant ID must be a GUID or a domain such as contoso.onmicrosoft.com").optional().or(z.literal("")),
+});
+
+function oauthIntegrationOr400(id: string, res: Response) {
+  const def = getIntegrationDef(id);
+  if (!def?.oauthConfig) {
+    res.status(400).json({ error: `${id} does not support OAuth2` });
+    return null;
+  }
+  return def;
+}
+
+router.get("/api/enterprise-integrations/:id/oauth-app", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const def = oauthIntegrationOr400(req.params.id as string, res);
+    if (!def) return;
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    const app = await resolveOAuthApp(orgId, def.id);
+    res.json({
+      integrationId: def.id,
+      configured: Boolean(app.clientId),
+      source: app.source,
+      clientId: app.clientId || null,
+      tenantId: app.tenantId ?? null,
+      hasSecret: Boolean(app.clientSecret),
+      redirectUri: oauthRedirectUri(req),
+      supportsTenant: def.oauthConfig!.authorizationUrl.includes("login.microsoftonline.com/common/"),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put("/api/enterprise-integrations/:id/oauth-app", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const def = oauthIntegrationOr400(req.params.id as string, res);
+    if (!def) return;
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    if (!orgId) return res.status(400).json({ error: "No organization context" });
+    const parsed = oauthAppSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid input" });
+    }
+    const { clientId, clientSecret, tenantId } = parsed.data;
+
+    const existing = await storage.getIntegrationOAuthApp(orgId, def.id);
+    if (!clientSecret && !existing?.clientSecretEncrypted) {
+      return res.status(400).json({ error: "Client secret is required the first time" });
+    }
+
+    await storage.upsertIntegrationOAuthApp(orgId, def.id, {
+      clientId,
+      clientSecretEncrypted: clientSecret ? encryptCredentialMap({ client_secret: clientSecret }) : undefined,
+      tenantId: tenantId || null,
+      updatedBy: (req as any).authUser?.username ?? null,
+    });
+
+    storage.createAuditEvent({
+      organizationId: orgId,
+      actorType: "user",
+      actorId: (req as any).authUser?.username ?? "unknown",
+      action: "credential_changed",
+      objectType: "integration",
+      objectId: def.id,
+      details: `OAuth app ${existing ? "updated" : "configured"} for '${def.id}' (client ${clientId}${clientSecret ? ", secret replaced" : ""})`,
+    }).catch(() => {});
+
+    res.json({ ok: true, configured: true, source: "organization", clientId, tenantId: tenantId || null, hasSecret: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete("/api/enterprise-integrations/:id/oauth-app", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const def = oauthIntegrationOr400(req.params.id as string, res);
+    if (!def) return;
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    if (!orgId) return res.status(400).json({ error: "No organization context" });
+    const removed = await storage.deleteIntegrationOAuthApp(orgId, def.id);
+    if (removed) {
+      storage.createAuditEvent({
+        organizationId: orgId,
+        actorType: "user",
+        actorId: (req as any).authUser?.username ?? "unknown",
+        action: "credential_removed",
+        objectType: "integration",
+        objectId: def.id,
+        details: `OAuth app removed for '${def.id}'`,
+      }).catch(() => {});
+    }
+    res.json({ ok: true, removed });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/api/integrations/oauth/start/:provider", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
   try {
     const { provider } = req.params;
@@ -661,13 +768,24 @@ router.get("/api/integrations/oauth/start/:provider", checkPermission("manage_mc
       ...(isSandbox ? { sandbox: true } : {}),
     };
 
+    const oauthApp = await resolveOAuthApp(orgId, provider as string);
+    if (!oauthApp.clientId) {
+      return res.status(400).json({
+        error: `${def.name} OAuth app is not set up yet. Enter its Client ID and secret in the connect dialog first.`,
+        code: "oauth_app_not_configured",
+      });
+    }
+
     // Select the correct authorization base URL (sandbox vs production)
-    const authorizationUrl = isSandbox
-      ? def.oauthConfig.authorizationUrl.replace("login.salesforce.com", "test.salesforce.com")
-      : def.oauthConfig.authorizationUrl;
+    const authorizationUrl = withTenant(
+      isSandbox
+        ? def.oauthConfig.authorizationUrl.replace("login.salesforce.com", "test.salesforce.com")
+        : def.oauthConfig.authorizationUrl,
+      oauthApp.tenantId,
+    );
 
     const url = new URL(authorizationUrl);
-    url.searchParams.set("client_id", process.env[`OAUTH_${provider.toUpperCase()}_CLIENT_ID`] ?? "PLACEHOLDER_CLIENT_ID");
+    url.searchParams.set("client_id", oauthApp.clientId);
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("state", state);
@@ -706,12 +824,13 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
 
   try {
     const redirectUri = oauthRedirectUri(req);
+    const oauthApp = await resolveOAuthApp(pending.orgId, pending.integrationId);
     const bodyParams: Record<string, string> = {
       grant_type: "authorization_code",
       code,
       redirect_uri: redirectUri,
-      client_id: process.env[`OAUTH_${pending.integrationId.toUpperCase()}_CLIENT_ID`] ?? "",
-      client_secret: process.env[`OAUTH_${pending.integrationId.toUpperCase()}_CLIENT_SECRET`] ?? "",
+      client_id: oauthApp.clientId,
+      client_secret: oauthApp.clientSecret,
     };
 
     // Include PKCE code_verifier if we stored one
@@ -720,9 +839,12 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
     }
 
     // Salesforce sandbox: use test.salesforce.com for token exchange if sandbox flag is set
-    const tokenUrl = pending.sandbox
-      ? def.oauthConfig.tokenUrl.replace("login.salesforce.com", "test.salesforce.com")
-      : def.oauthConfig.tokenUrl;
+    const tokenUrl = withTenant(
+      pending.sandbox
+        ? def.oauthConfig.tokenUrl.replace("login.salesforce.com", "test.salesforce.com")
+        : def.oauthConfig.tokenUrl,
+      oauthApp.tenantId,
+    );
 
     const tokenRes = await fetch(tokenUrl, {
       method: "POST",
@@ -846,14 +968,15 @@ async function refreshExpiringTokens(aheadMs: number): Promise<void> {
     if (!creds.refresh_token) continue;
 
     try {
+      const oauthApp = await resolveOAuthApp(conn.organizationId, conn.integrationId);
       const bodyParams: Record<string, string> = {
         grant_type: "refresh_token",
         refresh_token: creds.refresh_token,
-        client_id: process.env[`OAUTH_${conn.integrationId.toUpperCase()}_CLIENT_ID`] ?? "",
-        client_secret: process.env[`OAUTH_${conn.integrationId.toUpperCase()}_CLIENT_SECRET`] ?? "",
+        client_id: oauthApp.clientId,
+        client_secret: oauthApp.clientSecret,
       };
 
-      const tokenRes = await fetch(def.oauthConfig.tokenUrl, {
+      const tokenRes = await fetch(withTenant(def.oauthConfig.tokenUrl, oauthApp.tenantId), {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(bodyParams).toString(),

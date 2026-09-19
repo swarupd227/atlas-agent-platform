@@ -1148,6 +1148,21 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_int_conn_org ON integration_connections(organization_id);
       CREATE INDEX IF NOT EXISTS idx_int_conn_org_integration ON integration_connections(organization_id, integration_id);
 
+      -- Per-organization OAuth app (client id / encrypted secret / tenant) so an
+      -- admin configures an OAuth connector in the UI, not via env vars.
+      CREATE TABLE IF NOT EXISTS integration_oauth_apps (
+        id                      VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id         VARCHAR NOT NULL,
+        integration_id          VARCHAR NOT NULL,
+        client_id               TEXT NOT NULL,
+        client_secret_encrypted TEXT,
+        tenant_id               TEXT,
+        updated_by              TEXT,
+        created_at              TIMESTAMP DEFAULT NOW(),
+        updated_at              TIMESTAMP DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_int_oauth_app_org_integration ON integration_oauth_apps(organization_id, integration_id);
+
       -- Periodic Merkle-root checkpoint over the linear audit_events hash chain --
       -- selective/partial verification of a batch without replaying the whole chain.
       CREATE TABLE IF NOT EXISTS audit_chain_checkpoints (

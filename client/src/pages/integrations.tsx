@@ -1470,6 +1470,60 @@ function ConnectDialog({
     },
   });
 
+  // OAuth app setup (client id / secret / tenant), saved per organization.
+  const isOAuth = integration?.authMethod === "oauth2";
+  const oauthAppKey = [`/api/enterprise-integrations/${integration?.id}/oauth-app`];
+  const { data: oauthApp } = useQuery<{
+    configured: boolean;
+    source: "organization" | "environment" | "none";
+    clientId: string | null;
+    tenantId: string | null;
+    hasSecret: boolean;
+    redirectUri: string;
+    supportsTenant: boolean;
+  }>({ queryKey: oauthAppKey, enabled: open && isOAuth });
+  const [appClientId, setAppClientId] = useState("");
+  const [appClientSecret, setAppClientSecret] = useState("");
+  const [appTenantId, setAppTenantId] = useState("");
+  const [showAppSecret, setShowAppSecret] = useState(false);
+  const [appEdited, setAppEdited] = useState(false);
+  useEffect(() => {
+    if (oauthApp && !appEdited) {
+      setAppClientId(oauthApp.source === "organization" ? oauthApp.clientId ?? "" : "");
+      setAppTenantId(oauthApp.tenantId ?? "");
+    }
+  }, [oauthApp, appEdited]);
+
+  const saveAppMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("PUT", `/api/enterprise-integrations/${integration?.id}/oauth-app`, {
+        clientId: appClientId.trim(),
+        ...(appClientSecret.trim() ? { clientSecret: appClientSecret.trim() } : {}),
+        tenantId: appTenantId.trim(),
+      }),
+    onSuccess: () => {
+      toast({ title: "App settings saved", description: "The secret is stored encrypted and is not shown again." });
+      setAppClientSecret("");
+      setAppEdited(false);
+      queryClient.invalidateQueries({ queryKey: oauthAppKey });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not save app settings", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const removeAppMutation = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/enterprise-integrations/${integration?.id}/oauth-app`),
+    onSuccess: () => {
+      toast({ title: "App settings removed" });
+      setAppClientId("");
+      setAppClientSecret("");
+      setAppTenantId("");
+      setAppEdited(false);
+      queryClient.invalidateQueries({ queryKey: oauthAppKey });
+    },
+  });
+
   if (!integration) return null;
   const fields = integration.credentialFields ?? [];
 
@@ -1485,7 +1539,7 @@ function ConnectDialog({
   if (integration.authMethod === "oauth2") {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Connect {integration.name}</DialogTitle>
             <DialogDescription>
@@ -1493,6 +1547,97 @@ function ConnectDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3 py-2">
+            <div className="rounded-md border p-3 flex flex-col gap-2.5" data-testid="oauth-app-setup">
+              <div className="text-xs font-medium">1. Your {integration.name} app</div>
+              {oauthApp?.source === "environment" && (
+                <p className="text-xs text-muted-foreground">
+                  Using the platform's shared app. Save your own below to use it for this organization instead.
+                </p>
+              )}
+              <div className="text-xs text-muted-foreground">
+                Register an app with {integration.name} and add this redirect URI:
+                <div className="mt-1 flex items-center gap-1.5">
+                  <code className="flex-1 rounded bg-muted px-2 py-1 text-[11px] break-all text-foreground" data-testid="text-oauth-redirect-uri">
+                    {oauthApp?.redirectUri ?? "…"}
+                  </code>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (oauthApp?.redirectUri) {
+                        navigator.clipboard?.writeText(oauthApp.redirectUri);
+                        toast({ title: "Redirect URI copied" });
+                      }
+                    }}
+                  >
+                    Copy
+                  </Button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="oauth-client-id" className="text-xs">Client ID<span className="text-destructive ml-0.5">*</span></Label>
+                <Input
+                  id="oauth-client-id"
+                  data-testid="input-oauth-client-id"
+                  value={appClientId}
+                  onChange={(e) => { setAppClientId(e.target.value); setAppEdited(true); }}
+                  placeholder="Application (client) ID"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="oauth-client-secret" className="text-xs">
+                  Client secret<span className="text-destructive ml-0.5">*</span>
+                </Label>
+                <div className="flex gap-1.5">
+                  <Input
+                    id="oauth-client-secret"
+                    data-testid="input-oauth-client-secret"
+                    type={showAppSecret ? "text" : "password"}
+                    autoComplete="off"
+                    value={appClientSecret}
+                    onChange={(e) => { setAppClientSecret(e.target.value); setAppEdited(true); }}
+                    placeholder={oauthApp?.source === "organization" && oauthApp.hasSecret ? "Saved - leave blank to keep" : "Client secret value"}
+                  />
+                  <Button type="button" size="icon" variant="outline" onClick={() => setShowAppSecret((s) => !s)}>
+                    {showAppSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
+              {oauthApp?.supportsTenant && (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="oauth-tenant-id" className="text-xs">Tenant ID (optional)</Label>
+                  <Input
+                    id="oauth-tenant-id"
+                    data-testid="input-oauth-tenant-id"
+                    value={appTenantId}
+                    onChange={(e) => { setAppTenantId(e.target.value); setAppEdited(true); }}
+                    placeholder="Directory (tenant) ID or contoso.onmicrosoft.com"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Leave blank for a multi-tenant app. Required if the app is registered as single tenant.
+                  </p>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="button-oauth-save-app"
+                  disabled={!appClientId.trim() || saveAppMutation.isPending || (!appClientSecret.trim() && !(oauthApp?.source === "organization" && oauthApp.hasSecret))}
+                  onClick={() => saveAppMutation.mutate()}
+                >
+                  {saveAppMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}
+                  Save app settings
+                </Button>
+                {oauthApp?.source === "organization" && (
+                  <Button type="button" size="sm" variant="ghost" onClick={() => removeAppMutation.mutate()} disabled={removeAppMutation.isPending}>
+                    Remove
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="text-xs font-medium">2. Authorize</div>
             <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground flex items-start gap-2">
               <Info className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
@@ -1507,6 +1652,8 @@ function ConnectDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button
               data-testid={`button-oauth-start-${integration.id}`}
+              disabled={!oauthApp?.configured || appEdited}
+              title={!oauthApp?.configured ? "Save your app settings first" : appEdited ? "Save your changes first" : undefined}
               onClick={async () => {
                 try {
                   const res = await apiRequest("GET", `/api/integrations/oauth/start/${integration.id}`);

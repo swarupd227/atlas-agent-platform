@@ -3872,6 +3872,27 @@ export const insertIntegrationConnectionSchema = createInsertSchema(integrationC
 export type InsertIntegrationConnection = z.infer<typeof insertIntegrationConnectionSchema>;
 export type IntegrationConnection = typeof integrationConnections.$inferSelect;
 
+// The OAuth *application* an organization registered with a provider (its own
+// Entra / Salesforce / Slack app): client id, encrypted client secret and, for
+// Microsoft, the tenant. Distinct from integrationConnections, which holds the
+// tokens a user obtained through that app. Lets an org admin set up an OAuth
+// connector from the Integrations screen instead of the platform operator
+// setting OAUTH_<ID>_CLIENT_ID/SECRET environment variables.
+export const integrationOAuthApps = pgTable("integration_oauth_apps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull(),
+  integrationId: varchar("integration_id").notNull(),
+  clientId: text("client_id").notNull(),
+  clientSecretEncrypted: text("client_secret_encrypted"),
+  tenantId: text("tenant_id"),
+  updatedBy: text("updated_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_int_oauth_app_org_integration").on(table.organizationId, table.integrationId),
+]);
+export type IntegrationOAuthApp = typeof integrationOAuthApps.$inferSelect;
+
 // Per-agent outbound identity: lets one agent have its own connector
 // credential distinct from the org-wide integrationConnections row every
 // other agent in the org shares. Optional -- RealMcpBase.getCredentials()
