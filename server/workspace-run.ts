@@ -28,7 +28,7 @@ import { resolvePolicyBundle, buildAgentSystemPromptWithGovernance, recomputeOut
 import { getProvider, completeWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage } from "./llm-provider";
 import { RunSpanCollector } from "./run-spans";
 import { canonicalJsonStringify } from "./agent-runtime";
-import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
+import { runTeamAgentDag, extractFinalOutputText, onDagRunFinished, summarizeFinishedDagRun, type DagRunFinished } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { canDecideApproval, type RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
@@ -505,19 +505,20 @@ async function runTeamWorkspaceRun(
   const startMs = Date.now();
   const blueprintId: string | undefined = (agent as any).blueprintId || rtConfig.orchestration?.blueprintId || undefined;
 
+  const checkpointBase: Record<string, any> = {
+    messages: [], iterationsUsed: 0, steps: [], totalCostUsd: 0,
+    totalTokens: { prompt: 0, completion: 0, total: 0 },
+    mcpServerIds, modelName: agent.modelName || "gpt-4.1",
+    maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
+    skillAllowlist: null,
+  };
   const [run] = await db.insert(workspaceRuns).values({
     organizationId: orgId ?? undefined,
     agentId,
     status: "running",
     requestText: input,
     actorId: actorId ?? undefined,
-    checkpoint: {
-      messages: [], iterationsUsed: 0, steps: [], totalCostUsd: 0,
-      totalTokens: { prompt: 0, completion: 0, total: 0 },
-      mcpServerIds, modelName: agent.modelName || "gpt-4.1",
-      maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
-      skillAllowlist: null,
-    } as any,
+    checkpoint: checkpointBase as any,
   }).returning();
 
   onEvent({ type: "run_started", runId: run.id, agentId, agentName: agent.name });
@@ -545,6 +546,14 @@ async function runTeamWorkspaceRun(
   try {
     const { dagRunId: id, result, wavePlan } = await runTeamAgentDag(agentId, blueprintId, input, {
       errorStrategy: "best_effort",
+      // Recorded before execution starts: if this process dies mid-run, the
+      // resumed run's finished-run notification (or the periodic sweep) finds
+      // this row by it. Without the id a row interrupted by a deploy stayed
+      // "running" forever while the run completed underneath.
+      onRunCreated: async (dagRunId) => {
+        checkpointBase.dagRunId = dagRunId;
+        await db.update(workspaceRuns).set({ checkpoint: checkpointBase as any, updatedAt: new Date() }).where(eq(workspaceRuns.id, run.id));
+      },
       onNodeStart: (_nodeId, wave, label, totalWaves) => {
         onEvent({ type: "team_progress", wave, totalWaves, nodeLabel: label, status: "running" });
       },
@@ -618,19 +627,64 @@ async function runTeamWorkspaceRun(
   // just be "long enough" up to some arbitrary cap.
   await db.update(workspaceRuns).set({
     status, outputSummary: output, costUsd, traceId: traceId ?? undefined,
-    checkpoint: {
-      messages: [], iterationsUsed: 0, steps: waveResultsForTrace, totalCostUsd: costUsd,
-      totalTokens: { prompt: 0, completion: 0, total: 0 },
-      mcpServerIds, modelName: agent.modelName || "gpt-4.1",
-      maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
-      skillAllowlist: null,
-    } as any,
+    checkpoint: { ...checkpointBase, steps: waveResultsForTrace, totalCostUsd: costUsd, dagRunId } as any,
     updatedAt: new Date(),
   }).where(eq(workspaceRuns.id, run.id));
 
   onEvent({ type: "completed", output, costUsd, traceId });
   const [fresh] = await db.select().from(workspaceRuns).where(eq(workspaceRuns.id, run.id)).limit(1);
   return view(fresh);
+}
+
+/**
+ * Finishes the Workspace row of a team run whose caller is gone.
+ *
+ * A team run is awaited by the request that started it; when the process
+ * restarts (every deploy), the DAG run is resumed and completes, but nothing
+ * is left to write its result to the row the user is looking at, which said
+ * "running" forever. The resume paths now announce a finished run
+ * (onDagRunFinished) and the row is finished from that; rows whose run ended
+ * before this process was listening are picked up by the periodic sweep.
+ */
+async function finishOrphanedTeamRow(row: typeof workspaceRuns.$inferSelect, info: DagRunFinished): Promise<void> {
+  const cp = ((row.checkpoint as Record<string, any>) || {});
+  const status = info.status === "failed" ? "failed" : "completed";
+  await db.update(workspaceRuns).set({
+    status,
+    outputSummary: info.output,
+    costUsd: info.costUsd,
+    checkpoint: { ...cp, steps: info.waveResults, totalCostUsd: info.costUsd, dagRunId: info.dagRunId } as any,
+    updatedAt: new Date(),
+  }).where(eq(workspaceRuns.id, row.id));
+  console.log(`[workspace-run] run ${row.id} finished from DAG run ${info.dagRunId} (${info.status}) after its caller was lost`);
+}
+
+async function runningTeamRowsFor(dagRunId?: string): Promise<Array<typeof workspaceRuns.$inferSelect>> {
+  const rows = await db.select().from(workspaceRuns).where(eq(workspaceRuns.status, "running")).limit(500);
+  return rows.filter((r) => {
+    const id = (r.checkpoint as Record<string, any> | null)?.dagRunId;
+    return typeof id === "string" && (dagRunId === undefined || id === dagRunId);
+  });
+}
+
+onDagRunFinished(async (info) => {
+  for (const row of await runningTeamRowsFor(info.dagRunId)) await finishOrphanedTeamRow(row, info);
+});
+
+/** Rows still "running" whose DAG run has already ended; run periodically (dag-resume-poller). */
+export async function reconcileOrphanedTeamWorkspaceRuns(): Promise<{ checked: number; finished: number }> {
+  const rows = await runningTeamRowsFor();
+  let finished = 0;
+  for (const row of rows) {
+    const dagRunId = (row.checkpoint as Record<string, any>).dagRunId as string;
+    const dagRun = await storage.getDagExecutionRun(dagRunId).catch(() => undefined);
+    if (!dagRun) continue;
+    const info = await summarizeFinishedDagRun(dagRun).catch(() => undefined);
+    if (!info) continue;
+    await finishOrphanedTeamRow(row, info);
+    finished++;
+  }
+  return { checked: rows.length, finished };
 }
 
 /** Resume a suspended run after a human decision.

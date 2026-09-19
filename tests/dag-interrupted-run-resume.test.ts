@@ -170,3 +170,27 @@ describe("pollInterruptedDagRuns", () => {
     expect(runs.get("alive").status).toBe("running");
   });
 });
+
+describe("a resumed run announces its finish", () => {
+  it("tells listeners the outcome once the resumed run completes, so records that lost their caller can be finished", async () => {
+    const { onDagRunFinished } = await import("../server/dag-execution-engine");
+    const heard: any[] = [];
+    onDagRunFinished((info) => { heard.push(info); });
+    runs.clear();
+    claimAllowed = true;
+    const { executeWorkerAgent } = (await import("../server/agent-runtime")) as any;
+    executeWorkerAgent.mockReset();
+    executeWorkerAgent.mockImplementation(async () => ({ success: true, output: "reviewed after restart" }));
+    interruptedRun("r-notify", ago(DAG_RUN_STALE_AFTER_MS + 60_000));
+
+    expect(await resumeInterruptedTeamAgentDagRun("r-notify", NOW)).toBe("resumed");
+    await settle();
+
+    expect(heard).toHaveLength(1);
+    expect(heard[0].dagRunId).toBe("r-notify");
+    expect(heard[0].teamAgentId).toBe("team-1");
+    expect(heard[0].status).toBe("completed");
+    expect(heard[0].output).toContain("reviewed after restart");
+    expect(heard[0].waveResults.map((w: any) => w.waveNumber)).toEqual([1, 2]);
+  });
+});

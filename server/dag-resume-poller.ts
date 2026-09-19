@@ -10,6 +10,7 @@
  */
 import { storage } from "./storage";
 import { resumeTeamAgentDagRun, resumeInterruptedTeamAgentDagRun, DAG_RUN_STALE_AFTER_MS } from "./dag-execution-engine";
+import { reconcileOrphanedTeamWorkspaceRuns } from "./workspace-run";
 
 export async function pollWaitingApprovalDagRuns(): Promise<{ checked: number; resumed: number; errors: number }> {
   const runs = await storage.listDagExecutionRunsByStatus("waiting_approval");
@@ -52,6 +53,15 @@ export async function pollInterruptedDagRuns(now: Date = new Date()): Promise<{ 
       errors++;
       console.error(`[dag-resume-poller] Unexpected error recovering interrupted run ${run.id}:`, err.message);
     }
+  }
+
+  // Workspace rows whose team run ended without them hearing (see
+  // reconcileOrphanedTeamWorkspaceRuns). Same cadence, same safety-net role.
+  try {
+    const { finished } = await reconcileOrphanedTeamWorkspaceRuns();
+    if (finished > 0) console.log(`[dag-resume-poller] finished ${finished} orphaned workspace run row(s)`);
+  } catch (err: any) {
+    console.error(`[dag-resume-poller] workspace reconciliation failed:`, err.message);
   }
 
   return { checked: runs.length, resumed, failed, errors };

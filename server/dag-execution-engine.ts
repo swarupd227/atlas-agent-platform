@@ -2515,9 +2515,93 @@ export class DAGExecutionEngine {
 
 export interface RunTeamAgentDagOptions {
   errorStrategy?: "fail_fast" | "best_effort";
+  /** The run row exists; execution is about to start. A caller that keeps its own record of the run stores the id here, so a process restart can still tie the two together. */
+  onRunCreated?: (dagRunId: string) => void | Promise<void>;
   onNodeStart?: (nodeId: string, wave: number, label: string, totalWaves: number) => void;
   onNodeComplete?: (nodeId: string, wave: number, label: string, result: NodeExecutionResult, totalWaves: number) => void;
   onApprovalPending?: (nodeId: string, wave: number, label: string, totalWaves: number, approvalId: string) => void;
+}
+
+/**
+ * A run that finished on a RESUME -- after a restart or a decided approval --
+ * has no caller awaiting it: whoever started it lost the promise when the
+ * process died. Live, every deploy left the Workspace rows of in-flight team
+ * runs at "running" forever while the runs themselves completed underneath.
+ * Listeners registered here are told, so such records can be reconciled.
+ */
+export interface DagRunFinished {
+  dagRunId: string;
+  teamAgentId: string;
+  status: "completed" | "completed_with_skips" | "failed";
+  output: string;
+  costUsd: number;
+  waveResults: WaveExecutionResult[];
+}
+const dagRunFinishedListeners: Array<(info: DagRunFinished) => void | Promise<void>> = [];
+export function onDagRunFinished(listener: (info: DagRunFinished) => void | Promise<void>): void {
+  dagRunFinishedListeners.push(listener);
+}
+async function notifyDagRunFinished(info: DagRunFinished): Promise<void> {
+  for (const listener of dagRunFinishedListeners) {
+    try { await listener(info); } catch (err: any) { console.error(`[dag-run] finished-run listener failed for ${info.dagRunId}:`, err?.message); }
+  }
+}
+function finishedRunInfo(setup: DagRunSetup, teamAgentId: string, outcome: { result: DAGExecutionResult } | { error: unknown }): DagRunFinished {
+  if ("result" in outcome) {
+    const { result } = outcome;
+    return {
+      dagRunId: setup.dagRun.id,
+      teamAgentId,
+      status: result.success ? (result.skippedNodeIds.length > 0 ? "completed_with_skips" : "completed") : "failed",
+      output: extractFinalOutputText(result, setup.wavePlan),
+      costUsd: result.totalCostUsd,
+      waveResults: result.waveResults,
+    };
+  }
+  const err = outcome.error as any;
+  return {
+    dagRunId: setup.dagRun.id,
+    teamAgentId,
+    status: "failed",
+    output: `Team pipeline failed: ${err?.message ?? String(err)}`,
+    costUsd: 0,
+    waveResults: err instanceof DAGExecutionError ? err.context.waveResults : [],
+  };
+}
+
+/**
+ * What a finished run produced, rebuilt from its persisted row -- for a
+ * record that missed the finished-run notification (the run ended before
+ * the listener existed, or in another process).
+ */
+export async function summarizeFinishedDagRun(dagRun: DagExecutionRun): Promise<DagRunFinished | undefined> {
+  if (!dagRun.teamAgentId || !["completed", "completed_with_skips", "failed", "cancelled"].includes(String(dagRun.status))) return undefined;
+  const teamAgent = await storage.getAgent(dagRun.teamAgentId);
+  const blueprintId = (teamAgent as any)?.blueprintId;
+  if (!blueprintId) return undefined;
+  const [nodes, edges] = await Promise.all([storage.getTeamBlueprintNodes(blueprintId), storage.getTeamBlueprintEdges(blueprintId)]);
+  const wavePlan = computeWaves(nodes, edges);
+  const waveResults = ((dagRun.waveResults as unknown as WaveExecutionResult[]) || []);
+  const nodeResults = waveResults.flatMap((w) => w.nodes);
+  const failed = dagRun.status === "failed" || dagRun.status === "cancelled";
+  const result: DAGExecutionResult = {
+    finalState: (dagRun.finalState as Record<string, any>) || (dagRun.currentState as Record<string, any>) || {},
+    waveResults,
+    totalPromptTokens: nodeResults.reduce((s, n) => s + (n.promptTokens || 0), 0),
+    totalCompletionTokens: nodeResults.reduce((s, n) => s + (n.completionTokens || 0), 0),
+    totalCostUsd: nodeResults.reduce((s, n) => s + (n.costUsd || 0), 0),
+    totalToolCalls: nodeResults.reduce((s, n) => s + (n.toolCallCount || 0), 0),
+    success: !failed,
+    skippedNodeIds: nodeResults.filter((n) => n.status === "skipped").map((n) => n.nodeId),
+  };
+  return {
+    dagRunId: dagRun.id,
+    teamAgentId: dagRun.teamAgentId,
+    status: failed ? "failed" : result.skippedNodeIds.length > 0 ? "completed_with_skips" : "completed",
+    output: failed ? `Team pipeline ${dagRun.status}: ${(dagRun as any).error ?? "no further detail"}` : extractFinalOutputText(result, wavePlan),
+    costUsd: result.totalCostUsd,
+    waveResults,
+  };
 }
 
 interface DagRunSetup {
@@ -2748,6 +2832,7 @@ export async function runTeamAgentDag(
   opts?: RunTeamAgentDagOptions,
 ): Promise<{ dagRunId: string; result: DAGExecutionResult; wavePlan: ComputedWavePlan }> {
   const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request);
+  await opts?.onRunCreated?.(setup.dagRun.id);
   const result = await executeTeamAgentDagRun(setup, teamAgentId, opts);
   return { dagRunId: setup.dagRun.id, result, wavePlan: setup.wavePlan };
 }
@@ -2942,13 +3027,16 @@ export async function resumeTeamAgentDagRun(dagRunId: string): Promise<void> {
   const dagRun = await storage.getDagExecutionRun(dagRunId);
   if (!dagRun) return;
 
+  let setup: DagRunSetup | undefined;
   try {
-    const setup = await setupResumeForDagRun(dagRun);
+    setup = await setupResumeForDagRun(dagRun);
     console.log(`[dag-resume] Resuming run ${dagRunId} from wave ${setup.resumeFromWave}/${setup.wavePlan.totalWaves}`);
-    await executeTeamAgentDagRun(setup, dagRun.teamAgentId!, {});
+    const result = await executeTeamAgentDagRun(setup, dagRun.teamAgentId!, {});
+    await notifyDagRunFinished(finishedRunInfo(setup, dagRun.teamAgentId!, { result }));
   } catch (err: any) {
     console.error(`[dag-resume] Failed to resume run ${dagRunId}:`, err.message);
     await storage.updateDagExecutionRun(dagRunId, { status: "failed", error: `Resume failed: ${err.message}`, completedAt: new Date() }).catch(() => {});
+    if (setup && !(err instanceof DagRunSupersededError)) await notifyDagRunFinished(finishedRunInfo(setup, dagRun.teamAgentId!, { error: err }));
   }
 }
 
@@ -3065,9 +3153,13 @@ export async function resumeInterruptedTeamAgentDagRun(
   // Not awaited: a resumed run can take as long as the original, and the scan
   // that found it must keep its one-minute cadence. executeTeamAgentDagRun
   // records its own outcome, failures included.
-  void executeTeamAgentDagRun(setup, dagRun.teamAgentId!, {}).catch((err: any) => {
-    console.error(`[dag-resume] Resumed run ${dagRunId} ended with an error:`, err?.message);
-  });
+  const resumedSetup = setup;
+  void executeTeamAgentDagRun(resumedSetup, dagRun.teamAgentId!, {})
+    .then((result) => notifyDagRunFinished(finishedRunInfo(resumedSetup, dagRun.teamAgentId!, { result })))
+    .catch(async (err: any) => {
+      console.error(`[dag-resume] Resumed run ${dagRunId} ended with an error:`, err?.message);
+      if (!(err instanceof DagRunSupersededError)) await notifyDagRunFinished(finishedRunInfo(resumedSetup, dagRun.teamAgentId!, { error: err }));
+    });
   return "resumed";
 }
 
