@@ -366,7 +366,8 @@ export async function graph_search_sharepoint(
     query,
     results: hits.map((h: any) => ({
       id:           h.hitId,
-      // Pass drive_id + item_id (or web_url) to graph_read_document to read the file's text.
+      // Pass web_url to graph_read_document to read the file's text. Graph does
+      // not always include the drive id on a search hit, so drive_id may be null.
       drive_id:     h.resource?.parentReference?.driveId ?? null,
       item_id:      h.resource?.id ?? h.hitId,
       name:         h.resource?.name ?? h.resource?.displayName,

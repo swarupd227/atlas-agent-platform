@@ -182,7 +182,7 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
     },
     {
       name: "graph_read_document",
-      description: "Read the text of a SharePoint or OneDrive document (Word, PDF, Excel, PowerPoint, text, CSV). Pass the drive_id and item_id, or the web_url, returned by graph_search_sharepoint. Long documents are cut to max_chars.",
+      description: "Read the text of a SharePoint or OneDrive document (Word, PDF, Excel, PowerPoint, text, CSV). Pass the web_url returned by graph_search_sharepoint (or a drive_id and item_id when you have them). Long documents are cut to max_chars.",
       inputSchema: {
         type: "object",
         properties: {

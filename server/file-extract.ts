@@ -272,7 +272,12 @@ async function extractDocx(buffer: Buffer): Promise<string> {
       });
       if (rows.length) $(table).replaceWith(`\n\n${toMarkdownTable(rows)}\n\n`);
     });
-    return $.root().text();
+    // .text() on HTML concatenates block elements with no separator, so every
+    // heading and paragraph of a document containing a table ran together
+    // ("...OPERATIONSLoan Servicing PolicyDocument..."). Keep the line breaks.
+    $("br").replaceWith("\n");
+    $("h1,h2,h3,h4,h5,h6,p,li").each((_i: number, el: any) => { $(el).append("\n"); });
+    return $.root().text().replace(/\n{3,}/g, "\n\n").trim();
   }
   return (await mammoth.extractRawText({ buffer })).value;
 }
