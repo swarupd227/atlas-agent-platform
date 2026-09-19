@@ -1901,6 +1901,8 @@ async function createOutcomeVersion(
           const description = `${pn.label}${pn.description ? ": " + pn.description : ""}${pn.actor ? ` (performed by ${pn.actor})` : ""}`;
           const { draft } = await draftSingleAgent(description, industryId, orgId);
           const agent = await storage.createAgent({
+            // The outcome's organization, not the default one createAgent falls back to.
+            organizationId: outcome.organizationId ?? orgId ?? undefined,
             name: draft.name,
             description: draft.description,
             owner: "system",

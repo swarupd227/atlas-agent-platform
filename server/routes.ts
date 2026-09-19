@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementScope, mcpAppScope, mcpElicitationScope, outcomeScope, kpiScope } from "./tenant-scope";
+import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementScope, mcpAppScope, mcpElicitationScope, outcomeScope, kpiScope, teamAgentScope, dagRunScope } from "./tenant-scope";
 import { aiAssistRateLimiter } from "./rate-limits";
 import { checkPermission } from "./permissions";
 import { createServer, type Server } from "http";
@@ -253,6 +253,9 @@ export async function registerRoutes(
   app.use("/api/mcp-elicitations", mcpElicitationScope);
   app.use("/api/outcomes/:id", outcomeScope);
   app.use("/api/kpis", kpiScope);
+  app.use("/api/team-agents/:id", teamAgentScope);
+  app.use("/api/dag-execution-runs/:id", dagRunScope);
+  app.use("/api/dag-runs/:id", dagRunScope);
 
   // Every /api/ai/* assist route is an LLM call: one per-user budget for all of them.
   app.use("/api/ai", aiAssistRateLimiter);

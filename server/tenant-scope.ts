@@ -410,3 +410,60 @@ export async function filterKpisForOrg<T extends { outcomeId: string }>(kpis: T[
   const outcomeIds = new Set((await storage.getOutcomes(orgId ?? undefined)).map((o) => o.id));
   return kpis.filter((k) => outcomeIds.has(k.outcomeId));
 }
+
+// ── Team agents and their DAG runs ───────────────────────────────────────────
+//
+// dag_execution_runs has no organization column: a run belongs to its team
+// agent's organization (a legacy agent with none, or a run with no team agent,
+// to the default org).
+
+async function agentOwnerOrgId(agentId: string | null | undefined): Promise<string | null | undefined> {
+  if (!agentId) return getDefaultOrgId() ?? null;
+  const agent = await storage.getAgent(agentId);
+  if (!agent) return undefined; // unknown agent: let the route answer
+  return agent.organizationId ?? getDefaultOrgId() ?? null;
+}
+
+/** Mounted at /api/team-agents/:id -- every per-team-agent route. */
+export async function teamAgentScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    const owner = id ? await agentOwnerOrgId(id) : undefined;
+    if (owner !== undefined && !ownerMatches(owner, resolveRequestOrgId(req))) return notFound(res, "Agent");
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+const DAG_RUN_RESERVED = new Set(["recent"]);
+
+/** Mounted at /api/dag-execution-runs/:id and /api/dag-runs/:id. */
+export async function dagRunScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id || DAG_RUN_RESERVED.has(id)) return next();
+    const run = await storage.getDagExecutionRun(id);
+    if (!run) return next();
+    const owner = await agentOwnerOrgId(run.teamAgentId);
+    if (owner !== undefined && !ownerMatches(owner, resolveRequestOrgId(req))) {
+      return res.status(404).json({ error: "Run not found", message: "Run not found" });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Only the runs whose team agent belongs to the org. */
+export async function filterDagRunsForOrg<T extends { teamAgentId: string | null }>(runs: T[], orgId: string | undefined | null): Promise<T[]> {
+  const owners = new Map<string, string | null | undefined>();
+  const out: T[] = [];
+  for (const run of runs) {
+    const key = run.teamAgentId ?? "";
+    if (!owners.has(key)) owners.set(key, await agentOwnerOrgId(run.teamAgentId));
+    const owner = owners.get(key);
+    if (owner !== undefined && ownerMatches(owner, orgId)) out.push(run);
+  }
+  return out;
+}

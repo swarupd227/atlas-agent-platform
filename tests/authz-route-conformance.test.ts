@@ -108,7 +108,10 @@ function scanRoutes(): RouteEntry[] {
 // 454 (was 455, briefly 456): the process-flow drafting helpers
 // (process-flow/clarify, added unguarded in ac5ba87, and generate-process-flow)
 // need create_modify_outcomes, like saving a process flow.
-const BASELINE_UNGUARDED = 454;
+//
+// 452 (was 454): proposing a team (/api/ai/propose-agents) needs
+// create_modify_blueprints; Deploy & Run needs deploy_staging_pilot.
+const BASELINE_UNGUARDED = 452;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {

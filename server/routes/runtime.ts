@@ -70,7 +70,7 @@ import {
 import { getOrgId } from "../auth";
 import { connectorLinkAuditEvent } from "../connector-link";
 import { isValidHealthCheckPath } from "../connector-health-probe";
-import { resolveRequestOrgId, sanitizeMcpServerAuth, isMcpServerVisibleToOrg, filterMcpAppsForOrg, filterElicitationsForOrg } from "../tenant-scope";
+import { resolveRequestOrgId, sanitizeMcpServerAuth, isMcpServerVisibleToOrg, filterMcpAppsForOrg, filterElicitationsForOrg, filterDagRunsForOrg } from "../tenant-scope";
 import {
   resolveOntologyTags,
   handleZodError,
@@ -20967,10 +20967,11 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
   // ── DAG Execution Runs ────────────────────────────────────────────────────────
 
+  // Per-run routes are scoped by dagRunScope, team-agent routes by teamAgentScope (server/tenant-scope.ts).
   router.get("/api/dag-execution-runs", async (req, res) => {
     try {
       const pipelineRunId = req.query.pipelineRunId as string | undefined;
-      const runs = await storage.listDagExecutionRuns(pipelineRunId);
+      const runs = await filterDagRunsForOrg(await storage.listDagExecutionRuns(pipelineRunId), resolveRequestOrgId(req));
       res.json(runs);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

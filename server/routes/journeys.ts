@@ -101,7 +101,10 @@ router.post("/api/journeys/:id/clone", checkPermission("create_modify_blueprints
       await Promise.all(members.map((m) => storage.getAgent(m.memberAgentId, orgId)))
     ).filter((a): a is NonNullable<typeof a> => !!a);
 
+    // The copy belongs to the organization that made it (createAgent would
+    // otherwise file it under the default organization).
     const cloneAgentFields = (a: NonNullable<typeof source>) => ({
+      organizationId: orgId ?? getDefaultOrgId() ?? undefined,
       name: `${a.name} (Clone)`,
       description: a.description,
       owner: a.owner,

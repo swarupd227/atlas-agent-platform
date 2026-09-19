@@ -772,7 +772,7 @@ const router = Router();
     }
   });
 
-  router.post("/api/ai/propose-agents", async (req, res) => {
+  router.post("/api/ai/propose-agents", checkPermission("create_modify_blueprints"), async (req, res) => {
     // This call routinely takes 90-240s for larger teams (see openAITimeoutMs
     // below). Stream real progress over SSE -- matching the pattern already
     // used in playground.ts -- instead of leaving the client's "Drafting..."

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { resolveAgentIndustry } from "../agent-industry";
 import { getOrgId } from "../auth";
-import { getRequestRole } from "../permissions";
+import { checkPermission, getRequestRole } from "../permissions";
 import { buildAgentSystemPromptWithGovernance } from "./helpers";
 import { llmInvokeRateLimiter } from "../rate-limits";
 import {
@@ -688,7 +688,11 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
-  router.post("/api/agents/:id/deploy-and-run", async (req, res) => {
+  // Deploy & Run: straight to STAGING and start the runtime, for trying an
+  // agent out. It never touches a pilot or production deployment (those go
+  // through promotion and its approvals), and it records the pipeline stages
+  // it skipped as skipped rather than claiming they passed.
+  router.post("/api/agents/:id/deploy-and-run", checkPermission("deploy_staging_pilot"), async (req: Request<{ id: string }>, res: Response) => {
     try {
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
@@ -709,7 +713,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       }
 
       const deployments = await storage.getDeployments(getOrgId(req));
-      let deployment = deployments.find(d => d.agentId === req.params.id && (d.status === "deployed" || d.status === "pending"));
+      let deployment = deployments.find(d => d.agentId === req.params.id && d.environment === "staging" && (d.status === "deployed" || d.status === "pending"));
 
       if (!deployment) {
         // No invented default: an unknown industry stays unset.
@@ -721,7 +725,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           industry,
           status: "pending",
           version: agent.currentVersion || "1.0.0",
-          organizationId: agent.organizationId,
+          organizationId: agent.organizationId ?? undefined,
         });
         const depVersion = deployment.version || agent.currentVersion || "1.0.0";
         await storage.ensureAgentVersion(req.params.id, depVersion, "active");
@@ -729,7 +733,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
       if (deployment.status !== "deployed") {
         const pipelineStages = Array.isArray(deployment.pipelineStages)
-          ? (deployment.pipelineStages as any[]).map(s => ({ ...s, status: "passed", completedAt: new Date().toISOString(), attestation: "Auto-approved by Deploy & Run" }))
+          ? (deployment.pipelineStages as any[]).map(s => ({ ...s, status: "skipped", completedAt: new Date().toISOString(), attestation: "Not run: deployed straight to staging with Deploy & Run" }))
           : [];
         deployment = await storage.updateDeployment(deployment.id, {
           pipelineStages,
