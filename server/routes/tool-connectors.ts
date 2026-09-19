@@ -289,6 +289,16 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
 
       let events = await storage.getAuditEvents(getOrgId(req));
 
+      // What the filters can offer: the actions, object and actor types that
+      // actually occur, with counts, so the page never lists a value that
+      // matches nothing (a fixed list did: most real actions weren't on it).
+      const count = (key: "action" | "objectType" | "actorType") => {
+        const m = new Map<string, number>();
+        for (const e of events) { const v = e[key]; if (v) m.set(v, (m.get(v) || 0) + 1); }
+        return Array.from(m, ([value, n]) => ({ value, count: n })).sort((a, b) => b.count - a.count);
+      };
+      const facets = { actions: count("action"), objectTypes: count("objectType"), actorTypes: count("actorType") };
+
       if (actorType) {
         events = events.filter(e => e.actorType === actorType);
       }
@@ -331,12 +341,19 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
         }
       }
 
+      // sort=newest: most recent first, by chain position (the order events were written).
+      if (req.query.sort === "newest") {
+        events = [...events].sort((a, b) =>
+          (b.sequenceNum ?? 0) - (a.sequenceNum ?? 0) ||
+          new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+      }
+
       const total = events.length;
       const totalPages = Math.ceil(total / limit);
       const offset = (page - 1) * limit;
       const paginatedEvents = events.slice(offset, offset + limit);
 
-      res.json({ events: paginatedEvents, total, page, totalPages });
+      res.json({ events: paginatedEvents, total, page, totalPages, facets });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }

@@ -39,6 +39,7 @@ export default function McpServerDetail() {
   const { toast } = useToast();
   const [, params] = useRoute("/integrations/mcp-servers/:id");
   const id = params?.id || "";
+  const [tab, setTab] = useState("overview");
   const search = useSearch();
   const [, navigate] = useLocation();
 
@@ -431,271 +432,249 @@ export default function McpServerDetail() {
   const capabilities = (server.capabilities || {}) as Record<string, unknown>;
   const serverInfo = (server.serverInfo || {}) as Record<string, unknown>;
 
+  const health = server.healthStatus || "unknown";
+  const statusText: Record<string, string> = {
+    registered: "Registered, not yet verified",
+    verified: "Verified, not yet in production",
+    "production-enabled": "In production",
+  };
+  const risk = (server.riskTier || "").toLowerCase();
+  const enabledTools = (tools || []).filter((t) => !!t.enabled);
+  const unmatchedVocabulary = (parameterMatches || []).filter((m) => m.matchStatus === "unmatched").length;
+  const protocolOk = !!server.negotiatedProtocolVersion && (!server.expectedProtocolVersion || server.negotiatedProtocolVersion === server.expectedProtocolVersion);
+  const when = (d: string | Date | null | undefined) => {
+    if (!d) return "never";
+    const t = new Date(d);
+    const today = new Date().toDateString() === t.toDateString();
+    return today ? `today ${t.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}` : t.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  };
+  const tabClass = "rounded-none border-b-2 border-transparent bg-transparent px-3 py-2 text-[13px] text-muted-foreground shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
+  const kv = "grid grid-cols-[150px_1fr] items-baseline gap-x-4 gap-y-2 text-[13px]";
+
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <div className="flex flex-col gap-4">
-        <Link href="/integrations/mcp-servers" data-testid="link-back-mcp-servers">
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="w-4 h-4 mr-1.5" />
-            Back to MCP Servers
-          </Button>
+    <div className="astra-scope flex min-h-full flex-col gap-5 bg-background p-6 font-sans text-foreground">
+      <div className="flex flex-col gap-3">
+        <Link href="/integrations/mcp-servers" data-testid="link-back-mcp-servers" className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-3.5 w-3.5" /> Connections · MCP servers
         </Link>
 
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex flex-col gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-mcp-server-name">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-[260px]">
+            <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">MCP server · {server.transportType}</span>
+            <h1 className="font-[family-name:var(--astra-display)] text-2xl font-semibold tracking-tight" data-testid="text-mcp-server-name">
               {server.name}
             </h1>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant={STATUS_VARIANT[server.status] || "outline"} data-testid="badge-status">
-                {server.status}
-              </Badge>
-              <Badge
-                variant={server.riskTier === "CRITICAL" || server.riskTier === "HIGH" ? "destructive" : "outline"}
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12.5px]">
+              <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-0.5">
+                <span className={`h-2 w-2 rounded-full ${HEALTH_COLOR[health]}`} data-testid="indicator-health" />
+                <span className="capitalize" data-testid="text-health-status">{health}</span>
+                <span className="text-muted-foreground">· checked {when(server.lastHealthCheck)}</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-0.5" data-testid="badge-status">
+                {server.status === "production-enabled" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> : <Shield className="h-3.5 w-3.5 text-muted-foreground" />}
+                {statusText[server.status] || server.status}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 ${risk === "critical" || risk === "high" ? "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400" : "bg-card"}`}
                 data-testid="badge-risk-tier"
               >
-                <Shield className="w-3 h-3 mr-1" />
-                {server.riskTier}
-              </Badge>
-              <div className="flex items-center gap-1.5">
-                <div
-                  className={`w-2.5 h-2.5 rounded-full ${HEALTH_COLOR[server.healthStatus || "unknown"]}`}
-                  data-testid="indicator-health"
-                />
-                <span className="text-xs text-muted-foreground" data-testid="text-health-status">
-                  {server.healthStatus || "unknown"}
-                </span>
-              </div>
+                {risk ? `${risk.charAt(0).toUpperCase()}${risk.slice(1)} risk` : "Risk not set"}
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
+              size="sm"
               variant="outline"
               onClick={() => initializeMutation.mutate()}
               disabled={initializeMutation.isPending}
+              title="Reconnect and re-read what the server offers"
               data-testid="button-initialize"
             >
-              {initializeMutation.isPending ? (
-                <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
-              ) : (
-                <Play className="w-4 h-4 mr-1.5" />
-              )}
+              {initializeMutation.isPending ? <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
               Initialize
             </Button>
             <Button
+              size="sm"
               variant="outline"
               onClick={() => syncMutation.mutate()}
               disabled={syncMutation.isPending}
+              title="Refresh the tools, resources and prompts from the server"
               data-testid="button-sync-catalogs"
             >
-              {syncMutation.isPending ? (
-                <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4 mr-1.5" />
-              )}
-              Sync Catalogs
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin" : ""}`} />
+              Sync catalogs
             </Button>
             <Button
+              size="sm"
+              variant={server.status === "production-enabled" ? "outline" : "default"}
               onClick={() => enableProdMutation.mutate()}
-              disabled={enableProdMutation.isPending}
+              disabled={enableProdMutation.isPending || server.status === "production-enabled"}
               data-testid="button-enable-production"
             >
-              {enableProdMutation.isPending ? (
-                <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
-              ) : (
-                <Zap className="w-4 h-4 mr-1.5" />
-              )}
-              Enable Production
+              {enableProdMutation.isPending ? <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Zap className="mr-1.5 h-3.5 w-3.5" />}
+              {server.status === "production-enabled" ? "In production" : "Enable production"}
             </Button>
           </div>
         </div>
       </div>
 
-      <Tabs defaultValue="overview">
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="overview" data-testid="tab-overview">
-            <Server className="w-3.5 h-3.5 mr-1.5" />
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="capabilities" data-testid="tab-capabilities">
-            <Zap className="w-3.5 h-3.5 mr-1.5" />
-            Capabilities
-          </TabsTrigger>
-          <TabsTrigger value="tools" data-testid="tab-tools">
-            <Wrench className="w-3.5 h-3.5 mr-1.5" />
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-none border-b bg-transparent p-0">
+          <TabsTrigger value="overview" className={tabClass} data-testid="tab-overview">Overview</TabsTrigger>
+          <TabsTrigger value="tools" className={tabClass} data-testid="tab-tools">
             Tools
-            {tools && tools.length > 0 && (
-              <Badge variant="secondary" className="ml-1.5 text-[10px]">{tools.length}</Badge>
-            )}
+            {tools && tools.length > 0 && <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">{tools.length}</span>}
           </TabsTrigger>
-          <TabsTrigger value="resources" data-testid="tab-resources">
-            <FileText className="w-3.5 h-3.5 mr-1.5" />
+          <TabsTrigger value="resources" className={tabClass} data-testid="tab-resources">
             Resources
+            {resources && resources.length > 0 && <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">{resources.length}</span>}
           </TabsTrigger>
-          <TabsTrigger value="prompts" data-testid="tab-prompts">
-            <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
+          <TabsTrigger value="prompts" className={tabClass} data-testid="tab-prompts">
             Prompts
+            {prompts && prompts.length > 0 && <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">{prompts.length}</span>}
           </TabsTrigger>
-          <TabsTrigger value="auth" data-testid="tab-auth">
-            <Lock className="w-3.5 h-3.5 mr-1.5" />
-            Auth
-          </TabsTrigger>
-          <TabsTrigger value="audit" data-testid="tab-audit">
-            <Clock className="w-3.5 h-3.5 mr-1.5" />
-            Audit
-          </TabsTrigger>
-          <TabsTrigger value="vocabulary" data-testid="tab-vocabulary">
-            <BookOpen className="w-3.5 h-3.5 mr-1.5" />
+          <TabsTrigger value="capabilities" className={tabClass} data-testid="tab-capabilities">Capabilities</TabsTrigger>
+          <TabsTrigger value="auth" className={tabClass} data-testid="tab-auth">Access</TabsTrigger>
+          <TabsTrigger value="vocabulary" className={tabClass} data-testid="tab-vocabulary">
             Vocabulary
-            {parameterMatches && parameterMatches.filter(m => m.matchStatus === "unmatched").length > 0 && (
-              <Badge variant="destructive" className="ml-1.5 text-[10px]">
-                {parameterMatches.filter(m => m.matchStatus === "unmatched").length}
-              </Badge>
+            {unmatchedVocabulary > 0 && (
+              <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 font-mono text-[11px] text-amber-700 dark:text-amber-400" title="Tool parameters not yet matched to a business concept">
+                {unmatchedVocabulary} unmatched
+              </span>
             )}
           </TabsTrigger>
+          <TabsTrigger value="audit" className={tabClass} data-testid="tab-audit">Activity</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="flex flex-col gap-4 mt-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card data-testid="card-connection-info">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-                  <Globe className="w-4 h-4" />
-                  Connection Info
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">Transport Type</span>
-                  <Badge variant="outline" className="text-[10px]" data-testid="text-transport-type">
-                    {server.transportType === "stdio" ? (
-                      <Terminal className="w-3 h-3 mr-1" />
-                    ) : (
-                      <Globe className="w-3 h-3 mr-1" />
-                    )}
-                    {server.transportType}
-                  </Badge>
-                </div>
-                {server.url && (
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-xs text-muted-foreground">URL</span>
-                    <span className="text-xs font-mono" data-testid="text-url">{server.url}</span>
-                  </div>
-                )}
-                {server.command && (
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-xs text-muted-foreground">Command</span>
-                    <span className="text-xs font-mono" data-testid="text-command">
-                      {server.command} {(server.args || []).join(" ")}
-                    </span>
-                  </div>
-                )}
-                <Separator />
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">Expected Protocol</span>
-                  <span className="text-xs font-mono" data-testid="text-expected-protocol">
-                    {server.expectedProtocolVersion || "N/A"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">Negotiated Protocol</span>
-                  <span className="text-xs font-mono" data-testid="text-negotiated-protocol">
-                    {server.negotiatedProtocolVersion || "Not yet negotiated"}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card data-testid="card-server-info">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-                  <Server className="w-4 h-4" />
-                  Server Info
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">Name</span>
-                  <span className="text-xs" data-testid="text-server-info-name">
-                    {(serverInfo.name as string) || "N/A"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">Version</span>
-                  <span className="text-xs" data-testid="text-server-info-version">
-                    {(serverInfo.version as string) || "N/A"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">Protocol Version</span>
-                  <span className="text-xs" data-testid="text-server-info-protocol">
-                    {(serverInfo.protocolVersion as string) || "N/A"}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card data-testid="card-health">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-                  <Activity className="w-4 h-4" />
-                  Health
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <div className={`w-3 h-3 rounded-full ${HEALTH_COLOR[server.healthStatus || "unknown"]}`} />
-                  <span className="text-sm font-medium" data-testid="text-health-detail">
-                    {server.healthStatus || "unknown"}
-                  </span>
-                </div>
-                {server.healthDetail && server.healthStatus !== "healthy" && (
-                  <span className="text-xs text-red-600 dark:text-red-400" data-testid="text-health-reason">
-                    {server.healthDetail}
-                  </span>
-                )}
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs text-muted-foreground">Last Health Check</span>
-                  <span className="text-xs" data-testid="text-last-health-check">
-                    {server.lastHealthCheck
-                      ? new Date(server.lastHealthCheck).toLocaleString()
-                      : "Never"}
-                  </span>
-                </div>
-                {server.healthCheckPath && (
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-xs text-muted-foreground">Probed every 5 minutes</span>
-                    <span className="text-xs font-mono" data-testid="text-health-check-path">{server.healthCheckPath}</span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card data-testid="card-capabilities-summary">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-                  <Zap className="w-4 h-4" />
-                  Capabilities
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {Object.keys(capabilities).length > 0 ? (
-                    Object.keys(capabilities).map((cap) => (
-                      <Badge key={cap} variant="secondary" className="text-[10px]" data-testid={`badge-capability-${cap}`}>
-                        {cap}
-                      </Badge>
-                    ))
-                  ) : (
-                    <span className="text-xs text-muted-foreground" data-testid="text-no-capabilities">
-                      No capabilities negotiated
-                    </span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+        <TabsContent value="overview" className="mt-5 flex flex-col gap-6">
+          {/* The four facts that say whether agents can rely on it. */}
+          <div className="grid grid-cols-2 overflow-hidden rounded-xl border bg-card lg:grid-cols-4" data-testid="card-health">
+            <div className="border-b border-r p-4 lg:border-b-0">
+              <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Health</p>
+              <p className="mt-1 flex items-center gap-2 font-[family-name:var(--astra-display)] text-xl font-semibold capitalize">
+                <span className={`h-2.5 w-2.5 rounded-full ${HEALTH_COLOR[health]}`} />
+                <span data-testid="text-health-detail">{health}</span>
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground" data-testid="text-last-health-check">
+                Checked {when(server.lastHealthCheck)}{server.healthCheckPath ? ", every 5 minutes" : ""}
+              </p>
+              {server.healthDetail && health !== "healthy" && (
+                <p className="mt-1 text-xs text-red-700 dark:text-red-400" data-testid="text-health-reason">{server.healthDetail}</p>
+              )}
+            </div>
+            <div className="border-b p-4 lg:border-b-0 lg:border-r">
+              <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Tools for agents</p>
+              <p className="mt-1 font-[family-name:var(--astra-display)] text-xl font-semibold">{tools ? tools.length : "—"}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {resources?.length || 0} resource{(resources?.length || 0) !== 1 ? "s" : ""} · {prompts?.length || 0} prompt{(prompts?.length || 0) !== 1 ? "s" : ""}
+              </p>
+            </div>
+            <div className="border-r p-4" data-testid="card-server-info">
+              <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Server reports</p>
+              <p className="mt-1 truncate text-[15px] font-medium" data-testid="text-server-info-name" title={(serverInfo.name as string) || undefined}>
+                {(serverInfo.name as string) || "Not reported"}
+              </p>
+              <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                version <span data-testid="text-server-info-version">{(serverInfo.version as string) || "n/a"}</span>
+              </p>
+            </div>
+            <div className="p-4">
+              <p className="font-mono text-[10.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Protocol</p>
+              <p className="mt-1 font-mono text-[15px]" data-testid="text-server-info-protocol">
+                {server.negotiatedProtocolVersion || (serverInfo.protocolVersion as string) || "Not negotiated"}
+              </p>
+              <p className={`mt-0.5 text-xs ${protocolOk ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>
+                {protocolOk ? "Matches what the platform expects" : server.negotiatedProtocolVersion ? `Expected ${server.expectedProtocolVersion}` : "Initialize to negotiate"}
+              </p>
+            </div>
           </div>
+
+          {/* What it actually lets agents do. */}
+          <section>
+            <div className="mb-2 flex items-baseline justify-between gap-2">
+              <h2 className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">What agents can do with it</h2>
+              {tools && tools.length > 8 && (
+                <button type="button" onClick={() => setTab("tools")} className="text-xs underline underline-offset-2" data-testid="button-see-all-tools">
+                  See all {tools.length} tools
+                </button>
+              )}
+            </div>
+            {!tools ? (
+              <Skeleton className="h-24 w-full" />
+            ) : tools.length === 0 ? (
+              <p className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
+                No tools yet. Initialize the server, or Sync catalogs, to read what it offers.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 overflow-hidden rounded-xl border bg-card md:grid-cols-2">
+                {tools.slice(0, 8).map((t, i) => (
+                  <div key={t.id} className={`flex min-w-0 gap-3 px-4 py-2.5 ${i % 2 === 0 ? "md:border-r" : ""} ${i >= 2 ? "border-t" : i === 1 ? "border-t md:border-t-0" : ""}`} data-testid={`overview-tool-${t.name}`}>
+                    <Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-[12.5px]">
+                        {t.name}
+                        {!t.enabled && <span className="ml-1.5 font-sans text-[11px] text-muted-foreground">(off)</span>}
+                      </p>
+                      <p className="line-clamp-2 text-xs text-muted-foreground">{t.description || "No description from the server."}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {tools && tools.length > 0 && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {enabledTools.length} of {tools.length} enabled for agents. Every call goes through the platform's policy checks and is recorded in the audit trail.
+              </p>
+            )}
+          </section>
+
+          {/* How the platform reaches it. */}
+          <section data-testid="card-connection-info">
+            <h2 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Connection</h2>
+            <div className={`${kv} rounded-xl border bg-card p-4`}>
+              <span className="text-muted-foreground">Transport</span>
+              <span className="inline-flex items-center gap-1.5" data-testid="text-transport-type">
+                {server.transportType === "stdio" ? <Terminal className="h-3.5 w-3.5" /> : <Globe className="h-3.5 w-3.5" />}
+                {server.transportType}
+              </span>
+              {server.url && (
+                <>
+                  <span className="text-muted-foreground">Address</span>
+                  <span className="break-all font-mono text-[12.5px]" data-testid="text-url">{server.url}</span>
+                </>
+              )}
+              {server.command && (
+                <>
+                  <span className="text-muted-foreground">Command</span>
+                  <span className="break-all font-mono text-[12.5px]" data-testid="text-command">{server.command} {(server.args || []).join(" ")}</span>
+                </>
+              )}
+              {server.healthCheckPath && (
+                <>
+                  <span className="text-muted-foreground">Health check</span>
+                  <span className="font-mono text-[12.5px]" data-testid="text-health-check-path">{server.healthCheckPath} <span className="font-sans text-muted-foreground">every 5 minutes</span></span>
+                </>
+              )}
+              <span className="text-muted-foreground">Protocol</span>
+              <span className="font-mono text-[12.5px]">
+                <span data-testid="text-negotiated-protocol">{server.negotiatedProtocolVersion || "not yet negotiated"}</span>
+                <span className="font-sans text-muted-foreground"> negotiated · expected </span>
+                <span data-testid="text-expected-protocol">{server.expectedProtocolVersion || "n/a"}</span>
+              </span>
+              <span className="text-muted-foreground">Capabilities</span>
+              <span className="flex flex-wrap gap-1.5" data-testid="card-capabilities-summary">
+                {Object.keys(capabilities).length > 0 ? (
+                  Object.keys(capabilities).map((cap) => (
+                    <span key={cap} className="rounded-full bg-muted px-2 py-0.5 text-xs" data-testid={`badge-capability-${cap}`}>{cap}</span>
+                  ))
+                ) : (
+                  <span className="text-muted-foreground" data-testid="text-no-capabilities">None negotiated yet</span>
+                )}
+              </span>
+            </div>
+          </section>
         </TabsContent>
 
         <TabsContent value="capabilities" className="flex flex-col gap-4 mt-4">
@@ -712,7 +691,7 @@ export default function McpServerDetail() {
                   <Plus className="w-4 h-4 mr-1.5" /> Add Capability
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-lg">
+              <DialogContent className="astra-scope font-sans max-w-lg">
                 <DialogHeader>
                   <DialogTitle>Add Capability</DialogTitle>
                 </DialogHeader>
@@ -818,7 +797,7 @@ export default function McpServerDetail() {
                   <Plus className="w-4 h-4 mr-1.5" /> Add Tool
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-lg">
+              <DialogContent className="astra-scope font-sans max-w-lg">
                 <DialogHeader>
                   <DialogTitle>Add Tool to MCP Server</DialogTitle>
                 </DialogHeader>
@@ -1125,7 +1104,7 @@ export default function McpServerDetail() {
                   <Plus className="w-4 h-4 mr-1.5" /> Add Resource
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-lg">
+              <DialogContent className="astra-scope font-sans max-w-lg">
                 <DialogHeader>
                   <DialogTitle>Add Resource to MCP Server</DialogTitle>
                 </DialogHeader>
@@ -1304,7 +1283,7 @@ export default function McpServerDetail() {
                   <Plus className="w-4 h-4 mr-1.5" /> Add Prompt
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-lg">
+              <DialogContent className="astra-scope font-sans max-w-lg">
                 <DialogHeader>
                   <DialogTitle>Add Prompt Template</DialogTitle>
                 </DialogHeader>
