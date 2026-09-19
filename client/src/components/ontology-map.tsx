@@ -1,9 +1,6 @@
 // Ontology diagrams: a concept's neighbourhood (what it links to, each link
-// named) and the whole-ontology map, clustered by domain. Colour encodes the
-// domain only (a handful of hues, not one per category); a solid dot means an
-// agent uses the concept, a tinted one means none does yet.
+// named), coloured by domain, and the whole-ontology graph, coloured by category.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { forceSimulation, forceLink, forceManyBody, forceX, forceY, forceCollide, type SimulationNodeDatum } from "d3-force";
 
 export interface MapConcept {
   id: string;
@@ -12,6 +9,13 @@ export interface MapConcept {
   domain: string;
   used: boolean;
   relationships: Array<{ targetId: string; label: string; type: string }>;
+  /** How many agents reference it; sizes the circle in the graph. */
+  usageCount?: number;
+  description?: string;
+  tags?: string[];
+  synonyms?: string[];
+  /** Added by the organisation rather than from the industry standard. */
+  custom?: boolean;
 }
 
 const DOMAIN_COLORS = [
@@ -130,19 +134,24 @@ export function OntologyNeighbourhood({ concept, concepts, colors, onSelect }: {
   );
 }
 
-type SimNode = MapConcept & SimulationNodeDatum & { deg: number };
-type MapLink = { source: SimNode; target: SimNode; label: string; back?: string };
+// One bright colour per category, as the ontology graph has always had.
+const CATEGORY_COLORS = [
+  "hsl(210, 70%, 55%)", "hsl(150, 60%, 45%)", "hsl(30, 80%, 55%)", "hsl(280, 60%, 55%)", "hsl(0, 65%, 55%)",
+  "hsl(180, 55%, 45%)", "hsl(60, 70%, 45%)", "hsl(330, 60%, 55%)", "hsl(240, 50%, 60%)", "hsl(120, 50%, 45%)",
+];
 
-const radiusOf = (deg: number) => 8 + Math.min(10, deg * 1.6);
+type Placed = { c: MapConcept; x: number; y: number; r: number; a: number; row: number };
 
-/** The whole ontology as a network, one cluster per domain. Every concept is a
- *  filled dot sized by how connected it is (tinted when no agent uses it yet),
- *  named wherever the name fits. Pointing at a concept lights up its links and
- *  their names; a click focuses it, with its neighbours brought round it. Dots
- *  can be dragged, and domains hidden from the legend. */
-export function OntologyDomainMap({ concepts, colors, focusId, onSelect, searchQuery }: {
+/**
+ * The whole ontology as a graph: concepts in a ring, grouped by category, one
+ * colour per category, each a filled circle sized by how many agents use it
+ * (dashed when added by you). Names are placed so they never overlap; pointing
+ * at a concept lights up its links and names them, and a click focuses it.
+ * Circles can be dragged and categories hidden from the legend.
+ */
+export function OntologyDomainMap({ concepts, focusId, onSelect, searchQuery }: {
   concepts: MapConcept[];
-  colors: Record<string, string>;
+  colors?: Record<string, string>;
   focusId: string | null;
   onSelect: (id: string) => void;
   searchQuery: string;
@@ -165,290 +174,211 @@ export function OntologyDomainMap({ concepts, colors, focusId, onSelect, searchQ
     return () => ro.disconnect();
   }, []);
 
-  const allDomains = useMemo(() => Array.from(new Set(concepts.map((c) => c.domain))), [concepts]);
-  const shown = useMemo(() => concepts.filter((c) => !hidden.has(c.domain)), [concepts, hidden]);
-  const domains = useMemo(() => allDomains.filter((d) => !hidden.has(d)), [allDomains, hidden]);
-  const incoming = useMemo(() => buildIncoming(shown), [shown]);
+  // Categories in a stable order, grouped by domain so related colours sit together.
+  const categories = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const c of [...concepts].sort((a, b) => a.domain.localeCompare(b.domain) || a.category.localeCompare(b.category))) if (!seen.has(c.category)) seen.set(c.category, c.domain);
+    return Array.from(seen.keys());
+  }, [concepts]);
+  const catColor = useMemo(() => Object.fromEntries(categories.map((c, i) => [c, CATEGORY_COLORS[i % CATEGORY_COLORS.length]])), [categories]);
+  const shown = useMemo(() => concepts.filter((c) => !hidden.has(c.category)), [concepts, hidden]);
   const byId = useMemo(() => new Map(shown.map((c) => [c.id, c])), [shown]);
+  const incoming = useMemo(() => buildIncoming(shown), [shown]);
+  const maxUsage = useMemo(() => Math.max(1, ...shown.map((c) => c.usageCount ?? (c.used ? 1 : 0))), [shown]);
+  const radius = (c: MapConcept) => 12 + ((c.usageCount ?? (c.used ? 1 : 0)) / maxUsage) * 10;
 
-  const centers = useMemo(() => {
-    const cols = Math.ceil(Math.sqrt(domains.length)), rows = Math.ceil(domains.length / cols);
-    return Object.fromEntries(domains.map((d, i) => [d, {
-      x: size.w * ((i % cols) + 0.5) / cols,
-      y: size.h * (Math.floor(i / cols) + 0.5) / rows,
-    }]));
-  }, [domains, size]);
-
-  // Settle the layout once per data/size change, off screen, so the map appears still.
-  // A link stored both ways (A measures B, B measured by A) is drawn once, carrying both names.
+  // The ring, laid out in screen pixels as an ellipse that fills the pane (room left for names):
+  // each category gets an arc in proportion to its size, in one row or, when crowded, two.
   const layout = useMemo(() => {
-    const nodes: SimNode[] = shown.map((c) => ({ ...c, deg: 0 }));
-    const idx = new Map(nodes.map((n) => [n.id, n]));
-    const pairs = new Map<string, { source: string; target: string; label: string; back?: string }>();
+    const groups = categories.filter((cat) => !hidden.has(cat)).map((cat) => shown.filter((c) => c.category === cat)).filter((g) => g.length);
+    const rx = Math.max(160, size.w / 2 - 150), ry = Math.max(120, (size.h - 28) / 2 - 46);
+    const perimeter = 2 * Math.PI * Math.sqrt((rx * rx + ry * ry) / 2);
+    const slotsFor = (rows: number) => groups.reduce((sum, g) => sum + Math.ceil(g.length / rows) + 1, 0);
+    const rows = slotsFor(1) * 34 <= perimeter ? 1 : 2;
+    const perRow = slotsFor(rows);
+    const placed: Placed[] = [];
+    let slot = 0;
+    for (const g of groups) {
+      g.forEach((c, i) => {
+        const row = rows === 2 ? i % 2 : 0;
+        const col = rows === 2 ? Math.floor(i / 2) : i;
+        const a = ((slot + col + 0.5) / perRow) * Math.PI * 2 - Math.PI / 2;
+        const inset = row * 64;
+        placed.push({ c, x: Math.cos(a) * (rx - inset), y: Math.sin(a) * (ry - inset), r: radius(c), a, row });
+      });
+      slot += Math.ceil(g.length / rows) + 1;
+    }
+    return { placed, rows };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown, categories, hidden, maxUsage, size]);
+  useEffect(() => { setMoved({}); }, [layout]);
+
+  const pos = useMemo(() => {
+    const p = new Map(layout.placed.map((n) => [n.c.id, { x: n.x, y: n.y }]));
+    for (const [id, m] of Object.entries(moved)) if (p.has(id)) p.set(id, m);
+    return p;
+  }, [layout, moved]);
+  const node = useMemo(() => new Map(layout.placed.map((n) => [n.c.id, n])), [layout]);
+
+  const links = useMemo(() => {
+    const pairs = new Map<string, { a: string; b: string; label: string; back?: string }>();
     for (const c of shown) for (const r of c.relationships) {
       if (!byId.has(r.targetId) || r.targetId === c.id) continue;
       const label = r.label || r.type.replace(/_/g, " ");
-      const fwd = `${c.id}|${r.targetId}`, rev = `${r.targetId}|${c.id}`;
+      const rev = `${r.targetId}|${c.id}`;
       if (pairs.has(rev)) { const p = pairs.get(rev)!; if (!p.back) p.back = label; continue; }
-      if (!pairs.has(fwd)) pairs.set(fwd, { source: c.id, target: r.targetId, label });
+      if (!pairs.has(`${c.id}|${r.targetId}`)) pairs.set(`${c.id}|${r.targetId}`, { a: c.id, b: r.targetId, label });
     }
-    const links = Array.from(pairs.values());
-    for (const l of links) { idx.get(l.source)!.deg++; idx.get(l.target)!.deg++; }
-    const sim = forceSimulation<SimNode>(nodes)
-      .force("link", forceLink<SimNode, any>(links).id((n) => n.id).distance(92).strength(0.25))
-      .force("charge", forceManyBody().strength(-320))
-      .force("x", forceX<SimNode>((n) => centers[n.domain]?.x ?? size.w / 2).strength(0.09))
-      .force("y", forceY<SimNode>((n) => centers[n.domain]?.y ?? size.h / 2).strength(0.09))
-      .force("collide", forceCollide<SimNode>((n) => radiusOf(n.deg) + 26))
-      .stop();
-    for (let i = 0; i < 360; i++) sim.tick();
-    return { nodes, links: links as unknown as MapLink[] };
-  }, [shown, byId, centers, size]);
+    return Array.from(pairs.values());
+  }, [shown, byId]);
 
-  // Dragged dots keep their place until the data or the view is reset.
-  useEffect(() => { setMoved({}); }, [layout]);
-
-  const near = useMemo(() => {
-    if (!focusId || !byId.has(focusId)) return null;
-    return new Set([focusId, ...neighboursOf(focusId, byId, incoming).map((n) => n.id)]);
-  }, [focusId, byId, incoming]);
-
-  // In focus mode the neighbours are pulled into a ring around the focus so every link reads.
-  const basePos = useMemo(() => {
-    const p = new Map(layout.nodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }]));
-    if (focusId && near && p.has(focusId)) {
-      const f = { x: size.w * 0.5, y: size.h * 0.5 };
-      p.set(focusId, f);
-      const ring = Array.from(near).filter((id) => id !== focusId);
-      const rr = 120 + Math.min(ring.length, 14) * 10;
-      ring.forEach((id, i) => {
-        const a = (i / ring.length) * Math.PI * 2 - Math.PI / 2;
-        p.set(id, { x: f.x + Math.cos(a) * rr * 1.5, y: f.y + Math.sin(a) * rr });
-      });
-    }
-    return p;
-  }, [layout, focusId, near, size]);
-  const pos = useMemo(() => {
-    const p = new Map(basePos);
-    for (const [id, m] of Object.entries(moved)) if (p.has(id)) p.set(id, m);
-    return p;
-  }, [basePos, moved]);
-
-  // Fit the drawing into the view once per layout (not while a dot is dragged), leaving room for the legend.
-  const fit = useMemo(() => {
-    const all = near ? Array.from(near).map((id) => basePos.get(id)!).filter(Boolean) : Array.from(basePos.values());
-    if (!all.length) return { k: 1, x: 0, y: 0 };
-    const pad = near ? 120 : 70, legend = 64;
-    const minX = Math.min(...all.map((p) => p.x)) - pad, maxX = Math.max(...all.map((p) => p.x)) + pad;
-    const minY = Math.min(...all.map((p) => p.y)) - pad - 20, maxY = Math.max(...all.map((p) => p.y)) + pad;
-    const k = Math.min(1.5, size.w / (maxX - minX), (size.h - legend) / (maxY - minY));
-    return { k, x: (size.w - (maxX - minX) * k) / 2 - minX * k, y: (size.h - legend - (maxY - minY) * k) / 2 - minY * k };
-  }, [basePos, size, near]);
-  const K = fit.k * view.k;
-  // Text is drawn inside the zoomed group; divide by the zoom so it always reads at its set size.
+  // The layout is already in screen pixels; only the user's zoom scales it.
+  const K = view.k;
   const ts = (px: number) => px / K;
-  const toScreen = (p: { x: number; y: number }) => ({
-    x: view.x + (size.w / 2) * (1 - view.k) + view.k * (fit.x + fit.k * p.x),
-    y: view.y + (size.h / 2) * (1 - view.k) + view.k * (fit.y + fit.k * p.y),
-  });
+  const toScreen = (p: { x: number; y: number }) => ({ x: size.w / 2 + view.x + p.x * K, y: 28 + (size.h - 28) / 2 + view.y + p.y * K });
 
   const q = searchQuery.trim().toLowerCase();
-  const isMatch = (n: SimNode) => !!q && (n.label.toLowerCase().includes(q) || n.category.toLowerCase().includes(q));
+  const isMatch = (c: MapConcept) => !!q && (c.label.toLowerCase().includes(q) || (c.description ?? "").toLowerCase().includes(q) || (c.tags ?? []).some((t) => t.toLowerCase().includes(q)) || (c.synonyms ?? []).some((t) => t.toLowerCase().includes(q)));
   const lit = hoverId ?? focusId;
   const litSet = useMemo(() => {
     if (!lit || !byId.has(lit)) return null;
     return new Set([lit, ...neighboursOf(lit, byId, incoming).map((n) => n.id)]);
   }, [lit, byId, incoming]);
+  const touches = (l: { a: string; b: string }) => !!lit && (l.a === lit || l.b === lit);
 
-  // Name every dot whose name fits without covering another, best-connected first;
-  // the focus, its neighbours, the dot under the pointer and search hits always win.
-  const labelled = useMemo(() => {
-    const ids = new Set<string>();
+  // Names: outer row outwards, inner row inwards, each only where it covers no other name.
+  const labels = useMemo(() => {
+    const out = new Map<string, { x: number; y: number; anchor: "start" | "end" | "middle" }>();
     const boxes: Array<[number, number, number, number]> = [];
-    const prio = (n: SimNode) => (n.id === hoverId || n.id === focusId ? 1e6 : 0) + (litSet?.has(n.id) ? 1e5 : 0) + (isMatch(n) ? 1e4 : 0) + n.deg;
-    const nodes = layout.nodes.filter((n) => !near || near.has(n.id)).sort((a, b) => prio(b) - prio(a));
-    for (const n of nodes) {
-      const p = pos.get(n.id)!;
-      const w = n.label.length * 6.9 + 6, h = 15;
-      const x = p.x * K - w / 2, y = p.y * K + radiusOf(n.deg) * K + 3;
+    const prio = (n: Placed) => (n.c.id === hoverId || n.c.id === focusId ? 1e6 : 0) + (litSet?.has(n.c.id) ? 1e5 : 0) + (isMatch(n.c) ? 1e4 : 0) + (n.c.usageCount ?? 0);
+    for (const n of [...layout.placed].sort((a, b) => prio(b) - prio(a))) {
+      const p = pos.get(n.c.id)!;
+      const dir = n.row === 1 ? -1 : 1;
+      const dx = Math.cos(n.a) * dir, dy = Math.sin(n.a) * dir;
+      const anchor: "start" | "end" | "middle" = Math.abs(dx) < 0.3 ? "middle" : dx > 0 ? "start" : "end";
+      const gap = n.r + 6 / K;
+      const lx = p.x + dx * gap, ly = p.y + dy * gap + (Math.abs(dx) < 0.3 ? (dy > 0 ? 10 / K : -2 / K) : 4 / K);
+      const w = (n.c.label.length * 6.8 + 6) / K, h = 15 / K;
+      const x0 = anchor === "start" ? lx : anchor === "end" ? lx - w : lx - w / 2;
+      const box: [number, number, number, number] = [x0, ly - 11 / K, w, h];
+      const circleHit = layout.placed.some((o) => o.c.id !== n.c.id && (() => { const op = pos.get(o.c.id)!; const cx = Math.max(box[0], Math.min(op.x, box[0] + box[2])), cy = Math.max(box[1], Math.min(op.y, box[1] + box[3])); return Math.hypot(op.x - cx, op.y - cy) < o.r; })());
       const forced = prio(n) >= 1e4;
-      if (!forced && boxes.some(([bx, by, bw, bh]) => x < bx + bw && x + w > bx && y < by + bh && y + h > by)) continue;
-      boxes.push([x, y, w, h]);
-      ids.add(n.id);
+      if (!forced && (circleHit || boxes.some(([bx, by, bw, bh]) => box[0] < bx + bw && box[0] + box[2] > bx && box[1] < by + bh && box[1] + box[3] > by))) continue;
+      boxes.push(box);
+      out.set(n.c.id, { x: lx, y: ly, anchor });
     }
-    return ids;
+    return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, pos, K, near, hoverId, focusId, litSet, q]);
-
-  // With several domains, a soft halo behind each cluster, its name on top. The halo
-  // hugs the cluster's core (median centre, 85th-percentile reach) so a concept linked
-  // far into another domain doesn't stretch it over the whole map.
-  const halos = useMemo(() => {
-    if (domains.length < 2) return [];
-    const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
-    return domains.map((d) => {
-      const ps = layout.nodes.filter((n) => n.domain === d).map((n) => basePos.get(n.id)!);
-      if (!ps.length) return null;
-      const cx = median(ps.map((p) => p.x)), cy = median(ps.map((p) => p.y));
-      const ds = ps.map((p) => Math.hypot(p.x - cx, p.y - cy)).sort((a, b) => a - b);
-      const r = Math.max(60, ds[Math.min(ds.length - 1, Math.floor(ds.length * 0.85))]) + 34;
-      return { d, cx, cy, r };
-    }).filter(Boolean) as Array<{ d: string; cx: number; cy: number; r: number }>;
-  }, [domains, layout, basePos]);
-
-  const touches = (l: MapLink, id: string | null) => !!id && (l.source.id === id || l.target.id === id);
-  // Named links: all of the focus's (its neighbours sit in a ring, so the names have room);
-  // for a dot under the pointer in the full map, only when few enough not to pile up.
-  const litLinks = (() => {
-    if (!lit) return [];
-    const ls = layout.links.filter((l) => touches(l, lit) && (!near || (near.has(l.source.id) && near.has(l.target.id))));
-    return near || ls.length <= 6 ? ls : [];
-  })();
-  const unlinked = layout.nodes.filter((n) => n.deg === 0).length;
-  const hoverNode = hoverId ? layout.nodes.find((n) => n.id === hoverId) : null;
-
-  const curve = (a: { x: number; y: number }, b: { x: number; y: number }, ra: number, rb: number) => {
-    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len, uy = dy / len;
-    const s = { x: a.x + ux * ra, y: a.y + uy * ra }, e = { x: b.x - ux * (rb + 2), y: b.y - uy * (rb + 2) };
-    const bend = Math.min(40, len * 0.12);
-    const c = { x: (s.x + e.x) / 2 - uy * bend, y: (s.y + e.y) / 2 + ux * bend };
-    // The curve's midpoint, where the link's name sits.
-    const m = { x: 0.25 * s.x + 0.5 * c.x + 0.25 * e.x, y: 0.25 * s.y + 0.5 * c.y + 0.25 * e.y };
-    return { d: `M${s.x},${s.y} Q${c.x},${c.y} ${e.x},${e.y}`, m };
-  };
+  }, [layout, pos, K, hoverId, focusId, litSet, q]);
 
   const onMove = (e: React.PointerEvent) => {
     const nd = nodeDrag.current;
     if (nd) {
-      const dx = (e.clientX - nd.x) / K, dy = (e.clientY - nd.y) / K;
       if (Math.abs(e.clientX - nd.x) + Math.abs(e.clientY - nd.y) > 3) nd.moved = true;
-      if (nd.moved) setMoved((m) => ({ ...m, [nd.id]: { x: nd.ox + dx, y: nd.oy + dy } }));
+      if (nd.moved) setMoved((m) => ({ ...m, [nd.id]: { x: nd.ox + (e.clientX - nd.x) / K, y: nd.oy + (e.clientY - nd.y) / K } }));
       return;
     }
     const p = pan.current;
     if (p) setView((v) => ({ ...v, x: p.vx + e.clientX - p.x, y: p.vy + e.clientY - p.y }));
   };
-  // The click that ends a drag must not also select the dot; remember whether it moved.
   const endDrag = () => { draggedLast.current = !!nodeDrag.current?.moved; pan.current = null; nodeDrag.current = null; };
+  const hoverNode = hoverId ? node.get(hoverId) : null;
+  const litLinks = lit ? links.filter(touches) : [];
 
   return (
-    <div ref={wrapRef} className="relative h-full w-full overflow-hidden bg-background"
-      style={{ backgroundImage: "radial-gradient(hsl(var(--border)) 1px, transparent 1px)", backgroundSize: "18px 18px" }}
-      data-testid="ontology-domain-map">
+    <div ref={wrapRef} className="relative h-full w-full overflow-hidden bg-background" data-testid="ontology-domain-map">
+      {/* Legend on top, one chip per category; a click hides or shows it. */}
+      <div className="absolute inset-x-0 top-0 z-10 flex h-7 items-center gap-1 overflow-x-auto border-b bg-card/90 px-2 backdrop-blur" data-testid="map-legend">
+        {categories.map((cat) => {
+          const off = hidden.has(cat);
+          return (
+            <button key={cat} type="button" aria-pressed={!off} title={off ? `Show ${cat}` : `Hide ${cat}`}
+              onClick={() => setHidden((h) => { const s = new Set(h); if (s.has(cat)) s.delete(cat); else if (s.size < categories.length - 1) s.add(cat); return s; })}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-[11.5px] hover:bg-accent ${off ? "line-through opacity-40" : "text-muted-foreground"}`}
+              data-testid={`legend-toggle-${cat.toLowerCase().replace(/\s+/g, "-")}`}>
+              <i className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: catColor[cat] }} />{cat}
+            </button>
+          );
+        })}
+      </div>
       <svg
-        width={size.w} height={size.h} className="block cursor-grab active:cursor-grabbing select-none touch-none"
-        onWheel={(e) => { const k = Math.min(3, Math.max(0.4, view.k * (e.deltaY < 0 ? 1.1 : 0.9))); setView((v) => ({ ...v, k })); }}
+        width={size.w} height={size.h} className="block cursor-grab select-none touch-none active:cursor-grabbing"
+        onWheel={(e) => { const k = Math.min(4, Math.max(0.4, view.k * (e.deltaY < 0 ? 1.1 : 0.9))); setView((v) => ({ ...v, k, x: (v.x * k) / v.k, y: (v.y * k) / v.k })); }}
         onPointerDown={(e) => { pan.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; }}
         onPointerMove={onMove} onPointerUp={endDrag} onPointerLeave={endDrag}
       >
-        <defs>
-          <filter id="omap-shadow" x="-50%" y="-50%" width="200%" height="200%">
-            <feDropShadow dx="0" dy="1" stdDeviation="1.4" floodOpacity="0.22" />
-          </filter>
-          {allDomains.map((d, i) => (
-            <marker key={d} id={`omap-arrow-${i}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-              <path d="M0 0L10 5L0 10z" fill={colors[d]} />
-            </marker>
-          ))}
-        </defs>
-        <g transform={`translate(${view.x + (size.w / 2) * (1 - view.k)},${view.y + (size.h / 2) * (1 - view.k)}) scale(${view.k})`}>
-        <g transform={`translate(${fit.x},${fit.y}) scale(${fit.k})`}>
-          {!near && halos.map((h) => (
-            <g key={h.d} opacity={lit && !(litSet && layout.nodes.some((n) => n.domain === h.d && litSet.has(n.id))) ? 0.35 : 1}>
-              <circle cx={h.cx} cy={h.cy} r={h.r} fill={colors[h.d]} fillOpacity={0.06} stroke={colors[h.d]} strokeOpacity={0.3} strokeDasharray={`${ts(5)} ${ts(4)}`} strokeWidth={ts(1.2)} />
-              <text x={h.cx} y={h.cy - h.r - ts(8)} textAnchor="middle" className="fill-foreground"
-                style={{ fontSize: ts(14), fontWeight: 600, fontFamily: "var(--astra-display)", paintOrder: "stroke", stroke: "hsl(var(--background))", strokeWidth: ts(4) }}>{h.d}</text>
-            </g>
-          ))}
-          {layout.links.map((l, i) => {
-            const a = pos.get(l.source.id)!, b = pos.get(l.target.id)!;
-            const hot = touches(l, lit);
-            const hide = near && !(near.has(l.source.id) && near.has(l.target.id));
-            if (hide) return null;
-            const col = colors[l.source.domain];
-            const di = allDomains.indexOf(l.source.domain);
-            const { d } = curve(a, b, radiusOf(l.source.deg), radiusOf(l.target.deg));
-            return (
-              <path key={i} d={d} fill="none" stroke={col} strokeWidth={ts(hot ? 2.2 : 1.2)}
-                strokeOpacity={lit ? (hot ? 0.95 : 0.1) : 0.42}
-                markerEnd={hot ? `url(#omap-arrow-${di})` : undefined} markerStart={hot && l.back ? `url(#omap-arrow-${di})` : undefined} />
-            );
+        <g transform={`translate(${size.w / 2 + view.x},${28 + (size.h - 28) / 2 + view.y}) scale(${K})`} style={{ transition: nodeDrag.current || pan.current ? undefined : "transform .5s ease" }}>
+          {links.map((l, i) => {
+            const a = pos.get(l.a), b = pos.get(l.b);
+            if (!a || !b) return null;
+            const hot = touches(l);
+            return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={hot ? catColor[byId.get(lit!)!.category] : "hsl(var(--foreground))"}
+              strokeOpacity={hot ? 0.85 : lit ? 0.05 : 0.14} strokeWidth={ts(hot ? 2.2 : 1)} />;
           })}
-          {layout.nodes.map((n) => {
-            if (near && !near.has(n.id)) return null;
-            const p = pos.get(n.id)!, r = radiusOf(n.deg) + (n.id === focusId ? 3 : 0);
-            const col = colors[n.domain];
-            const match = isMatch(n);
-            const dim = litSet ? !litSet.has(n.id) : q ? !match : false;
+          {layout.placed.map((n) => {
+            const p = pos.get(n.c.id)!;
+            const col = catColor[n.c.category];
+            const sel = n.c.id === focusId, hov = n.c.id === hoverId;
+            const dim = litSet ? !litSet.has(n.c.id) : q ? !isMatch(n.c) : false;
+            const r = n.r + (sel ? 4 : hov ? 2 : 0);
             return (
-              <g key={n.id} transform={`translate(${p.x},${p.y})`} opacity={dim ? 0.22 : 1} style={{ transition: "opacity .15s" }}
-                className="cursor-pointer"
-                onPointerDown={(e) => { e.stopPropagation(); nodeDrag.current = { id: n.id, x: e.clientX, y: e.clientY, ox: p.x, oy: p.y, moved: false }; }}
-                onClick={() => { if (!draggedLast.current) onSelect(n.id); draggedLast.current = false; }}
-                onPointerEnter={() => setHoverId(n.id)} onPointerLeave={() => setHoverId(null)} data-testid={`map-node-${n.id}`}>
-                {match && <circle r={r + ts(5)} fill="none" stroke="hsl(var(--foreground))" strokeWidth={ts(1.5)} strokeDasharray={`${ts(3)} ${ts(2)}`} />}
-                <circle r={r} fill={col} fillOpacity={n.used ? 0.92 : 0.22} stroke={n.id === focusId || n.id === hoverId ? "hsl(var(--foreground))" : col}
-                  strokeWidth={ts(n.id === focusId ? 2.8 : n.id === hoverId ? 2 : 1.6)} filter={n.used ? "url(#omap-shadow)" : undefined} />
-                {labelled.has(n.id) && (
-                  <text y={r + ts(13)} textAnchor="middle" className="fill-foreground"
-                    style={{ fontSize: ts(12), fontWeight: n.id === focusId || n.id === hoverId ? 600 : 500, paintOrder: "stroke", stroke: "hsl(var(--background))", strokeWidth: ts(3.5), pointerEvents: "none" }}>{n.label}</text>
-                )}
+              <g key={n.c.id} opacity={dim ? 0.2 : 1} style={{ transition: "opacity .2s" }} className="cursor-pointer"
+                onPointerDown={(e) => { e.stopPropagation(); nodeDrag.current = { id: n.c.id, x: e.clientX, y: e.clientY, ox: p.x, oy: p.y, moved: false }; }}
+                onClick={() => { if (!draggedLast.current) onSelect(n.c.id); draggedLast.current = false; }}
+                onPointerEnter={() => setHoverId(n.c.id)} onPointerLeave={() => setHoverId(null)} data-testid={`map-node-${n.c.id}`}>
+                {isMatch(n.c) && <circle cx={p.x} cy={p.y} r={r + ts(6)} fill="none" stroke="hsl(var(--foreground))" strokeWidth={ts(2)} strokeDasharray={`${ts(3)} ${ts(2)}`} className="animate-pulse" />}
+                <circle cx={p.x} cy={p.y} r={r} fill={col} fillOpacity={sel ? 0.95 : hov ? 0.85 : 0.72}
+                  stroke={sel ? "hsl(var(--foreground))" : hov ? "hsl(var(--foreground))" : col} strokeWidth={ts(sel ? 3 : hov ? 2 : 1.5)}
+                  strokeDasharray={n.c.custom ? `${ts(4)} ${ts(2)}` : undefined} />
               </g>
             );
           })}
-          {/* Link names for the concept in focus or under the pointer, as pills over the curve. */}
+          {layout.placed.map((n) => {
+            const l = labels.get(n.c.id);
+            if (!l) return null;
+            const strong = n.c.id === focusId || n.c.id === hoverId;
+            return (
+              <text key={`t-${n.c.id}`} x={l.x} y={l.y} textAnchor={l.anchor} className="fill-foreground" style={{ fontSize: ts(strong ? 13 : 11.5), fontWeight: strong ? 600 : 500, paintOrder: "stroke", stroke: "hsl(var(--background))", strokeWidth: ts(3.5), pointerEvents: "none" }}>
+                {n.c.label}
+              </text>
+            );
+          })}
           {litLinks.slice(0, 14).map((l, i) => {
-            const a = pos.get(l.source.id)!, b = pos.get(l.target.id)!;
-            const { m } = curve(a, b, radiusOf(l.source.deg), radiusOf(l.target.deg));
+            const a = pos.get(l.a)!, b = pos.get(l.b)!;
             const text = (l.back ? `${l.label} ⇄ ${l.back}` : l.label).slice(0, 34);
             const w = ts(text.length * 6.2 + 12), h = ts(17);
             return (
-              <g key={`pl-${i}`} transform={`translate(${m.x},${m.y})`} style={{ pointerEvents: "none" }}>
-                <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={h / 2} fill="hsl(var(--card))" stroke={colors[l.source.domain]} strokeOpacity={0.6} strokeWidth={ts(1)} />
+              <g key={`pl-${i}`} transform={`translate(${(a.x + b.x) / 2},${(a.y + b.y) / 2})`} style={{ pointerEvents: "none" }}>
+                <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={h / 2} fill="hsl(var(--card))" stroke={catColor[byId.get(lit!)!.category]} strokeOpacity={0.7} strokeWidth={ts(1)} />
                 <text y={ts(3.8)} textAnchor="middle" className="fill-foreground font-mono" style={{ fontSize: ts(10.5) }}>{text}</text>
               </g>
             );
           })}
         </g>
-        </g>
       </svg>
       {hoverNode && (() => {
-        const s = toScreen(pos.get(hoverNode.id)!);
-        const r = radiusOf(hoverNode.deg) * K;
-        const left = Math.min(size.w - 236, s.x + r + 12), top = Math.max(8, Math.min(size.h - 110, s.y - 36));
+        const s = toScreen(pos.get(hoverNode.c.id)!);
+        const left = Math.min(size.w - 256, s.x + hoverNode.r * K + 14), top = Math.max(36, Math.min(size.h - 120, s.y - 40));
         return (
-          <div className="pointer-events-none absolute z-10 w-[224px] rounded-lg border bg-card px-3 py-2 shadow-md" style={{ left, top }} data-testid="map-hover-card">
+          <div className="pointer-events-none absolute z-20 w-[240px] rounded-lg border bg-card px-3 py-2 shadow-md" style={{ left, top }} data-testid="map-hover-card">
             <div className="flex items-center gap-1.5 text-[13px] font-semibold">
-              <i className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colors[hoverNode.domain] }} />
-              <span className="truncate">{hoverNode.label}</span>
+              <i className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: catColor[hoverNode.c.category] }} />
+              <span className="truncate">{hoverNode.c.label}</span>
             </div>
-            <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{hoverNode.domain} · {hoverNode.category}</div>
+            <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{hoverNode.c.category} · {hoverNode.c.domain}</div>
+            {hoverNode.c.description && <p className="mt-1 line-clamp-2 text-[11.5px] text-muted-foreground">{hoverNode.c.description}</p>}
             <div className="mt-1.5 font-mono text-[11px] text-muted-foreground">
-              {hoverNode.deg} {hoverNode.deg === 1 ? "link" : "links"} · {hoverNode.used ? "used by agents" : "not used by agents yet"}
+              {(hoverNode.c.usageCount ?? 0) > 0 ? `${hoverNode.c.usageCount} ${hoverNode.c.usageCount === 1 ? "reference" : "references"}` : hoverNode.c.used ? "used by agents" : "not used by agents yet"}
             </div>
           </div>
         );
       })()}
-      <div className="absolute bottom-3 left-3 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border bg-card px-2 py-1.5 font-mono text-[11px] text-muted-foreground" data-testid="map-legend">
-        {allDomains.map((d) => {
-          const off = hidden.has(d);
-          return (
-            <button key={d} type="button" aria-pressed={!off} title={off ? `Show ${d}` : `Hide ${d}`}
-              onClick={() => setHidden((h) => { const n = new Set(h); if (n.has(d)) n.delete(d); else if (n.size < allDomains.length - 1) n.add(d); return n; })}
-              className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-accent ${off ? "line-through opacity-50" : "text-foreground"}`}
-              data-testid={`map-legend-domain-${d}`}>
-              <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: colors[d] }} />{d}
-            </button>
-          );
-        })}
-        <span className="mx-1 inline-flex items-center gap-1.5"><i className="inline-block h-2.5 w-2.5 rounded-full border-[1.5px] border-muted-foreground bg-muted-foreground/20" />Not used by agents yet</span>
-        <span className="mx-1">Bigger = more links · drag a dot to move it</span>
-        {unlinked > 0 && <span className="mx-1">{unlinked} not linked yet</span>}
+      <div className="absolute bottom-3 left-3 rounded-md border bg-card/90 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+        Bigger = used more · dashed = added by you · drag a circle to move it
       </div>
-      <div className="absolute right-3 top-3 flex overflow-hidden rounded-lg border bg-card">
-        <button type="button" className="px-2.5 py-1 text-sm hover:bg-accent" onClick={() => setView((v) => ({ ...v, k: Math.min(3, v.k * 1.2) }))} aria-label="Zoom in" data-testid="button-map-zoom-in">+</button>
-        <button type="button" className="border-l px-2.5 py-1 text-sm hover:bg-accent" onClick={() => setView((v) => ({ ...v, k: Math.max(0.4, v.k / 1.2) }))} aria-label="Zoom out" data-testid="button-map-zoom-out">−</button>
+      <div className="absolute right-3 top-10 z-10 flex overflow-hidden rounded-lg border bg-card">
+        <button type="button" className="px-2.5 py-1 text-sm hover:bg-accent" onClick={() => setView((v) => ({ k: Math.min(4, v.k * 1.2), x: v.x * 1.2, y: v.y * 1.2 }))} aria-label="Zoom in" data-testid="button-map-zoom-in">+</button>
+        <button type="button" className="border-l px-2.5 py-1 text-sm hover:bg-accent" onClick={() => setView((v) => ({ k: Math.max(0.4, v.k / 1.2), x: v.x / 1.2, y: v.y / 1.2 }))} aria-label="Zoom out" data-testid="button-map-zoom-out">−</button>
         <button type="button" className="border-l px-2.5 py-1 text-xs hover:bg-accent" onClick={() => { setView({ k: 1, x: 0, y: 0 }); setMoved({}); setHidden(new Set()); }} data-testid="button-map-reset">Reset</button>
       </div>
     </div>

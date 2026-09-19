@@ -1042,6 +1042,8 @@ export default function OntologyExplorer() {
     id: c.id, label: c.label, category: c.category, domain: c.domain,
     used: !unusedConceptIds.has(c.id),
     relationships: c.relationships.map((r) => ({ targetId: r.targetId, label: r.label, type: r.type })),
+    usageCount: c.usageCount, description: c.description, tags: c.tags, synonyms: c.synonyms,
+    custom: c.source === "custom-extension",
   })), [concepts, unusedConceptIds]);
   const incomingMap = useMemo(() => buildIncoming(mapConcepts), [mapConcepts]);
   // The map follows the domain and source filters; search highlights rather than hides.
