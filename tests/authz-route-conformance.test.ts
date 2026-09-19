@@ -97,7 +97,10 @@ function scanRoutes(): RouteEntry[] {
 // org-scoped deployment, like a Workspace run), agent-files attach (org-scoped
 // file into the caller's own conversation) and output-contracts
 // check-strict-compat (computes an answer, changes nothing).
-const BASELINE_UNGUARDED = 466;
+//
+// 459 (was 466): outcome edits (PATCH, versions, regenerate-constraint-graph,
+// sync-eval-feedback) and KPI create/update/delete need create_modify_outcomes.
+const BASELINE_UNGUARDED = 459;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {

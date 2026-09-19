@@ -12,6 +12,7 @@ import {
 } from "@shared/schema";
 import { checkPermission, getRequestRole } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
+import { filterKpisForOrg, resolveRequestOrgId } from "../tenant-scope";
 import {
   resolveOntologyTags,
   computeConstraintGraph,
@@ -59,6 +60,7 @@ async function createOutcomeVersion(
   const updated = await storage.updateOutcome(outcomeId, { ...(outcomeUpdates as Partial<OutcomeContract>), version: newVersion }, orgId);
 
   await storage.createAuditEvent({
+    organizationId: orgId,
     actorType,
     objectType: "outcome",
     objectId: outcomeId,
@@ -266,10 +268,11 @@ async function createOutcomeVersion(
     }
   });
 
-  router.patch("/api/outcomes/:id", async (req, res) => {
+  // Per-outcome and per-KPI routes are scoped by outcomeScope / kpiScope (server/tenant-scope.ts).
+  router.patch("/api/outcomes/:id", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       const data = insertOutcomeContractSchema.partial().parse(req.body);
-      const existing = await storage.getOutcome(req.params.id, getOrgId(req));
+      const existing = await storage.getOutcome((req.params.id as string), getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Not found" });
 
       const slaFieldsChanged = !!(
@@ -281,11 +284,11 @@ async function createOutcomeVersion(
         (data.approvalGates !== undefined && JSON.stringify(data.approvalGates) !== JSON.stringify(existing.approvalGates))
       );
 
-      const updated = await storage.updateOutcome(req.params.id, data, getOrgId(req));
+      const updated = await storage.updateOutcome((req.params.id as string), data, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Not found" });
-      const kpis = await storage.getKpisByOutcome(req.params.id);
+      const kpis = await storage.getKpisByOutcome((req.params.id as string));
       const graph = computeConstraintGraph(updated, kpis);
-      const withGraph = await storage.updateOutcome(req.params.id, { constraintGraph: graph }, getOrgId(req));
+      const withGraph = await storage.updateOutcome((req.params.id as string), { constraintGraph: graph }, getOrgId(req));
       const finalOutcome = withGraph || updated;
 
       if (slaFieldsChanged) {
@@ -334,11 +337,12 @@ async function createOutcomeVersion(
         if (data.approvalGates !== undefined) changedFields.push("approvalGates updated");
 
         await storage.createAuditEvent({
+          organizationId: finalOutcome.organizationId ?? undefined,
           actorType: "user",
           actorId: "system",
           action: "outcome.sla_renegotiated",
           objectType: "outcome",
-          objectId: req.params.id,
+          objectId: (req.params.id as string),
           details: JSON.stringify({
             changedFields,
             boundAgentCount: boundAgents.length,
@@ -350,6 +354,7 @@ async function createOutcomeVersion(
 
         for (const agent of nonCompliantAgents) {
           await storage.createAuditEvent({
+            organizationId: finalOutcome.organizationId ?? undefined,
             actorType: "system",
             actorId: "outcome_engine",
             action: "agent.outcome_sla_review_required",
@@ -457,8 +462,8 @@ async function createOutcomeVersion(
     }
   });
 
-  router.get("/api/kpis", async (_req, res) => {
-    const kpis = await storage.getKpis();
+  router.get("/api/kpis", async (req, res) => {
+    const kpis = await filterKpisForOrg(await storage.getKpis(), resolveRequestOrgId(req));
     res.json(kpis);
   });
 
@@ -615,9 +620,9 @@ async function createOutcomeVersion(
     }
   });
 
-  router.post("/api/outcomes/:id/sync-eval-feedback", async (req, res) => {
+  router.post("/api/outcomes/:id/sync-eval-feedback", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
-      const outcomeId = req.params.id;
+      const outcomeId = (req.params.id as string);
       const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
 
@@ -891,9 +896,9 @@ async function createOutcomeVersion(
     }
   });
 
-  router.post("/api/outcomes/:id/versions", async (req, res) => {
+  router.post("/api/outcomes/:id/versions", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
-      const outcomeId = req.params.id;
+      const outcomeId = (req.params.id as string);
       const orgId = getOrgId(req);
       const outcome = await storage.getOutcome(outcomeId, orgId);
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
@@ -919,7 +924,7 @@ async function createOutcomeVersion(
         reason,
         req.body.actorId || "system",
         "user",
-        orgId,
+        orgId as string,
       );
 
       res.status(201).json({ ...updated, _downstreamImpact: downstreamImpact });
@@ -1528,9 +1533,9 @@ async function createOutcomeVersion(
     }
   });
 
-  router.post("/api/outcomes/:id/regenerate-constraint-graph", async (req, res) => {
+  router.post("/api/outcomes/:id/regenerate-constraint-graph", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
-      const outcomeId = req.params.id;
+      const outcomeId = (req.params.id as string);
       const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
@@ -2053,7 +2058,7 @@ async function createOutcomeVersion(
     }
   });
 
-  router.post("/api/kpis", async (req, res) => {
+  router.post("/api/kpis", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       const data = insertKpiDefinitionSchema.parse(req.body);
       // Provenance is recorded by the writers that measure (recomputeOutcomeKpis, the KPI PATCH), not claimed by a request.
@@ -2066,7 +2071,7 @@ async function createOutcomeVersion(
     }
   });
 
-  router.patch("/api/kpis/:id", async (req, res) => {
+  router.patch("/api/kpis/:id", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       const data = insertKpiDefinitionSchema.partial().parse(req.body);
       // A value typed in by a person is recorded as such; the source can't be set from the body.
@@ -2078,8 +2083,8 @@ async function createOutcomeVersion(
       }
 
       // Fetch old KPI record before updating so we have true before/after values
-      const existingKpi = await storage.getKpi(req.params.id);
-      const updated = await storage.updateKpi(req.params.id, data);
+      const existingKpi = await storage.getKpi((req.params.id as string));
+      const updated = await storage.updateKpi((req.params.id as string), data);
       if (!updated) return res.status(404).json({ message: "Not found" });
 
       // Trigger a parent outcome version bump only when version-worthy KPI fields
@@ -2112,7 +2117,7 @@ async function createOutcomeVersion(
             `KPI definition updated: ${updated.name}`,
             "system",
             "system",
-            getOrgId(req),
+            getOrgId(req) as string,
           );
           versionActuallyBumped = true;
         }
@@ -2124,8 +2129,8 @@ async function createOutcomeVersion(
     }
   });
 
-  router.delete("/api/kpis/:id", async (req, res) => {
-    await storage.deleteKpi(req.params.id);
+  router.delete("/api/kpis/:id", checkPermission("create_modify_outcomes"), async (req, res) => {
+    await storage.deleteKpi((req.params.id as string));
     res.status(204).send();
   });
 

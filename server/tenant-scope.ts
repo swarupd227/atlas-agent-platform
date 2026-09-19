@@ -352,3 +352,61 @@ export async function mcpElicitationScope(req: Request, res: Response, next: Nex
     next(err);
   }
 }
+
+// ── Outcomes and their KPIs ──────────────────────────────────────────────────
+//
+// An outcome belongs to its organizationId (a legacy NULL row to the default
+// org). A KPI has no organization column of its own: it belongs to its
+// outcome's organization.
+
+function outcomeVisibleToOrg(outcome: { organizationId: string | null }, orgId: string | undefined | null): boolean {
+  return ownerMatches(outcome.organizationId ?? getDefaultOrgId() ?? null, orgId);
+}
+
+async function authorizeOutcomeId(res: Response, outcomeId: string | undefined, orgId: string | undefined): Promise<boolean> {
+  if (!outcomeId) return true;
+  const outcome = await storage.getOutcome(outcomeId);
+  if (!outcome) return true; // the route answers its own not-found
+  if (!outcomeVisibleToOrg(outcome, orgId)) {
+    notFound(res, "Outcome");
+    return false;
+  }
+  return true;
+}
+
+// Literal segments that share the /api/outcomes/:id shape but are not ids.
+const OUTCOME_RESERVED = new Set(["intelligence", "with-kpis", "from-proposal"]);
+
+/** Mounted at /api/outcomes/:id -- every per-outcome route and sub-route. */
+export async function outcomeScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id || OUTCOME_RESERVED.has(id)) return next();
+    if (await authorizeOutcomeId(res, id, resolveRequestOrgId(req))) next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Mounted at /api/kpis -- a KPI addressed by id, and the outcome a create or update names. */
+export async function kpiScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const orgId = resolveRequestOrgId(req);
+    const [id] = req.path.split("/").filter(Boolean);
+    if (id) {
+      const kpi = await storage.getKpi(id);
+      if (kpi && !(await authorizeOutcomeId(res, kpi.outcomeId, orgId))) return;
+    }
+    const bodyOutcomeId = req.body && typeof req.body.outcomeId === "string" ? req.body.outcomeId : undefined;
+    if (!READ_METHODS.has(req.method) && !(await authorizeOutcomeId(res, bodyOutcomeId, orgId))) return;
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Only the KPIs of the org's outcomes. */
+export async function filterKpisForOrg<T extends { outcomeId: string }>(kpis: T[], orgId: string | undefined | null): Promise<T[]> {
+  const outcomeIds = new Set((await storage.getOutcomes(orgId ?? undefined)).map((o) => o.id));
+  return kpis.filter((k) => outcomeIds.has(k.outcomeId));
+}
