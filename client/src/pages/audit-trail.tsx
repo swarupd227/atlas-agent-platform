@@ -185,6 +185,8 @@ export default function AuditTrail() {
     const d = parseDetails(e.details);
     const named = (d?.agentName || d?.name || d?.label || d?.filename || d?.toolName || d?.serverName) as string | undefined;
     if (named) return String(named);
+    const quoted = !d && e.details ? /"([^"]{3,})"/.exec(e.details)?.[1] : undefined;
+    if (quoted) return quoted;
     if (e.objectType === "agent" && e.objectId && agentName.get(e.objectId)) return agentName.get(e.objectId)!;
     if (d?.agentId && agentName.get(String(d.agentId))) return agentName.get(String(d.agentId))!;
     return e.objectId ? (UUID.test(e.objectId) ? e.objectId.slice(0, 8) : e.objectId) : "";
@@ -198,6 +200,9 @@ export default function AuditTrail() {
         .map((k) => `${humanize(k)}: ${String(d[k])}`);
       return bits.join(" · ");
     }
+    // 'Approval "X" approved by admin': X is already shown as the object, so keep only who did it.
+    const by = /\bby ([^.,;]+)$/.exec(e.details);
+    if (/"[^"]{3,}"/.test(e.details)) return by ? `by ${by[1]}` : "";
     return e.details;
   };
 
@@ -384,12 +389,12 @@ export default function AuditTrail() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-[13px]">
+            <table className="w-full min-w-[860px] table-fixed text-[13px]">
               <thead>
                 <tr className="border-b text-left font-mono text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground">
                   <th className="w-[72px] px-4 py-2 font-medium">Time</th>
-                  <th className="w-[22%] px-3 py-2 font-medium">Who</th>
-                  <th className="w-[22%] px-3 py-2 font-medium">What</th>
+                  <th className="w-[20%] px-3 py-2 font-medium">Who</th>
+                  <th className="w-[24%] px-3 py-2 font-medium">What</th>
                   <th className="px-3 py-2 font-medium">On</th>
                   <th className="w-[64px] px-4 py-2 text-right font-medium">#</th>
                 </tr>
