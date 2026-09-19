@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { piiMaskingConfigs, piiMaskingRuns, insertPiiMaskingConfigSchema } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES } from "../services/pii/pii-masking-engine";
+import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES, SUPPORTED_ENTITY_TYPES } from "../services/pii/pii-masking-engine";
 
 const router = Router();
 
@@ -11,7 +11,8 @@ const router = Router();
 router.get("/api/pii/entity-types", (_req, res) => {
   res.json({
     engine: "regex",
-    entityTypes: DEFAULT_ENTITY_TYPES,
+    entityTypes: SUPPORTED_ENTITY_TYPES,
+    defaultEntityTypes: DEFAULT_ENTITY_TYPES,
     note: "PERSON detection requires Presidio (not yet enabled). Regex engine covers 6 pattern-based types.",
   });
 });
@@ -23,7 +24,7 @@ router.get("/api/pii/health", (_req, res) => {
     engine: "regex",
     presidioAvailable: false,
     presidioUrl: process.env.PRESIDIO_URL || null,
-    supportedTypes: DEFAULT_ENTITY_TYPES,
+    supportedTypes: SUPPORTED_ENTITY_TYPES,
   });
 });
 

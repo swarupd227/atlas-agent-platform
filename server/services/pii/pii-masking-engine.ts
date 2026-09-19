@@ -27,7 +27,8 @@ export interface PIIMaskingConfig {
   failOnError: boolean;
 }
 
-export const DEFAULT_ENTITY_TYPES = [
+/** Every type the regex engine can detect; a masking config may opt into any of them. */
+export const SUPPORTED_ENTITY_TYPES = [
   "EMAIL_ADDRESS",
   "PHONE_NUMBER",
   "US_SSN",
@@ -35,6 +36,13 @@ export const DEFAULT_ENTITY_TYPES = [
   "IP_ADDRESS",
   "URL",
 ];
+
+/**
+ * What is masked when nothing says otherwise (agent output, configs without a list).
+ * URL is left out: a web address is rarely personal data, and masking it by default
+ * replaced the links agents are asked to produce (image links, page links) with "[URL]".
+ */
+export const DEFAULT_ENTITY_TYPES = SUPPORTED_ENTITY_TYPES.filter((t) => t !== "URL");
 
 const REGEX_PATTERNS: Record<string, RegExp[]> = {
   EMAIL_ADDRESS:  [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g],
