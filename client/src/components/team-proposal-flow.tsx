@@ -274,7 +274,7 @@ export function TeamProposalDialog({
         if (!o) reset();
       }}
     >
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="dialog-team-proposal">
+      <DialogContent className="astra-scope font-sans max-w-lg max-h-[85vh] overflow-y-auto" data-testid="dialog-team-proposal">
         {step === "describe" && (
           <>
             <DialogHeader>
@@ -342,7 +342,7 @@ export function TeamProposalDialog({
               )}
               {(proposal.agents || []).map((a, i) => (
                 <div key={i} className="flex items-center gap-2 p-2 rounded-md border ml-4" data-testid={`review-worker-${i}`}>
-                  <Bot className="w-3.5 h-3.5 text-primary shrink-0" />
+                  <Bot className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                   <div className="flex flex-col">
                     <span className="text-sm font-medium">{a.name}</span>
                     <span className="text-[11px] text-muted-foreground">{a.description}</span>

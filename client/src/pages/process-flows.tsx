@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Workflow, Zap, Users, Brain, Bell, Square,
   Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
-  Play, Database, GitBranch, Save, Mic, FolderOpen, AlertTriangle, CheckCircle2,
+  Play, Database, GitBranch, Save, Mic, MicOff, FolderOpen, AlertTriangle, CheckCircle2,
+  Maximize2, Minimize2, X,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -102,6 +103,9 @@ const STARTER_TEMPLATES: Array<{ key: string; name: string; blurb: string; nodes
 
 // Staged status lines shown while the AI drafts a flow, so the ~6s round-trip
 // reads as visible progress instead of a blank canvas.
+// Overlays on the canvas start past the step palette (FlowGraphCanvas's left rail).
+const PALETTE_OFFSET = "left-[76px]";
+
 const GEN_MESSAGES = ["Reading your description…", "Drafting the steps…", "Wiring up the branches…", "Laying it out cleanly…"];
 
 export default function ProcessFlows() {
@@ -145,6 +149,8 @@ export default function ProcessFlows() {
   const [aiDescription, setAiDescription] = useState(() => urlParams.outcomeName || "");
   const [aiFiles, setAiFiles] = useState<AttachedFile[]>([]);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  // Long procedures need room: the describe panel can grow to the canvas height.
+  const [describeExpanded, setDescribeExpanded] = useState(false);
   // Full-viewport canvas. Header, AI panel and toolbar together leave little
   // room for a 9-node graph; this lifts the editor out of the page shell
   // without disturbing any of the layout beneath it.
@@ -415,150 +421,223 @@ export default function ProcessFlows() {
     [graph.nodes],
   );
 
+  const approvalCount = graph.nodes.filter(n => n.type === "expert_approval").length;
+  const decisionCount = graph.nodes.filter(n => n.type === "make_decision").length;
+  const wordCount = aiDescription.trim() ? aiDescription.trim().split(/\s+/).length : 0;
+  const describeOpen = aiPanelOpen && !generateMutation.isPending;
+
   return (
-    <div className="flex flex-col h-full" data-testid="page-process-flows">
-      {/* Header wraps rather than overflows. With an outcome in context this row
-          carries seven buttons; without flex-wrap they ran off the right edge, and
-          because the title block had no min-width flexbox crushed it until
-          "Process Flow Studio" broke across three lines and the description
-          rendered as a narrow column. The title now holds a sensible minimum and
-          the buttons wrap onto a second line instead. */}
-      <div className="flex items-center flex-wrap gap-x-3 gap-y-2 p-4 border-b shrink-0">
-        <Workflow className="w-5 h-5 text-primary shrink-0" />
-        <div className="min-w-[240px] flex-1">
-          <h1 className="text-base font-semibold">Process Flow Studio</h1>
-          <p className="text-xs text-muted-foreground">Describe the steps of a process, no KPI commitment required — for a goal you're accountable for, use Outcomes instead</p>
+    <div className="astra-scope flex flex-col h-full bg-background text-foreground font-sans" data-testid="page-process-flows">
+      {/* Header: what this flow is, then every action on it. Actions wrap onto a
+          second line on narrow screens instead of crushing the title. */}
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 px-5 pt-4 pb-3 shrink-0">
+        <div className="min-w-[260px] flex-1">
+          <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Process flow</span>
+          {nodeCount > 0 ? (
+            <Input
+              value={flowName}
+              onChange={e => setFlowName(e.target.value)}
+              className="mt-0.5 h-auto max-w-[640px] border-transparent bg-transparent px-1 -mx-1 py-0.5 font-[family-name:var(--astra-display)] text-2xl md:text-2xl font-semibold tracking-tight shadow-none hover:border-border focus-visible:border-border"
+              placeholder="Name this flow…"
+              aria-label="Flow name"
+              data-testid="input-flow-name"
+            />
+          ) : (
+            <h1 className="mt-0.5 font-[family-name:var(--astra-display)] text-2xl font-semibold tracking-tight">Process Flow Studio</h1>
+          )}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground">
+            {nodeCount > 0 ? (
+              <>
+                <span>{nodeCount} steps</span>
+                <span>{graph.edges.length} connections</span>
+                {decisionCount > 0 && <span>{decisionCount} decision{decisionCount !== 1 ? "s" : ""}</span>}
+                {approvalCount > 0 && <span>{approvalCount} approval{approvalCount !== 1 ? "s" : ""}</span>}
+                {totalMins > 0 && <span>{totalMins >= 60 ? `~${Math.round(totalMins / 60)}h` : `~${totalMins}m`} total</span>}
+                {linkedTeamAgent && <span>runs as <a href={`/agents/teams/${linkedTeamAgent.id}`} className="text-foreground underline underline-offset-2">{linkedTeamAgent.name}</a></span>}
+                <span>{savedFlowId ? "saved in library" : "not saved yet"}</span>
+              </>
+            ) : (
+              <span className="font-sans text-sm">Describe how a process runs and the studio draws it. For a goal you're accountable for, start from Outcomes instead.</span>
+            )}
+          </div>
         </div>
-        <div className="flex items-center flex-wrap gap-2 shrink-0 ml-auto [&_button]:shrink-0">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setAiPanelOpen(v => !v)}
-          data-testid="button-toggle-ai-panel"
-        >
-          <Sparkles className="w-3.5 h-3.5 mr-1.5 text-purple-500" />
-          {aiPanelOpen ? "Close AI" : "Describe Workflow"}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setLibraryOpen(true)}
-          data-testid="button-open-flow-library"
-        >
-          <FolderOpen className="w-3.5 h-3.5 mr-1.5" />
-          Open
-        </Button>
-        {nodeCount > 0 && (
+        <div className="flex flex-wrap items-center gap-2 [&_button]:shrink-0">
           <Button
             size="sm"
-            variant="outline"
-            onClick={() => saveToLibraryMutation.mutate()}
-            disabled={saveToLibraryMutation.isPending}
-            data-testid="button-save-flow-to-library"
+            variant={aiPanelOpen ? "secondary" : "outline"}
+            onClick={() => setAiPanelOpen(v => !v)}
+            aria-pressed={aiPanelOpen}
+            data-testid="button-toggle-ai-panel"
           >
-            {saveToLibraryMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
-            {savedFlowId ? "Save" : "Save to Library"}
+            <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+            Describe workflow
           </Button>
-        )}
-        {urlParams.outcomeId && nodeCount > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending}
-            data-testid="button-save-flow-to-outcome"
-          >
-            {saveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
-            Save to Outcome
+          <Button size="sm" variant="outline" onClick={() => setLibraryOpen(true)} data-testid="button-open-flow-library">
+            <FolderOpen className="w-3.5 h-3.5 mr-1.5" />
+            Open
           </Button>
-        )}
-        {urlParams.outcomeId && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => navigate(`/outcomes/${urlParams.outcomeId}`)}
-            data-testid="button-back-to-outcome"
-          >
-            <ArrowRight className="w-3.5 h-3.5 mr-1.5 rotate-180" />
-            Back to Outcome
-          </Button>
-        )}
-        {nodeCount > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => compileMutation.mutate()}
-            disabled={compileMutation.isPending}
-            data-testid="button-validate-flow"
-          >
-            {compileMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5 mr-1.5" />}
-            Validate &amp; Preview
-          </Button>
-        )}
-        {nodeCount > 0 && !linkedTeamAgent && (
-          <Button size="sm" onClick={() => setShowTeamProposal(true)} data-testid="button-turn-into-automation">
-            <Zap className="w-3.5 h-3.5 mr-1.5" />
-            Turn into a live automation
-          </Button>
-        )}
-        {nodeCount > 0 && linkedTeamAgent && (
-          <Button
-            size="sm"
-            onClick={() => syncMutation.mutate(undefined)}
-            disabled={syncMutation.isPending}
-            data-testid="button-sync-to-automation"
-          >
-            {syncMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
-            Sync to Automation
-          </Button>
-        )}
+          {nodeCount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => saveToLibraryMutation.mutate()}
+              disabled={saveToLibraryMutation.isPending}
+              data-testid="button-save-flow-to-library"
+            >
+              {saveToLibraryMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              {savedFlowId ? "Save" : "Save to Library"}
+            </Button>
+          )}
+          {urlParams.outcomeId && nodeCount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => saveMutation.mutate()}
+              disabled={saveMutation.isPending}
+              data-testid="button-save-flow-to-outcome"
+            >
+              {saveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              Save to Outcome
+            </Button>
+          )}
+          {urlParams.outcomeId && (
+            <Button size="sm" variant="ghost" onClick={() => navigate(`/outcomes/${urlParams.outcomeId}`)} data-testid="button-back-to-outcome">
+              <ArrowRight className="w-3.5 h-3.5 mr-1.5 rotate-180" />
+              Back to Outcome
+            </Button>
+          )}
+          {nodeCount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => compileMutation.mutate()}
+              disabled={compileMutation.isPending}
+              title="Validate the flow and preview how it would run"
+              data-testid="button-validate-flow"
+            >
+              {compileMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5 mr-1.5" />}
+              Check flow
+            </Button>
+          )}
+          {nodeCount > 0 && !linkedTeamAgent && (
+            <Button size="sm" onClick={() => setShowTeamProposal(true)} data-testid="button-turn-into-automation">
+              <Zap className="w-3.5 h-3.5 mr-1.5" />
+              Turn into a live automation
+            </Button>
+          )}
+          {nodeCount > 0 && linkedTeamAgent && (
+            <Button
+              size="sm"
+              onClick={() => syncMutation.mutate(undefined)}
+              disabled={syncMutation.isPending}
+              data-testid="button-sync-to-automation"
+            >
+              {syncMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
+              Sync to Automation
+            </Button>
+          )}
         </div>
       </div>
 
-      <div className="flex flex-1 min-h-0">
-        {/* Main: Editor */}
-        <div className="flex-1 flex flex-col min-w-0">
-          {/* AI Panel */}
-          {aiPanelOpen && (
-            <div className="border-b p-4 bg-muted/20 flex flex-col gap-2 max-h-[45vh] overflow-y-auto shrink-0">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-500" />
-                  Describe your workflow in plain English
-                </p>
+      {/* Outcome context */}
+      {urlParams.outcomeName && (
+        <div className="mx-5 mb-3 flex items-center gap-2 rounded-lg border bg-card px-3 py-2" data-testid="banner-outcome-context">
+          <Workflow className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <p className="text-xs text-muted-foreground">
+            Designing for outcome: <span className="font-medium text-foreground">{urlParams.outcomeName}</span>
+            {urlParams.kpis && <span> · KPIs: {urlParams.kpis}</span>}
+          </p>
+        </div>
+      )}
+
+      {/* Canvas — React Flow graph editor (branch / parallel / loop) */}
+      <div
+        className={canvasExpanded ? "fixed inset-0 z-50 astra-scope bg-background text-foreground font-sans" : "flex-1 min-h-0 relative border-t"}
+        data-testid="flow-canvas-container"
+      >
+        {/* Describe panel: floats over the canvas with room for a full process
+            write-up (grows with the text, resizable, expandable), dictation and
+            the source document. It closes once a flow is drawn; reopening keeps
+            the text. Rendered first so its textarea is the page's first. */}
+        {describeOpen && (
+          <div
+            className={`absolute left-1/2 top-4 z-30 flex w-[min(760px,calc(100%-2rem))] -translate-x-1/2 flex-col gap-3 rounded-2xl border bg-card p-4 shadow-[0_12px_40px_hsl(0_0%_0%/0.14)] ${describeExpanded ? "bottom-4" : ""}`}
+            role="dialog"
+            aria-label="Describe your workflow"
+            data-testid="panel-describe-workflow"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-[family-name:var(--astra-display)] text-base font-semibold">Describe your workflow in plain English</p>
+                <p className="text-xs text-muted-foreground">Who does what, in what order, where it branches, who approves. Paste a whole procedure if you have one.</p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8"
+                  onClick={() => setDescribeExpanded(v => !v)}
+                  title={describeExpanded ? "Shrink" : "Expand to full height"}
+                  aria-label={describeExpanded ? "Shrink the description" : "Expand the description"}
+                  data-testid="button-expand-describe"
+                >
+                  {describeExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                </Button>
+                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setAiPanelOpen(false)} aria-label="Close" data-testid="button-close-describe">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+            <div className={`relative flex flex-col ${describeExpanded ? "flex-1 min-h-0" : ""}`}>
+              <Textarea
+                value={aiDescription}
+                onChange={e => setAiDescription(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && (aiDescription.trim() || aiFiles.length)) {
+                    e.preventDefault();
+                    generateMutation.mutate(aiDescription);
+                  }
+                }}
+                placeholder={"e.g. When a new supplier invoice arrives, check it against our purchase order. Invoices over $10K need manager approval; the rest go straight through. Then schedule payment and notify the supplier."}
+                className={`bg-background text-sm leading-relaxed ${describeExpanded ? "flex-1 min-h-[240px] resize-none" : "min-h-[168px] max-h-[48vh] resize-y"}`}
+                data-testid="input-ai-description"
+              />
+              {listening && (
+                <span className="pointer-events-none absolute right-3 top-2.5 inline-flex items-center gap-1.5 rounded-full bg-primary px-2 py-0.5 font-mono text-[11px] font-medium text-primary-foreground" data-testid="badge-listening">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground animate-pulse" /> Listening
+                </span>
+              )}
+            </div>
+            <FileAttach
+              context="process_flow"
+              value={aiFiles}
+              onChange={setAiFiles}
+              disabled={generateMutation.isPending}
+              label="Attach an SOP, runbook or policy"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {wordCount > 0 ? `${wordCount} word${wordCount !== 1 ? "s" : ""}` : "Type, dictate, or attach a document"}
+                {aiFiles.length > 0 ? ` · ${aiFiles.length} file${aiFiles.length !== 1 ? "s" : ""}` : ""}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
                 {voiceSupported && (
                   <Button
                     size="sm"
                     variant={listening ? "default" : "outline"}
-                    className={`h-7 ${listening ? "animate-pulse" : ""}`}
                     onClick={toggleVoice}
+                    aria-pressed={listening}
                     data-testid="button-voice-dictate"
                   >
-                    <Mic className="w-3.5 h-3.5 mr-1.5" />
-                    {listening ? "Listening… tap to stop" : "Dictate"}
+                    {listening ? <MicOff className="w-3.5 h-3.5 mr-1.5" /> : <Mic className="w-3.5 h-3.5 mr-1.5" />}
+                    {listening ? "Stop dictating" : "Dictate"}
                   </Button>
                 )}
-              </div>
-              <Textarea
-                value={aiDescription}
-                onChange={e => setAiDescription(e.target.value)}
-                placeholder="e.g. When a new supplier invoice arrives, check it against our purchase order, get manager approval for invoices over $10K, then schedule payment and notify the supplier."
-                className="text-sm resize-none h-20"
-                data-testid="input-ai-description"
-              />
-              <FileAttach
-                context="process_flow"
-                value={aiFiles}
-                onChange={setAiFiles}
-                disabled={generateMutation.isPending}
-                variant="dropzone"
-                label="Or drop the process document — an SOP, runbook, or policy"
-              />
-              <div className="flex items-center justify-end gap-2">
                 <Button
                   size="sm"
                   onClick={() => generateMutation.mutate(aiDescription)}
                   disabled={(!aiDescription.trim() && !aiFiles.length) || generateMutation.isPending}
+                  title="Generate the flow (Ctrl+Enter)"
                   data-testid="button-ai-generate"
                 >
                   {generateMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
@@ -566,135 +645,89 @@ export default function ProcessFlows() {
                 </Button>
               </div>
             </div>
-          )}
-
-          {/* Outcome context banner */}
-          {urlParams.outcomeName && (
-            <div className="px-4 py-2 bg-primary/5 border-b flex items-center gap-2" data-testid="banner-outcome-context">
-              <Workflow className="w-3.5 h-3.5 text-primary shrink-0" />
-              <p className="text-xs text-muted-foreground">
-                Designing for outcome: <span className="font-medium text-foreground">{urlParams.outcomeName}</span>
-                {urlParams.kpis && <span> · KPIs: {urlParams.kpis}</span>}
-              </p>
-            </div>
-          )}
-
-          {/* Canvas header */}
-          <div className="flex items-center gap-3 p-3 border-b bg-muted/10">
-            {nodeCount > 0 ? (
-              <>
-                <Input
-                  value={flowName}
-                  onChange={e => setFlowName(e.target.value)}
-                  className="h-7 text-sm font-medium w-56"
-                  placeholder="Flow name…"
-                  data-testid="input-flow-name"
-                />
-                <Badge variant="secondary" className="text-[10px]">{nodeCount} steps</Badge>
-                <Badge variant="outline" className="text-[10px]">{graph.edges.length} connections</Badge>
-                {totalMins > 0 && (
-                  <span className="text-xs text-muted-foreground">{totalMins >= 60 ? `~${Math.round(totalMins / 60)}h` : `~${totalMins}m`} total</span>
-                )}
-                <div className="flex-1" />
-                <span className="text-[11px] text-muted-foreground hidden lg:inline">Drag from a node's right dot to connect · click a connection to add a branch condition</span>
-                <button
-                  type="button"
-                  onClick={() => setCanvasExpanded(v => !v)}
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  data-testid="button-expand-canvas"
-                >
-                  {canvasExpanded ? "Exit full screen" : "Full screen"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setClearConfirmOpen(true)}
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  data-testid="button-clear-flow"
-                >
-                  Clear
-                </button>
-              </>
-            ) : (
-              <span className="text-xs text-muted-foreground">Add nodes from the canvas palette, pick a template, or describe your workflow to generate a flow</span>
-            )}
           </div>
+        )}
 
-          {/* Canvas — React Flow graph editor (branch / parallel / loop) */}
-          <div
-            className={canvasExpanded ? "fixed inset-0 z-50 bg-background" : "flex-1 min-h-0 relative"}
-            data-testid="flow-canvas-container"
-          >
-            {canvasExpanded && (
-              <button
-                type="button"
-                onClick={() => setCanvasExpanded(false)}
-                className="absolute top-3 right-3 z-10 rounded-md border bg-background/90 px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-accent"
-                data-testid="button-exit-fullscreen"
-              >
-                Exit full screen
-              </button>
-            )}
-            <FlowGraphCanvas
-              flowKey={`flow-${flowKey}`}
-              initialNodes={graph.nodes}
-              initialEdges={graph.edges}
-              issues={validationIssues}
-              onChange={(nodes, edges) => { setGraph({ nodes, edges }); if (validationIssues.length) setValidationIssues([]); }}
-            />
+        <FlowGraphCanvas
+          flowKey={`flow-${flowKey}`}
+          initialNodes={graph.nodes}
+          initialEdges={graph.edges}
+          issues={validationIssues}
+          onChange={(nodes, edges) => { setGraph({ nodes, edges }); if (validationIssues.length) setValidationIssues([]); }}
+          overlay={nodeCount > 0 ? (
+            // One place for full screen and clear, in and out of full screen.
+            <div className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-lg border bg-card/95 p-1 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setCanvasExpanded(v => !v)}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              data-testid={canvasExpanded ? "button-exit-fullscreen" : "button-expand-canvas"}
+            >
+              {canvasExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              {canvasExpanded ? "Exit full screen" : "Full screen"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setClearConfirmOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
+              data-testid="button-clear-flow"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Clear
+            </button>
+          </div>
+          ) : null}
+        />
 
-            {/* Generation reveal — staged status over the canvas, so the AI
-                round-trip feels like progress rather than a frozen blank. */}
-            {generateMutation.isPending && (
-              <div className="absolute inset-0 left-40 flex flex-col items-center justify-center gap-3 bg-background/70 backdrop-blur-sm z-20" data-testid="generation-overlay">
-                <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                <p className="text-sm font-medium" data-testid="text-generation-status">{GEN_MESSAGES[genMsgIdx]}</p>
-                <p className="text-xs text-muted-foreground">Designing your flow from the description…</p>
+        {/* Generation reveal — staged status over the canvas, so the AI
+            round-trip feels like progress rather than a frozen blank. */}
+        {generateMutation.isPending && (
+          <div className={`absolute inset-0 ${PALETTE_OFFSET} flex flex-col items-center justify-center gap-3 bg-background/75 backdrop-blur-sm z-20`} data-testid="generation-overlay">
+            <Loader2 className="w-7 h-7 text-foreground animate-spin" />
+            <p className="font-[family-name:var(--astra-display)] text-base font-semibold" data-testid="text-generation-status">{GEN_MESSAGES[genMsgIdx]}</p>
+            <p className="text-xs text-muted-foreground">Designing your flow from the description…</p>
+          </div>
+        )}
+
+        {/* Empty state — a real starting point (describe or pick a template)
+            instead of a bare grid. Offset past the palette so it stays usable. */}
+        {nodeCount === 0 && !generateMutation.isPending && !describeOpen && (
+          <div className={`absolute inset-0 ${PALETTE_OFFSET} flex items-center justify-center p-6 pointer-events-none z-10`} data-testid="empty-state">
+            <div className="flex w-full max-w-2xl flex-col items-center gap-5 pointer-events-auto">
+              <div className="flex flex-col items-center gap-2 text-center">
+                <h2 className="font-[family-name:var(--astra-display)] text-xl font-semibold">Start building your process flow</h2>
+                <p className="max-w-md text-sm text-muted-foreground">Describe it in plain English, dictate it, or drop in the SOP. Or start from a template, or drag steps in from the left.</p>
               </div>
-            )}
-
-            {/* Empty state — a real starting point (describe or pick a template)
-                instead of a bare grid. Offset past the palette so it stays usable. */}
-            {nodeCount === 0 && !generateMutation.isPending && (
-              <div className="absolute inset-0 left-40 flex items-center justify-center p-6 pointer-events-none z-10" data-testid="empty-state">
-                <div className="flex flex-col items-center gap-4 max-w-xl pointer-events-auto">
-                  <div className="flex flex-col items-center gap-2 text-center">
-                    <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                      <Workflow className="w-6 h-6 text-primary" />
-                    </div>
-                    <h2 className="text-base font-semibold">Start building your process flow</h2>
-                    <p className="text-sm text-muted-foreground">Describe it in plain English and let AI draft it, pick a starter below, or drag nodes from the palette.</p>
-                  </div>
-                  <Button size="sm" onClick={() => setAiPanelOpen(true)} data-testid="button-empty-describe">
-                    <Sparkles className="w-3.5 h-3.5 mr-1.5 text-purple-200" />
-                    Describe your workflow
-                  </Button>
-                  <div className="flex flex-col items-center gap-2 w-full">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">or start from a template</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full">
-                      {STARTER_TEMPLATES.map(tpl => (
-                        <button
-                          key={tpl.key}
-                          type="button"
-                          onClick={() => { replaceLaidOut({ nodes: tpl.nodes, edges: tpl.edges }); setFlowName(tpl.name); setSavedFlowId(null); setValidationIssues([]); }}
-                          className="flex flex-col gap-1 rounded-lg border p-3 text-left hover-elevate transition-all"
-                          data-testid={`template-${tpl.key}`}
-                        >
-                          <span className="text-xs font-medium">{tpl.name}</span>
-                          <span className="text-[10px] text-muted-foreground leading-snug">{tpl.blurb}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+              <Button onClick={() => setAiPanelOpen(true)} data-testid="button-empty-describe">
+                <Sparkles className="w-4 h-4 mr-1.5" />
+                Describe your workflow
+              </Button>
+              <div className="flex w-full flex-col gap-2">
+                <span className="text-center font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">or start from a template</span>
+                <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3">
+                  {STARTER_TEMPLATES.map(tpl => (
+                    <button
+                      key={tpl.key}
+                      type="button"
+                      onClick={() => { replaceLaidOut({ nodes: tpl.nodes, edges: tpl.edges }); setFlowName(tpl.name); setSavedFlowId(null); setValidationIssues([]); }}
+                      className="flex flex-col gap-1 rounded-xl border bg-card p-3 text-left transition-colors hover:border-foreground/40"
+                      data-testid={`template-${tpl.key}`}
+                    >
+                      <span className="text-sm font-medium">{tpl.name}</span>
+                      <span className="text-xs leading-snug text-muted-foreground">{tpl.blurb}</span>
+                      <span className="mt-1 font-mono text-[11px] text-muted-foreground">{tpl.nodes.length} steps</span>
+                    </button>
+                  ))}
                 </div>
               </div>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <Dialog open={compileOpen} onOpenChange={setCompileOpen}>
-        <DialogContent className="max-w-lg" data-testid="dialog-execution-plan">
-          <DialogHeader><DialogTitle>Validation &amp; Execution Plan</DialogTitle></DialogHeader>
+        <DialogContent className="astra-scope font-sans max-w-lg" data-testid="dialog-execution-plan">
+          <DialogHeader><DialogTitle className="font-[family-name:var(--astra-display)]">Check flow: validation and run plan</DialogTitle></DialogHeader>
           {compiled && (compiled.valid ? (
             <div className="flex flex-col gap-3">
               {/* Validation verdict first: an honest go/no-go, not just a plan. */}
@@ -766,7 +799,7 @@ export default function ProcessFlows() {
       />
 
       <Dialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
-        <DialogContent className="max-w-sm" data-testid="dialog-clear-confirm">
+        <DialogContent className="astra-scope font-sans max-w-sm" data-testid="dialog-clear-confirm">
           <DialogHeader><DialogTitle>Clear this flow?</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
             This removes all {nodeCount} step{nodeCount !== 1 ? "s" : ""} and starts over. This can't be undone.
@@ -786,7 +819,7 @@ export default function ProcessFlows() {
       </Dialog>
 
       <Dialog open={libraryOpen} onOpenChange={setLibraryOpen}>
-        <DialogContent className="max-w-lg" data-testid="dialog-flow-library">
+        <DialogContent className="astra-scope font-sans max-w-lg" data-testid="dialog-flow-library">
           <DialogHeader><DialogTitle>Saved process flows</DialogTitle></DialogHeader>
           {!savedFlows ? (
             <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
@@ -796,7 +829,7 @@ export default function ProcessFlows() {
             <div className="flex flex-col gap-1.5 max-h-80 overflow-y-auto">
               {savedFlows.map((f: any) => (
                 <div key={f.id} className="flex items-center gap-2 rounded-md border p-2 hover-elevate" data-testid={`saved-flow-${f.id}`}>
-                  <Workflow className="w-4 h-4 text-primary shrink-0" />
+                  <Workflow className="w-4 h-4 text-muted-foreground shrink-0" />
                   <div className="flex flex-col min-w-0 flex-1">
                     <span className="text-sm font-medium truncate">{f.name}</span>
                     <span className="text-[10px] text-muted-foreground">{f.nodeCount} steps · {f.edgeCount} connections · {f.updatedAt ? new Date(f.updatedAt).toLocaleDateString() : ""}</span>
@@ -811,7 +844,7 @@ export default function ProcessFlows() {
       </Dialog>
 
       <Dialog open={syncLegacyChoiceOpen} onOpenChange={setSyncLegacyChoiceOpen}>
-        <DialogContent className="max-w-md" data-testid="dialog-sync-legacy-choice">
+        <DialogContent className="astra-scope font-sans max-w-md" data-testid="dialog-sync-legacy-choice">
           <DialogHeader>
             <DialogTitle>This automation predates edit-tracking</DialogTitle>
           </DialogHeader>
@@ -834,7 +867,7 @@ export default function ProcessFlows() {
       </Dialog>
 
       <Dialog open={syncResultOpen} onOpenChange={setSyncResultOpen}>
-        <DialogContent className="max-w-md" data-testid="dialog-sync-result">
+        <DialogContent className="astra-scope font-sans max-w-md" data-testid="dialog-sync-result">
           <DialogHeader><DialogTitle>Sync complete</DialogTitle></DialogHeader>
           {syncResult && (
             <div className="flex flex-col gap-3 text-sm">

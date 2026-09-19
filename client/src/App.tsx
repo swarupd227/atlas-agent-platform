@@ -174,16 +174,16 @@ function HeaderControls() {
         <div className="hidden md:flex items-center gap-2 flex-wrap">
           <IndustrySelector />
           <EnvironmentSelector />
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
+          <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 font-mono text-[11px] text-muted-foreground" data-testid="badge-security-mode">
             <Shield className="h-3 w-3" />
             Production
           </span>
-          <span className="text-xs text-muted-foreground" data-testid="text-current-user">{user?.username} ({user?.role})</span>
+          <span className="font-mono text-[11px] text-muted-foreground" data-testid="text-current-user">{user?.username} ({user?.role})</span>
         </div>
         <NotificationCenter />
         <button
           onClick={logout}
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive px-2 py-1 rounded-md border hover:border-destructive/50 transition-colors"
+          className="inline-flex items-center gap-1 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive"
           data-testid="button-logout"
         >
           <LogOut className="h-3 w-3" />
@@ -210,7 +210,7 @@ function BusinessModeAwareHeaderControls() {
         <EnvironmentSelector />
         {!isBusinessMode && <RoleSwitcher />}
         <BusinessModeBadge />
-        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
+        <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 font-mono text-[11px] text-muted-foreground" data-testid="badge-security-mode">
           <Shield className="h-3 w-3" />
           Demo
         </span>
@@ -233,7 +233,7 @@ function BusinessModeBadge() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="inline-flex items-center gap-1.5 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 px-2.5 py-1 rounded-md border border-primary/20 transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-medium bg-primary/25 text-foreground hover:bg-primary/40 px-2.5 py-1 rounded-full border border-primary/40 transition-colors cursor-pointer"
           data-testid="badge-business-mode"
         >
           <Briefcase className="h-3 w-3" />
@@ -455,7 +455,9 @@ function DashboardLayout() {
               <div className="flex h-screen w-full">
                 <AppSidebar />
                 <div className="flex flex-col flex-1 min-w-0">
-                  <header className="flex items-center justify-between gap-2 p-2 border-b shrink-0 h-12">
+                  {/* The frame (this bar and the sidebar) wears the Astra palette; page content
+                      keeps its own until each page is redesigned and opts in. */}
+                  <header className="astra-scope flex items-center justify-between gap-2 px-3 py-2 border-b shrink-0 h-12 bg-background text-foreground font-sans">
                     <div className="flex items-center gap-2 flex-wrap">
                       <SidebarTrigger data-testid="button-sidebar-toggle" />
                       <GlobalSearch />

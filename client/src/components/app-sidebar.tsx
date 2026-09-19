@@ -79,6 +79,13 @@ interface NavItem {
   url: string;
   icon: LucideIcon;
   badge?: number;
+  /** Suffix for data-testid when the title changed but tests still use the old name. */
+  testId?: string;
+}
+
+interface NavSection {
+  label: string;
+  items: NavItem[];
 }
 
 interface NavGroup {
@@ -94,6 +101,9 @@ export function AppSidebar() {
   return <FullAppSidebar />;
 }
 
+// The builder sidebar: a short, task-shaped nav (Work / Build / Review) with
+// everything else one click away under "All tools". Every route stays
+// reachable and filtered by isRouteAllowed; only the grouping changed.
 function FullAppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
@@ -116,64 +126,59 @@ function FullAppSidebar() {
   });
   const pendingApprovalsCount = Array.isArray(approvalsData) ? approvalsData.length : 0;
 
-  // Always-visible tier: the handful of pages used every day. Everything else
-  // that used to sit flat alongside these (Files, Knowledge, Deployments,
-  // Monitor, Fleet Health, Governance, Integrations) moved into primaryGroups
-  // below -- 13 flat top-level items made the nav feel like one long list with
-  // no structure, on top of the 33 already inside Advanced.
-  const primaryNav: NavItem[] = [
-    { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
-    // The conversation-first workspace, while it is a preview behind ASTRA_WORKSPACE_ENABLED.
-    ...(astraEnabled ? [{ title: "Try Astra (preview)", url: "/astra", icon: MessageSquareText }] : []),
-    { title: "Workspace", url: "/workspace", icon: Sparkles },
-    { title: "Outcomes", url: "/outcomes", icon: Target },
-    { title: "Agents", url: "/agents", icon: Bot },
-    { title: "Teams", url: "/agents/teams", icon: Users },
-    { title: "Journeys", url: "/journeys", icon: Compass },
+  // The pages people use every day, grouped by what they are doing.
+  const sections: NavSection[] = [
+    {
+      label: "",
+      items: [
+        { title: "Home", url: "/dashboard", icon: Home, testId: "overview" },
+        { title: "Workspace", url: "/workspace", icon: Sparkles },
+      ],
+    },
+    {
+      label: "Work",
+      items: [
+        { title: "Journeys", url: "/journeys", icon: Compass },
+        { title: "Teams", url: "/agents/teams", icon: Users },
+        { title: "Agents", url: "/agents", icon: Bot },
+        { title: "Outcomes", url: "/outcomes", icon: Target },
+      ],
+    },
+    {
+      label: "Build",
+      items: [
+        { title: "Process Flows", url: "/process-flows", icon: Workflow },
+        { title: "Skills", url: "/skills", icon: Layers },
+        { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
+        { title: "Business terms", url: "/ontology", icon: Network, testId: "ontology" },
+        { title: "Connections", url: "/integrations", icon: Plug, testId: "integrations" },
+      ],
+    },
+    {
+      label: "Review",
+      items: [
+        { title: "Approvals", url: "/approvals", icon: ShieldCheck, badge: pendingApprovalsCount || undefined },
+        { title: "Monitor", url: "/monitor", icon: Activity },
+        { title: "Fleet health", url: "/observability", icon: MonitorCheck, badge: unacknowledgedAlerts || undefined, testId: "fleet-health" },
+        { title: "Audit trail", url: "/audit-trail", icon: ScrollText, testId: "audit-trail" },
+      ],
+    },
   ];
 
-  // Named, collapsible groups at the primary level (same CollapsibleNavGroup
-  // component Advanced's sub-groups already use) -- visible and one click
-  // away, just organized, unlike Advanced which is hidden behind an extra
-  // "Advanced" toggle first.
-  const primaryGroups: NavGroup[] = [
+  // Everything else, still grouped the way it was, behind one toggle.
+  const toolGroups: NavGroup[] = [
     {
       label: "Content",
       icon: FileText,
-      items: [
-        { title: "Files", url: "/files", icon: FileText },
-        { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
-      ],
+      items: [{ title: "Files", url: "/files", icon: FileText }],
     },
-    {
-      label: "Operations",
-      icon: Rocket,
-      items: [
-        { title: "Deployments", url: "/deployments", icon: Rocket },
-        { title: "Monitor", url: "/monitor", icon: Activity },
-        { title: "Fleet Health", url: "/observability", icon: MonitorCheck, badge: unacknowledgedAlerts > 0 ? unacknowledgedAlerts : undefined },
-      ],
-    },
-    {
-      label: "Compliance",
-      icon: Shield,
-      items: [
-        { title: "Governance", url: "/governance", icon: Shield },
-        { title: "Integrations", url: "/integrations", icon: Plug },
-      ],
-    },
-  ];
-
-  const advancedGroups: NavGroup[] = [
     {
       label: "Build",
       icon: Hammer,
       items: [
         { title: "Pipelines", url: "/pipelines", icon: Workflow },
-        { title: "Process Flows", url: "/process-flows", icon: Workflow },
         { title: "Blueprints", url: "/blueprints", icon: PenTool },
         { title: "Templates", url: "/templates", icon: Library },
-        { title: "Skills", url: "/skills", icon: Layers },
         { title: "Context Engine", url: "/context-studio", icon: Brain },
         { title: "Memory Manager", url: "/memory-architecture", icon: Database },
         { title: "RAG Pipeline", url: "/rag-pipeline", icon: GitBranch },
@@ -200,6 +205,7 @@ function FullAppSidebar() {
       label: "Operate",
       icon: Eye,
       items: [
+        { title: "Deployments", url: "/deployments", icon: Rocket },
         { title: "Shadow Replay", url: "/shadow-replay", icon: GitCompare },
         { title: "Canary Deployment", url: "/canary-deployment", icon: GitBranch },
         { title: "Optimization", url: "/optimization", icon: Zap },
@@ -211,10 +217,9 @@ function FullAppSidebar() {
       label: "Govern",
       icon: Scale,
       items: [
+        { title: "Governance", url: "/governance", icon: Shield },
         { title: "Autonomy Engine", url: "/autonomy-engine", icon: Gauge },
         { title: "Oversight Console", url: "/oversight-console", icon: Scale },
-        { title: "Approvals", url: "/approvals", icon: CheckCircle, badge: pendingApprovalsCount > 0 ? pendingApprovalsCount : undefined },
-        { title: "Audit Trail", url: "/audit-trail", icon: ScrollText },
       ],
     },
     {
@@ -224,14 +229,15 @@ function FullAppSidebar() {
         { title: "Model Providers", url: "/model-providers", icon: Cpu },
         { title: "Developer Portal", url: "/developer", icon: Code2 },
         { title: "Billing", url: "/billing", icon: CreditCard },
-        { title: "Ontology", url: "/ontology", icon: BookOpen },
         { title: "Admin", url: "/admin", icon: ShieldCheck },
+        { title: "Demo Center", url: "/demo", icon: PlayCircle, testId: "demo-center" },
       ],
     },
   ];
 
   const isActive = (url: string) => {
     if (url === "/dashboard") return location === "/dashboard";
+    if (url === "/evals") return location === "/evals";
     if (url === "/outcomes") return location === "/outcomes" || location.startsWith("/outcomes/");
     if (url === "/agents/teams") return location === "/agents/teams" || location.startsWith("/agents/teams/");
     if (url === "/agents") return (location === "/agents" || location.startsWith("/agents/")) && !location.startsWith("/agents/teams");
@@ -243,167 +249,137 @@ function FullAppSidebar() {
     return location.startsWith(url);
   };
 
-  const isGroupActive = (group: NavGroup) => {
-    return group.items.some((item) => isActive(item.url));
-  };
-
-  const isAnyAdvancedActive = advancedGroups.some((g) =>
-    g.items.some((item) => isRouteAllowed(item.url) && isActive(item.url))
-  );
-  const [advancedManuallyOpened, setAdvancedManuallyOpened] = useState(false);
-
-  const filteredPrimaryNav = primaryNav.filter((item) => isRouteAllowed(item.url));
-
-  const filteredPrimaryGroups = primaryGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => isRouteAllowed(item.url)),
-    }))
-    .filter((group) => group.items.length > 0);
-
-  const filteredAdvancedGroups = advancedGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => isRouteAllowed(item.url)),
-    }))
-    .filter((group) => group.items.length > 0);
+  const visibleSections = sections
+    .map((s) => ({ ...s, items: s.items.filter((item) => isRouteAllowed(item.url)) }))
+    .filter((s) => s.items.length > 0);
+  const visibleToolGroups = toolGroups
+    .map((g) => ({ ...g, items: g.items.filter((item) => isRouteAllowed(item.url)) }))
+    .filter((g) => g.items.length > 0);
+  const isAnyToolActive = visibleToolGroups.some((g) => g.items.some((item) => isActive(item.url)));
 
   return (
-    <Sidebar>
-      <SidebarHeader className="p-4">
-        <Link href="/dashboard">
-          <div className="flex items-center gap-2 cursor-pointer">
-            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary">
-              <Zap className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name">ASTRA</span>
-              <span className="text-[10px] text-muted-foreground leading-tight">ASTRA Agents Platform</span>
-            </div>
-          </div>
-        </Link>
-      </SidebarHeader>
-      <SidebarContent>
-        {filteredPrimaryNav.length > 0 && (
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {filteredPrimaryNav.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild data-active={isActive(item.url)}>
-                      <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
-                        <item.icon className="w-4 h-4" />
-                        <span className="flex-1">{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
+    <Sidebar className="astra-scope">
+      <div className="astra-scope flex h-full min-h-0 flex-col bg-sidebar font-sans text-sidebar-foreground">
+        <SidebarHeader className="gap-3 px-3 pb-2 pt-3.5">
+          <Link href="/dashboard" className="flex items-center gap-2.5 rounded-md px-1">
+            <span className="grid h-7 w-7 place-items-center rounded-[7px] bg-primary font-[family-name:var(--astra-display)] text-[15px] font-bold text-primary-foreground">A</span>
+            <span className="flex flex-col leading-tight">
+              <span className="font-[family-name:var(--astra-display)] text-[15px] font-semibold" data-testid="text-app-name">Astra Agents</span>
+              <span className="font-mono text-[11px] text-muted-foreground">Agents platform</span>
+            </span>
+          </Link>
+          {astraEnabled && isRouteAllowed("/astra") && (
+            <Link
+              href="/astra"
+              className="flex items-center gap-2 rounded-[9px] bg-foreground px-3 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              data-testid="link-nav-ask-astra"
+            >
+              <MessageSquareText className="h-4 w-4" />
+              Ask Astra
+            </Link>
+          )}
+        </SidebarHeader>
 
-        {filteredPrimaryGroups.length > 0 && (
-          <div className="flex flex-col gap-0.5">
-            {filteredPrimaryGroups.map((group) => (
-              <CollapsibleNavGroup
-                key={group.label}
-                group={group}
-                isActive={isActive}
-                isGroupActive={isGroupActive(group)}
-              />
-            ))}
-          </div>
-        )}
+        <SidebarContent className="gap-0 px-2 pb-3">
+          {visibleSections.map((section) => (
+            <SidebarGroup key={section.label || "home"} className="px-0 py-0">
+              {section.label && <p className="px-2.5 pb-1 pt-3 font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted-foreground">{section.label}</p>}
+              <SidebarGroupContent>
+                <SidebarMenu className="gap-px">
+                  {section.items.map((item) => (
+                    <NavLink key={item.url} item={item} active={isActive(item.url)} />
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
 
-        {filteredAdvancedGroups.length > 0 && (
-          <AdvancedSection
-            key={role.id}
-            groups={filteredAdvancedGroups}
-            isActive={isActive}
-            isGroupActive={isGroupActive}
-            defaultOpen={isAnyAdvancedActive}
-            forceCollapsed={!advancedManuallyOpened && !isAnyAdvancedActive}
-            onManualToggle={() => setAdvancedManuallyOpened(true)}
-          />
-        )}
-        <SidebarGroup className="py-0">
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild data-active={location.startsWith("/demo")}>
-                  <Link href="/demo" data-testid="link-nav-demo-center">
-                    <PlayCircle className="w-4 h-4" />
-                    <span>Demo Center</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-      <SidebarFooter className="pb-3 pt-1 px-2 border-t mt-1">
-        <FeedbackTrigger />
-      </SidebarFooter>
+          {visibleToolGroups.length > 0 && (
+            <AllToolsSection
+              key={role.id}
+              groups={visibleToolGroups}
+              isActive={isActive}
+              defaultOpen={isAnyToolActive}
+            />
+          )}
+        </SidebarContent>
+
+        <SidebarFooter className="border-t px-2 pb-3 pt-1">
+          <FeedbackTrigger />
+        </SidebarFooter>
+      </div>
     </Sidebar>
   );
 }
 
-function AdvancedSection({
+const navTestId = (item: NavItem) => `link-nav-${item.testId ?? item.title.toLowerCase().replace(/\s+/g, "-")}`;
+
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        asChild
+        data-active={active}
+        className="h-8 gap-2.5 rounded-[7px] px-2.5 text-[13.5px] hover:bg-sidebar-accent data-[active=true]:bg-card data-[active=true]:shadow-[0_0_0_1px_hsl(var(--border))] [&>svg]:text-muted-foreground data-[active=true]:[&>svg]:text-foreground"
+      >
+        <Link href={item.url} data-testid={navTestId(item)}>
+          <item.icon className="h-4 w-4" />
+          <span className="flex-1">{item.title}</span>
+          {item.badge !== undefined && (
+            <span
+              className="ml-auto min-w-[18px] rounded-full bg-primary px-1.5 text-center font-mono text-[11px] font-medium leading-[18px] text-primary-foreground"
+              data-testid={`badge-${item.title.toLowerCase().replace(/\s+/g, "-")}-count`}
+            >
+              {item.badge > 99 ? "99+" : item.badge}
+            </span>
+          )}
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
+
+function AllToolsSection({
   groups,
   isActive,
-  isGroupActive,
   defaultOpen,
-  forceCollapsed,
-  onManualToggle,
 }: {
   groups: NavGroup[];
   isActive: (url: string) => boolean;
-  isGroupActive: (group: NavGroup) => boolean;
   defaultOpen: boolean;
-  forceCollapsed?: boolean;
-  onManualToggle?: () => void;
 }) {
-  const [open, setOpen] = useState(forceCollapsed ? false : defaultOpen);
+  const [open, setOpen] = useState(defaultOpen);
 
   useEffect(() => {
-    if (defaultOpen && !forceCollapsed) setOpen(true);
-  }, [defaultOpen, forceCollapsed]);
-
-  const handleOpenChange = (newOpen: boolean) => {
-    setOpen(newOpen);
-    if (newOpen && onManualToggle) onManualToggle();
-  };
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
 
   return (
-    <Collapsible open={open} onOpenChange={handleOpenChange}>
-      <SidebarGroup className="py-0">
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:bg-sidebar-accent/50 rounded-md transition-colors"
-            data-testid="button-advanced-toggle"
-          >
-            <MoreHorizontal className="w-3.5 h-3.5" />
-            <span className="flex-1 text-left">Advanced</span>
-            <ChevronRight
-              className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
+    <Collapsible open={open} onOpenChange={setOpen} className="mt-3">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent"
+          data-testid="button-advanced-toggle"
+          aria-label="All tools"
+        >
+          <MoreHorizontal className="h-4 w-4" />
+          <span className="flex-1 text-left">All tools</span>
+          <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="flex flex-col gap-0.5 pt-1">
+          {groups.map((group) => (
+            <CollapsibleNavGroup
+              key={group.label}
+              group={group}
+              isActive={isActive}
+              isGroupActive={group.items.some((item) => isActive(item.url))}
             />
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="flex flex-col gap-0.5 pl-1">
-            {groups.map((group) => (
-              <CollapsibleNavGroup
-                key={group.label}
-                group={group}
-                isActive={isActive}
-                isGroupActive={isGroupActive(group)}
-              />
-            ))}
-          </div>
-        </CollapsibleContent>
-      </SidebarGroup>
+          ))}
+        </div>
+      </CollapsibleContent>
     </Collapsible>
   );
 }
@@ -427,40 +403,22 @@ function CollapsibleNavGroup({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <SidebarGroup className="py-0">
+      <SidebarGroup className="px-0 py-0">
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex items-center gap-2 w-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent/50 rounded-md transition-colors"
+            className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1 font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted-foreground transition-colors hover:bg-sidebar-accent"
             data-testid={`button-group-${group.label.toLowerCase().replace(/\s+/g, "-")}`}
           >
-            <group.icon className="w-3.5 h-3.5" />
             <span className="flex-1 text-left">{group.label}</span>
-            <ChevronDown
-              className={`w-3 h-3 transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
-            />
+            <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent>
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="gap-px">
               {group.items.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild data-active={isActive(item.url)}>
-                    <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
-                      <item.icon className="w-4 h-4" />
-                      <span className="flex-1">{item.title}</span>
-                      {item.badge !== undefined && (
-                        <span
-                          className="ml-auto text-[10px] font-bold bg-amber-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none"
-                          data-testid={`badge-${item.title.toLowerCase().replace(/\s+/g, "-")}-count`}
-                        >
-                          {item.badge > 99 ? "99+" : item.badge}
-                        </span>
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                <NavLink key={item.url} item={item} active={isActive(item.url)} />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -521,36 +479,36 @@ function BusinessModeSidebar() {
   ];
 
   return (
-    <Sidebar>
-      <SidebarHeader className="p-4">
-        <Link href="/dashboard">
-          <div className="flex items-center gap-2 cursor-pointer">
-            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary">
-              <Zap className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <div className="flex flex-col">
-              {/* One brand everywhere (UX audit F-3): the builder sidebar says
-                  ASTRA — business mode must not introduce a second name. */}
-              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name-business">ASTRA</span>
-              <span className="text-[10px] text-muted-foreground leading-tight">Business</span>
-            </div>
-          </div>
+    <Sidebar className="astra-scope">
+      <div className="astra-scope flex h-full min-h-0 flex-col bg-sidebar font-sans text-sidebar-foreground">
+      <SidebarHeader className="px-3 pb-2 pt-3.5">
+        <Link href="/dashboard" className="flex items-center gap-2.5 rounded-md px-1">
+          <span className="grid h-7 w-7 place-items-center rounded-[7px] bg-primary font-[family-name:var(--astra-display)] text-[15px] font-bold text-primary-foreground">A</span>
+          {/* One brand everywhere (UX audit F-3): business mode must not introduce a second name. */}
+          <span className="flex flex-col leading-tight">
+            <span className="font-[family-name:var(--astra-display)] text-[15px] font-semibold" data-testid="text-app-name-business">Astra Agents</span>
+            <span className="font-mono text-[11px] text-muted-foreground">Business</span>
+          </span>
         </Link>
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
+        <SidebarGroup className="px-2">
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="gap-px">
               {navItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild data-active={isActive(item.url)}>
+                  <SidebarMenuButton
+                    asChild
+                    data-active={isActive(item.url)}
+                    className="h-8 gap-2.5 rounded-[7px] px-2.5 text-[13.5px] hover:bg-sidebar-accent data-[active=true]:bg-card data-[active=true]:shadow-[0_0_0_1px_hsl(var(--border))] [&>svg]:text-muted-foreground data-[active=true]:[&>svg]:text-foreground"
+                  >
                     <Link href={item.url} data-testid={`link-business-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
                       <item.icon className="w-4 h-4" />
                       <span className="flex-1">{item.title}</span>
                       {item.badge !== undefined && (
                         <span
-                          className="ml-auto text-[10px] font-bold bg-amber-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none"
+                          className="ml-auto min-w-[18px] rounded-full bg-primary px-1.5 text-center font-mono text-[11px] font-medium leading-[18px] text-primary-foreground"
                           data-testid={`badge-${item.title.toLowerCase().replace(/\s+/g, "-")}-count`}
                         >
                           {item.badge > 99 ? "99+" : item.badge}
@@ -590,6 +548,7 @@ function BusinessModeSidebar() {
           </button>
         </div>
       </SidebarFooter>
+      </div>
     </Sidebar>
   );
 }

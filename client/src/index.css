@@ -322,6 +322,14 @@
   --font-mono: "Geist Mono", Menlo, monospace;
   --astra-display: Outfit, Geist, system-ui, sans-serif;
   --radius: .375rem;
+  --sidebar: 44 28% 90%;
+  --sidebar-foreground: 50 14% 10%;
+  --sidebar-border: 44 20% 82%;
+  --sidebar-primary: 52 100% 50%;
+  --sidebar-primary-foreground: 50 14% 10%;
+  --sidebar-accent: 44 26% 86%;
+  --sidebar-accent-foreground: 50 14% 10%;
+  --sidebar-ring: 46 90% 42%;
 }
 
 .astra.dark, .dark .astra-scope {
@@ -347,6 +355,14 @@
   --accent-foreground: 45 30% 93%;
   --input: 48 7% 22%;
   --ring: 52 100% 50%;
+  --sidebar: 50 7% 7%;
+  --sidebar-foreground: 45 30% 93%;
+  --sidebar-border: 48 7% 15%;
+  --sidebar-primary: 52 100% 50%;
+  --sidebar-primary-foreground: 60 6% 5%;
+  --sidebar-accent: 48 7% 14%;
+  --sidebar-accent-foreground: 45 30% 93%;
+  --sidebar-ring: 52 100% 50%;
 }
 
 .astra-md { line-height: 1.6; overflow-wrap: anywhere; }
