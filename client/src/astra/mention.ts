@@ -9,6 +9,8 @@ export interface Mentionable {
   id: string;
   name: string;
   description: string | null;
+  /** A team runs as a whole flow of agents; absent means an agent. */
+  kind?: "agent" | "team";
 }
 
 export interface MentionQuery {

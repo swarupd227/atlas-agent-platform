@@ -1,4 +1,5 @@
-import { AlertTriangle, Check, X } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Check, X } from "lucide-react";
+import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import type { PendingAction } from "./types";
 
@@ -72,6 +73,13 @@ export function ConfirmCard({
           </>
         ) : (
           <span className="font-mono text-xs text-muted-foreground">No longer pending</span>
+        )}
+        {action.link && (
+          <Button asChild size="sm" variant="outline" className="ml-auto gap-1">
+            <Link href={`~${action.link.href}`} data-testid="astra-card-link">
+              {action.link.label} <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
         )}
       </div>
     </div>

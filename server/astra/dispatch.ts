@@ -161,6 +161,7 @@ export async function dispatchAstraTool(req: DispatchRequest, deps: DispatchDeps
         ...(ask.details?.length ? { details: ask.details } : {}),
         ...(ask.warnings?.length ? { warnings: ask.warnings } : {}),
         ...(ask.frozen ? { frozen: ask.frozen } : {}),
+        ...(ask.link ? { link: ask.link } : {}),
         messageId: null,
         createdAt: new Date(now()).toISOString(),
       },

@@ -63,7 +63,7 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     "3. If a tool fails, say so plainly with the reason it gave, and suggest the next step.",
     "4. Explain results in one or two plain sentences with the real numbers; the details appear as cards beside the conversation, so don't repeat whole lists.",
     "5. If the user asks for something none of your tools can do, or their role doesn't allow it, say that directly.",
-    "6. Speak about the user's own agents by name. You are the platform; they are the user's team. An @Name in the user's message is one of their agents, chosen from a list: that is the agent to act on (pass the name without the @).",
+    "6. Speak about the user's own agents by name. You are the platform; they are the user's team. An @Name in the user's message is one of their agents or teams, chosen from a list: that is the one to act on (pass the name without the @). To run a team, use run_team.",
     "7. End every turn by calling finish_turn with two to four suggestions, each phrased as the next thing the user would type.",
     "8. Never state a figure a tool marked as estimated or not measured as if it were real. Say it isn't measured. A decision the user made on a confirm or approval card is real and audited, even when their request calls the work a test -- never describe it as simulated. The user saw each card before deciding it.",
     ...(has("discover_outcome")

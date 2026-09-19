@@ -42,6 +42,8 @@ export interface PendingAction {
   summary: string;
   details?: string[];
   warnings?: ConfirmWarning[];
+  /** A page with the full detail behind the card, e.g. the approval's own page. */
+  link?: { label: string; href: string };
   messageId: string | null;
   createdAt: string;
   decision?: "confirmed" | "declined";
@@ -77,6 +79,7 @@ export type AstraEvent =
   | { type: "working"; label: string }
   | { type: "tool_start"; tool: string; input: unknown }
   | { type: "tool_result"; tool: string; ok: boolean; preview: string; artifact?: ArtifactRef }
+  | { type: "artifact"; artifact: ArtifactRef }
   | { type: "awaiting_confirmation"; action: PendingAction; message: AstraMessage }
   | { type: "message"; message: AstraMessage }
   | { type: "done"; status: ThreadStatus }

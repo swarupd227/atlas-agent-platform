@@ -95,7 +95,7 @@ export function Composer({
         <ul
           id="astra-mention-menu"
           role="listbox"
-          aria-label="Your agents"
+          aria-label="Your agents and teams"
           className="absolute bottom-full left-0 z-20 mb-1 max-h-64 w-full max-w-sm overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
           data-testid="astra-mention-menu"
         >
@@ -116,6 +116,7 @@ export function Composer({
             >
               <div className="flex min-w-0 items-baseline gap-2">
                 <span className="truncate">{a.name}</span>
+                {a.kind === "team" && <span className="shrink-0 rounded border px-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground" data-testid="astra-mention-team">Team</span>}
                 {dupes.has(a.name.toLowerCase()) && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{a.id.slice(0, 8)}</span>}
               </div>
               {a.description && <div className="truncate text-xs text-muted-foreground">{a.description}</div>}

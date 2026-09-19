@@ -275,13 +275,40 @@ router.get("/api/astra/library", checkPermission("use_astra"), async (req, res) 
   res.json({ query: q, sections, elsewhere: LIBRARY_ELSEWHERE });
 });
 
-/** The agents the composer's @ menu offers: exactly the ones run_agent accepts for this role. */
+/**
+ * What the composer's @ menu offers: exactly the agents run_agent accepts for this
+ * role, plus -- for roles that may run teams (run_team's permission) -- the
+ * organization's teams, marked as such.
+ */
+/** A team run as the pane beside the conversation shows it; polled while the run is live. Same view as get_team_run. */
+router.get("/api/astra/team-runs/:id", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  if (!hasPermission(ctx.role, "view_agents")) return res.status(403).json({ message: "Your role can't view team runs." });
+  try {
+    const run = await getAstraRuntime().deps.services.getTeamRun(ctx.orgId, ctx.role, String(req.params.id));
+    if (!run) return res.status(404).json({ message: "No team run with that id in this organization." });
+    res.json(run);
+  } catch (err) {
+    console.error("[astra] team run failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ message: "Couldn't load that team run." });
+  }
+});
+
+const RETIRED_STATUSES = new Set(["archived", "retired", "decommissioned", "deprecated"]);
 router.get("/api/astra/mentionables", checkPermission("use_astra"), async (req, res) => {
   const ctx = await callerContext(req);
   if (!ctx) return res.status(403).json({ message: "No organization context." });
   try {
-    const agents = (await getAstraRuntime().deps.services.listRunnableAgents(ctx.orgId, ctx.role)) as Array<{ id: string; name: string; description: string | null }>;
-    res.json(agents.map((a) => ({ id: a.id, name: a.name, description: a.description ?? null })));
+    const services = getAstraRuntime().deps.services;
+    const agents = (await services.listRunnableAgents(ctx.orgId, ctx.role)) as Array<{ id: string; name: string; description: string | null }>;
+    const teams = hasPermission(ctx.role, "manage_agents")
+      ? ((await services.listTeams(ctx.orgId)) as Array<{ id: string; name: string; status: string }>).filter((t) => !RETIRED_STATUSES.has(t.status))
+      : [];
+    res.json([
+      ...agents.map((a) => ({ id: a.id, name: a.name, description: a.description ?? null, kind: "agent" as const })),
+      ...teams.map((t) => ({ id: t.id, name: t.name, description: null, kind: "team" as const })),
+    ]);
   } catch (err) {
     console.error("[astra] mentionables failed:", err instanceof Error ? err.message : err);
     res.status(500).json({ message: "Couldn't load your agents." });

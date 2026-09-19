@@ -95,7 +95,7 @@ export interface ToolRunResult {
    * an approval gate). The turn pauses on a card; the user's decision calls
    * run() again with ctx.confirmation and ctx.decision.
    */
-  needsConfirmation?: { summary: string; details?: string[]; warnings?: ConfirmWarning[]; frozen?: Record<string, unknown> };
+  needsConfirmation?: { summary: string; details?: string[]; warnings?: ConfirmWarning[]; frozen?: Record<string, unknown>; link?: CardLink };
 }
 
 export interface AstraTool<I = any> {
@@ -138,6 +138,12 @@ export type ConfirmPreview =
   | { refuse: string }
   | { summary?: string; details?: string[]; warnings?: ConfirmWarning[]; frozen?: Record<string, unknown> };
 
+/** A page the card links to, for the full detail behind it (e.g. the approval's own page). */
+export interface CardLink {
+  label: string;
+  href: string;
+}
+
 export interface PendingAction {
   id: string;
   /** tool_confirm: a platform change Astra proposes. agent_approval: an agent run paused at an approval gate. */
@@ -153,6 +159,7 @@ export interface PendingAction {
   warnings?: ConfirmWarning[];
   /** Server-side facts captured by preview(); never sent by the client. */
   frozen?: Record<string, unknown>;
+  link?: CardLink;
   /** The Astra message that carries the confirm card. */
   messageId: string | null;
   createdAt: string;
@@ -233,6 +240,8 @@ export type AstraEvent =
   | { type: "working"; label: string }
   | { type: "tool_start"; tool: string; input: unknown }
   | { type: "tool_result"; tool: string; ok: boolean; preview: string; artifact?: ArtifactRef }
+  /** A result to show beside the conversation while its tool is still working (e.g. a team run in progress). */
+  | { type: "artifact"; artifact: ArtifactRef }
   | { type: "awaiting_confirmation"; action: PendingAction; message: AstraMessageRecord }
   | { type: "message"; message: AstraMessageRecord }
   | { type: "done"; status: ThreadStatus }

@@ -7,7 +7,7 @@ import type { Mentionable } from "./mention";
 
 const PREVIEW_OVERRIDE_KEY = "almp-astra-shell";
 
-async function getJson<T>(url: string): Promise<T> {
+export async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: "include", headers: getApiHeaders() });
   if (!res.ok) throw new Error(`${res.status}`);
   return res.json();
@@ -147,6 +147,9 @@ export function useThread(threadId: string | null, options: { industryId?: strin
           return { ...l, steps };
         });
         if (event.artifact) onArtifact.current?.(event.artifact);
+        break;
+      case "artifact":
+        onArtifact.current?.(event.artifact);
         break;
       case "awaiting_confirmation":
         setMessages((m) => [...m, event.message]);

@@ -66,6 +66,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/components/auth-provider";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
@@ -159,6 +160,7 @@ export default function BlueprintDetail() {
   const [edgeMode, setEdgeMode] = useState<string | null>(null);
   const [rightPanel, setRightPanel] = useState<"properties" | "validation" | "changes">("properties");
   const [signDialogOpen, setSignDialogOpen] = useState(false);
+  const { user } = useAuth();
   const [signedBy, setSignedBy] = useState("");
   const [blueprintName, setBlueprintName] = useState("");
   const [localValidation, setLocalValidation] = useState<ValidationResults | null>(null);
@@ -395,9 +397,9 @@ export default function BlueprintDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/blueprints"] });
       setSignDialogOpen(false);
       setSignedBy("");
-      toast({ title: "Blueprint signed and versioned" });
+      toast({ title: "Approved", description: "A new version of this blueprint is recorded." });
     },
-    onError: (err: Error) => toast({ title: "Sign failed", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Approval failed", description: err.message, variant: "destructive" }),
   });
 
   if (isLoading) return (
@@ -511,7 +513,7 @@ export default function BlueprintDetail() {
         ) : (
           <Button
             size="sm"
-            onClick={() => setSignDialogOpen(true)}
+            onClick={() => { if (!signedBy) setSignedBy(user?.username || ""); setSignDialogOpen(true); }}
             disabled={currentStatus !== "compiled"}
             title={currentStatus === "signed" ? "Already approved and versioned" : currentStatus !== "compiled" ? "Check the flow first" : "Approve this version"}
             data-testid="button-sign"
@@ -1516,26 +1518,27 @@ export default function BlueprintDetail() {
       )}
 
       <Dialog open={signDialogOpen} onOpenChange={setSignDialogOpen}>
-        <DialogContent>
+        <DialogContent className="astra-scope font-sans">
           <DialogHeader>
-            <DialogTitle data-testid="text-sign-dialog-title">Sign & Version Blueprint</DialogTitle>
+            <DialogTitle className="font-[family-name:var(--astra-display)]" data-testid="text-sign-dialog-title">Approve this version</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will create version {(blueprint.version || 0) + 1} of "{blueprintName}". This action cannot be undone.
+            Approving records version {(blueprint.version || 0) + 1} of "{blueprintName}" under your name. The approved version can't be changed afterwards; later edits become a new version.
           </p>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Signed By</label>
+            <label className="text-sm font-medium" htmlFor="input-signed-by">Approved by</label>
             <Input
+              id="input-signed-by"
               value={signedBy}
               onChange={e => setSignedBy(e.target.value)}
-              placeholder="Your name or identifier"
+              placeholder="Your name"
               data-testid="input-signed-by"
             />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSignDialogOpen(false)} data-testid="button-cancel-sign">Cancel</Button>
-            <Button onClick={() => signMutation.mutate()} disabled={signMutation.isPending} data-testid="button-confirm-sign">
-              {signMutation.isPending ? "Signing..." : "Sign & Version"}
+            <Button onClick={() => signMutation.mutate()} disabled={signMutation.isPending || !signedBy.trim()} data-testid="button-confirm-sign">
+              {signMutation.isPending ? "Approving..." : "Approve"}
             </Button>
           </DialogFooter>
         </DialogContent>

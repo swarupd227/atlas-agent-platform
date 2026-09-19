@@ -33,6 +33,7 @@ import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
 import { proposeTeam } from "../team-proposal";
 import { assessProposalBindings, resolveBindingServer } from "../team-bindings";
 import { flattenGraphToSteps, isUntouchedStarterFlow } from "@shared/process-flow";
+import { extractHtmlDocument } from "@shared/html-document";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 import { similarOutcomeNames } from "./outcome-names";
 import { decisionRoute } from "./needs-you";
@@ -904,20 +905,39 @@ async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
     : [[], []];
   const labelOf = new Map(nodes.map((n) => [n.id, n.label]));
   const waveResults = (Array.isArray(row.waveResults) ? row.waveResults : []) as any[];
-  const steps = waveResults.flatMap((w) =>
-    (w.nodes ?? []).map((n: any) => ({
-      wave: w.waveNumber,
-      label: labelOf.get(n.nodeId) ?? n.nodeId,
-      status: n.status,
-      error: n.error ? String(n.error).slice(0, 300) : null,
-      durationMs: n.durationMs ?? null,
-    })),
-  );
+  const plan = nodes.length > 0 ? (() => { try { return computeWaves(nodes as any, edges as any); } catch { return null; } })() : null;
+  const steps: Array<{ nodeId: string; wave: number; revision: number; label: string; status: string; error: string | null; durationMs: number | null; html: boolean }> =
+    waveResults.flatMap((w) =>
+      (w.nodes ?? []).map((n: any) => ({
+        nodeId: n.nodeId,
+        wave: w.waveNumber,
+        revision: w.revisionRound ?? 0,
+        label: labelOf.get(n.nodeId) ?? n.nodeId,
+        status: n.status,
+        error: n.error ? String(n.error).slice(0, 300) : null,
+        durationMs: n.durationMs ?? null,
+        // Whether the step produced a web page or email, which can be opened as a page.
+        html: Object.values(n.output ?? {}).some((v) => typeof v === "string" && extractHtmlDocument(v) !== null),
+      })),
+    );
+  // While the run is live, the steps it hasn't reached yet are listed too, so a
+  // viewer sees the whole plan fill in: the next stage running (or its approval
+  // step waiting for a person), the rest waiting.
+  if (plan && !TERMINAL_RUN_STATUSES.has(row.status)) {
+    const reached = new Set(steps.map((s) => s.nodeId));
+    const nextWave = (waveResults.length ? waveResults[waveResults.length - 1].waveNumber : 0) + 1;
+    for (const w of plan.waves) {
+      for (const nodeId of w.nodes) {
+        if (reached.has(nodeId)) continue;
+        const status = w.wave_number !== nextWave ? "waiting" : row.status === "waiting_approval" ? "waiting_approval" : row.status === "running" ? "running" : "waiting";
+        steps.push({ nodeId, wave: w.wave_number, revision: 0, label: labelOf.get(nodeId) ?? nodeId, status, error: null, durationMs: null, html: false });
+      }
+    }
+  }
 
   let answer: string | null = null;
-  if (TERMINAL_RUN_STATUSES.has(row.status) && row.finalState && nodes.length > 0) {
+  if (TERMINAL_RUN_STATUSES.has(row.status) && row.finalState && plan) {
     try {
-      const plan = computeWaves(nodes as any, edges as any);
       const skippedNodeIds = Array.from(new Set(waveResults.flatMap((w) => w.nodes ?? []).filter((n: any) => n.status === "skipped").map((n: any) => n.nodeId)));
       answer = extractFinalOutputText({ success: row.status !== "failed", finalState: row.finalState as any, skippedNodeIds } as any, plan);
     } catch {

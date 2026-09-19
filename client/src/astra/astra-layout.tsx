@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus } from "lucide-react";
@@ -34,6 +34,8 @@ function Workspace() {
   const [artifact, setArtifact] = useState<ArtifactRef | null>(null);
   const [creating, setCreating] = useState(false);
   const { data: mentionables = [] } = useMentionables();
+  // The @ menu also offers teams; the rail's "Your agents" lists agents only.
+  const railAgents = useMemo(() => mentionables.filter((m) => m.kind !== "team"), [mentionables]);
   const [composerInsert, setComposerInsert] = useState<ComposerInsert | null>(null);
   const mention = useCallback((name: string) => setComposerInsert({ text: `@${name} `, nonce: Date.now() }), []);
 
@@ -83,7 +85,7 @@ function Workspace() {
           onSelect={(id) => navigate(`/t/${encodeURIComponent(id)}`)}
           onNew={newConversation}
           onAskAbout={(text) => void send(text)}
-          agents={mentionables}
+          agents={railAgents}
           onMention={mention}
           view={onLibrary ? "library" : threadId ? "thread" : "home"}
           onLibrary={() => {

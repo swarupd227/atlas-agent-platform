@@ -278,7 +278,7 @@ export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onC
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold [font-family:var(--astra-display)]">{artifact.title}</h2>
         {artifact.fullViewHref && (
           <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
-            <Link href={`~${artifact.fullViewHref}`}>
+            <Link href={`~${artifact.fullViewHref}`} data-testid="astra-artifact-open">
               Open <ArrowUpRight className="h-3.5 w-3.5" />
             </Link>
           </Button>

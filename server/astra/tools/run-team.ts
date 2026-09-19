@@ -28,7 +28,7 @@ interface RunView {
   error: string | null;
   costUsd: number;
   toolCalls: number;
-  steps: Array<{ wave: number; label: string; status: string; error: string | null; durationMs: number | null }>;
+  steps: Array<{ nodeId: string; wave: number; revision: number; label: string; status: string; error: string | null; durationMs: number | null; html: boolean }>;
   pending: { approvalId: string; label: string | null; description: string | null } | null;
   answer: string | null;
 }
@@ -56,7 +56,8 @@ function narrate(ctx: AstraToolContext, teamName: string) {
 }
 
 export function runArtifact(run: RunView) {
-  return { kind: "teamRun", title: `${run.team.name} · ${run.status.replace(/_/g, " ")}`, props: { run }, fullViewHref: `/dag-runs/${run.id}` };
+  // The pane refreshes a live run itself, so the title names the team and the status stays in the body.
+  return { kind: "teamRun", title: run.team.name, props: { run }, fullViewHref: `/dag-runs/${run.id}` };
 }
 
 export function runProof(run: RunView, decided: string[] = []): Partial<ProofEnvelope> {
@@ -81,6 +82,8 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
   if (watch.state === "paused") {
     const approval = await ctx.services.getApprovalForDecision(ctx.orgId, ctx.role, watch.approvalId);
     const label = watch.label ?? run.pending?.label ?? "an approval step";
+    // The pane beside the conversation shows the run waiting at the gate.
+    ctx.onProgress?.({ type: "artifact", artifact: runArtifact(run) });
     if (approval?.canDecide?.allowed) {
       const description = approval.description ?? run.pending?.description;
       return {
@@ -94,6 +97,7 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
             "Confirm approves this step and the run continues. Not now rejects it, and the run stops here.",
           ],
           frozen: { dagRunId: run.id, approvalId: watch.approvalId, teamAgentId: run.team.id, teamName: run.team.name, label },
+          link: { label: "Open approval", href: `/approvals/${watch.approvalId}` },
         },
       };
     }
@@ -186,6 +190,8 @@ export const runTeamTool: AstraTool<Input> = {
         await ctx.services.decideApprovalAs(ctx.orgId, ctx.role, ctx.userId, decidedBy, f.approvalId, decision);
         decided.push(`"${f.label}" ${decision} by you on its approval card · audit recorded`);
       }
+      const resumed: RunView | null = await ctx.services.getTeamRun(ctx.orgId, ctx.role, f.dagRunId).catch(() => null);
+      if (resumed) ctx.onProgress?.({ type: "artifact", artifact: runArtifact(resumed) });
       const watch: WatchResult = await ctx.services.followTeamRun(ctx.orgId, f.dagRunId, { onEvent: narrate(ctx, f.teamName), maxWaitMs: WAIT_MS, ignoreApprovalId: f.approvalId });
       return report(ctx, f.dagRunId, watch, notes, decided);
     }
@@ -203,6 +209,9 @@ export const runTeamTool: AstraTool<Input> = {
 
     const { dagRunId } = await ctx.services.startTeamRun(ctx.orgId, teamAgentId, input.request);
     ctx.onProgress?.({ type: "working", label: `${wiring.team.name} started` });
+    // Open the run beside the conversation straight away; it keeps itself up to date while the run is live.
+    const started: RunView | null = await ctx.services.getTeamRun(ctx.orgId, ctx.role, dagRunId).catch(() => null);
+    if (started) ctx.onProgress?.({ type: "artifact", artifact: runArtifact(started) });
     const watch: WatchResult = await ctx.services.followTeamRun(ctx.orgId, dagRunId, { onEvent: narrate(ctx, wiring.team.name), maxWaitMs: WAIT_MS });
     return report(ctx, dagRunId, watch, [], []);
   },

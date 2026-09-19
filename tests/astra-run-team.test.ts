@@ -133,6 +133,11 @@ describe("run_team", () => {
     expect(gate).toMatchObject({ kind: "agent_approval", summary: "Fleet Team is waiting for approval: Gate 1" });
     expect(gate.details!.join(" ")).toContain("Not now rejects it, and the run stops here.");
     expect(t.events.some((e) => e.type === "tool_start" && (e as any).tool === "Fleet Team › Step 1")).toBe(true);
+    // The card links to the approval's own page, and the run is shown beside the conversation while it goes.
+    expect(gate.link).toEqual({ label: "Open approval", href: "/approvals/apr-1" });
+    const live = t.events.filter((e) => e.type === "artifact") as Array<Extract<AstraEvent, { type: "artifact" }>>;
+    expect(live.length).toBeGreaterThanOrEqual(2); // on start, and at the gate
+    expect(live[0].artifact).toMatchObject({ kind: "teamRun", title: "Fleet Team", fullViewHref: "/dag-runs/run-1" });
 
     expect(await resolveAction(t.deps, as("admin"), t.threadId, gate.id, "confirm", t.onEvent)).toBe("idle");
     expect(t.decisions[0]).toEqual([ORG, "admin", "u1", "admin", "apr-1", "approved"]);
