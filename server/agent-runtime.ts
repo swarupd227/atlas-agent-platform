@@ -3662,7 +3662,9 @@ export async function executeWorkerAgent(
       enrichedOutput = `${enrichedOutput}\n\n\`\`\`json\n${JSON.stringify(extraFields, null, 2)}\n\`\`\``;
     }
     if (Array.isArray(structuredOutput) && structuredOutput.length > 0) {
-      enrichedOutput = `${outputText}\n\n## STRUCTURED RECORDS FROM ${workerAgent.name} (${structuredOutput.length} records)\nThese are the exact record IDs and details processed by this agent. Downstream agents MUST reference these same record IDs for traceability.\n\`\`\`json\n${JSON.stringify({ processedRecords: structuredOutput }, null, 2)}\n\`\`\``;
+      // Build on enrichedOutput, not outputText: the extra-fields block above (routing fields,
+      // ids the next step needs) must survive when the model also returns processedRecords.
+      enrichedOutput = `${enrichedOutput}\n\n## STRUCTURED RECORDS FROM ${workerAgent.name} (${structuredOutput.length} records)\nThese are the exact record IDs and details processed by this agent. Downstream agents MUST reference these same record IDs for traceability.\n\`\`\`json\n${JSON.stringify({ processedRecords: structuredOutput }, null, 2)}\n\`\`\``;
     }
     enrichedOutput = `${enrichedOutput}\n\n---\n${buildVerifiedToolCallLog(result.steps)}`;
 
