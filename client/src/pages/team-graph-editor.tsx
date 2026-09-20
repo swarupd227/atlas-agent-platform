@@ -140,10 +140,18 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   const { data: knowledgeBases } = useQuery<KnowledgeBase[]>({ queryKey: ["/api/knowledge-bases"] });
 
   // The run order (stages) and the latest runs, for the stage layout and each step's last result.
-  const { data: wavePlan } = useQuery<WavePlan>({
+  // A flow whose steps loop back has no stages to compute; the canvas says so itself, quietly.
+  const { data: wavePlan, error: wavePlanError } = useQuery<WavePlan>({
     queryKey: ["/api/team-agents", teamAgentId, "dag-waves"],
     enabled: !!teamAgentId && nodes.length > 0,
+    retry: false,
+    meta: { quietError: true },
   });
+  const stagesUnavailable = wavePlanError
+    ? /cycle/i.test(String((wavePlanError as Error).message))
+      ? "A step here leads back to an earlier one, so the stages can't be worked out. The steps are shown as they were saved."
+      : "The stages couldn't be worked out just now. The steps are shown as they were saved."
+    : null;
   const { data: runs } = useQuery<DagExecutionRun[]>({
     queryKey: ["/api/team-agents", teamAgentId, "dag-runs"],
     enabled: !!teamAgentId,
@@ -391,6 +399,11 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
 
       {/* Canvas, with its tools floating over it. */}
       <div className="relative min-h-0 min-w-0 flex-1" data-testid="team-graph-canvas-container">
+        {stagesUnavailable && (
+          <div className="absolute inset-x-0 top-0 z-10 border-b bg-card/95 px-4 py-2 text-xs text-muted-foreground backdrop-blur" data-testid="text-stages-unavailable">
+            {stagesUnavailable}
+          </div>
+        )}
         <div className={`h-full ${panelTab ? "pr-[372px]" : ""}`}>
           <TeamGraphCanvas
             blueprintId={blueprintId}

@@ -876,10 +876,40 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     };
 
     const created: Array<{ sourceNodeId: string; targetNodeId: string }> = [];
+    // Does `to` already lead back to `from` through the edges built so far? Then an edge
+    // from -> to would close a loop, and computeWaves() rejects any graph with one.
+    const leadsTo = (from: string, to: string) => {
+      const seen = new Set([from]);
+      const queue = [from];
+      while (queue.length > 0) {
+        const id = queue.shift()!;
+        if (id === to) return true;
+        for (const e of created) if (e.sourceNodeId === id && !seen.has(e.targetNodeId)) { seen.add(e.targetNodeId); queue.push(e.targetNodeId); }
+      }
+      return false;
+    };
     for (const edgeSpec of pipeline!.edges!) {
       const source = resolveNode(edgeSpec.from);
       const target = resolveNode(edgeSpec.to);
       if (!source || !target || source.id === target.id) continue;
+      // "Send it back for a rewrite" arrives as an edge pointing back up the flow. As an edge it
+      // would make the graph cyclic -- no execution stages, so the team could not run at all. The
+      // platform expresses rework as a revision rule on the reviewing step instead: when its output
+      // says the work failed, the target step runs again, and everything after it follows.
+      if (leadsTo(target.id, source.id)) {
+        const existing = (source.config ?? {}) as Record<string, unknown>;
+        await storage.updateTeamBlueprintNode(source.id, {
+          config: {
+            ...existing,
+            revision: {
+              targetNodeId: target.id,
+              when: { combinator: "AND", conditions: [{ field: "output", operator: "contains", value: "fail" }] },
+              maxRounds: 1,
+            },
+          },
+        } as any);
+        continue;
+      }
       await storage.createTeamBlueprintEdge({
         blueprintId: blueprint.id,
         sourceNodeId: source.id,

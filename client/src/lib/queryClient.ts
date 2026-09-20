@@ -113,8 +113,11 @@ function isTransientNetworkError(error: unknown): boolean {
 
 export const queryClient = new QueryClient({
   queryCache: new QueryCache({
-    onError: (error) => {
+    onError: (error, query) => {
       if (isAbort(error)) return;
+      // A query that shows its own message in place (e.g. the team canvas explaining why it
+      // can't work out the stages) asks for quiet so the page doesn't also raise a red toast.
+      if ((query.meta as { quietError?: boolean } | undefined)?.quietError) return;
       const now = Date.now();
       if (now - lastQueryErrorToastAt < QUERY_ERROR_TOAST_WINDOW_MS) return;
       lastQueryErrorToastAt = now;

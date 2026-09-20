@@ -57,6 +57,11 @@ vi.mock("../server/storage", () => {
         return row;
       }),
       createTeamBlueprintNode: vi.fn(async (n: any) => { const row = { id: id("node"), ...n }; state.nodes.push(row); return row; }),
+      updateTeamBlueprintNode: vi.fn(async (nodeId: string, data: any) => {
+        const row = state.nodes.find((n) => n.id === nodeId);
+        if (row) Object.assign(row, data);
+        return row;
+      }),
       createTeamBlueprintEdge: vi.fn(async (e: any) => { const row = { id: id("edge"), ...e }; state.edges.push(row); return row; }),
       updateOutcome: vi.fn(async (outcomeId: string, data: any, orgId?: string) => { state.outcomeUpdates.push({ outcomeId, data, orgId }); return {}; }),
       createEvalSuite: vi.fn(async (s: any) => { const row = { id: id("suite"), ...s }; state.suites.push(row); return row; }),
@@ -217,6 +222,40 @@ describe("organization", () => {
       expect(u.data.policyBindings.map((b: any) => b.policyId)).toEqual(["pol-a"]);
     }
     expect(state.outcomeUpdates[0]).toMatchObject({ orgId: "org-a" });
+  });
+});
+
+describe("a flow that sends work back", () => {
+  it("turns the loop into a revision rule on the reviewer instead of an edge, so the stages still compute", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("Launch Team"),
+      workers: [worker("Write Copy"), worker("Review Copy"), worker("Schedule Launch")],
+      pipeline: {
+        pattern: "sequential",
+        edges: [
+          { from: "orchestrator", to: "Write Copy" },
+          { from: "Write Copy", to: "Review Copy" },
+          { from: "Review Copy", to: "Write Copy", label: "send back for a rewrite" },
+          { from: "Review Copy", to: "Schedule Launch" },
+        ],
+      },
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+
+    // The backward edge is gone, so there is no cycle and the stages compute.
+    expect(edgePairs()).toEqual([
+      "Launch Team -> Write Copy",
+      "Write Copy -> Review Copy",
+      "Review Copy -> Schedule Launch",
+    ]);
+    expect(() => computeWaves(state.nodes as any, state.edges as any)).not.toThrow();
+
+    // The rework itself is kept, as the platform's own revision rule on the reviewing step.
+    const reviewer = state.nodes.find((n) => n.label === "Review Copy");
+    const writer = state.nodes.find((n) => n.label === "Write Copy");
+    expect(reviewer.config.revision).toMatchObject({ targetNodeId: writer.id, maxRounds: 1 });
+    expect(reviewer.config.revision.when.conditions[0]).toMatchObject({ field: "output", operator: "contains" });
+    expect(reviewer.config.role).toBe("worker");
   });
 });
 
