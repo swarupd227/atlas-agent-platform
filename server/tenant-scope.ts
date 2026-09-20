@@ -554,3 +554,89 @@ export async function skillVersionScope(req: Request, res: Response, next: NextF
     next(err);
   }
 }
+
+// ── Policies, their exceptions and compliance reports ────────────────────────
+//
+// A policy belongs to its organizationId. A policy exception has no column of
+// its own: it belongs to its policy's organization. Compliance reports have no
+// column either, so the owning organization is recorded inside the report's
+// evidence package when it is created; older reports read as the default org's.
+
+async function authorizePolicyId(res: Response, policyId: string | undefined, orgId: string | undefined): Promise<boolean> {
+  if (!policyId) return true;
+  const policy = await storage.getPolicy(policyId);
+  if (!policy) return true; // the route answers its own not-found
+  if (!ownerMatches(policy.organizationId ?? getDefaultOrgId() ?? null, orgId)) {
+    notFound(res, "Policy");
+    return false;
+  }
+  return true;
+}
+
+/** Mounted at /api/policies/:id -- the policy and everything hanging off it. */
+export async function policyScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id) return next();
+    if (await authorizePolicyId(res, id, resolveRequestOrgId(req))) next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Only the exceptions whose policy belongs to the org. */
+export async function filterPolicyExceptionsForOrg<T extends { policyId: string }>(rows: T[], orgId: string | undefined | null): Promise<T[]> {
+  const owners = new Map<string, string | null>();
+  const out: T[] = [];
+  for (const row of rows) {
+    if (!owners.has(row.policyId)) {
+      const policy = await storage.getPolicy(row.policyId);
+      owners.set(row.policyId, policy ? policy.organizationId ?? getDefaultOrgId() ?? null : null);
+    }
+    const owner = owners.get(row.policyId)!;
+    if (policyOwnerVisible(owner, orgId)) out.push(row);
+  }
+  return out;
+}
+
+function policyOwnerVisible(owner: string | null, orgId: string | undefined | null): boolean {
+  // A missing policy leaves the exception orphaned: only the default org sees it.
+  return owner === null ? !!orgId && orgId === getDefaultOrgId() : ownerMatches(owner, orgId);
+}
+
+/** Mounted at /api/policy-exceptions -- list, create, update and the per-agent list. */
+export async function policyExceptionScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const orgId = resolveRequestOrgId(req);
+    const [first, second] = req.path.split("/").filter(Boolean);
+    if (first === "agent") {
+      const agent = second ? await storage.getAgent(second) : undefined;
+      if (agent && !ownerMatches(agent.organizationId ?? getDefaultOrgId() ?? null, orgId)) return notFound(res, "Agent");
+      return next();
+    }
+    if (first) {
+      const exception = (await storage.getPolicyExceptions()).find((e) => e.id === first);
+      if (exception && !(await authorizePolicyId(res, exception.policyId, orgId))) return;
+    }
+    if (req.method === "POST") {
+      if (!(await authorizePolicyId(res, typeof req.body?.policyId === "string" ? req.body.policyId : undefined, orgId))) return;
+      const agentId = typeof req.body?.agentId === "string" ? req.body.agentId : undefined;
+      const agent = agentId ? await storage.getAgent(agentId) : undefined;
+      if (agent && !ownerMatches(agent.organizationId ?? getDefaultOrgId() ?? null, orgId)) return notFound(res, "Agent");
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** The organization a compliance report was generated for (recorded in its evidence package). */
+export function complianceReportOrgId(report: { evidencePackage?: unknown }): string | null {
+  const pkg = report.evidencePackage as { organizationId?: unknown } | null | undefined;
+  const owner = pkg && typeof pkg === "object" ? (pkg as any).organizationId : undefined;
+  return typeof owner === "string" ? owner : getDefaultOrgId() ?? null;
+}
+
+export function filterComplianceReportsForOrg<T extends { evidencePackage?: unknown }>(reports: T[], orgId: string | undefined | null): T[] {
+  return reports.filter((r) => ownerMatches(complianceReportOrgId(r), orgId));
+}

@@ -33,6 +33,7 @@ import {
   redactPayload,
 } from "../permissions";
 import { resolveOntologyTags, handleZodError, checkPatchSafety, generateKpiAlignedEvalSuite, resolvePolicyBundle } from "./helpers";
+import { resolveRequestOrgId, filterPolicyExceptionsForOrg, filterComplianceReportsForOrg } from "../tenant-scope";
 import { getPublicKeyInfo, signAuditPayload } from "../audit-signing";
 import { generateComplianceReport } from "../eval-report-generator";
 import billingRouter from "./billing";
@@ -1018,12 +1019,13 @@ Ontology: ${ontologyName || "industry standard"}`,
     }
   });
 
+  // Per-policy routes are scoped by policyScope (server/tenant-scope.ts).
   router.get("/api/policies/:id/test-cases", async (req, res) => {
     const testCases = await storage.getPolicyTestCases(req.params.id);
     res.json(testCases);
   });
 
-  router.post("/api/policies/:id/test-cases", async (req, res) => {
+  router.post("/api/policies/:id/test-cases", checkPermission("create_modify_policies"), async (req, res) => {
     const testCase = await storage.createPolicyTestCase({
       ...req.body,
       policyId: req.params.id,
@@ -1031,12 +1033,12 @@ Ontology: ${ontologyName || "industry standard"}`,
     res.json(testCase);
   });
 
-  router.post("/api/policies/:id/test-cases/:testId/run", async (req, res) => {
-    const testCases = await storage.getPolicyTestCases(req.params.id);
+  router.post("/api/policies/:id/test-cases/:testId/run", checkPermission("create_modify_policies"), async (req, res) => {
+    const testCases = await storage.getPolicyTestCases((req.params.id as string));
     const testCase = testCases.find(tc => tc.id === req.params.testId);
     if (!testCase) return res.status(404).json({ error: "Test case not found" });
 
-    const policy = await storage.getPolicy(req.params.id, getOrgId(req));
+    const policy = await storage.getPolicy((req.params.id as string), getOrgId(req));
     if (!policy) return res.status(404).json({ error: "Policy not found" });
 
     const rules = (policy.policyJson as any)?.rules || [];
@@ -1372,97 +1374,36 @@ Ontology: ${ontologyName || "industry standard"}`,
   });
 
   // Verify hash chain integrity
+  /**
+   * Verify the organization's audit hash chain.
+   *
+   * This route used to re-implement the hash with FEWER fields than
+   * createAuditEvent signs (no organizationId, no createdAt) and over every
+   * organization's events interleaved in one sequence -- so it reported
+   * every current event as tampered and every multi-org deployment as broken.
+   * It now calls the verifier that shares the writer's canonicalization
+   * (storage.verifyAuditChainIntegrity), scoped to the caller's organization.
+   */
   router.get("/api/audit-events/verify-chain", checkPermission("export_audit_bundle"), async (req, res) => {
     try {
-      const crypto = await import("crypto");
-      const events = await storage.getAuditEvents(getOrgId(req));
-      const sorted = events
-        .filter(e => e.sequenceNum !== null && e.sequenceNum !== undefined)
-        .sort((a, b) => (a.sequenceNum || 0) - (b.sequenceNum || 0));
-
-      if (sorted.length === 0) {
-        return res.json({
-          valid: true,
-          totalEvents: events.length,
-          chainedEvents: 0,
-          unchainedEvents: events.length,
-          message: "No chained events found yet",
-        });
-      }
-
-      let valid = true;
-      const breaks: Array<{ sequenceNum: number; eventId: string; reason: string }> = [];
-
-      for (let i = 0; i < sorted.length; i++) {
-        const event = sorted[i];
-        const expectedPrevHash = i === 0 ? "GENESIS" : sorted[i - 1].eventHash;
-
-        if (event.previousHash !== expectedPrevHash) {
-          valid = false;
-          breaks.push({
-            sequenceNum: event.sequenceNum!,
-            eventId: event.id,
-            reason: `previousHash mismatch: expected "${expectedPrevHash?.slice(0, 16)}...", got "${event.previousHash?.slice(0, 16)}..."`,
-          });
-          continue;
-        }
-
-        const canonicalObj: Record<string, unknown> = {
-          action: event.action,
-          actorId: event.actorId,
-          actorType: event.actorType,
-          details: event.details,
-          objectId: event.objectId,
-          objectType: event.objectType,
-          sequenceNum: event.sequenceNum,
-        };
-        const canonicalPayload = JSON.stringify(canonicalObj, Object.keys(canonicalObj).sort());
-        const computedHash = nodeCrypto.createHash("sha256")
-          .update((event.previousHash || "GENESIS") + canonicalPayload)
-          .digest("hex");
-
-        if (computedHash !== event.eventHash) {
-          valid = false;
-          breaks.push({
-            sequenceNum: event.sequenceNum!,
-            eventId: event.id,
-            reason: `eventHash mismatch: computed "${computedHash.slice(0, 16)}...", stored "${event.eventHash?.slice(0, 16)}..."`,
-          });
-        }
-
-        // Gap/duplicate detection
-        if (i > 0) {
-          const prevSeq = sorted[i - 1].sequenceNum || 0;
-          const curSeq = event.sequenceNum || 0;
-          if (curSeq === prevSeq) {
-            valid = false;
-            breaks.push({
-              sequenceNum: curSeq,
-              eventId: event.id,
-              reason: `Duplicate sequenceNum ${curSeq} detected`,
-            });
-          } else if (curSeq !== prevSeq + 1) {
-            valid = false;
-            breaks.push({
-              sequenceNum: curSeq,
-              eventId: event.id,
-              reason: `Sequence gap: expected ${prevSeq + 1}, got ${curSeq}`,
-            });
-          }
-        }
-      }
-
+      const result = await storage.verifyAuditChainIntegrity(resolveRequestOrgId(req));
+      const verified = result.verifiedEvents ?? 0;
       res.json({
-        valid,
-        totalEvents: events.length,
-        chainedEvents: sorted.length,
-        unchainedEvents: events.length - sorted.length,
-        firstSequence: sorted[0]?.sequenceNum,
-        lastSequence: sorted[sorted.length - 1]?.sequenceNum,
-        breaks: breaks.length > 0 ? breaks : undefined,
-        message: valid
-          ? `Chain verified: ${sorted.length} events, sequence ${sorted[0]?.sequenceNum} to ${sorted[sorted.length - 1]?.sequenceNum}`
-          : `Chain BROKEN: ${breaks.length} break(s) detected`,
+        valid: result.valid,
+        totalEvents: result.totalEvents,
+        chainedEvents: verified,
+        unchainedEvents: result.totalEvents - verified,
+        signatureValid: result.signatureValid,
+        signedEvents: result.signedEvents,
+        unsignedEvents: result.unsignedEvents,
+        breaks: result.valid
+          ? undefined
+          : [{ sequenceNum: result.brokenAt ?? -1, eventId: "", reason: `Chain breaks at sequence ${result.brokenAt ?? "unknown"}` }],
+        message: verified === 0
+          ? "No chained events found yet"
+          : result.valid
+            ? `Chain verified: ${verified} event${verified === 1 ? "" : "s"}${result.signatureValid === false ? ", but a signature does not match" : ""}`
+            : `Chain BROKEN at sequence ${result.brokenAt ?? "unknown"}`,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message || "Chain verification failed" });
@@ -1838,17 +1779,19 @@ Ontology: ${ontologyName || "industry standard"}`,
     }
   });
 
-  router.get("/api/policy-exceptions", async (_req, res) => {
-    const exceptions = await storage.getPolicyExceptions();
+  // Exceptions and reports are scoped by policyExceptionScope (server/tenant-scope.ts):
+  // an exception belongs to its policy's organization.
+  router.get("/api/policy-exceptions", async (req, res) => {
+    const exceptions = await filterPolicyExceptionsForOrg(await storage.getPolicyExceptions(), resolveRequestOrgId(req));
     res.json(exceptions);
   });
 
   router.get("/api/policy-exceptions/agent/:agentId", async (req, res) => {
-    const exceptions = await storage.getPolicyExceptionsByAgent(req.params.agentId);
+    const exceptions = await filterPolicyExceptionsForOrg(await storage.getPolicyExceptionsByAgent(req.params.agentId as string), resolveRequestOrgId(req));
     res.json(exceptions);
   });
 
-  router.post("/api/policy-exceptions", async (req, res) => {
+  router.post("/api/policy-exceptions", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertPolicyExceptionSchema.parse(req.body);
       const exception = await storage.createPolicyException(data);
@@ -1858,21 +1801,31 @@ Ontology: ${ontologyName || "industry standard"}`,
     }
   });
 
-  router.patch("/api/policy-exceptions/:id", async (req, res) => {
-    const updated = await storage.updatePolicyException(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ message: "Not found" });
-    res.json(updated);
+  router.patch("/api/policy-exceptions/:id", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      // Validated, not the raw body: an update could otherwise set any column,
+      // including the policy the exception belongs to.
+      const data = insertPolicyExceptionSchema.partial().parse(req.body);
+      const updated = await storage.updatePolicyException(req.params.id as string, data);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
   });
 
-  router.get("/api/compliance-reports", async (_req, res) => {
-    const reports = await storage.getComplianceReports();
+  // compliance_reports has no organization column, so the owning organization is
+  // recorded in the report's evidence package when it is created.
+  router.get("/api/compliance-reports", async (req, res) => {
+    const reports = filterComplianceReportsForOrg(await storage.getComplianceReports(), resolveRequestOrgId(req));
     res.json(reports);
   });
 
-  router.post("/api/compliance-reports", async (req, res) => {
+  router.post("/api/compliance-reports", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertComplianceReportSchema.parse(req.body);
-      const report = await storage.createComplianceReport(data);
+      const evidencePackage = { ...((data.evidencePackage as Record<string, unknown> | null) ?? {}), organizationId: resolveRequestOrgId(req) ?? null };
+      const report = await storage.createComplianceReport({ ...data, evidencePackage });
       res.status(201).json(report);
     } catch (e) {
       handleZodError(res, e);

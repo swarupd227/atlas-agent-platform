@@ -115,7 +115,10 @@ function scanRoutes(): RouteEntry[] {
 // 430 (was 452): every knowledge-base write (create/edit/delete, sources,
 // embed, stats, staleness checks, tuning, agent link/unlink), skill-version
 // PATCH and skill-chain create/edit/delete need create_modify_blueprints.
-const BASELINE_UNGUARDED = 430;
+//
+// 425 (was 430): policy test-case create/run, policy-exception create/update
+// and compliance-report create need create_modify_policies.
+const BASELINE_UNGUARDED = 425;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {
