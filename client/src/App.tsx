@@ -50,7 +50,8 @@ const TraceDetail = lazy(() => import("@/pages/trace-detail"));
 const DagRunMonitor = lazy(() => import("@/pages/dag-run-monitor"));
 const AgentWizard = lazy(() => import("@/pages/agent-wizard"));
 const EvalDetail = lazy(() => import("@/pages/eval-detail"));
-const Evals = lazy(() => import("@/pages/evals"));
+const Evals = lazy(() => import("@/pages/eval-studio-home"));
+const EvalsClassic = lazy(() => import("@/pages/evals"));
 const EvalMetrics = lazy(() => import("@/pages/eval-metrics"));
 const EvalMetricBuilder = lazy(() => import("@/pages/eval-metric-builder"));
 const EvalSynthesizer = lazy(() => import("@/pages/eval-synthesizer"));
@@ -321,6 +322,7 @@ function DashboardRouter() {
       <Route path="/agents/:id" component={AgentDetail} />
       <Route path="/blueprints" component={Blueprints} />
       <Route path="/blueprints/:id" component={BlueprintDetail} />
+      <Route path="/evals/classic" component={EvalsClassic} />
       <Route path="/evals" component={Evals} />
       <Route path="/evals/metrics/new" component={EvalMetricBuilder} />
       <Route path="/evals/metrics/:id/edit" component={EvalMetricBuilder} />
