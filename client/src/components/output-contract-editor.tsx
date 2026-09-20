@@ -448,6 +448,35 @@ function ContractForm({
   const isEdit = !!initial;
   const savedId = initial?.id;
 
+  const [ontIndustry, setOntIndustry] = useState("financial_services");
+  const [ontCategory, setOntCategory] = useState("");
+  const [ontField, setOntField] = useState("");
+  const [ontBusy, setOntBusy] = useState(false);
+  const generateFromOntology = async () => {
+    setOntBusy(true);
+    try {
+      const res = await apiRequest("POST", "/api/output-contracts/generate-from-ontology", {
+        industryId: ontIndustry.trim(), category: ontCategory.trim() || undefined, fieldName: ontField.trim(),
+      });
+      const gen = await res.json();
+      let current: { type?: string; properties?: Record<string, unknown>; required?: string[] } = {};
+      try { current = JSON.parse(schemaJson); } catch { /* start from an empty schema */ }
+      const merged = {
+        ...current, type: "object",
+        properties: { ...(current.properties ?? {}), ...gen.schemaDefinition.properties },
+        required: Array.from(new Set([...(current.required ?? []), ...gen.schemaDefinition.required])),
+      };
+      setSchemaJson(JSON.stringify(merged, null, 2));
+      setSchemaError(null);
+      setNormalizers(prev => [...prev.filter(n => n.field !== ontField.trim()), ...gen.normalizers]);
+      toast({ title: "Generated from ontology", description: `${gen.values.length} allowed values for "${ontField.trim()}"` });
+    } catch (e) {
+      toast({ title: "Could not generate", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setOntBusy(false);
+    }
+  };
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       let parsedSchema: Record<string, unknown>;
@@ -514,6 +543,14 @@ function ContractForm({
         <TabsContent value="schema" className="mt-3 flex flex-col gap-2">
           <Label className="text-xs font-semibold">JSON Schema Definition (draft-2020-12)</Label>
           <p className="text-[11px] text-muted-foreground">Define the required structure for LLM outputs. Validation uses AJV with strict type coercion.</p>
+          <div className="flex flex-wrap items-end gap-2 rounded-md border p-2" data-testid="ontology-generator">
+            <div className="flex flex-col gap-1"><Label className="text-[10px]">Industry</Label><Input value={ontIndustry} onChange={(e) => setOntIndustry(e.target.value)} className="h-7 w-40 text-xs" data-testid="input-ontology-industry" /></div>
+            <div className="flex flex-col gap-1"><Label className="text-[10px]">Concept category</Label><Input value={ontCategory} onChange={(e) => setOntCategory(e.target.value)} placeholder="e.g. Content Type" className="h-7 w-40 text-xs" data-testid="input-ontology-category" /></div>
+            <div className="flex flex-col gap-1"><Label className="text-[10px]">Output field</Label><Input value={ontField} onChange={(e) => setOntField(e.target.value)} placeholder="e.g. contentType" className="h-7 w-36 text-xs" data-testid="input-ontology-field" /></div>
+            <Button type="button" size="sm" variant="outline" disabled={ontBusy || !ontIndustry.trim() || !ontField.trim()} onClick={generateFromOntology} data-testid="button-generate-from-ontology">
+              {ontBusy ? "Generating..." : "Generate from ontology"}
+            </Button>
+          </div>
           <Textarea
             value={schemaJson}
             onChange={(e) => setSchemaJson(e.target.value)}

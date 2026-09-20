@@ -98,6 +98,7 @@ const router = Router();
         synonyms: z.array(z.string()).optional(),
         source: z.enum(["industry-standard", "custom-extension", "ai-subdomain"]).optional(),
         linkedRegulations: z.array(z.any()).optional(),
+        sensitivityClassification: z.any().optional(),
       });
       const parseResult = bodySchema.safeParse(req.body);
       if (!parseResult.success) {
@@ -105,6 +106,7 @@ const router = Router();
       }
       const data = parseResult.data;
       const concept = await storage.createOntologyConcept({
+        sensitivityClassification: data.sensitivityClassification ?? null,
         id: data.id,
         industryId: data.industryId,
         subVerticals: data.subVerticals,

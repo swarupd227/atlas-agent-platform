@@ -3,6 +3,7 @@ import { resolveAgentIndustry } from "./agent-industry";
 import { db } from "./db";
 import { EventEmitter } from "events";
 import OpenAI from "openai";
+import { compileRedactPatterns, redactStringLeaves, redactText } from "./output-redaction";
 import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
@@ -1105,6 +1106,22 @@ export async function executePromptWithMcp(
   // Daily-per-agent and org-wide monthly cost caps, checked BEFORE this run
   // spends anything (unlike the per-run cap further down, which only stops
   // the tool loop after some spend has already happened this run). Opt-in —
+  // Policy `redactPatterns` applied to what the agent SAYS (tool args are redacted by the
+  // dispatcher). String leaves only, after contract enforcement, so JSON stays parseable.
+  const outputRedactRes = compileRedactPatterns(policyBundle?.redactPatterns);
+  let outputRedactMatches = 0;
+  const policyRedact = <T,>(v: T): T => {
+    const r = redactStringLeaves(v, outputRedactRes);
+    outputRedactMatches += r.matches;
+    return r.value;
+  };
+  const policyRedactText = (s: string): string => {
+    if (!s) return s;
+    const r = redactText(s, outputRedactRes);
+    outputRedactMatches += r.matches;
+    return r.value;
+  };
+
   // unset caps are not enforced. On breach the agent is marked "throttled" so
   // later calls fail fast without re-querying cost every time.
   {
@@ -1999,7 +2016,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         noToolsOutput = parseModelJsonObject(currentContent) ?? { analysis: currentContent };
       }
 
-      const maskedNoToolsOutput = maskPiiInOutputFields(noToolsOutput, runtimeConfig);
+      const maskedNoToolsOutput = policyRedact(maskPiiInOutputFields(noToolsOutput, runtimeConfig));
       noToolsStep.status = noToolsInterrupted ? "failed" : "completed";
       noToolsStep.completedAt = new Date().toISOString();
       noToolsStep.output = maskedNoToolsOutput;
@@ -2007,7 +2024,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         noToolsStep.error = `Output contract validation failed (strict_with_interrupt): ${(noToolsOutput.contractValidationErrors as string[] | undefined ?? []).slice(0, 3).join("; ")}`;
       }
       if (options?.conversational) {
-        conversationalResponseHoisted = typeof maskedNoToolsOutput.analysis === "string" ? maskedNoToolsOutput.analysis : maskPiiText(currentContent, runtimeConfig);
+        conversationalResponseHoisted = typeof maskedNoToolsOutput.analysis === "string" ? maskedNoToolsOutput.analysis : policyRedactText(maskPiiText(currentContent, runtimeConfig));
       }
     }
 
@@ -2577,8 +2594,8 @@ After receiving tool results, provide a structured analysis with key findings, s
         const lastStep = steps[steps.length - 1];
         lastStep.status = contractInterrupted ? "failed" : "completed";
         lastStep.completedAt = new Date().toISOString();
-        const maskedAnalysis = maskPiiInOutputFields(analysis, runtimeConfig);
-        const maskedRawContent = maskPiiText(rawContent, runtimeConfig);
+        const maskedAnalysis = policyRedact(maskPiiInOutputFields(analysis, runtimeConfig));
+        const maskedRawContent = policyRedactText(maskPiiText(rawContent, runtimeConfig));
         lastStep.output = maskedAnalysis;
         if (contractInterrupted) {
           lastStep.error = `Output contract validation failed (strict_with_interrupt): ${(analysis.contractValidationErrors ?? []).slice(0, 3).join("; ")}`;
@@ -2680,6 +2697,24 @@ After receiving tool results, provide a structured analysis with key findings, s
   try {
     const agentRecord = await storage.getAgent(agentId);
     const ontologyTags = (agentRecord?.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+  if (outputRedactRes.length > 0) {
+    complianceChecks.push({
+      rule: "Output Redaction",
+      status: "pass",
+      detail: `${outputRedactRes.length} policy redaction pattern(s) applied to agent output; ${outputRedactMatches} match(es) redacted`,
+    });
+    if (outputRedactMatches > 0) {
+      storage.createAuditEvent({
+        actorType: "system",
+        actorId: "policy-gate",
+        action: "output_redacted",
+        objectType: "agent",
+        objectId: agentId,
+        details: JSON.stringify({ agentId, patternCount: outputRedactRes.length, matchCount: outputRedactMatches, policyIds: policyBundle?.appliedPolicies.map(p => p.id) ?? [] }),
+      }).catch(() => {});
+    }
+  }
+
     if (ontologyTags.length > 0) {
       const allOutputText = steps
         .filter(s => s.status === "completed" && s.output)
