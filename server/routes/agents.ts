@@ -27,6 +27,7 @@ import {
   redactWithOntologyKeys,
 } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
+import { resolveRequestOrgId, filterEvalSuitesForOrg, filterEvalRunsForOrg } from "../tenant-scope";
 import {
   resolveOntologyTags,
   generateKpiAlignedEvalSuite,
@@ -2718,13 +2719,16 @@ const router = Router();
     }
   });
 
-  router.get("/api/evals", async (_req, res) => {
-    const suites = await storage.getEvalSuites();
+  // The legacy eval tables have no organization column: a suite belongs to its
+  // agent's organization, a run to its own agent or its suite's (evalSuiteScope /
+  // evalRunScope in server/tenant-scope.ts).
+  router.get("/api/evals", async (req, res) => {
+    const suites = await filterEvalSuitesForOrg(await storage.getEvalSuites(), resolveRequestOrgId(req));
     res.json(suites);
   });
 
-  router.get("/api/eval-runs", async (_req, res) => {
-    const runs = await storage.getAllEvalRuns();
+  router.get("/api/eval-runs", async (req, res) => {
+    const runs = await filterEvalRunsForOrg(await storage.getAllEvalRuns(), resolveRequestOrgId(req));
     res.json(runs);
   });
 
@@ -2918,9 +2922,12 @@ Respond in JSON format:
     }
   });
 
-  router.post("/api/evals", async (req, res) => {
+  router.post("/api/evals", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertEvalSuiteSchema.parse(req.body);
+      // A suite takes its organization from its agent, so the agent must be the caller's.
+      const owner = data.agentId ? await storage.getAgent(data.agentId, getOrgId(req)) : undefined;
+      if (data.agentId && !owner) return res.status(404).json({ message: "Agent not found" });
       const suite = await storage.createEvalSuite(data);
       res.status(201).json(suite);
       // Fire-and-forget: auto-populate ontology-grounded test cases if the agent has concepts

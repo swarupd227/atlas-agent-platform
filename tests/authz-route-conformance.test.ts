@@ -118,7 +118,10 @@ function scanRoutes(): RouteEntry[] {
 //
 // 425 (was 430): policy test-case create/run, policy-exception create/update
 // and compliance-report create need create_modify_policies.
-const BASELINE_UNGUARDED = 425;
+//
+// 412 (was 425): eval suite create, suite test-cases/runs, eval case results
+// and the golden-dataset writes need create_modify_blueprints.
+const BASELINE_UNGUARDED = 412;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {

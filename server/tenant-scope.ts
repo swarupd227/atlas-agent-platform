@@ -640,3 +640,87 @@ export function complianceReportOrgId(report: { evidencePackage?: unknown }): st
 export function filterComplianceReportsForOrg<T extends { evidencePackage?: unknown }>(reports: T[], orgId: string | undefined | null): T[] {
   return reports.filter((r) => ownerMatches(complianceReportOrgId(r), orgId));
 }
+
+// ── Evaluation: legacy suites, runs and case results ─────────────────────────
+//
+// None of the legacy eval tables has an organization column. A suite belongs
+// to its agent's organization; a run belongs to its own agent, else its
+// suite's; a case result belongs to its run. Golden datasets have no owner at
+// all -- they are a shared benchmark library, so they stay visible to every
+// organization and only their writes are guarded.
+
+async function evalSuiteOwnerOrgId(suite: { agentId?: string | null } | undefined): Promise<string | null | undefined> {
+  if (!suite) return undefined;
+  return agentOwnerOrgId(suite.agentId ?? null);
+}
+
+/** Mounted at /api/evals/:id -- the suite, its test cases, its runs and run-golden. */
+export async function evalSuiteScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id) return next();
+    const suite = await storage.getEvalSuite(id);
+    if (!suite) return next();
+    const owner = await evalSuiteOwnerOrgId(suite);
+    if (owner !== undefined && !ownerMatches(owner, resolveRequestOrgId(req))) return notFound(res, "Eval suite");
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function evalRunOwnerOrgId(run: { agentId?: string | null; suiteId?: string | null }): Promise<string | null | undefined> {
+  if (run.agentId) return agentOwnerOrgId(run.agentId);
+  const suite = run.suiteId ? await storage.getEvalSuite(run.suiteId) : undefined;
+  return evalSuiteOwnerOrgId(suite);
+}
+
+/** Mounted at /api/eval-runs/:id -- a run and its case results. */
+export async function evalRunScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id) return next();
+    const run = (await storage.getAllEvalRuns()).find((r) => r.id === id);
+    if (!run) return next();
+    const owner = await evalRunOwnerOrgId(run);
+    if (owner !== undefined && !ownerMatches(owner, resolveRequestOrgId(req))) return notFound(res, "Eval run");
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Only the suites whose agent belongs to the org. */
+export async function filterEvalSuitesForOrg<T extends { agentId?: string | null }>(suites: T[], orgId: string | undefined | null): Promise<T[]> {
+  const owners = new Map<string, string | null | undefined>();
+  const out: T[] = [];
+  for (const suite of suites) {
+    const key = suite.agentId ?? "";
+    if (!owners.has(key)) owners.set(key, await agentOwnerOrgId(suite.agentId ?? null));
+    const owner = owners.get(key);
+    if (owner !== undefined && ownerMatches(owner, orgId)) out.push(suite);
+  }
+  return out;
+}
+
+/** Only the runs whose agent (or suite's agent) belongs to the org. */
+export async function filterEvalRunsForOrg<T extends { agentId?: string | null; suiteId?: string | null }>(runs: T[], orgId: string | undefined | null): Promise<T[]> {
+  const suiteAgents = new Map<string, string | null | undefined>();
+  const owners = new Map<string, string | null | undefined>();
+  const out: T[] = [];
+  for (const run of runs) {
+    let agentId = run.agentId ?? null;
+    if (!agentId && run.suiteId) {
+      if (!suiteAgents.has(run.suiteId)) {
+        const suite = await storage.getEvalSuite(run.suiteId);
+        suiteAgents.set(run.suiteId, suite?.agentId ?? null);
+      }
+      agentId = (suiteAgents.get(run.suiteId) as string | null) ?? null;
+    }
+    const key = agentId ?? "";
+    if (!owners.has(key)) owners.set(key, await agentOwnerOrgId(agentId));
+    const owner = owners.get(key);
+    if (owner !== undefined && ownerMatches(owner, orgId)) out.push(run);
+  }
+  return out;
+}

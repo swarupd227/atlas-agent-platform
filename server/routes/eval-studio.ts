@@ -7,7 +7,7 @@ import * as os from "os";
 import { randomUUID } from "crypto";
 import { storage } from "../storage";
 import { startEvalRun, summarizeMetrics } from "../eval-runs";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
 import type { Request } from "express";
 import { generateComplianceReport, REPORT_TEMPLATES } from "../eval-report-generator";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
@@ -159,8 +159,12 @@ const validateCodeSchema = z.object({
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function assertOrgOwnership(entityOrgId: string | null | undefined, reqOrgId: string | undefined): void {
-  if (!entityOrgId) return;
-  if (reqOrgId && entityOrgId !== reqOrgId) {
+  // A record with no organization is a legacy row, not a shared one: it belongs
+  // to the default organization. Treating it as "everyone's" handed Studio
+  // datasets, runs and metrics of the original tenant to every other one.
+  const owner = entityOrgId ?? getDefaultOrgId();
+  if (!owner) return;
+  if (reqOrgId && owner !== reqOrgId) {
     throw new Error("FORBIDDEN");
   }
 }

@@ -1831,7 +1831,9 @@ ${naturalLanguageInput}`,
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.post("/api/golden-datasets", async (req, res) => {
+  // Golden datasets are a shared benchmark library (no organization column),
+  // so they stay readable by every organization and only writes are guarded.
+  router.post("/api/golden-datasets", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const parsed = insertGoldenDatasetSchema.parse(req.body);
       const dataset = await storage.createGoldenDataset(parsed);
@@ -1842,7 +1844,7 @@ ${naturalLanguageInput}`,
     }
   });
 
-  router.patch("/api/golden-datasets/:id", async (req, res) => {
+  router.patch("/api/golden-datasets/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const updated = await storage.updateGoldenDataset(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Dataset not found" });
@@ -1850,7 +1852,7 @@ ${naturalLanguageInput}`,
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.delete("/api/golden-datasets/:id", async (req, res) => {
+  router.delete("/api/golden-datasets/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const deleted = await storage.deleteGoldenDataset(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Dataset not found" });
@@ -1866,7 +1868,7 @@ ${naturalLanguageInput}`,
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.post("/api/golden-datasets/:datasetId/test-cases", async (req, res) => {
+  router.post("/api/golden-datasets/:datasetId/test-cases", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const parsed = insertGoldenTestCaseSchema.parse({ ...req.body, datasetId: req.params.datasetId as string });
       const tc = await storage.createGoldenTestCase(parsed);
@@ -1877,7 +1879,7 @@ ${naturalLanguageInput}`,
     }
   });
 
-  router.patch("/api/golden-test-cases/:id", async (req, res) => {
+  router.patch("/api/golden-test-cases/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const updated = await storage.updateGoldenTestCase(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Test case not found" });
@@ -1885,7 +1887,7 @@ ${naturalLanguageInput}`,
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.delete("/api/golden-test-cases/:id", async (req, res) => {
+  router.delete("/api/golden-test-cases/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const deleted = await storage.deleteGoldenTestCase(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Test case not found" });
@@ -1900,7 +1902,7 @@ ${naturalLanguageInput}`,
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.post("/api/golden-datasets/:datasetId/data-records", async (req, res) => {
+  router.post("/api/golden-datasets/:datasetId/data-records", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const record = await storage.createGoldenDataRecord({
         ...req.body,
@@ -1910,7 +1912,7 @@ ${naturalLanguageInput}`,
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.post("/api/golden-datasets/:datasetId/data-records/bulk", async (req, res) => {
+  router.post("/api/golden-datasets/:datasetId/data-records/bulk", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const { records } = req.body;
       if (!Array.isArray(records) || records.length === 0) {
@@ -1922,7 +1924,7 @@ ${naturalLanguageInput}`,
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.delete("/api/golden-data-records/:id", async (req, res) => {
+  router.delete("/api/golden-data-records/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const deleted = await storage.deleteGoldenDataRecord(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Data record not found" });

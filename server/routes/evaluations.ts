@@ -181,7 +181,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     res.json(cases);
   });
 
-  router.post("/api/evals/:id/test-cases", async (req, res) => {
+  router.post("/api/evals/:id/test-cases", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertEvalTestCaseSchema.parse({ ...req.body, suiteId: req.params.id });
       const testCase = await storage.createEvalTestCase(data);
@@ -264,7 +264,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     res.json(runs);
   });
 
-  router.post("/api/evals/:id/runs", async (req, res) => {
+  router.post("/api/evals/:id/runs", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertEvalRunSchema.parse({ ...req.body, suiteId: req.params.id });
       const run = await storage.createEvalRun(data);
@@ -279,7 +279,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     res.json(results);
   });
 
-  router.post("/api/eval-runs/:runId/case-results", async (req, res) => {
+  router.post("/api/eval-runs/:runId/case-results", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertEvalCaseResultSchema.parse({ ...req.body, runId: req.params.runId });
       const result = await storage.createEvalCaseResult(data);
