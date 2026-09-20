@@ -21,6 +21,7 @@ vi.mock("../server/storage", () => ({
     getAgent: async (id: string) => rows.agents.get(id),
     getAgentOrgMap: async () => new Map(Array.from(rows.agents.values()).map((a: any) => [a.id, a.organizationId ?? null])),
     getEvalSuite: async (id: string) => rows.suites.get(id),
+    getEvalSuites: async () => Array.from(rows.suites.values()),
     getAllEvalRuns: async () => rows.runs,
   },
 }));

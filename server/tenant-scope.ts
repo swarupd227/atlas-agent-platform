@@ -716,11 +716,12 @@ export async function filterEvalSuitesForOrg<T extends { agentId?: string | null
 /** Only the runs whose agent (or suite's agent) belongs to the org. */
 export async function filterEvalRunsForOrg<T extends { agentId?: string | null; suiteId?: string | null }>(runs: T[], orgId: string | undefined | null): Promise<T[]> {
   const map = await agentOrgMap();
-  // A run with no agent of its own takes its suite's; look each suite up once.
+  // A run with no agent of its own takes its suite's. One read of the suite
+  // list beats a lookup per run (439 runs cost ~11s that way).
+  const needSuites = runs.some((r) => !r.agentId && r.suiteId);
   const suiteAgents = new Map<string, string | null>();
-  for (const suiteId of Array.from(new Set(runs.filter((r) => !r.agentId && r.suiteId).map((r) => r.suiteId as string)))) {
-    const suite = await storage.getEvalSuite(suiteId);
-    suiteAgents.set(suiteId, suite?.agentId ?? null);
+  if (needSuites) {
+    for (const suite of await storage.getEvalSuites()) suiteAgents.set(suite.id, suite.agentId ?? null);
   }
   return runs.filter((run) => {
     const agentId = run.agentId ?? (run.suiteId ? suiteAgents.get(run.suiteId) ?? null : null);
