@@ -21,7 +21,7 @@ export function summarizeRunToolCalls(finalState: Record<string, unknown> | null
       const at = value.lastIndexOf(TOOL_LOG_MARKER);
       if (at < 0) continue;
       const counts = new Map<string, { ok: number; failed: number }>();
-      for (const m of value.slice(at).matchAll(TOOL_LOG_LINE)) {
+      for (const m of Array.from(value.slice(at).matchAll(TOOL_LOG_LINE))) {
         const c = counts.get(m[1]) ?? { ok: 0, failed: 0 };
         if (m[2] === "OK") c.ok++; else c.failed++;
         counts.set(m[1], c);
@@ -33,7 +33,7 @@ export function summarizeRunToolCalls(finalState: Record<string, unknown> | null
   let total = 0;
   const lines = steps.map((s) => {
     if (s.counts.size === 0) return `- ${s.label}: no tool calls`;
-    const parts = [...s.counts.entries()].map(([tool, c]) => {
+    const parts = Array.from(s.counts.entries()).map(([tool, c]) => {
       total += c.ok + c.failed;
       return `${tool} x${c.ok + c.failed}${c.failed ? ` (${c.failed} failed)` : ""}`;
     });
