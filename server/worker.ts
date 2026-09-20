@@ -1,5 +1,7 @@
 import { storage } from "./storage";
 import { pickRegressionBaseline, regressionCheck } from "./eval-regression";
+import { runBaselineStaticChecks } from "./eval-baseline-checks";
+import { resolvePolicyBundle } from "./routes/helpers";
 import { resolveAgentIndustry } from "./agent-industry";
 import type { Job, AuditChainTrigger } from "@shared/schema";
 import { agentAlerts } from "@shared/schema";
@@ -108,27 +110,30 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
   const agent = await storage.getAgent(agentId);
   if (!agent) throw new Error(`Agent ${agentId} not found`);
 
-  await delay(800);
-
+  // Real structural checks over the agent, its graph and the policies that
+  // resolve for it (server/eval-baseline-checks.ts). Anything that can't be
+  // checked says so rather than reporting a pass.
+  const graphBlueprintId = blueprintId ?? ((agent as any).blueprintId as string | undefined);
+  const [graphNodes, graphEdges, policyBundle, connectorLinks] = await Promise.all([
+    graphBlueprintId ? storage.getTeamBlueprintNodes(graphBlueprintId).catch(() => []) : Promise.resolve([]),
+    graphBlueprintId ? storage.getTeamBlueprintEdges(graphBlueprintId).catch(() => []) : Promise.resolve([]),
+    resolvePolicyBundle(agentId, agent.organizationId ?? undefined).catch(() => undefined),
+    storage.getAgentMcpServers(agentId).catch(() => undefined),
+  ]);
   const staticChecks: Record<string, unknown> = {
-    timestamp: new Date().toISOString(),
-    blueprintId,
-    checks: [
-      { name: "Schema Validation", status: "pass", message: "Blueprint JSON conforms to schema v2" },
-      { name: "Tool References", status: "pass", message: "All referenced tools are registered" },
-      { name: "Policy Bindings", status: "pass", message: "Required policies are bound" },
-      { name: "Escalation Paths", status: agent.autonomyMode === "full" ? "warning" : "pass", message: agent.autonomyMode === "full" ? "No human review node in fully autonomous mode" : "Human review nodes validated" },
-      { name: "Circular Dependencies", status: "pass", message: "No circular dependencies detected in workflow" },
-    ],
-    passCount: agent.autonomyMode === "full" ? 4 : 5,
-    warnCount: agent.autonomyMode === "full" ? 1 : 0,
-    failCount: 0,
+    ...runBaselineStaticChecks({
+      agent: agent as any,
+      blueprintJson: (agent as any).blueprintJson,
+      nodes: graphNodes as any,
+      edges: graphEdges as any,
+      appliedPolicies: policyBundle?.appliedPolicies as any,
+      linkedConnectorCount: connectorLinks?.length,
+    }),
+    blueprintId: graphBlueprintId,
   };
 
   await storage.updateJob(job.id, { progress: 30 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 30, step: "static_checks_complete" });
-
-  await delay(600);
 
   await storage.updateJob(job.id, { progress: 50 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 50, step: "running_eval_cases" });
@@ -1399,6 +1404,16 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   if (!agent) throw new Error(`Agent ${agentId} not found`);
   const agentCtx = buildAgentContext(agent);
 
+  // The industry framework's dimensions were never passed to the judge from a
+  // Studio run (industryDimensions was hardcoded undefined), so an industry's
+  // own scoring criteria never actually scored anything here, unlike a
+  // baseline run. Resolve them the same way that run does.
+  const studioIndustry = await resolveAgentIndustry(agent as any);
+  const studioIndustryFramework = studioIndustry ? industryEvalFrameworks[studioIndustry] : null;
+  const studioIndustryDims = studioIndustryFramework
+    ? studioIndustryFramework.dimensions.map(d => ({ id: d.id, name: d.name, scoringCriteria: d.scoringCriteria }))
+    : undefined;
+
   const metrics = metricIds.length > 0
     ? await Promise.all(metricIds.map(id => storage.getEvalMetric(id)))
     : [];
@@ -1500,7 +1515,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
             inputData: judgeInputData,
             expectedOutput: golden.expectedOutput ? { expected: golden.expectedOutput } : null,
             agentContext: `${agentCtx}\n\nEvaluation metric: ${metric.name}\nCriteria: ${metric.criteria || "Evaluate quality"}`,
-            industryDimensions: undefined,
+            industryDimensions: studioIndustryDims,
           });
           const metricDurationMs = Date.now() - metricT0;
           metricDurations.set(metric.name, metricDurationMs);
