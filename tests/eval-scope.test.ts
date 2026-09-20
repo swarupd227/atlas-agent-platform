@@ -19,6 +19,7 @@ const rows = { agents: new Map<string, any>(), suites: new Map<string, any>(), r
 vi.mock("../server/storage", () => ({
   storage: {
     getAgent: async (id: string) => rows.agents.get(id),
+    getAgentOrgMap: async () => new Map(Array.from(rows.agents.values()).map((a: any) => [a.id, a.organizationId ?? null])),
     getEvalSuite: async (id: string) => rows.suites.get(id),
     getAllEvalRuns: async () => rows.runs,
   },

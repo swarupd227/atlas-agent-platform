@@ -20,6 +20,7 @@ const rows = { agents: new Map<string, any>(), runs: new Map<string, any>() };
 vi.mock("../server/storage", () => ({
   storage: {
     getAgent: async (id: string) => rows.agents.get(id),
+    getAgentOrgMap: async () => new Map(Array.from(rows.agents.values()).map((a: any) => [a.id, a.organizationId ?? null])),
     getDagExecutionRun: async (id: string) => rows.runs.get(id),
   },
 }));

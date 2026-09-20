@@ -236,6 +236,7 @@ export interface IStorage {
 
   getAgents(orgId?: string): Promise<Agent[]>;
   getAgent(id: string, orgId?: string): Promise<Agent | undefined>;
+  getAgentOrgMap(): Promise<Map<string, string | null>>;
   getAgentsByOntologyConcept(conceptId: string, orgId?: string): Promise<Agent[]>;
   getCuratedJourneys(orgId?: string): Promise<Agent[]>;
   createAgent(agent: InsertAgent): Promise<Agent>;
@@ -1157,6 +1158,14 @@ export class DatabaseStorage implements IStorage {
       return db.select().from(agents).where(eq(agents.organizationId, scopedOrgId)).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
     }
     return db.select().from(agents).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
+  }
+
+  /** id -> organizationId for every agent, in one two-column query. Rows that
+   *  hang off an agent (eval suites and runs, DAG runs) derive their owner from
+   *  it, and doing that per row cost one query each. */
+  async getAgentOrgMap(): Promise<Map<string, string | null>> {
+    const rows = await db.select({ id: agents.id, organizationId: agents.organizationId }).from(agents);
+    return new Map(rows.map(r => [r.id, r.organizationId ?? null]));
   }
 
   async getAgent(id: string, orgId?: string) {

@@ -417,6 +417,24 @@ export async function filterKpisForOrg<T extends { outcomeId: string }>(kpis: T[
 // agent's organization (a legacy agent with none, or a run with no team agent,
 // to the default org).
 
+/** The owner map, cached briefly so one list request costs one query, not one per row. */
+let agentOrgMapCache: { at: number; map: Map<string, string | null> } | null = null;
+const AGENT_MAP_TTL_MS = 5_000;
+
+async function agentOrgMap(): Promise<Map<string, string | null>> {
+  if (agentOrgMapCache && Date.now() - agentOrgMapCache.at < AGENT_MAP_TTL_MS) return agentOrgMapCache.map;
+  const map = await storage.getAgentOrgMap();
+  agentOrgMapCache = { at: Date.now(), map };
+  return map;
+}
+
+/** Owner of a row that hangs off an agent, from the bulk map: undefined when the agent is unknown. */
+function ownerFromMap(map: Map<string, string | null>, agentId: string | null | undefined): string | null | undefined {
+  if (!agentId) return getDefaultOrgId() ?? null;
+  if (!map.has(agentId)) return undefined;
+  return map.get(agentId) ?? getDefaultOrgId() ?? null;
+}
+
 async function agentOwnerOrgId(agentId: string | null | undefined): Promise<string | null | undefined> {
   if (!agentId) return getDefaultOrgId() ?? null;
   const agent = await storage.getAgent(agentId);
@@ -457,15 +475,11 @@ export async function dagRunScope(req: Request, res: Response, next: NextFunctio
 
 /** Only the runs whose team agent belongs to the org. */
 export async function filterDagRunsForOrg<T extends { teamAgentId: string | null }>(runs: T[], orgId: string | undefined | null): Promise<T[]> {
-  const owners = new Map<string, string | null | undefined>();
-  const out: T[] = [];
-  for (const run of runs) {
-    const key = run.teamAgentId ?? "";
-    if (!owners.has(key)) owners.set(key, await agentOwnerOrgId(run.teamAgentId));
-    const owner = owners.get(key);
-    if (owner !== undefined && ownerMatches(owner, orgId)) out.push(run);
-  }
-  return out;
+  const map = await agentOrgMap();
+  return runs.filter((run) => {
+    const owner = ownerFromMap(map, run.teamAgentId);
+    return owner !== undefined && ownerMatches(owner, orgId);
+  });
 }
 
 // ── Knowledge bases and agent links ──────────────────────────────────────────
@@ -692,35 +706,25 @@ export async function evalRunScope(req: Request, res: Response, next: NextFuncti
 
 /** Only the suites whose agent belongs to the org. */
 export async function filterEvalSuitesForOrg<T extends { agentId?: string | null }>(suites: T[], orgId: string | undefined | null): Promise<T[]> {
-  const owners = new Map<string, string | null | undefined>();
-  const out: T[] = [];
-  for (const suite of suites) {
-    const key = suite.agentId ?? "";
-    if (!owners.has(key)) owners.set(key, await agentOwnerOrgId(suite.agentId ?? null));
-    const owner = owners.get(key);
-    if (owner !== undefined && ownerMatches(owner, orgId)) out.push(suite);
-  }
-  return out;
+  const map = await agentOrgMap();
+  return suites.filter((suite) => {
+    const owner = ownerFromMap(map, suite.agentId ?? null);
+    return owner !== undefined && ownerMatches(owner, orgId);
+  });
 }
 
 /** Only the runs whose agent (or suite's agent) belongs to the org. */
 export async function filterEvalRunsForOrg<T extends { agentId?: string | null; suiteId?: string | null }>(runs: T[], orgId: string | undefined | null): Promise<T[]> {
-  const suiteAgents = new Map<string, string | null | undefined>();
-  const owners = new Map<string, string | null | undefined>();
-  const out: T[] = [];
-  for (const run of runs) {
-    let agentId = run.agentId ?? null;
-    if (!agentId && run.suiteId) {
-      if (!suiteAgents.has(run.suiteId)) {
-        const suite = await storage.getEvalSuite(run.suiteId);
-        suiteAgents.set(run.suiteId, suite?.agentId ?? null);
-      }
-      agentId = (suiteAgents.get(run.suiteId) as string | null) ?? null;
-    }
-    const key = agentId ?? "";
-    if (!owners.has(key)) owners.set(key, await agentOwnerOrgId(agentId));
-    const owner = owners.get(key);
-    if (owner !== undefined && ownerMatches(owner, orgId)) out.push(run);
+  const map = await agentOrgMap();
+  // A run with no agent of its own takes its suite's; look each suite up once.
+  const suiteAgents = new Map<string, string | null>();
+  for (const suiteId of Array.from(new Set(runs.filter((r) => !r.agentId && r.suiteId).map((r) => r.suiteId as string)))) {
+    const suite = await storage.getEvalSuite(suiteId);
+    suiteAgents.set(suiteId, suite?.agentId ?? null);
   }
-  return out;
+  return runs.filter((run) => {
+    const agentId = run.agentId ?? (run.suiteId ? suiteAgents.get(run.suiteId) ?? null : null);
+    const owner = ownerFromMap(map, agentId);
+    return owner !== undefined && ownerMatches(owner, orgId);
+  });
 }
