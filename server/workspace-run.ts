@@ -28,6 +28,7 @@ import { resolvePolicyBundle, buildAgentSystemPromptWithGovernance, recomputeOut
 import { getProvider, completeWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage } from "./llm-provider";
 import { RunSpanCollector } from "./run-spans";
 import { canonicalJsonStringify } from "./agent-runtime";
+import { summarizeRunToolCalls } from "./run-tool-summary";
 import { runTeamAgentDag, extractFinalOutputText, onDagRunFinished, summarizeFinishedDagRun, type DagRunFinished } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { canDecideApproval, type RoleId } from "./permissions";
@@ -566,6 +567,8 @@ async function runTeamWorkspaceRun(
     });
     dagRunId = id;
     output = extractFinalOutputText(result, wavePlan);
+    const toolSummary = summarizeRunToolCalls(result.finalState, wavePlan);
+    if (toolSummary) output = `${output}\n\n---\n\n${toolSummary}`;
     status = result.success ? "completed" : "failed";
     waveResultsForTrace = result.waveResults;
     dagResultForProvenance = { totalNodes: wavePlan.totalNodes, totalWaves: wavePlan.totalWaves };

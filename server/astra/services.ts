@@ -11,6 +11,7 @@ import { agentMcpServers, agentProposals, agents, workspaceRuns, type InsertPoli
 import { createHash } from "crypto";
 import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
 import { computeWaves, extractFinalOutputText, startTeamAgentDagRun } from "../dag-execution-engine";
+import { summarizeRunToolCalls } from "../run-tool-summary";
 import { getDagRunEventBuffer, subscribeDagRunEvents, type DagRunEvent } from "../dag-run-events";
 import { TERMINAL_RUN_STATUSES, watchTeamRun } from "./team-run-watch";
 import { assessTeamWiring, type WiringAgent, type WiringLink, type WiringSnapshot } from "./wiring-assess";
@@ -940,6 +941,8 @@ async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
     try {
       const skippedNodeIds = Array.from(new Set(waveResults.flatMap((w) => w.nodes ?? []).filter((n: any) => n.status === "skipped").map((n: any) => n.nodeId)));
       answer = extractFinalOutputText({ success: row.status !== "failed", finalState: row.finalState as any, skippedNodeIds } as any, plan);
+      const toolSummary = summarizeRunToolCalls(row.finalState as Record<string, unknown>, plan);
+      if (toolSummary) answer = `${answer}\n\n---\n\n${toolSummary}`;
     } catch {
       answer = null;
     }
