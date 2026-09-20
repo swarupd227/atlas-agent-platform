@@ -357,7 +357,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   ];
   const PALETTE_NAME: Record<string, string> = {
     internal_agent: "Agent", tool_set: "Tool set", remote_agent: "Remote agent", expression: "Expression",
-    skill: "Skill", knowledge_base: "Knowledge", sub_flow: "Sub-flow", edge_gate: "Person approves",
+    skill: "Skill", knowledge_base: "Knowledge", sub_flow: "Sub-flow", edge_gate: "Human approves",
   };
   const toolBtn = "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40";
 

@@ -42,7 +42,7 @@ export function stageLayout(plan: WavePlan | undefined, nodes: TeamBlueprintNode
 }
 
 const KIND_LABEL: Record<string, string> = {
-  internal_agent: "Agent", tool_set: "Tool set", edge_gate: "Person approves", remote_agent: "Remote agent",
+  internal_agent: "Agent", tool_set: "Tool set", edge_gate: "Human approves", remote_agent: "Remote agent",
   skill: "Skill", knowledge_base: "Knowledge", sub_flow: "Sub-flow", expression: "Expression",
 };
 
