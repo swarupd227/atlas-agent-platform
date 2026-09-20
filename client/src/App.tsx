@@ -36,7 +36,8 @@ const Overview = lazy(() => import("@/pages/overview"));
 const Outcomes = lazy(() => import("@/pages/outcomes"));
 const Agents = lazy(() => import("@/pages/agents"));
 const AgentDetail = lazy(() => import("@/pages/agent-detail"));
-const Deployments = lazy(() => import("@/pages/deployments"));
+const Deployments = lazy(() => import("@/pages/deployments-overview"));
+const DeploymentsClassic = lazy(() => import("@/pages/deployments"));
 const Monitor = lazy(() => import("@/pages/monitor"));
 const Workspace = lazy(() => import("@/pages/workspace"));
 const Files = lazy(() => import("@/pages/files"));
@@ -344,6 +345,7 @@ function DashboardRouter() {
       <Route path="/evals/:id" component={EvalDetail} />
       <Route path="/golden-datasets/:id" component={GoldenDatasetDetail} />
       <Route path="/golden-datasets" component={GoldenDatasets} />
+      <Route path="/deployments/classic" component={DeploymentsClassic} />
       <Route path="/deployments" component={Deployments} />
       <Route path="/deployments/:id" component={ReleaseDetail} />
       <Route path="/traces/:id" component={TraceDetail} />

@@ -303,7 +303,7 @@ interface AutopromoteRule {
   enabled: boolean;
 }
 
-function CreateReleaseWizard({
+export function CreateReleaseWizard({
   open,
   onOpenChange,
   agents,
@@ -1068,7 +1068,7 @@ function CreateReleaseWizard({
   );
 }
 
-function FreezeCenter({
+export function FreezeCenter({
   agents,
   deployments,
 }: {
