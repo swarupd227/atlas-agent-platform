@@ -3402,11 +3402,11 @@ function buildVerifiedToolCallLog(steps: any[]): string {
   const calls = (steps || []).filter((s: any) => s.type === "api_call");
   const sandbox = sandboxCallLines(steps);
   if (calls.length === 0 && sandbox.length === 0) {
-    return "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, not the model's narrative): no tool calls were dispatched and no sandbox code ran this run.";
+    return "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, not the model's narrative): no tool calls were dispatched by this step and no sandbox code ran in it. Tool calls made by earlier steps of a team run are logged on those steps.";
   }
   if (calls.length === 0) {
     return [
-      "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, not the model's narrative): no platform tool calls were dispatched this run.",
+      "PLATFORM-VERIFIED TOOL CALL LOG (ground truth, not the model's narrative): no platform tool calls were dispatched by this step.",
       ...sandbox,
     ].join("\n");
   }
