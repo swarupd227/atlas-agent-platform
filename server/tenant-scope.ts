@@ -729,3 +729,28 @@ export async function filterEvalRunsForOrg<T extends { agentId?: string | null; 
     return owner !== undefined && ownerMatches(owner, orgId);
   });
 }
+
+// ── Deployments ──────────────────────────────────────────────────────────────
+//
+// deployments has an organizationId, but several per-deployment routes looked
+// the row up without it (start-runtime, stop-runtime, run-pipeline,
+// execute-now), so another organization's deployment could be started, stopped
+// or pushed through its pipeline by id. One check in front of them all.
+
+const DEPLOYMENT_RESERVED = new Set(["freeze", "health"]);
+
+/** Mounted at /api/deployments/:id -- every per-deployment route. */
+export async function deploymentScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id || DEPLOYMENT_RESERVED.has(id)) return next();
+    const deployment = await storage.getDeployment(id);
+    if (!deployment) return next();
+    if (!ownerMatches(deployment.organizationId ?? getDefaultOrgId() ?? null, resolveRequestOrgId(req))) {
+      return notFound(res, "Deployment");
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}

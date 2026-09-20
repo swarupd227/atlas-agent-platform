@@ -121,7 +121,12 @@ function scanRoutes(): RouteEntry[] {
 //
 // 412 (was 425): eval suite create, suite test-cases/runs, eval case results
 // and the golden-dataset writes need create_modify_blueprints.
-const BASELINE_UNGUARDED = 412;
+//
+// 401 (was 412): every deployment write needs deploy_staging_pilot (raw PATCH,
+// pipeline init/advance/evidence, promote, rollback, freeze, auto-promote,
+// run-pipeline, start/stop runtime, execute-now), and reaching production
+// additionally needs deploy_prod.
+const BASELINE_UNGUARDED = 401;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {

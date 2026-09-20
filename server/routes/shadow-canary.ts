@@ -297,9 +297,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
-  router.post("/api/deployments/:id/run-pipeline", async (req, res) => {
+  router.post("/api/deployments/:id/run-pipeline", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id as string, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
       const stages = (deployment.pipelineStages as any[]) || [];
@@ -448,7 +448,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       }
 
       if (pipelineHalted) {
-        const updated = await storage.updateDeployment(req.params.id, {
+        const updated = await storage.updateDeployment((req.params.id as string), {
           pipelineStages: updatedStages,
           pipelineComplete: false,
           status: "pipeline_failed",
@@ -471,7 +471,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         await storage.updateDeployment(old.id, { status: "superseded" }, getOrgId(req));
       }
 
-      const updated = await storage.updateDeployment(req.params.id, {
+      const updated = await storage.updateDeployment((req.params.id as string), {
         pipelineStages: updatedStages,
         pipelineComplete: true,
         status: "deployed",
@@ -482,7 +482,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         await storage.updateAgent(deployment.agentId, { status: "deployed" });
       }
       const richSystemPrompt = deployAgent ? await buildAgentSystemPromptWithGovernance(deployAgent, getOrgId(req)) : undefined;
-      const runtimeResult = await startAgentRuntime(req.params.id, richSystemPrompt);
+      const runtimeResult = await startAgentRuntime((req.params.id as string), richSystemPrompt);
       console.log(`[deploy] Agent runtime: ${runtimeResult.message}`);
 
       res.json({ ...updated, pipelineResults, runtimeStarted: runtimeResult.started, runtimeMessage: runtimeResult.message });
@@ -491,19 +491,19 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
-  router.post("/api/deployments/:id/start-runtime", async (req, res) => {
+  router.post("/api/deployments/:id/start-runtime", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const dep = await storage.getDeployment(req.params.id);
+      const dep = await storage.getDeployment(req.params.id as string, getOrgId(req));
       let richPrompt: string | undefined;
       let agent: any = null;
       if (dep) {
         agent = await storage.getAgent(dep.agentId, getOrgId(req));
         if (agent) richPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
       }
-      const result = await startAgentRuntime(req.params.id, richPrompt);
+      const result = await startAgentRuntime((req.params.id as string), richPrompt);
       if (dep && (result.started || result.message?.includes("already running"))) {
         if (dep.status === "pending" || dep.status === "inactive") {
-          await storage.updateDeployment(req.params.id, {
+          await storage.updateDeployment((req.params.id as string), {
             status: "deployed",
             ...(dep.deployedAt ? {} : { deployedAt: new Date() }),
           }, getOrgId(req));
@@ -518,11 +518,16 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
-  router.post("/api/deployments/:id/stop-runtime", async (req, res) => {
+  router.post("/api/deployments/:id/stop-runtime", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const result = await stopAgentRuntime(req.params.id);
+      // Check the deployment is the caller's BEFORE stopping anything: this
+      // used to stop another organization's runtime and only then fail to
+      // update the row.
+      const dep = await storage.getDeployment(req.params.id as string, getOrgId(req));
+      if (!dep) return res.status(404).json({ error: "Deployment not found" });
+      const result = await stopAgentRuntime(req.params.id as string);
       if (result.stopped) {
-        await storage.updateDeployment(req.params.id, { status: "inactive" }, getOrgId(req));
+        await storage.updateDeployment(req.params.id as string, { status: "inactive" }, getOrgId(req));
       }
       res.json(result);
     } catch (e: any) {
@@ -573,9 +578,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
-  router.post("/api/deployments/:id/execute-now", async (req, res) => {
+  router.post("/api/deployments/:id/execute-now", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id as string, getOrgId(req));
       if (!deployment) return res.status(404).json({ error: "Deployment not found" });
 
       const agent = await storage.getAgent(deployment.agentId, getOrgId(req));

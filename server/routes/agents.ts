@@ -21,6 +21,8 @@ import {
 import {
   checkPermission,
   getRequestRole,
+  getRequestActorLabel,
+  hasPermission,
   getTraceRedactionLevel,
   getRedactionLevel,
   redactPayload,
@@ -2214,7 +2216,7 @@ const router = Router();
     }
   });
 
-  router.post("/api/deployments/freeze", async (req, res) => {
+  router.post("/api/deployments/freeze", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
       const { action, scope, targetId, reason } = req.body;
       if (!action || !scope) {
@@ -2258,12 +2260,22 @@ const router = Router();
     res.json(deployment);
   });
 
-  router.patch("/api/deployments/:id", async (req, res) => {
+  // Per-deployment routes are org-scoped by deploymentScope (server/tenant-scope.ts).
+  router.patch("/api/deployments/:id", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const existing = await storage.getDeployment(req.params.id, getOrgId(req));
+      const existing = await storage.getDeployment(req.params.id as string, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Deployment not found" });
       const data = insertDeploymentSchema.partial().parse(req.body);
-      const updated = await storage.updateDeployment(req.params.id, data, getOrgId(req));
+      // Promotion is what moves a deployment between environments, and it runs
+      // the gates and files an approval. A raw edit must not do it quietly.
+      if (data.environment && data.environment !== existing.environment) {
+        return res.status(400).json({ message: "Use promote to move a deployment between environments." });
+      }
+      const goesLive = ["deployed", "active", "canary"].includes(String(data.status ?? ""));
+      if (goesLive && existing.environment === "prod" && !hasPermission(getRequestRole(req), "deploy_prod")) {
+        return res.status(403).json({ message: "Taking a production deployment live needs deploy_prod." });
+      }
+      const updated = await storage.updateDeployment((req.params.id as string), data, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Deployment not found" });
 
       if (req.body.status === "active" && existing.status !== "active") {
@@ -2287,9 +2299,9 @@ const router = Router();
     }
   });
 
-  router.post("/api/deployments/:id/initialize-pipeline", async (req, res) => {
+  router.post("/api/deployments/:id/initialize-pipeline", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
+      const deployment = await storage.getDeployment((req.params.id as string), getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
       const { industry, stages, rollbackTriggers, evidenceItems } = req.body;
       const stageRecords = (stages || []).map((s: any) => ({
@@ -2301,7 +2313,7 @@ const router = Router();
         itemId: e.id,
         collected: false,
       }));
-      const updated = await storage.updateDeployment(req.params.id, {
+      const updated = await storage.updateDeployment((req.params.id as string), {
         industry: industry || null,
         pipelineStages: stageRecords,
         industryRollbackTriggers: rollbackTriggers || [],
@@ -2314,9 +2326,9 @@ const router = Router();
     }
   });
 
-  router.post("/api/deployments/:id/advance-stage", async (req, res) => {
+  router.post("/api/deployments/:id/advance-stage", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
+      const deployment = await storage.getDeployment((req.params.id as string), getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
       const { stageId, status, attestation, completedBy } = req.body;
       if (!stageId || !status) return res.status(400).json({ message: "stageId and status are required" });
@@ -2326,10 +2338,11 @@ const router = Router();
       stages[idx] = {
         ...stages[idx],
         status,
-        ...(status === "completed" ? { completedAt: new Date().toISOString(), completedBy: completedBy || "system", attestation } : {}),
+        // Who signed off is the signed-in person, not whoever the request claims.
+        ...(status === "completed" ? { completedAt: new Date().toISOString(), completedBy: getRequestActorLabel(req), attestation } : {}),
       };
       const allComplete = stages.every((s: any) => s.status === "completed" || s.status === "skipped");
-      const updated = await storage.updateDeployment(req.params.id, {
+      const updated = await storage.updateDeployment((req.params.id as string), {
         pipelineStages: stages,
         pipelineComplete: allComplete,
       }, getOrgId(req));
@@ -2339,9 +2352,9 @@ const router = Router();
     }
   });
 
-  router.post("/api/deployments/:id/collect-evidence", async (req, res) => {
+  router.post("/api/deployments/:id/collect-evidence", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
+      const deployment = await storage.getDeployment((req.params.id as string), getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
       const { itemId, sourceLink, summary } = req.body;
       if (!itemId) return res.status(400).json({ message: "itemId is required" });
@@ -2355,7 +2368,7 @@ const router = Router();
         sourceLink: sourceLink || null,
         summary: summary || null,
       };
-      const updated = await storage.updateDeployment(req.params.id, {
+      const updated = await storage.updateDeployment((req.params.id as string), {
         evidencePackage: evidence,
       }, getOrgId(req));
       res.json(updated);
@@ -2364,8 +2377,15 @@ const router = Router();
     }
   });
 
-  router.post("/api/deployments/:id/promote", async (req, res) => {
+  router.post("/api/deployments/:id/promote", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
+      // deploy_prod was defined but never checked on the server: a role with
+      // staging rights could promote all the way into production.
+      const current = await storage.getDeployment(req.params.id as string, getOrgId(req));
+      const target = current?.environment === "staging" ? "pilot" : current?.environment === "pilot" ? "prod" : null;
+      if (target === "prod" && !hasPermission(getRequestRole(req), "deploy_prod")) {
+        return res.status(403).json({ message: "Promoting into production needs deploy_prod." });
+      }
       const r = await promoteDeploymentAction({ orgId: getOrgId(req) }, req.params.id as string, req.body ?? {});
       res.status(r.status).json(r.body);
     } catch (e) {
@@ -2585,7 +2605,7 @@ const router = Router();
     }
   });
 
-  router.post("/api/deployments/:id/rollback", async (req, res) => {
+  router.post("/api/deployments/:id/rollback", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
       const r = await rollbackDeploymentAction({ orgId: getOrgId(req) }, req.params.id as string, req.body ?? {});
       res.status(r.status).json(r.body);
@@ -2610,9 +2630,9 @@ const router = Router();
     }
   });
 
-  router.post("/api/deployments/:id/auto-promote", async (req, res) => {
+  router.post("/api/deployments/:id/auto-promote", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
+      const deployment = await storage.getDeployment((req.params.id as string), getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
       if (deployment.environment !== "staging") {
@@ -2668,13 +2688,16 @@ const router = Router();
 
       await storage.updateDeployment(deployment.id, { status: "promoted", promotedAt: new Date() }, getOrgId(req));
 
+      // "Auto" refers to the readiness checks above deciding when to promote,
+      // not to skipping the gates. The pilot deployment is created pending, so
+      // the same approval as a manual promotion has to be decided first.
       const promoted = await storage.createDeployment({
         agentId: deployment.agentId,
         agentName: deployment.agentName,
         environment: "pilot",
         versionId: deployment.versionId,
         version: deployment.version,
-        status: "deployed",
+        status: "pending",
         canaryPercent: deployment.canaryConfig ? (deployment.canaryConfig as any).startPercent || 0 : 0,
         rolloutStrategy: deployment.rolloutStrategy,
         approvedBy: "System (Auto-Promote)",
