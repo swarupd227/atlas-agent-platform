@@ -2042,6 +2042,7 @@ async function monitorCanaryDeployments() {
       if (autopromoteConfig?.rollbackOnFailure) {
         await storage.updateDeployment(dep.id, { status: "rolled_back", canaryPercent: 0, shadowEnabled: false });
         await storage.createAuditEvent({
+          organizationId: dep.organizationId ?? undefined,
           actorType: "system",
           actorId: "canary_monitor",
           action: "canary_rollback",
@@ -2083,6 +2084,17 @@ async function monitorCanaryDeployments() {
       continue;
     }
 
+    // Stepping traffic up is what auto-promote means. Without it, a canary a
+    // person started at 10% used to ramp itself to 100% and go active as long
+    // as the gates passed; now the monitor only records the health snapshot.
+    const autopromote = dep.autopromoteConfig as Record<string, unknown> | null;
+    if (!autopromote?.enabled) {
+      await storage.updateDeployment(dep.id, {
+        canaryConfig: { ...(dep.canaryConfig as object || {}), lastHealthSnapshot },
+      });
+      continue;
+    }
+
     const currentPercent = dep.canaryPercent || 0;
     const newPercent = Math.min(currentPercent + stepSize, 100);
     const updateData: Record<string, unknown> = {
@@ -2108,6 +2120,7 @@ async function monitorCanaryDeployments() {
     ].filter(Boolean).join(", ");
 
     await storage.createAuditEvent({
+      organizationId: dep.organizationId ?? undefined,
       actorType: "system",
       actorId: "canary_monitor",
       action: newPercent >= 100 ? "canary_promoted_full" : "canary_increased",

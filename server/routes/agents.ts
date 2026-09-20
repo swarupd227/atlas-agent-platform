@@ -30,6 +30,7 @@ import {
 } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveRequestOrgId, filterEvalSuitesForOrg, filterEvalRunsForOrg } from "../tenant-scope";
+import { buildBlastRadius } from "../blast-radius";
 import {
   resolveOntologyTags,
   generateKpiAlignedEvalSuite,
@@ -2516,14 +2517,17 @@ const router = Router();
         return Array.isArray(attrs) && attrs.some((at: any) => at.agentId === a.id);
       })).length;
 
-      const blastRadius = {
-        affectedRunsPerDay: Math.round(totalTraces * (24 / Math.max(1, 168))),
-        revenueExposure: `$${revenueExposure.toLocaleString()}`,
+      // Counted from rows (server/blast-radius.ts). This used to project
+      // "runs per day" from the last 50 traces as though they spanned a week,
+      // and fall back to "~15m" for rollback with nothing behind it.
+      const blastRadius = buildBlastRadius({
         environment: deployment.environment,
+        traces: recentTraces,
+        boundOutcomes,
+        revenueExposureUsd: agentInvoices.length > 0 ? revenueExposure : null,
         downstreamAgents: downstreamCount,
-        rollbackTimeEstimate: deployment.rollbackConfig ? `${(deployment.rollbackConfig as any).cooldownMinutes || 15}m` : "~15m",
-        boundOutcomes: boundOutcomes.map(o => o.name).slice(0, 5),
-      };
+        rollbackCooldownMinutes: (deployment.rollbackConfig as any)?.cooldownMinutes ?? null,
+      });
 
       let ontologyCheck: any = { enforced: true, status: "pass", lowAlignmentTools: [] };
       try {

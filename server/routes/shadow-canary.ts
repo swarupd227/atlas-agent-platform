@@ -1337,18 +1337,16 @@ Industry KPIs: ${JSON.stringify(context.kpis)}
 Safety Thresholds: ${JSON.stringify(context.safetyThresholds)}
 Current Deployment: ${deployment ? JSON.stringify({ name: deployment.name, currentTraffic: deployment.currentTrafficPercent, status: deployment.status, candidate: deployment.candidateVersion, baseline: deployment.baselineVersion }) : 'New deployment being configured'}
 
+Do NOT invent numbers. You have no measurements: no KPI values, customer
+counts, interaction counts or revenue figures. Judge only from the deployment
+state and the industry rules above, and say what should be measured instead.
+
 Respond in JSON:
 {
-  "kpiBaseline": { [kpi]: { "value": number, "trend": "up"|"down"|"stable", "unit": string } },
-  "kpiCandidate": { [kpi]: { "value": number, "trend": "up"|"down"|"stable", "unit": string } },
-  "blastRadius": {
-    "customers": number, "interactions": number, "revenue": number, "regulatoryScope": string,
-    "stages": [{ "percent": number, "customers": number, "interactions": number, "revenue": number, "regulatoryScope": string }]
-  },
   "recommendation": "promote"|"hold"|"rollback",
   "reasoning": string,
-  "riskScore": number,
-  "safetyGateStatus": [{ "gate": string, "passed": boolean, "detail": string }]
+  "whatToMeasure": [string],
+  "safetyGateStatus": [{ "gate": string, "checked": boolean, "detail": string }]
 }`,
         model: "claude-haiku-4-5",
         jsonMode: true,
@@ -1357,15 +1355,16 @@ Respond in JSON:
 
       const analysis = JSON.parse(stripJsonFences(canaryRaw) || "{}");
 
-      if (deployment) {
-        await storage.updateCanaryDeployment(deployment.id, {
-          kpiBaseline: analysis.kpiBaseline || {},
-          kpiCandidate: analysis.kpiCandidate || {},
-          blastRadius: analysis.blastRadius || {},
-        } as any);
-      }
-
-      res.json({ analysis, industryContext: context });
+      // Nothing from the model is written to the deployment. It used to save
+      // invented KPI baselines, candidate values and a blast radius (customers,
+      // interactions, revenue) onto the canary row, where they then read as
+      // measurements.
+      res.json({
+        analysis,
+        industryContext: context,
+        measured: false,
+        note: "A suggestion from the deployment's state and its industry rules. No KPI, customer or revenue figure here is measured, and none is saved.",
+      });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

@@ -12,6 +12,7 @@ import { storage } from "./storage";
 import { insertDeploymentSchema } from "@shared/schema";
 import { resolveOntologyTags, resolvePolicyBundle } from "./routes/helpers";
 import { ensureAarConfig } from "./routes/aar";
+import { buildBlastRadius } from "./blast-radius";
 import { stopAgentRuntime } from "./agent-runtime";
 
 export interface DeploymentActionContext {
@@ -636,23 +637,15 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
             errorRate: (totalT > 0 ? (failedT / totalT * 100).toFixed(1) : "0") + "%",
             traceCount: totalT,
           },
-          blastRadius: {
-            affectedRunsPerDay: Math.round(totalT * (24 / Math.max(1, 168))),
-            revenueExposure: `$${revenueExposure.toLocaleString()}`,
+          // Counted, not invented: "users affected" was the trace count times 30,
+          // and runs per day assumed the last 30 traces spanned a week.
+          blastRadius: buildBlastRadius({
             environment: "prod",
-            boundOutcomes: boundOutcomes.map(o => o.name).slice(0, 5),
-            rollbackTimeEstimate: source.rollbackConfig ? `${(source.rollbackConfig as any).cooldownMinutes || 15}m` : "~15m",
-            affectedOutcomes: boundOutcomes.slice(0, 3).map(o => ({
-              name: o.name,
-              riskTier: o.riskTier || "MEDIUM",
-              kpiImpact: `Potential impact on ${o.name} KPIs`,
-            })),
-            affectedSegments: [
-              { name: "All Production Users", userCount: Math.round(totalT * 30), revenueImpact: `$${revenueExposure.toLocaleString()}/mo exposure` },
-            ],
-            totalUsersAffected: Math.round(totalT * 30),
-            riskSummary: `Production deployment of ${source.agentName} v${source.version} affects ${boundOutcomes.length} outcome contract(s). Rollback available in ${source.rollbackConfig ? `${(source.rollbackConfig as any).cooldownMinutes || 15}m` : "~15m"}.`,
-          },
+            traces: recentTraces,
+            boundOutcomes,
+            revenueExposureUsd: revenueExposure > 0 ? revenueExposure : null,
+            rollbackCooldownMinutes: (source.rollbackConfig as any)?.cooldownMinutes ?? null,
+          }),
           promotedFrom: source.environment,
           deploymentId: promoted.id,
         },

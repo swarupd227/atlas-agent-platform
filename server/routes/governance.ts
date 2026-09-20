@@ -3317,7 +3317,8 @@ Ontology: ${ontologyName || "industry standard"}`,
             breachStatus,
             trend: kpi.trend || "stable",
             weight: kpi.weight || 1,
-            confidence: kpi.confidence || 0.85,
+            // null, not 0.85: a KPI with no recorded confidence has none.
+            confidence: kpi.confidence ?? null,
           };
         });
 
@@ -3325,14 +3326,15 @@ Ontology: ${ontologyName || "industry standard"}`,
           const agentTraces = traces.filter(t => t.agentId === agent.id).slice(-30);
           const recentFailures = agentTraces.filter(t => t.status === "failed" || t.status === "error").length;
           const recentTotal = agentTraces.length;
-          const recentSuccessRate = recentTotal > 0 ? ((recentTotal - recentFailures) / recentTotal) : (agent.successRate || 0.95);
+          // No runs means no success rate. It used to fall back to 0.95.
+          const recentSuccessRate = recentTotal > 0 ? ((recentTotal - recentFailures) / recentTotal) : null;
 
           return {
             id: agent.id,
             name: agent.name,
             status: agent.status,
-            healthScore: agent.healthScore || 85,
-            successRate: Math.round(recentSuccessRate * 1000) / 10,
+            healthScore: agent.healthScore ?? null,
+            successRate: recentSuccessRate == null ? null : Math.round(recentSuccessRate * 1000) / 10,
             avgLatencyMs: agent.avgLatencyMs || 0,
             autonomyMode: agent.autonomyMode,
             recentFailures,
