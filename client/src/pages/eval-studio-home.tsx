@@ -33,20 +33,37 @@ interface EvalRun {
   datasetId?: string | null;
   status: string;
   passRate: number | null;
-  totalCases?: number | null;
-  passedCases?: number | null;
-  failedCases?: number | null;
+  /** An Eval Studio run counts goldens, not "cases". */
+  totalGoldens?: number | null;
+  passedCount?: number | null;
+  failedCount?: number | null;
   startedAt?: string | null;
   completedAt?: string | null;
   costUsd?: number | null;
+  /** The worker writes the gate verdict here: gate:pass, gate:warn or gate:fail. */
   tags?: string[] | null;
+  isBaseline?: boolean | null;
+  triggeredBy?: string | null;
 }
 
 interface EvalGate {
   agentId: string;
-  minPassRate?: number | null;
-  enabled?: boolean | null;
-  blocking?: boolean | null;
+  isActive?: boolean | null;
+  attachedMetricIds?: string[] | null;
+  thresholdOverrides?: Record<string, number> | null;
+  regressionWindowPct?: number | null;
+}
+
+/** The verdict the worker recorded on the run (evaluateGateTag in server/worker.ts). */
+export function gateVerdict(run: EvalRun | undefined): "pass" | "warn" | "fail" | null {
+  const tag = (run?.tags ?? []).find((t) => t.startsWith("gate:"));
+  return tag === "gate:pass" ? "pass" : tag === "gate:warn" ? "warn" : tag === "gate:fail" ? "fail" : null;
+}
+
+/** The pass rate a gate demands overall, when it sets one. */
+export function gateThreshold(gate: EvalGate | undefined): number | null {
+  const overrides = gate?.thresholdOverrides ?? null;
+  return overrides && typeof overrides.passRate === "number" ? overrides.passRate : null;
 }
 
 interface EvalSummary {
@@ -200,7 +217,7 @@ export default function EvalStudioHome() {
                   const agentRuns = runsOf(runs, a.id);
                   const last = agentRuns[0];
                   const gate = gateOf.get(a.id);
-                  const belowGate = gate?.minPassRate != null && last?.passRate != null && last.passRate < gate.minPassRate;
+                  const verdict = gateVerdict(last);
                   return (
                     <button
                       key={a.id}
@@ -214,9 +231,11 @@ export default function EvalStudioHome() {
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap font-mono text-[10px] text-muted-foreground">
                         <span>{agentRuns.length} run{agentRuns.length === 1 ? "" : "s"}</span>
-                        {last?.failedCases ? <span className="text-red-600 dark:text-red-400">{last.failedCases} failed</span> : null}
-                        {belowGate && <span className="text-red-600 dark:text-red-400">below gate</span>}
-                        {gate && !belowGate && gate.minPassRate != null && <span>gate {Math.round(gate.minPassRate * 100)}%</span>}
+                        {last?.failedCount ? <span className="text-red-600 dark:text-red-400">{last.failedCount} failed</span> : null}
+                        {verdict === "fail" && <span className="text-red-600 dark:text-red-400">gate failed</span>}
+                        {verdict === "warn" && <span className="text-amber-600 dark:text-amber-400">gate warning</span>}
+                        {verdict === "pass" && <span className="text-emerald-600 dark:text-emerald-400">gate passed</span>}
+                        {!verdict && gate?.isActive && <span>gate set</span>}
                       </div>
                     </button>
                   );
@@ -245,7 +264,8 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
   const last = runs[0];
   const previous = runs.find((r, i) => i > 0 && r.passRate != null);
   const delta = last?.passRate != null && previous?.passRate != null ? (last.passRate - previous.passRate) * 100 : null;
-  const belowGate = gate?.minPassRate != null && last?.passRate != null && last.passRate < gate.minPassRate;
+  const verdict = gateVerdict(last);
+  const threshold = gateThreshold(gate);
 
   return (
     <ScrollArea className="h-full">
@@ -267,7 +287,7 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
               <div className="flex items-baseline gap-3 flex-wrap">
                 <span className={`text-2xl font-semibold tabular-nums ${rateTone(last.passRate)}`}>{pct(last.passRate)}</span>
                 <span className="text-sm text-muted-foreground">
-                  {last.passedCases ?? 0} of {last.totalCases ?? 0} cases passed
+                  {last.passedCount ?? 0} of {last.totalGoldens ?? 0} cases passed
                   {delta != null && <> · {delta >= 0 ? "+" : ""}{Math.round(delta * 10) / 10} points since the run before</>}
                 </span>
               </div>
@@ -279,8 +299,8 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
               )}
               <div className="flex gap-2 pt-1">
                 <Button size="sm" variant="outline" className="h-7 text-xs" asChild data-testid="link-run-detail"><Link href={`/evals/runs/${last.id}`}>Open run</Link></Button>
-                {(last.failedCases ?? 0) > 0 && (
-                  <Button size="sm" variant="outline" className="h-7 text-xs" asChild data-testid="link-failures"><Link href={`/evals/runs/${last.id}?passFail=fail`}>See the {last.failedCases} failures</Link></Button>
+                {(last.failedCount ?? 0) > 0 && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs" asChild data-testid="link-failures"><Link href={`/evals/runs/${last.id}?passFail=fail`}>See the {last.failedCount} failures</Link></Button>
                 )}
               </div>
             </div>
@@ -289,13 +309,29 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
 
         <section>
           <h3 className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground mb-2">Gate</h3>
-          <div className="flex items-start gap-2 text-sm">
-            {!gate ? (
-              <><CircleSlash className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" /><span className="text-muted-foreground">No gate: an eval result never blocks this agent's promotion.</span></>
-            ) : belowGate ? (
-              <><ShieldAlert className="w-3.5 h-3.5 mt-0.5 text-red-500 shrink-0" /><span>Last run is below the gate of {Math.round((gate.minPassRate ?? 0) * 100)}%, so a promotion is blocked until it passes.</span></>
-            ) : (
-              <><ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-emerald-500 shrink-0" /><span>Gate at {Math.round((gate.minPassRate ?? 0) * 100)}%{gate.enabled === false ? ", currently switched off" : ""}.</span></>
+          <div className="flex flex-col gap-1.5 text-sm">
+            <div className="flex items-start gap-2">
+              {!gate ? (
+                <><CircleSlash className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" /><span className="text-muted-foreground">No gate for this agent, so an eval result never blocks its promotion.</span></>
+              ) : verdict === "fail" ? (
+                <><ShieldAlert className="w-3.5 h-3.5 mt-0.5 text-red-500 shrink-0" /><span>The last run failed the gate, so promotion is blocked until a run passes.</span></>
+              ) : verdict === "warn" ? (
+                <><ShieldAlert className="w-3.5 h-3.5 mt-0.5 text-amber-500 shrink-0" /><span>The last run is under the gate's target but above the warning line.</span></>
+              ) : verdict === "pass" ? (
+                <><ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-emerald-500 shrink-0" /><span>The last run passed the gate.</span></>
+              ) : (
+                <><CircleSlash className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" /><span className="text-muted-foreground">A gate is set, but the last run recorded no verdict — it predates the gate or did not finish.</span></>
+              )}
+            </div>
+            {gate && (
+              <div className="font-mono text-[11px] text-muted-foreground">
+                {[
+                  `needs ${Math.round((threshold ?? 0.85) * 100)}% overall`,
+                  gate.attachedMetricIds?.length ? `${gate.attachedMetricIds.length} metric${gate.attachedMetricIds.length === 1 ? "" : "s"} enforced` : null,
+                  gate.regressionWindowPct != null ? `regression window ${gate.regressionWindowPct}%` : null,
+                  gate.isActive === false ? "currently switched off" : null,
+                ].filter(Boolean).join(" · ")}
+              </div>
             )}
           </div>
         </section>
@@ -312,7 +348,7 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
                   <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
                     {[r.status, r.completedAt ? formatDateTime(r.completedAt) : r.startedAt ? formatDateTime(r.startedAt) : "not started"].filter(Boolean).join(" · ")}
                   </span>
-                  {(r.failedCases ?? 0) > 0 && <span className="shrink-0 text-[11px] text-red-600 dark:text-red-400">{r.failedCases} failed</span>}
+                  {(r.failedCount ?? 0) > 0 && <span className="shrink-0 text-[11px] text-red-600 dark:text-red-400">{r.failedCount} failed</span>}
                   <Link href={`/evals/runs/${r.id}`} className="shrink-0 text-[11px] underline underline-offset-2">Open</Link>
                 </li>
               ))}
@@ -320,7 +356,7 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
           )}
         </section>
 
-        {(last?.failedCases ?? 0) > 0 && (
+        {(last?.failedCount ?? 0) > 0 && (
           <p className="flex items-start gap-2 text-[11px] text-muted-foreground">
             <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
             A failure means the judge scored the answer below the metric's threshold. Open the run to read the judge's reasoning for each case.

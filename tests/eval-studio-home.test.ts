@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { pct, rateTone, runsOf } from "../client/src/pages/eval-studio-home";
+import { pct, rateTone, runsOf, gateVerdict, gateThreshold } from "../client/src/pages/eval-studio-home";
 
 const run = (id: string, agentId: string, passRate: number | null, startedAt: string) => ({ id, agentId, status: "completed", passRate, startedAt });
 
@@ -40,6 +40,24 @@ describe("runsOf", () => {
   });
 });
 
+describe("gate reading", () => {
+  it("takes the verdict the worker recorded on the run, not a guess from the pass rate", () => {
+    expect(gateVerdict({ id: "r", agentId: "a", status: "completed", passRate: 0.2, tags: ["gate:fail"] })).toBe("fail");
+    expect(gateVerdict({ id: "r", agentId: "a", status: "completed", passRate: 0.8, tags: ["gate:warn"] })).toBe("warn");
+    expect(gateVerdict({ id: "r", agentId: "a", status: "completed", passRate: 0.99, tags: ["gate:pass"] })).toBe("pass");
+    // A run from before the gate existed carries no verdict, and must not be read as a pass.
+    expect(gateVerdict({ id: "r", agentId: "a", status: "completed", passRate: 0.99, tags: [] })).toBeNull();
+    expect(gateVerdict(undefined)).toBeNull();
+  });
+
+  it("reads the gate's overall threshold from thresholdOverrides.passRate only", () => {
+    expect(gateThreshold({ agentId: "a", thresholdOverrides: { passRate: 0.9, faithfulness: 0.7 } })).toBe(0.9);
+    // Per-metric keys are separate rules, never the overall threshold.
+    expect(gateThreshold({ agentId: "a", thresholdOverrides: { faithfulness: 0.7 } })).toBeNull();
+    expect(gateThreshold(undefined)).toBeNull();
+  });
+});
+
 describe("page wiring", () => {
   const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
   const page = () => read("client", "src", "pages", "eval-studio-home.tsx");
@@ -57,6 +75,12 @@ describe("page wiring", () => {
     for (const href of ["/evals/datasets", "/evals/metrics", "/evals/regression", "/evals/monitor", "/evals/synthesizer", "/evals/simulator", "/evals/redteam", "/evals/annotate", "/evals/reports", "/evals/prompts", "/evals/marketplace", "/evals/runs"]) {
       expect(src).toContain(href);
     }
+  });
+
+  it("reads the fields an Eval Studio run actually has", () => {
+    const src = page();
+    expect(src).toContain("last.passedCount ?? 0} of {last.totalGoldens ?? 0} cases passed");
+    for (const wrong of ["totalCases", "passedCases", "failedCases", "minPassRate"]) expect(src).not.toContain(wrong);
   });
 
   it("says an agent has no run instead of showing it as zero", () => {
