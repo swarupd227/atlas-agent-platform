@@ -179,7 +179,9 @@ export default function DeploymentsOverview() {
             </Select>
           </div>
           <QueryBoundary isLoading={deploymentsQ.isLoading} isError={deploymentsQ.isError} error={deploymentsQ.error as Error | null} onRetry={() => deploymentsQ.refetch()}>
-            <ScrollArea className="flex-1">
+            {/* Radix wraps the viewport content in display:table, which grows to the widest row
+                and defeats truncation; block layout keeps rows to the panel width. */}
+            <ScrollArea className="flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
               <div className="flex flex-col divide-y">
                 {filtered.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 gap-3 px-6">
