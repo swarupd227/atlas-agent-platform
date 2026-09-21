@@ -36,7 +36,17 @@ import type { Agent, Approval, Deployment, EvalSuite } from "@shared/schema";
 interface FreezeStatus { frozen: boolean; scope?: string; reason?: string; frozenBy?: string; frozenAt?: string }
 
 const ENV_LABEL: Record<string, string> = { staging: "Staging", pilot: "Pilot", prod: "Production" };
-const envLabel = (e?: string | null) => ENV_LABEL[e ?? ""] ?? (e ?? "unknown");
+/** Rows record production as both "prod" and "production"; they are the same place. */
+export const normEnv = (e?: string | null) => (e === "production" ? "prod" : e ?? "");
+const envLabel = (e?: string | null) => ENV_LABEL[normEnv(e)] ?? (e || "unknown");
+
+/**
+ * A deployment's display name: the name stored on it, else its agent's current
+ * name, else a plain statement that the agent is gone -- never a raw id.
+ */
+export function deploymentName(d: { agentName?: string | null; agentId: string }, agentNames: Map<string, string>): string {
+  return d.agentName || agentNames.get(d.agentId) || "Agent no longer exists";
+}
 
 /** Sort order: what needs a person, then what is moving, then what is live. */
 const STATUS_RANK: Record<string, number> = { pending: 0, canary: 1, deployed: 2, active: 2, promoted: 3, inactive: 4, rolled_back: 5, failed: 5 };
@@ -103,6 +113,8 @@ export default function DeploymentsOverview() {
     return at && (!latest || new Date(at) > new Date(latest)) ? at : latest;
   }, null);
 
+  const agentNames = useMemo(() => new Map(agents.map((a) => [a.id, a.name])), [agents]);
+
   const pendingApprovalFor = useMemo(() => {
     const byObject = new Map<string, Approval>();
     for (const a of approvals) {
@@ -112,9 +124,9 @@ export default function DeploymentsOverview() {
   }, [approvals]);
 
   const filtered = deployments
-    .filter((d) => (env === "all" ? true : d.environment === env))
-    .filter((d) => (query ? `${d.agentName ?? ""} ${d.version ?? ""}`.toLowerCase().includes(query.toLowerCase()) : true))
-    .sort((a, b) => rankOf(a) - rankOf(b) || (a.agentName ?? "").localeCompare(b.agentName ?? ""));
+    .filter((d) => (env === "all" ? true : normEnv(d.environment) === env))
+    .filter((d) => (query ? `${deploymentName(d, agentNames)} ${d.version ?? ""}`.toLowerCase().includes(query.toLowerCase()) : true))
+    .sort((a, b) => rankOf(a) - rankOf(b) || deploymentName(a, agentNames).localeCompare(deploymentName(b, agentNames)));
 
   const selected = deployments.find((d) => d.id === selectedId) ?? null;
 
@@ -137,7 +149,7 @@ export default function DeploymentsOverview() {
           </div>
         </div>
         <div className="flex items-stretch divide-x px-2 pb-1 overflow-x-auto">
-          <Stat label="Live" value={`${live.length}`} hint={`across ${new Set(live.map((d) => d.environment)).size} environment${new Set(live.map((d) => d.environment)).size === 1 ? "" : "s"}`} />
+          <Stat label="Live" value={`${live.length}`} hint={`across ${new Set(live.map((d) => normEnv(d.environment))).size} environment${new Set(live.map((d) => normEnv(d.environment))).size === 1 ? "" : "s"}`} />
           <Stat label="Waiting on you" value={`${pending.length}`} tone={pending.length ? "text-amber-600 dark:text-amber-400" : ""} hint="pending a decision" to="/approvals" />
           <Stat label="Rolling out" value={`${canaries.length}`} tone={canaries.length ? "text-primary" : ""} hint="canary in progress" />
           <Stat label="Frozen" value={`${frozenScopes.length}`} tone={frozenScopes.length ? "text-primary" : ""} hint={frozenScopes.length ? frozenScopes.map(([k]) => k).join(", ") : "nothing frozen"} />
@@ -182,7 +194,7 @@ export default function DeploymentsOverview() {
                     data-testid={`deployment-row-${d.id}`}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <span className="text-xs font-medium truncate leading-tight">{d.agentName ?? d.agentId}</span>
+                      <span className={`min-w-0 text-xs font-medium truncate leading-tight ${agentNames.has(d.agentId) || d.agentName ? "" : "text-muted-foreground italic"}`}>{deploymentName(d, agentNames)}</span>
                       <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{envLabel(d.environment)}</span>
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap font-mono text-[10px] text-muted-foreground">
@@ -200,7 +212,7 @@ export default function DeploymentsOverview() {
 
         <div className="flex-1 min-h-0 min-w-0">
           {selected ? (
-            <DeploymentDetail deployment={selected} approval={pendingApprovalFor.get(selected.id)} />
+            <DeploymentDetail deployment={selected} name={deploymentName(selected, agentNames)} agentExists={agentNames.has(selected.agentId)} approval={pendingApprovalFor.get(selected.id)} />
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
               <Rocket className="w-10 h-10 opacity-25" />
@@ -229,14 +241,15 @@ interface Readiness {
   blastRadius?: BlastRadiusData;
 }
 
-function DeploymentDetail({ deployment, approval }: { deployment: Deployment; approval?: Approval }) {
+function DeploymentDetail({ deployment, name, agentExists, approval }: { deployment: Deployment; name: string; agentExists: boolean; approval?: Approval }) {
   const { toast } = useToast();
   const stagingPerm = usePermission("deploy_staging_pilot");
   const prodPerm = usePermission("deploy_prod");
   const readinessQ = useQuery<Readiness>({ queryKey: [`/api/deployments/${deployment.id}/readiness`], retry: false });
   const readiness = readinessQ.data;
 
-  const nextEnv = deployment.environment === "staging" ? "pilot" : deployment.environment === "pilot" ? "prod" : null;
+  const here = normEnv(deployment.environment);
+  const nextEnv = here === "staging" ? "pilot" : here === "pilot" ? "prod" : null;
   const canPromote = nextEnv === "prod" ? prodPerm.allowed : stagingPerm.allowed;
 
   const act = useMutation({
@@ -255,7 +268,7 @@ function DeploymentDetail({ deployment, approval }: { deployment: Deployment; ap
       <div className="p-6 flex flex-col gap-6 max-w-3xl">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base font-semibold">{deployment.agentName ?? deployment.agentId}</h2>
+            <h2 className="text-base font-semibold">{name}</h2>
             <Badge variant="outline" className="text-[10px]">{envLabel(deployment.environment)}</Badge>
             {deployment.version && <Badge variant="outline" className="text-[10px]">v{deployment.version}</Badge>}
             <span className={`text-xs ${statusTone(deployment.status)}`}>{(deployment.status ?? "unknown").replace(/_/g, " ")}</span>
@@ -270,8 +283,13 @@ function DeploymentDetail({ deployment, approval }: { deployment: Deployment; ap
           </div>
           <div className="mt-2 flex gap-2 flex-wrap">
             <Button size="sm" variant="outline" className="h-7 text-xs" asChild data-testid="link-release-detail"><Link href={`/deployments/${deployment.id}`}>Open release</Link></Button>
-            <Button size="sm" variant="outline" className="h-7 text-xs" asChild data-testid="link-agent"><Link href={`/agents/${deployment.agentId}`}>Open agent</Link></Button>
+            {agentExists && <Button size="sm" variant="outline" className="h-7 text-xs" asChild data-testid="link-agent"><Link href={`/agents/${deployment.agentId}`}>Open agent</Link></Button>}
           </div>
+          {!agentExists && (
+            <p className="mt-2 text-xs text-muted-foreground" data-testid="orphan-note">
+              The agent this deployment was for no longer exists in your organization, so it can't be promoted or run. Rolling it back clears it from the list of pending deployments.
+            </p>
+          )}
         </div>
 
         {approval && (
@@ -321,7 +339,7 @@ function DeploymentDetail({ deployment, approval }: { deployment: Deployment; ap
         <section>
           <h3 className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground mb-2">Actions</h3>
           <div className="flex gap-2 flex-wrap">
-            {nextEnv && (
+            {nextEnv && agentExists && (
               <Button
                 size="sm" variant="outline" className="h-7 text-xs"
                 disabled={!canPromote || act.isPending}
@@ -335,7 +353,7 @@ function DeploymentDetail({ deployment, approval }: { deployment: Deployment; ap
             <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!stagingPerm.allowed || act.isPending} onClick={() => act.mutate({ path: "rollback", body: { reason: "Rolled back from the deployments page" } })} data-testid="button-rollback">
               <Undo2 className="w-3.5 h-3.5 mr-1.5" /> Roll back
             </Button>
-            {deployment.status === "deployed" || deployment.status === "active" ? (
+            {!agentExists ? null : deployment.status === "deployed" || deployment.status === "active" ? (
               <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!stagingPerm.allowed || act.isPending} onClick={() => act.mutate({ path: "stop-runtime" })} data-testid="button-stop-runtime">
                 <Square className="w-3.5 h-3.5 mr-1.5" /> Stop runtime
               </Button>

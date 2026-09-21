@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { normEnv, deploymentName } from "../client/src/pages/deployments-overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = () => read("client", "src", "pages", "deployments-overview.tsx");
@@ -29,6 +30,28 @@ describe("ordering", () => {
     expect(src).toContain("const STATUS_RANK: Record<string, number> = { pending: 0, canary: 1, deployed: 2, active: 2, promoted: 3, inactive: 4, rolled_back: 5, failed: 5 };");
     expect(src).toContain("filtered = deployments");
     expect(src).toContain("rankOf(a) - rankOf(b)");
+  });
+});
+
+describe("names and environments from real rows", () => {
+  it("treats \"production\" and \"prod\" as the same environment", () => {
+    expect(normEnv("production")).toBe("prod");
+    expect(normEnv("prod")).toBe("prod");
+    expect(normEnv("staging")).toBe("staging");
+    expect(normEnv(null)).toBe("");
+  });
+
+  it("never shows a raw agent id: stored name, then the agent's name, then a plain statement", () => {
+    const names = new Map([["ag-1", "Invoice Agent"]]);
+    expect(deploymentName({ agentName: "Stored", agentId: "ag-1" }, names)).toBe("Stored");
+    expect(deploymentName({ agentName: null, agentId: "ag-1" }, names)).toBe("Invoice Agent");
+    expect(deploymentName({ agentName: null, agentId: "957678f5-69ce-4a1e-a8f2-ac7f698ef328" }, names)).toBe("Agent no longer exists");
+  });
+
+  it("offers no promote or runtime action for a deployment whose agent is gone", () => {
+    const src = page();
+    expect(src).toContain("{nextEnv && agentExists && (");
+    expect(src).toContain("{!agentExists ? null : deployment.status");
   });
 });
 
