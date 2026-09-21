@@ -381,6 +381,63 @@ export async function graph_search_sharepoint(
   });
 }
 
+// ── Tool: graph_classify_table ───────────────────────────────────────────────
+// Exact grouping of the rows of a CSV/TSV on SharePoint or OneDrive. The model supplies rules; the
+// counts and ids come from code (server/table-classify.ts), so they cannot be invented.
+
+const MAX_TABLE_BYTES = 10 * 1024 * 1024;
+
+export async function graph_classify_table(
+  client: MicrosoftGraphClient,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  const driveId = args.drive_id as string | undefined;
+  const itemId  = args.item_id as string | undefined;
+  const webUrl  = args.web_url as string | undefined;
+  const idColumn = String(args.id_column ?? "").trim();
+  if (!idColumn) throw new Error("id_column is required (the column that identifies each row, for example TicketID)");
+  const rules = args.rules as Array<{ theme: string; column?: string; any_of: string[] }> | undefined;
+  if (!Array.isArray(rules) || rules.length === 0) throw new Error("rules is required: a list of { theme, column, any_of } objects");
+
+  let base: string;
+  if (driveId && itemId) {
+    base = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`;
+  } else if (webUrl) {
+    let safe = webUrl;
+    try { safe = encodeURI(decodeURI(webUrl)); } catch { /* keep as given */ }
+    base = `/shares/u!${Buffer.from(safe).toString("base64url")}/driveItem`;
+  } else {
+    throw new Error("Provide drive_id and item_id, or web_url");
+  }
+
+  const meta = await client.getAt(base) as any;
+  const name: string = meta?.name ?? "table";
+  const size: number = Number(meta?.size ?? 0);
+  if (meta?.folder) throw new Error(`'${name}' is a folder, not a file`);
+  if (size > MAX_TABLE_BYTES) throw new Error(`'${name}' is above the ${MAX_TABLE_BYTES / (1024 * 1024)} MB limit for table analysis`);
+  const ext = name.split(".").pop()?.toLowerCase();
+  if (ext !== "csv" && ext !== "tsv") throw new Error(`'${name}' is not a CSV or TSV file. Export the sheet as CSV to classify its rows.`);
+
+  const bytes = await client.getBytesAt(`${base}/content`);
+  const { classifyTable } = await import("../../table-classify");
+  const result = classifyTable({
+    text: Buffer.from(bytes).toString("utf-8"),
+    idColumn,
+    rules: rules.map(r => ({ theme: r.theme, column: r.column, any_of: r.any_of })),
+    otherTheme: args.other_theme as string | undefined,
+    breakdownColumns: Array.isArray(args.breakdown_columns) ? (args.breakdown_columns as string[]) : undefined,
+    delimiter: ext === "tsv" ? "	" : ",",
+  });
+  return ok({
+    file: name,
+    total_rows: result.totalRows,
+    columns: result.columns,
+    themes: result.themes.map(t => ({ theme: t.theme, count: t.count, breakdown: t.breakdown, ids: t.ids })),
+    unclassified: { theme: result.unmatched.theme, count: result.unmatched.count, breakdown: result.unmatched.breakdown, ids: result.unmatched.ids },
+    note: "Rules are applied in order and a row goes to the first rule it matches. Counts and ids are computed from the file.",
+  });
+}
+
 // ── Tool: graph_read_document ────────────────────────────────────────────────
 // Downloads a SharePoint/OneDrive file and returns its text, using the same
 // extraction every upload surface uses (server/file-extract.ts): Word, PDF,

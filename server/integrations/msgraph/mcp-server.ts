@@ -24,6 +24,7 @@ import {
   graph_list_teams,
   graph_search_sharepoint,
   graph_read_document,
+  graph_classify_table,
   graph_get_sharepoint_file,
   graph_read_sharepoint_page,
   graph_get_onedrive_file,
@@ -194,6 +195,35 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       },
     },
     {
+      name: "graph_classify_table",
+      description: "Group the rows of a CSV or TSV on SharePoint or OneDrive into themes using rules you supply, and get EXACT counts and row ids back (computed by code, not estimated). Each rule is { theme, column, any_of } and a row goes to the first rule whose column contains any of the words. Rows no rule matches come back as unclassified so you can refine the rules. Use this instead of counting or listing ids yourself.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          drive_id:  { type: "string", description: "Drive ID of the file" },
+          item_id:   { type: "string", description: "Item ID of the file" },
+          web_url:   { type: "string", description: "The file's web_url (alternative to drive_id + item_id)" },
+          id_column: { type: "string", description: "Column that identifies each row, for example TicketID (required)" },
+          rules: {
+            type: "array",
+            description: "Ordered grouping rules (required)",
+            items: {
+              type: "object",
+              properties: {
+                theme:  { type: "string", description: "Name of the theme" },
+                column: { type: "string", description: "Column to search, for example Summary. Omit to search every column." },
+                any_of: { type: "array", items: { type: "string" }, description: "Words or phrases; a row matches if the column contains any of them (case-insensitive)" },
+              },
+              required: ["theme", "any_of"],
+            },
+          },
+          other_theme:       { type: "string", description: "Name for rows no rule matches (default Unclassified)" },
+          breakdown_columns: { type: "array", items: { type: "string" }, description: "Columns to count within each theme, for example Platform" },
+        },
+        required: ["id_column", "rules"],
+      },
+    },
+    {
       name: "graph_get_sharepoint_file",
       description: "Get metadata and download URL for a SharePoint file. Returns a permission error (not a crash) if the service account cannot read the file.",
       inputSchema: {
@@ -269,6 +299,7 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       case "graph_list_teams":                result = await graph_list_teams(client, args); break;
       case "graph_search_sharepoint":         result = await graph_search_sharepoint(client, args); break;
       case "graph_read_document":             result = await graph_read_document(client, args); break;
+      case "graph_classify_table":            result = await graph_classify_table(client, args); break;
       case "graph_get_sharepoint_file":       result = await graph_get_sharepoint_file(client, args); break;
       case "graph_read_sharepoint_page":      result = await graph_read_sharepoint_page(client, args); break;
       case "graph_get_onedrive_file":         result = await graph_get_onedrive_file(client, args); break;
