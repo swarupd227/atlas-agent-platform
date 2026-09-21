@@ -23,6 +23,7 @@
  * (redacting inputs before a real API call would corrupt the call).
  */
 import { createHash } from "crypto";
+import { hasReadOnlyToolName } from "./tool-read-only";
 import { storage } from "./storage";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpAuthHeaders } from "./mcp-client";
 import { resolvePolicyBundle } from "./routes/helpers";
@@ -236,14 +237,10 @@ export function getToolRateLimiterSnapshot(): Array<{ key: string; callsInWindow
 const IDEMPOTENCY_TTL_MS = 15 * 60_000;
 const idempotencyCache = new Map<string, { at: number; result: any }>();
 
-const READ_ONLY_NAME_PREFIXES = ["get_", "list_", "search_", "read_", "query_", "fetch_", "describe_", "check_", "lookup_", "view_"];
-
 /** A tool is treated as side-effectful unless it is clearly read-only. */
 export function isSideEffectful(tool: AvailableTool): boolean {
   if ((tool.toolMethod || "").toUpperCase() === "GET") return false;
-  const name = tool.toolName.toLowerCase();
-  if (READ_ONLY_NAME_PREFIXES.some(p => name.startsWith(p))) return false;
-  return true;
+  return !hasReadOnlyToolName(tool.toolName);
 }
 
 function stableStringify(obj: any): string {

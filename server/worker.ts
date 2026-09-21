@@ -7,6 +7,8 @@ import type { Job, AuditChainTrigger } from "@shared/schema";
 import { agentAlerts } from "@shared/schema";
 import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle, runAgentOnce } from "./agent-runtime";
+import { describeEvalRunShape, runAgentForEval } from "./eval-agent-run";
+import { evalRunMode } from "./eval-run-mode";
 import { industryEvalFrameworks } from "./routes";
 import { runLlmJudge, runAgentOnInput, buildAgentContext, routeMetricMeasurement } from "./eval-judge";
 import { getDefaultProvider, getProvider, completeWithFallback } from "./llm-provider";
@@ -1439,24 +1441,24 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     let agentFailureReason: string | undefined;
 
     try {
-      // Prefer the full AAR runtime path (runAgentOnce) for fidelity — it exercises tools,
-      // MCP bindings, and all runtime middleware that would run in production.
-      // Fall back to direct LLM call only when the agent has no active deployment.
-      const agentDeployments = await storage.getDeploymentsByAgentId(agentId, "active");
-      if (agentDeployments.length > 0) {
-        const deployment = agentDeployments[0];
-        const aarResult = await runAgentOnce(deployment.id, golden.input, undefined);
-        if (!aarResult.success || !aarResult.message || aarResult.message.trim() === "") {
+      // An agent whose answer depends on tools, skills, knowledge or a deployment is run through the
+      // real runtime with write tools withheld, so the judge scores its actual answer. A plain
+      // prompt-only agent is a single model call either way. (The old paths judged a bare model call
+      // with no tools, or a fixed "cycle completed" message for a deployed agent.)
+      const runShape = await describeEvalRunShape(agent);
+      if (evalRunMode(runShape) === "runtime") {
+        const rt = await runAgentForEval(agent, golden.input, runShape.mcpServerIds);
+        if (rt.error || rt.output.trim() === "") {
           agentFailed = true;
-          agentFailureReason = aarResult.success
-            ? "Agent produced empty output via AAR"
-            : `AAR run failed: ${aarResult.message}`;
+          agentFailureReason = rt.error ? `Agent run failed: ${rt.error}` : "Agent produced empty output";
           actualOutput = "";
         } else {
-          actualOutput = aarResult.message;
+          actualOutput = rt.output;
+        }
+        if (rt.withheldTools.length > 0) {
+          console.log(`[eval-test-run] Withheld ${rt.withheldTools.length} write tool(s) from the eval run: ${rt.withheldTools.join(", ")}`);
         }
       } else {
-        // Fallback: agent has no active deployment — use direct LLM call for eval
         const agentResult = await runAgentOnInput(agent.systemPrompt, { input: golden.input });
         if (!agentResult.output || agentResult.output.trim() === "") {
           agentFailed = true;

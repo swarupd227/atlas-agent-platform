@@ -142,7 +142,7 @@ export async function runAgentOnInput(
       ],
       {
         temperature: 0,
-        maxTokens: 1000,
+        maxTokens: 4096,
       },
     );
     return { output: result.content, latencyMs: Date.now() - start };
