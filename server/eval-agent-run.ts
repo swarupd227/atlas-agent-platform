@@ -6,7 +6,7 @@
 // other than the agent's answer. Write tools are withheld here, so an eval can never change anything.
 
 import { storage } from "./storage";
-import { executePromptWithMcp } from "./agent-runtime";
+import { executePromptWithMcp, additionalAnalysisFields } from "./agent-runtime";
 import { gatherAvailableTools, isSideEffectful } from "./tool-dispatcher";
 import { buildAgentSystemPromptWithGovernance } from "./routes/helpers";
 import { resolveAgentIndustry } from "./agent-industry";
@@ -55,6 +55,8 @@ export async function runAgentForEval(
   const systemPrompt = fullAgent ? await buildAgentSystemPromptWithGovernance(fullAgent, orgId ?? undefined) : undefined;
   const industry = fullAgent ? (await resolveAgentIndustry(fullAgent as any)) ?? undefined : undefined;
 
+  // The standard agent cycle, the same one a team run uses. Quick-chat ("conversational") mode lets the
+  // model skip its tools and answer from memory, which is not how the agent behaves in a run.
   const result = await executePromptWithMcp(
     agent.id,
     "eval",
@@ -64,7 +66,6 @@ export async function runAgentForEval(
     industry,
     systemPrompt,
     {
-      conversational: true,
       maxToolIterations: agent.maxToolIterations ?? 8,
       ...(allowlist.length > 0 ? { dagToolAllowlist: allowlist } : {}),
     },
@@ -74,9 +75,19 @@ export async function runAgentForEval(
   );
 
   const toolCalls = (result.steps ?? []).filter((s: any) => s.type === "api_call").length;
-  if (!result.success && result.summary?.error) {
+  // Same reading of the answer a team-run step uses: the analysis text plus any fields beyond the generic shape.
+  const analysisStep = (result.steps ?? []).find((s: any) => s.type === "ai_analysis" && s.status === "completed");
+  const analysisText = analysisStep?.output?.summary || analysisStep?.output?.analysis;
+  let output = "";
+  if (typeof analysisText === "string" && analysisText.length > 0) {
+    output = analysisText;
+    const extra = additionalAnalysisFields(result.summary?.analysis);
+    if (extra) output += "\n\n```json\n" + JSON.stringify(extra, null, 2) + "\n```";
+  } else if (result.summary?.analysis && Object.keys(result.summary.analysis).length > 0) {
+    output = JSON.stringify(result.summary.analysis);
+  }
+  if (!output && !result.success && result.summary?.error) {
     return { output: "", error: String(result.summary.error), toolCalls, withheldTools };
   }
-  const output = (result as any).conversationalResponse || result.summary?.analysis?.summary || "";
-  return { output: typeof output === "string" ? output : JSON.stringify(output), error: null, toolCalls, withheldTools };
+  return { output, error: null, toolCalls, withheldTools };
 }
