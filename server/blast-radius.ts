@@ -46,6 +46,8 @@ export interface BlastRadiusInput {
   downstreamAgents?: number | null;
   /** Minutes from the deployment's rollback config, when it has one. */
   rollbackCooldownMinutes?: number | null;
+  /** The clock to count from. Only tests pass it; production uses now. */
+  now?: number;
 }
 
 export interface BlastRadius {
@@ -64,7 +66,7 @@ export interface BlastRadius {
 }
 
 export function buildBlastRadius(input: BlastRadiusInput): BlastRadius {
-  const runs = runsPerDay(input.traces);
+  const runs = runsPerDay(input.traces, input.now ?? Date.now());
   const notMeasured: string[] = [];
   if (runs.basis === "not_enough_history") {
     notMeasured.push(runs.historyHours == null ? "runs per day (no runs recorded yet)" : `runs per day (only ${runs.historyHours}h of history)`);

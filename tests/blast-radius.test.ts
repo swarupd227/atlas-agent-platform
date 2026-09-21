@@ -42,6 +42,9 @@ describe("buildBlastRadius", () => {
     boundOutcomes: [{ id: "o1", name: "Invoice cycle time", riskTier: "HIGH" }],
     revenueExposureUsd: 12_000,
     rollbackCooldownMinutes: 10,
+    // Pin the clock to the traces' reference time: without it this test read
+    // the real clock and started failing a day after it was written.
+    now: NOW,
   };
 
   it("reports what it counted", () => {
