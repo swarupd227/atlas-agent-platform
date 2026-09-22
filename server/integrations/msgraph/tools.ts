@@ -381,9 +381,19 @@ export async function graph_search_all_sources(
   const needle = query.toLowerCase();
 
   const sharepoint = await (async () => {
+    const runSearch = async (q: string) => {
+      const result = await client.searchSharePoint(q, ["driveItem", "listItem", "site"], 10) as any;
+      return result?.value?.[0]?.hitsContainers?.[0]?.hits ?? [];
+    };
     try {
-      const result = await client.searchSharePoint(query, ["driveItem", "listItem", "site"], 10) as any;
-      const hits = result?.value?.[0]?.hitsContainers?.[0]?.hits ?? [];
+      let hits = await runSearch(query);
+      // Microsoft Search treats multiple words as AND by default, so a multi-word natural-
+      // language query (e.g. a date qualifier plus the subject) can match nothing even when a
+      // shorter phrase would -- retry as OR of the individual words before giving up.
+      if (hits.length === 0) {
+        const words = query.split(/\s+/).filter((w) => w.length > 2);
+        if (words.length > 1) hits = await runSearch(words.join(" OR "));
+      }
       return {
         results: hits.map((h: any) => ({
           name: h.resource?.name ?? h.resource?.displayName,
