@@ -7,7 +7,7 @@ import { resumeWorkspaceRun } from "../workspace-run";
 import { applyApprovalEffects } from "../approval-decision";
 import { bindPolicyToOutcome } from "../policy-actions";
 import { promoteToBaseline } from "../services/screenshot-baseline";
-import { desc, eq, and, sql } from "drizzle-orm";
+import { desc, eq, and, inArray, sql } from "drizzle-orm";
 import { z, ZodError } from "zod";
 import {
   insertPolicySchema,
@@ -19,6 +19,7 @@ import {
   insertIncidentSchema,
   pipelineRuns,
   workspaceRuns,
+  auditEvents,
   type InsertAuditEvent,
 } from "@shared/schema";
 import { getOrgId, getDefaultOrgId } from "../auth";
@@ -1169,6 +1170,22 @@ Ontology: ${ontologyName || "industry standard"}`,
       return res.json(approvals.filter((a: any) => a.status === statusFilter));
     }
     res.json(approvals);
+  });
+
+  // One approval's history: the audit events about it or the thing it decides,
+  // newest first. A narrow query -- the detail route below reads the whole log.
+  router.get("/api/approvals/:id/history", async (req, res) => {
+    const approval = await storage.getApproval(req.params.id as string, getOrgId(req));
+    if (!approval) return res.status(404).json({ message: "Approval not found" });
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    const ids = Array.from(new Set([approval.id, approval.objectId].filter((x): x is string => !!x)));
+    const rows = await db
+      .select({ id: auditEvents.id, action: auditEvents.action, actorId: auditEvents.actorId, actorType: auditEvents.actorType, details: auditEvents.details, createdAt: auditEvents.createdAt })
+      .from(auditEvents)
+      .where(and(orgId ? eq(auditEvents.organizationId, orgId) : sql`true`, inArray(auditEvents.objectId, ids)))
+      .orderBy(desc(auditEvents.createdAt))
+      .limit(30);
+    res.json(rows);
   });
 
   router.get("/api/approvals/:id", async (req, res) => {

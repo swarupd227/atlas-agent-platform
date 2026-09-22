@@ -280,16 +280,13 @@ export function buildMyActions(rows: MyActionsRows, now: Date = new Date()) {
       approval.type,
       approval.objectName
     );
-    const riskScore = normalizeRiskScore(approval.riskScore);
+    // Urgency is the due date the request set, not the requester's own risk score:
+    // overdue or due within a day is urgent, within three days today, otherwise this week.
+    const hoursLeft = approval.dueDate ? (new Date(approval.dueDate).getTime() - now.getTime()) / 3_600_000 : null;
     const urgency: ActionItem["urgency"] =
-      riskScore >= 0.8 ? "urgent" : riskScore >= 0.5 ? "today" : "this_week";
-
-    const businessImpact =
-      riskScore >= 0.8
-        ? `High risk (${(riskScore * 100).toFixed(0)}%) — requires careful review`
-        : riskScore >= 0.5
-        ? `Medium risk (${(riskScore * 100).toFixed(0)}%)`
-        : null;
+      hoursLeft === null ? "this_week" : hoursLeft <= 24 ? "urgent" : hoursLeft <= 72 ? "today" : "this_week";
+    // No risk-percentage line: the score is the requester's own estimate, and it isn't a percentage.
+    const businessImpact = null;
 
     const item: ActionItem = {
       id: `approval-${approval.id}`,

@@ -15,7 +15,7 @@ const at = (iso: string) => new Date(iso);
 
 const rows = (): MyActionsRows => ({
   approvals: [
-    { id: "a1", type: "outcome_review", objectType: "outcome_contract", objectName: "Reduce DSO", status: "pending", riskScore: 8, createdAt: at("2026-09-14T09:00:00Z"), decidedAt: null } as any,
+    { id: "a1", type: "outcome_review", objectType: "outcome_contract", objectName: "Reduce DSO", status: "pending", riskScore: 8, dueDate: at("2026-09-15T06:00:00Z"), createdAt: at("2026-09-14T09:00:00Z"), decidedAt: null } as any,
     { id: "a2", type: "hitl_gate", objectType: "pipeline_gate", objectName: "Manager Approval", status: "pending", riskScore: 0.4, createdAt: at("2026-09-14T10:00:00Z"), decidedAt: null } as any,
     { id: "a3", type: "deployment", objectType: "deployment", objectName: "AR Agent", status: "approved", riskScore: 5, createdAt: at("2026-09-13T10:00:00Z"), decidedAt: at("2026-09-14T08:00:00Z") } as any,
     { id: "a4", type: "deployment", objectType: "deployment", objectName: "Old", status: "approved", riskScore: 5, createdAt: at("2026-09-01T10:00:00Z"), decidedAt: at("2026-09-02T08:00:00Z") } as any,
@@ -31,10 +31,13 @@ const rows = (): MyActionsRows => ({
 
 describe("buildMyActions", () => {
   it("puts pending approvals, urgent alerts and exceptions under needs decision, urgent first", () => {
+    // a1 is urgent because it's due within a day, a2 has no due date; the risk score doesn't set urgency.
     const r = buildMyActions(rows(), NOW);
     expect(r.needsDecision.map((i) => i.id)).toEqual(["alert-al1", "approval-a1", "pe-pe1", "approval-a2"]);
     expect(r.fyi.map((i) => i.id)).toEqual(["alert-al2"]);
     expect(r.needsDecision.find((i) => i.id === "alert-al1")!.businessImpact).toBe("-22.2% vs baseline");
+
+    expect(r.needsDecision.find((i) => i.id === "approval-a1")!.businessImpact).toBeNull();
   });
 
   it("counts only decisions made today as completed today", () => {

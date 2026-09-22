@@ -44,6 +44,7 @@ const Files = lazy(() => import("@/pages/files"));
 const Governance = lazy(() => import("@/pages/governance-overview"));
 const GovernanceClassic = lazy(() => import("@/pages/governance"));
 const Approvals = lazy(() => import("@/pages/approvals"));
+const ApprovalsHome = lazy(() => import("@/pages/approvals-home"));
 const Billing = lazy(() => import("@/pages/billing"));
 const OutcomeDetail = lazy(() => import("@/pages/outcome-detail"));
 const ReleaseDetail = lazy(() => import("@/pages/release-detail"));
@@ -379,8 +380,10 @@ function DashboardRouter() {
       <Route path="/governance" component={Governance} />
       <Route path="/audit-trail" component={AuditTrail} />
       <Route path="/approvals/gates" component={ApprovalGates} />
-      <Route path="/approvals" component={Approvals} />
-      <Route path="/approvals/:id" component={ApprovalDetail} />
+      <Route path="/approvals/classic" component={Approvals} />
+      <Route path="/approvals/:id/classic" component={ApprovalDetail} />
+      <Route path="/approvals" component={ApprovalsHome} />
+      <Route path="/approvals/:id" component={ApprovalsHome} />
       <Route path="/improvements" component={Improvements} />
       <Route path="/improvement-loop" component={ImprovementLoop} />
       <Route path="/optimization" component={Optimization} />

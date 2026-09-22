@@ -69,7 +69,7 @@ const TYPE_META: Record<string, { label: string; icon: any; color: string }> = {
   export_package:        { label: "Export Package",         icon: FileText, color: "text-violet-500" },
 };
 
-function getTypeMeta(type: string) {
+export function getTypeMeta(type: string) {
   return TYPE_META[type] ?? { label: type.replace(/_/g, " "), icon: Shield, color: "text-amber-500" };
 }
 
@@ -706,8 +706,8 @@ function SectionBlock({ icon: Icon, title, children }: { icon: any; title: strin
   );
 }
 
-/* ── Evidence section dispatcher ── */
-function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }: {
+/* ── Evidence section dispatcher (also used by the one-page Approvals, approvals-home.tsx) ── */
+export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }: {
   approval: Approval;
   agentSuites: EvalSuite[];
   agentDrift: Array<{ id: string; agentId: string; agentName: string; suiteName: string; metric: string; driftPercent: number; severity: string; status: string }>;
