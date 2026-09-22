@@ -1012,6 +1012,14 @@ router.get("/api/integrations/oauth/start/:provider", checkPermission("manage_mc
     url.searchParams.set("state", state);
     url.searchParams.set("scope", def.oauthConfig.defaultScopes.join(" "));
 
+    // Microsoft's authorize endpoint can silently skip the consent screen if the user already
+    // consented to this app before (e.g. with an older, narrower scope list) — the callback then
+    // hands back a token that looks fine but is missing the newly added scopes, with no error.
+    // Forcing prompt=consent makes every reconnect show the current scope list for real approval.
+    if (authorizationUrl.includes("login.microsoftonline.com")) {
+      url.searchParams.set("prompt", "consent");
+    }
+
     if (def.oauthConfig.pkce) {
       const codeVerifier = generateCodeVerifier();
       const codeChallenge = deriveCodeChallenge(codeVerifier);
