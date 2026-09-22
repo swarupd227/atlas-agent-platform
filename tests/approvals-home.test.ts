@@ -93,8 +93,10 @@ describe("the page", () => {
     const route = read("server", "routes", "governance.ts");
     const at = route.indexOf('router.get("/api/approvals/:id/history"');
     expect(at).toBeGreaterThan(-1);
-    expect(route.slice(at, at + 1200)).toContain("inArray(auditEvents.objectId, ids)");
-    expect(route.slice(at, at + 1200)).toContain(".limit(30)");
+    expect(route.slice(at, at + 600)).toContain("approvalHistory(");
+    const helper = route.slice(route.indexOf("async function approvalHistory("));
+    expect(helper.slice(0, 700)).toContain("inArray(auditEvents.objectId, ids)");
+    expect(helper.slice(0, 700)).toContain(".limit(limit)");
   });
 });
 

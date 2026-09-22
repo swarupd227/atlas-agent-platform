@@ -1164,28 +1164,34 @@ Ontology: ${ontologyName || "industry standard"}`,
   });
 
   router.get("/api/approvals", async (req, res) => {
-    const approvals = await storage.getApprovals(getOrgId(req));
     const statusFilter = req.query.status as string | undefined;
+    // Evidence only for requests still open; a decided one's evidence is on
+    // /api/approvals/:id, and ?full=1 returns it all. The full list was 3.3 MB,
+    // almost all of it evidence on requests decided long ago, and the
+    // notification centre fetched it on every page.
+    const approvals = req.query.full === "1" ? await storage.getApprovals(getOrgId(req)) : await storage.getApprovalSummaries(getOrgId(req));
     if (statusFilter) {
       return res.json(approvals.filter((a: any) => a.status === statusFilter));
     }
     res.json(approvals);
   });
 
-  // One approval's history: the audit events about it or the thing it decides,
-  // newest first. A narrow query -- the detail route below reads the whole log.
-  router.get("/api/approvals/:id/history", async (req, res) => {
-    const approval = await storage.getApproval(req.params.id as string, getOrgId(req));
-    if (!approval) return res.status(404).json({ message: "Approval not found" });
-    const orgId = getOrgId(req) ?? getDefaultOrgId();
+  /** The audit events about an approval or the thing it decides, newest first, read narrowly. */
+  async function approvalHistory(orgId: string | undefined, approval: { id: string; objectId: string | null }, limit: number) {
     const ids = Array.from(new Set([approval.id, approval.objectId].filter((x): x is string => !!x)));
-    const rows = await db
-      .select({ id: auditEvents.id, action: auditEvents.action, actorId: auditEvents.actorId, actorType: auditEvents.actorType, details: auditEvents.details, createdAt: auditEvents.createdAt })
+    return db
+      .select()
       .from(auditEvents)
       .where(and(orgId ? eq(auditEvents.organizationId, orgId) : sql`true`, inArray(auditEvents.objectId, ids)))
       .orderBy(desc(auditEvents.createdAt))
-      .limit(30);
-    res.json(rows);
+      .limit(limit);
+  }
+
+  router.get("/api/approvals/:id/history", async (req, res) => {
+    const approval = await storage.getApproval(req.params.id as string, getOrgId(req));
+    if (!approval) return res.status(404).json({ message: "Approval not found" });
+    const rows = await approvalHistory(getOrgId(req) ?? getDefaultOrgId() ?? undefined, approval, 30);
+    res.json(rows.map((e) => ({ id: e.id, action: e.action, actorId: e.actorId, actorType: e.actorType, details: e.details, createdAt: e.createdAt })));
   });
 
   router.get("/api/approvals/:id", async (req, res) => {
@@ -1193,16 +1199,17 @@ Ontology: ${ontologyName || "industry standard"}`,
     if (!approval) return res.status(404).json({ message: "Approval not found" });
 
     const orgId = getOrgId(req);
-    const agents = await storage.getAgents(orgId);
-    const outcomes = await storage.getOutcomes(orgId);
-    const evalSuites = await storage.getEvalSuites();
-    const policies = await storage.getPolicies(orgId);
-    const auditEvents = await storage.getAuditEvents(orgId);
-
-    const agent = approval.agentId ? agents.find(a => a.id === approval.agentId) : agents.find(a => a.id === approval.objectId);
-    const outcome = approval.outcomeId ? outcomes.find(o => o.id === approval.outcomeId) : null;
+    // Look up what it concerns by id, and its history narrowly: this used to read
+    // every agent, outcome and audit event in the organization.
+    const agentId = approval.agentId ?? approval.objectId;
+    const [agent, outcome, evalSuites, policies, relatedAudit] = await Promise.all([
+      agentId ? storage.getAgent(agentId, orgId) : Promise.resolve(undefined),
+      approval.outcomeId ? storage.getOutcome(approval.outcomeId, orgId) : Promise.resolve(null),
+      storage.getEvalSuites(),
+      storage.getPolicies(orgId),
+      approvalHistory(orgId ?? getDefaultOrgId() ?? undefined, approval, 20),
+    ]);
     const agentSuites = agent ? evalSuites.filter(s => s.agentId === agent.id) : [];
-    const relatedAudit = auditEvents.filter(e => e.objectId === approval.id || e.objectId === approval.objectId).slice(0, 20);
     const effectivePolicies = policies.filter(p => {
       if (!agent) return false;
       const scope = (p as any).scope;

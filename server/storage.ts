@@ -1,4 +1,4 @@
-import { eq, ne, desc, inArray, and, like, or, sql, isNull, isNotNull, lte, gte, asc, lt } from "drizzle-orm";
+import { eq, ne, desc, inArray, and, like, or, sql, isNull, isNotNull, lte, gte, asc, lt, getTableColumns } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
@@ -283,6 +283,8 @@ export interface IStorage {
   deletePolicy(id: string, orgId?: string): Promise<boolean>;
 
   getApprovals(orgId?: string): Promise<Approval[]>;
+  /** Every approval, with evidence only on the ones still open. */
+  getApprovalSummaries(orgId?: string): Promise<Approval[]>;
   getApproval(id: string, orgId?: string): Promise<Approval | undefined>;
   createApproval(approval: InsertApproval): Promise<Approval>;
   updateApproval(id: string, data: Partial<Approval>, orgId?: string): Promise<Approval | undefined>;
@@ -1443,6 +1445,19 @@ export class DatabaseStorage implements IStorage {
       return db.select().from(approvals).where(eq(approvals.organizationId, scopedOrgId));
     }
     return db.select().from(approvals);
+  }
+
+  async getApprovalSummaries(orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const { evidenceJson: _evidence, ...cols } = getTableColumns(approvals);
+    const rows = await db
+      .select({
+        ...cols,
+        evidenceJson: sql<unknown>`case when ${approvals.status} in ('pending', 'changes_requested') then ${approvals.evidenceJson} else null end`,
+      })
+      .from(approvals)
+      .where(scopedOrgId ? eq(approvals.organizationId, scopedOrgId) : sql`true`);
+    return rows as Approval[];
   }
 
   async getApproval(id: string, orgId?: string) {

@@ -122,6 +122,7 @@ export default function ApprovalsHome() {
   const [type, setType] = useState("all");
   const selectedId = params?.id && params.id !== "classic" ? params.id : null;
 
+  // The list carries evidence only for open requests; a decided one loads its evidence when opened.
   const approvalsQ = useQuery<Approval[]>({ queryKey: ["/api/approvals"], refetchOnMount: "always", refetchInterval: 30_000 });
   const approvals = approvalsQ.data ?? [];
   const counts = approvalCounts(approvals);
@@ -235,7 +236,10 @@ export default function ApprovalsHome() {
 
 type Pending = null | "changes" | "reject" | "limits";
 
-function ApprovalPane({ approval }: { approval: Approval }) {
+function ApprovalPane({ approval: row }: { approval: Approval }) {
+  // A decided request's evidence isn't in the summary list; read the full record for it.
+  const fullQ = useQuery<Approval>({ queryKey: ["/api/approvals", row.id], enabled: !isOpen(row.status) && row.evidenceJson == null });
+  const approval: Approval = fullQ.data ? { ...row, evidenceJson: fullQ.data.evidenceJson } : row;
   const { toast } = useToast();
   // The server decides who may (canDecideApproval): the routed reviewer role, or approve_changes when unrouted.
   const { role } = useRole();

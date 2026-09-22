@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
+import { compressResponses } from "./compression";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -88,6 +89,9 @@ app.use(
     crossOriginEmbedderPolicy: false, // would block the Vite dev client / third-party embeds we don't control.
   }),
 );
+
+// Responses were never compressed; streams are left alone (server/compression.ts).
+app.use(compressResponses);
 
 app.use(
   express.json({
