@@ -49,8 +49,13 @@ describe("decisionRoute", () => {
       .toEqual({ href: "/my-actions", page: "My Actions", reason: "Your role can't decide alerts." });
   });
 
-  it("still sends policy exceptions and autonomy requests to My Actions", () => {
-    expect(decisionRoute({ source: "governance", category: "governance", sourceId: "g", allowed: null }).elsewhere!.reason)
-      .toBe("Governance items are handled in My Actions.");
+  it("decides policy exceptions and tool requests here too, for a role allowed to", () => {
+    expect(decisionRoute({ source: "governance", category: "governance", sourceId: "g", allowed: { allowed: true, reason: "" } }))
+      .toEqual({ canDecideHere: true, requiredReviewerRole: null, elsewhere: null });
+    expect(decisionRoute({ source: "autonomy", category: "autonomy_escalation", sourceId: "t", allowed: { allowed: true, reason: "" } }).canDecideHere).toBe(true);
+    expect(decisionRoute({ source: "governance", category: "governance", sourceId: "g", allowed: { allowed: false, reason: "" } }).elsewhere!.reason)
+      .toBe("Your role can't decide policy exceptions.");
+    expect(decisionRoute({ source: "autonomy", category: "autonomy_escalation", sourceId: "t", allowed: null }).elsewhere!.reason)
+      .toBe("Your role can't decide tool requests.");
   });
 });

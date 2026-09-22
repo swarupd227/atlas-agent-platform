@@ -1,6 +1,7 @@
 /**
  * Deciding the other things that need someone: improvement recommendations
- * (accept or dismiss) and agent alerts (acknowledge). The Recommendations page,
+ * (accept or dismiss), agent alerts (acknowledge), policy exceptions (approve
+ * or reject) and agents' tool requests (approve or decline). The Recommendations page,
  * My Actions and the Astra Workspace all go through here, so a decision does
  * the same thing and leaves the same audit record wherever it is made.
  *
@@ -12,7 +13,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { storage } from "./storage";
-import { agentAlerts, improvementRecommendations, type ImprovementRecommendation } from "@shared/schema";
+import { agentAlerts, improvementRecommendations, mcpElicitations, policyExceptions, type ImprovementRecommendation } from "@shared/schema";
+import { filterElicitationsForOrg, filterPolicyExceptionsForOrg } from "./tenant-scope";
 
 /** The next cheaper model in the same family; a cost optimization's model downgrade uses it. */
 export const MODEL_DOWNGRADE_MAP: Record<string, string> = {
@@ -155,6 +157,67 @@ export async function decideRecommendation(input: ActorInput & { recommendationI
 export async function getAlertInOrg(alertId: string, orgId: string) {
   const [alert] = await db.select().from(agentAlerts).where(eq(agentAlerts.id, alertId));
   return alert && alert.orgId === orgId ? alert : null;
+}
+
+/**
+ * Approve or reject a requested policy exception. Recorded, audited and
+ * decided once; an approved exception is a record of the decision, it doesn't
+ * yet change what the runtime enforces, and the result says so.
+ */
+export async function decidePolicyException(input: ActorInput & { exceptionId: string; decision: "approve" | "reject"; note?: string }) {
+  const [pe] = await db.select().from(policyExceptions).where(eq(policyExceptions.id, input.exceptionId));
+  if (!pe || (await filterPolicyExceptionsForOrg([pe], input.orgId)).length === 0) {
+    throw new ActionDecisionError("No policy exception with that id in this organization.", "not_found");
+  }
+  if (pe.status !== "pending") throw new ActionDecisionError(`That exception was already ${pe.status}.`, "not_pending");
+
+  const approve = input.decision === "approve";
+  await db
+    .update(policyExceptions)
+    .set({ status: approve ? "approved" : "rejected", approvedBy: approve ? input.actorLabel : null })
+    .where(eq(policyExceptions.id, pe.id));
+  const policy = await storage.getPolicy(pe.policyId);
+  await storage.createAuditEvent({
+    organizationId: input.orgId,
+    actorType: "user",
+    actorId: input.actorId,
+    action: approve ? "policy_exception_approved" : "policy_exception_rejected",
+    objectType: "policy_exception",
+    objectId: pe.id,
+    details: `Exception to "${policy?.name ?? "a policy"}" ${approve ? "approved" : "rejected"} by ${input.actorLabel} (via ${input.via})${input.note ? `. Note: ${input.note}` : ""}`,
+  });
+  return {
+    exception: { id: pe.id, policyName: policy?.name ?? null, status: approve ? "approved" : "rejected", reason: pe.reason },
+    runtimeEffect: approve ? "Recorded only: the runtime doesn't read exceptions yet, so the policy is still enforced as before." : null,
+  };
+}
+
+/**
+ * Answer an agent's request to use a tool (an MCP elicitation). The same
+ * statuses as the elicitation's own respond route, so an agent waiting on it
+ * sees the answer, and a linked approval is closed with it.
+ */
+export async function respondToToolRequest(input: ActorInput & { elicitationId: string; decision: "approve" | "decline"; note?: string }) {
+  const [el] = await db.select().from(mcpElicitations).where(eq(mcpElicitations.id, input.elicitationId));
+  if (!el || (await filterElicitationsForOrg([el], input.orgId)).length === 0) {
+    throw new ActionDecisionError("No tool request with that id in this organization.", "not_found");
+  }
+  if (el.status !== "pending") throw new ActionDecisionError(`That tool request was already ${el.status}.`, "not_pending");
+
+  const status = input.decision === "approve" ? "approved" : "declined";
+  const now = new Date();
+  await db.update(mcpElicitations).set({ status, decidedBy: input.actorLabel, decidedAt: now }).where(eq(mcpElicitations.id, el.id));
+  if (el.linkedApprovalId) await storage.updateApproval(el.linkedApprovalId, { status, decidedBy: input.actorLabel, decidedAt: now });
+  await storage.createAuditEvent({
+    organizationId: input.orgId,
+    actorType: "user",
+    actorId: input.actorId,
+    action: `elicitation_${input.decision}`,
+    objectType: "mcp_elicitation",
+    objectId: el.id,
+    details: `Request to use ${el.toolName || "a tool"} on ${el.serverName || "a connector"} ${status} by ${input.actorLabel} (via ${input.via})${input.note ? `. Note: ${input.note}` : ""}`,
+  });
+  return { toolRequest: { id: el.id, toolName: el.toolName, serverName: el.serverName, status } };
 }
 
 export async function acknowledgeAlert(input: ActorInput & { alertId: string; note?: string }) {

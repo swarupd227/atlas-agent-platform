@@ -41,7 +41,7 @@ const compact = (i: Item) => ({
 export const listNeedsMeTool: AstraTool<Input> = {
   name: "list_needs_me",
   description:
-    "What needs the user's attention: pending approvals, recommendations and alerts (urgent first), with their ids and whether they can be decided here (decide_approval, decide_recommendation, acknowledge_alert); optionally the things-to-know list too.",
+    "What needs the user's attention: pending approvals, recommendations, alerts, policy exceptions and agents' tool requests (urgent first), with their ids and whether they can be decided here (decide_approval, decide_recommendation, acknowledge_alert, decide_policy_exception for source 'governance', answer_tool_request for source 'autonomy'); optionally the things-to-know list too.",
   input: z.object({ includeFyi: z.boolean().optional().describe("Also list items that don't need a decision.") }),
   confirm: false,
   run: async (ctx, input) => {

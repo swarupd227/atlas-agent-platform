@@ -7,7 +7,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { agentMcpServers, agentProposals, agents, workspaceRuns, type InsertPolicy } from "@shared/schema";
+import { agentMcpServers, agentProposals, agents, mcpElicitations, policyExceptions, workspaceRuns, type InsertPolicy } from "@shared/schema";
 import { createHash } from "crypto";
 import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
 import { computeWaves, extractFinalOutputText, startTeamAgentDagRun } from "../dag-execution-engine";
@@ -20,9 +20,9 @@ import { getRedactionLevel, hasPermission, redactPayload, type RoleId } from "..
 import { getIndustryPack } from "@shared/industry-packs";
 import { getBuiltInIndustry } from "@shared/built-in-industries";
 import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
-import { isMcpServerVisibleToOrg } from "../tenant-scope";
+import { filterElicitationsForOrg, filterPolicyExceptionsForOrg, isMcpServerVisibleToOrg } from "../tenant-scope";
 import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
-import { acknowledgeAlert, decideRecommendation, getAlertInOrg, getRecommendationInOrg, recommendationEffect } from "../action-decisions";
+import { acknowledgeAlert, decidePolicyException, decideRecommendation, getAlertInOrg, getRecommendationInOrg, recommendationEffect, respondToToolRequest } from "../action-decisions";
 import { bindPolicyToAgent, bindPolicyToOutcome, installPolicyPack, policyPackCatalog, type Enforcement } from "../policy-actions";
 import { resolvePolicyBundle } from "../routes/helpers";
 import { evalServices } from "./eval-services";
@@ -365,6 +365,53 @@ async function acknowledgeAlertAs(orgId: string, userId: string | null, actorLab
   return acknowledgeAlert({ orgId, actorId: userId ?? actorLabel, actorLabel, via: "Astra Workspace", alertId, note });
 }
 
+// ── decide_policy_exception / answer_tool_request ───────────────────────────
+
+/** A requested policy exception in the organization: which policy, who for, why, until when. */
+async function getPolicyExceptionForDecision(orgId: string, exceptionId: string) {
+  const [pe] = await db.select().from(policyExceptions).where(eq(policyExceptions.id, exceptionId));
+  if (!pe || (await filterPolicyExceptionsForOrg([pe], orgId)).length === 0) return null;
+  const [policy, agent] = await Promise.all([storage.getPolicy(pe.policyId), pe.agentId ? storage.getAgent(pe.agentId, orgId) : Promise.resolve(undefined)]);
+  return {
+    id: pe.id,
+    status: pe.status,
+    reason: pe.reason,
+    scope: pe.scope,
+    requestedBy: pe.requestedBy ?? null,
+    expiresAt: pe.expiresAt ? new Date(pe.expiresAt).toISOString() : null,
+    policy: policy ? { id: policy.id, name: policy.name } : null,
+    agent: agent ? { id: agent.id, name: agent.name } : null,
+  };
+}
+
+async function decidePolicyExceptionAs(orgId: string, userId: string | null, actorLabel: string, exceptionId: string, decision: "approve" | "reject", note?: string) {
+  return decidePolicyException({ orgId, actorId: userId ?? actorLabel, actorLabel, via: "Astra Cowork", exceptionId, decision, note });
+}
+
+/** An agent's pending request to use a tool, in the organization. */
+async function getToolRequestForDecision(orgId: string, elicitationId: string) {
+  const [el] = await db.select().from(mcpElicitations).where(eq(mcpElicitations.id, elicitationId));
+  if (!el || (await filterElicitationsForOrg([el], orgId)).length === 0) return null;
+  const agent = el.agentId ? await storage.getAgent(el.agentId, orgId) : undefined;
+  const args = el.proposedArgs == null ? null : JSON.stringify(el.proposedArgs);
+  return {
+    id: el.id,
+    status: el.status,
+    toolName: el.toolName ?? null,
+    serverName: el.serverName ?? null,
+    reason: el.reason ?? null,
+    riskFlags: el.riskFlags ?? [],
+    proposedArgs: args && args.length > 400 ? `${args.slice(0, 399)}…` : args,
+    // A request that asks for a form or a URL visit needs an answer, not a yes or no.
+    needsAnswer: el.mode === "url" || (el.formSchema != null && Object.keys((el.formSchema as any)?.properties ?? {}).length > 0),
+    agent: agent ? { id: agent.id, name: agent.name } : null,
+  };
+}
+
+async function respondToToolRequestAs(orgId: string, userId: string | null, actorLabel: string, elicitationId: string, decision: "approve" | "decline", note?: string) {
+  return respondToToolRequest({ orgId, actorId: userId ?? actorLabel, actorLabel, via: "Astra Cowork", elicitationId, decision, note });
+}
+
 // ── Governance pack ─────────────────────────────────────────────────────────
 
 /** An agent only if it is in this organization (resolvePolicyBundle alone would fall back to org policies). */
@@ -620,7 +667,9 @@ async function needsMe(orgId: string, role: RoleId) {
           ? { allowed: hasPermission(role, "approve_changes"), reason: "" }
           : item.source === "alert"
             ? { allowed: hasPermission(role, "view_agents"), reason: "" }
-            : null,
+            : item.source === "governance" || item.source === "autonomy"
+              ? { allowed: hasPermission(role, "approve_changes"), reason: "" }
+              : null,
     });
     return {
       ...item,
@@ -1015,6 +1064,10 @@ export function createAstraServices(): AstraServices {
     decideRecommendationAs,
     getAlertForDecision,
     acknowledgeAlertAs,
+    getPolicyExceptionForDecision,
+    decidePolicyExceptionAs,
+    getToolRequestForDecision,
+    respondToToolRequestAs,
     getUserDisplayName,
     outcomeGrounding,
     listOutcomes,

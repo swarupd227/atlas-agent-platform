@@ -1,13 +1,9 @@
 import { Router } from "express";
-import { storage } from "../storage";
-import { db } from "../db";
-import { eq, inArray } from "drizzle-orm";
-import { agentAlerts, agents, improvementRecommendations, policyExceptions, mcpElicitations } from "@shared/schema";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
 import { getRequestActorLabel, getRequestRole, hasPermission } from "../permissions";
 import { ApprovalDecisionError, decideApproval } from "../approval-decision";
-import { ActionDecisionError, acknowledgeAlert, decideRecommendation } from "../action-decisions";
+import { ActionDecisionError, acknowledgeAlert, decidePolicyException, decideRecommendation, respondToToolRequest } from "../action-decisions";
 
 const router = Router();
 
@@ -24,187 +20,68 @@ router.get("/api/my-actions", async (req, res) => {
   }
 });
 
+/**
+ * Every kind of item is decided by the same code as its own page and the
+ * Astra Cowork tools: checked against the organization, decided once, and
+ * audited under the person who decided it.
+ */
 router.post("/api/my-actions/decide", async (req, res) => {
   try {
-    const orgId = getOrgId(req);
-    const { source, sourceId, decision } = req.body as {
+    const { source, sourceId, decision, note } = req.body as {
       source: "approval" | "alert" | "recommendation" | "governance" | "autonomy";
       sourceId: string;
       decision: "approved" | "rejected" | "dismissed" | "acknowledged";
+      note?: string;
     };
-
     if (!source || !sourceId || !decision) {
       return res.status(400).json({ error: "source, sourceId, and decision are required" });
     }
 
-    // Approvals, alerts and recommendations are decided by the same code as the
-    // Approvals and Recommendations pages and the Astra Workspace: review
-    // routing, the real effects, and an audit record in the organization.
-    const decisionOrgId = orgId ?? getDefaultOrgId();
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    if (!orgId) return res.status(403).json({ error: "No organization context." });
+    const role = getRequestRole(req);
     const actorLabel = getRequestActorLabel(req);
-    const actorId = req.authUser?.userId ?? actorLabel;
-    const failed = (err: unknown) => {
-      if (err instanceof ApprovalDecisionError || err instanceof ActionDecisionError) {
-        const status = err.code === "not_found" ? 404 : err.code === "not_allowed" ? 403 : 409;
-        res.status(status).json({ error: err.message });
-        return true;
-      }
-      return false;
-    };
-    if (decisionOrgId && (source === "approval" || source === "alert" || source === "recommendation")) {
-      try {
-        if (source === "approval") {
+    const actor = { orgId, actorId: req.authUser?.userId ?? actorLabel, actorLabel, via: "My Actions" };
+    const approve = decision === "approved";
+    const text = typeof note === "string" && note.trim() ? note.trim().slice(0, 1000) : undefined;
+
+    // Exceptions and tool requests need the same permission as approvals.
+    if ((source === "governance" || source === "autonomy") && !hasPermission(role, "approve_changes")) {
+      return res.status(403).json({ error: "Your role can't decide this." });
+    }
+
+    try {
+      switch (source) {
+        case "approval":
           await decideApproval({
-            orgId: decisionOrgId,
-            role: getRequestRole(req),
+            orgId,
+            role,
             userId: req.authUser?.userId ?? null,
             decidedBy: actorLabel,
             approvalId: sourceId,
-            decision: decision === "approved" ? "approved" : "rejected",
+            decision: approve ? "approved" : "rejected",
+            note: text,
             via: "My Actions",
           });
-        } else if (source === "alert") {
-          await acknowledgeAlert({ orgId: decisionOrgId, actorId, actorLabel, via: "My Actions", alertId: sourceId });
-        } else {
-          await decideRecommendation({
-            orgId: decisionOrgId, actorId, actorLabel, via: "My Actions",
-            recommendationId: sourceId,
-            decision: decision === "approved" ? "accept" : "dismiss",
-          });
-        }
-        return res.json({ ok: true });
-      } catch (err) {
-        if (failed(err)) return;
-        throw err;
+          return res.json({ ok: true });
+        case "alert":
+          return res.json({ ok: true, ...(await acknowledgeAlert({ ...actor, alertId: sourceId, note: text })) });
+        case "recommendation":
+          return res.json({ ok: true, ...(await decideRecommendation({ ...actor, recommendationId: sourceId, decision: approve ? "accept" : "dismiss", note: text })) });
+        case "governance":
+          return res.json({ ok: true, ...(await decidePolicyException({ ...actor, exceptionId: sourceId, decision: approve ? "approve" : "reject", note: text })) });
+        case "autonomy":
+          return res.json({ ok: true, ...(await respondToToolRequest({ ...actor, elicitationId: sourceId, decision: approve ? "approve" : "decline", note: text })) });
+        default:
+          return res.status(400).json({ error: "Unknown source type" });
       }
-    }
-
-    if (source === "approval" || source === "governance" || source === "autonomy") {
-      const role = getRequestRole(req);
-      if (!hasPermission(role, "approve_changes")) {
-        return res.status(403).json({ error: "Insufficient permissions to decide on this item" });
+    } catch (err) {
+      if (err instanceof ApprovalDecisionError || err instanceof ActionDecisionError) {
+        const status = err.code === "not_found" ? 404 : err.code === "not_allowed" ? 403 : 409;
+        return res.status(status).json({ error: err.message });
       }
+      throw err;
     }
-
-    if (source === "approval") {
-      const approval = await storage.getApproval(sourceId);
-      if (!approval) return res.status(404).json({ error: "Approval not found" });
-      if (orgId && approval.organizationId !== orgId) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
-      const status = decision === "approved" ? "approved" : "rejected";
-      await storage.updateApproval(sourceId, {
-        status,
-        decidedBy: "outcome_owner",
-        decidedAt: new Date(),
-      });
-      return res.json({ ok: true });
-    }
-
-    if (source === "alert") {
-      const rows = await db
-        .select()
-        .from(agentAlerts)
-        .where(eq(agentAlerts.id, sourceId));
-      const alert = rows[0];
-      if (!alert) return res.status(404).json({ error: "Alert not found" });
-      if (orgId && alert.orgId !== orgId) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
-      await db
-        .update(agentAlerts)
-        .set({ acknowledgedAt: new Date() })
-        .where(eq(agentAlerts.id, sourceId));
-      return res.json({ ok: true });
-    }
-
-    if (source === "recommendation") {
-      const rows = await db
-        .select()
-        .from(improvementRecommendations)
-        .where(eq(improvementRecommendations.id, sourceId));
-      const rec = rows[0];
-      if (!rec) return res.status(404).json({ error: "Recommendation not found" });
-
-      if (orgId) {
-        const orgAgents = await db
-          .select({ id: agents.id })
-          .from(agents)
-          .where(eq(agents.organizationId, orgId));
-        const orgAgentIds = new Set(orgAgents.map((a) => a.id));
-        if (!orgAgentIds.has(rec.agentId ?? "")) {
-          return res.status(403).json({ error: "Forbidden" });
-        }
-      }
-
-      const now = new Date();
-      const status = decision === "approved" ? "applied" : "dismissed";
-      await db
-        .update(improvementRecommendations)
-        .set({
-          status,
-          appliedAt: decision === "approved" ? now : undefined,
-          dismissedAt: decision !== "approved" ? now : undefined,
-        })
-        .where(eq(improvementRecommendations.id, sourceId));
-      return res.json({ ok: true });
-    }
-
-    if (source === "governance") {
-      const rows = await db
-        .select()
-        .from(policyExceptions)
-        .where(eq(policyExceptions.id, sourceId));
-      const pe = rows[0];
-      if (!pe) return res.status(404).json({ error: "Policy exception not found" });
-
-      if (orgId && pe.agentId) {
-        const ownerRows = await db
-          .select({ id: agents.id })
-          .from(agents)
-          .where(eq(agents.organizationId, orgId));
-        const ownerIds = new Set(ownerRows.map((a) => a.id));
-        if (!ownerIds.has(pe.agentId)) {
-          return res.status(403).json({ error: "Forbidden" });
-        }
-      }
-
-      const status = decision === "approved" ? "approved" : "rejected";
-      await db
-        .update(policyExceptions)
-        .set({ status, approvedBy: decision === "approved" ? "outcome_owner" : undefined })
-        .where(eq(policyExceptions.id, sourceId));
-      return res.json({ ok: true });
-    }
-
-    if (source === "autonomy") {
-      const rows = await db
-        .select()
-        .from(mcpElicitations)
-        .where(eq(mcpElicitations.id, sourceId));
-      const me = rows[0];
-      if (!me) return res.status(404).json({ error: "Elicitation not found" });
-
-      if (orgId && me.agentId) {
-        const ownerRows = await db
-          .select({ id: agents.id })
-          .from(agents)
-          .where(eq(agents.organizationId, orgId));
-        const ownerIds = new Set(ownerRows.map((a) => a.id));
-        if (!ownerIds.has(me.agentId)) {
-          return res.status(403).json({ error: "Forbidden" });
-        }
-      }
-
-      const status = decision === "approved" ? "approved" : "rejected";
-      await db
-        .update(mcpElicitations)
-        .set({ status, decidedBy: "outcome_owner", decidedAt: new Date() })
-        .where(eq(mcpElicitations.id, sourceId));
-      return res.json({ ok: true });
-    }
-
-    return res.status(400).json({ error: "Unknown source type" });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[my-actions/decide] Error:", message);
