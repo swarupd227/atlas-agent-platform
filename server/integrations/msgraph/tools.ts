@@ -1,5 +1,5 @@
 /**
- * Microsoft Graph tool implementations — 14 tools.
+ * Microsoft Graph tool implementations — 17 tools.
  * Each function receives a MicrosoftGraphClient and validated args.
  * graph_send_email appends an agent attribution footer.
  */
@@ -576,5 +576,106 @@ export async function graph_get_onedrive_file(
     created_at:    item?.createdDateTime,
     mime_type:     item?.file?.mimeType ?? null,
     modified_by:   item?.lastModifiedBy?.user?.displayName ?? null,
+  });
+}
+
+// ── Tool: graph_reconcile_duplicate ──────────────────────────────────────────
+// Resolves a flagged duplicate by moving (never deleting) the superseded copy into an
+// "Archived - Superseded" sibling folder and renaming it, so the canonical copy is the only
+// one left where people are looking. Reversible: nothing is deleted, only relocated.
+
+export async function graph_reconcile_duplicate(
+  client: MicrosoftGraphClient,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  const keepDriveId = args.keep_drive_id as string | undefined;
+  const keepItemId  = args.keep_item_id as string | undefined;
+  const dupDriveId  = args.duplicate_drive_id as string | undefined;
+  const dupItemId   = args.duplicate_item_id as string | undefined;
+
+  if (!keepDriveId || !keepItemId) throw new Error("keep_drive_id and keep_item_id are required (the canonical copy to retain in place)");
+  if (!dupDriveId || !dupItemId) throw new Error("duplicate_drive_id and duplicate_item_id are required (the copy to archive)");
+
+  const [keepMeta, dupMeta] = await Promise.all([
+    client.getAt(`/drives/${encodeURIComponent(keepDriveId)}/items/${encodeURIComponent(keepItemId)}`) as Promise<any>,
+    client.getAt(`/drives/${encodeURIComponent(dupDriveId)}/items/${encodeURIComponent(dupItemId)}`) as Promise<any>,
+  ]);
+  const dupParentId = dupMeta?.parentReference?.id;
+  if (!dupParentId) throw new Error(`Could not resolve the parent folder of '${dupMeta?.name ?? dupItemId}'`);
+
+  const ARCHIVE_FOLDER_NAME = "Archived - Superseded";
+  const siblings = await client.listDriveItemChildren(dupDriveId, dupParentId) as any;
+  let archiveFolder = (siblings?.value ?? []).find((v: any) => v.folder && v.name === ARCHIVE_FOLDER_NAME);
+  if (!archiveFolder) {
+    archiveFolder = await client.createDriveFolder(dupDriveId, dupParentId, ARCHIVE_FOLDER_NAME) as any;
+  }
+
+  const newName = dupMeta?.name?.startsWith("SUPERSEDED - ") ? dupMeta.name : `SUPERSEDED - ${dupMeta?.name ?? "document"}`;
+  const moved = await client.moveDriveItem(dupDriveId, dupItemId, archiveFolder.id, newName) as any;
+
+  return ok({
+    action: "reconciled_duplicate",
+    kept: { name: keepMeta?.name, web_url: keepMeta?.webUrl },
+    superseded: { name: moved?.name, web_url: moved?.webUrl, moved_to_folder: ARCHIVE_FOLDER_NAME },
+    note: "The duplicate was moved and renamed, not deleted — it can be restored from Archived - Superseded at any time.",
+  });
+}
+
+// ── Tool: graph_list_planner_plans ───────────────────────────────────────────
+
+export async function graph_list_planner_plans(
+  client: MicrosoftGraphClient,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  const groupId = args.group_id as string | undefined;
+  if (!groupId) throw new Error("group_id is required (the Microsoft 365 Group that owns the Planner plan)");
+
+  const result = await client.listPlannerPlans(groupId) as any;
+  const plans = result?.value ?? [];
+  return ok({
+    count: plans.length,
+    plans: plans.map((p: any) => ({ id: p.id, title: p.title, created_at: p.createdDateTime })),
+  });
+}
+
+// ── Tool: graph_create_planner_task ──────────────────────────────────────────
+// Creates a real Microsoft Planner task — the platform half of "agent auto-creates a task,
+// no human touches Planner." Optionally attaches a link back to the source document/thread as
+// a task reference, so the task is traceable to what triggered it.
+
+export async function graph_create_planner_task(
+  client: MicrosoftGraphClient,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  const planId = args.plan_id as string | undefined;
+  const title  = args.title as string | undefined;
+  if (!planId) throw new Error("plan_id is required (from graph_list_planner_plans)");
+  if (!title) throw new Error("title is required");
+
+  const dueDate = args.due_date as string | undefined;
+  const assigneeUserIds = Array.isArray(args.assignee_user_ids) ? (args.assignee_user_ids as string[]) : undefined;
+  const bucketId = args.bucket_id as string | undefined;
+  const referenceUrl = args.reference_url as string | undefined;
+  const referenceAlias = args.reference_alias as string | undefined;
+
+  const task = await client.createPlannerTask({
+    planId,
+    title,
+    bucketId,
+    dueDateTime: dueDate,
+    assigneeUserIds,
+  }) as any;
+
+  if (referenceUrl) {
+    await client.addPlannerTaskReference(task.id, referenceUrl, referenceAlias ?? referenceUrl);
+  }
+
+  return ok({
+    id: task?.id,
+    title: task?.title,
+    plan_id: task?.planId,
+    due_date: task?.dueDateTime ?? null,
+    web_url: `https://tasks.office.com/Home/Task/${task?.id}`,
+    reference_attached: Boolean(referenceUrl),
   });
 }

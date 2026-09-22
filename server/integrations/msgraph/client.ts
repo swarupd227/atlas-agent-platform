@@ -66,6 +66,14 @@ export class MicrosoftGraphClient {
     }));
   }
 
+  private async patch(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<unknown> {
+    return parseGraph(await this.fetch(path, {
+      method: "PATCH",
+      headers: extraHeaders,
+      body: JSON.stringify(body),
+    }));
+  }
+
   /**
    * Returns the base path prefix for user-scoped API calls:
    * - "me"        → "/me"   (delegated — uses the token's own identity)
@@ -191,6 +199,62 @@ export class MicrosoftGraphClient {
 
   async getOneDriveFile(userId: string, itemPath: string): Promise<unknown> {
     return this.get(`${this.userBase(userId)}/drive/root:/${encodeURIComponent(itemPath)}`);
+  }
+
+  async listDriveItemChildren(driveId: string, itemId: string): Promise<unknown> {
+    return this.get(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/children`);
+  }
+
+  async createDriveFolder(driveId: string, parentItemId: string, name: string): Promise<unknown> {
+    return this.post(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentItemId)}/children`, {
+      name,
+      folder: {},
+      "@microsoft.graph.conflictBehavior": "rename",
+    });
+  }
+
+  /** Move (and optionally rename) a drive item by changing its parent reference. Never deletes. */
+  async moveDriveItem(driveId: string, itemId: string, newParentItemId: string, newName?: string): Promise<unknown> {
+    const body: Record<string, unknown> = { parentReference: { id: newParentItemId } };
+    if (newName) body.name = newName;
+    return this.patch(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`, body);
+  }
+
+  // ── Planner ──────────────────────────────────────────────────────────────────
+
+  async listPlannerPlans(groupId: string): Promise<unknown> {
+    return this.get(`/groups/${encodeURIComponent(groupId)}/planner/plans`);
+  }
+
+  async createPlannerTask(task: {
+    planId: string;
+    title: string;
+    bucketId?: string;
+    dueDateTime?: string;
+    assigneeUserIds?: string[];
+  }): Promise<unknown> {
+    const body: Record<string, unknown> = { planId: task.planId, title: task.title };
+    if (task.bucketId) body.bucketId = task.bucketId;
+    if (task.dueDateTime) body.dueDateTime = task.dueDateTime;
+    if (task.assigneeUserIds?.length) {
+      body.assignments = Object.fromEntries(
+        task.assigneeUserIds.map((userId) => [userId, { "@odata.type": "#microsoft.graph.plannerAssignment", orderHint: " !" }])
+      );
+    }
+    return this.post("/planner/tasks", body);
+  }
+
+  /** Attach a link back to the source document/thread as a task reference (shows as an attachment on the Planner card). */
+  async addPlannerTaskReference(taskId: string, url: string, alias: string): Promise<unknown> {
+    const details = await this.get(`/planner/tasks/${encodeURIComponent(taskId)}/details`) as any;
+    const etag = details?.["@odata.etag"] ?? "*";
+    // Planner reference keys are the reference URL with every "." replaced by "%2E" (Graph's documented encoding).
+    const key = encodeURIComponent(url).replace(/\./g, "%2E");
+    return this.patch(
+      `/planner/tasks/${encodeURIComponent(taskId)}/details`,
+      { references: { [key]: { "@odata.type": "#microsoft.graph.plannerExternalReference", alias, type: "Other" } } },
+      { "If-Match": etag }
+    );
   }
 
   // ── Connection test ─────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 /**
- * Microsoft Graph MCP Server — 14 real tools across Exchange, Teams, SharePoint, Azure AD.
+ * Microsoft Graph MCP Server — 17 real tools across Exchange, Teams, SharePoint, Azure AD, Planner.
  * Extends RealMcpBase; auth via Bearer access_token (OAuth2, Azure App Registration).
  * Credentials: access_token (required), refresh_token, tenant_id, client_id, client_secret,
  *              user_id (delegated mode) or service_account_email (app mode).
@@ -28,9 +28,13 @@ import {
   graph_get_sharepoint_file,
   graph_read_sharepoint_page,
   graph_get_onedrive_file,
+  graph_reconcile_duplicate,
+  graph_list_planner_plans,
+  graph_create_planner_task,
 } from "./tools";
 
 const OUTBOUND_TOOLS = new Set(["graph_send_email", "graph_post_teams_message"]);
+const WRITE_ACTION_TOOLS = new Set(["graph_reconcile_duplicate", "graph_create_planner_task"]);
 
 export class MicrosoftGraphMcpServer extends RealMcpBase {
   readonly integrationId = "msgraph";
@@ -259,6 +263,48 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
         required: ["item_path"],
       },
     },
+    {
+      name: "graph_reconcile_duplicate",
+      description: "Resolve a flagged duplicate file by moving (never deleting) the superseded copy into an 'Archived - Superseded' sibling folder and renaming it, leaving the canonical copy as the only one where people are looking. Reversible.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          keep_drive_id:      { type: "string", description: "Drive ID of the canonical copy to retain in place (required)" },
+          keep_item_id:       { type: "string", description: "Item ID of the canonical copy (required)" },
+          duplicate_drive_id: { type: "string", description: "Drive ID of the duplicate copy to archive (required)" },
+          duplicate_item_id:  { type: "string", description: "Item ID of the duplicate copy (required)" },
+        },
+        required: ["keep_drive_id", "keep_item_id", "duplicate_drive_id", "duplicate_item_id"],
+      },
+    },
+    {
+      name: "graph_list_planner_plans",
+      description: "List the Planner plans owned by a Microsoft 365 Group, to find the plan_id for graph_create_planner_task.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "Microsoft 365 Group ID that owns the plan (required)" },
+        },
+        required: ["group_id"],
+      },
+    },
+    {
+      name: "graph_create_planner_task",
+      description: "Create a real task in Microsoft Planner, optionally due-dated, assigned, and linked back to the source document or thread that triggered it.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          plan_id:            { type: "string", description: "Planner plan ID from graph_list_planner_plans (required)" },
+          title:              { type: "string", description: "Task title (required)" },
+          bucket_id:          { type: "string", description: "Bucket (column) ID within the plan; omitted uses the plan's default bucket" },
+          due_date:           { type: "string", description: "ISO 8601 due date/time" },
+          assignee_user_ids:  { type: "array", items: { type: "string" }, description: "Azure AD user IDs to assign the task to" },
+          reference_url:      { type: "string", description: "URL of the source document/thread to attach as a task reference" },
+          reference_alias:    { type: "string", description: "Display label for the attached reference (default: the URL itself)" },
+        },
+        required: ["plan_id", "title"],
+      },
+    },
   ];
 
   async handleTool(
@@ -303,6 +349,9 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       case "graph_get_sharepoint_file":       result = await graph_get_sharepoint_file(client, args); break;
       case "graph_read_sharepoint_page":      result = await graph_read_sharepoint_page(client, args); break;
       case "graph_get_onedrive_file":         result = await graph_get_onedrive_file(client, args); break;
+      case "graph_reconcile_duplicate":       result = await graph_reconcile_duplicate(client, args); break;
+      case "graph_list_planner_plans":        result = await graph_list_planner_plans(client, args); break;
+      case "graph_create_planner_task":       result = await graph_create_planner_task(client, args); break;
       default: return this.err(`Unknown Microsoft Graph tool: ${toolName}`);
     }
 
@@ -320,6 +369,20 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
           agent_name: args.agent_name ?? null,
           attribution_added: toolName === "graph_send_email",
         }),
+        organizationId: orgId,
+      }).catch(() => {});
+    }
+
+    // Extra audit event for write actions in shared content/task systems
+    if (!result.isError && WRITE_ACTION_TOOLS.has(toolName)) {
+      storage.createAuditEvent({
+        actorType: "agent",
+        action: toolName === "graph_reconcile_duplicate" ? "agent_file_reconciliation" : "agent_task_creation",
+        objectType: toolName === "graph_reconcile_duplicate" ? "drive_item" : "planner_task",
+        objectId: toolName === "graph_reconcile_duplicate"
+          ? `${args.duplicate_drive_id ?? ""}:${args.duplicate_item_id ?? ""}`
+          : `${args.plan_id ?? ""}:${String(args.title ?? "")}`,
+        details: JSON.stringify({ tool: toolName, args }),
         organizationId: orgId,
       }).catch(() => {});
     }
@@ -369,6 +432,7 @@ export function createMicrosoftGraphRouter(): Router {
         { permission: "ChannelMessage.Read.All", type: "Application", description: "Read Teams channel messages" },
         { permission: "Files.Read.All",          type: "Application", description: "Read SharePoint and OneDrive files" },
         { permission: "Sites.Read.All",          type: "Application", description: "Read SharePoint site pages and content" },
+        { permission: "Tasks.ReadWrite",         type: "Delegated",   description: "Create and update Microsoft Planner tasks on behalf of the signed-in user" },
       ],
     });
   });
