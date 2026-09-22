@@ -154,3 +154,20 @@ export interface HomeBriefing {
   rows: HomeRow[];
   notShown: string[];
 }
+
+/** GET /api/astra/home/activity (server/astra/home-activity.ts). */
+export interface ActivityItem {
+  id: string;
+  kind: "team_run" | "agent_run";
+  title: string;
+  detail: string;
+  status: "running" | "waiting" | "stalled" | "completed" | "failed";
+  at: string | null;
+  href: string;
+}
+
+export interface HomeActivity {
+  inProgress: ActivityItem[];
+  recent: ActivityItem[];
+  spend: { days: number; runs: number; costUsd: number; basis: string } | null;
+}

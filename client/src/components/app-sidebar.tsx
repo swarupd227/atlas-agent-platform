@@ -131,8 +131,8 @@ function FullAppSidebar() {
     {
       label: "",
       items: [
-        { title: "Home", url: "/dashboard", icon: Home, testId: "overview" },
-        // With Ask Astra on, running an agent starts there; Workspace moves to All tools.
+        // With Astra Cowork on, it is home and this is the dashboard; running an agent starts there, so Workspace moves to All tools.
+        { title: astraEnabled ? "Dashboard" : "Home", url: "/dashboard", icon: Home, testId: "overview" },
         ...(astraEnabled ? [] : [{ title: "Workspace", url: "/workspace", icon: Sparkles }]),
       ],
     },
@@ -263,7 +263,7 @@ function FullAppSidebar() {
     <Sidebar className="astra-scope">
       <div className="astra-scope flex h-full min-h-0 flex-col bg-sidebar font-sans text-sidebar-foreground">
         <SidebarHeader className="gap-3 px-3 pb-2 pt-3.5">
-          <Link href="/dashboard" className="flex items-center gap-2.5 rounded-md px-1">
+          <Link href="/home" className="flex items-center gap-2.5 rounded-md px-1">
             <span className="grid h-7 w-7 place-items-center rounded-[7px] bg-primary font-[family-name:var(--astra-display)] text-[15px] font-bold text-primary-foreground">A</span>
             <span className="flex flex-col leading-tight">
               <span className="font-[family-name:var(--astra-display)] text-[15px] font-semibold" data-testid="text-app-name">Astra Agents</span>
@@ -279,7 +279,7 @@ function FullAppSidebar() {
               data-testid="link-nav-ask-astra"
             >
               <MessageSquareText className="h-4 w-4" />
-              Ask Astra
+              Astra Cowork
             </Link>
           )}
         </SidebarHeader>
@@ -472,8 +472,10 @@ function BusinessModeSidebar() {
       ).length
     : 0;
 
+  const { enabled: astraEnabled } = useAstraEnabled();
   const navItems = [
-    { title: "Home", url: "/dashboard", icon: Home },
+    ...(astraEnabled ? [{ title: "Astra Cowork", url: "/astra", icon: MessageSquareText }] : []),
+    { title: astraEnabled ? "Dashboard" : "Home", url: "/dashboard", icon: Home },
     { title: "Workspace", url: "/workspace", icon: Sparkles },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "My Workers", url: "/my-workers", icon: Bot, badge: runningWorkersCount > 0 ? runningWorkersCount : undefined },
@@ -486,7 +488,7 @@ function BusinessModeSidebar() {
     <Sidebar className="astra-scope">
       <div className="astra-scope flex h-full min-h-0 flex-col bg-sidebar font-sans text-sidebar-foreground">
       <SidebarHeader className="px-3 pb-2 pt-3.5">
-        <Link href="/dashboard" className="flex items-center gap-2.5 rounded-md px-1">
+        <Link href="/home" className="flex items-center gap-2.5 rounded-md px-1">
           <span className="grid h-7 w-7 place-items-center rounded-[7px] bg-primary font-[family-name:var(--astra-display)] text-[15px] font-bold text-primary-foreground">A</span>
           {/* One brand everywhere (UX audit F-3): business mode must not introduce a second name. */}
           <span className="flex flex-col leading-tight">

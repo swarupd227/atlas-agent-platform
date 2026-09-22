@@ -4,7 +4,7 @@ import { Markdown } from "@/components/markdown";
 import { Composer, type ComposerInsert } from "./composer";
 import type { Mentionable } from "./mention";
 import { ConfirmCard } from "./confirm-card";
-import { HomeBriefing } from "./home";
+import { HomeActivityPanel, HomeBriefing, HomeGreeting } from "./home";
 import { STARTERS } from "./prompts";
 import { ProofStrip } from "./proof-strip";
 import type { LiveTurn } from "./api";
@@ -157,16 +157,16 @@ export function Thread({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
           {empty && (
-            <div className="pt-[6vh]">
-              <h1 className="text-2xl font-semibold tracking-tight [font-family:var(--astra-display)] text-balance">
-                What should your agents do?
-              </h1>
-              <p className="mt-2 max-w-prose text-sm text-muted-foreground">
-                Ask about your agents, connectors and industry context, or have an agent do the work. Anything that changes the platform
-                waits for your confirmation, and every answer shows what it's based on.
-              </p>
+            <div className="space-y-8 pt-[4vh]" data-testid="astra-cowork-home">
+              <HomeGreeting />
               <HomeBriefing onSend={onSend} />
-              <div className="mt-6 grid gap-2 sm:grid-cols-2">
+              <HomeActivityPanel />
+              <section aria-label="Start something">
+                <h2 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Start something</h2>
+                <p className="mb-2 max-w-prose text-xs text-muted-foreground">
+                  Anything that changes the platform waits for your confirmation, and every answer shows what it's based on.
+                </p>
+              <div className="grid gap-2 sm:grid-cols-2">
                 {STARTERS.map((s) => (
                   <button
                     key={s.label}
@@ -178,6 +178,7 @@ export function Thread({
                   </button>
                 ))}
               </div>
+              </section>
             </div>
           )}
 

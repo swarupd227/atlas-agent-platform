@@ -100,7 +100,7 @@ function Workspace() {
           <Link href="~/dashboard" className="md:hidden" aria-label="Back to the classic app">
             <ArrowLeft className="h-4 w-4 text-muted-foreground" />
           </Link>
-          <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{onLibrary ? "Library" : threadId ? thread.title || "Conversation" : "New conversation"}</h1>
+          <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{onLibrary ? "Library" : threadId ? thread.title || "Conversation" : "Astra Cowork"}</h1>
           {industry && (
             <span
               className="hidden shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline"
@@ -166,7 +166,7 @@ function NotEnabled({ signedOut }: { signedOut: boolean }) {
     <div className="flex h-screen items-center justify-center bg-background p-6 text-foreground">
       <div className="max-w-sm space-y-3">
         <h1 className="text-lg font-semibold [font-family:var(--astra-display)]">
-          {signedOut ? "Your session has ended" : "Astra Workspace isn't on here"}
+          {signedOut ? "Your session has ended" : "Astra Cowork isn't on here"}
         </h1>
         <p className="text-sm text-muted-foreground">
           {signedOut

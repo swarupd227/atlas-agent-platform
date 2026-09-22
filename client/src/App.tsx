@@ -1,5 +1,5 @@
 import { useEffect, lazy, Suspense } from "react";
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, Redirect, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -165,6 +165,8 @@ const BusinessSettings = lazy(() => import("@/pages/business-settings"));
 const MyWorkers = lazy(() => import("@/pages/my-workers"));
 import { Shield, LogOut, Briefcase } from "lucide-react";
 import { useRole } from "@/components/role-provider";
+import { useAstraEnabled } from "@/astra/api";
+import { homeRoute } from "@/lib/home-route";
 
 function HeaderControls() {
   const { securityMode, user, logout } = useAuth();
@@ -284,6 +286,21 @@ function BusinessOnlyRoute({ component: Comp }: { component: React.ComponentType
   return <Comp />;
 }
 
+/**
+ * Where "home" is: Astra Cowork when it's on and this role may open it, the
+ * dashboard otherwise. Sign-in, the landing page and the logo all come here.
+ */
+function HomeRedirect() {
+  const { isRouteAllowed } = useRole();
+  const { enabled, isLoading } = useAstraEnabled();
+  const [, navigate] = useLocation();
+  const target = isLoading ? null : homeRoute({ astraEnabled: enabled, astraAllowed: isRouteAllowed("/astra") });
+  useEffect(() => {
+    if (target) navigate(target, { replace: true });
+  }, [target, navigate]);
+  return <RouteFallback />;
+}
+
 /** Fallback while a lazily-loaded route chunk downloads (UX audit F-7). */
 function RouteFallback() {
   return (
@@ -303,6 +320,7 @@ function DashboardRouter() {
     <Suspense fallback={<RouteFallback />}>
     <Switch>
       <Route path="/dashboard" component={DashboardHome} />
+      <Route path="/home" component={HomeRedirect} />
       <Route path="/my-actions" component={MyActions} />
       <Route path="/actions" component={MyActions} />
       <Route path="/business-settings" component={BusinessSettings} />
@@ -498,7 +516,8 @@ function AuthGate() {
     );
   }
 
-  if (isLanding) return <Landing />;
+  // Signed in, the landing page is only a way in: go straight to home.
+  if (isLanding) return isAuthenticated ? <Redirect to="/home" replace /> : <Landing />;
 
   if (securityMode === "production" && !isAuthenticated) {
     return <LoginPage />;

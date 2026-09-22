@@ -4,7 +4,8 @@
  *
  * A count here is only a pointer. Each row carries a prompt, and choosing it
  * asks Astra, so the fact is re-established by a tool call with its own proof.
- * No cost or business-value figures: the rates behind them aren't measured.
+ * No business-value figures: the rates behind them aren't measured. Model
+ * spend, which is recorded on each run, is in home-activity.ts.
  */
 
 /** A section's data; `null` when this role doesn't have access to it (the row is left out, not shown as empty). */
@@ -91,6 +92,6 @@ export function buildHome(input: HomeInput): HomeBriefing {
   return {
     organizationName: input.organizationName,
     rows: rows.filter((r): r is HomeRow => r !== null),
-    notShown: ["Cost and business value aren't shown here: the rates behind them aren't measured."],
+    notShown: ["Business value isn't shown here: the rates behind it aren't measured."],
   };
 }

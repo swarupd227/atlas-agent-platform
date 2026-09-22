@@ -17,6 +17,7 @@ import { AstraBusyError, AstraNotFoundError, resolveAction, runTurn } from "../a
 import { getAstraRuntime } from "../astra/wiring";
 import { getTenantIndustry, resolveIndustry } from "../industry-context";
 import { buildHome, type HomeSection } from "../astra/home";
+import { loadActivity } from "../astra/home-activity";
 import { LIBRARY_ELSEWHERE, buildLibrarySection, normalizeQuery, visibleLibrarySections, type LibraryItem, type LibrarySection, type LibrarySectionId } from "../astra/library";
 import type { AstraContext, AstraEvent } from "../astra/types";
 
@@ -174,6 +175,20 @@ router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => 
       connectors,
     }),
   );
+});
+
+/**
+ * What is running, what finished this week and what it cost, for the home.
+ * Separate from /home so a slow run table never holds up the briefing.
+ */
+router.get("/api/astra/home/activity", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  try {
+    res.json(await loadActivity(ctx.orgId, { includeSpend: hasPermission(ctx.role, "view_traces") }));
+  } catch (err) {
+    res.status(500).json({ message: err instanceof Error ? err.message : "Couldn't load activity." });
+  }
 });
 
 /**

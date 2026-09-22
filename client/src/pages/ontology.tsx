@@ -1639,7 +1639,7 @@ export default function OntologyExplorer() {
                       <p className="text-sm font-medium">{unusedConceptIds.has(selectedConcept.id) ? "Not used by any agent yet" : "Referenced by agents, none tagged with it"}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         {unusedConceptIds.has(selectedConcept.id)
-                          ? "It still grounds search and Ask Astra, but no agent reasons with it until one uses it."
+                          ? "It still grounds search and Astra Cowork, but no agent reasons with it until one uses it."
                           : "An agent's prompt, tools or skills mention it. Tag the agent with this concept to track it here."}
                       </p>
                     </>

@@ -111,7 +111,7 @@ export default function Landing() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Link href="/dashboard">
+          <Link href="/home">
             <Button variant="ghost" size="sm" data-testid="link-login">
               Log In
             </Button>
@@ -136,7 +136,7 @@ export default function Landing() {
               autonomy calibrated to real-time risk.
             </p>
             <div className="mt-10 flex items-center justify-center gap-4 flex-wrap">
-              <Link href="/dashboard">
+              <Link href="/home">
                 <Button size="lg" className="gap-2" data-testid="button-get-started">
                   Get Started <ArrowRight className="w-4 h-4" />
                 </Button>
@@ -231,7 +231,7 @@ export default function Landing() {
               frameworks already built in — not bolted on.
             </p>
             <div className="mt-8 flex items-center justify-center gap-4 flex-wrap">
-              <Link href="/dashboard">
+              <Link href="/home">
                 <Button size="lg" className="gap-2" data-testid="button-cta-get-started">
                   Get Started <ArrowRight className="w-4 h-4" />
                 </Button>
