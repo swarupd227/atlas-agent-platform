@@ -253,6 +253,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
         "https://graph.microsoft.com/Team.ReadBasic.All",
         "https://graph.microsoft.com/Channel.ReadBasic.All",
         "https://graph.microsoft.com/ChannelMessage.Send",
+        "https://graph.microsoft.com/ChannelMessage.Read.All",
         "https://graph.microsoft.com/Files.ReadWrite.All",
         "https://graph.microsoft.com/Sites.Read.All",
         "https://graph.microsoft.com/Tasks.ReadWrite",
