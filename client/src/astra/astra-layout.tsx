@@ -51,7 +51,8 @@ function Workspace() {
   const decisions = useMemo(
     () =>
       (needsYou?.needsDecision ?? [])
-        .filter((i) => i.canDecideHere)
+        // An alert is acknowledged, not approved or rejected; /needs still lists them.
+        .filter((i) => i.canDecideHere && i.source !== "alert")
         .map((i) => ({ id: i.sourceId, title: i.title, noun: DECISION_NOUN[i.source] ?? "item" })),
     [needsYou],
   );

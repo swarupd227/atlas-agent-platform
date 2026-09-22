@@ -117,7 +117,7 @@ describe("the composer", () => {
   it("pickers read what's really there: your agents, your teams, and what's waiting on you", () => {
     const layout = read("client", "src", "astra", "astra-layout.tsx");
     expect(layout).toContain("(needsYou?.needsDecision ?? [])");
-    expect(layout).toContain(".filter((i) => i.canDecideHere)");
+    expect(layout).toContain('.filter((i) => i.canDecideHere && i.source !== "alert")');
     expect(composer).toContain('rankMentionables(mentionables.filter((m) => (m.kind ?? "agent") === wanted)');
   });
 });
