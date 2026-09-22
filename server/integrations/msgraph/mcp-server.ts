@@ -32,6 +32,7 @@ import {
   graph_list_planner_plans,
   graph_create_planner_task,
   graph_list_team_channels,
+  graph_search_all_sources,
 } from "./tools";
 
 const OUTBOUND_TOOLS = new Set(["graph_send_email", "graph_post_teams_message"]);
@@ -182,6 +183,17 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
           team_id: { type: "string", description: "Teams team ID from graph_list_teams (required)" },
         },
         required: ["team_id"],
+      },
+    },
+    {
+      name: "graph_search_all_sources",
+      description: "Search SharePoint, every joined Microsoft Teams channel, and the mailbox for one query in a single call, and get each source's hits back separately. Use this instead of calling graph_search_sharepoint, graph_list_teams and graph_search_email one at a time -- it guarantees every source is actually checked.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search term or topic (required)" },
+        },
+        required: ["query"],
       },
     },
     {
@@ -356,6 +368,7 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       case "graph_get_teams_channel_messages":result = await graph_get_teams_channel_messages(client, args); break;
       case "graph_list_teams":                result = await graph_list_teams(client, args); break;
       case "graph_list_team_channels":        result = await graph_list_team_channels(client, args); break;
+      case "graph_search_all_sources":        result = await graph_search_all_sources(client, args); break;
       case "graph_search_sharepoint":         result = await graph_search_sharepoint(client, args); break;
       case "graph_read_document":             result = await graph_read_document(client, args); break;
       case "graph_classify_table":            result = await graph_classify_table(client, args); break;

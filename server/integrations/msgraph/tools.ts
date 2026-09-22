@@ -363,6 +363,98 @@ export async function graph_list_team_channels(
   });
 }
 
+// ── Tool: graph_search_all_sources ───────────────────────────────────────────
+// Searches SharePoint, every joined Team's channels, and the mailbox for one query in a
+// single call, so "search across systems" is a real code path, not something the model has
+// to remember to do three separate times. Each source is best-effort: one source erroring
+// (e.g. no Teams permission) never blocks the other two.
+
+const MAX_TEAMS_SCANNED = 15;
+const MAX_MESSAGES_PER_CHANNEL = 25;
+
+export async function graph_search_all_sources(
+  client: MicrosoftGraphClient,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  const query = args.query as string | undefined;
+  if (!query) throw new Error("query is required");
+  const needle = query.toLowerCase();
+
+  const sharepoint = await (async () => {
+    try {
+      const result = await client.searchSharePoint(query, ["driveItem", "listItem", "site"], 10) as any;
+      const hits = result?.value?.[0]?.hitsContainers?.[0]?.hits ?? [];
+      return {
+        results: hits.map((h: any) => ({
+          name: h.resource?.name ?? h.resource?.displayName,
+          web_url: h.resource?.webUrl,
+          drive_id: h.resource?.parentReference?.driveId ?? null,
+          item_id: h.resource?.id ?? h.hitId,
+          summary: h.summary ?? null,
+        })),
+      };
+    } catch (e: any) {
+      return { results: [], error: e?.message ?? "SharePoint search failed" };
+    }
+  })();
+
+  const teams = await (async () => {
+    try {
+      const teamsResult = await client.listJoinedTeams() as any;
+      const teamList = (teamsResult?.value ?? []).slice(0, MAX_TEAMS_SCANNED);
+      const matches: Array<{ team: string; channel: string; from: string | null; created_at: string | null; preview: string; web_url: string | null }> = [];
+      for (const t of teamList) {
+        const channelsResult = await client.getTeamChannels(t.id) as any;
+        for (const c of channelsResult?.value ?? []) {
+          const msgsResult = await client.getTeamsChannelMessages(t.id, c.id, MAX_MESSAGES_PER_CHANNEL) as any;
+          for (const m of msgsResult?.value ?? []) {
+            const text = String(m.body?.content ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+            if (text.toLowerCase().includes(needle)) {
+              matches.push({
+                team: t.displayName,
+                channel: c.displayName,
+                from: m.from?.user?.displayName ?? null,
+                created_at: m.createdDateTime ?? null,
+                preview: text.slice(0, 300),
+                web_url: m.webUrl ?? null,
+              });
+            }
+          }
+        }
+      }
+      return { results: matches };
+    } catch (e: any) {
+      return { results: [], error: e?.message ?? "Teams search failed" };
+    }
+  })();
+
+  const email = await (async () => {
+    try {
+      const result = await client.searchMessages("me", query, 10) as any;
+      const msgs = result?.value ?? [];
+      return {
+        results: msgs.map((m: any) => ({
+          subject: m.subject,
+          from: maskEmail(m.from?.emailAddress?.address),
+          received_at: m.receivedDateTime,
+          preview: m.bodyPreview,
+          id: m.id,
+        })),
+      };
+    } catch (e: any) {
+      return { results: [], error: e?.message ?? "Email search failed" };
+    }
+  })();
+
+  return ok({
+    query,
+    sharepoint: { count: sharepoint.results.length, ...sharepoint },
+    teams: { count: teams.results.length, ...teams },
+    email: { count: email.results.length, ...email },
+    note: "Each source is independent -- an error on one does not affect the others. Use graph_read_document, graph_get_teams_channel_messages or graph_get_email to read a hit in full.",
+  });
+}
+
 // ── Tool: graph_search_sharepoint ────────────────────────────────────────────
 
 export async function graph_search_sharepoint(
