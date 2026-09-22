@@ -25,6 +25,10 @@ describe("an approval sent back for changes stays open", () => {
     expect(OPEN_APPROVAL_STATUSES.has("changes_requested")).toBe(true);
     expect(isDecidable("approved")).toBe(false);
     expect(OPEN_APPROVAL_STATUSES.has("rejected")).toBe(false);
+    // A review window that closed without a decision isn't a decision: both pages offer it,
+    // so the server takes it too (there are 315 of them live).
+    expect(isDecidable("expired")).toBe(true);
+    expect(OPEN_APPROVAL_STATUSES.has("expired")).toBe(true);
   });
 
   it("is still in My Actions, saying what was asked for", () => {

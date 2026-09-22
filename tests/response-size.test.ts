@@ -42,6 +42,11 @@ describe("the approvals list", () => {
     expect(storage).toContain("case when ${approvals.status} in ('pending', 'changes_requested') then ${approvals.evidenceJson} else null end");
   });
 
+  it("cuts the description down in the list, where only a line of it is shown", () => {
+    // 682 rows carried 1.9 MB of description; the detail route still has the whole thing.
+    expect(storage).toContain("left(${approvals.description}, 400)");
+  });
+
   it("a single approval looks up what it concerns by id and reads its history narrowly", () => {
     const at = route.indexOf('router.get("/api/approvals/:id", async');
     const body = route.slice(at, at + 1500);

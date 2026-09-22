@@ -398,8 +398,12 @@ export async function applyApprovalEffects(approval: Approval, status: string | 
   return { outcomeStatus };
 }
 
-/** Still waiting on a decision: pending, or sent back for changes that the reviewer then decides on. */
-export const OPEN_APPROVAL_STATUSES = new Set(["pending", "changes_requested"]);
+/**
+ * Still waiting on a decision: pending, sent back for changes that the
+ * reviewer then decides on, or expired -- a review window that closed without
+ * anyone deciding is not a decision, and both approval pages still offer it.
+ */
+export const OPEN_APPROVAL_STATUSES = new Set(["pending", "changes_requested", "expired"]);
 
 export interface DecideApprovalInput {
   orgId: string;

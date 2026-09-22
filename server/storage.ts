@@ -1449,11 +1449,14 @@ export class DatabaseStorage implements IStorage {
 
   async getApprovalSummaries(orgId?: string) {
     const scopedOrgId = resolveOrgIdForRead(orgId);
-    const { evidenceJson: _evidence, ...cols } = getTableColumns(approvals);
+    const { evidenceJson: _evidence, description: _description, ...cols } = getTableColumns(approvals);
     const rows = await db
       .select({
         ...cols,
         evidenceJson: sql<unknown>`case when ${approvals.status} in ('pending', 'changes_requested') then ${approvals.evidenceJson} else null end`,
+        // Descriptions run to thousands of characters each (1.9 MB across 682 rows);
+        // the list shows a line of it and the detail route has the whole thing.
+        description: sql<string | null>`left(${approvals.description}, 400)`,
       })
       .from(approvals)
       .where(scopedOrgId ? eq(approvals.organizationId, scopedOrgId) : sql`true`);
