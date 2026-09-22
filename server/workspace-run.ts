@@ -102,6 +102,11 @@ interface Checkpoint {
   modelName: string;
   maxIterations: number;
   skillAllowlist: string[] | null;
+  /** Extra restriction on top of policy/skill allowlists, e.g. read-only tool
+   *  names for an eval run -- so an eval can exercise the agent's real tool
+   *  loop without ever being able to call a write tool. null/absent for an
+   *  ordinary run: no extra restriction. */
+  toolAllowlist?: string[] | null;
   // Present only while suspended at an approval gate:
   pendingToolCalls?: Array<{ id: string; name: string; arguments: Record<string, any> }>;
   pendingToolIndex?: number;
@@ -197,7 +202,7 @@ function toolFuncName(idx: number, tool: AvailableTool): string {
 
 /** Recompute the (non-serializable) execution context deterministically from
  *  the agent — so a resume rebuilds the exact same tool surface and gates. */
-async function buildContext(agentId: string, orgId: string | undefined, mcpServerIds: string[], skillAllowlist: string[] | null) {
+async function buildContext(agentId: string, orgId: string | undefined, mcpServerIds: string[], skillAllowlist: string[] | null, toolAllowlist?: string[] | null) {
   let availableTools = await gatherAvailableTools(mcpServerIds);
   const policyBundle = await resolvePolicyBundle(agentId, orgId);
 
@@ -211,6 +216,10 @@ async function buildContext(agentId: string, orgId: string | undefined, mcpServe
   }
   if (skillAllowlist) {
     const allow = new Set(skillAllowlist);
+    availableTools = availableTools.filter(t => allow.has(t.toolName.toLowerCase()));
+  }
+  if (toolAllowlist) {
+    const allow = new Set(toolAllowlist.map(t => t.toLowerCase()));
     availableTools = availableTools.filter(t => allow.has(t.toolName.toLowerCase()));
   }
   return { availableTools, policyBundle };
@@ -360,6 +369,10 @@ export async function startWorkspaceRun(params: {
   orgId?: string;
   actorId?: string;
   fileIds?: string[];
+  /** Extra tool restriction for this run only (see Checkpoint.toolAllowlist). Every
+   *  production caller omits this; only the eval runner (server/eval-agent-run.ts)
+   *  passes it, to withhold write tools while still exercising the agent's real loop. */
+  toolAllowlist?: string[];
 }, onEvent: OnWorkspaceEvent = NOOP): Promise<WorkspaceRunView> {
   const { agentId, input, orgId, actorId } = params;
   const fileIds = params.fileIds ?? [];
@@ -439,6 +452,7 @@ export async function startWorkspaceRun(params: {
     modelName: agent.modelName || "gpt-4.1",
     maxIterations: (agent as any).maxToolIterations ?? MAX_ITERATIONS_DEFAULT,
     skillAllowlist,
+    toolAllowlist: params.toolAllowlist ?? null,
     fileIds: allFileIds,
     contextUsage: measureContextUsage({
       instructions: baseSystemMessage,
@@ -866,7 +880,7 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   if (!runRow) throw new Error("Run not found");
   const cp = runRow.checkpoint as Checkpoint;
 
-  const { availableTools, policyBundle } = await buildContext(agentId, orgId, cp.mcpServerIds, cp.skillAllowlist);
+  const { availableTools, policyBundle } = await buildContext(agentId, orgId, cp.mcpServerIds, cp.skillAllowlist, cp.toolAllowlist);
   const agentRow = await storage.getAgent(agentId, orgId);
   const activeSkills = await resolveActiveSkills(agentRow);
   // Provider-agnostic document generation: offered on any model, gated on the
