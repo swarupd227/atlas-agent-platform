@@ -1,5 +1,5 @@
 /**
- * Microsoft Graph tool implementations — 17 tools.
+ * Microsoft Graph tool implementations — 18 tools.
  * Each function receives a MicrosoftGraphClient and validated args.
  * graph_send_email appends an agent attribution footer.
  */
@@ -343,6 +343,23 @@ export async function graph_list_teams(
       is_archived: t.isArchived ?? false,
       visibility:  t.visibility ?? null,
     })),
+  });
+}
+
+// ── Tool: graph_list_team_channels ───────────────────────────────────────────
+
+export async function graph_list_team_channels(
+  client: MicrosoftGraphClient,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  const teamId = args.team_id as string | undefined;
+  if (!teamId) throw new Error("team_id is required (from graph_list_teams)");
+
+  const result = await client.getTeamChannels(teamId) as any;
+  const channels = result?.value ?? [];
+  return ok({
+    count: channels.length,
+    channels: channels.map((c: any) => ({ id: c.id, display_name: c.displayName, description: c.description ?? null })),
   });
 }
 

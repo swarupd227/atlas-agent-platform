@@ -1,5 +1,5 @@
 /**
- * Microsoft Graph MCP Server — 17 real tools across Exchange, Teams, SharePoint, Azure AD, Planner.
+ * Microsoft Graph MCP Server — 18 real tools across Exchange, Teams, SharePoint, Azure AD, Planner.
  * Extends RealMcpBase; auth via Bearer access_token (OAuth2, Azure App Registration).
  * Credentials: access_token (required), refresh_token, tenant_id, client_id, client_secret,
  *              user_id (delegated mode) or service_account_email (app mode).
@@ -31,6 +31,7 @@ import {
   graph_reconcile_duplicate,
   graph_list_planner_plans,
   graph_create_planner_task,
+  graph_list_team_channels,
 } from "./tools";
 
 const OUTBOUND_TOOLS = new Set(["graph_send_email", "graph_post_teams_message"]);
@@ -170,6 +171,17 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       inputSchema: {
         type: "object",
         properties: {},
+      },
+    },
+    {
+      name: "graph_list_team_channels",
+      description: "List the channels of a Microsoft Teams team, to find a channel_id for graph_post_teams_message / graph_get_teams_channel_messages.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          team_id: { type: "string", description: "Teams team ID from graph_list_teams (required)" },
+        },
+        required: ["team_id"],
       },
     },
     {
@@ -343,6 +355,7 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       case "graph_post_teams_message":        result = await graph_post_teams_message(client, args); break;
       case "graph_get_teams_channel_messages":result = await graph_get_teams_channel_messages(client, args); break;
       case "graph_list_teams":                result = await graph_list_teams(client, args); break;
+      case "graph_list_team_channels":        result = await graph_list_team_channels(client, args); break;
       case "graph_search_sharepoint":         result = await graph_search_sharepoint(client, args); break;
       case "graph_read_document":             result = await graph_read_document(client, args); break;
       case "graph_classify_table":            result = await graph_classify_table(client, args); break;
