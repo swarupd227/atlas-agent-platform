@@ -30,7 +30,7 @@ import { QueryBoundary, EmptyState } from "@/components/ui-vocab";
 import { usePermission, useRole } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { formatDateTime } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
 import type { Agent, Policy, PolicyException, Approval, Regulation, RegulatoryPolicy, ComplianceControl } from "@shared/schema";
 
 interface ChainResult {
@@ -544,7 +544,7 @@ function RegulationDetail({ regulation, policies, onOpenPolicy, toast }: { regul
           <p className="text-sm mt-0.5">{regulation.fullName}</p>
           {regulation.description && <p className="text-sm text-muted-foreground mt-1">{regulation.description}</p>}
           <div className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground">
-            {regulation.effectiveDate && <span>In effect since {formatDateTime(regulation.effectiveDate)}</span>}
+            {regulation.effectiveDate && <span>In effect since {formatDate(regulation.effectiveDate)}</span>}
             {regulation.sourceUrl && <a href={regulation.sourceUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2 inline-flex items-center gap-0.5">Source text <ArrowUpRight className="w-3 h-3" /></a>}
           </div>
         </div>
