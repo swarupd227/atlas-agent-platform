@@ -35,6 +35,7 @@ import Landing from "@/pages/landing";
 const Overview = lazy(() => import("@/pages/overview"));
 const Outcomes = lazy(() => import("@/pages/outcomes"));
 const Agents = lazy(() => import("@/pages/agents"));
+const AgentsHome = lazy(() => import("@/pages/agents-home"));
 const AgentDetail = lazy(() => import("@/pages/agent-detail"));
 const Deployments = lazy(() => import("@/pages/deployments-overview"));
 const DeploymentsClassic = lazy(() => import("@/pages/deployments"));
@@ -347,13 +348,16 @@ function DashboardRouter() {
       <Route path="/outcomes/:id" component={OutcomeDetail} />
       <Route path="/my-workers">{() => <Redirect to="/agents" replace />}</Route>
       <Route path="/process-flows" component={ProcessFlows} />
-      <Route path="/agents" component={Agents} />
+      <Route path="/agents" component={AgentsHome} />
+      <Route path="/agents/classic" component={Agents} />
       <Route path="/templates" component={Templates} />
       <Route path="/templates/:id" component={TemplateDetail} />
       <Route path="/journeys" component={Journeys} />
       <Route path="/agents/wizard" component={AgentWizard} />
-      <Route path="/agents/teams" component={AgentTeams} />
-      <Route path="/agents/remote" component={RemoteAgents} />
+      <Route path="/agents/teams" component={AgentsHome} />
+      <Route path="/agents/teams/classic" component={AgentTeams} />
+      <Route path="/agents/remote" component={AgentsHome} />
+      <Route path="/agents/remote/classic" component={RemoteAgents} />
       <Route path="/agents/:id/playground" component={AgentPlayground} />
       <Route path="/agents/:id/export" component={AgentExport} />
       <Route path="/agents/:id" component={AgentDetail} />

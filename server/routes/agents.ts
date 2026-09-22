@@ -4,8 +4,8 @@ import { isKnownIndustry } from "@shared/industry-filter";
 import { resolveReadableSkills, skillCatalogPrompt } from "../builtin-skill-tools";
 import { db } from "../db";
 import { ensureAarConfig } from "./aar";
-import { desc, and, eq } from "drizzle-orm";
-import { traceSpans } from "@shared/schema";
+import { desc, and, eq, gte, sql } from "drizzle-orm";
+import { agentMcpServers, agents as agentsTable, runTraces, traceSpans } from "@shared/schema";
 import { z, ZodError } from "zod";
 import {
   insertAgentSchema,
@@ -60,6 +60,46 @@ const router = Router();
   router.get("/api/agents", async (req, res) => {
     const agents = await storage.getAgents(getOrgId(req));
     res.json(agents);
+  });
+
+  /**
+   * What each agent has actually done, counted from its runs: runs in the
+   * last 30 days, how many failed, and when it last ran. The agents table's
+   * own totalRuns / successRate / healthScore columns are seed data (one
+   * agent claims 18,432 runs) and no runtime path updates them, so nothing
+   * reads them.
+   *
+   * Registered before /api/agents/:id, which would otherwise match "activity".
+   */
+  router.get("/api/agents/activity", async (req, res) => {
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    if (!orgId) return res.json({ days: 30, agents: {} });
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const [runs, connectors] = await Promise.all([
+      db
+        .select({
+          agentId: runTraces.agentId,
+          runs: sql<number>`count(*)::int`,
+          failed: sql<number>`count(*) filter (where ${runTraces.status} <> 'completed')::int`,
+          lastRunAt: sql<string | null>`max(${runTraces.startedAt})`,
+        })
+        .from(runTraces)
+        .where(and(eq(runTraces.organizationId, orgId), gte(runTraces.startedAt, since)))
+        .groupBy(runTraces.agentId),
+      db
+        .select({ agentId: agentMcpServers.agentId, connectors: sql<number>`count(*)::int` })
+        .from(agentMcpServers)
+        .innerJoin(agentsTable, eq(agentsTable.id, agentMcpServers.agentId))
+        .where(eq(agentsTable.organizationId, orgId))
+        .groupBy(agentMcpServers.agentId),
+    ]);
+    const byAgent: Record<string, { runs: number; failed: number; lastRunAt: string | null; connectors: number }> = {};
+    for (const r of runs) byAgent[r.agentId] = { runs: r.runs, failed: r.failed, lastRunAt: r.lastRunAt, connectors: 0 };
+    for (const c of connectors) {
+      byAgent[c.agentId] = byAgent[c.agentId] ?? { runs: 0, failed: 0, lastRunAt: null, connectors: 0 };
+      byAgent[c.agentId].connectors = c.connectors;
+    }
+    res.json({ days: 30, agents: byAgent });
   });
 
   router.get("/api/agents/:id", async (req, res) => {
