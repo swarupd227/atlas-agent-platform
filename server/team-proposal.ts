@@ -11,25 +11,13 @@
  * The body keeps its original indentation because it holds the model prompts
  * as multi-line template strings.
  */
-import OpenAI from "openai";
 import { z } from "zod";
 import { storage } from "./storage";
 import { getDefaultOrgId } from "./auth";
 import { parseProposalContent } from "./team-proposal-parse";
+import { completeWithFallback, type LLMCompletionResult } from "./llm-provider";
+import { runWithLlmAbortSignal } from "./llm-abort-context";
 
-let openaiClient: OpenAI | null = null;
-/** Created on first use, so importing this module needs no API key. */
-function getOpenAI(): OpenAI {
-  if (!openaiClient) {
-    openaiClient = new OpenAI({
-      // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
-      // back to a direct OpenAI API key. baseURL undefined => api.openai.com.
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-    });
-  }
-  return openaiClient;
-}
 
 export interface ProposeTeamInput {
   outcomeContract?: any;
@@ -803,19 +791,32 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       const openAITimeoutMs = Math.min(240_000, Math.max(90_000, 90_000 + estimatedAgentCount * 5_000));
       const openAIMaxTokens = Math.min(16_000, Math.max(7_000, 2_000 + estimatedAgentCount * 500));
 
-      async function callProposeAgentsOnce() {
+      // Through the shared provider path, not a bare SDK call: that is what
+      // gives this the rate-limit patience, the per-provider token pacing and
+      // the cross-vendor fallback every other model call on the platform has.
+      // Live 2026-09-23: drafting a seven-agent E&S underwriting team against
+      // a 30K-tokens-per-minute key returned 429 on the first attempt, the
+      // bespoke retry below did not count that as transient, and the whole
+      // generation died with a generic failure -- for a prompt the other
+      // vendor's model would have answered.
+      async function callProposeAgentsOnce(): Promise<LLMCompletionResult> {
         const abort = new AbortController();
         const timeout = setTimeout(() => abort.abort(), openAITimeoutMs);
         try {
-          return await getOpenAI().chat.completions.create({
-            model: "gpt-4.1-mini",
-            response_format: { type: "json_object" },
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userMsg },
-            ],
-            max_tokens: openAIMaxTokens,
-          }, { signal: abort.signal });
+          return await runWithLlmAbortSignal(abort.signal, () =>
+            completeWithFallback(
+              [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userMsg },
+              ],
+              {
+                model: "gpt-4.1-mini",
+                requestedProvider: "openai",
+                responseFormat: "json",
+                maxTokens: openAIMaxTokens,
+              },
+            ),
+          );
         } finally {
           clearTimeout(timeout);
         }
@@ -823,11 +824,13 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
       sendEvent({ type: "progress", status: "calling_ai", message: `Drafting your team with AI (up to ~${Math.round(openAITimeoutMs / 1000)}s for a plan this size)...`, estimatedAgentCount });
 
-      let openAIResp: Awaited<ReturnType<OpenAI["chat"]["completions"]["create"]>>;
+      let proposalResp: LLMCompletionResult;
       try {
-        openAIResp = await callProposeAgentsOnce();
+        proposalResp = await callProposeAgentsOnce();
       } catch (firstErr: any) {
-        const isTransient = firstErr?.name === "AbortError" || firstErr?.code === "ERR_CANCELED" || (typeof firstErr?.status === "number" && firstErr.status >= 500);
+        // 429 counts: a rate limit is the provider saying "not yet", and the
+        // same request succeeds once the window clears.
+        const isTransient = firstErr?.name === "AbortError" || firstErr?.code === "ERR_CANCELED" || firstErr?.status === 429 || (typeof firstErr?.status === "number" && firstErr.status >= 500);
         if (!isTransient) throw firstErr;
         // One automatic retry before surfacing a failure to the user — absorbs
         // a single slow/busy moment on the model provider's side instead of
@@ -835,7 +838,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         console.warn(`[propose-agents] First attempt failed (${firstErr?.name || firstErr?.status}), retrying once (timeout=${openAITimeoutMs}ms, maxTokens=${openAIMaxTokens}, estimatedAgents=${estimatedAgentCount})...`);
         sendEvent({ type: "progress", status: "retrying", message: "First attempt was slow to respond — retrying once..." });
         try {
-          openAIResp = await callProposeAgentsOnce();
+          proposalResp = await callProposeAgentsOnce();
         } catch (secondErr: any) {
           if (secondErr?.name === "AbortError" || secondErr?.code === "ERR_CANCELED") {
             sendEvent({
@@ -849,12 +852,15 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         }
       }
       sendEvent({ type: "progress", status: "ai_responded", message: "AI response received. Validating and enriching the plan..." });
-      const content = openAIResp.choices[0]?.message?.content ?? "";
-      // finish_reason "length" is OpenAI's own signal that generation was cut
-      // off by max_tokens (as opposed to a genuine formatting mistake) -- the
-      // authoritative way to tell "this was too big to draft in one shot"
-      // apart from any other JSON-parsing failure.
-      const wasTruncatedByTokenLimit = openAIResp.choices[0]?.finish_reason === "length";
+      if (proposalResp.providerFallback) {
+        console.warn(`[propose-agents] drafted by fallback provider "${proposalResp.actualProvider}" (${proposalResp.actualModel}) after ${proposalResp.fallbackReason} on the requested provider`);
+      }
+      const content = proposalResp.content ?? "";
+      // A "max_tokens" stop reason is the provider's own signal that generation
+      // was cut off at the output limit (as opposed to a genuine formatting
+      // mistake) -- the authoritative way to tell "this was too big to draft in
+      // one shot" apart from any other JSON-parsing failure.
+      const wasTruncatedByTokenLimit = proposalResp.stopReason === "max_tokens";
       const { ok: parsedOk, value: parsed } = parseProposalContent(content);
       if (!parsedOk) {
         // Honest, actionable failure instead of a bare empty plan: tell the
