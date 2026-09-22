@@ -46,7 +46,7 @@ describe("decisionRoute", () => {
     expect(decisionRoute({ source: "recommendation", category: "recommendation", sourceId: "y", allowed: { allowed: true, reason: "" } }))
       .toEqual({ canDecideHere: true, requiredReviewerRole: null, elsewhere: null });
     expect(decisionRoute({ source: "alert", category: "alert", sourceId: "x", approval: null, allowed: { allowed: false, reason: "" } }).elsewhere)
-      .toEqual({ href: "/my-actions", page: "My Actions", reason: "Your role can't decide alerts." });
+      .toEqual({ href: "/my-actions/classic", page: "My Actions", reason: "Your role can't decide alerts." });
   });
 
   it("decides policy exceptions and tool requests here too, for a role allowed to", () => {

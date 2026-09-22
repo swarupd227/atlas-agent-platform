@@ -61,7 +61,7 @@ export const listNeedsMeTool: AstraTool<Input> = {
     };
     return {
       payload,
-      artifact: { kind: "needsMe", title: "Needs you", props: { ...data, needsDecision: data.needsDecision.slice(0, 25), fyi: data.fyi.slice(0, 25) }, fullViewHref: "/my-actions" },
+      artifact: { kind: "needsMe", title: "Needs you", props: { ...data, needsDecision: data.needsDecision.slice(0, 25), fyi: data.fyi.slice(0, 25) }, fullViewHref: "/approvals" },
       proof,
     };
   },

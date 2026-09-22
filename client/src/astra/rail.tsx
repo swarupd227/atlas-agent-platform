@@ -155,12 +155,14 @@ export function Rail({
               ))}
               {(needsYou?.needsDecisionCount ?? 0) > NEEDS_YOU_SHOWN && (
                 <li>
-                  <Link
-                    href="~/my-actions"
-                    className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  <button
+                    type="button"
+                    onClick={() => onAskAbout("Show me everything that needs my decision.")}
+                    className="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    data-testid="astra-needs-you-all"
                   >
-                    All {needsYou!.needsDecisionCount} in My Actions <ArrowUpRight className="h-3 w-3" aria-hidden />
-                  </Link>
+                    See all {needsYou!.needsDecisionCount}
+                  </button>
                 </li>
               )}
             </ul>

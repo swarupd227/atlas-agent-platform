@@ -474,13 +474,14 @@ function BusinessModeSidebar() {
 
   const { enabled: astraEnabled } = useAstraEnabled();
   const navItems = [
-    ...(astraEnabled ? [{ title: "Astra Cowork", url: "/astra", icon: MessageSquareText }] : []),
+    ...(astraEnabled ? [{ title: "Astra Cowork", url: "/astra", icon: MessageSquareText, badge: pendingActions > 0 ? pendingActions : undefined }] : []),
     { title: astraEnabled ? "Dashboard" : "Home", url: "/dashboard", icon: Home },
     { title: "Workspace", url: "/workspace", icon: Sparkles },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "My Workers", url: "/my-workers", icon: Bot, badge: runningWorkersCount > 0 ? runningWorkersCount : undefined },
     { title: "Process Flows", url: "/process-flows", icon: Workflow },
-    { title: "My Actions", url: "/actions", icon: CheckCircle2, badge: pendingActions > 0 ? pendingActions : undefined },
+    // With Cowork on, what needs you is decided there (the /actions route opens it).
+    ...(astraEnabled ? [] : [{ title: "My Actions", url: "/actions", icon: CheckCircle2, badge: pendingActions > 0 ? pendingActions : undefined }]),
     { title: "Settings", url: "/business-settings", icon: Settings },
   ];
 

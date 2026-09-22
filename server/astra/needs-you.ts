@@ -41,13 +41,13 @@ export function decisionRoute(input: {
     return {
       canDecideHere: false,
       requiredReviewerRole: null,
-      elsewhere: { href: "/my-actions", page: "My Actions", reason: `Your role can't decide ${noun.toLowerCase()}.` },
+      elsewhere: { href: "/my-actions/classic", page: "My Actions", reason: `Your role can't decide ${noun.toLowerCase()}.` },
     };
   }
 
   if (input.source !== "approval" || !approval) {
     const noun = CATEGORY_NOUN[input.category] ?? "These items";
-    return { canDecideHere: false, requiredReviewerRole, elsewhere: { href: "/my-actions", page: "My Actions", reason: `${noun} are handled in My Actions.` } };
+    return { canDecideHere: false, requiredReviewerRole, elsewhere: { href: "/my-actions/classic", page: "My Actions", reason: `${noun} are handled in My Actions.` } };
   }
 
   const href = `/approvals/${encodeURIComponent(input.sourceId)}`;

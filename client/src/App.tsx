@@ -302,6 +302,23 @@ function HomeRedirect() {
   return <RouteFallback />;
 }
 
+/**
+ * My Actions is what Astra Cowork's Needs you decides, with the same code and
+ * audit trail, so with Cowork on it opens there. The page stays at
+ * /my-actions/classic, and is the page when Cowork is off.
+ */
+function MyActionsRoute() {
+  const { isRouteAllowed } = useRole();
+  const { enabled, isLoading } = useAstraEnabled();
+  const [, navigate] = useLocation();
+  const toCowork = !isLoading && enabled && isRouteAllowed("/astra");
+  useEffect(() => {
+    if (toCowork) navigate("/astra", { replace: true });
+  }, [toCowork, navigate]);
+  if (isLoading || toCowork) return <RouteFallback />;
+  return <MyActions />;
+}
+
 /** Fallback while a lazily-loaded route chunk downloads (UX audit F-7). */
 function RouteFallback() {
   return (
@@ -322,8 +339,9 @@ function DashboardRouter() {
     <Switch>
       <Route path="/dashboard" component={DashboardHome} />
       <Route path="/home" component={HomeRedirect} />
-      <Route path="/my-actions" component={MyActions} />
-      <Route path="/actions" component={MyActions} />
+      <Route path="/my-actions/classic" component={MyActions} />
+      <Route path="/my-actions" component={MyActionsRoute} />
+      <Route path="/actions" component={MyActionsRoute} />
       <Route path="/business-settings" component={BusinessSettings} />
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />

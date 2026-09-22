@@ -73,6 +73,6 @@ describe("list_needs_me", () => {
     expect(payload.items.find((i: any) => i.approvalId === "a1")).toMatchObject({ canDecideHere: true });
     expect(payload.items.find((i: any) => i.approvalId === "a1")).not.toHaveProperty("impact");
     expect(payload).not.toHaveProperty("fyi");
-    expect(out.artifact).toMatchObject({ kind: "needsMe", fullViewHref: "/my-actions" });
+    expect(out.artifact).toMatchObject({ kind: "needsMe", fullViewHref: "/approvals" });
   });
 });
