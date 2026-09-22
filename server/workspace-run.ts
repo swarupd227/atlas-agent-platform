@@ -35,7 +35,8 @@ import { canDecideApproval, type RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt } from "./builtin-skill-tools";
-import type { Agent, Skill } from "@shared/schema";
+import type { Agent, OutputContract, Skill } from "@shared/schema";
+import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds } from "./brand-assets";
 
@@ -951,7 +952,40 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
     await db.update(workspaceRuns).set({ checkpoint: cp as any, updatedAt: new Date(), ...patch }).where(eq(workspaceRuns.id, runId));
   };
 
-  const finalize = async (output: string, status: "completed" | "failed") => {
+  // Output contracts (Ajv schema + repair) are enforced for a team DAG worker (agent-runtime.ts's
+  // executePromptWithMcp) but this single-agent loop had no equivalent -- a contract-bound agent invoked
+  // directly (Ask Astra, Workspace chat, an eval) got its raw, unenforced text, and a "strict" contract's
+  // guarantee silently didn't hold outside its DAG. Resolved once here, the same way agent-runtime.ts
+  // resolves it (runtimeConfig.outputContractId, else the agent's most recent contract row).
+  const runtimeConfig = ((agentRow as any)?.runtimeConfig as Record<string, unknown>) || {};
+  const outputContractId = runtimeConfig.outputContractId as string | undefined;
+  const finalizeContract: OutputContract | undefined = outputContractId
+    ? await storage.getOutputContract(outputContractId).catch(() => undefined)
+    : (await storage.getOutputContracts(agentId).catch(() => []))[0];
+
+  const finalize = async (rawOutput: string, status: "completed" | "failed") => {
+    let output = rawOutput;
+    if (finalizeContract && status === "completed") {
+      try {
+        const enforced = await outputContractEnforcer.enforce(finalizeContract, rawOutput, {
+          agentId,
+          promptSpec: { id: "workspace-run", version: "1.0.0", text: runRow.requestText },
+          originalPayload: { agentId, prompt: runRow.requestText },
+          llmLatencyMs: Date.now() - startMs,
+          tokenUsage: { promptTokens: cp.totalTokens.prompt, completionTokens: cp.totalTokens.completion },
+        });
+        // shouldInterrupt (strict_with_interrupt) still produces text -- keep it; strict's own failure
+        // throws below and is caught, leaving rawOutput as the answer rather than an empty {}.
+        output = JSON.stringify(enforced.output);
+      } catch (e: any) {
+        // "strict" mode throws StructuredOutputValidationError once repair is exhausted. Fail open: the
+        // run still finalizes with the model's own text, exactly as before this contract check existed,
+        // rather than a contract misconfiguration turning a real answer into a run failure.
+        if (!(e instanceof StructuredOutputValidationError)) {
+          console.warn(`[workspace-run] output contract enforcement errored (non-fatal, keeping raw output): ${e?.message}`);
+        }
+      }
+    }
     spans.end(runSpanId, status === "completed" ? "ok" : "error", { "run.cost_usd": cp.totalCostUsd });
     const cost = Math.round(cp.totalCostUsd * 100000) / 100000;
     // Signed run trace — the same accountable, auditable record every run gets.
