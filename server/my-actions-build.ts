@@ -31,7 +31,7 @@ export interface ActionItem {
 
 export interface CompletedItem extends ActionItem {
   decidedAt: string | null;
-  decision: "approved" | "dismissed";
+  decision: "approved" | "rejected" | "dismissed";
 }
 
 const AUTONOMY_TYPES = new Set(["tool-invocation", "tool_permission", "agent_change"]);
@@ -308,6 +308,10 @@ export function buildMyActions(rows: MyActionsRows, now: Date = new Date()) {
 
     if (approval.status === "pending") {
       needsDecision.push(item);
+    } else if (approval.status === "changes_requested") {
+      // Sent back, not closed: it waits for the reviewer to decide once the changes are made.
+      const asked = (approval.constraintsJson as any)?.requestedChanges;
+      needsDecision.push({ ...item, context: `Changes requested${asked ? `: ${String(asked).slice(0, 200)}` : ""}. Decide once they're made.` });
     } else if (
       (approval.status === "approved" || approval.status === "rejected") &&
       isToday(approval.decidedAt, now)
@@ -315,7 +319,7 @@ export function buildMyActions(rows: MyActionsRows, now: Date = new Date()) {
       completedToday.push({
         ...item,
         decidedAt: approval.decidedAt ? approval.decidedAt.toISOString() : null,
-        decision: approval.status === "approved" ? "approved" : "dismissed",
+        decision: approval.status === "approved" ? "approved" : "rejected",
       });
     }
   }

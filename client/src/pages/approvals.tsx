@@ -195,7 +195,9 @@ export default function Approvals() {
     return true;
   }).sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
 
-  const pending   = (approvals ?? []).filter(a => a.status === "pending").length;
+  // Sent back for changes is still open: it's in the queue until someone decides it.
+  const isOpen = (s: string) => s === "pending" || s === "changes_requested";
+  const pending   = (approvals ?? []).filter(a => isOpen(a.status)).length;
   const approved  = (approvals ?? []).filter(a => a.status === "approved").length;
   const rejected  = (approvals ?? []).filter(a => a.status === "rejected").length;
 
@@ -307,12 +309,12 @@ export default function Approvals() {
           <div className="w-80 border-r flex flex-col min-h-0 shrink-0">
             <ScrollArea className="flex-1">
               <div className="flex flex-col divide-y">
-                {filtered.filter(a => a.status === "pending").length === 0 ? (
+                {filtered.filter(a => isOpen(a.status)).length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 gap-3 px-6">
                     <CheckCircle className="w-8 h-8 text-emerald-500/40" />
                     <p className="text-xs text-muted-foreground text-center">All clear — no pending approvals</p>
                   </div>
-                ) : filtered.filter(a => a.status === "pending").map(approval => {
+                ) : filtered.filter(a => isOpen(a.status)).map(approval => {
                   const meta = getTypeMeta(approval.type);
                   const Icon = meta.icon;
                   const rl = riskLevel(approval.riskScore);

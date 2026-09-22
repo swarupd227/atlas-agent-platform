@@ -1,12 +1,12 @@
 import { Lock, Clock } from "lucide-react";
 import type { Approval } from "@shared/schema";
 
-/** An approval still needs a decision if it's pending, or if its SLA passed with no decision recorded (expired
- * isn't a dead end -- see ApprovalExpiredNote below). Approved/rejected are final; changes_requested is awaiting
- * the requester's resubmission, not a fresh decision from this reviewer, so it isn't included here either.
- * The one place both approval pages agree on what "still decidable" means. */
+/** An approval still needs a decision if it's pending, if changes were asked for (the reviewer decides once
+ * they're made -- nothing else reopens it, so leaving it out stranded it), or if its SLA passed with no decision
+ * (expired isn't a dead end -- see ApprovalExpiredNote below). Approved/rejected are final. The one place the
+ * approval pages agree on what "still decidable" means; the server's rule is OPEN_APPROVAL_STATUSES. */
 export function isDecidable(status: string) {
-  return status === "pending" || status === "expired";
+  return status === "pending" || status === "changes_requested" || status === "expired";
 }
 
 /**

@@ -44,7 +44,7 @@ function label(a: ApprovalView) {
 async function load(ctx: Parameters<NonNullable<AstraTool<Input>["preview"]>>[0], input: Input): Promise<{ refuse: string } | { approval: ApprovalView }> {
   const approval: ApprovalView | null = await ctx.services.getApprovalForDecision(ctx.orgId, ctx.role, input.approvalId);
   if (!approval) return { refuse: "No approval with that id in this organization." };
-  if (approval.status !== "pending") return { refuse: `That approval is already ${approval.status}. Nothing to decide.` };
+  if (approval.status !== "pending" && approval.status !== "changes_requested") return { refuse: `That approval is already ${approval.status}. Nothing to decide.` };
   if (!approval.canDecide.allowed) {
     return { refuse: `The ${ctx.role} role can't decide this approval${approval.requiredReviewerRole ? `: it is routed to the ${approval.requiredReviewerRole} role` : " (it needs approve_changes)"}.` };
   }

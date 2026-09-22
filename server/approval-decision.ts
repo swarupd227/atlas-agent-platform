@@ -398,6 +398,9 @@ export async function applyApprovalEffects(approval: Approval, status: string | 
   return { outcomeStatus };
 }
 
+/** Still waiting on a decision: pending, or sent back for changes that the reviewer then decides on. */
+export const OPEN_APPROVAL_STATUSES = new Set(["pending", "changes_requested"]);
+
 export interface DecideApprovalInput {
   orgId: string;
   role: RoleId;
@@ -417,7 +420,7 @@ export interface DecideApprovalInput {
 export async function decideApproval(input: DecideApprovalInput) {
   const approval = await storage.getApproval(input.approvalId, input.orgId);
   if (!approval) throw new ApprovalDecisionError("No approval with that id in this organization.", "not_found");
-  if (approval.status !== "pending") {
+  if (!OPEN_APPROVAL_STATUSES.has(approval.status)) {
     throw new ApprovalDecisionError(`This approval was already ${approval.status}${approval.decidedBy ? ` by ${approval.decidedBy}` : ""}.`, "not_pending");
   }
   const allowed = whoMayDecide(input.role, approval);

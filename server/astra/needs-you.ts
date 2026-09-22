@@ -51,7 +51,7 @@ export function decisionRoute(input: {
   }
 
   const href = `/approvals/${encodeURIComponent(input.sourceId)}`;
-  if (approval.status !== "pending") {
+  if (approval.status !== "pending" && approval.status !== "changes_requested") {
     return { canDecideHere: false, requiredReviewerRole, elsewhere: { href, page: "Approvals", reason: `Already ${approval.status}.` } };
   }
   if (input.allowed && !input.allowed.allowed) {

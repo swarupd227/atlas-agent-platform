@@ -86,17 +86,13 @@ export default function ApprovalDetail() {
   const [showTechnical, setShowTechnical] = useState(false);
 
   const [constraintsOpen, setConstraintsOpen] = useState(false);
-  const [labelingOpen, setLabelingOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [requestChangesOpen, setRequestChangesOpen] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState("");
 
-  const [canaryPercent, setCanaryPercent] = useState("10");
-  const [duration, setDuration] = useState("24h");
-  const [maxTraffic, setMaxTraffic] = useState("1000");
+  const [maxCanaryPercent, setMaxCanaryPercent] = useState("10");
+  const [shadowOnly, setShadowOnly] = useState(false);
   const [constraintNotes, setConstraintNotes] = useState("");
-
-  const [labelingCases, setLabelingCases] = useState("");
 
   const [rejectReason, setRejectReason] = useState("");
   const [followUpDescription, setFollowUpDescription] = useState("");
@@ -121,7 +117,6 @@ export default function ApprovalDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
       toast({ title: "Approval updated" });
       setConstraintsOpen(false);
-      setLabelingOpen(false);
       setRejectOpen(false);
     },
     onError: (err: Error) => {
@@ -135,24 +130,14 @@ export default function ApprovalDetail() {
     decideMutation.mutate({ status: "approved" });
   };
 
+  // The two limits the rollout actually applies (applyApprovalEffects in server/approval-decision.ts):
+  // a ceiling on the canary share, or shadow only. A duration or traffic cap would be ignored, so none is offered.
   const handleApproveWithConstraints = () => {
     decideMutation.mutate({
       status: "approved",
       constraintsJson: {
-        canaryPercent: Number(canaryPercent),
-        duration,
-        maxTraffic: Number(maxTraffic),
-        notes: constraintNotes,
-      },
-    });
-  };
-
-  const handleRequestLabeling = () => {
-    decideMutation.mutate({
-      status: "pending",
-      constraintsJson: {
-        requiresHumanLabeling: true,
-        labelingDescription: labelingCases,
+        ...(shadowOnly ? { shadowOnly: true } : { maxCanaryPercent: Math.min(100, Math.max(1, Number(maxCanaryPercent) || 10)) }),
+        ...(constraintNotes.trim() ? { notes: constraintNotes.trim() } : {}),
       },
     });
   };
@@ -308,55 +293,40 @@ export default function ApprovalDetail() {
               Approve
             </Button>
 
+            {/* Limits only mean something where approving starts a rollout. */}
+            {(approval.objectType === "deployment" || approval.objectType === "patch") && (
             <Dialog open={constraintsOpen} onOpenChange={setConstraintsOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" data-testid="button-approve-constraints">
                   <Shield className="w-4 h-4 mr-1.5" />
-                  Approve with Constraints
+                  Approve with limits
                 </Button>
               </DialogTrigger>
               <DialogContent data-testid="dialog-constraints">
                 <DialogHeader>
-                  <DialogTitle>Approve with Constraints</DialogTitle>
+                  <DialogTitle>Approve with limits</DialogTitle>
                 </DialogHeader>
                 <div className="flex flex-col gap-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={shadowOnly} onChange={(e) => setShadowOnly(e.target.checked)} data-testid="checkbox-shadow-only" />
+                    Shadow only: run alongside the live version, serving no traffic
+                  </label>
+                  {!shadowOnly && (
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-sm font-medium">Largest canary share (%)</label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={maxCanaryPercent}
+                        onChange={(e) => setMaxCanaryPercent(e.target.value)}
+                        data-testid="input-canary-percent"
+                      />
+                      <span className="text-xs text-muted-foreground">The rollout starts at or below this share of traffic.</span>
+                    </div>
+                  )}
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">Canary Percentage</label>
-                    <Input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={canaryPercent}
-                      onChange={(e) => setCanaryPercent(e.target.value)}
-                      data-testid="input-canary-percent"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">Duration</label>
-                    <Select value={duration} onValueChange={setDuration}>
-                      <SelectTrigger data-testid="select-duration">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="12h">12 hours</SelectItem>
-                        <SelectItem value="24h">24 hours</SelectItem>
-                        <SelectItem value="48h">48 hours</SelectItem>
-                        <SelectItem value="7d">7 days</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">Max Traffic</label>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={maxTraffic}
-                      onChange={(e) => setMaxTraffic(e.target.value)}
-                      data-testid="input-max-traffic"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">Additional Notes</label>
+                    <label className="text-sm font-medium">Notes</label>
                     <Textarea
                       value={constraintNotes}
                       onChange={(e) => setConstraintNotes(e.target.value)}
@@ -373,48 +343,12 @@ export default function ApprovalDetail() {
                     disabled={decideMutation.isPending}
                     data-testid="button-submit-constraints"
                   >
-                    Approve with Constraints
+                    Approve with limits
                   </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-
-            <Dialog open={labelingOpen} onOpenChange={setLabelingOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" data-testid="button-request-labeling">
-                  <Users className="w-4 h-4 mr-1.5" />
-                  Request Human Labeling
-                </Button>
-              </DialogTrigger>
-              <DialogContent data-testid="dialog-labeling">
-                <DialogHeader>
-                  <DialogTitle>Request Human Labeling</DialogTitle>
-                </DialogHeader>
-                <div className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">Which eval cases need labeling?</label>
-                    <Textarea
-                      value={labelingCases}
-                      onChange={(e) => setLabelingCases(e.target.value)}
-                      placeholder="Describe the eval cases that need human labeling..."
-                      data-testid="textarea-labeling-cases"
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setLabelingOpen(false)} data-testid="button-cancel-labeling">
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleRequestLabeling}
-                    disabled={decideMutation.isPending}
-                    data-testid="button-submit-labeling"
-                  >
-                    Submit Request
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            )}
 
             <Dialog open={requestChangesOpen} onOpenChange={setRequestChangesOpen}>
               <DialogTrigger asChild>
