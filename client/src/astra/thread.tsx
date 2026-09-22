@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Check, CircleAlert, Loader2, PanelRight } from "lucide-react";
 import { Markdown } from "@/components/markdown";
-import { Composer, type ComposerInsert } from "./composer";
+import { Composer, type ComposerInsert, type DecisionOption } from "./composer";
+import type { PermissionAction } from "@/components/role-provider";
 import type { Mentionable } from "./mention";
 import { ConfirmCard } from "./confirm-card";
 import { HomeActivityPanel, HomeBriefing, HomeGreeting } from "./home";
@@ -128,6 +129,9 @@ export function Thread({
   onOpenArtifact,
   mentionables,
   composerInsert,
+  decisions,
+  canUse,
+  onCommandNavigate,
 }: {
   messages: AstraMessage[];
   status: ThreadStatus;
@@ -140,6 +144,10 @@ export function Thread({
   onOpenArtifact: (a: ArtifactRef) => void;
   mentionables?: Mentionable[];
   composerInsert?: ComposerInsert | null;
+  /** What /approve and /reject offer. */
+  decisions?: DecisionOption[];
+  canUse?: (permission?: PermissionAction) => boolean;
+  onCommandNavigate?: (href: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -239,7 +247,10 @@ export function Thread({
             onSend={onSend}
             mentionables={mentionables}
             insert={composerInsert}
-            placeholder={waiting ? "Confirm or choose Not now above to continue" : hasThread ? "Reply to Astra" : "Ask Astra, or type @ for one of your agents"}
+            decisions={decisions}
+            canUse={canUse}
+            onCommandNavigate={onCommandNavigate}
+            placeholder={waiting ? "Confirm or choose Not now above to continue" : hasThread ? "Reply to Astra" : "Ask Astra, / for a command, @ for one of your agents"}
           />
         </div>
       </div>

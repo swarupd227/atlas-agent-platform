@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getApiHeaders } from "@/lib/queryClient";
 import { postSse, SseHttpError } from "@/lib/sse";
-import type { ArtifactRef, AstraEvent, AstraMessage, LiveStep, ThreadStatus, ThreadSummary } from "./types";
+import type { ArtifactRef, AstraEvent, AstraMessage, LiveStep, NeedsYou, ThreadStatus, ThreadSummary } from "./types";
 import type { Mentionable } from "./mention";
 
 const PREVIEW_OVERRIDE_KEY = "almp-astra-shell";
@@ -37,6 +37,20 @@ export function useAstraEnabled(): { enabled: boolean; isLoading: boolean; signe
   }
   // 401: the session ended -- that says nothing about whether the preview is on.
   return { enabled: data === 200 && override !== "off", isLoading, signedOut: data === 401 };
+}
+
+/** What needs the person, for the rail and for the /approve and /reject pickers. */
+export function useNeedsYou() {
+  return useQuery<NeedsYou | null>({
+    queryKey: ["/api/astra/needs-you"],
+    queryFn: async () => {
+      const res = await fetch("/api/astra/needs-you", { credentials: "include", headers: getApiHeaders() });
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json();
+    },
+    refetchInterval: 60_000,
+    retry: false,
+  });
 }
 
 export function useThreads() {

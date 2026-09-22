@@ -2,6 +2,16 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { applyMention, duplicateNames, findMentionQuery, isCompletedMention, rankMentionables, type Mentionable } from "./mention";
+import { applyCommand, fillArg, findSlashQuery, rankCommands, resolveSlash, type SlashCommand } from "./slash";
+import type { PermissionAction } from "@/components/role-provider";
+
+/** Something waiting on the person, for /approve and /reject to pick from. */
+export interface DecisionOption {
+  id: string;
+  title: string;
+  /** How Astra is asked for it: "approval", "policy exception", "tool request"… */
+  noun: string;
+}
 
 /** Text to add to the composer from elsewhere (a rail row); a new nonce inserts it again. */
 export interface ComposerInsert {
@@ -15,18 +25,28 @@ export function Composer({
   placeholder,
   mentionables = [],
   insert = null,
+  decisions = [],
+  canUse = () => true,
+  onCommandNavigate,
 }: {
   disabled: boolean;
   onSend: (text: string) => void;
   placeholder: string;
   mentionables?: Mentionable[];
   insert?: ComposerInsert | null;
+  /** Options for /approve and /reject. */
+  decisions?: DecisionOption[];
+  /** Whether this role can use a command's tool; commands it can't are hidden. */
+  canUse?: (permission?: PermissionAction) => boolean;
+  /** Where a "go" command sends the person. */
+  onCommandNavigate?: (href: string) => void;
 }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   // The "@" position the user closed the menu for with Escape.
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+  const [slashError, setSlashError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const pendingCaret = useRef<number | null>(null);
 
@@ -55,12 +75,37 @@ export function Composer({
     });
   }, [insert]);
 
+  // A "/" command is only ever at the very start of the message.
+  const slash = findSlashQuery(text, caret);
+  const commandMatches = useMemo(() => (slash && !slash.command ? rankCommands(slash.query, canUse) : []), [slash?.query, slash?.command, canUse]);
+  const argOptions: Array<{ id: string; name: string; detail: string | null; value: string }> = useMemo(() => {
+    const arg = slash?.command?.arg;
+    if (!arg || arg.kind === "text") return [];
+    const typed = slash!.rest.trim().toLowerCase();
+    if (arg.kind === "decision") {
+      return decisions
+        .filter((d) => !typed || d.title.toLowerCase().includes(typed))
+        .slice(0, 8)
+        .map((d) => ({ id: d.id, name: d.title, detail: d.noun, value: `"${d.title}" (${d.noun} ${d.id})` }));
+    }
+    const wanted = arg.kind === "team" ? "team" : "agent";
+    return rankMentionables(mentionables.filter((m) => (m.kind ?? "agent") === wanted), slash!.rest)
+      .map((m) => ({ id: m.id, name: m.name, detail: m.description, value: m.name }));
+  }, [slash?.command?.name, slash?.rest, mentionables, decisions]);
+  // Once an option has been picked the text is exactly that option, so the menu closes and Enter sends.
+  const argPicked = !!slash?.command?.arg && argOptions.some((o) => o.value === slash!.rest.trim());
+  const slashMenu: "commands" | "args" | null = !slash
+    ? null
+    : !slash.command
+      ? commandMatches.length > 0 ? "commands" : null
+      : argOptions.length > 0 && !argPicked ? "args" : null;
+
   const mention = findMentionQuery(text, caret);
   const matches = useMemo(() => (mention ? rankMentionables(mentionables, mention.query) : []), [mention?.query, mention?.start, mentionables]);
   const dupes = useMemo(() => duplicateNames(mentionables), [mentionables]);
-  const menuOpen = !!mention && matches.length > 0 && dismissedAt !== mention.start && !isCompletedMention(mention.query, mentionables);
+  const menuOpen = !slashMenu && !!mention && matches.length > 0 && dismissedAt !== mention.start && !isCompletedMention(mention.query, mentionables);
 
-  useEffect(() => setHighlight(0), [mention?.query, mention?.start]);
+  useEffect(() => setHighlight(0), [mention?.query, mention?.start, slash?.query, slash?.rest]);
   // Escape closes the menu for that one mention; once it's gone, a new @ opens it again.
   useEffect(() => {
     if (!mention) setDismissedAt(null);
@@ -73,9 +118,50 @@ export function Composer({
     setText(next.text);
   };
 
+  const chooseCommand = (command: SlashCommand) => {
+    setSlashError(null);
+    if (command.kind === "go") {
+      setText("");
+      onCommandNavigate?.(command.href!);
+      return;
+    }
+    const next = applyCommand(command);
+    pendingCaret.current = next.caret;
+    setText(next.text);
+  };
+
+  const chooseArg = (value: string) => {
+    if (!slash?.command) return;
+    const next = `/${slash.command.name} ${value}`;
+    pendingCaret.current = next.length;
+    setText(next);
+  };
+
   const submit = () => {
     const t = text.trim();
     if (!t || disabled) return;
+    if (t.startsWith("/")) {
+      const result = resolveSlash(t);
+      if (result.action === "go") {
+        setText("");
+        setSlashError(null);
+        onCommandNavigate?.(result.href);
+        return;
+      }
+      if (result.action === "need_arg") {
+        setSlashError(`/${result.command.name} needs ${result.command.arg!.label}.`);
+        return;
+      }
+      if (result.action === "unknown") {
+        setSlashError(`There's no /${result.typed} command.${result.suggestion ? ` Did you mean /${result.suggestion.name}?` : ""}`);
+        return;
+      }
+      setSlashError(null);
+      onSend(result.text);
+      setText("");
+      return;
+    }
+    setSlashError(null);
     onSend(t);
     setText("");
     setDismissedAt(null);
@@ -91,6 +177,59 @@ export function Composer({
         submit();
       }}
     >
+      {slashError && (
+        <p className="absolute bottom-full left-0 mb-1 rounded bg-[hsl(var(--astra-fail)/0.12)] px-2 py-1 text-xs text-[hsl(var(--astra-fail))]" role="alert" data-testid="astra-slash-error">
+          {slashError}
+        </p>
+      )}
+      {slashMenu && (
+        <ul
+          id="astra-slash-menu"
+          role="listbox"
+          aria-label={slashMenu === "commands" ? "Commands" : slash!.command!.arg!.label}
+          className="absolute bottom-full left-0 z-20 mb-1 max-h-64 w-full max-w-sm overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+          data-testid="astra-slash-menu"
+        >
+          {slashMenu === "commands"
+            ? commandMatches.map((c, i) => (
+                <li
+                  key={c.name}
+                  role="option"
+                  aria-selected={i === highlight}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    chooseCommand(c);
+                  }}
+                  onMouseEnter={() => setHighlight(i)}
+                  className={`cursor-pointer rounded px-2 py-1.5 text-sm ${i === highlight ? "bg-accent text-accent-foreground" : ""}`}
+                  data-testid="astra-slash-option"
+                >
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span className="font-mono text-xs">/{c.name}</span>
+                    <span className="truncate">{c.label}</span>
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">{c.hint}</div>
+                </li>
+              ))
+            : argOptions.map((o, i) => (
+                <li
+                  key={o.id}
+                  role="option"
+                  aria-selected={i === highlight}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    chooseArg(o.value);
+                  }}
+                  onMouseEnter={() => setHighlight(i)}
+                  className={`cursor-pointer rounded px-2 py-1.5 text-sm ${i === highlight ? "bg-accent text-accent-foreground" : ""}`}
+                  data-testid="astra-slash-option"
+                >
+                  <div className="truncate">{o.name}</div>
+                  {o.detail && <div className="truncate text-xs text-muted-foreground">{o.detail}</div>}
+                </li>
+              ))}
+        </ul>
+      )}
       {menuOpen && (
         <ul
           id="astra-mention-menu"
@@ -131,9 +270,31 @@ export function Composer({
         onChange={(e) => {
           setText(e.target.value);
           syncCaret(e.target);
+          if (slashError) setSlashError(null);
         }}
         onSelect={(e) => syncCaret(e.currentTarget)}
         onKeyDown={(e) => {
+          if (slashMenu) {
+            const options = slashMenu === "commands" ? commandMatches : argOptions;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              const step = e.key === "ArrowDown" ? 1 : -1;
+              setHighlight((h) => (h + step + options.length) % options.length);
+              return;
+            }
+            if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              const picked = Math.min(highlight, options.length - 1);
+              if (slashMenu === "commands") chooseCommand(commandMatches[picked]);
+              else chooseArg(argOptions[picked].value);
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setText("");
+              return;
+            }
+          }
           if (menuOpen) {
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();

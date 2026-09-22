@@ -4,8 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IndustryProvider, useIndustry } from "@/components/industry-provider";
-import { RoleProvider } from "@/components/role-provider";
-import { createThread, useAstraEnabled, useMentionables, useThread, useThreads } from "./api";
+import { RoleProvider, useRole, type PermissionAction } from "@/components/role-provider";
+import { createThread, useAstraEnabled, useMentionables, useNeedsYou, useThread, useThreads } from "./api";
 import type { ComposerInsert } from "./composer";
 import { Rail } from "./rail";
 import { Thread } from "./thread";
@@ -23,6 +23,15 @@ function useAstraTheme() {
   }, []);
 }
 
+/** How a waiting item is named when a picker puts it into the message. */
+const DECISION_NOUN: Record<string, string> = {
+  approval: "approval",
+  recommendation: "recommendation",
+  alert: "alert",
+  governance: "policy exception",
+  autonomy: "tool request",
+};
+
 function Workspace() {
   const [location, navigate] = useLocation();
   const threadId = location.startsWith("/t/") ? decodeURIComponent(location.slice(3)) : null;
@@ -37,6 +46,17 @@ function Workspace() {
   // The @ menu also offers teams; the rail's "Your agents" lists agents only.
   const railAgents = useMemo(() => mentionables.filter((m) => m.kind !== "team"), [mentionables]);
   const [composerInsert, setComposerInsert] = useState<ComposerInsert | null>(null);
+  // /approve and /reject pick from what's actually waiting; the rail reads the same list.
+  const { data: needsYou } = useNeedsYou();
+  const decisions = useMemo(
+    () =>
+      (needsYou?.needsDecision ?? [])
+        .filter((i) => i.canDecideHere)
+        .map((i) => ({ id: i.sourceId, title: i.title, noun: DECISION_NOUN[i.source] ?? "item" })),
+    [needsYou],
+  );
+  const { getPermission } = useRole();
+  const canUse = useCallback((permission?: PermissionAction) => !permission || getPermission(permission).access !== "denied", [getPermission]);
   const mention = useCallback((name: string) => setComposerInsert({ text: `@${name} `, nonce: Date.now() }), []);
 
   // A result opens by itself only where the pane sits beside the conversation;
@@ -141,6 +161,9 @@ function Workspace() {
             onOpenArtifact={setArtifact}
             mentionables={mentionables}
             composerInsert={composerInsert}
+            decisions={decisions}
+            canUse={canUse}
+            onCommandNavigate={(href) => (href === "library" ? navigate("/library") : href === "new" ? newConversation() : navigate(`~${href}`))}
           />
           )}
         </div>

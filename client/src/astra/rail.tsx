@@ -3,7 +3,7 @@ import { decidePrompt } from "./decide-prompt";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, House, Library as LibraryIcon, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getApiHeaders } from "@/lib/queryClient";
+import { useNeedsYou } from "./api";
 import type { NeedsYou, NeedsYouItem, ThreadSummary } from "./types";
 import type { Mentionable } from "./mention";
 
@@ -89,16 +89,7 @@ export function Rail({
   /** Put "@Name " in the composer. */
   onMention: (name: string) => void;
 }) {
-  const { data: needsYou, isError: needsYouFailed } = useQuery<NeedsYou | null>({
-    queryKey: ["/api/astra/needs-you"],
-    queryFn: async () => {
-      const res = await fetch("/api/astra/needs-you", { credentials: "include", headers: getApiHeaders() });
-      if (!res.ok) throw new Error(String(res.status));
-      return res.json();
-    },
-    refetchInterval: 60_000,
-    retry: false,
-  });
+  const { data: needsYou, isError: needsYouFailed } = useNeedsYou();
 
   const waitingThreads = threads.filter((t) => t.status === "awaiting_confirmation");
   const items = needsYou?.needsDecision ?? [];
