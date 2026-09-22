@@ -105,10 +105,16 @@ function Stat({ label, value, tone, to, hint }: { label: string; value: string; 
   );
 }
 
+export function policyFromSearch(search: string): string | null {
+  const id = new URLSearchParams(search).get("policy");
+  return id && id.trim() ? id.trim() : null;
+}
+
 export default function GovernanceOverview() {
   const [query, setQuery] = useState("");
   const [domain, setDomain] = useState("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // ?policy=<id> opens that policy: Astra's cards and the Library link straight to it.
+  const [selectedId, setSelectedId] = useState<string | null>(() => policyFromSearch(typeof window === "undefined" ? "" : window.location.search));
   const { toast } = useToast();
   const canExportAudit = usePermission("export_audit_bundle").allowed;
 

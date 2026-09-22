@@ -83,7 +83,7 @@ export const agentHealthTool: AstraTool<{ agent: string }> = {
     const proof: Partial<ProofEnvelope> = h.runs
       ? { compliance: { status: "measured", summary: `${Math.round((h.successRate ?? 0) * 100)}% success over the last ${h.runs} runs · ${h.policyViolations} policy violations` } }
       : { compliance: { status: "not_measured", reason: "No runs yet." } };
-    return { payload: h, artifact: { kind: "agentHealth", title: `Health · ${h.agent.name}`, props: h }, proof };
+    return { payload: h, artifact: { kind: "agentHealth", title: `Health · ${h.agent.name}`, props: h, fullViewHref: `/agents/${h.agent.id}` }, proof };
   },
 };
 

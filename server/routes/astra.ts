@@ -264,7 +264,7 @@ router.get("/api/astra/library", checkPermission("use_astra"), async (req, res) 
         detail: [p.domain?.replace(/_/g, " "), text(p.description)].filter(Boolean).join(" · ") || null,
         status: p.status ?? null,
         ask: null,
-        href: "/governance/policy-engine",
+        href: `/governance?policy=${encodeURIComponent(p.id)}`,
       })),
     processFlows: async () =>
       (await storage.getProcessFlows(orgId)).map((f) => ({

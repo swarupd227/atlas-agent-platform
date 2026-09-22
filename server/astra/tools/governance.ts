@@ -32,7 +32,7 @@ export const listPoliciesTool: AstraTool<{ domain?: string; query?: string }> = 
       .map(compactPolicy);
     return {
       payload: { total: rows.length, active: rows.filter((p) => p.status === "active").length, policies: rows.slice(0, 40) },
-      artifact: { kind: "policies", title: "Policies", props: { mode: "list", policies: rows.slice(0, 100), total: rows.length }, fullViewHref: "/governance/policy-engine" },
+      artifact: { kind: "policies", title: "Policies", props: { mode: "list", policies: rows.slice(0, 100), total: rows.length }, fullViewHref: "/governance" },
       proof: { compliance: { status: "measured", summary: `${rows.length} ${rows.length === 1 ? "policy" : "policies"}${input.domain ? ` in ${input.domain}` : ""}` } },
     };
   },
@@ -83,7 +83,7 @@ export const checkGovernanceReadinessTool: AstraTool<{ agent: string }> = {
       : { compliance: { status: "not_measured", reason: r.message ?? "No requirements were checked." } };
     return {
       payload: { agent: r.agent, industry: r.industryId, checked: r.checked, passed: r.checked ? r.passed : null, missing, requirements: r.requirements, ...(r.message ? { message: r.message } : {}) },
-      artifact: { kind: "readiness", title: `Governance readiness · ${r.agent.name}`, props: r },
+      artifact: { kind: "readiness", title: `Governance readiness · ${r.agent.name}`, props: r, fullViewHref: `/agents/${r.agent.id}` },
       proof,
     };
   },
@@ -136,7 +136,7 @@ export const regulatoryExamPackageTool: AstraTool<{ agent: string; days?: number
           ? "No red-team probes ran in this period, so the package's bias and security scores are the report's defaults, not measurements."
           : "Scores in the package are computed from the red-team probes and eval runs in the period.",
       },
-      artifact: { kind: "examPackage", title: `Regulatory exam package · ${r.agent.name}`, props: r },
+      artifact: { kind: "examPackage", title: `Regulatory exam package · ${r.agent.name}`, props: r, fullViewHref: `/agents/${r.agent.id}` },
       proof: { compliance: { status: "measured", summary: `${r.decisionLogEvents} logged decisions · ${r.humanOverrides} human overrides · ${r.redTeamRuns} red-team runs in ${r.days} days` } },
     };
   },

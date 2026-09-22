@@ -146,7 +146,7 @@ export const compareEvalRunsTool: AstraTool<{ run: string; against?: string }> =
     }
     return {
       payload: r,
-      artifact: { kind: "evalCompare", title: "Eval comparison", props: r },
+      artifact: { kind: "evalCompare", title: "Eval comparison", props: r, fullViewHref: `/evals/runs/${r.run.id}` },
       proof: { compliance: { status: "measured", summary: `${r.passRateDeltaPct != null && r.passRateDeltaPct >= 0 ? "+" : ""}${r.passRateDeltaPct ?? "—"} pp vs previous run${r.regressed ? " · regression" : ""}` } },
     };
   },
@@ -164,7 +164,7 @@ export const explainEvalFailuresTool: AstraTool<{ run: string }> = {
     if (!r) throw new Error("No eval run with that id in this organization.");
     return {
       payload: r,
-      artifact: { kind: "evalFailures", title: "Failed cases", props: r },
+      artifact: { kind: "evalFailures", title: "Failed cases", props: r, fullViewHref: `/evals/runs/${r.run.id}` },
       proof: { compliance: { status: "measured", summary: `${r.shown} of ${r.failedTotal} failed cases, with judge reasoning` } },
     };
   },
