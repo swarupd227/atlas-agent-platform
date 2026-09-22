@@ -62,6 +62,23 @@ describe("in progress", () => {
     expect(a.inProgress[0]).toMatchObject({ status: "stalled", detail: "No sign of progress for 40 min" });
   });
 
+  it("reads several runs of one team in the same state as one line", () => {
+    const a = buildActivity({
+      teamRuns: [1, 2, 3].map((n) => team({ id: `w${n}`, status: "waiting_approval", startedAt: minsAgo(60 * n), createdAt: minsAgo(60 * n) })),
+      agentRuns: [],
+      spend: null,
+      now: NOW,
+    });
+    expect(a.inProgress).toHaveLength(1);
+    expect(a.inProgress[0]).toMatchObject({ id: "w1", count: 3, detail: "3 runs waiting for an approval · oldest started 3 h ago" });
+  });
+
+  it("calls an agent run still marked running after half an hour stalled: it lost its process", () => {
+    const a = buildActivity({ teamRuns: [], agentRuns: [agent({ status: "running", createdAt: minsAgo(60 * 42) })], spend: null, now: NOW });
+    expect(a.inProgress[0]).toMatchObject({ status: "stalled" });
+    expect(a.inProgress[0].detail).toMatch(/^Started 42 h ago and never finished · “What does our travel policy/);
+  });
+
   it("names a run whose team was deleted instead of showing an id", () => {
     const a = buildActivity({ teamRuns: [team({ teamName: null })], agentRuns: [], spend: null, now: NOW });
     expect(a.inProgress[0].title).toBe("A team that no longer exists");
@@ -81,8 +98,8 @@ describe("finished this week", () => {
     });
     expect(a.recent.map((i) => i.id)).toEqual(["t9", "w1"]);
     expect(a.recent[0]).toMatchObject({ status: "failed", detail: "Failed in 10 min: Connector timed out after 30s" });
-    // Markdown is stripped: the line is plain text.
-    expect(a.recent[1].detail).toBe("Taxis are covered when no public transport runs after 10pm.");
+    // The question, not the answer's first line, which is often "Perfect! I have the information…".
+    expect(a.recent[1].detail).toBe("Answered “What does our travel policy say about taxis?”");
   });
 
   it("says a denied run was stopped by the approval, not that it failed", () => {
@@ -148,6 +165,8 @@ describe("Astra Cowork is the default surface", () => {
   it("sign-in, the landing page and the logo go to home, not the dashboard", () => {
     const app = read("client", "src", "App.tsx");
     expect(app).toContain('<Route path="/home" component={HomeRedirect} />');
+    // A failed chunk load on the first screen shows a reload, not a blank page.
+    expect(app).toMatch(/<Route path="\/astra" nest>[\s\S]{0,200}<ErrorBoundary resetKey=\{location\}>\s*<AstraLayout \/>/);
     expect(app).toContain('isAuthenticated ? <Redirect to="/home" replace /> : <Landing />');
     expect(read("client", "src", "pages", "landing.tsx")).not.toContain('href="/dashboard"');
     expect(read("client", "src", "components", "app-sidebar.tsx")).not.toContain('<Link href="/dashboard" className="flex items-center gap-2.5');

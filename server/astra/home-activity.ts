@@ -50,6 +50,8 @@ export interface ActivityItem {
   status: "running" | "waiting" | "stalled" | "completed" | "failed";
   at: string | null;
   href: string;
+  /** How many runs this line stands for, when several were grouped. */
+  count?: number;
 }
 
 export interface HomeActivity {
@@ -62,6 +64,11 @@ const IN_FLIGHT_TEAM = new Set(["pending", "running", "waiting_approval"]);
 const IN_FLIGHT_AGENT = new Set(["running", "awaiting_approval"]);
 /** A running team run whose heartbeat is older than this has lost its process. */
 const STALE_HEARTBEAT_MS = 5 * 60_000;
+/**
+ * Agent runs don't heartbeat, and one runs within a single request, so a run
+ * still marked running after this long lost its process and won't finish.
+ */
+const STALE_AGENT_RUN_MS = 30 * 60_000;
 const RECENT_WINDOW_MS = 7 * 86_400_000;
 
 const ms = (t: Date | string | null | undefined) => (t ? new Date(t).getTime() : NaN);
@@ -112,21 +119,50 @@ function agentItem(r: AgentRunRow, now: number): ActivityItem {
   const asked = oneLine(r.requestText, 60);
   if (IN_FLIGHT_AGENT.has(r.status)) {
     const waiting = r.status === "awaiting_approval";
-    const since = duration(ms(r.createdAt), now);
+    const started = ms(r.createdAt);
+    const since = duration(started, now);
+    const stalled = !waiting && now - started > STALE_AGENT_RUN_MS;
+    const state = waiting ? `Waiting for an approval · ${since}` : stalled ? `Started ${since} ago and never finished` : `Running for ${since}`;
     return {
       id: r.id,
       kind: "agent_run",
       title,
-      detail: [waiting ? `Waiting for an approval · ${since}` : `Running for ${since}`, asked ? `“${asked}”` : null].filter(Boolean).join(" · "),
-      status: waiting ? "waiting" : "running",
+      detail: [state, asked ? `“${asked}”` : null].filter(Boolean).join(" · "),
+      status: waiting ? "waiting" : stalled ? "stalled" : "running",
       at: iso(r.createdAt),
       href,
     };
   }
   const failed = r.status !== "completed";
-  const said = oneLine(r.outputSummary);
-  const detail = failed ? (r.status === "denied" ? "Stopped: the approval was denied" : "Failed") : said ?? "Finished";
+  // The question says what the run was for; the answer's first line is often the model clearing its throat.
+  const detail = failed ? (r.status === "denied" ? "Stopped: the approval was denied" : "Failed") : asked ? `Answered “${asked}”` : "Finished";
   return { id: r.id, kind: "agent_run", title, detail, status: failed ? "failed" : "completed", at: iso(r.updatedAt ?? r.createdAt), href };
+}
+
+/**
+ * Several runs of one team or agent in the same state read as one line
+ * ("5 runs waiting for an approval"), linked to the newest, so a pile-up
+ * doesn't push everything else off the list.
+ */
+export function groupRepeats(items: ActivityItem[], now: number = Date.now()): ActivityItem[] {
+  const groups = new Map<string, ActivityItem[]>();
+  for (const i of items) {
+    // Only runs that are stuck pile up; each live run keeps its own line and timing.
+    const key = i.status === "waiting" || i.status === "stalled" ? `${i.kind}|${i.title}|${i.status}` : `one|${i.kind}|${i.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), i]);
+  }
+  const STATE: Record<ActivityItem["status"], string> = {
+    running: "running",
+    waiting: "waiting for an approval",
+    stalled: "stalled",
+    completed: "finished",
+    failed: "failed",
+  };
+  return Array.from(groups.values()).map((g) => {
+    if (g.length === 1) return g[0];
+    const oldest = g[g.length - 1];
+    return { ...g[0], detail: `${g.length} runs ${STATE[g[0].status]} · oldest ${oldest.at ? `started ${duration(ms(oldest.at), now)} ago` : "undated"}`, count: g.length };
+  });
 }
 
 export function buildActivity(input: { teamRuns: TeamRunRow[]; agentRuns: AgentRunRow[]; spend: SpendRow | null; now?: number }): HomeActivity {
@@ -136,8 +172,8 @@ export function buildActivity(input: { teamRuns: TeamRunRow[]; agentRuns: AgentR
     ...input.agentRuns.map((r) => ({ item: agentItem(r, now), live: IN_FLIGHT_AGENT.has(r.status) })),
   ];
   const byNewest = (a: ActivityItem, b: ActivityItem) => (ms(b.at) || 0) - (ms(a.at) || 0);
-  // A run that lost its process stays in progress, labelled "no sign of progress", rather than hidden.
-  const inProgress = items.filter((i) => i.live).map((i) => i.item).sort(byNewest);
+  // A run that lost its process stays in progress, labelled as stalled, rather than hidden.
+  const inProgress = groupRepeats(items.filter((i) => i.live).map((i) => i.item).sort(byNewest), now);
   const recent = items
     .filter((i) => !i.live && now - (ms(i.item.at) || 0) <= RECENT_WINDOW_MS)
     .map((i) => i.item)

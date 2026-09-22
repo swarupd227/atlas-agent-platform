@@ -164,6 +164,7 @@ export interface ActivityItem {
   status: "running" | "waiting" | "stalled" | "completed" | "failed";
   at: string | null;
   href: string;
+  count?: number;
 }
 
 export interface HomeActivity {

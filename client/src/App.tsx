@@ -528,7 +528,10 @@ function AuthGate() {
       <Switch>
         <Route path="/agents/:id/export" component={AgentExport} />
         <Route path="/astra" nest>
-          <AstraLayout />
+          {/* Cowork is the first screen people see: a failed chunk load shows a reload, not a blank page. */}
+          <ErrorBoundary resetKey={location}>
+            <AstraLayout />
+          </ErrorBoundary>
         </Route>
         <Route>{() => <DashboardLayout />}</Route>
       </Switch>
