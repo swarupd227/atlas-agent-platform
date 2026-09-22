@@ -441,6 +441,7 @@ export function createMicrosoftGraphRouter(): Router {
         { permission: "Calendars.ReadWrite",     type: "Delegated",   description: "Read and create calendar events" },
         { permission: "User.Read.All",           type: "Application", description: "Look up any user in the Azure AD directory" },
         { permission: "Team.ReadBasic.All",      type: "Application", description: "List Teams the service account is a member of" },
+        { permission: "Channel.ReadBasic.All",   type: "Application", description: "List the channels within a Teams team" },
         { permission: "ChannelMessage.Send",     type: "Application", description: "Post messages to Teams channels" },
         { permission: "ChannelMessage.Read.All", type: "Application", description: "Read Teams channel messages" },
         { permission: "Files.Read.All",          type: "Application", description: "Read SharePoint and OneDrive files" },
