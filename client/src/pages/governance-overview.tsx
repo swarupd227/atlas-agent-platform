@@ -12,7 +12,7 @@
  * bindings, exceptions, the audit chain verifier). No compliance score is
  * shown, because the ones the platform computes today are not measured.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
@@ -125,6 +125,13 @@ export default function GovernanceOverview() {
   const chainQ = useQuery<ChainResult>({ queryKey: ["/api/audit-events/verify-chain"], enabled: canExportAudit, retry: false });
 
   const policies = policiesQ.data ?? [];
+  // Opened from a link: bring that policy's row into view once the list has loaded.
+  const linkedId = useRef(selectedId);
+  useEffect(() => {
+    if (!linkedId.current || policies.length === 0) return;
+    document.querySelector(`[data-testid="policy-row-${CSS.escape(linkedId.current)}"]`)?.scrollIntoView({ block: "center" });
+    linkedId.current = null;
+  }, [policies.length]);
   const agents = agentsQ.data ?? [];
   const exceptions = exceptionsQ.data ?? [];
   const approvals = approvalsQ.data ?? [];

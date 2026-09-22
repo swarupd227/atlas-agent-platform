@@ -55,6 +55,9 @@ describe("the links go to the page that shows the thing", () => {
     expect(policyFromSearch("?policy=abc-123")).toBe("abc-123");
     expect(policyFromSearch("?policy=")).toBeNull();
     expect(policyFromSearch("")).toBeNull();
+    const page = readFileSync(join(__dirname, "..", "client", "src", "pages", "governance-overview.tsx"), "utf8");
+    // In a list of 100+, the linked row is scrolled into view, not just highlighted off-screen.
+    expect(page).toContain("scrollIntoView({ block: \"center\" })");
   });
 });
 
@@ -65,5 +68,12 @@ describe("the reply is a summary", () => {
     expect(prompt).toContain("Reply with a summary, not the detail");
     expect(prompt).toContain("each card links to its full page");
     expect(prompt).toContain("Never reproduce a list, table or page in the reply");
+    expect(prompt).toContain("Give counts, not lists");
+    expect(prompt).toContain("at most three examples by name");
+  });
+
+  it("each row of a policies card opens that policy", () => {
+    const src = readFileSync(join(__dirname, "..", "client", "src", "astra", "renderers", "governance.tsx"), "utf8");
+    expect(src).toContain("href={`~/governance?policy=${encodeURIComponent(p.id)}`}");
   });
 });

@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 import { CircleAlert, CircleCheck, Download, ShieldCheck } from "lucide-react";
 import { Label, human } from "./parts";
 
@@ -13,7 +14,10 @@ function PolicyRows({ policies }: { policies: any[] }) {
     <ul className="divide-y divide-border">
       {policies.map((p) => (
         <li key={`${p.id}-${p.scope}`} className="flex items-baseline gap-2 py-2 text-sm">
-          <span className="min-w-0 flex-1 truncate">{p.name}</span>
+          {/* Each row opens that policy in Governance. */}
+          <Link href={`~/governance?policy=${encodeURIComponent(p.id)}`} className="min-w-0 flex-1 truncate hover:underline" data-testid={`astra-policy-${p.id}`}>
+            {p.name}
+          </Link>
           <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{human(p.domain)}</span>
           <span className={`shrink-0 font-mono text-[10px] uppercase tracking-wider ${ENFORCEMENT[String(p.enforcement).toLowerCase()] ?? "text-muted-foreground"}`}>{p.enforcement}</span>
         </li>
