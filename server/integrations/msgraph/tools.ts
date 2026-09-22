@@ -740,6 +740,26 @@ export async function graph_reconcile_duplicate(
   });
 }
 
+// ── Tool: graph_move_drive_item ──────────────────────────────────────────────
+// Generic move/rename for a SharePoint or OneDrive file or folder -- e.g. to restore an item
+// graph_reconcile_duplicate archived, or to relocate a file for any other reason. Never deletes.
+
+export async function graph_move_drive_item(
+  client: MicrosoftGraphClient,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  const driveId = args.drive_id as string | undefined;
+  const itemId = args.item_id as string | undefined;
+  const newParentItemId = args.new_parent_item_id as string | undefined;
+  const newName = args.new_name as string | undefined;
+
+  if (!driveId || !itemId) throw new Error("drive_id and item_id are required");
+  if (!newParentItemId) throw new Error("new_parent_item_id is required (the destination folder's item id)");
+
+  const moved = await client.moveDriveItem(driveId, itemId, newParentItemId, newName) as any;
+  return ok({ id: moved?.id, name: moved?.name, web_url: moved?.webUrl, parent_item_id: newParentItemId });
+}
+
 // ── Tool: graph_list_planner_plans ───────────────────────────────────────────
 
 export async function graph_list_planner_plans(

@@ -29,6 +29,7 @@ import {
   graph_read_sharepoint_page,
   graph_get_onedrive_file,
   graph_reconcile_duplicate,
+  graph_move_drive_item,
   graph_list_planner_plans,
   graph_create_planner_task,
   graph_list_team_channels,
@@ -36,7 +37,7 @@ import {
 } from "./tools";
 
 const OUTBOUND_TOOLS = new Set(["graph_send_email", "graph_post_teams_message"]);
-const WRITE_ACTION_TOOLS = new Set(["graph_reconcile_duplicate", "graph_create_planner_task"]);
+const WRITE_ACTION_TOOLS = new Set(["graph_reconcile_duplicate", "graph_create_planner_task", "graph_move_drive_item"]);
 
 export class MicrosoftGraphMcpServer extends RealMcpBase {
   readonly integrationId = "msgraph";
@@ -302,6 +303,20 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       },
     },
     {
+      name: "graph_move_drive_item",
+      description: "Move and/or rename a SharePoint or OneDrive file or folder to a different parent folder in the same drive. Never deletes.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          drive_id:           { type: "string", description: "Drive ID of the item (required)" },
+          item_id:            { type: "string", description: "Item ID to move (required)" },
+          new_parent_item_id: { type: "string", description: "Item ID of the destination folder (required)" },
+          new_name:           { type: "string", description: "New name for the item; omit to keep its current name" },
+        },
+        required: ["drive_id", "item_id", "new_parent_item_id"],
+      },
+    },
+    {
       name: "graph_list_planner_plans",
       description: "List the Planner plans owned by a Microsoft 365 Group, to find the plan_id for graph_create_planner_task.",
       inputSchema: {
@@ -376,6 +391,7 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
       case "graph_read_sharepoint_page":      result = await graph_read_sharepoint_page(client, args); break;
       case "graph_get_onedrive_file":         result = await graph_get_onedrive_file(client, args); break;
       case "graph_reconcile_duplicate":       result = await graph_reconcile_duplicate(client, args); break;
+      case "graph_move_drive_item":           result = await graph_move_drive_item(client, args); break;
       case "graph_list_planner_plans":        result = await graph_list_planner_plans(client, args); break;
       case "graph_create_planner_task":       result = await graph_create_planner_task(client, args); break;
       default: return this.err(`Unknown Microsoft Graph tool: ${toolName}`);
@@ -401,13 +417,17 @@ export class MicrosoftGraphMcpServer extends RealMcpBase {
 
     // Extra audit event for write actions in shared content/task systems
     if (!result.isError && WRITE_ACTION_TOOLS.has(toolName)) {
+      const isTask = toolName === "graph_create_planner_task";
+      const isMove = toolName === "graph_move_drive_item";
       storage.createAuditEvent({
         actorType: "agent",
-        action: toolName === "graph_reconcile_duplicate" ? "agent_file_reconciliation" : "agent_task_creation",
-        objectType: toolName === "graph_reconcile_duplicate" ? "drive_item" : "planner_task",
-        objectId: toolName === "graph_reconcile_duplicate"
-          ? `${args.duplicate_drive_id ?? ""}:${args.duplicate_item_id ?? ""}`
-          : `${args.plan_id ?? ""}:${String(args.title ?? "")}`,
+        action: isTask ? "agent_task_creation" : isMove ? "agent_file_move" : "agent_file_reconciliation",
+        objectType: isTask ? "planner_task" : "drive_item",
+        objectId: isTask
+          ? `${args.plan_id ?? ""}:${String(args.title ?? "")}`
+          : isMove
+            ? `${args.drive_id ?? ""}:${args.item_id ?? ""}`
+            : `${args.duplicate_drive_id ?? ""}:${args.duplicate_item_id ?? ""}`,
         details: JSON.stringify({ tool: toolName, args }),
         organizationId: orgId,
       }).catch(() => {});
