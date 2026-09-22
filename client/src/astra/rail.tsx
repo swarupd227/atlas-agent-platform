@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { decidePrompt } from "./decide-prompt";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, House, Library as LibraryIcon, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,12 +27,6 @@ const URGENCY_DOT: Record<string, string> = {
   this_week: "bg-muted-foreground/50",
 };
 
-/** The message "Decide here" sends: shows the item with the choices for its kind. */
-function decidePrompt(item: NeedsYouItem): string {
-  if (item.source === "recommendation") return `Show me the recommendation "${item.title}" (recommendation ${item.sourceId}) so I can accept or dismiss it.`;
-  if (item.source === "alert") return `Show me the alert "${item.title}" (alert ${item.sourceId}) so I can acknowledge it.`;
-  return `Show me "${item.title}" (approval ${item.sourceId}) so I can approve or reject it.`;
-}
 
 /** Decide here when Astra can finish it; otherwise say where it's decided and why. */
 function NeedsYouRow({ item, onAskAbout }: { item: NeedsYouItem; onAskAbout: (text: string) => void }) {

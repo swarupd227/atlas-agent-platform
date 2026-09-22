@@ -6,6 +6,7 @@ import { Markdown } from "@/components/markdown";
 import { openRunStepHtml } from "@/lib/agent-output";
 import { getJson } from "../api";
 import { Label, StatusDot, human } from "./parts";
+import { gatePrompt } from "../decide-prompt";
 
 const LIVE = new Set(["pending", "running", "waiting_approval"]);
 
@@ -14,7 +15,7 @@ const LIVE = new Set(["pending", "running", "waiting_approval"]);
  * so the plan fills in step by step: waiting, running, done, and a pause for a
  * person at an approval step. A step that built a web page or email opens as a page.
  */
-export function TeamRun({ props }: { props: Record<string, any> }) {
+export function TeamRun({ props, onAsk }: { props: Record<string, any>; onAsk?: (text: string) => void }) {
   const initial = props.run ?? {};
   const { data } = useQuery<any>({
     queryKey: ["/api/astra/team-runs", initial.id],
@@ -50,11 +51,24 @@ export function TeamRun({ props }: { props: Record<string, any> }) {
           <div className="min-w-0 flex-1">
             <div className="font-medium">Waiting for approval{run.pending.label ? `: ${run.pending.label}` : ""}</div>
             {run.pending.approvalId && (
-              <Button asChild size="sm" variant="outline" className="mt-2 h-7 gap-1 px-2 text-xs">
-                <Link href={`~/approvals/${run.pending.approvalId}`} data-testid="astra-team-run-open-approval">
-                  Open approval <ArrowUpRight className="h-3.5 w-3.5" />
-                </Link>
-              </Button>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {/* Decided here through Astra's confirmation card; the approval page keeps the full evidence. */}
+                {onAsk && (
+                  <>
+                    <Button size="sm" className="h-7 px-2 text-xs" onClick={() => onAsk(gatePrompt("approve", run.pending.approvalId, run.pending.label ?? null))} data-testid="astra-team-run-approve">
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => onAsk(gatePrompt("reject", run.pending.approvalId, run.pending.label ?? null))} data-testid="astra-team-run-reject">
+                      Reject
+                    </Button>
+                  </>
+                )}
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link href={`~/approvals/${run.pending.approvalId}`} data-testid="astra-team-run-open-approval">
+                    Full evidence <ArrowUpRight className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              </div>
             )}
           </div>
         </div>

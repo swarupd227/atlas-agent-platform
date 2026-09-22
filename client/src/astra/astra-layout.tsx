@@ -154,7 +154,7 @@ function Workspace() {
 
       {artifact && (
         <div className="fixed inset-0 z-40 min-h-0 lg:static lg:z-auto">
-          <ArtifactPane artifact={artifact} onClose={() => setArtifact(null)} />
+          <ArtifactPane artifact={artifact} onClose={() => setArtifact(null)} onAsk={(text) => void send(text)} />
         </div>
       )}
     </div>

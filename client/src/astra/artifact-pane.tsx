@@ -246,7 +246,8 @@ function Fallback({ props }: { props: Record<string, any> }) {
   return <pre className="overflow-x-auto rounded bg-muted p-3 font-mono text-xs">{JSON.stringify(props, null, 2)}</pre>;
 }
 
-const RENDERERS: Record<string, (p: { props: Record<string, any> }) => JSX.Element> = {
+/** onAsk sends a message into the conversation, e.g. a card's "Decide" button. */
+const RENDERERS: Record<string, (p: { props: Record<string, any>; onAsk?: (text: string) => void }) => JSX.Element> = {
   agentList: AgentList,
   agent: AgentDetail,
   connectorList: ConnectorList,
@@ -270,7 +271,7 @@ const RENDERERS: Record<string, (p: { props: Record<string, any> }) => JSX.Eleme
   agentHealth: AgentHealth,
 };
 
-export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onClose: () => void }) {
+export function ArtifactPane({ artifact, onClose, onAsk }: { artifact: ArtifactRef; onClose: () => void; onAsk?: (text: string) => void }) {
   const Render = RENDERERS[artifact.kind] ?? Fallback;
   return (
     <aside className="flex h-full min-h-0 flex-col border-l border-border bg-card" aria-label={artifact.title} data-testid="astra-artifact-pane">
@@ -288,7 +289,7 @@ export function ArtifactPane({ artifact, onClose }: { artifact: ArtifactRef; onC
         </Button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <Render props={artifact.props} />
+        <Render props={artifact.props} onAsk={onAsk} />
       </div>
     </aside>
   );

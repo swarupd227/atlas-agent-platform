@@ -319,8 +319,9 @@ async function decideApprovalAs(
   approvalId: string,
   decision: ApprovalDecision,
   note?: string,
+  followUp?: string,
 ) {
-  return decideApproval({ orgId, role, userId, decidedBy, approvalId, decision, note, via: "Astra Workspace" });
+  return decideApproval({ orgId, role, userId, decidedBy, approvalId, decision, note, via: "Astra Cowork", followUp: followUp ? { description: followUp } : undefined });
 }
 
 // ── decide_recommendation / acknowledge_alert ───────────────────────────────

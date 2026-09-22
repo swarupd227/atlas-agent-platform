@@ -1,4 +1,5 @@
 import { Label } from "./parts";
+import { decidePrompt } from "../decide-prompt";
 
 const URGENCY: Record<string, string> = {
   urgent: "bg-[hsl(var(--astra-fail))]",
@@ -6,7 +7,7 @@ const URGENCY: Record<string, string> = {
   this_week: "bg-muted-foreground/50",
 };
 
-function Items({ items }: { items: any[] }) {
+function Items({ items, onAsk }: { items: any[]; onAsk?: (text: string) => void }) {
   return (
     <ul className="divide-y divide-border">
       {items.map((i) => (
@@ -19,8 +20,17 @@ function Items({ items }: { items: any[] }) {
               <div className="mt-1 flex flex-wrap gap-x-3 font-mono text-[11px] text-muted-foreground">
                 <span>{String(i.urgency).replace(/_/g, " ")}</span>
                 {i.businessImpact && <span>{i.businessImpact}</span>}
-                {i.canDecideHere && <span className="text-foreground">can decide here</span>}
               </div>
+              {i.canDecideHere && onAsk && (
+                <button
+                  type="button"
+                  onClick={() => onAsk(decidePrompt(i))}
+                  className="mt-1 rounded text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  data-testid={`astra-needs-me-decide-${i.sourceId}`}
+                >
+                  {i.source === "alert" ? "Acknowledge" : "Decide"}
+                </button>
+              )}
               {!i.canDecideHere && i.elsewhere && (
                 <a href={i.elsewhere.href} className="mt-1 block text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
                   Decided in {i.elsewhere.page}: {i.elsewhere.reason}
@@ -34,7 +44,7 @@ function Items({ items }: { items: any[] }) {
   );
 }
 
-export function NeedsMe({ props }: { props: Record<string, any> }) {
+export function NeedsMe({ props, onAsk }: { props: Record<string, any>; onAsk?: (text: string) => void }) {
   const decide: any[] = props.needsDecision ?? [];
   const fyi: any[] = props.fyi ?? [];
   return (
@@ -53,12 +63,12 @@ export function NeedsMe({ props }: { props: Record<string, any> }) {
       </div>
       <div>
         <Label>Needs a decision</Label>
-        {decide.length ? <Items items={decide} /> : <p className="text-sm text-muted-foreground">Nothing waiting on you.</p>}
+        {decide.length ? <Items items={decide} onAsk={onAsk} /> : <p className="text-sm text-muted-foreground">Nothing waiting on you.</p>}
       </div>
       {fyi.length > 0 && (
         <div>
           <Label>Good to know</Label>
-          <Items items={fyi} />
+          <Items items={fyi} onAsk={onAsk} />
         </div>
       )}
     </div>

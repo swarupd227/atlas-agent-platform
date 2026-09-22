@@ -410,6 +410,8 @@ export interface DecideApprovalInput {
   note?: string;
   /** Where the decision was made, recorded in the audit details. */
   via: string;
+  /** On a rejection: open a follow-up task for the same object, so the work isn't just dropped. */
+  followUp?: { description: string };
 }
 
 export async function decideApproval(input: DecideApprovalInput) {
@@ -423,9 +425,30 @@ export async function decideApproval(input: DecideApprovalInput) {
     throw new ApprovalDecisionError(`The ${input.role} role can't decide this approval (${allowed.reason}).`, "not_allowed");
   }
 
+  // The same follow-up the Approvals page creates: a pending task on the same object, linked back.
+  let followUpTaskId: string | null = null;
+  if (input.decision === "rejected" && input.followUp?.description.trim()) {
+    const followUp = await storage.createApproval({
+      organizationId: approval.organizationId ?? input.orgId,
+      type: "follow_up_task",
+      objectType: approval.objectType,
+      objectId: approval.objectId,
+      objectName: `Follow-up: ${approval.objectName || approval.type}`,
+      status: "pending",
+      requestedBy: input.decidedBy,
+      description: input.followUp.description.trim().slice(0, 2000),
+      riskScore: approval.riskScore,
+      agentId: approval.agentId,
+      outcomeId: approval.outcomeId,
+      environment: approval.environment,
+      evidenceJson: { parentApprovalId: approval.id, reason: input.note ?? null },
+    });
+    followUpTaskId = followUp.id;
+  }
+
   const updated = await storage.updateApproval(
     approval.id,
-    { status: input.decision, decidedBy: input.decidedBy, decidedAt: new Date() },
+    { status: input.decision, decidedBy: input.decidedBy, decidedAt: new Date(), ...(followUpTaskId ? { followUpTaskId } : {}) },
     input.orgId,
   );
 
@@ -436,7 +459,7 @@ export async function decideApproval(input: DecideApprovalInput) {
     action: `approval_${input.decision}`,
     objectType: "approval",
     objectId: approval.id,
-    details: `Approval "${approval.objectName || approval.type}" ${input.decision} by ${input.decidedBy} (via ${input.via})${input.note ? `: ${input.note}` : ""}`,
+    details: `Approval "${approval.objectName || approval.type}" ${input.decision} by ${input.decidedBy} (via ${input.via})${input.note ? `: ${input.note}` : ""}${followUpTaskId ? `; follow-up task ${followUpTaskId} opened` : ""}`,
   });
 
   const { outcomeStatus } = await applyApprovalEffects(approval, input.decision, {
@@ -445,5 +468,5 @@ export async function decideApproval(input: DecideApprovalInput) {
     decidedBy: input.decidedBy,
   });
 
-  return { approval: updated ?? { ...approval, status: input.decision }, outcomeStatus };
+  return { approval: updated ?? { ...approval, status: input.decision }, outcomeStatus, followUpTaskId };
 }

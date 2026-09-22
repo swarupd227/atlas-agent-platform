@@ -59,7 +59,7 @@ describe("decide_approval", () => {
     expect(t.services.decideApprovalAs).not.toHaveBeenCalled();
 
     expect(await resolveAction(t.deps, as("admin"), t.threadId, action.id, "confirm", t.onEvent)).toBe("idle");
-    expect(t.decisions[0]).toEqual([ORG, "admin", "user-1", "admin", "apr-1", "approved", undefined]);
+    expect(t.decisions[0]).toEqual([ORG, "admin", "user-1", "admin", "apr-1", "approved", undefined, undefined]);
     const final = t.store.threadMessages(t.threadId).at(-1)!;
     expect(final.proof!.compliance).toMatchObject({ summary: expect.stringContaining("Approved as admin") });
   });
