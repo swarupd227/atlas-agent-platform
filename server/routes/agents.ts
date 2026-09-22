@@ -58,8 +58,11 @@ import { callClaude, stripJsonFences } from "../claude";
 const router = Router();
 
   router.get("/api/agents", async (req, res) => {
-    const agents = await storage.getAgents(getOrgId(req));
-    res.json(agents);
+    // ?summary=1: only what a list shows. A full row carries ~80 columns and 12
+    // JSON blobs (blueprint, runtime config, system prompt), and four pages ask
+    // for the whole list.
+    const orgId = getOrgId(req);
+    res.json(req.query.summary === "1" ? await storage.getAgentSummaries(orgId) : await storage.getAgents(orgId));
   });
 
   /**
@@ -841,7 +844,9 @@ const router = Router();
   });
 
   router.get("/api/agents/:id/traces", async (req, res) => {
-    const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
+    // Capped: this returned every run ever recorded, with each row's full payload.
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+    const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req), limit);
     res.json(traces);
   });
 

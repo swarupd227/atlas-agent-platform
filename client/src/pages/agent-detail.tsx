@@ -595,6 +595,12 @@ function AgentDetailInner() {
   const [, params] = useRoute("/agents/:id");
   const agentId = params?.id;
 
+  // Declared here, not with the other view state below: the queries underneath
+  // use it to load a tab's data when that tab is opened. Every tab's data used
+  // to load on mount -- around 30 queries, twelve of them whole collections.
+  const [activeTab, setActiveTab] = useState("summary");
+  const onTab = (...tabs: string[]) => tabs.includes(activeTab);
+
   const { data: agent, isLoading } = useQuery<Agent>({
     queryKey: ["/api/agents", agentId],
     enabled: !!agentId,
@@ -675,9 +681,11 @@ function AgentDetailInner() {
   });
   const { data: allToolConnectors } = useQuery<ToolConnector[]>({
     queryKey: ["/api/tool-connectors"],
+    enabled: onTab("mcp-servers", "api-gateway", "summary"),
   });
   const { data: remoteAgents } = useQuery<RemoteAgent[]>({
     queryKey: ["/api/remote-agents"],
+    enabled: onTab("a2a", "team"),
   });
   const { data: teamMembers } = useQuery<AgentTeam[]>({
     queryKey: ["/api/agent-teams", agentId, "members"],
@@ -689,13 +697,17 @@ function AgentDetailInner() {
     enabled: !!agentId && agent?.agentType === "team",
   });
   const { data: allAgents } = useQuery<Agent[]>({
-    queryKey: ["/api/agents"],
+    // The list, not every agent's blueprint and prompt.
+    queryKey: ["/api/agents?summary=1"],
+    enabled: onTab("team", "lifecycle", "blueprint"),
   });
   const { data: allSkills } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
+    enabled: onTab("skills"),
   });
   const { data: allRunbooks } = useQuery<Runbook[]>({
     queryKey: ["/api/runbooks"],
+    enabled: onTab("aar", "monitor"),
   });
   const { data: agentMcpLinks } = useQuery<AgentMcpServer[]>({
     queryKey: ["/api/agents", agentId, "mcp-servers"],
@@ -720,9 +732,11 @@ function AgentDetailInner() {
   });
   const { data: allOntologyConcepts } = useQuery<OntologyConcept[]>({
     queryKey: ["/api/ontology-concepts/all"],
+    enabled: onTab("ontology", "knowledge-graph"),
   });
   const { data: allBlueprints } = useQuery<Blueprint[]>({
     queryKey: ["/api/blueprints"],
+    enabled: onTab("blueprint", "summary"),
   });
   const agentBlueprint = allBlueprints?.find(b => b.agentId === agentId);
   const { data: runtimeStatus, refetch: refetchRuntimeStatus } = useQuery<{
@@ -1068,7 +1082,6 @@ function AgentDetailInner() {
   const [timelineFilter, setTimelineFilter] = useState<string>("all");
   const [retirementChecklist, setRetirementChecklist] = useState<boolean[]>([false, false, false, false, false, false, false, false]);
   const [expandedTrace, setExpandedTrace] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("summary");
   const [editingDescription, setEditingDescription] = useState(false);
   const [editDescValue, setEditDescValue] = useState("");
   const [editingName, setEditingName] = useState(false);

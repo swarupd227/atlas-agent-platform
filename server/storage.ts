@@ -235,6 +235,8 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
 
   getAgents(orgId?: string): Promise<Agent[]>;
+  /** Agents with only what a list shows: the row itself carries ~80 columns and 12 JSON blobs. */
+  getAgentSummaries(orgId?: string): Promise<Agent[]>;
   getAgent(id: string, orgId?: string): Promise<Agent | undefined>;
   getAgentOrgMap(): Promise<Map<string, string | null>>;
   getAgentsByOntologyConcept(conceptId: string, orgId?: string): Promise<Agent[]>;
@@ -265,7 +267,7 @@ export interface IStorage {
   getTraceSummaries(orgId?: string): Promise<Pick<RunTrace, "id" | "agentId" | "status" | "startedAt" | "latencyMs">[]>;
   getRecentBlockedTraces(orgId: string | undefined, since: Date): Promise<Pick<RunTrace, "id" | "agentId" | "status" | "startedAt" | "policyChecks">[]>;
   getTrace(id: string, orgId?: string): Promise<RunTrace | undefined>;
-  getTracesByAgent(agentId: string, orgId?: string): Promise<RunTrace[]>;
+  getTracesByAgent(agentId: string, orgId?: string, limitCount?: number): Promise<RunTrace[]>;
   getAgentCostSince(agentId: string, since: Date): Promise<number>;
   getOrgCostSince(orgId: string, since: Date): Promise<number>;
   getRecentCompletedTracesByAgent(agentId: string, limit?: number): Promise<RunTrace[]>;
@@ -1162,6 +1164,22 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(agents).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
   }
 
+  async getAgentSummaries(orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const cols = {
+      id: agents.id, organizationId: agents.organizationId, name: agents.name, description: agents.description,
+      status: agents.status, environment: agents.environment, agentType: agents.agentType, modelName: agents.modelName,
+      riskTier: agents.riskTier, outcomeId: agents.outcomeId, policyBindings: agents.policyBindings,
+      preloadedSkills: agents.preloadedSkills, complianceTags: agents.complianceTags, createdAt: agents.createdAt, updatedAt: agents.updatedAt,
+    };
+    const rows = await db
+      .select(cols)
+      .from(agents)
+      .where(scopedOrgId ? eq(agents.organizationId, scopedOrgId) : sql`true`)
+      .orderBy(desc(agents.updatedAt), desc(agents.createdAt));
+    return rows as unknown as Agent[];
+  }
+
   /** id -> organizationId for every agent, in one two-column query. Rows that
    *  hang off an agent (eval suites and runs, DAG runs) derive their owner from
    *  it, and doing that per row cost one query each. */
@@ -1351,10 +1369,15 @@ export class DatabaseStorage implements IStorage {
     return trace;
   }
 
-  async getTracesByAgent(agentId: string, orgId?: string) {
+  /**
+   * An agent's runs, newest first. Limited: the rows carry the whole prompt,
+   * tool calls and span tree, and this used to return every run ever recorded
+   * (the agent page fetched it on mount, and policy-readiness again per call).
+   */
+  async getTracesByAgent(agentId: string, orgId?: string, limitCount = 100) {
     const conditions: ReturnType<typeof eq>[] = [eq(runTraces.agentId, agentId)];
     if (orgId) conditions.push(eq(runTraces.organizationId, orgId));
-    return db.select().from(runTraces).where(and(...conditions)).orderBy(desc(runTraces.startedAt));
+    return db.select().from(runTraces).where(and(...conditions)).orderBy(desc(runTraces.startedAt)).limit(limitCount);
   }
 
   /** Sum of runTraces.costUsd for one agent since a timestamp -- backs the daily-per-agent budget tier. */

@@ -105,7 +105,8 @@ export default function AgentsHome() {
   // ?selected=<id> keeps the full agent page on /agents/:id, where every link already points.
   const selectedId = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("selected");
 
-  const agentsQ = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
+  // The list needs a name, a status and a few counts, not every agent's blueprint.
+  const agentsQ = useQuery<Agent[]>({ queryKey: ["/api/agents?summary=1"] });
   const activityQ = useQuery<{ days: number; agents: ActivityMap }>({ queryKey: ["/api/agents/activity"] });
   const outcomesQ = useQuery<OutcomeContract[]>({ queryKey: ["/api/outcomes"] });
   const agents = agentsQ.data ?? [];
@@ -198,7 +199,7 @@ export default function AgentsHome() {
                       </div>
                       <div className="flex flex-wrap items-center gap-x-2 font-mono text-[10px] text-muted-foreground">
                         <span>{activityLine(act, days)}</span>
-                        {act?.connectors ? <span>{act.connectors} connectors</span> : null}
+                        {act?.connectors ? <span>{act.connectors} {act.connectors === 1 ? "connector" : "connectors"}</span> : null}
                       </div>
                     </button>
                   );
