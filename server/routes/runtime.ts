@@ -15900,7 +15900,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     effectiveDate: z.coerce.date().nullable().optional(),
   });
 
-  router.post("/api/regulations", async (req, res) => {
+  router.post("/api/regulations", checkPermission("manage_platform_settings"), async (req, res) => {
     try {
       const data = regulationBodySchema.parse(req.body);
       const reg = await storage.createRegulation(data);
@@ -15908,9 +15908,9 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     } catch (e) { handleZodError(res, e); }
   });
 
-  router.patch("/api/regulations/:id", async (req, res) => {
+  router.patch("/api/regulations/:id", checkPermission("manage_platform_settings"), async (req, res) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const patchSchema = regulationBodySchema.partial();
       const data = patchSchema.parse(req.body);
       const updated = await storage.updateRegulation(id, data);
@@ -15938,7 +15938,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     res.json(policy);
   });
 
-  router.post("/api/regulatory-policies", async (req, res) => {
+  router.post("/api/regulatory-policies", checkPermission("manage_platform_settings"), async (req, res) => {
     try {
       const data = insertRegulatoryPolicySchema.parse(req.body);
       const policy = await storage.createRegulatoryPolicy(data);
@@ -15946,10 +15946,10 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     } catch (e) { handleZodError(res, e); }
   });
 
-  router.patch("/api/regulatory-policies/:id", async (req, res) => {
+  router.patch("/api/regulatory-policies/:id", checkPermission("manage_platform_settings"), async (req, res) => {
     try {
       const data = insertRegulatoryPolicySchema.partial().parse(req.body);
-      const updated = await storage.updateRegulatoryPolicy(req.params.id, data);
+      const updated = await storage.updateRegulatoryPolicy(req.params.id as string, data);
       if (!updated) return res.status(404).json({ message: "Not found" });
       res.json(updated);
     } catch (e) { handleZodError(res, e); }
@@ -15965,7 +15965,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     res.json(controls);
   });
 
-  router.post("/api/compliance-controls", async (req, res) => {
+  router.post("/api/compliance-controls", checkPermission("manage_platform_settings"), async (req, res) => {
     try {
       const data = insertComplianceControlSchema.parse(req.body);
       const control = await storage.createComplianceControl(data);
@@ -15983,7 +15983,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     res.json(changes);
   });
 
-  router.post("/api/regulatory-changes", async (req, res) => {
+  router.post("/api/regulatory-changes", checkPermission("manage_platform_settings"), async (req, res) => {
     try {
       const data = insertRegulatoryChangeSchema.parse(req.body);
       const change = await storage.createRegulatoryChange(data);
@@ -15991,14 +15991,14 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     } catch (e) { handleZodError(res, e); }
   });
 
-  router.patch("/api/regulatory-changes/:id", async (req, res) => {
+  router.patch("/api/regulatory-changes/:id", checkPermission("manage_platform_settings"), async (req, res) => {
     try {
       const data = insertRegulatoryChangeSchema.partial().parse(req.body);
       const updateData: any = { ...data };
       if (data.reviewedBy) {
         updateData.reviewedAt = new Date();
       }
-      const updated = await storage.updateRegulatoryChange(req.params.id, updateData);
+      const updated = await storage.updateRegulatoryChange(req.params.id as string, updateData);
       if (!updated) return res.status(404).json({ message: "Not found" });
       res.json(updated);
     } catch (e) { handleZodError(res, e); }
@@ -16318,6 +16318,12 @@ Return ONLY a valid JSON object.`
 
       const regulation = await storage.getRegulation(policy.regulationId);
       const regName = regulation?.name || "Unknown";
+      // The copy belongs to the caller's organization, once.
+      const orgId = resolveRequestOrgId(req);
+      const existing = (await storage.getPolicies(orgId)).find((p) =>
+        ((p.policyJson as any)?.rules ?? []).some((r: any) => r?.sourcePolicyId === policy.id),
+      );
+      if (existing) return res.status(409).json({ message: "Your organization already has this rule as a policy.", policy: existing });
 
       const govPolicy = {
         name: `[${regName}] ${policy.title}`,
@@ -16340,6 +16346,7 @@ Return ONLY a valid JSON object.`
         },
         scopeType: "org" as const,
         status: "active" as const,
+        organizationId: orgId,
       };
 
       const created = await storage.createPolicy(govPolicy);
@@ -16351,7 +16358,9 @@ Return ONLY a valid JSON object.`
   });
 
   // Seed endpoint for regulatory data
-  router.post("/api/regulations/seed", async (_req, res) => {
+  // The regulation catalogue is shared by every organization, so only a
+  // platform admin may change it; reading it stays open to everyone.
+  router.post("/api/regulations/seed", checkPermission("manage_platform_settings"), async (_req, res) => {
     try {
       const existingRegs = await storage.getRegulations();
       if (existingRegs.length > 0) {

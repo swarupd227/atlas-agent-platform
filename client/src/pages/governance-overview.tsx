@@ -5,8 +5,10 @@
  * Exceptions, Policy Rules, Audit Log). Policies are the spine: the header
  * states what is in force and what needs a person, the list is every policy,
  * and a policy's detail carries its rules, where it applies, its exceptions
- * and its tests. Everything else -- the event feed, the regulation library,
- * the compliance matrix, the change tracker -- is a link, not a tab.
+ * and its tests. The list can switch to Regulations: the shared regulation
+ * catalogue, each with the policies you took from it, the rules you can
+ * still adopt and the requirements it lists. The old Policy Engine's editor
+ * and change tracker are not carried over; admins edit the catalogue there.
  *
  * Truthfulness: every figure here is counted from real rows (policies,
  * bindings, exceptions, the audit chain verifier). No compliance score is
@@ -25,11 +27,11 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { QueryBoundary, EmptyState } from "@/components/ui-vocab";
-import { usePermission } from "@/components/role-provider";
+import { usePermission, useRole } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatDateTime } from "@/lib/format";
-import type { Agent, Policy, PolicyException, Approval } from "@shared/schema";
+import type { Agent, Policy, PolicyException, Approval, Regulation, RegulatoryPolicy, ComplianceControl } from "@shared/schema";
 
 interface ChainResult {
   valid: boolean;
@@ -110,19 +112,60 @@ export function policyFromSearch(search: string): string | null {
   return id && id.trim() ? id.trim() : null;
 }
 
+export function regulationFromSearch(search: string): string | null {
+  const id = new URLSearchParams(search).get("regulation");
+  return id && id.trim() ? id.trim() : null;
+}
+
+/** Rules a policy was made from, as "push to governance" records them. */
+function sourceRules(policy: Policy): Array<{ sourceRegulationId?: string; sourcePolicyId?: string }> {
+  const rules = ((policy.policyJson ?? {}) as Record<string, any>).rules;
+  return Array.isArray(rules) ? rules : [];
+}
+
+/** The organization's policies that were taken from this regulation. */
+export function policiesFromRegulation(policies: Policy[], regulationId: string): Policy[] {
+  return policies.filter((p) => sourceRules(p).some((r) => r?.sourceRegulationId === regulationId));
+}
+
+/** Catalogue rules the organization has already adopted, by rule id. */
+export function adoptedRuleIds(policies: Policy[]): Set<string> {
+  const ids = new Set<string>();
+  for (const p of policies) for (const r of sourceRules(p)) if (r?.sourcePolicyId) ids.add(String(r.sourcePolicyId));
+  return ids;
+}
+
+export function coverageCounts(controls: Array<{ coverageStatus: string }>): { full: number; partial: number; gap: number } {
+  return {
+    full: controls.filter((c) => c.coverageStatus === "full").length,
+    partial: controls.filter((c) => c.coverageStatus === "partial").length,
+    gap: controls.filter((c) => c.coverageStatus === "gap").length,
+  };
+}
+
+const industryLabel = (i?: string | null) => (i ?? "").replace(/_/g, " ") || "any industry";
+
 export default function GovernanceOverview() {
   const [query, setQuery] = useState("");
   const [domain, setDomain] = useState("all");
   // ?policy=<id> opens that policy: Astra's cards and the Library link straight to it.
   const [selectedId, setSelectedId] = useState<string | null>(() => policyFromSearch(typeof window === "undefined" ? "" : window.location.search));
+  // ?regulation=<id> opens the Regulations list on that regulation.
+  const [selectedRegId, setSelectedRegId] = useState<string | null>(() => regulationFromSearch(typeof window === "undefined" ? "" : window.location.search));
+  const [view, setView] = useState<"policies" | "regulations">(() =>
+    selectedRegId || (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "regulations") ? "regulations" : "policies",
+  );
   const { toast } = useToast();
   const canExportAudit = usePermission("export_audit_bundle").allowed;
+  // Editing the shared catalogue is admin-only on the server (manage_platform_settings); this only hides the link.
+  const canEditCatalogue = useRole().role.id === "admin";
 
   const policiesQ = useQuery<Policy[]>({ queryKey: ["/api/policies"] });
   const agentsQ = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const exceptionsQ = useQuery<PolicyException[]>({ queryKey: ["/api/policy-exceptions"] });
   const approvalsQ = useQuery<Approval[]>({ queryKey: ["/api/approvals"] });
   const chainQ = useQuery<ChainResult>({ queryKey: ["/api/audit-events/verify-chain"], enabled: canExportAudit, retry: false });
+  const regulationsQ = useQuery<Regulation[]>({ queryKey: ["/api/regulations"] });
 
   const policies = policiesQ.data ?? [];
   // Opened from a link: bring that policy's row into view once the list has loaded.
@@ -153,6 +196,18 @@ export default function GovernanceOverview() {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const selected = policies.find((p) => p.id === selectedId) ?? null;
+  const regulations = regulationsQ.data ?? [];
+  const regulationRows = regulations
+    .map((r) => ({ reg: r, yours: policiesFromRegulation(policies, r.id).length }))
+    .filter(({ reg }) => (query ? `${reg.name} ${reg.fullName} ${reg.jurisdiction} ${reg.industry}`.toLowerCase().includes(query.toLowerCase()) : true))
+    // The ones your policies come from first, then by name.
+    .sort((a, b) => Number(b.yours > 0) - Number(a.yours > 0) || a.reg.name.localeCompare(b.reg.name));
+  const selectedReg = regulations.find((r) => r.id === selectedRegId) ?? null;
+  const openPolicy = (id: string) => {
+    setView("policies");
+    setSelectedId(id);
+    setTimeout(() => document.querySelector(`[data-testid="policy-row-${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" }), 50);
+  };
   const domains = Array.from(new Set(policies.map((p) => p.domain).filter(Boolean))) as string[];
 
   return (
@@ -166,7 +221,7 @@ export default function GovernanceOverview() {
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             <Button variant="outline" size="sm" asChild data-testid="link-audit-trail"><Link href="/audit-trail"><ScrollText className="w-3.5 h-3.5 mr-1.5" />Audit trail</Link></Button>
-            <Button variant="outline" size="sm" asChild data-testid="link-policy-engine"><Link href="/governance/policy-engine">Regulations & change tracker</Link></Button>
+            {canEditCatalogue && <Button variant="ghost" size="sm" asChild data-testid="link-policy-engine"><Link href="/governance/policy-engine">Edit regulation catalogue</Link></Button>}
             <Button variant="ghost" size="sm" asChild data-testid="link-classic"><Link href="/governance/classic">Classic view</Link></Button>
           </div>
         </div>
@@ -198,18 +253,57 @@ export default function GovernanceOverview() {
         {/* ── Policy list ── */}
         <div className="w-80 border-r flex flex-col min-h-0 shrink-0">
           <div className="p-3 flex flex-col gap-2 border-b">
+            <div className="grid grid-cols-2 rounded-md border p-0.5 text-xs" role="radiogroup" aria-label="Show">
+              {(["policies", "regulations"] as const).map((v) => (
+                <button
+                  key={v}
+                  role="radio"
+                  aria-checked={view === v}
+                  onClick={() => setView(v)}
+                  className={`rounded px-2 py-1 transition-colors ${view === v ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                  data-testid={`view-${v}`}
+                >
+                  {v === "policies" ? `Your policies · ${policies.length}` : `Regulations · ${regulations.length}`}
+                </button>
+              ))}
+            </div>
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2 top-2.5 text-muted-foreground" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search policies" className="h-8 pl-7 text-xs" data-testid="input-search-policies" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={view === "policies" ? "Search policies" : "Search regulations"} className="h-8 pl-7 text-xs" data-testid="input-search-policies" />
             </div>
-            <Select value={domain} onValueChange={setDomain}>
+            {view === "policies" && <Select value={domain} onValueChange={setDomain}>
               <SelectTrigger className="h-8 text-xs" data-testid="select-domain"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All domains</SelectItem>
                 {domains.map((d) => <SelectItem key={d} value={d}>{domainLabel(d)}</SelectItem>)}
               </SelectContent>
-            </Select>
+            </Select>}
           </div>
+          {view === "regulations" ? (
+            <QueryBoundary isLoading={regulationsQ.isLoading} isError={regulationsQ.isError} error={regulationsQ.error as Error | null} onRetry={() => regulationsQ.refetch()}>
+              <ScrollArea className="flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
+                <div className="flex flex-col divide-y">
+                  {regulationRows.length === 0 ? (
+                    <p className="py-16 px-6 text-xs text-muted-foreground text-center">{regulations.length === 0 ? "The regulation catalogue is empty" : "No regulation matches your search"}</p>
+                  ) : regulationRows.map(({ reg, yours }) => (
+                    <button
+                      key={reg.id}
+                      onClick={() => setSelectedRegId(reg.id)}
+                      className={`flex flex-col gap-1.5 p-3 text-left w-full transition-colors hover:bg-muted/40 ${selectedRegId === reg.id ? "bg-muted/60 border-l-2 border-l-primary" : "border-l-2 border-l-transparent"}`}
+                      data-testid={`regulation-row-${reg.id}`}
+                    >
+                      <span className="text-xs font-medium truncate leading-tight">{reg.name}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap font-mono text-[10px] text-muted-foreground">
+                        <span>{reg.jurisdiction}</span>
+                        <span>{industryLabel(reg.industry)}</span>
+                        {yours > 0 ? <span className="text-emerald-600 dark:text-emerald-400">{yours} of your policies</span> : <span>none adopted</span>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
+            </QueryBoundary>
+          ) : (
           <QueryBoundary isLoading={policiesQ.isLoading} isError={policiesQ.isError} error={policiesQ.error as Error | null} onRetry={() => policiesQ.refetch()}>
             {/* Radix wraps the viewport content in display:table, which grows to the widest row
                 and defeats truncation; block layout keeps rows to the panel width. */}
@@ -246,11 +340,21 @@ export default function GovernanceOverview() {
               </div>
             </ScrollArea>
           </QueryBoundary>
+          )}
         </div>
 
-        {/* ── Policy detail ── */}
+        {/* ── Detail ── */}
         <div className="flex-1 min-h-0 min-w-0">
-          {selected ? (
+          {view === "regulations" ? (
+            selectedReg ? (
+              <RegulationDetail regulation={selectedReg} policies={policies} onOpenPolicy={openPolicy} toast={toast} />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
+                <ScrollText className="w-10 h-10 opacity-25" />
+                <p className="text-sm">Select a regulation to see what it asks for and which of your policies come from it</p>
+              </div>
+            )
+          ) : selected ? (
             <PolicyDetail policy={selected} agents={agents} exceptions={exceptions.filter((e) => e.policyId === selected.id)} toast={toast} />
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
@@ -396,6 +500,128 @@ function PolicyDetail({ policy, agents, exceptions, toast }: { policy: Policy; a
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+      </div>
+    </ScrollArea>
+  );
+}
+
+/**
+ * One regulation: which of your policies came from it, the catalogue's rules
+ * you can still adopt, and the requirements it lists. The catalogue's own
+ * "encoded policy count" isn't shown: it doesn't match the rules it holds.
+ */
+function RegulationDetail({ regulation, policies, onOpenPolicy, toast }: { regulation: Regulation; policies: Policy[]; onOpenPolicy: (id: string) => void; toast: ReturnType<typeof useToast>["toast"] }) {
+  const canAdopt = usePermission("create_modify_policies").allowed;
+  const rulesQ = useQuery<RegulatoryPolicy[]>({ queryKey: [`/api/regulations/${regulation.id}/policies`] });
+  const controlsQ = useQuery<ComplianceControl[]>({ queryKey: [`/api/regulations/${regulation.id}/compliance-controls`] });
+  const rules = rulesQ.data ?? [];
+  const controls = controlsQ.data ?? [];
+  const yours = policiesFromRegulation(policies, regulation.id);
+  const adopted = adoptedRuleIds(policies);
+  const coverage = coverageCounts(controls);
+
+  const adopt = useMutation({
+    mutationFn: async (ruleId: string) => (await apiRequest("POST", `/api/regulatory-policies/${ruleId}/push-to-governance`, {})).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
+      toast({ title: "Added to your policies", description: "It starts as a monitoring policy: violations are recorded, calls aren't stopped." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't add the rule", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <ScrollArea className="h-full">
+      <div className="p-6 flex flex-col gap-6 max-w-3xl" data-testid={`regulation-detail-${regulation.id}`}>
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-base font-semibold">{regulation.name}</h2>
+            <Badge variant="outline" className="text-[10px]">{regulation.jurisdiction}</Badge>
+            <Badge variant="outline" className="text-[10px]">{industryLabel(regulation.industry)}</Badge>
+            {regulation.enforcementStatus !== "active" && <Badge variant="outline" className="text-[10px]">{regulation.enforcementStatus}</Badge>}
+          </div>
+          <p className="text-sm mt-0.5">{regulation.fullName}</p>
+          {regulation.description && <p className="text-sm text-muted-foreground mt-1">{regulation.description}</p>}
+          <div className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground">
+            {regulation.effectiveDate && <span>In effect since {formatDateTime(regulation.effectiveDate)}</span>}
+            {regulation.sourceUrl && <a href={regulation.sourceUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2 inline-flex items-center gap-0.5">Source text <ArrowUpRight className="w-3 h-3" /></a>}
+          </div>
+        </div>
+
+        <section>
+          <h3 className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground mb-2">Your policies from it</h3>
+          {yours.length === 0 ? (
+            <p className="text-sm text-muted-foreground">None yet. Adopt a rule below to hold your agents to it.</p>
+          ) : (
+            <ul className="flex flex-col divide-y rounded border">
+              {yours.map((p) => (
+                <li key={p.id}>
+                  <button onClick={() => onOpenPolicy(p.id)} className="w-full flex items-center gap-2 p-2.5 text-left text-sm hover:bg-muted/40" data-testid={`regulation-policy-${p.id}`}>
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                    <span className={`font-mono text-[10px] ${enforcementOf(p) === "blocks" ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>{enforcementOf(p)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section>
+          <h3 className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground mb-2">Rules you can adopt</h3>
+          {rulesQ.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : rules.length === 0 ? (
+            <p className="text-sm text-muted-foreground">The catalogue has no encodable rules for this regulation yet.</p>
+          ) : (
+            <ul className="flex flex-col divide-y rounded border">
+              {rules.map((r) => {
+                const isAdopted = adopted.has(r.id);
+                return (
+                  <li key={r.id} className="p-2.5 text-sm flex items-start gap-3" data-testid={`regulatory-rule-${r.id}`}>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{r.title} <span className="font-mono text-[10px] text-muted-foreground">{r.articleRef}</span></div>
+                      <div className="text-muted-foreground">{r.naturalLanguage}</div>
+                      <div className="font-mono text-[10px] text-muted-foreground mt-0.5">on violation: {r.violationAction} · {r.severity} severity</div>
+                    </div>
+                    {isAdopted ? (
+                      <span className="shrink-0 text-[11px] text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />In your policies</span>
+                    ) : canAdopt ? (
+                      <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" disabled={adopt.isPending} onClick={() => adopt.mutate(r.id)} data-testid={`adopt-rule-${r.id}`}>Add to your policies</Button>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        <section>
+          <h3 className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground mb-2">What it requires</h3>
+          {controlsQ.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : controls.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No requirements listed in the catalogue for this regulation.</p>
+          ) : (
+            <>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                {coverage.full} covered, {coverage.partial} partly covered and {coverage.gap} not covered by a platform control, as recorded in the catalogue. This isn't checked against your agents.
+              </p>
+              <ul className="flex flex-col divide-y rounded border">
+                {controls.map((c) => (
+                  <li key={c.id} className="p-2.5 text-sm" data-testid={`control-${c.id}`}>
+                    <div className="flex items-start gap-2">
+                      <span className="min-w-0 flex-1"><span className="font-mono text-[10px] text-muted-foreground mr-1.5">{c.requirementRef}</span>{c.requirementTitle}</span>
+                      <Badge variant="outline" className={`text-[10px] shrink-0 ${c.coverageStatus === "gap" ? "text-red-600 dark:text-red-400" : c.coverageStatus === "partial" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>{c.coverageStatus === "gap" ? "not covered" : c.coverageStatus === "partial" ? "partly" : "covered"}</Badge>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">{c.almpControl} · evidence: {c.evidenceArtifact}</div>
+                    {c.coverageStatus !== "full" && (c.gapDescription || c.customerActionRequired) && (
+                      <div className="text-[11px] mt-0.5">{[c.gapDescription, c.customerActionRequired && `You need to: ${c.customerActionRequired}`].filter(Boolean).join(" ")}</div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </section>
       </div>

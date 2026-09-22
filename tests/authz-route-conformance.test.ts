@@ -126,7 +126,11 @@ function scanRoutes(): RouteEntry[] {
 // pipeline init/advance/evidence, promote, rollback, freeze, auto-promote,
 // run-pipeline, start/stop runtime, execute-now), and reaching production
 // additionally needs deploy_prod.
-const BASELINE_UNGUARDED = 401;
+//
+// 393 (was 401): the regulation catalogue is shared by every organization,
+// so its writes (regulations, regulatory policies, compliance controls,
+// regulatory changes, seed) need manage_platform_settings.
+const BASELINE_UNGUARDED = 393;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {
