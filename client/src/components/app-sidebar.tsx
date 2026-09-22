@@ -140,7 +140,6 @@ function FullAppSidebar() {
       label: "Work",
       items: [
         { title: "Journeys", url: "/journeys", icon: Compass },
-        { title: "Teams", url: "/agents/teams", icon: Users },
         { title: "Agents", url: "/agents", icon: Bot },
         { title: "Outcomes", url: "/outcomes", icon: Target },
       ],
@@ -179,7 +178,6 @@ function FullAppSidebar() {
       icon: Hammer,
       items: [
         { title: "Pipelines", url: "/pipelines", icon: Workflow },
-        { title: "Blueprints", url: "/blueprints", icon: PenTool },
         { title: "Templates", url: "/templates", icon: Library },
         { title: "Context Engine", url: "/context-studio", icon: Brain },
         { title: "Memory Manager", url: "/memory-architecture", icon: Database },
@@ -241,8 +239,8 @@ function FullAppSidebar() {
     if (url === "/dashboard") return location === "/dashboard";
     if (url === "/evals") return location === "/evals";
     if (url === "/outcomes") return location === "/outcomes" || location.startsWith("/outcomes/");
-    if (url === "/agents/teams") return location === "/agents/teams" || location.startsWith("/agents/teams/");
-    if (url === "/agents") return (location === "/agents" || location.startsWith("/agents/")) && !location.startsWith("/agents/teams");
+    // Agents covers its own Teams and Remote views, so they keep the entry active.
+    if (url === "/agents") return location === "/agents" || location.startsWith("/agents/");
     if (url === "/governance") return location === "/governance" || location.startsWith("/governance/");
     if (url === "/skills") return location === "/skills" || location.startsWith("/skills/");
     if (url === "/approvals") return location === "/approvals" || location.startsWith("/approvals/");
@@ -478,7 +476,7 @@ function BusinessModeSidebar() {
     { title: astraEnabled ? "Dashboard" : "Home", url: "/dashboard", icon: Home },
     { title: "Workspace", url: "/workspace", icon: Sparkles },
     { title: "Outcomes", url: "/outcomes", icon: Target },
-    { title: "My Workers", url: "/my-workers", icon: Bot, badge: runningWorkersCount > 0 ? runningWorkersCount : undefined },
+    { title: "My Agents", url: "/agents", icon: Bot, badge: runningWorkersCount > 0 ? runningWorkersCount : undefined },
     { title: "Process Flows", url: "/process-flows", icon: Workflow },
     // With Cowork on, what needs you is decided there (the /actions route opens it).
     ...(astraEnabled ? [] : [{ title: "My Actions", url: "/actions", icon: CheckCircle2, badge: pendingActions > 0 ? pendingActions : undefined }]),

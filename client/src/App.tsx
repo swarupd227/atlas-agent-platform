@@ -163,7 +163,6 @@ const BusinessCommandCenter = lazy(() => import("@/pages/business-command-center
 const MyActions = lazy(() => import("@/pages/my-actions"));
 const AstraLayout = lazy(() => import("@/astra/astra-layout"));
 const BusinessSettings = lazy(() => import("@/pages/business-settings"));
-const MyWorkers = lazy(() => import("@/pages/my-workers"));
 import { Shield, LogOut, Briefcase } from "lucide-react";
 import { useRole } from "@/components/role-provider";
 import { useAstraEnabled } from "@/astra/api";
@@ -346,7 +345,7 @@ function DashboardRouter() {
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
-      <Route path="/my-workers">{() => <BusinessOnlyRoute component={MyWorkers} />}</Route>
+      <Route path="/my-workers">{() => <Redirect to="/agents" replace />}</Route>
       <Route path="/process-flows" component={ProcessFlows} />
       <Route path="/agents" component={Agents} />
       <Route path="/templates" component={Templates} />
