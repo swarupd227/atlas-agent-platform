@@ -996,6 +996,190 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
       ],
     },
+    {
+      name: "ServiceNow CMDB (Sandbox)",
+      description: "Stand-in for the customer's ServiceNow while REST access to the live instance is being arranged. Reads mirror the real connector's shapes -- Table API rows, CMDB relationships, incident and change history -- over a generated semiconductor estate that carries the problems the control tower exists for: configuration items with no owner, records Discovery has not seen for months, two sources describing the same machine, items nothing depends on, and services with no tier. Every write needs the id of an approval a person gave, records what the field held before, and returns an undo id.",
+      baseUrl: `${BASE_URL}/api/mock/servicenow-cmdb`,
+      tools: [
+        {
+          name: "snow_estate_summary",
+          description: "The shape of the estate in one call: how many configuration items, how many without an owner or a support group, how many services without a tier, how many not seen by Discovery in 90 days, how many nothing depends on, and the counts by class. Start here to size a problem before pulling records.",
+          endpoint: "/estate",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "snow_query_table",
+          description: "Read any of the readable tables (cmdb_ci, cmdb_rel_ci, incident, change_request, sys_user, task) with a ServiceNow encoded query. Supports field=value, field!=value, fieldISEMPTY, fieldISNOTEMPTY and fieldLIKEtext joined by ^ -- for example assigned_toISEMPTY^sys_class_name=cmdb_ci_server.",
+          endpoint: "/table",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              table: { type: "string", description: "Table name, e.g. cmdb_ci" },
+              query: { type: "string", description: "Encoded query, e.g. assigned_toISEMPTY^environment=Production" },
+              fields: { type: "string", description: "Comma-separated fields to return" },
+              limit: { type: "number", description: "Rows to return, up to 200 (default 25)" },
+            },
+            required: ["table"],
+          },
+        },
+        {
+          name: "snow_get_cmdb_ci",
+          description: "One configuration item in full, with the signals an inference needs: whether it has an owner, a support group and a tier, how long since Discovery saw it, how many items depend on it, and its incident counts.",
+          endpoint: "/ci",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { ci: { type: "string", description: "sys_id or name of the configuration item" } },
+            required: ["ci"],
+          },
+        },
+        {
+          name: "snow_search_cmdb",
+          description: "Find configuration items by text, class or condition: unowned=true for items missing an owner or support group, untiered=true for those with no criticality, stale_days for those Discovery has not seen in that many days.",
+          endpoint: "/search",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              q: { type: "string", description: "Text to match in the name or description" },
+              class: { type: "string", description: "Class filter, e.g. cmdb_ci_server, cmdb_ci_appl, cmdb_ci_service" },
+              unowned: { type: "string", description: "\"true\" to return only items with no owner or no support group" },
+              untiered: { type: "string", description: "\"true\" to return only items with no business criticality" },
+              stale_days: { type: "number", description: "Only items last discovered at least this many days ago" },
+              limit: { type: "number", description: "Rows to return, up to 200 (default 25)" },
+            },
+          },
+        },
+        {
+          name: "snow_cmdb_relationships",
+          description: "Walk the dependency graph around a configuration item: dependants (what breaks if it fails) and depends_on (what it needs), to the depth asked for, with the Tier 1 dependants and the owners to notify called out. This is the blast radius.",
+          endpoint: "/relationships",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              ci: { type: "string", description: "sys_id or name of the configuration item" },
+              direction: { type: "string", description: "up (dependants), down (dependencies) or both (default)" },
+              depth: { type: "number", description: "How many hops to walk, up to 4 (default 2)" },
+            },
+            required: ["ci"],
+          },
+        },
+        {
+          name: "snow_ci_history",
+          description: "The incidents and changes that touched a configuration item, with a tally of the people and groups who worked them and its incident rate over the last 90 days. This is the evidence behind an inferred owner and behind a tier.",
+          endpoint: "/history",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { ci: { type: "string", description: "sys_id or name of the configuration item" } },
+            required: ["ci"],
+          },
+        },
+        {
+          name: "snow_duplicate_candidates",
+          description: "Records that look like the same physical thing seen twice, matched on serial number or address, with each record's discovery source, dependants and last discovery so a merge can keep the right one.",
+          endpoint: "/duplicates",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "snow_orphan_candidates",
+          description: "Configuration items nothing depends on and nothing depends upon, last seen by Discovery at least stale_days ago -- the retirement shortlist.",
+          endpoint: "/orphans",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { stale_days: { type: "number", description: "Days since last discovery, default 90" } },
+          },
+        },
+        {
+          name: "snow_update_ci",
+          description: "Change fields on a configuration item -- owner, support group, criticality, install or operational status, environment, description. Requires approvalRef, the id of the approval a person gave for this specific change; one approval may be spent once. Returns what each field held before and an undo id. Retiring an item other items still depend on is refused, with the dependants named.",
+          endpoint: "/ci/update",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              ci: { type: "string", description: "sys_id or name of the configuration item" },
+              fields: { type: "object", description: "Fields to set, e.g. { \"assigned_to\": \"Rosa Martinez\", \"support_group\": \"Platform Engineering\" }" },
+              approvalRef: { type: "string", description: "Id of the approval that authorised this write" },
+            },
+            required: ["ci", "fields", "approvalRef"],
+          },
+        },
+        {
+          name: "snow_rollback_update",
+          description: "Put a configuration item back exactly as it was before a write, by the undo id that write returned.",
+          endpoint: "/ci/rollback",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: { undoId: { type: "string", description: "Undo id returned by snow_update_ci" } },
+            required: ["undoId"],
+          },
+        },
+        {
+          name: "snow_create_relationship",
+          description: "Add a dependency edge between two configuration items once a person has approved it. Requires approvalRef. Refused when the edge already exists or both ends are the same item.",
+          endpoint: "/relationship",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              parent: { type: "string", description: "The dependent item (the one that needs the other)" },
+              child: { type: "string", description: "The item depended upon" },
+              type: { type: "string", description: "Relationship type, default \"Depends on::Used by\"" },
+              approvalRef: { type: "string", description: "Id of the approval that authorised this edge" },
+            },
+            required: ["parent", "child", "approvalRef"],
+          },
+        },
+        {
+          name: "snow_create_task",
+          description: "Open a task against a configuration item -- an attestation for an inferred owner to confirm, or remediation work. The task lands in that person's queue; their confirmation is the attestation, not ours.",
+          endpoint: "/task",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              ci: { type: "string", description: "Configuration item the task is about" },
+              short_description: { type: "string", description: "One line describing what is being asked" },
+              description: { type: "string", description: "The detail, including the evidence behind the request" },
+              assigned_to: { type: "string", description: "Person the task goes to" },
+              assignment_group: { type: "string", description: "Group the task goes to" },
+              due_date: { type: "string", description: "Due date, YYYY-MM-DD" },
+            },
+            required: ["short_description"],
+          },
+        },
+        {
+          name: "snow_add_work_note",
+          description: "Write a work note onto a change request or incident by its number, so an assessment sits on the record the approver actually reads.",
+          endpoint: "/worknote",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              table: { type: "string", description: "change_request (default) or incident" },
+              number: { type: "string", description: "Record number, e.g. CHG0025001" },
+              note: { type: "string", description: "The note to add" },
+              added_by: { type: "string", description: "Who it is recorded as coming from" },
+            },
+            required: ["number", "note"],
+          },
+        },
+        {
+          name: "snow_write_audit",
+          description: "Everything this connector has been asked to change: each write with its before and after values, the approval that authorised it, whether it was rolled back, plus tasks opened and work notes added.",
+          endpoint: "/audit",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    },
   ];
 }
 

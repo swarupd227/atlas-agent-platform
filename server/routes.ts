@@ -49,6 +49,7 @@ import accountAdministrationRouter from "./mock-mcp/account-administration";
 import bridgeSpecialtyIntakeRouter from "./mock-mcp/bridge-specialty-intake";
 import insurityRatingRouter from "./mock-mcp/insurity-rating";
 import insurityPolicySorRouter from "./mock-mcp/insurity-policy-sor";
+import serviceNowCmdbMockRouter from "./mock-mcp/servicenow-cmdb";
 import surplusLinesComplianceRouter from "./mock-mcp/surplus-lines-compliance";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
@@ -285,6 +286,7 @@ export async function registerRoutes(
   app.use("/api/mock/bridge-specialty-intake", bridgeSpecialtyIntakeRouter);
   app.use("/api/mock/insurity-rating", insurityRatingRouter);
   app.use("/api/mock/insurity-policy-sor", insurityPolicySorRouter);
+  app.use("/api/mock/servicenow-cmdb", serviceNowCmdbMockRouter);
   app.use("/api/mock/surplus-lines-compliance", surplusLinesComplianceRouter);
   app.use("/api/mock/adobe", adobeAnalyticsRouter);
   app.use("/api/mock/marketo", marketoRouter);
