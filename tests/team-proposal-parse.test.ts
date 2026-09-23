@@ -51,3 +51,27 @@ describe("team-proposal module", () => {
     }
   });
 });
+
+describe("agentPlanShape", () => {
+  /**
+   * A model with nothing to say for an absent field writes null, because JSON
+   * cannot write undefined. Rejecting that threw away a plan that had taken
+   * ~260s to draft (live 2026-09-23, a 22-step process flow).
+   */
+  it("accepts the null a model can actually emit, as well as an absent field", async () => {
+    const { agentPlanShape } = await import("../server/team-proposal");
+    const base = { orchestrator: plan.orchestrator, agents: plan.agents };
+
+    expect(agentPlanShape.safeParse({ ...base, pipeline: null }).success).toBe(true);
+    expect(agentPlanShape.safeParse(base).success).toBe(true);
+    expect(agentPlanShape.safeParse({ ...base, pipeline: plan.pipeline }).success).toBe(true);
+    expect(agentPlanShape.safeParse({ ...base, pipeline: { pattern: "sequential", systemsExtracted: null } }).success).toBe(true);
+  });
+
+  it("still rejects a plan that is actually unusable", async () => {
+    const { agentPlanShape } = await import("../server/team-proposal");
+    expect(agentPlanShape.safeParse({ orchestrator: plan.orchestrator, agents: [] }).success).toBe(false);
+    expect(agentPlanShape.safeParse({ agents: plan.agents }).success).toBe(false);
+    expect(agentPlanShape.safeParse({ ...plan, pipeline: { systemsExtracted: [] } }).success).toBe(false);
+  });
+});

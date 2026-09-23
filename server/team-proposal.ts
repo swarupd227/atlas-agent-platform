@@ -34,6 +34,26 @@ export type ProposeTeamEvent =
   | { type: "error"; error: string; details?: string; timeout?: boolean }
   | { type: "done"; result: any };
 
+/**
+ * The shape a drafted plan must have to be usable.
+ *
+ * nullish, not optional: JSON has no `undefined`, so a model with nothing to
+ * say for an absent field writes null, and .optional() alone rejects exactly
+ * that. Live 2026-09-23: a 22-agent plan that took ~260s to draft was thrown
+ * away over "pipeline": null -- the one spelling the format allows -- and this
+ * route emits pipeline: null in its own fallback event, so it was a shape we
+ * already produced. normalizePipeline() returns null for a missing pipeline
+ * and every read of it downstream is optional-chained, so null flows through.
+ */
+export const agentPlanShape = z.object({
+  orchestrator: z.object({ name: z.string(), role: z.string() }),
+  agents: z.array(z.object({ name: z.string(), role: z.string() })).min(1),
+  pipeline: z.object({
+    pattern: z.string(),
+    systemsExtracted: z.array(z.any()).nullish(),
+  }).nullish(),
+});
+
 export async function proposeTeam(
   input: ProposeTeamInput,
   opts: { orgId: string | undefined; onEvent: (event: ProposeTeamEvent) => void },
@@ -894,14 +914,6 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         return;
       }
 
-      const agentPlanShape = z.object({
-        orchestrator: z.object({ name: z.string(), role: z.string() }),
-        agents: z.array(z.object({ name: z.string(), role: z.string() })).min(1),
-        pipeline: z.object({
-          pattern: z.string(),
-          systemsExtracted: z.array(z.any()).optional(),
-        }).optional(),
-      });
       const agentPlanValidation = agentPlanShape.safeParse(parsed);
       if (!agentPlanValidation.success) {
         console.error("[propose-agents] LLM response failed schema validation:", agentPlanValidation.error.message);
