@@ -41,6 +41,13 @@ export interface ProcessEdge {
   label?: string;
   /** Optional human/machine-readable condition guarding this edge. */
   condition?: string;
+  /**
+   * For a loop edge (one pointing back to an earlier step): how many times the
+   * work may be sent back before the flow has to move on. Without it, "send it
+   * back for a redraft, at most twice" was only ever a phrase in a label, and
+   * the team built from the flow defaulted every loop to a single round.
+   */
+  maxRounds?: number;
 }
 
 export const PROCESS_FLOW_VERSION = 2 as const;

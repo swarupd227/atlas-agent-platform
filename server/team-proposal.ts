@@ -55,8 +55,8 @@ export type ProposeTeamEvent =
 export function deriveEdgesFromFlow(
   agents: Array<{ name?: string; flowStepLabels?: unknown }>,
   steps: Array<{ id?: string; label?: string }>,
-  edges: Array<{ from?: string; to?: string; label?: string; condition?: string }>,
-): Array<{ from: string; to: string; label?: string; condition?: string; type: string }> {
+  edges: Array<{ from?: string; to?: string; label?: string; condition?: string; maxRounds?: number }>,
+): Array<{ from: string; to: string; label?: string; condition?: string; type: string; maxRounds?: number }> {
   const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
   const agentByStepLabel = new Map<string, string>();
   for (const agent of agents) {
@@ -72,7 +72,7 @@ export function deriveEdgesFromFlow(
   for (const step of steps) if (step?.id && step.label) labelByStepId.set(String(step.id), step.label);
   const agentForStepId = (id: unknown) => agentByStepLabel.get(norm(labelByStepId.get(String(id))));
 
-  const derived: Array<{ from: string; to: string; label?: string; condition?: string; type: string }> = [];
+  const derived: Array<{ from: string; to: string; label?: string; condition?: string; type: string; maxRounds?: number }> = [];
   const seen = new Set<string>();
   for (const edge of edges) {
     const from = agentForStepId(edge?.from);
@@ -88,6 +88,9 @@ export function deriveEdgesFromFlow(
       label: edge.condition || edge.label || undefined,
       condition: edge.condition || undefined,
       type: edge.condition ? "conditional" : "handoff",
+      // Carried so a loop the business bounded at two rounds is built as two,
+      // rather than defaulting to one and only saying "two" in its label.
+      ...(Number.isFinite(Number(edge.maxRounds)) ? { maxRounds: Number(edge.maxRounds) } : {}),
     });
   }
   return derived;

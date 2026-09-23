@@ -939,7 +939,7 @@ ${sources ? `\n${sources.text}\n` : ""}${formatClarifications(clarifications)}
 Return a JSON object with:
 - "name": a short name for this process (max 5 words)
 - "nodes": an array of steps, each with: "id" (short unique string like "n1", "n2"), "type" (one of the valid types), "label" (plain English name max 5 words), "description" (1 sentence), "actor" (who does this: "System", "AI", "Customer", "Manager", or a relevant role)
-- "edges": an array of connections between nodes, each with: "from" (a node id), "to" (a node id), and for branches only: "label" (short branch name, e.g. "High priority") and "condition" (plain-English guard, e.g. "urgency is high")
+- "edges": an array of connections between nodes, each with: "from" (a node id), "to" (a node id), and for branches only: "label" (short branch name, e.g. "High priority") and "condition" (plain-English guard, e.g. "urgency is high"). For a connection that points BACK to an earlier node (rework: "send it back to be redone"), also set "maxRounds" to the number of times the work may be sent back before the process must move on — use the number the description gives ("at most two rounds" is 2), or 1 when it gives none. A round limit written only in the label is lost: the automation built from this flow reads "maxRounds".
 
 Rules:
 - Always start with exactly one "trigger" node (no incoming edges) and end with at least one "end" node (no outgoing edges)

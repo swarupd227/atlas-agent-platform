@@ -64,6 +64,19 @@ describe("deriveEdgesFromFlow", () => {
     ]);
   });
 
+  it("carries a loop's round limit through, so two rounds is built as two", () => {
+    const [derived] = deriveEdgesFromFlow(agents, steps, [
+      { from: "n6", to: "n5", condition: "Endorsement rejected", maxRounds: 2 },
+    ]);
+    expect(derived.maxRounds).toBe(2);
+    // Absent stays absent rather than becoming 0 or NaN, so the builder's own
+    // default applies instead of a bogus number.
+    const [none] = deriveEdgesFromFlow(agents, steps, [{ from: "n6", to: "n5" }]);
+    expect(none).not.toHaveProperty("maxRounds");
+    const [bad] = deriveEdgesFromFlow(agents, steps, [{ from: "n6", to: "n5", maxRounds: "two" as any }]);
+    expect(bad).not.toHaveProperty("maxRounds");
+  });
+
   it("emits fewer edges rather than wrong ones when the mapping is partial", () => {
     const partial = [{ name: "Intake Agent", flowStepLabels: ["Read Submission"] }];
     const derived = deriveEdgesFromFlow(partial, steps, [

@@ -476,7 +476,7 @@ export default function ProcessFlows() {
   // team was built as a flat fan-out: every agent in one parallel wave, with
   // the decisions, sign-off ordering and rework loops silently gone.
   const proposalEdges = useMemo(
-    () => graph.edges.map(e => ({ from: e.from, to: e.to, label: e.label, condition: e.condition })),
+    () => graph.edges.map(e => ({ from: e.from, to: e.to, label: e.label, condition: e.condition, maxRounds: e.maxRounds })),
     [graph.edges],
   );
 
