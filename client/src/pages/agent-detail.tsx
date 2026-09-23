@@ -592,7 +592,10 @@ function McpServerLinkCard({ link, server, onUnlink, unlinking }: {
 }
 
 function AgentDetailInner() {
-  const [, params] = useRoute("/agents/:id");
+  // Mounted at /agents/:id/classic (see App.tsx) -- matching only /agents/:id here left params
+  // empty for every render, so agentId was always undefined: the main agent query (enabled:
+  // !!agentId) never fired at all, producing "Agent not found" for a team that plainly exists.
+  const [, params] = useRoute("/agents/:id/classic");
   const agentId = params?.id;
 
   // Declared here, not with the other view state below: the queries underneath
