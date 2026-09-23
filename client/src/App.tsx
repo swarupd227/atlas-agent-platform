@@ -37,6 +37,7 @@ const Outcomes = lazy(() => import("@/pages/outcomes"));
 const Agents = lazy(() => import("@/pages/agents"));
 const AgentsHome = lazy(() => import("@/pages/agents-home"));
 const AgentDetail = lazy(() => import("@/pages/agent-detail"));
+const AgentOverview = lazy(() => import("@/pages/agent-overview"));
 const Deployments = lazy(() => import("@/pages/deployments-overview"));
 const DeploymentsClassic = lazy(() => import("@/pages/deployments"));
 const Monitor = lazy(() => import("@/pages/monitor"));
@@ -360,7 +361,8 @@ function DashboardRouter() {
       <Route path="/agents/remote/classic" component={RemoteAgents} />
       <Route path="/agents/:id/playground" component={AgentPlayground} />
       <Route path="/agents/:id/export" component={AgentExport} />
-      <Route path="/agents/:id" component={AgentDetail} />
+      <Route path="/agents/:id/classic" component={AgentDetail} />
+      <Route path="/agents/:id" component={AgentOverview} />
       <Route path="/blueprints" component={Blueprints} />
       <Route path="/blueprints/:id" component={BlueprintDetail} />
       <Route path="/evals/classic" component={EvalsClassic} />

@@ -72,8 +72,8 @@ describe("the routes", () => {
     expect(app).toContain('<Route path="/agents/teams/classic" component={AgentTeams} />');
   });
 
-  it("the full agent page still owns /agents/:id", () => {
-    expect(app).toContain('<Route path="/agents/:id" component={AgentDetail} />');
+  it("one agent opens its own page, which the registry links to", () => {
+    expect(app).toContain('<Route path="/agents/:id" component={AgentOverview} />');
     expect(app.indexOf('path="/agents/teams"')).toBeLessThan(app.indexOf('path="/agents/:id"'));
   });
 });
