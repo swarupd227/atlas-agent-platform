@@ -55,6 +55,7 @@ import { runMeetingTranscription, aiConfigured } from "../meeting-transcription"
 import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError } from "../team-build";
 import { proposeTeam } from "../team-proposal";
 import { buildClarifyPrompt, parseClarifyResponse, readClarifications, formatClarifications } from "../process-flow-clarify";
+import { openSse } from "../sse";
 
 const openai = new OpenAI({
   // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
@@ -773,16 +774,17 @@ const router = Router();
   });
 
   router.post("/api/ai/propose-agents", checkPermission("create_modify_blueprints"), async (req, res) => {
-    // This call routinely takes 90-240s for larger teams (see openAITimeoutMs
-    // below). Stream real progress over SSE -- matching the pattern already
-    // used in playground.ts -- instead of leaving the client's "Drafting..."
-    // spinner static the whole time with no signal the request is even alive.
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    });
-    const sendEvent = (data: any) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    // This call routinely takes 90-300s for larger teams (see openAITimeoutMs
+    // in team-proposal.ts). Stream real progress over SSE instead of leaving
+    // the client's "Drafting..." spinner static the whole time with no signal
+    // the request is even alive.
+    //
+    // Through the shared writer for its heartbeat: the stretch around the
+    // model call sends nothing, and Azure closes a connection that has been
+    // quiet for ~230s. Without it a large plan died at ~249s with
+    // ERR_CONNECTION_RESET before either the result or this route's own error
+    // message could reach the browser (live 2026-09-23, a 22-step flow).
+    const sendEvent = openSse<unknown>(res);
     await proposeTeam(req.body ?? {}, { orgId: getOrgId(req), onEvent: sendEvent });
     res.end();
   });

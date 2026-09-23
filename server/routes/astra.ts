@@ -12,6 +12,7 @@ import { z } from "zod";
 import { getDefaultOrgId, getOrgId } from "../auth";
 import { checkPermission, getRequestRole, hasPermission } from "../permissions";
 import { llmInvokeRateLimiter } from "../rate-limits";
+import { openSse as openSseStream } from "../sse";
 import { storage } from "../storage";
 import { AstraBusyError, AstraNotFoundError, resolveAction, runTurn } from "../astra/engine";
 import { getAstraRuntime } from "../astra/wiring";
@@ -58,21 +59,8 @@ async function callerContext(req: Request, requestedIndustryId?: string | null):
   };
 }
 
-/** SSE writer with a heartbeat, so Azure's idle timeout doesn't cut a long turn. */
-function openSse(res: Response): (event: AstraEvent) => void {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders?.();
-  const heartbeat = setInterval(() => {
-    try { res.write(":hb\n\n"); } catch { /* client gone */ }
-  }, 15_000);
-  res.on("close", () => clearInterval(heartbeat));
-  return (event) => {
-    try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* client gone; the turn still completes and is saved */ }
-  };
-}
+/** This route's own view of the shared SSE writer (server/sse.ts). */
+const openSse = (res: Response): ((event: AstraEvent) => void) => openSseStream<AstraEvent>(res);
 
 function streamError(send: (e: AstraEvent) => void, err: unknown) {
   const message = err instanceof Error ? err.message : "Something went wrong.";
