@@ -450,7 +450,20 @@ describe("provider fallback visibility and control", () => {
   });
 });
 
-import { providerForModel, primaryProviderName } from "../server/llm-provider";
+import { providerForModel, primaryProviderName, isCallerAbort } from "../server/llm-provider";
+
+describe("recognising a caller's own abort", () => {
+  it("counts every shape the SDKs actually throw, and nothing else", () => {
+    class APIUserAbortError extends Error {}
+    // The shape that slipped through a `name === "AbortError"` check and made a
+    // route timeout surface as a generic provider failure.
+    expect(isCallerAbort(new APIUserAbortError("Request was aborted."))).toBe(true);
+    expect(isCallerAbort(Object.assign(new Error("Request aborted while waiting to retry"), { name: "AbortError" }))).toBe(true);
+    expect(isCallerAbort(Object.assign(new Error("canceled"), { code: "ERR_CANCELED" }))).toBe(true);
+    expect(isCallerAbort(Object.assign(new Error("Too Many Requests"), { status: 429 }))).toBe(false);
+    expect(isCallerAbort("not an error")).toBe(false);
+  });
+});
 
 describe("routing a call to the provider that owns its model", () => {
   it("attributes model ids to their provider, and leaves unknown ids alone", () => {

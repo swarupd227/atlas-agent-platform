@@ -15,7 +15,7 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { getDefaultOrgId } from "./auth";
 import { parseProposalContent } from "./team-proposal-parse";
-import { completeWithFallback, type LLMCompletionResult } from "./llm-provider";
+import { completeWithFallback, isCallerAbort, type LLMCompletionResult } from "./llm-provider";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 
 
@@ -788,8 +788,14 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         const agentMentions = (desc.match(/\bAgent\b/g) || []).length;
         return Math.max(agentMentions, 4);
       })();
-      const openAITimeoutMs = Math.min(240_000, Math.max(90_000, 90_000 + estimatedAgentCount * 5_000));
-      const openAIMaxTokens = Math.min(16_000, Math.max(7_000, 2_000 + estimatedAgentCount * 500));
+      // The window covers the whole provider chain, so it has to fit the leg
+      // that actually answers rather than the first one tried. Measured
+      // 2026-09-23 against Anthropic: a 4-agent plan took 94s of a 110s
+      // window, and 22 agents did not fit 200s at all.
+      const openAITimeoutMs = Math.min(480_000, Math.max(120_000, 120_000 + estimatedAgentCount * 8_000));
+      // 24k of output stays inside what both gpt-4.1-mini and claude-sonnet-4-5
+      // will emit in one turn, and keeps a large plan from being truncated.
+      const openAIMaxTokens = Math.min(24_000, Math.max(7_000, 2_000 + estimatedAgentCount * 500));
 
       // Through the shared provider path, not a bare SDK call: that is what
       // gives this the rate-limit patience, the per-provider token pacing and
@@ -824,13 +830,30 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
       sendEvent({ type: "progress", status: "calling_ai", message: `Drafting your team with AI (up to ~${Math.round(openAITimeoutMs / 1000)}s for a plan this size)...`, estimatedAgentCount });
 
+      // What the caller can actually act on when the plan does not fit the
+      // window: nothing about the request will change on a second attempt.
+      const tooLargeMessage = `This team description looks too large to draft in one request (roughly ${estimatedAgentCount} agents). Try describing a smaller team, or split it into stages and combine them afterward.`;
+
       let proposalResp: LLMCompletionResult;
       try {
         proposalResp = await callProposeAgentsOnce();
       } catch (firstErr: any) {
+        // An abort here is this route's own timeout firing, not a provider
+        // having a bad moment: retrying spends a second full window to fail
+        // the same way. Say what is wrong instead.
+        //
+        // Classified through the shared isCallerAbort, because the SDKs throw
+        // APIUserAbortError, whose `name` is not "AbortError" -- the local
+        // name check this replaced let a real timeout fall through as a
+        // permanent error and surface as the generic "Failed to generate agent
+        // proposals" (live 2026-09-23, a 22-step flow, every time).
+        if (isCallerAbort(firstErr)) {
+          sendEvent({ type: "error", error: tooLargeMessage, timeout: true });
+          return;
+        }
         // 429 counts: a rate limit is the provider saying "not yet", and the
         // same request succeeds once the window clears.
-        const isTransient = firstErr?.name === "AbortError" || firstErr?.code === "ERR_CANCELED" || firstErr?.status === 429 || (typeof firstErr?.status === "number" && firstErr.status >= 500);
+        const isTransient = firstErr?.status === 429 || (typeof firstErr?.status === "number" && firstErr.status >= 500);
         if (!isTransient) throw firstErr;
         // One automatic retry before surfacing a failure to the user — absorbs
         // a single slow/busy moment on the model provider's side instead of
@@ -840,12 +863,8 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         try {
           proposalResp = await callProposeAgentsOnce();
         } catch (secondErr: any) {
-          if (secondErr?.name === "AbortError" || secondErr?.code === "ERR_CANCELED") {
-            sendEvent({
-              type: "error",
-              error: `This team description looks too large to draft in one request (roughly ${estimatedAgentCount} agents). Try describing a smaller team, or split it into stages and combine them afterward.`,
-              timeout: true,
-            });
+          if (isCallerAbort(secondErr)) {
+            sendEvent({ type: "error", error: tooLargeMessage, timeout: true });
             return;
           }
           throw secondErr;

@@ -503,9 +503,11 @@ function isRetryable(err: unknown): boolean {
  * never retried, never cascaded to another provider, and never counted against
  * the provider: nothing failed, the answer is simply no longer wanted.
  */
-function isCallerAbort(err: unknown): boolean {
+export function isCallerAbort(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  return err.constructor.name === "APIUserAbortError" || err.name === "AbortError";
+  if (err.constructor.name === "APIUserAbortError" || err.name === "AbortError") return true;
+  // Axios-style cancellation, as the OpenAI SDK's older transport reports it.
+  return (err as Error & { code?: string }).code === "ERR_CANCELED";
 }
 
 async function withRetry<T>(fn: () => Promise<T>, providerName: string, tokenCharge?: number): Promise<T> {
