@@ -468,8 +468,16 @@ export default function ProcessFlows() {
     return (flowName ? `${flowName}: ${steps}` : steps) + branchLines;
   }, [graph.nodes, graph.edges, flowName]);
   const proposalSteps = useMemo(
-    () => graph.nodes.map(n => ({ type: n.type, label: n.label, description: n.description, actor: n.actor, config: n.config })),
+    () => graph.nodes.map(n => ({ id: n.id, type: n.type, label: n.label, description: n.description, actor: n.actor, config: n.config })),
     [graph.nodes],
+  );
+  // The connections, not just the steps. Sending the steps alone left the
+  // drafting side to re-infer the graph from prose, and when it didn't, the
+  // team was built as a flat fan-out: every agent in one parallel wave, with
+  // the decisions, sign-off ordering and rework loops silently gone.
+  const proposalEdges = useMemo(
+    () => graph.edges.map(e => ({ from: e.from, to: e.to, label: e.label, condition: e.condition })),
+    [graph.edges],
   );
 
   const approvalCount = graph.nodes.filter(n => n.type === "expert_approval").length;
@@ -919,6 +927,7 @@ export default function ProcessFlows() {
         onOpenChange={setShowTeamProposal}
         initialDescription={proposalDescription}
         processFlowSteps={proposalSteps}
+        processFlowEdges={proposalEdges}
       />
 
       <Dialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>

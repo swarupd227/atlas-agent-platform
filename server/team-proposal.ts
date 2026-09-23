@@ -27,12 +27,71 @@ export interface ProposeTeamInput {
   industryContext?: { industryId?: string; subVertical?: string; frameworks?: any; jurisdictions?: any; departments?: any; [key: string]: any } | null;
   templateId?: string;
   processFlowSteps?: any[];
+  /** The connections between those steps, so the graph doesn't have to be re-inferred from prose. */
+  processFlowEdges?: any[];
 }
 
 export type ProposeTeamEvent =
   | { type: "progress"; status: string; message: string; [key: string]: unknown }
   | { type: "error"; error: string; details?: string; timeout?: boolean }
   | { type: "done"; result: any };
+
+/**
+ * Turn the business flow's own connections into the team's execution edges.
+ *
+ * The drafting model is asked to rebuild the graph, and when it doesn't, the
+ * team is built as a flat fan-out: every agent in one parallel wave, with the
+ * decisions, sign-off ordering and rework loops gone -- and nothing says so,
+ * because a star is a valid graph. Live 2026-09-23: a 22-step E&S underwriting
+ * flow with 25 connections, 4 decisions and 2 loops became 17 agents that all
+ * ran at once. Deriving the edges here instead means the structure the business
+ * drew is the structure that runs, whatever the model returns.
+ *
+ * An agent claims steps through "flowStepLabels". Steps nothing claims are
+ * skipped rather than guessed at, and an edge is emitted only when both ends
+ * resolve to different agents -- so a partial mapping yields fewer edges, never
+ * wrong ones.
+ */
+export function deriveEdgesFromFlow(
+  agents: Array<{ name?: string; flowStepLabels?: unknown }>,
+  steps: Array<{ id?: string; label?: string }>,
+  edges: Array<{ from?: string; to?: string; label?: string; condition?: string }>,
+): Array<{ from: string; to: string; label?: string; condition?: string; type: string }> {
+  const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+  const agentByStepLabel = new Map<string, string>();
+  for (const agent of agents) {
+    if (!agent?.name || !Array.isArray(agent.flowStepLabels)) continue;
+    for (const label of agent.flowStepLabels) {
+      const key = norm(label);
+      if (key && !agentByStepLabel.has(key)) agentByStepLabel.set(key, agent.name);
+    }
+  }
+  if (agentByStepLabel.size === 0) return [];
+
+  const labelByStepId = new Map<string, string>();
+  for (const step of steps) if (step?.id && step.label) labelByStepId.set(String(step.id), step.label);
+  const agentForStepId = (id: unknown) => agentByStepLabel.get(norm(labelByStepId.get(String(id))));
+
+  const derived: Array<{ from: string; to: string; label?: string; condition?: string; type: string }> = [];
+  const seen = new Set<string>();
+  for (const edge of edges) {
+    const from = agentForStepId(edge?.from);
+    const to = agentForStepId(edge?.to);
+    // Both ends inside one agent means the connection is internal to its work.
+    if (!from || !to || from === to) continue;
+    const key = `${from}\u0000${to}\u0000${edge.condition ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    derived.push({
+      from,
+      to,
+      label: edge.condition || edge.label || undefined,
+      condition: edge.condition || undefined,
+      type: edge.condition ? "conditional" : "handoff",
+    });
+  }
+  return derived;
+}
 
 /**
  * The shape a drafted plan must have to be usable.
@@ -64,7 +123,7 @@ export async function proposeTeam(
         sendEvent({ type: "error", error: "AI assistant is not configured" });
         return;
       }
-      const { outcomeContract, kpis, feedback, previousPlan, industryContext, templateId, processFlowSteps } = input;
+      const { outcomeContract, kpis, feedback, previousPlan, industryContext, templateId, processFlowSteps, processFlowEdges } = input;
 
       sendEvent({ type: "progress", status: "gathering_context", message: "Gathering templates, skills, policies, and connected systems..." });
       const orgId = opts.orgId;
@@ -535,6 +594,15 @@ The business team has defined this process flow for the outcome. Each agent you 
 
 ${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}${s.config?.skillName ? ` [REQUIRED SKILL: "${s.config.skillName}" — the business user explicitly bound this skill to this step; the agent handling it MUST include this exact name in matchedSkills]` : ""}${s.config?.kbName ? ` [REQUIRED KNOWLEDGE BASE: id="${s.config.kbId}" name="${s.config.kbName}" — the business user explicitly bound this KB to this step; the agent handling it MUST include this exact {id, name} in suggestedKnowledgeBases]` : ""}`).join("\n")}
 
+${Array.isArray(processFlowEdges) && processFlowEdges.length > 0 ? `
+HOW THOSE STEPS CONNECT (the business's own sequencing — not a suggestion):
+${processFlowEdges.map((e: any) => {
+  const stepNo = (id: string) => { const i = processFlowSteps.findIndex((s: any) => s.id === id); return i >= 0 ? `Step ${i + 1} "${processFlowSteps[i].label}"` : id; };
+  return `${stepNo(e.from)} → ${stepNo(e.to)}${e.condition ? ` WHEN ${e.condition}` : ""}${e.label && e.label !== e.condition ? ` (${e.label})` : ""}`;
+}).join("\n")}
+
+MANDATORY: every agent you propose (and the orchestrator) MUST include "flowStepLabels": an array of the exact step labels above that it covers, copied verbatim. This is how the steps' connections become the team's execution order, so an agent with no flowStepLabels cannot be sequenced and the team will run every agent at once. A step that is a human checkpoint still belongs on whichever agent represents that checkpoint.
+` : ""}
 IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above. Any step marked REQUIRED SKILL or REQUIRED KNOWLEDGE BASE is a business-user commitment, not a suggestion -- the resulting agent's matchedSkills / suggestedKnowledgeBases MUST include those exact values.
 The orchestrator's own "workflowSteps" must include one non-empty bullet per step above, IN ORDER, including "expert_approval"/human-checkpoint steps -- those don't get a dedicated worker agent, so describe them from the orchestrator's perspective instead, e.g. "Route to human approval: <step label>". Never leave a workflowSteps entry blank.
 ` : ""}
@@ -982,6 +1050,27 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         result = { agents: parsed.map(normalizeAgent), orchestrator: null, pipeline: null };
       } else {
         result = { agents: [], orchestrator: null, pipeline: null, raw: content };
+      }
+
+      // The flow the business drew is the authority on sequencing, so its own
+      // connections replace whatever the model inferred -- and supply a graph
+      // at all when the model returned none, which is what turned a 22-step
+      // flow into 17 agents running in a single wave.
+      if (Array.isArray(processFlowSteps) && processFlowSteps.length > 0 && Array.isArray(processFlowEdges) && processFlowEdges.length > 0) {
+        const flowEdges = deriveEdgesFromFlow(
+          [result.orchestrator, ...(result.agents || [])].filter(Boolean),
+          processFlowSteps,
+          processFlowEdges,
+        );
+        if (flowEdges.length > 0) {
+          result.pipeline = { ...(result.pipeline || {}), edges: flowEdges, edgesDerivedFromFlow: true };
+          console.info(`[propose-agents] sequenced the team from the flow's own connections: ${flowEdges.length} edges from ${processFlowEdges.length} flow connections`);
+        } else {
+          // Nothing claimed a step, so the team cannot be sequenced. Say so
+          // rather than letting a silent fan-out look like a working team.
+          result.structureWarning = `The drafted agents did not say which process-flow steps they cover, so this team could not be sequenced from your flow's ${processFlowEdges.length} connections. Every agent would run at once. Try drafting again.`;
+          console.warn(`[propose-agents] no agent declared flowStepLabels; team cannot be sequenced from ${processFlowEdges.length} flow connections`);
+        }
       }
 
       // Post-process: enforce pre-computed coverage — LLM cannot reliably derive this

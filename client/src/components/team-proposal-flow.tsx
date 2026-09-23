@@ -55,11 +55,13 @@ export function TeamProposalDialog({
   onOpenChange,
   initialDescription = "",
   processFlowSteps,
+  processFlowEdges,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialDescription?: string;
   processFlowSteps?: unknown[];
+  processFlowEdges?: unknown[];
 }) {
   const [step, setStep] = useState<Step>("describe");
   const [description, setDescription] = useState(initialDescription);
@@ -102,6 +104,7 @@ export function TeamProposalDialog({
           outcomeContract: { name: description.slice(0, 60), description },
           kpis: [],
           processFlowSteps,
+          processFlowEdges,
           // Without this the draft was grounded as "general": no industry
           // skills, ontology concepts or knowledge bases were offered.
           industryContext: industry ? { industryId: industry.id, subVertical: subVertical || undefined } : undefined,

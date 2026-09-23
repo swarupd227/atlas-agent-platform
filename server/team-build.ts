@@ -653,6 +653,11 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // an intermediate approval node reached by the *other* branch) --
   // exactly the shape a decision-with-two-alternatives produces.
   const hasExplicitEdgeSpec = !!(pipeline?.edges && pipeline.edges.length > 0);
+  // Problems worth telling the caller about rather than shipping quietly, the
+  // same way unconnectedBindings is returned instead of swallowed.
+  const structureWarnings: string[] = [];
+  // Set where the orchestrator is wired to every worker and to nothing else.
+  let builtAsFanOut = false;
 
   if (hasParallelInfo && tiers.length > 0) {
     let yOffset = 150;
@@ -811,6 +816,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
           });
         }
       } else {
+        builtAsFanOut = true;
         for (let i = 0; i < workerNodes.length; i++) {
           const edgeLabel = pipeline?.edges?.find((e: any) => e.to === createdWorkers[i].name)?.label;
           await storage.createTeamBlueprintEdge({
@@ -824,6 +830,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         }
 
         if (pipeline?.pattern === "fan_out_fan_in") {
+          builtAsFanOut = false;
           for (let i = 0; i < workerNodes.length; i++) {
             await storage.createTeamBlueprintEdge({
               blueprintId: blueprint.id,
@@ -904,7 +911,9 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
             revision: {
               targetNodeId: target.id,
               when: { combinator: "AND", conditions: [{ field: "output", operator: "contains", value: "fail" }] },
-              maxRounds: 1,
+              // A flow that says "at most two rounds" means two, not one. The
+              // engine caps this at 3 regardless.
+              maxRounds: Math.min(3, Math.max(1, Number((edgeSpec as any).maxRounds) || 1)),
             },
           },
         } as any);
@@ -938,6 +947,18 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         });
       }
     }
+  }
+
+  // A team of more than a couple of workers with no worker-to-worker edge is a
+  // star: every agent runs in one wave, so nothing gates anything. That is
+  // occasionally what was asked for, but far more often it means the proposal
+  // arrived without sequencing -- and the built team looks complete either way,
+  // which is how a 22-step flow shipped as 17 agents running at once.
+  if (builtAsFanOut && createdWorkers.length > 2) {
+    structureWarnings.push(
+      `This team has no order: all ${createdWorkers.length} agents run at once, because the plan carried no connections between them. Any decision, approval gate or rework loop in the original process is not enforced.`,
+    );
+    console.warn(`[team-build] built a team with ${createdWorkers.length} workers and no worker-to-worker edges: every agent will run in one wave`);
   }
 
   for (let i = 0; i < createdWorkers.length; i++) {
@@ -1060,5 +1081,6 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     evalSuiteIds,
     unconnectedBindings,
     unresolvedBindings,
+    structureWarnings,
   };
 }
