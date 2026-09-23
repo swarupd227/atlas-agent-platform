@@ -89,8 +89,10 @@ export function Composer({
         .map((d) => ({ id: d.id, name: d.title, detail: d.noun, value: `"${d.title}" (${d.noun} ${d.id})` }));
     }
     const wanted = arg.kind === "team" ? "team" : "agent";
+    // A command that opens a page needs the id; one that writes a message uses the name.
+    const useId = slash!.command!.argValue === "id";
     return rankMentionables(mentionables.filter((m) => (m.kind ?? "agent") === wanted), slash!.rest)
-      .map((m) => ({ id: m.id, name: m.name, detail: m.description, value: m.name }));
+      .map((m) => ({ id: m.id, name: m.name, detail: m.description, value: useId ? m.id : m.name }));
   }, [slash?.command?.name, slash?.rest, mentionables, decisions]);
   // Once an option has been picked the text is exactly that option, so the menu closes and Enter sends.
   const argPicked = !!slash?.command?.arg && argOptions.some((o) => o.value === slash!.rest.trim());

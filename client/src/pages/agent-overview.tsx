@@ -68,8 +68,40 @@ export function policyEffect(policy: Pick<Policy, "policyJson">): "blocks" | "mo
 
 interface ResolvedPolicies {
   effectivePolicies: Policy[];
+  orgPolicies?: Policy[];
+  outcomePolicies?: Policy[];
+  agentPolicies?: Policy[];
+  envPolicies?: Policy[];
+  bindingPolicies?: Policy[];
   enforcement?: { blockedTools?: string[]; monitoredTools?: string[]; toolAllowlist?: string[] };
   exceptions?: unknown[];
+}
+
+/**
+ * One row per policy, with the scopes it arrives through. The resolver returns
+ * a policy once per scope, so an organization-wide policy that also applies
+ * through the outcome was listed two or three times.
+ */
+export function policiesByScope(resolved: ResolvedPolicies | undefined): Array<{ policy: Policy; scopes: string[] }> {
+  if (!resolved) return [];
+  const scopeOf: Array<[keyof ResolvedPolicies, string]> = [
+    ["orgPolicies", "organization"],
+    ["outcomePolicies", "outcome"],
+    ["agentPolicies", "this agent"],
+    ["envPolicies", "environment"],
+    ["bindingPolicies", "binding"],
+  ];
+  const scopes = new Map<string, string[]>();
+  for (const [key, label] of scopeOf) {
+    for (const p of (resolved[key] as Policy[] | undefined) ?? []) {
+      scopes.set(p.id, [...(scopes.get(p.id) ?? []), label]);
+    }
+  }
+  const seen = new Map<string, { policy: Policy; scopes: string[] }>();
+  for (const p of resolved.effectivePolicies ?? []) {
+    if (!seen.has(p.id)) seen.set(p.id, { policy: p, scopes: scopes.get(p.id) ?? [] });
+  }
+  return Array.from(seen.values());
 }
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -326,7 +358,7 @@ function Setup({ agent }: { agent: Agent }) {
 function Rules({ agent }: { agent: Agent }) {
   const resolvedQ = useQuery<ResolvedPolicies>({ queryKey: [`/api/policies/resolve/${agent.id}`] });
   const exceptionsQ = useQuery<PolicyException[]>({ queryKey: [`/api/policy-exceptions/agent/${agent.id}`] });
-  const policies = resolvedQ.data?.effectivePolicies ?? [];
+  const policies = policiesByScope(resolvedQ.data);
   const blocked = resolvedQ.data?.enforcement?.blockedTools ?? [];
   const monitored = resolvedQ.data?.enforcement?.monitoredTools ?? [];
   const exceptions = exceptionsQ.data ?? [];
@@ -341,9 +373,10 @@ function Rules({ agent }: { agent: Agent }) {
           <p className="text-sm text-muted-foreground">No policy applies to it.</p>
         ) : (
           <ul className="flex flex-col divide-y rounded border" data-testid="policy-list">
-            {policies.map((p) => (
+            {policies.map(({ policy: p, scopes }) => (
               <li key={p.id} className="flex items-center gap-2 p-2.5 text-sm">
                 <Link href={`/governance?policy=${encodeURIComponent(p.id)}`} className="min-w-0 flex-1 truncate hover:underline">{p.name}</Link>
+                {scopes.length > 0 && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">via {scopes.join(", ")}</span>}
                 <span className={`shrink-0 font-mono text-[10px] ${policyEffect(p) === "blocks" ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>{policyEffect(p)}</span>
               </li>
             ))}

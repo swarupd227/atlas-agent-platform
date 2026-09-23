@@ -63,6 +63,13 @@ describe("sending", () => {
     expect(resolveSlash("/library")).toEqual({ action: "go", href: "library" });
   });
 
+  it("a go command with a picker opens the thing that was picked", () => {
+    expect(resolveSlash("/agent 63f32a75-d324-4088-8879-318de7c8adc5")).toEqual({ action: "go", href: "/agents/63f32a75-d324-4088-8879-318de7c8adc5" });
+    expect(resolveSlash("/teams")).toEqual({ action: "go", href: "/agents/teams" });
+    // Without one it asks, rather than opening the list it didn't mean.
+    expect(resolveSlash("/agent")).toMatchObject({ action: "need_arg" });
+  });
+
   it("asks for the missing argument rather than sending half a request", () => {
     const r = resolveSlash("/run");
     expect(r).toMatchObject({ action: "need_arg" });
@@ -83,7 +90,8 @@ describe("what the commands promise", () => {
   it("every ask command has wording and every go command a destination", () => {
     for (const c of SLASH_COMMANDS) {
       if (c.kind === "ask") expect(typeof c.ask, c.name).toBe("function");
-      else expect(c.href, c.name).toBeTruthy();
+      // A go command has a fixed destination, or works one out from what was picked.
+      else expect(c.href ?? c.hrefFor, c.name).toBeTruthy();
     }
   });
 
@@ -112,6 +120,12 @@ describe("the composer", () => {
 
   it("names both triggers in the placeholder", () => {
     expect(read("client", "src", "astra", "thread.tsx")).toContain("Ask Astra, / for a command, @ for one of your agents");
+  });
+
+  it("a command that opens a page picks by id, one that writes a message by name", () => {
+    expect(byName("agent").argValue).toBe("id");
+    expect(byName("run").argValue).toBeUndefined();
+    expect(composer).toContain('const useId = slash!.command!.argValue === "id";');
   });
 
   it("pickers read what's really there: your agents, your teams, and what's waiting on you", () => {

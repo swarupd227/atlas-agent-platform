@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { SECTIONS, policyEffect, runOutcome, runStats } from "../client/src/pages/agent-overview";
+import { SECTIONS, policiesByScope, policyEffect, runOutcome, runStats } from "../client/src/pages/agent-overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "agent-overview.tsx");
@@ -57,6 +57,29 @@ describe("what a policy does", () => {
     expect(policyEffect({ policyJson: { enforcement: "hard" } } as any)).toBe("blocks");
     expect(policyEffect({ policyJson: { enforcement: "monitor" } } as any)).toBe("monitors");
     expect(policyEffect({ policyJson: null } as any)).toBe("monitors");
+  });
+});
+
+describe("policies in force", () => {
+  it("lists each policy once, with the scopes it arrives through", () => {
+    const p = (id: string, name: string) => ({ id, name, policyJson: {} }) as any;
+    const gate = p("g", "Human Reporter Gate");
+    const resolved = {
+      // The resolver returns a policy once per scope it applies through.
+      effectivePolicies: [gate, gate, p("c", "Customer Privacy Policy"), gate],
+      orgPolicies: [gate],
+      outcomePolicies: [gate, p("c", "Customer Privacy Policy")],
+      envPolicies: [gate],
+    };
+    const rows = policiesByScope(resolved as any);
+    expect(rows.map((r) => r.policy.id)).toEqual(["g", "c"]);
+    expect(rows[0].scopes).toEqual(["organization", "outcome", "environment"]);
+    expect(rows[1].scopes).toEqual(["outcome"]);
+  });
+
+  it("copes with a resolver that sends nothing", () => {
+    expect(policiesByScope(undefined)).toEqual([]);
+    expect(policiesByScope({ effectivePolicies: [] } as any)).toEqual([]);
   });
 });
 

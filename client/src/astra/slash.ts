@@ -27,10 +27,14 @@ export interface SlashCommand {
   /** Hidden from the menu when this role can't do it. */
   permission?: PermissionAction;
   arg?: SlashArg;
+  /** What the picker puts into the message: the thing's name, or its id when the command needs one. */
+  argValue?: "name" | "id";
   /** ask: the message to send. */
   ask?: (arg: string) => string;
   /** go: where to open, inside the shell (~ prefixed by the caller). */
   href?: string;
+  /** go with an argument: where the picked thing lives. */
+  hrefFor?: (arg: string) => string;
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
@@ -92,6 +96,13 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "governance", kind: "go", label: "Open Governance", hint: "Policies, exceptions and regulations", href: "/governance" },
   { name: "deployments", kind: "go", label: "Open Deployments", hint: "What's released where", href: "/deployments" },
   { name: "agents", kind: "go", label: "Open Agents", hint: "Every agent and team", href: "/agents" },
+  {
+    name: "agent", kind: "go", label: "Open one agent", hint: "Its runs, setup, rules and releases",
+    arg: { kind: "agent", label: "which agent", required: true },
+    argValue: "id",
+    hrefFor: (id) => `/agents/${encodeURIComponent(id)}`,
+  },
+  { name: "teams", kind: "go", label: "Open Teams", hint: "The registry on its Teams view", href: "/agents/teams" },
   { name: "library", kind: "go", label: "Open the Library", hint: "Everything this organization has", href: "library" },
   { name: "new", kind: "go", label: "New conversation", hint: "Start a fresh thread", href: "new" },
 ];
@@ -190,8 +201,8 @@ export function resolveSlash(text: string, commands = SLASH_COMMANDS): SlashResu
   if (!command) {
     return { action: "unknown", typed: name, suggestion: closestCommand(name, commands) };
   }
-  if (command.kind === "go") return { action: "go", href: command.href! };
   if (command.arg?.required && !rest) return { action: "need_arg", command };
+  if (command.kind === "go") return { action: "go", href: command.hrefFor ? command.hrefFor(rest) : command.href! };
   return { action: "send", text: command.ask!(rest) };
 }
 
