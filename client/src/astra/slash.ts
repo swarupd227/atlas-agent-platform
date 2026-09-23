@@ -61,6 +61,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     arg: { kind: "team", label: "which team", required: true },
     ask: (a) => `Run the team @${a} on: `,
   },
+  {
+    name: "team-plan", kind: "ask", label: "Plan a team for some work", hint: "Describe the process; no outcome needed", permission: "create_modify_blueprints",
+    arg: { kind: "text", label: "the work", required: true },
+    ask: (a) => `Plan a team for this work: ${a}`,
+  },
   { name: "status", kind: "ask", label: "What's running", hint: "Runs in progress and what they're waiting on", ask: () => "What's running right now, and what is each run waiting on?" },
   // ── Build ──
   {

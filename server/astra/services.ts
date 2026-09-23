@@ -7,7 +7,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { agentMcpServers, agentProposals, agents, mcpElicitations, policyExceptions, workspaceRuns, type InsertPolicy } from "@shared/schema";
+import { agentMcpServers, agentProposals, agents, astraThreads, mcpElicitations, policyExceptions, workspaceRuns, type InsertPolicy } from "@shared/schema";
 import { createHash } from "crypto";
 import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
 import { computeWaves, extractFinalOutputText, startTeamAgentDagRun } from "../dag-execution-engine";
@@ -38,6 +38,7 @@ import { extractHtmlDocument } from "@shared/html-document";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 import { similarOutcomeNames } from "./outcome-names";
 import { decisionRoute } from "./needs-you";
+import { isThreadOwned, threadIdOf, threadOwnerId, workTitle } from "./team-draft";
 import { createOutcomeFromProposal, prepareOutcomeFromProposal, type OutcomeProposalBody } from "../outcome-create";
 import type { AstraServices } from "./types";
 
@@ -758,6 +759,53 @@ async function proposeTeamForOutcome(
   return { ok: true as const, outcome: { id: outcome.id, name: outcome.name, status: outcome.status, riskTier: outcome.riskTier }, plan: result, proposalId: result.proposalId ?? null, bindings };
 }
 
+/**
+ * Plan a team from a description of the work, with no outcome behind it: the
+ * path the classic Teams page offers ("no KPI commitment required"). The plan
+ * is owned by the conversation, and proposing again replaces it.
+ */
+async function proposeTeamForWork(
+  orgId: string,
+  threadId: string,
+  work: string,
+  industryId: string | null,
+  feedback: string | undefined,
+  onProgress: (message: string) => void,
+) {
+  const ownerId = threadOwnerId(threadId);
+  const draft = feedback ? await storage.getAgentProposalByOutcome(ownerId).catch(() => undefined) : undefined;
+  const previousPlan = draft ? { orchestrator: draft.orchestrator, workers: draft.workers, pipeline: draft.pipeline } : undefined;
+  // Shaped like an outcome for the planner, but with no KPIs and no targets:
+  // there is nothing here to measure the team against, and the card says so.
+  const outcomeContract: Record<string, unknown> = {
+    id: ownerId,
+    name: workTitle(work),
+    description: work,
+    riskTier: "MEDIUM",
+    ...(feedback && !previousPlan ? { requirementsFromTheUser: feedback } : {}),
+  };
+
+  let result: any = null;
+  let failure: { error: string; details?: string; timeout?: boolean } | null = null;
+  await proposeTeam(
+    { outcomeContract, kpis: [], feedback: previousPlan ? feedback : undefined, previousPlan, industryContext: industryId ? { industryId } : null },
+    {
+      orgId,
+      onEvent: (event) => {
+        if (event.type === "progress") onProgress(event.message);
+        else if (event.type === "done") result = event.result;
+        else if (event.type === "error") failure = event;
+      },
+    },
+  );
+  if (failure) return { ok: false as const, error: (failure as any).error, details: (failure as any).details, timeout: (failure as any).timeout };
+  if (!result || result.error || !Array.isArray(result.agents) || result.agents.length === 0) {
+    return { ok: false as const, error: result?.error ?? "No team plan was produced.", likelyTooLarge: !!result?.likelyTooLarge };
+  }
+  const bindings = await assessBindings(orgId, [...(result.orchestrator ? [result.orchestrator] : []), ...result.agents]);
+  return { ok: true as const, work: outcomeContract.name as string, plan: result, proposalId: result.proposalId ?? null, bindings };
+}
+
 // ── build_team ───────────────────────────────────────────────────────────────
 
 /** A fingerprint of a plan: the draft is overwritten when the outcome is proposed for again. */
@@ -769,6 +817,19 @@ function planHash(row: { orchestrator: unknown; workers: unknown; pipeline: unkn
 async function getProposalForBuild(orgId: string, proposalId: string) {
   const [row] = await db.select().from(agentProposals).where(eq(agentProposals.id, proposalId)).limit(1);
   if (!row) return null;
+  // A plan made from a description of the work belongs to the conversation
+  // that produced it, and is only visible to that conversation's organization.
+  const threadId = threadIdOf(row.outcomeId);
+  if (threadId) {
+    const [thread] = await db.select({ organizationId: astraThreads.organizationId }).from(astraThreads).where(eq(astraThreads.id, threadId)).limit(1);
+    if (!thread || thread.organizationId !== orgId) return null;
+    return {
+      proposal: { id: row.id, status: row.status, orchestrator: row.orchestrator as any, workers: (row.workers as any[]) ?? [], pipeline: row.pipeline as any },
+      outcome: null,
+      pendingReviewApprovalId: null,
+      hash: planHash(row),
+    };
+  }
   const outcome = await storage.getOutcome(row.outcomeId, orgId);
   if (!outcome) return null;
   const approvalsList = await storage.getApprovals(orgId);
@@ -1079,6 +1140,7 @@ export function createAstraServices(): AstraServices {
     needsMe,
     assessBindings,
     proposeTeamForOutcome,
+    proposeTeamForWork,
     getProposalForBuild,
     resolvePolicyNames,
     buildTeam,

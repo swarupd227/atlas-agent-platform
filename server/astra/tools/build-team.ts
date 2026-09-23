@@ -12,7 +12,8 @@ type Input = { proposalId: string; excludeWorkers?: string[] };
 
 interface Loaded {
   proposal: { id: string; status: string; orchestrator: any; workers: any[]; pipeline: any };
-  outcome: { id: string; name: string; status: string; riskTier: string };
+  /** Null for a plan made from a description of the work: there is no outcome behind it. */
+  outcome: { id: string; name: string; status: string; riskTier: string } | null;
   pendingReviewApprovalId: string | null;
   processFlowSteps?: any[];
   hash: string;
@@ -53,9 +54,9 @@ async function load(ctx: AstraToolContext, input: Input): Promise<{ refuse: stri
   const loaded: Loaded | null = await ctx.services.getProposalForBuild(ctx.orgId, input.proposalId);
   if (!loaded) return { refuse: "No team proposal with that id in this organization. Use propose_team first." };
   if (loaded.proposal.status === "created") return { refuse: "This proposal has already been built into a team." };
-  if (loaded.outcome.status === "pending_review") {
+  if (loaded.outcome?.status === "pending_review") {
     return {
-      refuse: `The outcome "${loaded.outcome.name}" is still pending review, so its team can't be built yet.${loaded.pendingReviewApprovalId ? ` Its review approval is ${loaded.pendingReviewApprovalId}; decide it with decide_approval.` : ""}`,
+      refuse: `The outcome "${loaded.outcome!.name}" is still pending review, so its team can't be built yet.${loaded.pendingReviewApprovalId ? ` Its review approval is ${loaded.pendingReviewApprovalId}; decide it with decide_approval.` : ""}`,
     };
   }
   const exclude = input.excludeWorkers ?? [];
@@ -95,19 +96,26 @@ export const buildTeamTool: AstraTool<Input> = {
     if (notConnected.length) warnings.push({ title: `${notConnected.length} ${notConnected.length === 1 ? "connector isn't" : "connectors aren't"} connected`, detail: `${notConnected.join(", ")}: the steps that use ${notConnected.length === 1 ? "it" : "them"} will fail until connected. They are linked anyway.` });
     if (unresolved.length) warnings.push({ title: `${unresolved.length} named ${unresolved.length === 1 ? "connector doesn't" : "connectors don't"} exist here`, detail: `${unresolved.join(", ")}: not linked.` });
     if (missingTools.length) warnings.push({ title: `${missingTools.length} expected ${missingTools.length === 1 ? "tool is" : "tools are"} missing`, detail: missingTools.slice(0, 5).map((i: any) => `${i.tool} on ${i.server}`).join("; ") });
-    if ((loaded.outcome.riskTier === "HIGH" || loaded.outcome.riskTier === "CRITICAL") && gates.length === 0) {
+    if ((loaded.outcome?.riskTier === "HIGH" || loaded.outcome?.riskTier === "CRITICAL") && gates.length === 0) {
       warnings.push({ title: `No approval gate for a ${loaded.outcome.riskTier}-risk outcome`, detail: "Nothing in this team pauses for a person before acting." });
+    }
+    if (!loaded.outcome) {
+      warnings.push({
+        title: "No outcome behind this team",
+        detail: "Nothing measures whether it works: no KPI targets, no review, and it won't appear under an outcome. Create one later and bind the team to it if you want that.",
+      });
+      if (gates.length === 0) warnings.push({ title: "Nothing pauses for a person", detail: "No step in this team waits for an approval." });
     }
 
     return {
-      summary: `Build ${orchestrator.name} (${workers.length} ${workers.length === 1 ? "agent" : "agents"}) for ${loaded.outcome.name}`,
+      summary: `Build ${orchestrator.name} (${workers.length} ${workers.length === 1 ? "agent" : "agents"}) ${loaded.outcome ? `for ${loaded.outcome.name}` : "for the work described in this conversation"}`,
       details: [
         `Agents: ${workers.map((w) => `${w.name}${w.isHumanCheckpoint ? " (pauses for a person)" : ""}`).join(", ")}.`,
         ...(input.excludeWorkers?.length ? [`Left out: ${input.excludeWorkers.join(", ")}.`] : []),
         connectors.length ? `Links connectors: ${connectors.join(", ")}.` : "Links no connectors.",
         policies.resolved.length || policies.unresolved.length
           ? `Policies bound: ${policies.resolved.length ? policies.resolved.join(", ") : "none"}${policies.unresolved.length ? `; named but not found here: ${policies.unresolved.join(", ")}` : ""}.`
-          : "Binds the outcome's policies, if any.",
+          : loaded.outcome ? "Binds the outcome's policies, if any." : "Binds no policies: there's no outcome to take them from.",
         "Creates a draft team blueprint and baseline eval suites. Does not deploy or run anything.",
       ],
       warnings,
@@ -122,7 +130,7 @@ export const buildTeamTool: AstraTool<Input> = {
     }
     const { loaded, workers, pipeline } = r;
     const body = {
-      outcomeId: loaded.outcome.id,
+      ...(loaded.outcome ? { outcomeId: loaded.outcome.id } : {}),
       ...(ctx.industryId ? { industry: ctx.industryId } : {}),
       orchestrator: loaded.proposal.orchestrator,
       workers,

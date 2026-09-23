@@ -9,25 +9,32 @@ import type { AstraTool, ProofEnvelope } from "../types";
  * organization's real connectors and tools.
  */
 
-type Input = { outcomeId: string; feedback?: string };
+type Input = { outcomeId?: string; work?: string; feedback?: string };
 
 export const proposeTeamTool: AstraTool<Input> = {
   name: "propose_team",
   description:
-    "Propose an agent team (orchestrator, workers, pipeline, approval gates) for one of the organization's outcomes. Takes up to a few minutes and narrates progress. Saves the plan as the outcome's draft proposal, replacing any earlier draft; builds nothing. Reports connector bindings that won't work. Pass the user's requirements for the team in feedback -- especially steps a person must approve -- both the first time and to revise a proposal.",
+    "Propose an agent team (orchestrator, workers, pipeline, approval gates), either for one of the organization's outcomes (outcomeId) or for a piece of work the user describes (work) when there is no outcome and no KPI to commit to. Exactly one of the two. Takes up to a few minutes and narrates progress. Saves the plan as a draft -- the outcome's, or this conversation's -- replacing any earlier one; builds nothing. Reports connector bindings that won't work. Pass the user's requirements for the team in feedback -- especially steps a person must approve -- both the first time and to revise a proposal.",
   input: z.object({
-    outcomeId: z.string().min(1).describe("The outcome's id (from list_outcomes or create_outcome)."),
+    outcomeId: z.string().min(1).optional().describe("The outcome's id (from list_outcomes or create_outcome)."),
+    work: z.string().min(10).max(2000).optional().describe("What the team should do, in the user's words, when there is no outcome: the process, its steps, and what a person must approve."),
     feedback: z.string().max(2000).optional().describe("The user's requirements for the team, or what to change about the previous proposal, in their words (e.g. 'a person approves before any equipment moves')."),
   }),
   permission: "create_modify_blueprints",
   confirm: false,
   run: async (ctx, input) => {
+    if (!input.outcomeId === !input.work) {
+      throw new Error("Propose a team either for an outcome (outcomeId) or for work the user described (work) -- one of the two, not both.");
+    }
     const said = new Set<string>();
-    const r = await ctx.services.proposeTeamForOutcome(ctx.orgId, input.outcomeId, ctx.industryId ?? null, input.feedback, (message: string) => {
+    const narrate = (message: string) => {
       if (said.has(message)) return;
       said.add(message);
       ctx.onProgress?.({ type: "working", label: message.replace(/\.\.\.$/, "") });
-    });
+    };
+    const r = input.outcomeId
+      ? await ctx.services.proposeTeamForOutcome(ctx.orgId, input.outcomeId, ctx.industryId ?? null, input.feedback, narrate)
+      : await ctx.services.proposeTeamForWork(ctx.orgId, ctx.threadId, input.work!, ctx.industryId ?? null, input.feedback, narrate);
     if (!r.ok) {
       return { payload: { proposed: false, error: r.error, ...(r.likelyTooLarge || r.timeout ? { tip: "Describe a smaller team, or split the outcome into stages." } : {}) } };
     }
@@ -44,7 +51,7 @@ export const proposeTeamTool: AstraTool<Input> = {
       proposed: true,
       proposalId: r.proposalId,
       ...(r.proposalId ? {} : { note: "The plan couldn't be saved as a draft, so it can't be built from here." }),
-      outcome: r.outcome,
+      ...(r.outcome ? { outcome: r.outcome } : { work: r.work, noOutcome: "Planned from the work described here: no KPI targets, and nothing measures whether it works." }),
       orchestrator: plan.orchestrator?.name ?? null,
       pattern: plan.pipeline?.pattern ?? null,
       workers: workers.map((w) => ({
@@ -56,7 +63,7 @@ export const proposeTeamTool: AstraTool<Input> = {
       })),
       approvalGates: gates,
       bindingIssues: r.bindings.issues.length,
-      ...(r.outcome.status === "pending_review" ? { outcomeReview: "The outcome is still pending review; it must be approved before build_team." } : {}),
+      ...(r.outcome?.status === "pending_review" ? { outcomeReview: "The outcome is still pending review; it must be approved before build_team." } : {}),
     };
 
     const proof: Partial<ProofEnvelope> = {
@@ -74,9 +81,10 @@ export const proposeTeamTool: AstraTool<Input> = {
       payload,
       artifact: {
         kind: "teamProposal",
-        title: plan.orchestrator?.name ?? `Team for ${r.outcome.name}`,
+        title: plan.orchestrator?.name ?? `Team for ${r.outcome?.name ?? r.work}`,
         props: {
-          outcome: r.outcome,
+          outcome: r.outcome ?? null,
+          ...(r.outcome ? {} : { work: r.work }),
           proposalId: r.proposalId,
           orchestrator: plan.orchestrator ? { name: plan.orchestrator.name, description: plan.orchestrator.description } : null,
           pipeline: plan.pipeline ? { pattern: plan.pipeline.pattern, description: plan.pipeline.description } : null,
@@ -92,7 +100,8 @@ export const proposeTeamTool: AstraTool<Input> = {
             estimatedImpact: w.estimatedImpact || null,
           })),
         },
-        fullViewHref: `/outcomes/${r.outcome.id}`,
+        // A plan with no outcome has nowhere else to live yet: it is this conversation's.
+        ...(r.outcome ? { fullViewHref: `/outcomes/${r.outcome.id}` } : {}),
       },
       proof,
     };
