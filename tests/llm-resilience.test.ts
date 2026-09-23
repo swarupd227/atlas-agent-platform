@@ -450,6 +450,62 @@ describe("provider fallback visibility and control", () => {
   });
 });
 
+import { providerForModel, primaryProviderName } from "../server/llm-provider";
+
+describe("routing a call to the provider that owns its model", () => {
+  it("attributes model ids to their provider, and leaves unknown ids alone", () => {
+    expect(providerForModel("gpt-4.1-mini")).toBe("openai");
+    expect(providerForModel("o3-mini")).toBe("openai");
+    expect(providerForModel("claude-sonnet-4-5")).toBe("anthropic");
+    expect(providerForModel("anthropic/claude-sonnet-4-5")).toBe("anthropic");
+    expect(providerForModel("gemini-2.5-pro")).toBe("google");
+    expect(providerForModel("some-self-hosted-llama")).toBeUndefined();
+    expect(providerForModel(undefined)).toBeUndefined();
+  });
+
+  it("tries the requested provider first, then the model's owner, then the default", () => {
+    const before = process.env.DEFAULT_LLM_PROVIDER;
+    try {
+      process.env.DEFAULT_LLM_PROVIDER = "anthropic";
+      expect(primaryProviderName({ requestedProvider: "openai", model: "claude-sonnet-4-5" })).toBe("openai");
+      expect(primaryProviderName({ model: "gpt-4.1-mini" })).toBe("openai");
+      expect(primaryProviderName({ model: "some-self-hosted-llama" })).toBe("anthropic");
+      expect(primaryProviderName()).toBe("anthropic");
+    } finally {
+      if (before === undefined) delete process.env.DEFAULT_LLM_PROVIDER; else process.env.DEFAULT_LLM_PROVIDER = before;
+    }
+  });
+
+  it("never sends a model id to a provider that does not own it", async () => {
+    // The live failure this guards: with DEFAULT_LLM_PROVIDER=anthropic, a call
+    // for "gpt-4.1-mini" reached Anthropic verbatim, which 404s on an unknown
+    // model -- a permanent status, so the chain refused to cascade at all.
+    const seen: Array<string | undefined> = [];
+    const anthropic = mockProvider("anthropic", async (_m, o) => {
+      seen.push(o?.model);
+      return makeResult("drafted on its own default model");
+    });
+    const result = await completeWithFallback(MESSAGES, { model: "gpt-4.1-mini" }, [anthropic]);
+    expect(seen).toEqual([undefined]);
+    expect(result.content).toBe("drafted on its own default model");
+  });
+
+  it("keeps the model on the leg that owns it, and drops it on later legs", async () => {
+    const seen: Array<string | undefined> = [];
+    const openai = mockProvider("openai", async (_m, o) => {
+      seen.push(o?.model);
+      throw Object.assign(new Error("Too Many Requests"), { status: 429 });
+    });
+    const anthropic = mockProvider("anthropic", async (_m, o) => {
+      seen.push(o?.model);
+      return makeResult("from-fallback");
+    });
+    const result = await completeWithFallback(MESSAGES, { model: "gpt-4.1-mini" }, [openai, anthropic]);
+    expect(seen).toEqual(["gpt-4.1-mini", undefined]);
+    expect(result.providerFallback).toBe(true);
+  });
+});
+
 describe("unwrapJsonFence", () => {
   it("strips a ```json fence and leaves bare JSON alone", () => {
     expect(unwrapJsonFence('```json\n{"a": 1}\n```')).toBe('{"a": 1}');

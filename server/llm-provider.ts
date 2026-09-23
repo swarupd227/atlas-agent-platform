@@ -1804,16 +1804,88 @@ export function providerFallbackAllowed(options?: Pick<LLMCompletionOptions, "al
   return (process.env.LLM_PROVIDER_FALLBACK || "on").trim().toLowerCase() !== "off";
 }
 
+/**
+ * The provider a model id belongs to, or undefined when it can't be told.
+ * Prefix-based rather than catalog-based on purpose: the catalogs above list
+ * the models the picker offers, not every id a caller may legitimately pass --
+ * a dated snapshot, a fine-tune, a model released after this build. An id we
+ * don't recognise is left alone rather than rerouted or stripped.
+ */
+export function providerForModel(modelId: string | undefined): string | undefined {
+  if (!modelId) return undefined;
+  const id = modelId.trim().toLowerCase();
+  if (!id) return undefined;
+  // Some agents store the provider on the id itself ("anthropic/claude-sonnet-4-5").
+  const slash = id.indexOf("/");
+  if (slash > 0) {
+    const prefix = id.slice(0, slash);
+    if (prefix === "openai" || prefix === "anthropic" || prefix === "google") return prefix;
+  }
+  if (id.startsWith("claude")) return "anthropic";
+  if (id.startsWith("gemini")) return "google";
+  if (
+    id.startsWith("gpt") ||
+    id.startsWith("chatgpt") ||
+    id.startsWith("text-embedding") ||
+    id.startsWith("ft:") ||
+    /^o[1-9]/.test(id)
+  ) {
+    return "openai";
+  }
+  return undefined;
+}
+
+/**
+ * The providers to try, in order.
+ *
+ * The first leg is the one the call actually asked for: an explicit
+ * requestedProvider, else the provider that owns the requested model, else the
+ * platform default. Before this, the chain always started at
+ * DEFAULT_LLM_PROVIDER and requestedProvider was recorded but never routed on.
+ * Live 2026-09-23: on a deployment with DEFAULT_LLM_PROVIDER=anthropic, drafting
+ * a team asked for "gpt-4.1-mini" and the id went verbatim to Anthropic, which
+ * 404s on an unknown model -- a permanent status, so the chain refused to
+ * cascade and the feature failed in about a second with both providers healthy.
+ */
+/** The provider a call should be tried on first. See providerChain. */
+export function primaryProviderName(options?: Pick<LLMCompletionOptions, "requestedProvider" | "model">): string {
+  return (
+    options?.requestedProvider?.trim() ||
+    providerForModel(options?.model) ||
+    process.env.DEFAULT_LLM_PROVIDER ||
+    "openai"
+  );
+}
+
 function providerChain(providers: LLMProvider[] | undefined, options?: LLMCompletionOptions): LLMProvider[] {
   let list: LLMProvider[];
   if (providers && providers.length > 0) {
     list = providers;
   } else {
-    const primary = getDefaultProvider();
+    const primary = getProvider(primaryProviderName(options));
     const fallbackName = primary.providerName === "openai" ? "anthropic" : "openai";
     list = [primary, getProvider(fallbackName)];
   }
   return providerFallbackAllowed(options) ? list : list.slice(0, 1);
+}
+
+/**
+ * Options for one leg of the chain. A model id only ever reaches the provider
+ * that owns it: any other leg drops it and uses that provider's own default.
+ */
+function optionsForLeg(
+  options: LLMCompletionOptions | undefined,
+  provider: LLMProvider,
+  isFirstLeg: boolean,
+): LLMCompletionOptions | undefined {
+  if (!options) return undefined;
+  if (!options.model) return options;
+  // Later legs have always dropped the model; keep that, since an id we can't
+  // attribute is still likelier to belong to the provider that was asked first.
+  if (!isFirstLeg) return { ...options, model: undefined };
+  const owner = providerForModel(options.model);
+  if (owner && owner !== provider.providerName) return { ...options, model: undefined };
+  return options;
 }
 
 // A fallback used to be visible only as a console line: the result said which
@@ -1840,10 +1912,7 @@ export async function completeWithFallback(
   let lastReason = "";
   for (let i = 0; i < providerList.length; i++) {
     const provider = providerList[i];
-    // For fallback providers (not the primary), strip the model so each provider
-    // uses its own default rather than a model ID that belongs to a different provider.
-    const effectiveOptions: LLMCompletionOptions | undefined =
-      i === 0 ? options : (options ? { ...options, model: undefined } : undefined);
+    const effectiveOptions = optionsForLeg(options, provider, i === 0);
     try {
       const result = await provider.complete(messages, effectiveOptions);
       if (i > 0) {
@@ -1894,8 +1963,7 @@ export async function streamCompleteWithFallback(
   let lastReason = "";
   for (let i = 0; i < providerList.length; i++) {
     const provider = providerList[i];
-    const effectiveOptions: LLMCompletionOptions | undefined =
-      i === 0 ? options : (options ? { ...options, model: undefined } : undefined);
+    const effectiveOptions = optionsForLeg(options, provider, i === 0);
     try {
       let result: LLMCompletionResult;
       if (provider.streamComplete) {
