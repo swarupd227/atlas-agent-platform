@@ -66,6 +66,13 @@ function Workspace() {
     if (window.matchMedia("(min-width: 1024px)").matches) setArtifact(a);
   }, []);
   const thread = useThread(threadId, { industryId: industry?.id ?? null, onArtifact: autoOpen });
+  // Same lookup Thread itself uses for its in-message ConfirmCards -- an artifact pane (e.g. a
+  // live team run) showing a pending approval needs the same pendingAction id to decide it for
+  // real, rather than posting a freeform chat message that can't resolve the gate on its own.
+  const activeActionId = useMemo(
+    () => (thread.status === "awaiting_confirmation" ? [...thread.messages].reverse().find((m) => m.pendingAction && !m.pendingAction.decision)?.pendingAction?.id ?? null : null),
+    [thread.status, thread.messages],
+  );
 
   useEffect(() => {
     if (!threadId) setArtifact(null);
@@ -178,7 +185,13 @@ function Workspace() {
 
       {artifact && (
         <div className="fixed inset-0 z-40 min-h-0 lg:static lg:z-auto">
-          <ArtifactPane artifact={artifact} onClose={() => setArtifact(null)} onAsk={(text) => void send(text)} />
+          <ArtifactPane
+            artifact={artifact}
+            onClose={() => setArtifact(null)}
+            onAsk={(text) => void send(text)}
+            onDecide={(actionId, decision) => void thread.decide(actionId, decision)}
+            activeActionId={activeActionId}
+          />
         </div>
       )}
     </div>

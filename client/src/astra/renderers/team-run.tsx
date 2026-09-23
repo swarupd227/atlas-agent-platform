@@ -15,7 +15,12 @@ const LIVE = new Set(["pending", "running", "waiting_approval"]);
  * so the plan fills in step by step: waiting, running, done, and a pause for a
  * person at an approval step. A step that built a web page or email opens as a page.
  */
-export function TeamRun({ props, onAsk }: { props: Record<string, any>; onAsk?: (text: string) => void }) {
+export function TeamRun({ props, onAsk, onDecide, activeActionId }: {
+  props: Record<string, any>;
+  onAsk?: (text: string) => void;
+  onDecide?: (actionId: string, decision: "confirm" | "cancel") => void;
+  activeActionId?: string | null;
+}) {
   const initial = props.run ?? {};
   const { data } = useQuery<any>({
     queryKey: ["/api/astra/team-runs", initial.id],
@@ -52,8 +57,25 @@ export function TeamRun({ props, onAsk }: { props: Record<string, any>; onAsk?: 
             <div className="font-medium">Waiting for approval{run.pending.label ? `: ${run.pending.label}` : ""}</div>
             {run.pending.approvalId && (
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {/* Decided here through Astra's confirmation card; the approval page keeps the full evidence. */}
-                {onAsk && (
+                {/*
+                  Decide for real through the same pendingAction a message's own ConfirmCard uses
+                  (onDecide -> thread.decide -> resolveAction), not onAsk: that path only posts a
+                  freeform chat message asking Astra to approve, which can't resolve the gate by
+                  itself -- decide_approval is itself confirm-gated, so a bare onAsk click could
+                  only ever produce a second confirmation, never a decision. Fall back to onAsk
+                  only if the caller hasn't wired a real action id (keeps this renderer usable
+                  wherever else it might be mounted without that context).
+                */}
+                {onDecide && activeActionId ? (
+                  <>
+                    <Button size="sm" className="h-7 px-2 text-xs" onClick={() => onDecide(activeActionId, "confirm")} data-testid="astra-team-run-approve">
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => onDecide(activeActionId, "cancel")} data-testid="astra-team-run-reject">
+                      Reject
+                    </Button>
+                  </>
+                ) : onAsk && (
                   <>
                     <Button size="sm" className="h-7 px-2 text-xs" onClick={() => onAsk(gatePrompt("approve", run.pending.approvalId, run.pending.label ?? null))} data-testid="astra-team-run-approve">
                       Approve
