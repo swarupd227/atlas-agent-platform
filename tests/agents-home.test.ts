@@ -55,6 +55,15 @@ describe("the page", () => {
     expect(page).toContain("Counted from this agent's runs.");
   });
 
+  it("selecting one actually shows it", () => {
+    // The selection was held in the address, but the router reports the path only:
+    // changing ?selected= never re-rendered the page and the panel stayed empty.
+    expect(page).toContain("const [selectedId, setSelectedId] = useState<string | null>(");
+    expect(page).toContain("onClick={() => select(a.id)}");
+    expect(page).toContain("window.history.replaceState(null, \"\", `${window.location.pathname}?selected=${encodeURIComponent(id)}`)");
+    expect(page).not.toContain("navigate(`${location.split");
+  });
+
   it("keeps the full agent page as the way to configure one", () => {
     expect(page).toContain('href={`/agents/${agent.id}`}');
     expect(page).toContain("?selected=");

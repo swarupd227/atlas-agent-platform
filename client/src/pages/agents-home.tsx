@@ -14,7 +14,7 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { ArrowUpRight, Bot, Inbox, Network, PlayCircle, Search, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -95,15 +95,25 @@ function Stat({ label, value, hint, tone }: { label: string; value: number; hint
 }
 
 export default function AgentsHome() {
-  const [location, navigate] = useLocation();
   const [view, setView] = useState<RegistryView>(() => {
     const path = typeof window === "undefined" ? "" : window.location.pathname;
     return path.endsWith("/teams") ? "teams" : path.endsWith("/remote") ? "remote" : "agents";
   });
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
-  // ?selected=<id> keeps the full agent page on /agents/:id, where every link already points.
-  const selectedId = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("selected");
+  // The selection is state, not the address: the router reports the path only, so a
+  // change to ?selected= never re-rendered this page and the panel stayed empty.
+  // A ?selected=<id> link still opens on that agent, and picking one updates the
+  // address so the view can be shared, without a navigation.
+  const [selectedId, setSelectedId] = useState<string | null>(() => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("selected")));
+  const select = (id: string) => {
+    setSelectedId(id);
+    try {
+      window.history.replaceState(null, "", `${window.location.pathname}?selected=${encodeURIComponent(id)}`);
+    } catch {
+      /* the panel still opens without the address */
+    }
+  };
 
   // The list needs a name, a status and a few counts, not every agent's blueprint.
   const agentsQ = useQuery<Agent[]>({ queryKey: ["/api/agents?summary=1"] });
@@ -189,7 +199,7 @@ export default function AgentsHome() {
                   return (
                     <button
                       key={a.id}
-                      onClick={() => navigate(`${location.split("?")[0]}?selected=${a.id}`, { replace: true })}
+                      onClick={() => select(a.id)}
                       className={`flex w-full flex-col gap-1.5 p-3 text-left transition-colors hover:bg-muted/40 ${selectedId === a.id ? "border-l-2 border-l-primary bg-muted/60" : "border-l-2 border-l-transparent"}`}
                       data-testid={`agent-row-${a.id}`}
                     >

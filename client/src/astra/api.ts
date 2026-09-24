@@ -4,6 +4,7 @@ import { apiRequest, getApiHeaders } from "@/lib/queryClient";
 import { postSse, SseHttpError } from "@/lib/sse";
 import type { ArtifactRef, AstraEvent, AstraMessage, LiveStep, NeedsYou, ThreadStatus, ThreadSummary } from "./types";
 import type { Mentionable } from "./mention";
+import { keepWatching, nextDelayMs, watchOutcome } from "./watch-turn";
 
 const PREVIEW_OVERRIDE_KEY = "almp-astra-shell";
 
@@ -103,6 +104,32 @@ export function useThread(threadId: string | null, options: { industryId?: strin
   const onArtifact = useRef(options.onArtifact);
   onArtifact.current = options.onArtifact;
 
+  /**
+   * The stream dropped but the turn is still running: check back until it
+   * settles, then show what it produced. Stops when the conversation is
+   * opened elsewhere or the turn is abandoned (watch-turn.ts).
+   */
+  const watchUntilSettled = useCallback(async (id: string, controller: AbortController) => {
+    const startedAt = Date.now();
+    for (let attempt = 0; ; attempt++) {
+      await new Promise((r) => setTimeout(r, nextDelayMs(attempt)));
+      if (controller.signal.aborted || abortRef.current !== controller) return;
+      let thread: { status: string } | null = null;
+      try {
+        thread = (await getJson<{ thread: ThreadSummary }>(`/api/astra/threads/${id}`)).thread;
+      } catch {
+        // A check that fails is not an answer: try again while there is time.
+      }
+      const status = thread?.status ?? "running";
+      if (!keepWatching(status, Date.now() - startedAt)) {
+        const outcome = watchOutcome(status);
+        if (outcome.settled) await load(id, false);
+        setError(outcome.message);
+        return;
+      }
+    }
+  }, []);
+
   const load = useCallback(async (id: string, keepError = false) => {
     setLoading(true);
     try {
@@ -197,12 +224,19 @@ export function useThread(threadId: string | null, options: { industryId?: strin
           { id: `local-${Date.now()}`, threadId: id, role: "user", markdown: userText, artifacts: [], sources: [], suggestions: [], proof: null, pendingAction: null, createdAt: new Date().toISOString() },
         ]);
       }
+      let dropped = false;
       try {
         await postSse<AstraEvent>(url, { body, headers: getApiHeaders(), onEvent: handle, signal: controller.signal, idleMs: 90_000 });
       } catch (err) {
         if (controller.signal.aborted && abortRef.current !== controller) return;
         if (err instanceof SseHttpError) setError(err.status === 429 ? "Too many requests right now. Wait a moment and try again." : err.message);
-        else setError("The connection dropped. What was already done is saved; reload the conversation to see it.");
+        else {
+          // The turn keeps running on the server when the stream drops (a proxy
+          // timeout, a lost network). Watch for the answer instead of telling
+          // the person to reload.
+          dropped = true;
+          setError("The live updates stopped. The work is still running on the server — watching for the result.");
+        }
       } finally {
         if (abortRef.current === controller) {
           setStreaming(false);
@@ -210,6 +244,7 @@ export function useThread(threadId: string | null, options: { industryId?: strin
           freshRef.current = null;
           // Resync with what the server saved (the user message, the answer, the status).
           await load(id, true);
+          if (dropped) await watchUntilSettled(id, controller);
           queryClient.invalidateQueries({ queryKey: ["/api/astra/threads"] });
           // A turn may have decided something or created an outcome.
           queryClient.invalidateQueries({ queryKey: ["/api/astra/needs-you"] });

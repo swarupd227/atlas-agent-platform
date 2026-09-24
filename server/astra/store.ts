@@ -24,7 +24,13 @@ import { canAccessThread } from "./access";
 
 export { canAccessThread };
 
-const STALE_RUNNING_MINUTES = 10;
+/**
+ * A running turn is touched every 60s while a long tool works (engine.ts's
+ * keepAlive), so a claim older than this means the process that held it is
+ * gone -- a restart mid-turn -- and the conversation would otherwise refuse
+ * every message until the window passed.
+ */
+const STALE_RUNNING_MINUTES = 3;
 const DEFAULT_TITLE = "New conversation";
 
 export interface ThreadSummary {
