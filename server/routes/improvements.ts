@@ -46,6 +46,7 @@ import {
   executePromptWithMcp,
 } from "../agent-runtime";
 import OpenAI, { toFile } from "openai";
+import { createLazyClient } from "../lazy-client";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -57,12 +58,15 @@ import { proposeTeam } from "../team-proposal";
 import { buildClarifyPrompt, parseClarifyResponse, readClarifications, formatClarifications } from "../process-flow-clarify";
 import { openSse } from "../sse";
 
-const openai = new OpenAI({
+// Lazy: the OpenAI SDK throws synchronously if no apiKey resolves, which
+// would otherwise crash the whole server at boot on a self-host deployment
+// with no OpenAI key configured (see server/lazy-client.ts).
+const openai = createLazyClient(() => new OpenAI({
   // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
   // back to a direct OpenAI API key. baseURL undefined => api.openai.com.
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-});
+}));
 
 const router = Router();
 
@@ -924,7 +928,7 @@ Revenue:
         return res.status(400).json({ error: "The attached document could not be read. Re-upload it and try again." });
       }
 
-      const validTypes = ["trigger", "get_info", "ai_reasoning", "make_decision", "expert_approval", "take_action", "send_notification", "end"];
+      const validTypes = ["trigger", "get_info", "ai_reasoning", "make_decision", "parallel", "expert_approval", "take_action", "send_notification", "end"];
       const contextLine = outcomeContext ? `\nOutcome context: ${JSON.stringify(outcomeContext)}` : "";
 
       // Ask for a real graph (nodes + edges), not a flat step list. A flat
@@ -947,8 +951,11 @@ Rules:
 - Include ${sources ? "as many nodes as the document actually describes (up to 25) — do not compress a documented process to fit a smaller number, and do not pad it either" : "5-10 nodes total"}
 - Use "expert_approval" for any human sign-off steps, "ai_reasoning" for AI analysis, "make_decision" for branching points
 - If the description mentions a condition, threshold, or "if X then... otherwise..." -- model it literally: a "make_decision" node with TWO OR MORE outgoing edges, each with its own "label" and "condition" describing when that branch is taken. Do not collapse a branch into a single linear path.
-- Every non-branching node has exactly one outgoing edge to the next step
+- If the description says steps happen "in parallel", "at the same time", "independently", or "while X happens, Y also happens" -- that is NOT a decision (nothing is being chosen between). Model it literally: a "parallel" node with TWO OR MORE outgoing edges and no "condition" on any of them (every branch always runs), then route each branch into the same downstream node once they converge. Do not serialize parallel work into a chain just because it has to be written down in some order.
+- Every node has exactly one outgoing edge to the next step, UNLESS it is a "make_decision" node (each edge is a condition to choose between) or a "parallel" node (each edge is a branch that always runs) -- either may have multiple
 - Keep labels under 5 words and in plain business language
+
+Worked example of true parallelism (for shape only -- invent your own content from the description): a "parallel" node "p1" with edges p1->"check_access" and p1->"check_retention" (neither edge has a "condition"), and separately check_access->"merge" and check_retention->"merge" so both branches converge on the same next node.
 
 Respond ONLY with valid JSON, no markdown fences.`;
 
