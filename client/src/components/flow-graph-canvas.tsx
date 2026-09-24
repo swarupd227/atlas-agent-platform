@@ -539,13 +539,25 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
     const nodeIssues = issuesByNode[n.id];
     return nodeIssues?.length ? { ...n, data: { ...(n.data as RFData), _issue: nodeIssues[0].message } } : n;
   }), [nodes, issuesByNode]);
+  // A retry/loop edge whose target sits at or behind its source's column (laid
+  // out right-to-left) shares React Flow's default bezier curvature with every
+  // forward edge, so its midpoint -- where its label lands -- routinely fell on
+  // top of a nearby forward edge's own label (confirmed live: two labels
+  // stacked at the same point, only fragments of each readable). A much wider
+  // curvature bows the loop further out, away from the forward edges' band.
+  const nodeX = useMemo(() => new Map(nodes.map(n => [n.id, n.position.x])), [nodes]);
   const displayEdges = useMemo(() => edges.map(e => {
     const edgeIssues = issuesByEdge[e.id];
-    const base = { ...e, ...EDGE_LABEL_PROPS, style: { ...(e.style || {}), ...(e.id === selectedEdgeId ? EDGE_SELECTED_STYLE : EDGE_STYLE) } };
+    const isBackEdge = (nodeX.get(e.target) ?? 0) <= (nodeX.get(e.source) ?? 0);
+    const base = {
+      ...e, ...EDGE_LABEL_PROPS,
+      style: { ...(e.style || {}), ...(e.id === selectedEdgeId ? EDGE_SELECTED_STYLE : EDGE_STYLE) },
+      ...(isBackEdge ? { pathOptions: { curvature: 1.1 } } : {}),
+    };
     return edgeIssues?.length
       ? { ...base, style: { ...base.style, stroke: "#f59e0b", strokeWidth: 2.5 }, label: e.label || "no condition" }
       : base;
-  }), [edges, issuesByEdge, selectedEdgeId]);
+  }), [edges, issuesByEdge, selectedEdgeId, nodeX]);
 
   const canUndo = pastRef.current.length > 0;
   const canRedo = futureRef.current.length > 0;

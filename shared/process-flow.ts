@@ -201,8 +201,15 @@ export function layoutGraph(
   edges: ProcessEdge[],
   opts: { colWidth?: number; rowHeight?: number } = {},
 ): ProcessNode[] {
-  const COL = opts.colWidth ?? 280;
-  const ROW = opts.rowHeight ?? 120;
+  // Node boxes render at a fixed 176px wide (flow-graph-canvas.tsx's w-44), so
+  // the previous 280px column width left only ~104px between adjacent columns
+  // -- not enough room for even a short edge-condition label's background chip
+  // once zoomed in, so labels routinely overlapped both the node they left and
+  // the one they entered. 380 leaves ~200px, confirmed live to clear a normal
+  // 2-4 word label; rows widened to match so parallel branches get the same
+  // breathing room vertically.
+  const COL = opts.colWidth ?? 380;
+  const ROW = opts.rowHeight ?? 150;
   if (nodes.length === 0) return nodes;
 
   const ids = new Set(nodes.map(n => n.id));
