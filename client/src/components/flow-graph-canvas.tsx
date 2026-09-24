@@ -47,7 +47,12 @@ const NODE_META: Record<ProcessNodeType, NodeMeta> = {
 
 // Connections: darker and thicker than React Flow's default hairline, labels on an opaque chip so "Approved" /
 // "Rejected" stay readable where lines cross. Render-only; never written to the saved flow.
-const EDGE_STYLE = { stroke: "hsl(var(--foreground) / 0.55)", strokeWidth: 2 };
+// "Hot" (selected, or touching the selected node) edges draw full-strength; everything else
+// recedes -- matches team-graph-canvas.tsx's blueprint editor, whose all-labels-dimmed-except-the-
+// selected-one approach reads far cleaner than showing every condition text at once (see EDGE_LABEL
+// visibility below).
+const EDGE_STYLE = { stroke: "hsl(var(--foreground) / 0.55)", strokeWidth: 1.4 };
+const EDGE_HOT_STYLE = { stroke: "hsl(var(--foreground))", strokeWidth: 2 };
 const EDGE_SELECTED_STYLE = { stroke: "hsl(var(--primary))", strokeWidth: 2.5 };
 const EDGE_LABEL_PROPS = {
   labelStyle: { fontSize: 11, fontWeight: 600, fill: "hsl(var(--foreground))" },
@@ -546,18 +551,33 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
   // stacked at the same point, only fragments of each readable). A much wider
   // curvature bows the loop further out, away from the forward edges' band.
   const nodeX = useMemo(() => new Map(nodes.map(n => [n.id, n.position.x])), [nodes]);
+  // Labels stay visible at rest (the flow needs to read at a glance -- that's the whole point of a
+  // decision's Yes/No), but once something IS selected, only that edge (or edges touching the
+  // selected node) keeps its label; every other label hides and its line recedes. That's the actual
+  // fix for the "always cluttered" feeling: at rest a well-spaced flow with a handful of labels
+  // reads fine, but the moment you're focused on one branch, every OTHER label competing for the
+  // same narrow bands between columns is pure noise -- matches team-graph-canvas.tsx's blueprint
+  // editor's declutter-on-selection behavior, minus its harsher hidden-until-selected default.
   const displayEdges = useMemo(() => edges.map(e => {
     const edgeIssues = issuesByEdge[e.id];
     const isBackEdge = (nodeX.get(e.target) ?? 0) <= (nodeX.get(e.source) ?? 0);
+    const nothingSelected = !selectedNodeId && !selectedEdgeId;
+    const hot = e.id === selectedEdgeId || e.source === selectedNodeId || e.target === selectedNodeId;
     const base = {
       ...e, ...EDGE_LABEL_PROPS,
-      style: { ...(e.style || {}), ...(e.id === selectedEdgeId ? EDGE_SELECTED_STYLE : EDGE_STYLE) },
+      label: hot || nothingSelected ? e.label : undefined,
+      style: {
+        ...(e.style || {}),
+        ...(e.id === selectedEdgeId ? EDGE_SELECTED_STYLE : hot ? EDGE_HOT_STYLE : EDGE_STYLE),
+        opacity: hot || nothingSelected ? 1 : 0.45,
+      },
       ...(isBackEdge ? { pathOptions: { curvature: 1.1 } } : {}),
     };
+    // A compiler-flagged issue is worth seeing regardless of selection -- it's not decoration.
     return edgeIssues?.length
-      ? { ...base, style: { ...base.style, stroke: "#f59e0b", strokeWidth: 2.5 }, label: e.label || "no condition" }
+      ? { ...base, label: e.label || "no condition", style: { ...base.style, stroke: "#f59e0b", strokeWidth: 2.5, opacity: 1 } }
       : base;
-  }), [edges, issuesByEdge, selectedEdgeId, nodeX]);
+  }), [edges, issuesByEdge, selectedEdgeId, selectedNodeId, nodeX]);
 
   const canUndo = pastRef.current.length > 0;
   const canRedo = futureRef.current.length > 0;
