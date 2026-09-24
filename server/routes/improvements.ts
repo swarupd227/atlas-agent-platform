@@ -46,7 +46,6 @@ import {
   executePromptWithMcp,
 } from "../agent-runtime";
 import OpenAI, { toFile } from "openai";
-import { createLazyClient } from "../lazy-client";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -58,15 +57,12 @@ import { proposeTeam } from "../team-proposal";
 import { buildClarifyPrompt, parseClarifyResponse, readClarifications, formatClarifications } from "../process-flow-clarify";
 import { openSse } from "../sse";
 
-// Lazy: the OpenAI SDK throws synchronously if no apiKey resolves, which
-// would otherwise crash the whole server at boot on a self-host deployment
-// with no OpenAI key configured (see server/lazy-client.ts).
-const openai = createLazyClient(() => new OpenAI({
+const openai = new OpenAI({
   // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
   // back to a direct OpenAI API key. baseURL undefined => api.openai.com.
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-}));
+});
 
 const router = Router();
 
