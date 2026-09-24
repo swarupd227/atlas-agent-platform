@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Loader2, Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { applyMention, duplicateNames, findMentionQuery, isCompletedMention, rankMentionables, type Mentionable } from "./mention";
 import { applyCommand, fillArg, findSlashQuery, rankCommands, resolveSlash, type SlashCommand } from "./slash";
+import { useVoiceInput } from "./use-voice-input";
+import { insertSpoken, micLabel } from "./voice";
 import type { PermissionAction } from "@/components/role-provider";
 
 /** Something waiting on the person, for /approve and /reject to pick from. */
@@ -49,6 +51,20 @@ export function Composer({
   const [slashError, setSlashError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const pendingCaret = useRef<number | null>(null);
+  // Dictation arrives in bursts, several chunks before React re-renders, so
+  // where the words go is read from a ref rather than from `caret` state.
+  const caretRef = useRef(0);
+  caretRef.current = caret;
+
+  /** Spoken words land in the box at the caret. They are never sent. */
+  const voice = useVoiceInput({
+    onText: (spoken) =>
+      setText((current) => {
+        const next = insertSpoken(current, pendingCaret.current ?? caretRef.current, spoken);
+        pendingCaret.current = next.caret;
+        return next.text;
+      }),
+  });
 
   useEffect(() => {
     const el = ref.current;
@@ -142,6 +158,9 @@ export function Composer({
   const submit = () => {
     const t = text.trim();
     if (!t || disabled) return;
+    // Sending ends the dictation: nobody expects the mic to stay live after
+    // the message has gone.
+    voice.stop();
     if (t.startsWith("/")) {
       const result = resolveSlash(t);
       if (result.action === "go") {
@@ -182,6 +201,20 @@ export function Composer({
       {slashError && (
         <p className="absolute bottom-full left-0 mb-1 rounded bg-[hsl(var(--astra-fail)/0.12)] px-2 py-1 text-xs text-[hsl(var(--astra-fail))]" role="alert" data-testid="astra-slash-error">
           {slashError}
+        </p>
+      )}
+      {!slashError && (voice.error || voice.state !== "idle") && (
+        <p
+          className={`absolute bottom-full left-0 mb-1 max-w-full truncate rounded px-2 py-1 text-xs ${voice.error ? "bg-[hsl(var(--astra-fail)/0.12)] text-[hsl(var(--astra-fail))]" : "bg-muted text-muted-foreground"}`}
+          role="status"
+          data-testid="astra-voice-status"
+        >
+          {voice.error
+            ? voice.error
+            : voice.state === "transcribing"
+              ? "Transcribing what you said…"
+              : `Listening. ${voice.note}`}
+          {voice.interim && <span className="italic"> {voice.interim}</span>}
         </p>
       )}
       {slashMenu && (
@@ -330,6 +363,28 @@ export function Composer({
         className="max-h-[200px] min-h-[36px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
         data-testid="astra-composer"
       />
+      {voice.mode !== "off" && (
+        <Button
+          type="button"
+          size="icon"
+          variant={voice.state === "listening" ? "default" : "ghost"}
+          className="h-8 w-8 shrink-0"
+          onClick={voice.toggle}
+          disabled={disabled || voice.state === "transcribing"}
+          aria-label={micLabel(voice.state)}
+          aria-pressed={voice.state === "listening"}
+          title={voice.note}
+          data-testid="astra-mic"
+        >
+          {voice.state === "transcribing" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : voice.state === "listening" ? (
+            <Square className="h-3.5 w-3.5 fill-current" />
+          ) : (
+            <Mic className="h-4 w-4" />
+          )}
+        </Button>
+      )}
       <Button type="submit" size="icon" className="h-8 w-8 shrink-0" disabled={disabled || !text.trim()} aria-label="Send">
         <ArrowUp className="h-4 w-4" />
       </Button>

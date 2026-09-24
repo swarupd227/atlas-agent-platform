@@ -31,6 +31,7 @@ import journeysRouter from "./routes/journeys";
 import goldenEvalRouter from "./routes/golden-eval";
 import governanceRouter from "./routes/governance";
 import improvementsRouter from "./routes/improvements";
+import voiceRouter from "./routes/voice";
 import runtimeRouter from "./routes/runtime";
 import playgroundRouter from "./routes/playground";
 import aarRouter, { backfillAarConfigs } from "./routes/aar";
@@ -428,6 +429,8 @@ export async function registerRoutes(
   app.use(goldenEvalRouter);
   app.use(governanceRouter);    // includes billingRouter + governance domain routes
   app.use(improvementsRouter);
+  // Dictation for the Cowork composer; mounted after the /api/ai budget above.
+  app.use(voiceRouter);
   app.use(runtimeRouter);
   app.use(workspaceRouter);
   // Astra Workspace (behind the ASTRA_WORKSPACE_ENABLED setting) -- docs/ux/agentic-modernization.md
