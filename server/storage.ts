@@ -252,6 +252,8 @@ export interface IStorage {
   getKpis(): Promise<KpiDefinition[]>;
   getKpi(id: string): Promise<KpiDefinition | undefined>;
   getKpisByOutcome(outcomeId: string): Promise<KpiDefinition[]>;
+  /** Every KPI of these outcomes, in one query (the list route read every organization's). */
+  getKpisByOutcomeIds(outcomeIds: string[]): Promise<KpiDefinition[]>;
   createKpi(kpi: InsertKpiDefinition): Promise<KpiDefinition>;
   updateKpi(id: string, data: Partial<KpiDefinition>): Promise<KpiDefinition | undefined>;
   deleteKpi(id: string): Promise<boolean>;
@@ -1249,6 +1251,11 @@ export class DatabaseStorage implements IStorage {
   async getKpi(id: string) {
     const [kpi] = await db.select().from(kpiDefinitions).where(eq(kpiDefinitions.id, id));
     return kpi;
+  }
+
+  async getKpisByOutcomeIds(outcomeIds: string[]) {
+    if (outcomeIds.length === 0) return [];
+    return db.select().from(kpiDefinitions).where(inArray(kpiDefinitions.outcomeId, outcomeIds));
   }
 
   async getKpisByOutcome(outcomeId: string) {

@@ -58,64 +58,10 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { isTestFixtureName } from "@/lib/test-data-filter";
 import type { OutcomeContract, KpiDefinition, Invoice, Agent } from "@shared/schema";
 
-function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
-  const nameLower = kpiName.toLowerCase();
-  const universalBenchmarks: Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }> = [
-    { keywords: ["autonomous resolution", "resolution rate", "resolutions"], data: { benchmark: 85, unit: "percent", source: "Industry avg (Gartner 2024)" } },
-    { keywords: ["customer satisfaction", "csat", "satisfaction"], data: { benchmark: 78, unit: "score", source: "Industry avg (ACSI)" } },
-    { keywords: ["response time", "avg response", "latency"], data: { benchmark: 120, unit: "seconds", source: "Industry avg (McKinsey)" } },
-    { keywords: ["conversion rate", "conversion"], data: { benchmark: 3.5, unit: "percent", source: "Industry avg (Monetate)" } },
-    { keywords: ["extraction accuracy", "accuracy"], data: { benchmark: 95, unit: "percent", source: "Industry benchmark" } },
-    { keywords: ["leads qualified", "lead qualification"], data: { benchmark: 250, unit: "count", source: "Industry avg (HubSpot)" } },
-    { keywords: ["items moderated", "moderation", "content moderation"], data: { benchmark: 10000, unit: "count", source: "Industry avg (Trust & Safety)" } },
-    { keywords: ["invoices processed", "invoice processing"], data: { benchmark: 500, unit: "count", source: "Industry avg (Ardent Partners)" } },
-    { keywords: ["processing time"], data: { benchmark: 120, unit: "seconds", source: "Industry avg (McKinsey)" } },
-    { keywords: ["compliance score"], data: { benchmark: 92, unit: "percent", source: "Regulatory benchmark" } },
-    { keywords: ["fraud detection"], data: { benchmark: 78, unit: "percent", source: "Industry avg (Nilson Report)" } },
-  ];
-
-  const industryOverrides: Record<string, Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }>> = {
-    financial_services: [
-      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 82, unit: "percent", source: "FinServ avg (Gartner 2024)" } },
-      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 76, unit: "score", source: "J.D. Power Banking" } },
-      { keywords: ["response time", "avg response"], data: { benchmark: 90, unit: "seconds", source: "FCA benchmark" } },
-      { keywords: ["compliance score"], data: { benchmark: 94, unit: "percent", source: "SOX/Basel III standard" } },
-    ],
-    healthcare: [
-      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 88, unit: "percent", source: "HEDIS measure" } },
-      { keywords: ["customer satisfaction", "patient satisfaction", "satisfaction"], data: { benchmark: 82, unit: "score", source: "CAHPS benchmark" } },
-      { keywords: ["response time", "avg response"], data: { benchmark: 180, unit: "seconds", source: "CMS guideline" } },
-      { keywords: ["accuracy", "extraction accuracy"], data: { benchmark: 97, unit: "percent", source: "FDA AI/ML guidance" } },
-    ],
-    insurance: [
-      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 90, unit: "percent", source: "ACORD benchmark" } },
-      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 80, unit: "score", source: "J.D. Power Insurance" } },
-      { keywords: ["invoices processed", "claims"], data: { benchmark: 400, unit: "count", source: "Industry avg (Novarica)" } },
-    ],
-    manufacturing: [
-      { keywords: ["accuracy", "extraction accuracy"], data: { benchmark: 99, unit: "percent", source: "ISO 9001 standard" } },
-      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 75, unit: "score", source: "IndustryWeek avg" } },
-    ],
-    retail: [
-      { keywords: ["conversion rate", "conversion"], data: { benchmark: 3.2, unit: "percent", source: "Industry avg (Monetate)" } },
-      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 80, unit: "score", source: "ACSI Retail" } },
-      { keywords: ["items moderated", "moderation"], data: { benchmark: 15000, unit: "count", source: "Trust & Safety avg" } },
-    ],
-  };
-
-  const overrides = industryOverrides[industry] || [];
-  for (const entry of overrides) {
-    if (entry.keywords.some(kw => nameLower.includes(kw))) {
-      return { ...entry.data, comparison: "" };
-    }
-  }
-  for (const entry of universalBenchmarks) {
-    if (entry.keywords.some(kw => nameLower.includes(kw))) {
-      return { ...entry.data, comparison: "" };
-    }
-  }
-  return null;
-}
+// Industry benchmarks were a hardcoded table attributed to Gartner, ACSI,
+// McKinsey and others, with no source behind the numbers, and each KPI was
+// judged "above avg" or "below avg" against them. Nothing measured that, so
+// the comparison is gone rather than relabelled.
 
 
 function SlaTrafficLight({ outcome, kpis, agents }: { outcome: OutcomeContract; kpis: KpiDefinition[]; agents: Agent[] }) {
@@ -136,16 +82,9 @@ function SlaTrafficLight({ outcome, kpis, agents }: { outcome: OutcomeContract; 
       status: avgSuccess >= sla.minSuccessRate ? "green" : avgSuccess >= sla.minSuccessRate * 0.95 ? "yellow" : "red",
     });
   }
-  if (sla.uptimePercent) {
-    const avgHealth = boundAgents.length > 0
-      ? boundAgents.reduce((sum, a) => sum + (a.healthScore || 0), 0) / boundAgents.length
-      : 99;
-    const derivedUptime = Math.min(100, avgHealth * 1.1);
-    checks.push({
-      label: "Uptime",
-      status: derivedUptime >= sla.uptimePercent ? "green" : derivedUptime >= sla.uptimePercent * 0.995 ? "yellow" : "red",
-    });
-  }
+  // Uptime was the agents' seeded health score times 1.1, defaulting to 99 when
+  // no agent was bound, and Policy Compliance was hardcoded green with no check
+  // behind it. Nothing measures either, so neither is shown.
   if (sla.maxP95LatencyMs) {
     const avgLatency = boundAgents.length > 0
       ? boundAgents.reduce((sum, a) => sum + (a.avgLatencyMs || 0), 0) / boundAgents.length
@@ -153,12 +92,6 @@ function SlaTrafficLight({ outcome, kpis, agents }: { outcome: OutcomeContract; 
     checks.push({
       label: "P95 Latency",
       status: avgLatency <= sla.maxP95LatencyMs ? "green" : avgLatency <= sla.maxP95LatencyMs * 1.2 ? "yellow" : "red",
-    });
-  }
-  if (sla.maxPolicyViolationRate !== undefined) {
-    checks.push({
-      label: "Policy Compliance",
-      status: "green",
     });
   }
 
@@ -413,7 +346,11 @@ export default function Outcomes() {
       // No KPIs recorded yet — show as awaiting data rather than an optimistic
       // "on-track" that would contradict the 0% shown next to it (UX audit F-1).
       if (outcomeKpis.length === 0) return "awaiting-data";
-      const avgPct = outcomeKpis.reduce((s, k) => s + (k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 100), 0) / outcomeKpis.length;
+      // Only KPIs with a target can say how far along something is. Counting a
+      // targetless one as 100% made every outcome look nearly done.
+      const measurable = outcomeKpis.filter((k) => k.target > 0);
+      if (measurable.length === 0) return "awaiting-data";
+      const avgPct = measurable.reduce((s, k) => s + Math.min(100, ((k.currentValue || 0) / k.target) * 100), 0) / measurable.length;
       return avgPct >= 75 ? "on-track" : "at-risk";
     }
 
@@ -982,17 +919,6 @@ export default function Outcomes() {
                               </TooltipTrigger>
                               <TooltipContent side="top">{kpi.name}</TooltipContent>
                             </Tooltip>
-                            {(() => {
-                              const bm = getIndustryBenchmark(industryId, kpi.name, kpi.unit);
-                              if (!bm) return null;
-                              const isInverse = kpi.name.includes("Time") || kpi.name.includes("Latency");
-                              const isBetter = isInverse ? (kpi.currentValue || 0) < bm.benchmark : (kpi.currentValue || 0) > bm.benchmark;
-                              return (
-                                <span className={`text-xs shrink-0 ${isBetter ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`benchmark-indicator-${kpi.id}`}>
-                                  {isBetter ? "above" : "below"} avg
-                                </span>
-                              );
-                            })()}
                             <span className="text-xs tabular-nums shrink-0">
                               {(kpi.currentValue || 0).toLocaleString()}/{kpi.target.toLocaleString()}
                             </span>

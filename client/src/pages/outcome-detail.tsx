@@ -122,64 +122,10 @@ import { normalizeToGraph, flattenGraphToSteps, PROCESS_FLOW_VERSION } from "@sh
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 import { AgentPlanGraph } from "@/components/agent-plan-graph";
 
-function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
-  const nameLower = kpiName.toLowerCase();
-  const universalBenchmarks: Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }> = [
-    { keywords: ["autonomous resolution", "resolution rate", "resolutions"], data: { benchmark: 85, unit: "percent", source: "Industry avg (Gartner 2024)" } },
-    { keywords: ["customer satisfaction", "csat", "satisfaction"], data: { benchmark: 78, unit: "score", source: "Industry avg (ACSI)" } },
-    { keywords: ["response time", "avg response", "latency"], data: { benchmark: 120, unit: "seconds", source: "Industry avg (McKinsey)" } },
-    { keywords: ["conversion rate", "conversion"], data: { benchmark: 3.5, unit: "percent", source: "Industry avg (Monetate)" } },
-    { keywords: ["extraction accuracy", "accuracy"], data: { benchmark: 95, unit: "percent", source: "Industry benchmark" } },
-    { keywords: ["leads qualified", "lead qualification"], data: { benchmark: 250, unit: "count", source: "Industry avg (HubSpot)" } },
-    { keywords: ["items moderated", "moderation", "content moderation"], data: { benchmark: 10000, unit: "count", source: "Industry avg (Trust & Safety)" } },
-    { keywords: ["invoices processed", "invoice processing"], data: { benchmark: 500, unit: "count", source: "Industry avg (Ardent Partners)" } },
-    { keywords: ["processing time"], data: { benchmark: 120, unit: "seconds", source: "Industry avg (McKinsey)" } },
-    { keywords: ["compliance score"], data: { benchmark: 92, unit: "percent", source: "Regulatory benchmark" } },
-    { keywords: ["fraud detection"], data: { benchmark: 78, unit: "percent", source: "Industry avg (Nilson Report)" } },
-  ];
-
-  const industryOverrides: Record<string, Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }>> = {
-    financial_services: [
-      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 82, unit: "percent", source: "FinServ avg (Gartner 2024)" } },
-      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 76, unit: "score", source: "J.D. Power Banking" } },
-      { keywords: ["response time", "avg response"], data: { benchmark: 90, unit: "seconds", source: "FCA benchmark" } },
-      { keywords: ["compliance score"], data: { benchmark: 94, unit: "percent", source: "SOX/Basel III standard" } },
-    ],
-    healthcare: [
-      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 88, unit: "percent", source: "HEDIS measure" } },
-      { keywords: ["customer satisfaction", "patient satisfaction", "satisfaction"], data: { benchmark: 82, unit: "score", source: "CAHPS benchmark" } },
-      { keywords: ["response time", "avg response"], data: { benchmark: 180, unit: "seconds", source: "CMS guideline" } },
-      { keywords: ["accuracy", "extraction accuracy"], data: { benchmark: 97, unit: "percent", source: "FDA AI/ML guidance" } },
-    ],
-    insurance: [
-      { keywords: ["autonomous resolution", "resolutions"], data: { benchmark: 90, unit: "percent", source: "ACORD benchmark" } },
-      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 80, unit: "score", source: "J.D. Power Insurance" } },
-      { keywords: ["invoices processed", "claims"], data: { benchmark: 400, unit: "count", source: "Industry avg (Novarica)" } },
-    ],
-    manufacturing: [
-      { keywords: ["accuracy", "extraction accuracy"], data: { benchmark: 99, unit: "percent", source: "ISO 9001 standard" } },
-      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 75, unit: "score", source: "IndustryWeek avg" } },
-    ],
-    retail: [
-      { keywords: ["conversion rate", "conversion"], data: { benchmark: 3.2, unit: "percent", source: "Industry avg (Monetate)" } },
-      { keywords: ["customer satisfaction", "satisfaction"], data: { benchmark: 80, unit: "score", source: "ACSI Retail" } },
-      { keywords: ["items moderated", "moderation"], data: { benchmark: 15000, unit: "count", source: "Trust & Safety avg" } },
-    ],
-  };
-
-  const overrides = industryOverrides[industry] || [];
-  for (const entry of overrides) {
-    if (entry.keywords.some(kw => nameLower.includes(kw))) {
-      return { ...entry.data, comparison: "" };
-    }
-  }
-  for (const entry of universalBenchmarks) {
-    if (entry.keywords.some(kw => nameLower.includes(kw))) {
-      return { ...entry.data, comparison: "" };
-    }
-  }
-  return null;
-}
+// Industry benchmarks were a hardcoded table attributed to Gartner, ACSI,
+// McKinsey and others, with no source behind the numbers, and each KPI was
+// judged "above avg" or "below avg" against them. Nothing measured that, so
+// the comparison is gone rather than relabelled.
 
 function Sparkline({
   points,
@@ -189,15 +135,17 @@ function Sparkline({
   height = 32,
   className,
 }: {
-  points: Array<{ date: string; value: number }>;
+  /** A day with no runs has no value; it is left out of the line rather than drawn as zero. */
+  points: Array<{ date: string; value: number | null }>;
   target?: number;
   slaThreshold?: number | null;
   width?: number;
   height?: number;
   className?: string;
 }) {
-  if (!points || points.length < 2) return null;
-  const values = points.map((p) => p.value);
+  const measured = (points ?? []).filter((p): p is { date: string; value: number } => p.value !== null);
+  if (measured.length < 2) return null;
+  const values = measured.map((p) => p.value);
   const allVals = [...values];
   if (target != null) allVals.push(target);
   if (slaThreshold != null) allVals.push(slaThreshold);
@@ -208,8 +156,8 @@ function Sparkline({
   const w = width - pad * 2;
   const h = height - pad * 2;
 
-  const pathPoints = points.map((p, i) => {
-    const x = pad + (i / (points.length - 1)) * w;
+  const pathPoints = measured.map((p, i) => {
+    const x = pad + (i / (measured.length - 1)) * w;
     const y = pad + h - ((p.value - min) / range) * h;
     return `${x},${y}`;
   });
@@ -519,7 +467,9 @@ export default function OutcomeDetail() {
       unit: string;
       target: number;
       baseline: number;
-      points: Array<{ date: string; value: number }>;
+      measuredDays?: number;
+      basis?: string;
+      points: Array<{ date: string; value: number | null }>;
     }>;
     correlatedMetrics: {
       successRate: number;
@@ -676,23 +626,23 @@ export default function OutcomeDetail() {
       agentName: string;
       agentType: string;
       status: string;
-      valueShare: number;
-      deliveredValue: number;
-      costToServe: number;
-      healthScore: number;
-      successRate: number;
-      avgLatency: number;
+      /** Share of the runs done for this outcome. Not a share of its value. */
+      runShare: number;
+      costUsd: number;
+      /** Null when the agent hasn't run: there is nothing to rate. */
+      successRate: number | null;
+      avgLatency: number | null;
       totalRuns: number;
       failedRuns: number;
-      capabilities: Array<{ name: string; contribution: number }>;
-      isUnderperforming: boolean;
     }>;
     summary: {
       totalAgents: number;
-      totalRevenue: number;
-      underperformingCount: number;
-      avgHealthScore: number;
+      totalRuns: number;
+      billableEvents: number;
+      invoicedValue: number;
+      agentsWithNoRuns: number;
     };
+    basis: string;
   }>({
     queryKey: ["/api/outcomes", outcomeId, "agent-contributions"],
     enabled: !!outcomeId,
@@ -1000,7 +950,6 @@ export default function OutcomeDetail() {
           baseline: k.baseline,
           trend: k.trend,
           confidence: k.confidence,
-          benchmark: getIndustryBenchmark(industry?.id || "", k.name, k.unit),
         })),
         agents: boundAgents.map(a => ({
           name: a.name,
@@ -1478,10 +1427,10 @@ export default function OutcomeDetail() {
             subtitle={boundAgents.length === 0 ? "Assign agents via Create Agent" : (() => {
               const driftingCount = killChainAlerts?.alerts ? new Set(killChainAlerts.alerts.map(a => a.agentId)).size : 0;
               if (driftingCount > 0) return `${driftingCount} drifting`;
-              if (agentContributions?.summary?.underperformingCount) return `${agentContributions.summary.underperformingCount} underperforming`;
-              return "All healthy";
+              if (agentContributions?.summary?.agentsWithNoRuns) return `${agentContributions.summary.agentsWithNoRuns} never run`;
+              return `${agentContributions?.summary?.totalRuns ?? 0} runs`;
             })()}
-            variant={boundAgents.length === 0 ? "default" : (killChainAlerts?.summary?.critical || 0) > 0 ? "danger" : (killChainAlerts?.summary?.warning || 0) > 0 ? "warning" : agentContributions?.summary?.underperformingCount ? "warning" : "success"}
+            variant={boundAgents.length === 0 ? "default" : (killChainAlerts?.summary?.critical || 0) > 0 ? "danger" : (killChainAlerts?.summary?.warning || 0) > 0 ? "warning" : agentContributions?.summary?.agentsWithNoRuns ? "warning" : "success"}
             testId="stat-bound-agents"
             tooltip="Agents assigned to deliver this outcome. Use the Agent Development Plan to create a team."
           />
@@ -1890,15 +1839,14 @@ export default function OutcomeDetail() {
                                 {agent.totalRuns > 0 && ` · ${agent.totalRuns.toLocaleString()} runs`}
                               </span>
                             </div>
-                            {agent.isUnderperforming && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 shrink-0">Needs attention</span>
+                            {agent.failedRuns > 0 && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 shrink-0">{agent.failedRuns} failed</span>
                             )}
                           </div>
+                          {/* Its share of the runs done here, counted. The bar used to be a
+                              health score built from magic constants. */}
                           <div className="h-1 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className={`h-1 rounded-full transition-all ${agent.healthScore >= 80 ? "bg-emerald-500" : agent.healthScore >= 60 ? "bg-amber-500" : "bg-red-500"}`}
-                              style={{ width: `${agent.healthScore}%` }}
-                            />
+                            <div className="h-1 rounded-full bg-primary transition-all" style={{ width: `${agent.runShare}%` }} />
                           </div>
                         </div>
                       );
@@ -2256,13 +2204,10 @@ export default function OutcomeDetail() {
               const kpiTs = evidence?.kpiTimeSeries?.find(ts => ts.kpiId === kpi.id);
               const contributingAgents = agentContributions?.contributions?.slice(0, 3) || [];
 
-              const lastPt = kpiTs?.points?.[kpiTs.points.length - 1];
-              const firstPt = kpiTs?.points?.[0];
-              const currentVal = kpi.currentValue || 0;
-              const projectedDailyRate = kpiTs && kpiTs.points.length >= 2
-                ? (lastPt!.value - firstPt!.value) / (kpiTs.points.length - 1)
-                : 0;
-              const projected30d = currentVal + projectedDailyRate * 30;
+              // No projection: it extrapolated a line the chart had itself drawn
+              // between baseline and current value, then coloured the result
+              // green or amber as if it were a forecast.
+              const measuredDays = kpiTs?.measuredDays ?? 0;
 
               return (
                 <Card key={kpi.id} data-testid={`card-kpi-${kpi.id}`}>
@@ -2303,30 +2248,11 @@ export default function OutcomeDetail() {
                                 <span className="text-sm font-medium" data-testid={`text-sla-${kpi.id}`}>{kpi.slaThreshold ?? "N/A"}</span>
                               </div>
                               <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">30d Projected</span>
-                                <span className={`text-sm font-medium ${(isInverse ? projected30d <= (kpi.target || 0) : projected30d >= (kpi.target || 0)) ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid={`text-projected-${kpi.id}`}>
-                                  {projected30d.toFixed(1)} {kpi.unit}
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Days with runs</span>
+                                <span className="text-sm font-medium" data-testid={`text-measured-days-${kpi.id}`}>
+                                  {measuredDays} of 7
                                 </span>
                               </div>
-                              {(() => {
-                                const bm = getIndustryBenchmark(industry?.id || "", kpi.name, kpi.unit);
-                                if (!bm) return null;
-                                const currentVal = kpi.currentValue || 0;
-                                const isInverse = (kpi.targetOperator === "<" || kpi.targetOperator === "<=");
-                                const isBetter = isInverse ? currentVal < bm.benchmark : currentVal > bm.benchmark;
-                                return (
-                                  <div className="flex flex-col gap-0.5">
-                                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Illustrative Benchmark</span>
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-sm font-medium" data-testid={`text-benchmark-${kpi.id}`}>{bm.benchmark} {bm.unit}</span>
-                                      <Badge variant="outline" className={`text-[9px] ${isBetter ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
-                                        {isBetter ? "Above avg" : "Below avg"}
-                                      </Badge>
-                                    </div>
-                                    <span className="text-[9px] text-muted-foreground italic">Illustrative reference only — not live data</span>
-                                  </div>
-                                );
-                              })()}
                             </div>
                           </div>
                         </div>
@@ -2404,9 +2330,12 @@ export default function OutcomeDetail() {
                             />
                             <span className="text-[10px] text-muted-foreground">
                               {(() => {
-                                const last = kpiTs.points[kpiTs.points.length - 1];
-                                const first = kpiTs.points[0];
-                                return last.value > first.value ? "Trending up" : last.value < first.value ? "Trending down" : "Stable";
+                                // Only days that actually had runs say anything about a trend.
+                                const withRuns = kpiTs.points.filter((p) => p.value !== null);
+                                if (withRuns.length < 2) return "Not enough days with runs";
+                                const last = withRuns[withRuns.length - 1].value!;
+                                const first = withRuns[0].value!;
+                                return last > first ? "Trending up" : last < first ? "Trending down" : "Stable";
                               })()}
                             </span>
                           </div>
@@ -2429,7 +2358,7 @@ export default function OutcomeDetail() {
                             <Link key={agent.agentId} href={`/agents/${agent.agentId}`}>
                               <Badge variant="outline" className="text-[10px] cursor-pointer" data-testid={`badge-contributing-agent-${agent.agentId}`}>
                                 <Bot className="w-3 h-3 mr-1" />
-                                {agent.agentName} ({agent.valueShare}%)
+                                {agent.agentName} ({agent.runShare}% of runs)
                               </Badge>
                             </Link>
                           ))}
@@ -2583,32 +2512,31 @@ export default function OutcomeDetail() {
                   tooltip="Total number of agents contributing to this outcome"
                 />
                 <StatCard
-                  title="Total Revenue"
-                  value={`$${agentContributions.summary.totalRevenue.toLocaleString()}`}
+                  title="Invoiced"
+                  value={`$${agentContributions.summary.invoicedValue.toLocaleString()}`}
                   icon={DollarSign}
                   testId="stat-contribution-total-revenue"
-                  tooltip="Combined revenue generated by all contributing agents"
+                  tooltip={`${agentContributions.summary.billableEvents} billable events at this outcome's price per unit. It is not attributed to individual agents.`}
                 />
                 <StatCard
-                  title="Avg Health Score"
-                  value={agentContributions.summary.avgHealthScore}
+                  title="Runs"
+                  value={agentContributions.summary.totalRuns.toLocaleString()}
                   icon={Activity}
-                  variant={agentContributions.summary.avgHealthScore >= 80 ? "success" : agentContributions.summary.avgHealthScore >= 60 ? "warning" : "danger"}
-                  testId="stat-contribution-avg-health"
-                  tooltip="Average health score across all bound agents, based on uptime and error rates"
+                  testId="stat-contribution-total-runs"
+                  tooltip="Runs recorded for the agents bound to this outcome"
                 />
                 <StatCard
-                  title="Underperforming"
-                  value={agentContributions.summary.underperformingCount}
+                  title="Never run"
+                  value={agentContributions.summary.agentsWithNoRuns}
                   icon={AlertTriangle}
-                  variant={agentContributions.summary.underperformingCount > 0 ? "danger" : "success"}
-                  testId="stat-contribution-underperforming"
-                  tooltip="Agents falling below expected performance thresholds"
+                  variant={agentContributions.summary.agentsWithNoRuns > 0 ? "warning" : "success"}
+                  testId="stat-contribution-never-run"
+                  tooltip="Bound agents with no run recorded"
                 />
               </div>
 
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Value Share Distribution</h3>
+                <h3 className="text-sm font-semibold">Share of the runs</h3>
                 <div className="flex items-center gap-1 h-6 rounded-md overflow-hidden" data-testid="bar-value-share-distribution">
                   {agentContributions.contributions.map((agent, i) => {
                     const colors = [
@@ -2624,12 +2552,12 @@ export default function OutcomeDetail() {
                         <TooltipTrigger asChild>
                           <div
                             className={`h-full ${colors[i % colors.length]} transition-all`}
-                            style={{ width: `${agent.valueShare}%` }}
+                            style={{ width: `${agent.runShare}%` }}
                             data-testid={`bar-segment-${agent.agentId}`}
                           />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p className="text-xs">{agent.agentName}: {agent.valueShare}% (${agent.deliveredValue.toLocaleString()})</p>
+                          <p className="text-xs">{agent.agentName}: {agent.runShare}% of runs ({agent.totalRuns.toLocaleString()})</p>
                         </TooltipContent>
                       </Tooltip>
                     );
@@ -2648,7 +2576,7 @@ export default function OutcomeDetail() {
                     return (
                       <div key={agent.agentId} className="flex items-center gap-1.5">
                         <div className={`w-2.5 h-2.5 rounded-full ${dotColors[i % dotColors.length]}`} />
-                        <span className="text-xs text-muted-foreground">{agent.agentName} ({agent.valueShare}%)</span>
+                        <span className="text-xs text-muted-foreground">{agent.agentName} ({agent.runShare}%)</span>
                       </div>
                     );
                   })}
@@ -2659,41 +2587,43 @@ export default function OutcomeDetail() {
                 {agentContributions.contributions.map((agent) => (
                   <Card
                     key={agent.agentId}
-                    className={agent.isUnderperforming ? "border-red-500/30" : ""}
+                    className={agent.failedRuns > 0 ? "border-amber-500/30" : ""}
                     data-testid={`card-agent-contribution-${agent.agentId}`}
                   >
                     <CardContent className="p-4">
                       <div className="flex flex-col gap-4">
                         <div className="flex items-start justify-between gap-4 flex-wrap">
                           <div className="flex items-center gap-3 min-w-0">
-                            <ProgressRing value={agent.healthScore} size={44} strokeWidth={3.5} />
+                            <ProgressRing value={agent.successRate ?? 0} size={44} strokeWidth={3.5} />
                             <div className="flex flex-col min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <Link href={`/agents/${agent.agentId}`}>
                                   <span className="text-sm font-semibold cursor-pointer" data-testid={`text-agent-name-${agent.agentId}`}>{agent.agentName}</span>
                                 </Link>
                                 <StatusBadge status={agent.status} />
-                                {agent.isUnderperforming && (
-                                  <Badge variant="outline" className="text-[10px] bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20">
-                                    Underperforming
+                                {agent.failedRuns > 0 && (
+                                  <Badge variant="outline" className="text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20">
+                                    {agent.failedRuns} failed
                                   </Badge>
                                 )}
                               </div>
-                              <span className="text-[11px] text-muted-foreground">{agent.agentType} | {agent.totalRuns} runs | {agent.successRate}% success</span>
+                              <span className="text-[11px] text-muted-foreground">
+                                {agent.agentType} | {agent.totalRuns} runs{agent.successRate !== null ? ` | ${agent.successRate}% completed` : " | never run"}
+                              </span>
                             </div>
                           </div>
                           <div className="flex items-center gap-4 shrink-0 flex-wrap">
                             <div className="flex flex-col items-end gap-0.5">
-                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Value Share</span>
-                              <span className="text-sm font-semibold" data-testid={`text-value-share-${agent.agentId}`}>{agent.valueShare}%</span>
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Share of runs</span>
+                              <span className="text-sm font-semibold" data-testid={`text-value-share-${agent.agentId}`}>{agent.runShare}%</span>
                             </div>
                             <div className="flex flex-col items-end gap-0.5">
-                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Delivered</span>
-                              <span className="text-sm font-semibold" data-testid={`text-delivered-value-${agent.agentId}`}>${agent.deliveredValue.toLocaleString()}</span>
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Runs</span>
+                              <span className="text-sm font-semibold" data-testid={`text-agent-runs-${agent.agentId}`}>{agent.totalRuns.toLocaleString()}</span>
                             </div>
                             <div className="flex flex-col items-end gap-0.5">
-                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost-to-Serve</span>
-                              <span className="text-sm font-semibold" data-testid={`text-cost-${agent.agentId}`}>${agent.costToServe.toFixed(2)}</span>
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Model cost</span>
+                              <span className="text-sm font-semibold" data-testid={`text-cost-${agent.agentId}`}>${agent.costUsd.toFixed(2)}</span>
                             </div>
                           </div>
                         </div>
@@ -3052,10 +2982,11 @@ export default function OutcomeDetail() {
                 {evidence.kpiTimeSeries.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {evidence.kpiTimeSeries.map((kpiTs) => {
-                      const lastPoint = kpiTs.points[kpiTs.points.length - 1];
-                      const firstPoint = kpiTs.points[0];
-                      const trendDir = lastPoint && firstPoint
-                        ? lastPoint.value > firstPoint.value ? "up" : lastPoint.value < firstPoint.value ? "down" : "stable"
+                      const withRuns = kpiTs.points.filter((p) => p.value !== null);
+                      const lastPoint = withRuns[withRuns.length - 1];
+                      const firstPoint = withRuns[0];
+                      const trendDir = withRuns.length >= 2
+                        ? lastPoint.value! > firstPoint.value! ? "up" : lastPoint.value! < firstPoint.value! ? "down" : "stable"
                         : "stable";
                       const matchingKpi = kpis?.find(k => k.id === kpiTs.kpiId);
                       return (

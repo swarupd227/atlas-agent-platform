@@ -463,8 +463,10 @@ async function createOutcomeVersion(
   });
 
   router.get("/api/kpis", async (req, res) => {
-    const kpis = await filterKpisForOrg(await storage.getKpis(), resolveRequestOrgId(req));
-    res.json(kpis);
+    // Was: every KPI in every organization, then a second full outcomes read to
+    // filter them in Node. A KPI belongs to its outcome, so ask for those.
+    const outcomes = await storage.getOutcomes(getOrgId(req));
+    res.json(await storage.getKpisByOutcomeIds(outcomes.map((o) => o.id)));
   });
 
   router.get("/api/outcomes/:id/kpis", async (req, res) => {
@@ -477,11 +479,10 @@ async function createOutcomeVersion(
       const outcomeId = req.params.id;
       const kpis = await storage.getKpisByOutcome(outcomeId);
       const agents = await storage.getAgents(getOrgId(req));
-      const traces = await storage.getTraces(getOrgId(req));
       const outcomeEvents = await storage.getOutcomeEvents(getOrgId(req));
       const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
-      const boundAgentIds = new Set(boundAgents.map(a => a.id));
-      const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId));
+      // This outcome's agents' runs, not every trace in the organization.
+      const relevantTraces = (await Promise.all(boundAgents.map(a => storage.getTracesByAgent(a.id, getOrgId(req), 500)))).flat();
 
       const now = Date.now();
       const kpiTimeSeries = kpis.map(kpi => {
@@ -494,7 +495,10 @@ async function createOutcomeVersion(
             return ts >= dayStart.getTime() && ts < dayEnd.getTime();
           });
 
-          let value: number;
+          // A day with no runs has no value: nothing is carried forward and nothing
+          // is interpolated. The chart used to draw a straight line from baseline to
+          // the current value whenever there was no data to draw.
+          let value: number | null = null;
           const kpiNameLower = (kpi.name || "").toLowerCase();
           if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
             if (dayTraces.length > 0) {
@@ -524,16 +528,7 @@ async function createOutcomeVersion(
               value = kpi.currentValue || kpi.baseline || 0;
             }
           } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput")) {
-            value = dayTraces.length;
-          } else {
-            if (dayTraces.length > 0) {
-              const baseline = kpi.baseline || 0;
-              const current = kpi.currentValue || 0;
-              const progress = baseline + ((current - baseline) * (7 - i)) / 7;
-              value = Math.round(progress * 100) / 100;
-            } else {
-              value = kpi.currentValue || kpi.baseline || 0;
-            }
+            value = dayTraces.length > 0 ? dayTraces.length : null;
           }
 
           points.push({
@@ -542,7 +537,18 @@ async function createOutcomeVersion(
             traceCount: dayTraces.length,
           });
         }
-        return { kpiId: kpi.id, kpiName: kpi.name, unit: kpi.unit, target: kpi.target, baseline: kpi.baseline, points };
+        return {
+          kpiId: kpi.id,
+          kpiName: kpi.name,
+          unit: kpi.unit,
+          target: kpi.target,
+          baseline: kpi.baseline,
+          points,
+          // What these points are: run statistics matched to the KPI by its name,
+          // not a business measurement. Days with no runs have no point.
+          basis: "agent_runs",
+          measuredDays: points.filter((p: { value: number | null }) => p.value !== null).length,
+        };
       });
 
       const totalTraces = relevantTraces.length;
@@ -981,21 +987,17 @@ async function createOutcomeVersion(
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
       const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === outcomeId);
-      const traces = await storage.getTraces(getOrgId(req));
       const outcomeEvents = (await storage.getOutcomeEvents(getOrgId(req))).filter(e => e.outcomeId === outcomeId);
       const totalBillable = outcomeEvents.filter(e => e.billable).length;
-      const totalRevenue = totalBillable * (outcome.pricePerUnit || 0);
+      const invoicedValue = totalBillable * (outcome.pricePerUnit || 0);
 
-      const hashStr = function(s: string) {
-        let h = 0;
-        for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-        return Math.abs(h);
-      }
-
-      const totalAgentRuns = agents.reduce((s, a) => s + traces.filter(t => t.agentId === a.id).length, 0);
+      // Each bound agent's own runs, not every trace in the organization.
+      const tracesByAgent = new Map<string, Awaited<ReturnType<typeof storage.getTracesByAgent>>>();
+      for (const a of agents) tracesByAgent.set(a.id, await storage.getTracesByAgent(a.id, getOrgId(req), 500));
+      const totalAgentRuns = agents.reduce((s, a) => s + (tracesByAgent.get(a.id)?.length ?? 0), 0);
 
       const contributions = agents.map(agent => {
-        const agentTraces = traces.filter(t => t.agentId === agent.id);
+        const agentTraces = tracesByAgent.get(agent.id) ?? [];
         const totalRuns = agentTraces.length;
         const failedRuns = agentTraces.filter(t => t.status === "failed" || t.status === "error").length;
         const successRate = totalRuns > 0 ? ((totalRuns - failedRuns) / totalRuns) * 100 : 100;
@@ -1003,60 +1005,38 @@ async function createOutcomeVersion(
           ? Math.round(agentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalRuns)
           : 0;
 
-        const valueShare = totalAgentRuns > 0 ? totalRuns / totalAgentRuns : (agents.length > 0 ? 1 / agents.length : 0);
-        const deliveredValue = Math.round(totalRevenue * valueShare);
-
-        const costPerRun = (agent as any).costPerRun || 0.01;
-        const costToServe = Math.round(totalRuns * costPerRun * 100) / 100;
-
-        const healthScore = Math.round(
-          (successRate * 0.4) +
-          (Math.max(0, 100 - avgLatency / 50) * 0.3) +
-          ((totalRuns > 0 ? 80 : 30) * 0.3)
-        );
-
-        const successfulRuns = totalRuns - failedRuns;
-        const capabilities = [
-          { name: "Primary Task Execution", contribution: totalRuns > 0 ? Math.round((successfulRuns / totalRuns) * 80) : 0 },
-          { name: "Error Recovery", contribution: failedRuns > 0 && totalRuns > 0 ? Math.round(((totalRuns - failedRuns) / totalRuns) * 15) : 10 },
-          { name: "Data Processing", contribution: totalRuns > 0 ? Math.min(Math.round(totalRuns / Math.max(totalAgentRuns, 1) * 20), 20) : 0 },
-        ];
+        // Share of the work done, counted from runs. It used to be multiplied by
+        // the outcome's revenue and presented as the value that agent delivered,
+        // and a health score built from magic constants gave any agent with a
+        // single run 24 free points; neither measured anything.
+        const runShare = totalAgentRuns > 0 ? Math.round((totalRuns / totalAgentRuns) * 100) : 0;
+        const costUsd = Math.round(agentTraces.reduce((s, t) => s + (t.costUsd || 0), 0) * 100) / 100;
 
         return {
           agentId: agent.id,
           agentName: agent.name,
           agentType: agent.agentType || "single",
           status: agent.status || "active",
-          valueShare: Math.round(valueShare * 100),
-          deliveredValue,
-          costToServe,
-          healthScore,
-          successRate: Math.round(successRate * 10) / 10,
-          avgLatency,
+          runShare,
+          costUsd,
+          successRate: totalRuns > 0 ? Math.round(successRate * 10) / 10 : null,
+          avgLatency: totalRuns > 0 ? avgLatency : null,
           totalRuns,
           failedRuns,
-          capabilities,
-          isUnderperforming: healthScore < 60 || successRate < 80,
         };
       });
-
-      const totalShare = contributions.reduce((s, c) => s + c.valueShare, 0);
-      if (totalShare > 0 && totalShare !== 100) {
-        contributions.forEach(c => {
-          c.valueShare = Math.round((c.valueShare / totalShare) * 100);
-        });
-      }
 
       res.json({
         contributions,
         summary: {
           totalAgents: agents.length,
-          totalRevenue,
-          underperformingCount: contributions.filter(c => c.isUnderperforming).length,
-          avgHealthScore: contributions.length > 0
-            ? Math.round(contributions.reduce((s, c) => s + c.healthScore, 0) / contributions.length)
-            : 0,
+          totalRuns: totalAgentRuns,
+          billableEvents: totalBillable,
+          invoicedValue,
+          agentsWithNoRuns: contributions.filter(c => c.totalRuns === 0).length,
         },
+        // Said once, so nothing below has to be read as a business measurement.
+        basis: "Counted from each agent's runs and the outcome's billable events. Value is not attributed to individual agents.",
       });
     } catch (e) {
       handleZodError(res, e);
@@ -1376,7 +1356,6 @@ async function createOutcomeVersion(
         return res.json({ alerts: [], summary: { critical: 0, warning: 0, watch: 0, total: 0 } });
       }
 
-      const allTraces = await storage.getTraces(getOrgId(req));
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
       const kpisWithThreshold = kpis.filter(k => k.slaThreshold != null && k.currentValue != null);
@@ -1409,11 +1388,22 @@ async function createOutcomeVersion(
       const alerts: KillChainAlert[] = [];
 
       for (const agent of agents) {
-        const agentTraces = allTraces.filter(t => t.agentId === agent.id);
-        const recentTraces = agentTraces.filter(t => t.startedAt && new Date(t.startedAt) >= sevenDaysAgo);
-
-        const baselinePassRate = agent.successRate != null ? agent.successRate * 100 : null;
-        const baselineLatencyMs = agent.avgLatencyMs ?? null;
+        const agentTraces = await storage.getTracesByAgent(agent.id, getOrgId(req), 500);
+        const at = (t: { startedAt?: Date | string | null }) => (t.startedAt ? new Date(t.startedAt).getTime() : 0);
+        const recentTraces = agentTraces.filter(t => at(t) >= sevenDaysAgo.getTime());
+        // The baseline is what this agent did before the last week, counted from
+        // its own runs. It used to be agents.successRate / avgLatencyMs, which
+        // are seed columns no runtime path updates -- so "drift" was measured
+        // against a number nobody set, and an agent with no history still drifted.
+        const earlierTraces = agentTraces.filter(t => at(t) > 0 && at(t) < sevenDaysAgo.getTime());
+        const ENOUGH_FOR_A_BASELINE = 5;
+        const haveBaseline = earlierTraces.length >= ENOUGH_FOR_A_BASELINE;
+        const baselinePassRate = haveBaseline
+          ? (earlierTraces.filter(t => t.status === "completed" || t.status === "success").length / earlierTraces.length) * 100
+          : null;
+        const baselineLatencyMs = haveBaseline
+          ? Math.round(earlierTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / earlierTraces.length)
+          : null;
 
         if (recentTraces.length >= 3) {
           const recentSuccessful = recentTraces.filter(t => t.status === "completed" || t.status === "success").length;
