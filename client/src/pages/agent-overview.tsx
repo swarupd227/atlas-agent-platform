@@ -44,6 +44,16 @@ export const SECTIONS: Array<{ id: Section; label: string; hint: string }> = [
   { id: "releases", label: "Releases", hint: "Where it runs, and its versions" },
 ];
 
+/**
+ * The section a ?section=<id> link asks for. Anything unrecognized (or absent)
+ * opens on Overview, so a stale link degrades to the page's front door rather
+ * than a blank panel.
+ */
+export function sectionFromSearch(search: string): Section {
+  const asked = new URLSearchParams(search).get("section");
+  return SECTIONS.some((s) => s.id === asked) ? (asked as Section) : "overview";
+}
+
 /** What a run's outcome is called, from its recorded status. */
 export function runOutcome(status: string | null | undefined): { label: string; tone: "ok" | "bad" | "muted" } {
   if (status === "completed") return { label: "completed", tone: "ok" };
@@ -121,7 +131,10 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 export default function AgentOverview() {
   const [, params] = useRoute("/agents/:id");
   const agentId = params?.id ?? "";
-  const [section, setSection] = useState<Section>("overview");
+  // A ?section= link opens on that section: the registry deep-links straight to
+  // an agent's Setup or Runs, and landing on Overview instead made those links
+  // look broken.
+  const [section, setSection] = useState<Section>(() => sectionFromSearch(typeof window === "undefined" ? "" : window.location.search));
   const { toast } = useToast();
   const canEdit = usePermission("create_modify_blueprints").allowed;
 
@@ -301,7 +314,14 @@ function RunsAndTests({ agent, traces, loading }: { agent: Agent; traces: RunTra
 
 function Setup({ agent }: { agent: Agent }) {
   const connectorsQ = useQuery<Array<{ id: string; serverId: string; name?: string }>>({ queryKey: [`/api/agents/${agent.id}/mcp-servers`] });
-  const knowledgeQ = useQuery<Array<{ id: string; name?: string; knowledgeBaseId?: string }>>({ queryKey: [`/api/agents/${agent.id}/knowledge-bases`] });
+  // The endpoint answers { links, knowledgeBases }, not an array. Typed as an
+  // array, `(data ?? []).length === 0` was `undefined === 0` -- false -- so the
+  // page went on to .map() an object and took the whole Setup section down with
+  // the error boundary, on every agent, whether or not a base was attached.
+  const knowledgeQ = useQuery<{ links: Array<{ id: string; knowledgeBaseId?: string }>; knowledgeBases: Array<{ id: string; name?: string }> }>({
+    queryKey: [`/api/agents/${agent.id}/knowledge-bases`],
+  });
+  const knowledgeBases = knowledgeQ.data?.knowledgeBases ?? [];
   const skills = Array.isArray(agent.preloadedSkills) ? (agent.preloadedSkills as Array<Record<string, any>>) : [];
   const tags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptLabel?: string }>) : [];
 
@@ -327,12 +347,12 @@ function Setup({ agent }: { agent: Agent }) {
       </Block>
 
       <Block title="Knowledge it can search" empty="None attached.">
-        {(knowledgeQ.data ?? []).length === 0 ? (
+        {knowledgeBases.length === 0 ? (
           <p className="text-sm text-muted-foreground">{knowledgeQ.isLoading ? "Loading…" : "None attached."}</p>
         ) : (
           <ul className="flex flex-wrap gap-1.5" data-testid="knowledge-list">
-            {(knowledgeQ.data ?? []).map((k: any) => (
-              <li key={k.id}><Link href="/knowledge-bases" className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs hover:bg-muted/50">{k.name ?? k.knowledgeBaseName ?? k.knowledgeBaseId}<ArrowUpRight className="h-3 w-3" /></Link></li>
+            {knowledgeBases.map((k) => (
+              <li key={k.id}><Link href="/knowledge-bases" className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs hover:bg-muted/50">{k.name ?? k.id}<ArrowUpRight className="h-3 w-3" /></Link></li>
             ))}
           </ul>
         )}

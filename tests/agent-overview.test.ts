@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { SECTIONS, policiesByScope, policyEffect, runOutcome, runStats } from "../client/src/pages/agent-overview";
+import { SECTIONS, policiesByScope, policyEffect, runOutcome, runStats, sectionFromSearch } from "../client/src/pages/agent-overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "agent-overview.tsx");
@@ -30,6 +30,29 @@ describe("the sections", () => {
     }
     expect(page.indexOf("function Setup(")).toBeLessThan(page.indexOf('`/api/agents/${agent.id}/mcp-servers`'));
     expect(page.indexOf("function Rules(")).toBeLessThan(page.indexOf("`/api/policies/resolve/${agent.id}`"));
+  });
+});
+
+describe("a link into a section", () => {
+  it("opens on the section it names", () => {
+    expect(sectionFromSearch("?section=setup")).toBe("setup");
+    expect(sectionFromSearch("?selected=x&section=runs")).toBe("runs");
+  });
+
+  it("falls back to Overview rather than a blank panel", () => {
+    // The registry used to link to ?tab=mcp -- a tab name this page has never had.
+    expect(sectionFromSearch("?tab=mcp")).toBe("overview");
+    expect(sectionFromSearch("?section=nonsense")).toBe("overview");
+    expect(sectionFromSearch("")).toBe("overview");
+  });
+
+  it("is the shape the registry actually links to", () => {
+    const registry = read("client", "src", "pages", "agents-home.tsx");
+    // A link into this page, not the word in a comment explaining why it moved.
+    expect(registry).not.toMatch(/\/agents\/\$\{[^}]+\}\?tab=/);
+    for (const m of registry.matchAll(/\?section=([a-z-]+)/g)) {
+      expect(SECTIONS.map((s) => s.id)).toContain(m[1]);
+    }
   });
 });
 

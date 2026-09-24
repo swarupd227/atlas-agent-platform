@@ -271,9 +271,12 @@ function AgentSummary({ agent, activity, days, outcomes }: { agent: Agent; activ
           <h3 className="mb-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">What it's set up with</h3>
           <ul className="grid gap-2 sm:grid-cols-2">
             {[
-              ["Connectors", activity?.connectors ?? 0, `/agents/${agent.id}?tab=mcp`],
+              // The agent page has sections, not the classic page's tabs, so a
+              // ?tab= link silently landed on Overview instead of the thing the
+              // number was about.
+              ["Connectors", activity?.connectors ?? 0, `/agents/${agent.id}?section=setup`],
               ["Policies bound", bindings.length, "/governance"],
-              ["Skills preloaded", skills.length, `/agents/${agent.id}?tab=skills`],
+              ["Skills preloaded", skills.length, `/agents/${agent.id}?section=setup`],
               ["Risk tier", agent.riskTier ?? "—", null],
             ].map(([label, value, href]) => (
               <li key={String(label)} className="rounded border px-3 py-2 text-sm">
@@ -300,7 +303,7 @@ function AgentSummary({ agent, activity, days, outcomes }: { agent: Agent; activ
           <h3 className="mb-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">Elsewhere</h3>
           <div className="flex flex-wrap gap-1.5">
             {[
-              ["Runs and traces", `/agents/${agent.id}?tab=traces`],
+              ["Runs and traces", `/agents/${agent.id}?section=runs`],
               ["Evals", `/evals`],
               ["Deployments", `/deployments`],
               ["Export code", `/agents/${agent.id}/export`],

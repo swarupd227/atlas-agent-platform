@@ -1873,7 +1873,7 @@ export default function AgentWizard() {
         icon: Rocket,
         title: "Activate the Agent",
         description: "Deploy this agent to start processing tasks. You can start in shadow mode to validate before going live.",
-        href: `/agents/${postCreationAgent.id}?tab=lifecycle`,
+        href: `/agents/${postCreationAgent.id}/classic?tab=lifecycle`,
         testId: "link-next-activate",
       },
       {
@@ -1887,7 +1887,7 @@ export default function AgentWizard() {
         icon: ShieldCheck,
         title: "Review the mandate",
         description: "Confirm the plain-language job description this agent starts with -- pre-filled from what you entered in Governance -- then approve it.",
-        href: `/agents/${postCreationAgent.id}?tab=mandate`,
+        href: `/agents/${postCreationAgent.id}/classic?tab=mandate`,
         testId: "link-next-mandate",
       },
     ];

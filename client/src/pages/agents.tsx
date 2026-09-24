@@ -742,13 +742,13 @@ export default function Agents() {
                         if (!summary) return <span className="text-xs text-muted-foreground/60">—</span>;
                         if (!summary.hasMandate) {
                           return (
-                            <Link href={`/agents/${agent.id}?tab=mandate`}>
+                            <Link href={`/agents/${agent.id}/classic?tab=mandate`}>
                               <Badge variant="outline" className="text-[10px] cursor-pointer bg-muted text-muted-foreground border-muted-foreground/20">No mandate</Badge>
                             </Link>
                           );
                         }
                         return (
-                          <Link href={`/agents/${agent.id}?tab=mandate&view=document`}>
+                          <Link href={`/agents/${agent.id}/classic?tab=mandate&view=document`}>
                             <Badge
                               variant="outline"
                               className={summary.ok
