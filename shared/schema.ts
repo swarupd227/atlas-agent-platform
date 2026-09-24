@@ -83,11 +83,46 @@ export const kpiDefinitions = pgTable("kpi_definitions", {
   /** Where currentValue came from: "agent_runs" (derived from run traces), "manual". Null: unknown, not measured. */
   valueSource: text("value_source"),
   valueUpdatedAt: timestamp("value_updated_at"),
+  /**
+   * What measures this KPI, declared rather than guessed from its name:
+   * {kind:"manual"} or {kind:"agent_runs",statistic,windowDays}. Null means
+   * nothing measures it yet. See server/kpi-measurement.ts.
+   */
+  measurementSource: jsonb("measurement_source"),
 });
 
 export const insertKpiDefinitionSchema = createInsertSchema(kpiDefinitions).omit({ id: true });
 export type InsertKpiDefinition = z.infer<typeof insertKpiDefinitionSchema>;
 export type KpiDefinition = typeof kpiDefinitions.$inferSelect;
+
+/**
+ * Every measurement a KPI has ever had, so a value has a history rather than
+ * only a latest number. `kpi_definitions.currentValue` is the most recent
+ * reading; this is where it came from.
+ */
+export const kpiReadings = pgTable("kpi_readings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  kpiId: varchar("kpi_id").notNull(),
+  outcomeId: varchar("outcome_id").notNull(),
+  organizationId: varchar("organization_id"),
+  value: real("value").notNull(),
+  /** When the measurement was taken -- which is not always when it was entered. */
+  takenAt: timestamp("taken_at").notNull().defaultNow(),
+  /** "manual" (a person recorded it) or "agent_runs" (a declared run statistic). */
+  source: text("source").notNull(),
+  /** For a run statistic: which one, and over how many days. */
+  statistic: text("statistic"),
+  windowDays: integer("window_days"),
+  /** How the person knows, in their words. */
+  note: text("note"),
+  recordedBy: varchar("recorded_by"),
+  recordedByName: text("recorded_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertKpiReadingSchema = createInsertSchema(kpiReadings).omit({ id: true, createdAt: true });
+export type InsertKpiReading = z.infer<typeof insertKpiReadingSchema>;
+export type KpiReading = typeof kpiReadings.$inferSelect;
 
 export const agents = pgTable("agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

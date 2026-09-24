@@ -66,8 +66,9 @@ export function prepareOutcomeFromProposal(body: OutcomeProposalBody, opts: Prep
 
   const parsedKpis = Array.isArray(kpiData)
     ? kpiData.map((kpi: any) => {
-        // A proposal can't claim where a current value came from.
-        const { valueSource: _vs, valueUpdatedAt: _vu, ...rest } = kpi ?? {};
+        // A proposal can't claim where a current value came from, nor declare
+        // what measures the KPI -- a person does that, knowingly, later.
+        const { valueSource: _vs, valueUpdatedAt: _vu, measurementSource: _ms, ...rest } = kpi ?? {};
         return insertKpiDefinitionSchema.omit({ outcomeId: true }).parse({
           ...rest,
           target: typeof kpi.target === "number" ? kpi.target : (parseFloat(kpi.target) || 0),

@@ -318,6 +318,25 @@ export async function runStartupMigrations() {
       );
       ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS agent_id VARCHAR REFERENCES agents(id);
       ALTER TABLE agents ADD COLUMN IF NOT EXISTS source_template_id VARCHAR;
+      -- What measures a KPI, declared instead of guessed from its name, and
+      -- every reading it has ever had. See server/kpi-measurement.ts.
+      ALTER TABLE kpi_definitions ADD COLUMN IF NOT EXISTS measurement_source JSONB;
+      CREATE TABLE IF NOT EXISTS kpi_readings (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        kpi_id VARCHAR NOT NULL,
+        outcome_id VARCHAR NOT NULL,
+        organization_id VARCHAR,
+        value REAL NOT NULL,
+        taken_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        source TEXT NOT NULL,
+        statistic TEXT,
+        window_days INTEGER,
+        note TEXT,
+        recorded_by VARCHAR,
+        recorded_by_name TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS kpi_readings_kpi_taken_idx ON kpi_readings (kpi_id, taken_at DESC);
       CREATE TABLE IF NOT EXISTS agent_alerts (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         org_id VARCHAR,

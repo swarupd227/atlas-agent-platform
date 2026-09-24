@@ -10,7 +10,7 @@ import {
   insertOutcomeContractSchema,
   insertKpiDefinitionSchema,
 } from "@shared/schema";
-import { checkPermission, getRequestRole } from "../permissions";
+import { checkPermission, getRequestActorLabel, getRequestRole } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { filterKpisForOrg, resolveRequestOrgId } from "../tenant-scope";
 import {
@@ -23,6 +23,7 @@ import {
 } from "./helpers";
 import type { ProcessNode } from "@shared/process-flow";
 import { createOutcomeFromProposal, OutcomeInputError, prepareOutcomeFromProposal } from "../outcome-create";
+import { describeSource, parseMeasurementSource, suggestMeasurement, trendBetween, breachesThreshold, validateMeasurementSource } from "../kpi-measurement";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 
 const router = Router();
@@ -2069,6 +2070,9 @@ async function createOutcomeVersion(
       // A value typed in by a person is recorded as such; the source can't be set from the body.
       delete data.valueSource;
       delete data.valueUpdatedAt;
+      // What measures a KPI is declared through PUT /api/kpis/:id/measurement,
+      // which validates it and records who declared it.
+      delete (data as any).measurementSource;
       if (data.currentValue !== undefined) {
         data.valueSource = "manual";
         data.valueUpdatedAt = new Date();
@@ -2078,6 +2082,24 @@ async function createOutcomeVersion(
       const existingKpi = await storage.getKpi((req.params.id as string));
       const updated = await storage.updateKpi((req.params.id as string), data);
       if (!updated) return res.status(404).json({ message: "Not found" });
+
+      // A value set here is a measurement like any other, so it is kept in the
+      // KPI's history rather than only overwriting the latest number.
+      if (data.currentValue !== undefined && data.currentValue !== null) {
+        await storage.createKpiReading({
+          kpiId: updated.id,
+          outcomeId: updated.outcomeId,
+          organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null,
+          value: data.currentValue,
+          takenAt: data.valueUpdatedAt ?? new Date(),
+          source: "manual",
+          statistic: null,
+          windowDays: null,
+          note: null,
+          recordedBy: (req as any).authUser?.userId ?? null,
+          recordedByName: getRequestActorLabel(req),
+        });
+      }
 
       // Trigger a parent outcome version bump only when version-worthy KPI fields
       // actually CHANGED (compare old vs new values, not just field presence).
@@ -2119,6 +2141,126 @@ async function createOutcomeVersion(
     } catch (e) {
       handleZodError(res, e);
     }
+  });
+
+  /**
+   * What measures this KPI, what it has read so far, and -- when nothing
+   * measures it yet -- what its name suggests might. The suggestion is only
+   * ever shown; accepting it is a separate, deliberate write.
+   */
+  router.get("/api/kpis/:id/measurement", async (req, res) => {
+    const kpi = await storage.getKpi(req.params.id as string);
+    if (!kpi) return res.status(404).json({ message: "Not found" });
+    const source = parseMeasurementSource((kpi as any).measurementSource);
+    const readings = await storage.getKpiReadings(kpi.id, 50);
+    res.json({
+      kpiId: kpi.id,
+      source,
+      describes: describeSource(source),
+      // The prose whoever authored the outcome wrote about how to measure this.
+      authorNote: kpi.measurement || null,
+      suggestion: source ? null : suggestMeasurement(kpi),
+      readings,
+    });
+  });
+
+  /** Declare what measures this KPI, or clear it back to nothing. */
+  router.put("/api/kpis/:id/measurement", checkPermission("create_modify_outcomes"), async (req, res) => {
+    const kpi = await storage.getKpi(req.params.id as string);
+    if (!kpi) return res.status(404).json({ message: "Not found" });
+    const checked = validateMeasurementSource(req.body?.source ?? null);
+    if (!checked.ok) return res.status(400).json({ error: checked.error });
+
+    const before = parseMeasurementSource((kpi as any).measurementSource);
+    const updated = await storage.updateKpi(kpi.id, { measurementSource: checked.source } as any);
+    await storage.createAuditEvent({
+      organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined,
+      actorType: "user",
+      actorId: getRequestActorLabel(req),
+      objectType: "kpi",
+      objectId: kpi.id,
+      action: "kpi_measurement_declared",
+      details: JSON.stringify({ kpi: kpi.name, from: describeSource(before), to: describeSource(checked.source) }),
+      ontologyTags: resolveOntologyTags("outcome", "kpi_measurement_declared"),
+    });
+    res.json({ ...updated, describes: describeSource(checked.source) });
+  });
+
+  /**
+   * Record a measurement somebody actually took. This is the first path in the
+   * product by which a KPI gets a real value rather than a figure inferred
+   * from agent runs.
+   */
+  router.post("/api/kpis/:id/readings", checkPermission("create_modify_outcomes"), async (req, res) => {
+    const kpi = await storage.getKpi(req.params.id as string);
+    if (!kpi) return res.status(404).json({ message: "Not found" });
+
+    const body = z.object({
+      value: z.number().finite(),
+      takenAt: z.string().datetime().optional(),
+      note: z.string().max(2000).optional(),
+    }).safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: "A reading needs a numeric value, and may carry when it was taken and a note." });
+
+    const source = parseMeasurementSource((kpi as any).measurementSource);
+    // Recording against a run-measured KPI would be silently overwritten by the
+    // next run, so it is refused with the reason rather than accepted and lost.
+    if (source?.kind === "agent_runs") {
+      return res.status(409).json({
+        error: `"${kpi.name}" is measured by agent runs, so a recorded value would be overwritten on the next run. Change what measures it to "recorded by a person" first.`,
+      });
+    }
+
+    const takenAt = body.data.takenAt ? new Date(body.data.takenAt) : new Date();
+    const orgId = getOrgId(req) ?? getDefaultOrgId() ?? undefined;
+    const actor = getRequestActorLabel(req);
+    const reading = await storage.createKpiReading({
+      kpiId: kpi.id,
+      outcomeId: kpi.outcomeId,
+      organizationId: orgId ?? null,
+      value: body.data.value,
+      takenAt,
+      source: "manual",
+      statistic: null,
+      windowDays: null,
+      note: body.data.note ?? null,
+      recordedBy: (req as any).authUser?.userId ?? null,
+      recordedByName: actor,
+    });
+
+    // The latest reading is what the KPI now reads; a reading taken earlier
+    // than the current value is kept as history without rewriting it.
+    const isLatest = !kpi.valueUpdatedAt || takenAt >= new Date(kpi.valueUpdatedAt);
+    let updated = kpi;
+    if (isLatest) {
+      updated = (await storage.updateKpi(kpi.id, {
+        currentValue: body.data.value,
+        trend: trendBetween(kpi.valueUpdatedAt ? kpi.currentValue : null, body.data.value),
+        valueSource: "manual",
+        valueUpdatedAt: takenAt,
+        // Recording a value declares the KPI measured by a person, so the next
+        // run doesn't quietly take it back.
+        measurementSource: source ?? { kind: "manual" },
+      } as any)) ?? kpi;
+    }
+
+    await storage.createAuditEvent({
+      organizationId: orgId,
+      actorType: "user",
+      actorId: actor,
+      objectType: "kpi",
+      objectId: kpi.id,
+      action: "kpi_value_recorded",
+      details: JSON.stringify({ kpi: kpi.name, value: body.data.value, unit: kpi.unit, takenAt: takenAt.toISOString(), note: body.data.note ?? null }),
+      ontologyTags: resolveOntologyTags("outcome", "kpi_value_recorded"),
+    });
+
+    res.status(201).json({
+      reading,
+      kpi: updated,
+      breached: breachesThreshold(body.data.value, kpi.slaThreshold, kpi.targetOperator),
+      appliedAsCurrent: isLatest,
+    });
   });
 
   router.delete("/api/kpis/:id", checkPermission("create_modify_outcomes"), async (req, res) => {

@@ -4,6 +4,7 @@ import { storage } from "../storage";
 import { getDefaultOrgId } from "../auth";
 import { callClaude, stripJsonFences } from "../claude";
 import { insertEvalTestCaseSchema } from "@shared/schema";
+import { breachesThreshold, parseMeasurementSource, statisticValue, trendBetween, type AgentRunsSource, type RunWindow } from "../kpi-measurement";
 
 async function routeAIComplete(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
@@ -1004,6 +1005,9 @@ export function computeConstraintGraph(
   };
 }
 
+/** How long a steady value waits before the history keeps another point. */
+const STEADY_READING_GAP_MS = 60 * 60_000;
+
 export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): Promise<{
   updated: number;
   totalRuns: number;
@@ -1012,89 +1016,90 @@ export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): P
   kpis: any[];
 }> {
   const kpis = await storage.getKpisByOutcome(outcomeId);
-  const agents = await storage.getAgents(orgId);
-  const traces = await storage.getTraces(orgId);
-  const outcomeEvents = await storage.getOutcomeEvents(orgId);
-  const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
-  const boundAgentIds = new Set(boundAgents.map(a => a.id));
-  // Scope to a trailing 30-day window, not all-time history. Volume/count KPIs
-  // below set currentValue to a raw count of matching traces/events; without a
-  // window that count only ever grows while its target stays fixed, eventually
-  // producing nonsensical attainment percentages (e.g. 38254%) once enough test
-  // runs and demo activity accumulate against a small target.
-  const windowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId) && t.startedAt && new Date(t.startedAt) >= windowStart);
-  const relevantEvents = outcomeEvents.filter(e => e.outcomeId === outcomeId && e.createdAt && new Date(e.createdAt) >= windowStart);
-
-  if (relevantTraces.length === 0 && relevantEvents.length === 0) {
+  // Only KPIs that asked to be measured by runs are touched here. One declaring
+  // `manual` belongs to whoever records it, and one declaring nothing is not
+  // measured -- a name that happens to contain "rate" is not a measurement.
+  const declared = kpis
+    .map((kpi) => ({ kpi, source: parseMeasurementSource((kpi as any).measurementSource) }))
+    .filter((x): x is { kpi: typeof x.kpi; source: AgentRunsSource } => x.source?.kind === "agent_runs");
+  if (declared.length === 0) {
     return { updated: 0, totalRuns: 0, totalEvents: 0, changes: [], kpis };
   }
 
-  const totalTraces = relevantTraces.length;
-  const failedTraces = relevantTraces.filter(t => t.status === "failed" || t.status === "error").length;
+  const agents = await storage.getAgents(orgId);
+  const traces = await storage.getTraces(orgId);
+  const outcomeEvents = await storage.getOutcomeEvents(orgId);
+  const boundAgentIds = new Set(agents.filter((a) => a.outcomeId === outcomeId).map((a) => a.id));
+  const outcomeTraces = traces.filter((t) => boundAgentIds.has(t.agentId) && t.startedAt);
+  const outcomeEventsHere = outcomeEvents.filter((e) => e.outcomeId === outcomeId && e.createdAt);
+
+  // Each KPI states its own window, so the figures are counted per window
+  // rather than once over a fixed 30 days.
+  const windowFor = (days: number): RunWindow => {
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const runs = outcomeTraces.filter((t) => new Date(t.startedAt as any) >= from);
+    return {
+      runs: runs.length,
+      failed: runs.filter((t) => t.status === "failed" || t.status === "error").length,
+      totalLatencyMs: runs.reduce((sum, t) => sum + (t.latencyMs || 0), 0),
+      totalCostUsd: runs.reduce((sum, t) => sum + (t.costUsd || 0), 0),
+      events: outcomeEventsHere.filter((e) => new Date(e.createdAt as any) >= from).length,
+    };
+  };
+
   const changes: KpiReEvalResult[] = [];
+  let totalRuns = 0;
+  let totalEvents = 0;
 
-  for (const kpi of kpis) {
-    const kpiNameLower = (kpi.name || "").toLowerCase();
-    let newValue: number | null = null;
+  for (const { kpi, source } of declared) {
+    const window = windowFor(source.windowDays);
+    totalRuns = Math.max(totalRuns, window.runs);
+    totalEvents = Math.max(totalEvents, window.events);
+    const newValue = statisticValue(source, window, kpi.unit);
+    // No runs in the window is not a zero: the KPI stays unmeasured.
+    if (newValue === null) continue;
 
-    // "Rate" is ambiguous: success/accuracy rate is higher-is-better (target near
-    // 100), but exception/error/failure rate is lower-is-better (target near 0).
-    // Applying the success-rate formula to the latter inverts the number (e.g. a
-    // clean run reads as "100% exception rate" against a target of 1%), which is
-    // exactly the kind of mismatch that produces a nonsensical attainment percentage.
-    const isInverseRate = kpiNameLower.includes("exception") || kpiNameLower.includes("error") ||
-      kpiNameLower.includes("failure") || kpiNameLower.includes("defect") || kpiNameLower.includes("escalation") ||
-      kpiNameLower.includes("churn") || kpiNameLower.includes("dispute") || kpiNameLower.includes("breach") ||
-      kpiNameLower.includes("violation") || kpiNameLower.includes("complaint");
-    if (isInverseRate) {
-      if (totalTraces > 0) {
-        newValue = Math.round((failedTraces / totalTraces) * 10000) / 100;
-      }
-    } else if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
-      if (totalTraces > 0) {
-        newValue = Math.round(((totalTraces - failedTraces) / totalTraces) * 10000) / 100;
-      }
-    } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
-      if (totalTraces > 0) {
-        const avgLatencyMs = relevantTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalTraces;
-        const unitLower = (kpi.unit || "").toLowerCase();
-        if (unitLower === "minutes" || unitLower === "min") {
-          newValue = Math.round((avgLatencyMs / 60000) * 100) / 100;
-        } else if (unitLower === "seconds" || unitLower === "sec" || unitLower === "s") {
-          newValue = Math.round((avgLatencyMs / 1000) * 10) / 10;
-        } else {
-          newValue = Math.round(avgLatencyMs);
-        }
-      }
-    } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput") ||
-               kpiNameLower.includes("resolution") || kpiNameLower.includes("processed") || kpiNameLower.includes("moderated") ||
-               kpiNameLower.includes("qualified") || kpiNameLower.includes("invoices")) {
-      newValue = relevantEvents.length > 0 ? relevantEvents.length : totalTraces;
-    } else if (kpiNameLower.includes("cost")) {
-      if (totalTraces > 0) {
-        newValue = parseFloat(relevantTraces.reduce((s, t) => s + (t.costUsd || 0), 0).toFixed(4));
-      }
+    const measuredBefore = kpi.valueUpdatedAt ? kpi.currentValue : null;
+    const trend = trendBetween(measuredBefore, newValue);
+    const moved = newValue !== kpi.currentValue || kpi.valueSource !== "agent_runs" || !kpi.valueUpdatedAt;
+
+    // Landing on the same number is still a measurement, so when it was last
+    // measured moves even when the value doesn't.
+    const takenAt = new Date();
+    await storage.updateKpi(kpi.id, { currentValue: newValue, trend, valueSource: "agent_runs", valueUpdatedAt: takenAt });
+
+    // The history keeps every move, plus a point an hour apart while a value
+    // holds steady -- enough to plot, without a row per agent run.
+    const [latest] = await storage.getKpiReadings(kpi.id, 1);
+    const sinceLast = latest?.takenAt ? Date.now() - new Date(latest.takenAt).getTime() : Infinity;
+    if (moved || sinceLast > STEADY_READING_GAP_MS) {
+      await storage.createKpiReading({
+        kpiId: kpi.id,
+        outcomeId,
+        organizationId: orgId ?? null,
+        value: newValue,
+        takenAt,
+        source: "agent_runs",
+        statistic: source.statistic,
+        windowDays: source.windowDays,
+        note: null,
+        recordedBy: null,
+        recordedByName: null,
+      });
     }
-
-    if (newValue !== null && newValue !== kpi.currentValue) {
-      const oldValue = kpi.currentValue || 0;
-      const trend = newValue > oldValue ? "up" : newValue < oldValue ? "down" : (kpi.trend || "stable");
-      const breached = kpi.slaThreshold != null && (
-        kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("cost")
-          ? newValue > kpi.slaThreshold
-          : newValue < kpi.slaThreshold
-      );
-      await storage.updateKpi(kpi.id, { currentValue: newValue, trend, valueSource: "agent_runs", valueUpdatedAt: new Date() });
-      changes.push({ kpiId: kpi.id, kpiName: kpi.name, oldValue, newValue, trend, breached });
-    } else if (newValue !== null && kpi.valueSource !== "agent_runs") {
-      // Same number, but now we know it was derived from runs.
-      await storage.updateKpi(kpi.id, { valueSource: "agent_runs", valueUpdatedAt: new Date() });
-    }
+    if (!moved) continue;
+    changes.push({
+      kpiId: kpi.id,
+      kpiName: kpi.name,
+      oldValue: measuredBefore ?? 0,
+      newValue,
+      trend,
+      breached: breachesThreshold(newValue, kpi.slaThreshold, kpi.targetOperator),
+    });
   }
 
   const updatedKpis = await storage.getKpisByOutcome(outcomeId);
-  return { updated: changes.length, totalRuns: totalTraces, totalEvents: relevantEvents.length, changes, kpis: updatedKpis };
+  return { updated: changes.length, totalRuns, totalEvents, changes, kpis: updatedKpis };
 }
 
 /**

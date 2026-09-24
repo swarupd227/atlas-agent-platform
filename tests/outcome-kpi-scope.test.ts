@@ -114,6 +114,16 @@ describe("wiring", () => {
       'router.patch("/api/kpis/:id", checkPermission("create_modify_outcomes")',
       'router.delete("/api/kpis/:id", checkPermission("create_modify_outcomes")',
     ]) expect(src).toContain(route);
-    expect(src).toContain("filterKpisForOrg(await storage.getKpis(), resolveRequestOrgId(req))");
+    // GET /api/kpis no longer reads every organization's KPIs and filters them
+    // in Node; it asks for the KPIs of this organization's outcomes, which is
+    // both faster and narrower. filterKpisForOrg still guards the readers that
+    // start from a full list.
+    expect(src).toContain("await storage.getKpisByOutcomeIds(outcomes.map((o) => o.id))");
+    expect(src).toContain("const outcomes = await storage.getOutcomes(getOrgId(req));");
+    // The new measurement writes are guarded the same way as the rest.
+    for (const route of [
+      'router.put("/api/kpis/:id/measurement", checkPermission("create_modify_outcomes")',
+      'router.post("/api/kpis/:id/readings", checkPermission("create_modify_outcomes")',
+    ]) expect(src).toContain(route);
   });
 });
