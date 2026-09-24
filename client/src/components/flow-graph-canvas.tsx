@@ -312,23 +312,40 @@ function toRFNodes(nodes: ProcessNode[]): RFNode[] {
     initialHeight: 64,
   }));
 }
-function toRFEdges(edges: ProcessEdge[]): RFEdge[] {
+/** Exported for the round-trip test: this conversion is lossy by construction. */
+export function toRFEdges(edges: ProcessEdge[]): RFEdge[] {
   return edges.map((e) => ({
     id: e.id || `${e.from}-${e.to}`,
     source: e.from,
     target: e.to,
     label: e.label,
-    data: { condition: e.condition },
+    // Carry every edge property the canvas doesn't itself render, not just the
+    // ones it draws with: this conversion runs on load, so anything left out
+    // here is gone from the page's graph before the user touches it.
+    data: { condition: e.condition, maxRounds: e.maxRounds },
     animated: !!e.condition,
   }));
 }
-function fromRF(nodes: RFNode[], edges: RFEdge[]): { nodes: ProcessNode[]; edges: ProcessEdge[] } {
+/** Exported for the round-trip test: see toRFEdges. */
+export function fromRF(nodes: RFNode[], edges: RFEdge[]): { nodes: ProcessNode[]; edges: ProcessEdge[] } {
   return {
     nodes: nodes.map(n => {
       const d = n.data as RFData;
       return { id: n.id, type: d.ntype, label: d.label, description: d.description, actor: d.actor, position: n.position, estimatedMins: undefined, config: d.config } as ProcessNode;
     }),
-    edges: edges.map(e => ({ id: e.id, from: e.source, to: e.target, label: e.label as string | undefined, condition: (e.data as any)?.condition })),
+    edges: edges.map(e => {
+      const d = (e.data ?? {}) as { condition?: string; maxRounds?: number };
+      return {
+        id: e.id,
+        from: e.source,
+        to: e.target,
+        label: e.label as string | undefined,
+        condition: d.condition,
+        // Only when set, so an ordinary edge doesn't gain a maxRounds: undefined
+        // key that then has to be stripped again on the way to the server.
+        ...(d.maxRounds === undefined ? {} : { maxRounds: d.maxRounds }),
+      };
+    }),
   };
 }
 
