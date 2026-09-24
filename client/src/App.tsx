@@ -34,6 +34,7 @@ import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 const Overview = lazy(() => import("@/pages/overview"));
 const Outcomes = lazy(() => import("@/pages/outcomes"));
+const OutcomesHome = lazy(() => import("@/pages/outcomes-home"));
 const Agents = lazy(() => import("@/pages/agents"));
 const AgentsHome = lazy(() => import("@/pages/agents-home"));
 const AgentDetail = lazy(() => import("@/pages/agent-detail"));
@@ -344,7 +345,8 @@ function DashboardRouter() {
       <Route path="/my-actions" component={MyActionsRoute} />
       <Route path="/actions" component={MyActionsRoute} />
       <Route path="/business-settings" component={BusinessSettings} />
-      <Route path="/outcomes" component={Outcomes} />
+      <Route path="/outcomes" component={OutcomesHome} />
+      <Route path="/outcomes/classic" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
       <Route path="/my-workers">{() => <Redirect to="/agents" replace />}</Route>
