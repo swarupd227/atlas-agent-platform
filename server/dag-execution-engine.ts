@@ -2297,7 +2297,14 @@ export class DAGExecutionEngine {
       nodeId,
       agentId: "",
       status: result.approved ? "completed" : "failed",
-      output: result.approved ? { [nc.stateKey]: { approved: true, decidedBy: result.decidedBy } } : {},
+      // The decision's own id travels with it. A downstream step that writes to
+      // a system of record has to be able to cite the approval that authorized
+      // the write -- without it, an agent facing a connector that demands an
+      // approval reference either invents one or (correctly) refuses to write
+      // at all, and the run finishes having changed nothing.
+      output: result.approved
+        ? { [nc.stateKey]: { approved: true, decidedBy: result.decidedBy, approvalId: result.approvalId || approvalId || undefined } }
+        : {},
       error: result.approved ? undefined : (result.reason || "Approval gate rejected or timed out"),
       durationMs: Date.now() - start,
       promptTokens: 0,

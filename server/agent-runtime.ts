@@ -3093,7 +3093,7 @@ export async function waitForApproval(
    * description that leads with the artifact actually being approved.
    */
   approvalMeta?: { objectName?: string; description?: string; evidenceJson?: Record<string, unknown> },
-): Promise<{ approved: boolean; decidedBy?: string; reason?: string }> {
+): Promise<{ approved: boolean; decidedBy?: string; reason?: string; approvalId?: string }> {
   // Resuming a DAG run re-runs the whole paused wave (see resumeTeamAgentDagRun
   // in dag-execution-engine.ts), including the gate node itself -- without
   // this check, every resume would create a brand-new "pending" approval and
@@ -3104,9 +3104,9 @@ export async function waitForApproval(
   let approval = existingApprovalId ? await storage.getApproval(existingApprovalId) : undefined;
   if (approval && approval.status !== "pending") {
     console.log(`[agent-runtime] HITL gate "${gateName}" already decided (id=${approval.id}, status=${approval.status}) -- resuming without re-waiting`);
-    if (approval.status === "approved") return { approved: true, decidedBy: approval.decidedBy || "human", reason: "Approved" };
-    if (approval.status === "rejected") return { approved: false, decidedBy: approval.decidedBy || "human", reason: rejectionReason(approval) };
-    return { approved: false, reason: `Gate already ${approval.status}` };
+    if (approval.status === "approved") return { approved: true, decidedBy: approval.decidedBy || "human", reason: "Approved", approvalId: approval.id };
+    if (approval.status === "rejected") return { approved: false, decidedBy: approval.decidedBy || "human", reason: rejectionReason(approval), approvalId: approval.id };
+    return { approved: false, reason: `Gate already ${approval.status}`, approvalId: approval.id };
   }
   if (!approval) {
     // File the decision with the organization that owns the run's agent, so it
@@ -3146,11 +3146,11 @@ export async function waitForApproval(
     if (!updated) break;
     if (updated.status === "approved") {
       console.log(`[agent-runtime] HITL gate "${gateName}" approved by ${updated.decidedBy}`);
-      return { approved: true, decidedBy: updated.decidedBy || "human", reason: "Approved" };
+      return { approved: true, decidedBy: updated.decidedBy || "human", reason: "Approved", approvalId: approval.id };
     }
     if (updated.status === "rejected") {
       console.log(`[agent-runtime] HITL gate "${gateName}" rejected by ${updated.decidedBy}`);
-      return { approved: false, decidedBy: updated.decidedBy || "human", reason: rejectionReason(updated) };
+      return { approved: false, decidedBy: updated.decidedBy || "human", reason: rejectionReason(updated), approvalId: approval.id };
     }
   }
   await storage.updateApproval(approval.id, { status: "expired" } as any);

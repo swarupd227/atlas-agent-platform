@@ -130,6 +130,48 @@ describe("DAGExecutionEngine — approval gate execution", () => {
     expect(result.finalState.gate_result).toEqual({ approved: true, decidedBy: "user-1" });
   });
 
+  it("carries the approval's own id into state, so a later write can cite it", async () => {
+    // A connector that demands proof of approval before it will change a record
+    // has to be given something real. With only { approved, decidedBy } in
+    // state, the writing agent either invents a reference or refuses to write,
+    // and the run finishes having changed nothing -- seen live on a CMDB
+    // ownership run that approved three items and wrote none of them.
+    const { waitForApproval } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1", approvalId: "apr-77" });
+
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Manager Sign-off", stateKey: "gate_result" });
+    const engine = new DAGExecutionEngine();
+    const result = await engine.execute({
+      executionPlan: computeWaves([gateNode], []),
+      stateSchema: {},
+      initialState: {},
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+    });
+
+    expect(result.finalState.gate_result).toEqual({ approved: true, decidedBy: "user-1", approvalId: "apr-77" });
+  });
+
+  it("falls back to the id the gate was created with when the wait doesn't report one", async () => {
+    const { waitForApproval } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockImplementation(async (_a: any, _b: any, _c: any, _d: any, _e: any, onCreated: (id: string) => void) => {
+      onCreated("approval-123");
+      return { approved: true, decidedBy: "user-1" };
+    });
+
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Manager Sign-off", stateKey: "gate_result" });
+    const engine = new DAGExecutionEngine();
+    const result = await engine.execute({
+      executionPlan: computeWaves([gateNode], []),
+      stateSchema: {},
+      initialState: {},
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+    });
+
+    expect(result.finalState.gate_result).toEqual({ approved: true, decidedBy: "user-1", approvalId: "approval-123" });
+  });
+
   it("fires onApprovalPending with the node id and created approval id before the wait resolves", async () => {
     const { waitForApproval } = await import("../server/agent-runtime");
     (waitForApproval as any).mockImplementation(async (_a: any, _b: any, _c: any, _d: any, _e: any, onCreated: (id: string) => void) => {

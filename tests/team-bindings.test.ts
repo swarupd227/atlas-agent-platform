@@ -21,6 +21,22 @@ describe("resolveBindingServer", () => {
     expect(resolveBindingServer("SAP ERP", connectors)?.id).toBe("c-sap");
     expect(resolveBindingServer("Oracle Fusion", connectors)).toBeUndefined();
   });
+
+  it("prefers the connector actually named over one that merely shares a first word", () => {
+    // Live: bindings on "ServiceNow CMDB (Sandbox)" resolved to the Enterprise
+    // connector, which sits first and matches on "servicenow" alone. Agents
+    // ended up bound to the wrong ServiceNow, and the wiring check then called
+    // the correctly-bound ones unlinked.
+    const two = [
+      { id: "c-ent", name: "ServiceNow ITSM (Enterprise)", connected: true },
+      { id: "c-box", name: "ServiceNow CMDB (Sandbox)", connected: null },
+    ];
+    expect(resolveBindingServer("ServiceNow CMDB (Sandbox)", two)?.id).toBe("c-box");
+    expect(resolveBindingServer("servicenow cmdb (sandbox)  ", two)?.id).toBe("c-box");
+    expect(resolveBindingServer("ServiceNow ITSM (Enterprise)", two)?.id).toBe("c-ent");
+    // No exact name: the looser match still answers, as it always did.
+    expect(resolveBindingServer("ServiceNow", two)?.id).toBe("c-ent");
+  });
 });
 
 describe("assessProposalBindings", () => {

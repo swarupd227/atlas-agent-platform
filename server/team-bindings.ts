@@ -10,10 +10,18 @@
 
 /** A connector whose name contains the proposed name, or whose first word the proposed name contains. */
 export function resolveBindingServer<T extends { name: string }>(serverName: string, servers: T[]): T | undefined {
-  return servers.find(s =>
-    s.name.toLowerCase().includes(serverName.toLowerCase()) ||
-    serverName.toLowerCase().includes(s.name.toLowerCase().split(" ")[0])
-  );
+  const want = serverName.trim().toLowerCase();
+  // An exact name wins, whatever the list order. Without this, a binding on
+  // "ServiceNow CMDB (Sandbox)" resolved to "ServiceNow ITSM (Enterprise)" --
+  // the loose clauses below match on the first word alone, so whichever
+  // connector happened to come first in the list took the binding. That
+  // mis-resolution bound agents to the wrong connector, and later reported the
+  // correctly-bound ones as "expects X but isn't linked to it".
+  return servers.find(s => s.name.trim().toLowerCase() === want)
+    ?? servers.find(s =>
+      s.name.toLowerCase().includes(want) ||
+      want.includes(s.name.toLowerCase().split(" ")[0])
+    );
 }
 
 export type BindingIssueCode = "server_unresolved" | "server_not_connected" | "tool_not_on_server" | "server_no_tools_discovered";
