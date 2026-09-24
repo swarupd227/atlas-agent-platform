@@ -1007,6 +1007,45 @@ async function followTeamRun(
 }
 
 /** What happened in a team run, step by step, with its answer once it's done. */
+/**
+ * What a step actually concluded, in the words a business reader can use.
+ *
+ * An agent writes a plain-English lead and then appends its machine parts: a
+ * JSON block for routing, a "STRUCTURED RECORDS" section, and the platform's
+ * own verified tool-call log. The lead is the summary -- no second model call,
+ * no invention. Strip the machine parts, take the opening sentence.
+ *
+ * Returns null when a step produced no prose (a gate that emits only
+ * {"approved": true}, say), so the caller shows nothing rather than dressing
+ * up a fragment of JSON as a sentence.
+ */
+export function stepSummary(output: Record<string, unknown> | null | undefined): string | null {
+  const candidates = Object.values(output ?? {})
+    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    // A step that produced a web page or email is opened, not summarized.
+    .filter((v) => extractHtmlDocument(v) === null)
+    .sort((a, b) => b.length - a.length);
+
+  for (const raw of candidates) {
+    const prose = raw
+      .replace(/\n-{3,}\s*\n\s*PLATFORM-VERIFIED[\s\S]*$/i, "")
+      .replace(/\n#{1,3}\s*STRUCTURED RECORDS[\s\S]*$/i, "")
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    // Too short to be a sentence: almost always a bare value or a stray label.
+    if (prose.length < 15) continue;
+    // A step whose whole answer is JSON, unfenced. It has no prose to show,
+    // and "{"approved": true}" is not a sentence however long it is.
+    if (/^[[{][\s\S]*[\]}]$/.test(prose)) {
+      try { JSON.parse(prose); continue; } catch { /* not JSON after all: treat as prose */ }
+    }
+    const sentence = prose.match(/^.*?[.!?](\s|$)/)?.[0]?.trim() ?? prose;
+    return sentence.length > 220 ? `${sentence.slice(0, 217).trimEnd()}…` : sentence;
+  }
+  return null;
+}
+
 async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
   const found = await getTeamRunRow(orgId, dagRunId);
   if (!found) return null;
@@ -1018,7 +1057,7 @@ async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
   const labelOf = new Map(nodes.map((n) => [n.id, n.label]));
   const waveResults = (Array.isArray(row.waveResults) ? row.waveResults : []) as any[];
   const plan = nodes.length > 0 ? (() => { try { return computeWaves(nodes as any, edges as any); } catch { return null; } })() : null;
-  const steps: Array<{ nodeId: string; wave: number; revision: number; label: string; status: string; error: string | null; durationMs: number | null; html: boolean }> =
+  const steps: Array<{ nodeId: string; wave: number; revision: number; label: string; status: string; error: string | null; durationMs: number | null; html: boolean; summary: string | null }> =
     waveResults.flatMap((w) =>
       (w.nodes ?? []).map((n: any) => ({
         nodeId: n.nodeId,
@@ -1030,6 +1069,9 @@ async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
         durationMs: n.durationMs ?? null,
         // Whether the step produced a web page or email, which can be opened as a page.
         html: Object.values(n.output ?? {}).some((v) => typeof v === "string" && extractHtmlDocument(v) !== null),
+        // What this step concluded, so the run reads as work done rather than
+        // a second copy of the step list beside the conversation.
+        summary: stepSummary(n.output),
       })),
     );
   // While the run is live, the steps it hasn't reached yet are listed too, so a
@@ -1042,7 +1084,7 @@ async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
       for (const nodeId of w.nodes) {
         if (reached.has(nodeId)) continue;
         const status = w.wave_number !== nextWave ? "waiting" : row.status === "waiting_approval" ? "waiting_approval" : row.status === "running" ? "running" : "waiting";
-        steps.push({ nodeId, wave: w.wave_number, revision: 0, label: labelOf.get(nodeId) ?? nodeId, status, error: null, durationMs: null, html: false });
+        steps.push({ nodeId, wave: w.wave_number, revision: 0, label: labelOf.get(nodeId) ?? nodeId, status, error: null, durationMs: null, html: false, summary: null });
       }
     }
   }

@@ -117,6 +117,15 @@ export function TeamRun({ props, onAsk, onDecide, activeActionId }: {
                     <span className="truncate">{s.label}{s.revision ? <span className="ml-1 font-mono text-[10.5px] text-muted-foreground">· revision {s.revision}</span> : null}</span>
                     <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">{human(s.status)}</span>
                   </div>
+                  {/*
+                    What the step concluded, in business terms. Without this the
+                    panel beside the conversation was a second copy of the same
+                    step list, saying something different only when a step
+                    paused for a person.
+                  */}
+                  {s.summary && !s.error && (
+                    <p className="mt-0.5 text-xs leading-snug text-muted-foreground" data-testid="astra-team-run-step-summary">{s.summary}</p>
+                  )}
                   {s.error && <div className="text-xs text-muted-foreground">{s.error}</div>}
                   {s.html && s.nodeId && (
                     <button type="button" onClick={() => openRunStepHtml(run.id, s.nodeId, s.wave, s.revision)}

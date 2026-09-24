@@ -1102,10 +1102,6 @@ export async function executePromptWithMcp(
     };
   }
 
-  // ── Tiered budget gate (kill-switch) ─────────────────────────────────────────
-  // Daily-per-agent and org-wide monthly cost caps, checked BEFORE this run
-  // spends anything (unlike the per-run cap further down, which only stops
-  // the tool loop after some spend has already happened this run). Opt-in —
   // Policy `redactPatterns` applied to what the agent SAYS (tool args are redacted by the
   // dispatcher). String leaves only, after contract enforcement, so JSON stays parseable.
   const outputRedactRes = compileRedactPatterns(policyBundle?.redactPatterns);
@@ -1122,6 +1118,10 @@ export async function executePromptWithMcp(
     return r.value;
   };
 
+  // ── Tiered budget gate (kill-switch) ─────────────────────────────────────────
+  // Daily-per-agent and org-wide monthly cost caps, checked BEFORE this run
+  // spends anything (unlike the per-run cap further down, which only stops
+  // the tool loop after some spend has already happened this run). Opt-in —
   // unset caps are not enforced. On breach the agent is marked "throttled" so
   // later calls fail fast without re-querying cost every time.
   {
@@ -2693,10 +2693,6 @@ After receiving tool results, provide a structured analysis with key findings, s
     },
   ];
 
-  let ontologyComplianceResult: OntologyComplianceResult | null = null;
-  try {
-    const agentRecord = await storage.getAgent(agentId);
-    const ontologyTags = (agentRecord?.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
   if (outputRedactRes.length > 0) {
     complianceChecks.push({
       rule: "Output Redaction",
@@ -2715,6 +2711,10 @@ After receiving tool results, provide a structured analysis with key findings, s
     }
   }
 
+  let ontologyComplianceResult: OntologyComplianceResult | null = null;
+  try {
+    const agentRecord = await storage.getAgent(agentId);
+    const ontologyTags = (agentRecord?.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
     if (ontologyTags.length > 0) {
       const allOutputText = steps
         .filter(s => s.status === "completed" && s.output)
@@ -3398,6 +3398,119 @@ function buildTiersFromExecutionGraph(
  * downstream agent (e.g. Triage & Report) can check the claim against what
  * was actually dispatched instead of trusting it outright.
  */
+/** Per tool result kept verbatim; beyond this a payload is a payload, not a fact. */
+const VERIFIED_FACT_MAX_CHARS = 4000;
+const VERIFIED_FACTS_MAX_CHARS = 32_000;
+
+/**
+ * What the connectors actually returned, keyed by tool, kept verbatim.
+ *
+ * A step reads a tool result and then writes figures into state in its own
+ * words -- and an LLM re-keying a number is an LLM that can get it wrong.
+ * Live 2026-09-24: the submission system returned a largest single location of
+ * $18,500,000 and the step wrote $8,947,000 into state. The aggregate beside
+ * it was copied correctly, every later step reasoned on the wrong figure in
+ * good faith, and nothing in the run looked wrong -- the treaty comparison was
+ * confidently and correctly performed against a number that was never true.
+ *
+ * So the source values travel alongside the narrative, unedited, for a later
+ * step (or an assertion) to read instead of trusting the retyping. Oversized
+ * results are dropped rather than truncated: half a payload read as fact is
+ * worse than no fact, and a result that large is a payload the pipeline should
+ * not be carrying anyway.
+ */
+export function verifiedToolFacts(steps: any[]): Record<string, unknown> | null {
+  const calls = (steps || []).filter((s: any) => s.type === "api_call" && s.status === "completed");
+  if (calls.length === 0) return null;
+  const facts: Record<string, unknown> = {};
+  let budget = VERIFIED_FACTS_MAX_CHARS;
+  for (const call of calls) {
+    const tool = String(call.mcpTool || call.name || "").trim();
+    if (!tool) continue;
+    // `?? call.output` would turn an explicit {data: null} into the wrapper
+    // object and record "the tool answered nothing" as a fact.
+    const wrapper = call.output ?? {};
+    const data = typeof wrapper === "object" && wrapper !== null && "data" in wrapper ? (wrapper as any).data : wrapper;
+    if (data == null || typeof data !== "object") continue;
+    let encoded: string;
+    try { encoded = JSON.stringify(data); } catch { continue; }
+    if (encoded.length > VERIFIED_FACT_MAX_CHARS || encoded.length > budget) continue;
+    budget -= encoded.length;
+    // Later calls to the same tool win: a step that re-read after acting
+    // should be judged on what it saw last.
+    facts[tool] = data;
+  }
+  return Object.keys(facts).length > 0 ? facts : null;
+}
+
+export interface TranscriptionDrift {
+  /** The field the step wrote. */
+  field: string;
+  wrote: number;
+  /** What the connector actually returned for the same thing. */
+  source: number;
+  sourcePath: string;
+}
+
+/** "largestSingleLocationTiv" and "largest_single_location.tiv" are the same name. */
+const normalizeFieldName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Every numeric leaf in a tool's answer, with the names it could be called by. */
+function numericLeaves(value: unknown, path: string[] = [], out: Array<{ path: string; names: Set<string>; value: number }> = []) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const names = new Set<string>();
+    const leaf = path[path.length - 1] ?? "";
+    if (leaf) {
+      names.add(normalizeFieldName(leaf));
+      // A step usually flattens: scheduleSummary.largestSingleLocation.tiv
+      // becomes largestSingleLocationTiv.
+      for (let depth = 2; depth <= 3 && depth <= path.length; depth++) {
+        names.add(normalizeFieldName(path.slice(-depth).join("")));
+      }
+    }
+    out.push({ path: path.join("."), names, value });
+    return out;
+  }
+  if (Array.isArray(value)) return out; // a row in a payload is not a headline figure
+  if (value && typeof value === "object") {
+    for (const [k, v] of Object.entries(value)) numericLeaves(v, [...path, k], out);
+  }
+  return out;
+}
+
+/**
+ * Figures a step wrote that disagree with what the connector told it.
+ *
+ * Live 2026-09-24: the submission system returned a largest single location of
+ * $18,500,000; the step wrote largestSingleLocationTiv: 8947000. The aggregate
+ * beside it was copied correctly, so nothing looked wrong, and every later
+ * step reasoned confidently on a number that was never true. Only fields whose
+ * NAME matches something the connector returned are compared, so this reports
+ * a retyping that changed a value -- not a figure the step worked out itself.
+ */
+export function detectTranscriptionDrift(
+  written: Record<string, unknown> | null | undefined,
+  facts: Record<string, unknown> | null | undefined,
+): TranscriptionDrift[] {
+  if (!written || !facts) return [];
+  const leaves = numericLeaves(facts);
+  if (leaves.length === 0) return [];
+  const drift: TranscriptionDrift[] = [];
+  for (const [field, value] of Object.entries(written)) {
+    const wrote = typeof value === "number" ? value : typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : null;
+    if (wrote === null || !Number.isFinite(wrote)) continue;
+    const name = normalizeFieldName(field);
+    const matches = leaves.filter((l) => l.names.has(name));
+    if (matches.length === 0) continue;
+    // Any source reading of that name agreeing is enough: a tool called twice
+    // legitimately returns different values for the same field.
+    if (matches.some((m) => m.value === wrote)) continue;
+    const closest = matches[0];
+    drift.push({ field, wrote, source: closest.value, sourcePath: closest.path });
+  }
+  return drift;
+}
+
 function buildVerifiedToolCallLog(steps: any[]): string {
   const calls = (steps || []).filter((s: any) => s.type === "api_call");
   const sandbox = sandboxCallLines(steps);
@@ -3668,6 +3781,19 @@ export async function executeWorkerAgent(
     }
     enrichedOutput = `${enrichedOutput}\n\n---\n${buildVerifiedToolCallLog(result.steps)}`;
 
+    // A figure this step wrote that disagrees with what the connector returned
+    // for the same field. Said out loud on the step's own output, because a
+    // mis-transcribed number is invisible otherwise: it is plausible,
+    // internally consistent, and every step after it reasons on it in good
+    // faith (live 2026-09-24, $8,947,000 written for a returned $18,500,000).
+    const stepFacts = verifiedToolFacts(result.steps);
+    const drift = detectTranscriptionDrift(extraFields, stepFacts);
+    if (drift.length > 0) {
+      const lines = drift.map((d) => `- ${d.field}: this step wrote ${d.wrote}, but ${d.sourcePath} returned ${d.source}`);
+      enrichedOutput = `${enrichedOutput}\n\nFIGURES THAT DISAGREE WITH THE SOURCE (platform check, not the model's narrative):\n${lines.join("\n")}`;
+      console.warn(`[agent-runtime] "${workerAgent.name}" wrote ${drift.length} figure(s) that disagree with the connector's answer: ${drift.map((d) => `${d.field} ${d.wrote}!=${d.source}`).join(", ")}`);
+    }
+
     // On failure, executePromptWithMcp already recorded a real reason on the
     // failing step (e.g. "No MCP Server integrations... linked") -- surface it
     // here instead of leaving callers (dag-execution-engine, the run-dag API,
@@ -3701,6 +3827,10 @@ export async function executeWorkerAgent(
         workerSteps: result.steps,
       },
       output: enrichedOutput,
+      // The connectors' own answers, unedited, for anything downstream that
+      // should check a figure rather than trust it was copied correctly.
+      verifiedFacts: stepFacts,
+      ...(drift.length > 0 ? { transcriptionDrift: drift } : {}),
       success: nodeSucceeded,
       startTime,
       endTime,

@@ -834,6 +834,7 @@ export function visibleStateKeys(
     if (!nc.stateKey) continue;
     owned.add(nc.stateKey);
     owned.add(`${nc.stateKey}${GENERATED_FILES_STATE_SUFFIX}`);
+    owned.add(`${nc.stateKey}${VERIFIED_FACTS_STATE_SUFFIX}`);
   }
   const visible = new Set<string>();
   const show = (id: string) => {
@@ -841,6 +842,9 @@ export function visibleStateKeys(
     if (!key) return;
     visible.add(key);
     visible.add(`${key}${GENERATED_FILES_STATE_SUFFIX}`);
+    // An ancestor's source values are visible wherever its narrative is, so a
+    // later step can check a figure instead of inheriting a retyping of it.
+    visible.add(`${key}${VERIFIED_FACTS_STATE_SUFFIX}`);
   };
   for (const id of ancestorsOf(nodeId, plan.edgeMap)) show(id);
   show(nodeId);
@@ -961,6 +965,14 @@ function buildAgentInput(
  * pause at an approval gate and a resume in another process.
  */
 export const GENERATED_FILES_STATE_SUFFIX = "_files";
+
+/**
+ * Suffix for the connectors' own answers to a step, kept verbatim beside the
+ * step's narrative (see verifiedToolFacts in agent-runtime.ts). A step that
+ * needs a figure an earlier step obtained can read this rather than the
+ * earlier step's retyping of it.
+ */
+export const VERIFIED_FACTS_STATE_SUFFIX = "_verified";
 
 export function collectUpstreamGeneratedFileIds(state: Record<string, any>): string[] {
   const ids: string[] = [];
@@ -1843,6 +1855,10 @@ export class DAGExecutionEngine {
       output: {
         [nc.stateKey]: workerResult.output,
         ...(workerResult.generatedFiles?.length ? { [`${nc.stateKey}${GENERATED_FILES_STATE_SUFFIX}`]: workerResult.generatedFiles } : {}),
+        // What the connectors returned to THIS step, verbatim, under its own
+        // state key. A later step that needs a figure can read the source
+        // rather than the retyping, and an assertion can compare the two.
+        ...(workerResult.verifiedFacts ? { [`${nc.stateKey}${VERIFIED_FACTS_STATE_SUFFIX}`]: workerResult.verifiedFacts } : {}),
       },
       durationMs,
       promptTokens: workerResult.promptTokens || 0,
