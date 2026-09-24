@@ -20,6 +20,8 @@ const state = vi.hoisted(() => ({
   servers: [] as any[],
   connections: [] as any[],
   agentUpdates: [] as any[],
+  flows: [] as any[],
+  flowUpdates: [] as any[],
   seq: 0,
 }));
 
@@ -30,6 +32,14 @@ vi.mock("../server/storage", () => {
       getOutcome: vi.fn(async (outcomeId: string, orgId?: string) =>
         state.outcomes.find((o) => o.id === outcomeId && (!orgId || o.organizationId === orgId))),
       getMcpServers: vi.fn(async () => state.servers),
+      getProcessFlow: vi.fn(async (flowId: string, orgId?: string) =>
+        state.flows.find((f) => f.id === flowId && (!orgId || f.organizationId === orgId))),
+      updateProcessFlow: vi.fn(async (flowId: string, data: any, orgId?: string) => {
+        state.flowUpdates.push({ flowId, data, orgId });
+        const row = state.flows.find((f) => f.id === flowId);
+        if (row) Object.assign(row, data);
+        return row;
+      }),
       getSkills: vi.fn(async () => []),
       getPolicies: vi.fn(async () => state.policies),
       getPoliciesByScope: vi.fn(async () => state.outcomePolicies),
@@ -272,5 +282,50 @@ describe("explicit edges without the orchestrator", () => {
     await buildTeamFromProposal(body, { orgId: "org-a" });
     expect(edgePairs()).toEqual(["Gather -> Decide", "Decide -> Approve", "Approve -> Execute", "Fleet Team -> Gather"]);
     expect(computeWaves(state.nodes as any, state.edges as any).totalWaves).toBe(5);
+  });
+});
+
+describe("the process flow a team was drawn from", () => {
+  /**
+   * A flow authored FROM a journey already carries teamAgentId. One drawn
+   * first in the Studio and then turned into an automation had no way to
+   * write it back, so the journey showed no process flow and every re-draft
+   * orphaned another one (live 2026-09-24).
+   */
+  const body = (processFlowId?: string) => teamBuildBodySchema.parse({
+    orchestrator: worker("Binding Team"),
+    workers: [worker("Read Submission"), worker("Price It")],
+    pipeline: { pattern: "sequential" },
+    ...(processFlowId ? { processFlowId } : {}),
+  });
+
+  it("records the journey it became on the flow", async () => {
+    state.flows.push({ id: "flow-1", organizationId: "org-a", teamAgentId: null });
+    const result = await buildTeamFromProposal(body("flow-1"), { orgId: "org-a" });
+    expect(state.flowUpdates).toEqual([{ flowId: "flow-1", data: { teamAgentId: result.teamAgent.id }, orgId: "org-a" }]);
+    expect(state.flows[0].teamAgentId).toBe(result.teamAgent.id);
+  });
+
+  it("re-points a flow that already made a team, since a redraft makes a new one", async () => {
+    state.flows.push({ id: "flow-1", organizationId: "org-a", teamAgentId: "older-team" });
+    const result = await buildTeamFromProposal(body("flow-1"), { orgId: "org-a" });
+    expect(state.flows[0].teamAgentId).toBe(result.teamAgent.id);
+  });
+
+  it("leaves flows alone when the team wasn't drawn from one", async () => {
+    state.flows.push({ id: "flow-1", organizationId: "org-a", teamAgentId: null });
+    await buildTeamFromProposal(body(), { orgId: "org-a" });
+    expect(state.flowUpdates).toEqual([]);
+    expect(state.flows[0].teamAgentId).toBeNull();
+  });
+
+  it("still builds the team when the flow can't be linked", async () => {
+    // Another org's flow, or one since deleted: the team is the point, and a
+    // bookkeeping link failing must not cost the caller the whole build.
+    state.flows.push({ id: "flow-1", organizationId: "someone-else", teamAgentId: null });
+    const result = await buildTeamFromProposal(body("flow-1"), { orgId: "org-a" });
+    expect(result.teamAgent.id).toBeTruthy();
+    expect(state.flowUpdates).toEqual([]);
+    expect(state.flows[0].teamAgentId).toBeNull();
   });
 });

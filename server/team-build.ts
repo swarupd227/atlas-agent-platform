@@ -137,6 +137,12 @@ export const teamBuildBodySchema = z.object({
   // Library page. Left unset for ordinary chat-proposal team creation.
   markAsCuratedJourney: z.boolean().optional(),
   journeySubVertical: z.string().optional(),
+  // The saved process flow this team was drawn from, so the flow can record
+  // which journey it became. A flow authored FROM a journey already carries
+  // that link; one drawn first in the Studio and then turned into an
+  // automation had no way to write it back, leaving the journey with no
+  // process flow attached and every re-draft orphaning another one.
+  processFlowId: z.string().optional(),
   orchestrator: teamAgentProposalSchema,
   workers: z.array(teamAgentProposalSchema).min(1),
   pipeline: z.object({
@@ -1083,6 +1089,24 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         .catch(err => console.warn(`[create-team] ontology eval generation failed for ${created.name}:`, err?.message));
     } catch (evalErr: any) {
       console.error(`[create-team] eval suite creation failed for ${created.name}:`, evalErr?.message);
+    }
+  }
+
+  // The flow this team was drawn from now knows which journey it became.
+  // Best-effort: the team exists either way, and a failure here should not
+  // undo a build. Re-pointing rather than refusing when the flow already has
+  // an owner is deliberate -- redrafting a flow makes a NEW team, and the
+  // flow belongs with the one it most recently produced.
+  if (body.processFlowId) {
+    try {
+      const flow = await storage.getProcessFlow(body.processFlowId, orgId);
+      if (!flow) {
+        console.warn(`[create-team] process flow ${body.processFlowId} not found; team "${teamAgent.name}" left unlinked`);
+      } else {
+        await storage.updateProcessFlow(body.processFlowId, { teamAgentId: teamAgent.id } as any, orgId);
+      }
+    } catch (err: any) {
+      console.warn(`[create-team] could not link process flow ${body.processFlowId} to "${teamAgent.name}": ${err?.message}`);
     }
   }
 

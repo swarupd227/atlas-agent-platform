@@ -56,12 +56,15 @@ export function TeamProposalDialog({
   initialDescription = "",
   processFlowSteps,
   processFlowEdges,
+  processFlowId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialDescription?: string;
   processFlowSteps?: unknown[];
   processFlowEdges?: unknown[];
+  /** The saved flow this was drawn from, so the journey it becomes is recorded on it. */
+  processFlowId?: string | null;
 }) {
   const [step, setStep] = useState<Step>("describe");
   const [description, setDescription] = useState(initialDescription);
@@ -180,6 +183,7 @@ export function TeamProposalDialog({
         orchestrator: proposal.orchestrator,
         workers: proposal.agents,
         pipeline,
+        ...(processFlowId ? { processFlowId } : {}),
       });
       const data = await res.json();
 

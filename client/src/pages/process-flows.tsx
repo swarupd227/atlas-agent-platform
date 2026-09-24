@@ -928,6 +928,7 @@ export default function ProcessFlows() {
         initialDescription={proposalDescription}
         processFlowSteps={proposalSteps}
         processFlowEdges={proposalEdges}
+        processFlowId={savedFlowId}
       />
 
       <Dialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
