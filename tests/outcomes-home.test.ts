@@ -11,7 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { STAGE_LABEL, kpiLine, nextStep, outcomeCounts, outcomeOrder, stageOf } from "../client/src/pages/outcomes-home";
+import { STAGE_LABEL, isMeasured, kpiLine, nextStep, outcomeCounts, outcomeOrder, stageOf } from "../client/src/pages/outcomes-home";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "outcomes-home.tsx");
@@ -35,8 +35,10 @@ describe("where an outcome stands", () => {
       { id: "o4", status: "awaiting_agent_plan" },
     ] as any[];
     const kpis = [
-      { outcomeId: "o1", currentValue: 12 },
-      { outcomeId: "o2", currentValue: null },
+      { outcomeId: "o1", currentValue: 12, valueUpdatedAt: "2026-09-20T00:00:00Z" },
+      { outcomeId: "o2", currentValue: null, valueUpdatedAt: null },
+      // A 0 that was never taken is not a measurement: 125 of 164 live KPIs look like this.
+      { outcomeId: "o3", currentValue: 0, valueUpdatedAt: null },
     ] as any[];
     expect(outcomeCounts(outcomes, kpis)).toEqual({ live: 1, waitingForTeam: 2, waitingForReview: 1, measured: 1 });
   });
@@ -50,16 +52,19 @@ describe("where an outcome stands", () => {
 
 describe("what a KPI says about itself", () => {
   it("says when it isn't measured", () => {
-    expect(kpiLine({ name: "Effort Reduction", unit: "%", target: 30, currentValue: null, valueSource: null } as any)).toBe("target 30 % · not measured yet");
+    expect(kpiLine({ name: "Effort Reduction", unit: "%", target: 30, currentValue: null, valueSource: null, valueUpdatedAt: null } as any)).toBe("target 30 % · not measured yet");
+    // The column starts at 0, so a 0 nobody took reads as "not measured", not as a result.
+    expect(isMeasured({ currentValue: 0, valueUpdatedAt: null } as any)).toBe(false);
+    expect(kpiLine({ name: "Fleet utilization", unit: "%", target: 70, currentValue: 0, valueSource: null, valueUpdatedAt: null } as any)).toBe("target 70 % · not measured yet");
   });
 
   it("says its value came from runs, which is a proxy", () => {
-    expect(kpiLine({ name: "Automation Rate", unit: "%", target: 80, currentValue: 100, valueSource: "agent_runs" } as any))
+    expect(kpiLine({ name: "Automation Rate", unit: "%", target: 80, currentValue: 100, valueSource: "agent_runs", valueUpdatedAt: "2026-09-24T00:00:00Z" } as any))
       .toBe("100 % against target 80 % (from agent runs, a proxy)");
   });
 
   it("says when no target was set, rather than treating it as met", () => {
-    expect(kpiLine({ name: "Volume", unit: "count", target: 0, currentValue: 5, valueSource: "agent_runs" } as any)).toContain("no target set");
+    expect(kpiLine({ name: "Volume", unit: "count", target: 0, currentValue: 5, valueSource: "agent_runs", valueUpdatedAt: "2026-09-24T00:00:00Z" } as any)).toContain("no target set");
   });
 });
 

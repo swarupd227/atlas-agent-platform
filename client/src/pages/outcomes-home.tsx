@@ -56,17 +56,26 @@ export const STAGE_LABEL: Record<Stage, string> = {
   done: "Done",
 };
 
+/**
+ * Whether anything was ever measured for this KPI. A value alone doesn't say
+ * so: 125 of the 164 KPIs live read 0 having never been updated, because the
+ * column starts at 0, and "0% against target 70%" reads as a measured zero.
+ */
+export function isMeasured(kpi: Pick<KpiDefinition, "currentValue" | "valueUpdatedAt">): boolean {
+  return kpi.currentValue != null && kpi.valueUpdatedAt != null;
+}
+
 /** What one KPI can honestly say about itself. */
-export function kpiLine(kpi: Pick<KpiDefinition, "name" | "unit" | "target" | "currentValue" | "valueSource">): string {
+export function kpiLine(kpi: Pick<KpiDefinition, "name" | "unit" | "target" | "currentValue" | "valueSource" | "valueUpdatedAt">): string {
   const unit = kpi.unit ? ` ${kpi.unit}` : "";
   const target = kpi.target ? `target ${kpi.target}${unit}` : "no target set";
-  if (kpi.currentValue == null) return `${target} · not measured yet`;
+  if (!isMeasured(kpi)) return `${target} · not measured yet`;
   const source = kpi.valueSource === "agent_runs" ? " (from agent runs, a proxy)" : "";
   return `${kpi.currentValue}${unit} against ${target}${source}`;
 }
 
-export function outcomeCounts(outcomes: Array<Pick<OutcomeContract, "id" | "status">>, kpis: Array<Pick<KpiDefinition, "outcomeId" | "currentValue">>) {
-  const measured = new Set(kpis.filter((k) => k.currentValue != null).map((k) => k.outcomeId));
+export function outcomeCounts(outcomes: Array<Pick<OutcomeContract, "id" | "status">>, kpis: Array<Pick<KpiDefinition, "outcomeId" | "currentValue" | "valueUpdatedAt">>) {
+  const measured = new Set(kpis.filter(isMeasured).map((k) => k.outcomeId));
   const by = (s: Stage) => outcomes.filter((o) => stageOf(o.status) === s).length;
   return {
     live: by("live"),
@@ -184,7 +193,7 @@ export default function OutcomesHome() {
                 ) : rows.map((o) => {
                   const s = stageOf(o.status);
                   const own = kpisByOutcome.get(o.id) ?? [];
-                  const measured = own.filter((k) => k.currentValue != null).length;
+                  const measured = own.filter(isMeasured).length;
                   return (
                     <button
                       key={o.id}
