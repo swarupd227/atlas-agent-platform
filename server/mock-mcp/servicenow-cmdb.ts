@@ -13,7 +13,8 @@
  *   - every write needs an approvalRef, the id of a decision a person made;
  *   - every write records the field's previous value and returns an undo id,
  *     so it can be put back exactly as it was;
- *   - the same approvalRef cannot be spent twice, so a retry can't double-write;
+ *   - an approval covers the records the decision covered, but the same field on the same
+ *     record cannot be written twice under it, so a retry can't double-write;
  *   - retiring a CI that other CIs still depend on is refused, with the
  *     dependants listed, rather than quietly orphaning them.
  *
@@ -27,7 +28,10 @@ const now = () => new Date().toISOString();
 
 /** Overlays on the generated estate: nothing here mutates the seed itself. */
 const edits = new Map<string, Partial<Ci>>();
-const spentApprovals = new Set<string>();
+/** One entry per (approval, record, fields) already applied: a batch writes once, a retry not at all. */
+const appliedWrites = new Set<string>();
+const writeKey = (approvalRef: string, table: string, sysId: string, fields: string[]) =>
+  `${approvalRef}|${table}|${sysId}|${[...fields].sort().join(",")}`;
 interface UndoEntry {
   undoId: string;
   table: string;
@@ -307,7 +311,13 @@ router.get("/estate", (_req: Request, res: Response) => {
 
 const WRITABLE_FIELDS = new Set(["assigned_to", "support_group", "business_criticality", "install_status", "operational_status", "environment", "short_description"]);
 
-function gate(req: Request, res: Response): string | null {
+/**
+ * An approval is the decision a person made, and a decision usually covers several records:
+ * eighteen tiers, nine retirements. So the approval may be used for each record it covers --
+ * what is refused is writing the same fields on the same record twice under it, which is what
+ * a retry or a confused second pass would do.
+ */
+function gate(req: Request, res: Response, table: string, sysId: string, fields: string[]): string | null {
   const approvalRef = String((req.body || {}).approvalRef || "").trim();
   if (!approvalRef) {
     res.status(422).json({
@@ -317,11 +327,11 @@ function gate(req: Request, res: Response): string | null {
     });
     return null;
   }
-  if (spentApprovals.has(approvalRef)) {
+  if (appliedWrites.has(writeKey(approvalRef, table, sysId, fields))) {
     res.status(409).json({
       written: false,
-      error: `Approval ${approvalRef} has already been used for a write.`,
-      guidance: "One approval, one write. Ask for a new decision rather than reusing this one.",
+      error: `Approval ${approvalRef} has already written ${fields.join(", ")} on this record.`,
+      guidance: "That record is done. Move on to the next one the approval covers rather than writing it again.",
     });
     return null;
   }
@@ -345,7 +355,7 @@ router.post("/ci/update", (req: Request, res: Response) => {
     });
     return;
   }
-  const approvalRef = gate(req, res);
+  const approvalRef = gate(req, res, "cmdb_ci", ci.sys_id, Object.keys(changes));
   if (!approvalRef) return;
 
   // Retiring something other items still depend on breaks them: refuse and name them.
@@ -365,7 +375,7 @@ router.post("/ci/update", (req: Request, res: Response) => {
   const before: Record<string, string> = {};
   for (const f of Object.keys(changes)) before[f] = String((liveCi(ci) as any)[f] ?? "");
   edits.set(ci.sys_id, { ...(edits.get(ci.sys_id) ?? {}), ...changes, sys_updated_on: now().replace("T", " ").slice(0, 19) });
-  spentApprovals.add(approvalRef);
+  appliedWrites.add(writeKey(approvalRef, "cmdb_ci", ci.sys_id, Object.keys(changes)));
   const entry: UndoEntry = { undoId: `UNDO-${String(undoLog.length + 1).padStart(4, "0")}`, table: "cmdb_ci", sys_id: ci.sys_id, before, after: changes, approvalRef, at: now(), undone: false };
   undoLog.push(entry);
 
@@ -407,7 +417,7 @@ router.post("/relationship", (req: Request, res: Response) => {
     res.status(422).json({ written: false, error: "A configuration item cannot depend on itself." });
     return;
   }
-  const approvalRef = gate(req, res);
+  const approvalRef = gate(req, res, "cmdb_rel_ci", `${parent.sys_id}->${child.sys_id}`, ["relationship"]);
   if (!approvalRef) return;
   if (allRels().some((r) => r.parent === parent.sys_id && r.child === child.sys_id)) {
     res.status(409).json({ written: false, error: `${parent.name} already depends on ${child.name}.` });
@@ -415,7 +425,7 @@ router.post("/relationship", (req: Request, res: Response) => {
   }
   const rel = { sys_id: `rel-added-${addedRels.length + 1}`, parent: parent.sys_id, child: child.sys_id, type: String(b.type || "Depends on::Used by") };
   addedRels.push(rel);
-  spentApprovals.add(approvalRef);
+  appliedWrites.add(writeKey(approvalRef, "cmdb_rel_ci", `${parent.sys_id}->${child.sys_id}`, ["relationship"]));
   res.status(201).json({ written: true, relationship: { parent: parent.name, child: child.name, type: rel.type }, approvalRef, guidance: "The dependency graph now carries this edge; blast radius will include it." });
 });
 
@@ -469,7 +479,7 @@ router.get("/audit", (_req: Request, res: Response) => {
 
 router.post("/reset", (_req: Request, res: Response) => {
   edits.clear();
-  spentApprovals.clear();
+  appliedWrites.clear();
   undoLog.length = 0;
   tasks.length = 0;
   workNotes.length = 0;
