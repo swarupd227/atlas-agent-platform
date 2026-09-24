@@ -312,6 +312,14 @@ router.get("/estate", (_req: Request, res: Response) => {
 const WRITABLE_FIELDS = new Set(["assigned_to", "support_group", "business_criticality", "install_status", "operational_status", "environment", "short_description"]);
 
 /**
+ * ServiceNow holds criticality as a choice list, so anything else is not a tier -- it is a
+ * string that looks like one. Two runs of the same journey wrote "1 - Most Critical" and
+ * "Tier 2" for the same application because nothing here said otherwise.
+ */
+const CRITICALITY_VALUES = ["1 - Most Critical", "2 - Somewhat Critical", "3 - Less Critical", "4 - Not Critical"];
+const INSTALL_STATUS_VALUES: Record<string, string> = { "1": "Installed", "6": "In Maintenance", "7": "Retired", "8": "Stolen" };
+
+/**
  * An approval is the decision a person made, and a decision usually covers several records:
  * eighteen tiers, nine retirements. So the approval may be used for each record it covers --
  * what is refused is writing the same fields on the same record twice under it, which is what
@@ -352,6 +360,25 @@ router.post("/ci/update", (req: Request, res: Response) => {
       written: false,
       error: bad.length ? `These fields cannot be written here: ${bad.join(", ")}.` : "No fields given to write.",
       writable: Array.from(WRITABLE_FIELDS),
+    });
+    return;
+  }
+  const tier = changes.business_criticality;
+  if (tier !== undefined && !CRITICALITY_VALUES.includes(tier)) {
+    res.status(422).json({
+      written: false,
+      error: `"${tier}" is not a criticality value.`,
+      allowed: CRITICALITY_VALUES,
+      guidance: "Criticality is a choice list, not free text. Write one of the allowed values exactly.",
+    });
+    return;
+  }
+  const status = changes.install_status;
+  if (status !== undefined && !INSTALL_STATUS_VALUES[status]) {
+    res.status(422).json({
+      written: false,
+      error: `"${status}" is not an install status.`,
+      allowed: Object.entries(INSTALL_STATUS_VALUES).map(([k, v]) => `${k} (${v})`),
     });
     return;
   }

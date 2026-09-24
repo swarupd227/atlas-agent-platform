@@ -1097,7 +1097,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
         {
           name: "snow_update_ci",
-          description: "Change fields on a configuration item -- owner, support group, criticality, install or operational status, environment, description. Requires approvalRef, the id of the approval a person gave. One approval covers every record that decision covered, so use it for each of them in turn; writing the same fields on the same record twice under it is refused. Returns what each field held before and an undo id. Retiring an item other items still depend on is refused, with the dependants named.",
+          description: "Change fields on a configuration item -- owner, support group, criticality, install or operational status, environment, description. Criticality is a choice list: \"1 - Most Critical\", \"2 - Somewhat Critical\", \"3 - Less Critical\" or \"4 - Not Critical\", written exactly; install status is \"1\" installed, \"6\" in maintenance, \"7\" retired or \"8\" stolen. Anything else is refused with the allowed values. Requires approvalRef, the id of the approval a person gave. One approval covers every record that decision covered, so use it for each of them in turn; writing the same fields on the same record twice under it is refused. Returns what each field held before and an undo id. Retiring an item other items still depend on is refused, with the dependants named.",
           endpoint: "/ci/update",
           method: "POST",
           inputSchema: {
