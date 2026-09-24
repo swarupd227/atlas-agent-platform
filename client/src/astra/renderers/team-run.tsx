@@ -62,16 +62,21 @@ export function TeamRun({ props, onAsk, onDecide, activeActionId }: {
                   (onDecide -> thread.decide -> resolveAction), not onAsk: that path only posts a
                   freeform chat message asking Astra to approve, which can't resolve the gate by
                   itself -- decide_approval is itself confirm-gated, so a bare onAsk click could
-                  only ever produce a second confirmation, never a decision. Fall back to onAsk
-                  only if the caller hasn't wired a real action id (keeps this renderer usable
+                  only ever produce a second confirmation, never a decision.
+                  This panel's own run query can show run.pending a few seconds before the
+                  thread's message list (and so activeActionId) catches up to the same pause --
+                  confirmed live: a click in that window silently fails. Disable rather than fall
+                  back to onAsk in that gap, since onAsk doesn't actually resolve anything either;
+                  the buttons enable themselves the moment activeActionId arrives. Fall back to
+                  onAsk only if the caller never wired onDecide at all (keeps this renderer usable
                   wherever else it might be mounted without that context).
                 */}
-                {onDecide && activeActionId ? (
+                {onDecide ? (
                   <>
-                    <Button size="sm" className="h-7 px-2 text-xs" onClick={() => onDecide(activeActionId, "confirm")} data-testid="astra-team-run-approve">
+                    <Button size="sm" className="h-7 px-2 text-xs" disabled={!activeActionId} onClick={() => activeActionId && onDecide(activeActionId, "confirm")} data-testid="astra-team-run-approve">
                       Approve
                     </Button>
-                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => onDecide(activeActionId, "cancel")} data-testid="astra-team-run-reject">
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={!activeActionId} onClick={() => activeActionId && onDecide(activeActionId, "cancel")} data-testid="astra-team-run-reject">
                       Reject
                     </Button>
                   </>
