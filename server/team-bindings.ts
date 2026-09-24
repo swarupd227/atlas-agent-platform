@@ -8,20 +8,62 @@
  * will be built.
  */
 
-/** A connector whose name contains the proposed name, or whose first word the proposed name contains. */
+/** Words that say what kind of thing a connector is, not which one it is. */
+const GENERIC_NAME_WORDS = new Set([
+  "the", "a", "an", "and", "of", "for", "to",
+  "mcp", "server", "connector", "api", "service", "services", "platform",
+  "system", "systems", "record", "engine", "queue", "store", "hub", "gateway",
+]);
+
+function nameTokens(name: string): string[] {
+  return name.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t && !GENERIC_NAME_WORDS.has(t));
+}
+
+/**
+ * The connector a proposed binding means.
+ *
+ * Tried in order: the exact name; a name that wholly contains (or is contained
+ * by) the proposed one; then the candidate sharing the most distinctive words
+ * with it. Only a clear winner counts -- on a tie the old first-match rule
+ * still answers, so an ambiguous one-word binding resolves as it always did.
+ *
+ * The best-match step is what stops a shared generic word from deciding.
+ * Live 2026-09-24: "Surplus Lines Compliance & Bordereau Queue" resolved to
+ * "Compliance Connector MCP Server" because the old rule matched a candidate's
+ * FIRST WORD alone, and "Insurity Policy System of Record" resolved to
+ * "Insurity Rating & Predict Engine" the same way. Both bound silently: the
+ * builder reported nothing unresolved, the agent showed a connector, and the
+ * failure only surfaced at run time as a clause reviewer refusing to certify
+ * an endorsement because its verification tool "was not functional" -- it was
+ * attached to a connector that does not have that tool.
+ */
 export function resolveBindingServer<T extends { name: string }>(serverName: string, servers: T[]): T | undefined {
   const want = serverName.trim().toLowerCase();
-  // An exact name wins, whatever the list order. Without this, a binding on
-  // "ServiceNow CMDB (Sandbox)" resolved to "ServiceNow ITSM (Enterprise)" --
-  // the loose clauses below match on the first word alone, so whichever
-  // connector happened to come first in the list took the binding. That
-  // mis-resolution bound agents to the wrong connector, and later reported the
-  // correctly-bound ones as "expects X but isn't linked to it".
-  return servers.find(s => s.name.trim().toLowerCase() === want)
-    ?? servers.find(s =>
-      s.name.toLowerCase().includes(want) ||
-      want.includes(s.name.toLowerCase().split(" ")[0])
-    );
+
+  const exact = servers.find((s) => s.name.trim().toLowerCase() === want);
+  if (exact) return exact;
+
+  const contained = servers.filter((s) => {
+    const name = s.name.trim().toLowerCase();
+    return name.includes(want) || want.includes(name);
+  });
+  if (contained.length === 1) return contained[0];
+
+  const wanted = new Set(nameTokens(want));
+  let best: T | undefined;
+  let bestScore = 0;
+  let tied = false;
+  for (const server of servers) {
+    const score = nameTokens(server.name).filter((t) => wanted.has(t)).length;
+    if (score > bestScore) { best = server; bestScore = score; tied = false; }
+    else if (score === bestScore && score > 0) { tied = true; }
+  }
+  if (best && bestScore > 0 && !tied) return best;
+
+  // Ambiguous or nothing distinctive in common: the historical rule, so a
+  // binding that used to resolve still resolves the same way.
+  return contained[0]
+    ?? servers.find((s) => want.includes(s.name.toLowerCase().split(" ")[0]));
 }
 
 export type BindingIssueCode = "server_unresolved" | "server_not_connected" | "tool_not_on_server" | "server_no_tools_discovered";

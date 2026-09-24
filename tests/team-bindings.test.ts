@@ -37,6 +37,28 @@ describe("resolveBindingServer", () => {
     // No exact name: the looser match still answers, as it always did.
     expect(resolveBindingServer("ServiceNow", two)?.id).toBe("c-ent");
   });
+
+  it("does not let one shared generic word decide between two real connectors", () => {
+    // Live 2026-09-24: both of these mis-resolved, silently. The clause
+    // reviewer was bound to a connector without verify_clause_taxonomy and
+    // refused to certify the endorsement; the policy binder was pointed at the
+    // rating engine. Nothing was reported unresolved, because from the
+    // builder's side each one had matched something.
+    const insurance = [
+      { id: "c-generic", name: "Compliance Connector MCP Server" },
+      { id: "c-surplus", name: "Surplus Lines Compliance & Bordereau Queue" },
+      { id: "c-rating", name: "Insurity Rating & Predict Engine" },
+      { id: "c-policy", name: "Insurity Policy System of Record" },
+    ];
+    expect(resolveBindingServer("Surplus Lines Compliance & Bordereau Queue", insurance)?.id).toBe("c-surplus");
+    expect(resolveBindingServer("Surplus Lines Compliance", insurance)?.id).toBe("c-surplus");
+    expect(resolveBindingServer("Insurity Policy System of Record", insurance)?.id).toBe("c-policy");
+    expect(resolveBindingServer("Insurity Policy SoR", insurance)?.id).toBe("c-policy");
+    expect(resolveBindingServer("Insurity Rating", insurance)?.id).toBe("c-rating");
+    // "Compliance" alone is the generic one's whole distinctive name, so it
+    // still wins on containment rather than being dragged to the longer name.
+    expect(resolveBindingServer("Compliance Connector MCP Server", insurance)?.id).toBe("c-generic");
+  });
 });
 
 describe("assessProposalBindings", () => {

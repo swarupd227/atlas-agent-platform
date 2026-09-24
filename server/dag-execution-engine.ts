@@ -285,6 +285,12 @@ export interface DAGExecutionResult {
   // missingDeliverableError). Any entry makes the run fail: the deliverable
   // the run exists to produce is not there, whatever the steps' text says.
   missingDeliverableNodeIds?: string[];
+  // Steps that ran, branch, and had EVERY branch come out unsatisfied, so the
+  // run stopped there having decided nothing. Distinct from an ordinary
+  // untaken branch, where a sibling branch was taken instead. Any entry makes
+  // the run fail: the flow did not reach the end it was drawn to reach, and
+  // saying "completed with skips" invites reading that as success.
+  routingDeadEndNodeIds?: string[];
 }
 
 // The one place that decides what a finished run's DB status should say.
@@ -1510,6 +1516,25 @@ export class DAGExecutionEngine {
       .map(([id]) => id);
     if (missingDeliverableNodeIds.length > 0) success = false;
 
+    // A step that ran, branches, and whose every branch was unsatisfied: the
+    // run stopped there having decided nothing. Each skipped step downstream
+    // already records "No incoming edge condition was satisfied", but that
+    // reads as an ordinary not-taken branch, and the run as a whole still
+    // called itself a success. Live 2026-09-24: a review step asked for a
+    // redraft, neither of its two branches ("passed review" / "rejected after
+    // two rounds") was true, and the six steps that bind the policy and file
+    // it were skipped -- reported as completed_with_skips.
+    const routingDeadEndNodeIds = Array.from(nodeOutcomes.entries())
+      .filter(([nodeId, o]) => {
+        if (o.status !== "completed") return false;
+        const targets = config.executionPlan.edgeMap[nodeId] ?? [];
+        const branching = targets.filter((t) =>
+          (config.executionPlan.incomingEdges[t] ?? []).some((e) => e.sourceNodeId === nodeId && e.isGating));
+        return branching.length > 0 && branching.every((t) => skippedNodeIds.has(t));
+      })
+      .map(([nodeId]) => nodeId);
+    if (routingDeadEndNodeIds.length > 0) success = false;
+
     return {
       finalState: currentState,
       waveResults,
@@ -1520,6 +1545,7 @@ export class DAGExecutionEngine {
       success,
       skippedNodeIds: Array.from(skippedNodeIds),
       ...(missingDeliverableNodeIds.length > 0 ? { missingDeliverableNodeIds } : {}),
+      ...(routingDeadEndNodeIds.length > 0 ? { routingDeadEndNodeIds } : {}),
     };
   }
 
