@@ -301,16 +301,26 @@ export function unwrapJsonFence(text: string): string {
 }
 
 /**
- * An exhausted quota/budget: OpenAI reports it as 429 "insufficient_quota",
- * the same status as a rate limit, but no amount of waiting clears it. It is
- * never retried; whether it cascades is the fallback policy's call.
+ * An exhausted quota/budget: a provider reports it as 429, the same status as
+ * a rate limit, but no amount of waiting clears it. It is never retried;
+ * whether it cascades is the fallback policy's call.
+ *
+ * The wording matters more than it should, because getting it wrong is silent
+ * and expensive. Live 2026-09-24: a key with no credits returned 429 "You have
+ * no credits remaining", which matched none of the phrases here, so every call
+ * was treated as a passing rate limit and retried with backoff until the
+ * caller's own timeout killed it -- 180s per agent step, instead of failing in
+ * a second and cascading to the other provider. The fallback looked healthy
+ * while doing nothing. Hence matching on the shape of the message (credit,
+ * quota, billing) rather than on exact sentences a provider may reword.
  */
 export function isQuotaExhaustedError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const e = err as Error & { status?: number; code?: string; type?: string; error?: { code?: string; type?: string } };
   const code = e.code ?? e.error?.code ?? e.type ?? e.error?.type;
   if (code === "insufficient_quota" || code === "billing_hard_limit_reached") return true;
-  return e.status === 429 && /insufficient_quota|exceeded your current quota|billing hard limit/i.test(e.message);
+  if (e.status !== 429) return false;
+  return /insufficient_quota|exceeded your current quota|billing hard limit|no credits remaining|out of credits|credit balance|add credits|billing details/i.test(e.message);
 }
 
 export function isRateLimitError(err: unknown): boolean {

@@ -47,6 +47,12 @@ describe("deriveEdgesFromFlow", () => {
     const breach = derived.find((e) => e.to === "Carrier Approval Checkpoint");
     expect(breach).toMatchObject({ type: "conditional", condition: "Treaty limit breached", label: "Treaty limit breached" });
     expect(derived.find((e) => e.to === "Treaty Limit Evaluator")).toMatchObject({ type: "handoff" });
+
+    // branchCondition is the name team-build's resolveEdgeRuleFromSpec reads.
+    // Without it the edge is built unconditional and the decision takes every
+    // branch, which is not a branch at all.
+    expect(breach!.branchCondition).toBe("Treaty limit breached");
+    expect(derived.find((e) => e.to === "Treaty Limit Evaluator")).not.toHaveProperty("branchCondition");
   });
 
   it("drops a connection whose ends sit inside one agent", () => {
@@ -60,7 +66,14 @@ describe("deriveEdgesFromFlow", () => {
       { from: "n6", to: "n5", condition: "Endorsement rejected" },
     ]);
     expect(derived).toEqual([
-      { from: "Contract Certainty Reviewer", to: "Pricing & Drafting Agent", label: "Endorsement rejected", condition: "Endorsement rejected", type: "conditional" },
+      {
+        from: "Contract Certainty Reviewer",
+        to: "Pricing & Drafting Agent",
+        label: "Endorsement rejected",
+        condition: "Endorsement rejected",
+        branchCondition: "Endorsement rejected",
+        type: "conditional",
+      },
     ]);
   });
 

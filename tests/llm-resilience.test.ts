@@ -541,6 +541,44 @@ describe("exhausted quota is not a rate limit", () => {
     expect(result.fallbackReason).toBe("quota_exhausted");
     expect(calls).toHaveBeenCalledTimes(1);
   });
+
+  it("recognises a dead key by the message alone, with no quota code", async () => {
+    const { isQuotaExhaustedError } = await import("../server/llm-provider");
+    // The exact 429 a credit-less key returns. It carries no insufficient_quota
+    // code, so before this it read as an ordinary rate limit and was retried
+    // with backoff until the caller's timeout killed the step (live
+    // 2026-09-24: 180s burned per agent step, and no cascade).
+    const noCredits = Object.assign(
+      new Error("429 You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/."),
+      { status: 429 },
+    );
+    expect(isQuotaExhaustedError(noCredits)).toBe(true);
+    expect(isRateLimitError(noCredits)).toBe(false);
+
+    const calls = vi.fn(async () => { throw noCredits; });
+    const result = await completeWithFallback(MESSAGES, undefined, [
+      mockProvider("openai", calls),
+      mockProvider("anthropic", async () => ({ ...makeResult("from-fallback"), actualProvider: "anthropic" })),
+    ]);
+    expect(result.content).toBe("from-fallback");
+    expect(result.fallbackReason).toBe("quota_exhausted");
+    expect(calls).toHaveBeenCalledTimes(1);
+  });
+
+  it("still treats a genuine rate limit as retryable", async () => {
+    const { isQuotaExhaustedError } = await import("../server/llm-provider");
+    // Wording that mentions a limit but not money: waiting does clear this one.
+    const rateLimited = Object.assign(
+      new Error("429 Rate limit reached for gpt-4o in organization org-x on tokens per min. Limit: 30000, Used: 30000. Please try again in 6ms."),
+      { status: 429 },
+    );
+    expect(isQuotaExhaustedError(rateLimited)).toBe(false);
+    expect(isRateLimitError(rateLimited)).toBe(true);
+    // A 429 that is not about credit must not be caught by the wider match.
+    expect(isQuotaExhaustedError(Object.assign(new Error("429 Too Many Requests"), { status: 429 }))).toBe(false);
+    // And the wording only counts on a 429, not on an unrelated failure.
+    expect(isQuotaExhaustedError(Object.assign(new Error("500 no credits remaining"), { status: 500 }))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

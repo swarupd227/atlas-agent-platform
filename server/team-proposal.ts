@@ -72,7 +72,7 @@ export function deriveEdgesFromFlow(
   for (const step of steps) if (step?.id && step.label) labelByStepId.set(String(step.id), step.label);
   const agentForStepId = (id: unknown) => agentByStepLabel.get(norm(labelByStepId.get(String(id))));
 
-  const derived: Array<{ from: string; to: string; label?: string; condition?: string; type: string; maxRounds?: number }> = [];
+  const derived: Array<{ from: string; to: string; label?: string; condition?: string; branchCondition?: string; type: string; maxRounds?: number }> = [];
   const seen = new Set<string>();
   for (const edge of edges) {
     const from = agentForStepId(edge?.from);
@@ -87,6 +87,11 @@ export function deriveEdgesFromFlow(
       to,
       label: edge.condition || edge.label || undefined,
       condition: edge.condition || undefined,
+      // The name the builder reads (resolveEdgeRuleFromSpec in team-build.ts).
+      // Sending only "condition" built the edge unconditional, so a decision
+      // took BOTH its branches: live 2026-09-24, a submission the confidence
+      // gate had explicitly cleared still went to the human correction step.
+      ...(edge.condition ? { branchCondition: edge.condition } : {}),
       type: edge.condition ? "conditional" : "handoff",
       // Carried so a loop the business bounded at two rounds is built as two,
       // rather than defaulting to one and only saying "two" in its label.
