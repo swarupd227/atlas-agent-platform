@@ -263,6 +263,8 @@ export interface IStorage {
   getKpiReadingsByOutcome(outcomeId: string): Promise<KpiReading[]>;
   getKpiReading(id: string): Promise<KpiReading | undefined>;
   deleteKpiReading(id: string): Promise<boolean>;
+  detachSkillFromAgents(skillId: string, orgId?: string): Promise<string[]>;
+  detachPolicyFromAgents(policyId: string, policyName: string, orgId?: string): Promise<string[]>;
 
   getDeployments(orgId?: string): Promise<Deployment[]>;
   getDeployment(id: string, orgId?: string): Promise<Deployment | undefined>;
@@ -1315,6 +1317,9 @@ export class DatabaseStorage implements IStorage {
   async deleteOutcome(id: string, orgId?: string) {
     const owned = await this.getOutcome(id, orgId);
     if (!owned) return false;
+    // Readings belong to the KPIs being deleted here; without this they
+    // outlive the KPI they measured (kpi_readings postdates this cleanup).
+    await db.delete(kpiReadings).where(eq(kpiReadings.outcomeId, id));
     await db.delete(kpiDefinitions).where(eq(kpiDefinitions.outcomeId, id));
     await db.delete(outcomeEvents).where(eq(outcomeEvents.outcomeId, id));
     await db.delete(billingDisputes).where(eq(billingDisputes.outcomeId, id));
@@ -1494,8 +1499,37 @@ export class DatabaseStorage implements IStorage {
   async deletePolicy(id: string, orgId?: string) {
     const owned = await this.getPolicy(id, orgId);
     if (!owned) return false;
+    await this.detachPolicyFromAgents(id, owned.name, orgId);
     const [deleted] = await db.delete(policies).where(eq(policies.id, id)).returning();
     return !!deleted;
+  }
+
+  /**
+   * Take a policy out of every agent's policyBindings. Bindings are written in
+   * two shapes -- an array of {policyId, name} or {policies: ["<name>"]} (see
+   * normalizePolicyBindings) -- so both are handled, by id and by name.
+   */
+  async detachPolicyFromAgents(policyId: string, policyName: string, orgId?: string): Promise<string[]> {
+    const matches = (entry: any) =>
+      (typeof entry === "string" ? entry : entry?.policyId ?? entry?.name) === policyId ||
+      (typeof entry === "string" ? entry : entry?.name) === policyName;
+    const changed: string[] = [];
+    for (const agent of await this.getAgents(orgId)) {
+      const raw = (agent as any).policyBindings;
+      if (Array.isArray(raw)) {
+        const kept = raw.filter((entry: any) => !matches(entry));
+        if (kept.length === raw.length) continue;
+        await db.update(agents).set({ policyBindings: kept } as any).where(eq(agents.id, agent.id));
+        changed.push(agent.id);
+      } else if (raw && Array.isArray((raw as any).policies)) {
+        const policiesList = (raw as any).policies;
+        const kept = policiesList.filter((entry: any) => !matches(entry));
+        if (kept.length === policiesList.length) continue;
+        await db.update(agents).set({ policyBindings: { ...(raw as any), policies: kept } } as any).where(eq(agents.id, agent.id));
+        changed.push(agent.id);
+      }
+    }
+    return changed;
   }
 
   async getApprovals(orgId?: string) {
@@ -3407,8 +3441,27 @@ export class DatabaseStorage implements IStorage {
   async deleteSkill(id: string, orgId?: string) {
     const owned = await this.getSkill(id, orgId);
     if (!owned) return false;
+    await db.delete(skillVersions).where(eq(skillVersions.skillId, id));
+    // An agent that preloaded this skill keeps pointing at it otherwise, and
+    // the runtime silently drops the missing id rather than saying the agent
+    // lost a skill.
+    await this.detachSkillFromAgents(id, orgId);
     await db.delete(skills).where(eq(skills.id, id));
     return true;
+  }
+
+  /** Take a skill id out of every agent's preloadedSkills. Returns the agents changed. */
+  async detachSkillFromAgents(skillId: string, orgId?: string): Promise<string[]> {
+    const changed: string[] = [];
+    for (const agent of await this.getAgents(orgId)) {
+      const raw = (agent as any).preloadedSkills;
+      if (!Array.isArray(raw) || raw.length === 0) continue;
+      const kept = raw.filter((entry: any) => (typeof entry === "string" ? entry : entry?.skillId) !== skillId);
+      if (kept.length === raw.length) continue;
+      await db.update(agents).set({ preloadedSkills: kept } as any).where(eq(agents.id, agent.id));
+      changed.push(agent.id);
+    }
+    return changed;
   }
 
   async getProcessFlows(orgId?: string) {
