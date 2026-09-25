@@ -29,9 +29,17 @@ export const REQUIRED_FIELDS_NOTE =
 
 // Guards against a fact noticed at one tool-calling step (e.g. "some records
 // have no matching related data") going unreconciled against a contradictory
-// conclusion drawn at another (e.g. "none qualify").
+// conclusion drawn at another (e.g. "none qualify"). Also covers a DAG
+// synthesis node, which reaches this same final-answer step after its
+// upstream siblings' full outputs have already been injected as state into
+// its own conversation -- so "everything observed earlier" includes their
+// claims too. Backlog B43: a synthesis node was flagging differing figures
+// from different sources as contradictions when the real explanation was a
+// difference in when or how each was measured, information the sources
+// never carried because nothing asked for it.
 export const RECONCILIATION_NOTE =
-  " Before finalizing your answer, check it against everything observed earlier in this conversation -- if an earlier step noted a fact (e.g. some records have no matching related data) that would contradict your conclusion (e.g. \"none qualify\"), resolve the contradiction or explain it rather than reporting a conclusion that contradicts an earlier observation.";
+  " Before finalizing your answer, check it against everything observed earlier in this conversation -- if an earlier step noted a fact (e.g. some records have no matching related data) that would contradict your conclusion (e.g. \"none qualify\"), resolve the contradiction or explain it rather than reporting a conclusion that contradicts an earlier observation." +
+  " When two sources report different figures for what looks like the same fact, do not assume a contradiction: check whether either carries a date, time period or methodology note -- a difference in when or how something was measured often explains the gap, not a disagreement. If that context is present, say so explicitly (for example, a likely trend or a differing method) instead of flagging a conflict; if neither source gives you that context, say the comparison cannot be verified rather than averaging the values or silently picking one.";
 
 // A step's time tracks the size of its answer (r = 0.96 across the measured
 // steps), and a step fed a long upstream context tended to retell it. The
