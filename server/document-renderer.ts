@@ -120,13 +120,17 @@ export async function renderPptx(spec: DocumentSpec): Promise<Buffer> {
 
 /** A bullet whose model-written text leads with a short all-caps tag ("HIGH: ...", "LOW: ...",
  *  "MEDIUM: ...") -- a convention several agents already use for severity/status. Split it out so
- *  it renders as a coloured badge instead of buried plain text; anything else renders unchanged. */
+ *  it renders as a coloured badge instead of buried plain text; anything else renders unchanged.
+ *  Matched on the tag's FIRST word only, not the whole phrase: live output varies the rest
+ *  ("HIGH:" one run, "HIGH SEVERITY:" the next, same agent) -- confirmed live, a run that wrote
+ *  "HIGH SEVERITY:" fell all the way through to plain grey text because the old lookup required
+ *  the entire tag to match a known key exactly. */
 const SEVERITY_COLOR: Record<string, string> = {
   CRITICAL: "B91C1C", HIGH: "DC2626", MEDIUM: "D97706", MODERATE: "D97706",
   LOW: "059669", INFO: "2563EB", STRONG: "059669", WEAK: "D97706",
 };
 function splitBulletTag(bullet: string): { tag: string | null; color: string; rest: string } {
-  const m = bullet.match(/^([A-Z][A-Z ]{1,14}):\s*(.*)$/s);
+  const m = bullet.match(/^([A-Z]+)(?:[A-Z ]{0,14}):\s*(.*)$/s);
   if (m && SEVERITY_COLOR[m[1]]) return { tag: m[1], color: SEVERITY_COLOR[m[1]], rest: m[2] };
   return { tag: null, color: THEME.slate, rest: bullet };
 }
