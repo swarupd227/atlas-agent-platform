@@ -533,6 +533,23 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
 
   const addNode = useCallback((ntype: ProcessNodeType) => placeNode(ntype), [placeNode]);
 
+  // Right-click the canvas to add a step exactly where you clicked. The left rail
+  // adds to the next grid slot and drag-and-drop places precisely, but neither is
+  // discoverable when you already know where the step belongs: you point at the
+  // gap and ask for a step there.
+  const [menu, setMenu] = useState<{ screenX: number; screenY: number; flow: { x: number; y: number } } | null>(null);
+  const onPaneContextMenu = useCallback((e: React.MouseEvent | MouseEvent) => {
+    e.preventDefault();
+    const host = (e.currentTarget as HTMLElement)?.getBoundingClientRect?.();
+    setMenu({
+      // Positioned within the canvas pane, so the menu cannot sit off-screen at
+      // the right or bottom edge.
+      screenX: host ? e.clientX - host.left : e.clientX,
+      screenY: host ? e.clientY - host.top : e.clientY,
+      flow: screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+    });
+  }, [screenToFlowPosition]);
+
   // Drop a palette item at the cursor -- real drag-and-drop placement, versus
   // the click-to-append-at-next-grid-slot fallback that addNode still provides.
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -718,7 +735,9 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
           nodeTypes={nodeTypes}
           onNodeClick={(_, n) => { setSelectedNodeId(n.id); setSelectedEdgeId(null); }}
           onEdgeClick={(_, e) => { setSelectedEdgeId(e.id); setSelectedNodeId(null); }}
-          onPaneClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }}
+          onPaneClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setMenu(null); }}
+          onPaneContextMenu={onPaneContextMenu}
+          onMoveStart={() => setMenu(null)}
           fitView
           proOptions={{ hideAttribution: true }}
           data-testid="reactflow-canvas"
@@ -726,6 +745,43 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
           <Background color="hsl(var(--foreground) / 0.18)" gap={18} size={1.2} />
           <Controls showInteractive={false} className="!shadow-sm [&>button]:!border-border [&>button]:!bg-card [&>button]:!fill-foreground" />
         </ReactFlow>
+        {menu && (
+          <>
+            {/* Catches the next click anywhere, including a second right-click. */}
+            <div className="absolute inset-0 z-40" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} data-testid="context-menu-backdrop" />
+            <div
+              className="absolute z-50 w-56 max-h-[70%] overflow-y-auto rounded-lg border bg-card p-1 shadow-[0_12px_40px_hsl(0_0%_0%/0.18)]"
+              style={{ left: Math.max(8, menu.screenX), top: Math.max(8, menu.screenY) }}
+              role="menu"
+              aria-label="Add a step here"
+              data-testid="canvas-context-menu"
+            >
+              <p className="px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Add a step here</p>
+              {PALETTE_GROUPS.map(group => (
+                <div key={group.label} className="pb-0.5">
+                  <p className="px-2 pt-1 text-[10px] font-medium text-muted-foreground">{group.label}</p>
+                  {group.types.map(t => {
+                    const meta = NODE_META[t];
+                    const Icon = meta.icon;
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => { placeNode(t, menu.flow); setMenu(null); }}
+                        className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs hover-elevate"
+                        data-testid={`context-add-${t}`}
+                      >
+                        <span className={`flex h-4 w-4 items-center justify-center rounded ${meta.bg} ${meta.color}`}><Icon className="h-2.5 w-2.5" /></span>
+                        {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Inspector */}

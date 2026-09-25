@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeToGraph, layoutGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
+import { classifyStep, estimateFlowCost, type ExecutionKind } from "@shared/flow-execution-kind";
 import FlowGraphCanvas, { type FlowIssue } from "@/components/flow-graph-canvas";
 import { TeamProposalDialog } from "@/components/team-proposal-flow";
 
@@ -451,7 +452,47 @@ export default function ProcessFlows() {
   }, [voiceSupported, listening]);
 
   const totalMins = graph.nodes.reduce((s, n) => s + (n.estimatedMins || 0), 0);
+
+  /** Which steps become agents and which run themselves -- asked for by name: "show which one will be Agent and which one will be not". */
+  const StepPlanTable = ({ title }: { title: string }) => {
+    const KIND_COPY: Record<ExecutionKind, { label: string; note: string; tone: string }> = {
+      agent: { label: "Agent", note: "a model call", tone: "text-violet-700 dark:text-violet-300" },
+      expression: { label: "Expression", note: "runs in-process, free", tone: "text-emerald-700 dark:text-emerald-300" },
+      knowledge_base: { label: "Knowledge lookup", note: "a search, free", tone: "text-emerald-700 dark:text-emerald-300" },
+      skill: { label: "Skill text", note: "injected, free", tone: "text-emerald-700 dark:text-emerald-300" },
+      tool_call: { label: "Tool call", note: "one call, free", tone: "text-emerald-700 dark:text-emerald-300" },
+      gate: { label: "Human approval", note: "waits for a person", tone: "text-rose-700 dark:text-rose-300" },
+      structural: { label: "Marker", note: "nothing runs", tone: "text-muted-foreground" },
+    };
+    return (
+      <div className="flex flex-col gap-1.5" data-testid="step-plan">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-xs font-medium">{title}</p>
+          <p className="text-[11px] text-muted-foreground tabular-nums">
+            {flowCost.modelSteps} agent{flowCost.modelSteps !== 1 ? "s" : ""} · {flowCost.freeSteps} free · approx. ${flowCost.approxUsdPerRun.toFixed(2)} a run
+          </p>
+        </div>
+        <div className="max-h-64 overflow-y-auto rounded-md border divide-y">
+          {stepPlan.map(({ node, kind }) => (
+            <div key={node.id} className="flex items-center justify-between gap-3 px-2.5 py-1.5" data-testid={`step-plan-${node.id}`}>
+              <span className="truncate text-xs">{node.label}</span>
+              <span className="flex shrink-0 items-baseline gap-1.5">
+                <span className={`text-[11px] font-medium ${KIND_COPY[kind].tone}`}>{KIND_COPY[kind].label}</span>
+                <span className="text-[10px] text-muted-foreground">{KIND_COPY[kind].note}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const nodeCount = graph.nodes.length;
+
+  // What each step becomes when the flow goes live. The same classifier the
+  // server builds from, so what this promises and what gets built cannot drift.
+  const stepPlan = useMemo(() => graph.nodes.map(n => ({ node: n, kind: classifyStep(n) })), [graph.nodes]);
+  const flowCost = useMemo(() => estimateFlowCost(graph), [graph]);
 
   const [showTeamProposal, setShowTeamProposal] = useState(false);
   const proposalDescription = useMemo(() => {
@@ -634,7 +675,7 @@ export default function ProcessFlows() {
             the text. Rendered first so its textarea is the page's first. */}
         {describeOpen && (
           <div
-            className={`absolute left-1/2 top-4 z-30 flex w-[min(760px,calc(100%-2rem))] -translate-x-1/2 flex-col gap-3 rounded-2xl border bg-card p-4 shadow-[0_12px_40px_hsl(0_0%_0%/0.14)] ${describeExpanded ? "bottom-4" : ""}`}
+            className={`absolute left-1/2 top-4 z-30 flex w-[min(1100px,calc(100%-3rem))] -translate-x-1/2 flex-col gap-3 rounded-2xl border bg-card p-5 shadow-[0_12px_40px_hsl(0_0%_0%/0.14)] ${describeExpanded ? "bottom-4" : ""}`}
             role="dialog"
             aria-label="Describe your workflow"
             data-testid="panel-describe-workflow"
@@ -673,7 +714,7 @@ export default function ProcessFlows() {
                   }
                 }}
                 placeholder={"e.g. When a new supplier invoice arrives, check it against our purchase order. Invoices over $10K need manager approval; the rest go straight through. Then schedule payment and notify the supplier."}
-                className={`bg-background text-sm leading-relaxed ${describeExpanded ? "flex-1 min-h-[240px] resize-none" : "min-h-[168px] max-h-[48vh] resize-y"}`}
+                className={`bg-background text-sm leading-relaxed ${describeExpanded ? "flex-1 min-h-[320px] resize-none" : "min-h-[260px] max-h-[58vh] resize-y"}`}
                 data-testid="input-ai-description"
               />
               {listening && (
@@ -857,7 +898,7 @@ export default function ProcessFlows() {
       </div>
 
       <Dialog open={compileOpen} onOpenChange={setCompileOpen}>
-        <DialogContent className="astra-scope font-sans max-w-lg" data-testid="dialog-execution-plan">
+        <DialogContent className="astra-scope font-sans max-w-3xl" data-testid="dialog-execution-plan">
           <DialogHeader><DialogTitle className="font-[family-name:var(--astra-display)]">Check flow: validation and run plan</DialogTitle></DialogHeader>
           {compiled && (compiled.valid ? (
             <div className="flex flex-col gap-3">
@@ -1002,7 +1043,7 @@ export default function ProcessFlows() {
       </Dialog>
 
       <Dialog open={syncLegacyChoiceOpen} onOpenChange={setSyncLegacyChoiceOpen}>
-        <DialogContent className="astra-scope font-sans max-w-md" data-testid="dialog-sync-legacy-choice">
+        <DialogContent className="astra-scope font-sans max-w-xl" data-testid="dialog-sync-legacy-choice">
           <DialogHeader>
             <DialogTitle>This automation predates edit-tracking</DialogTitle>
           </DialogHeader>
@@ -1010,6 +1051,7 @@ export default function ProcessFlows() {
             Its current agents can't be matched to specific process-flow steps, so I can't tell what changed.
             Rebuild it fully — every current step gets a fresh agent, and the existing ones are superseded — or skip syncing for now.
           </p>
+          <StepPlanTable title="What each step becomes when this goes live" />
           <DialogFooter>
             <Button variant="outline" onClick={() => setSyncLegacyChoiceOpen(false)} data-testid="button-skip-sync">Skip for now</Button>
             <Button
@@ -1025,8 +1067,9 @@ export default function ProcessFlows() {
       </Dialog>
 
       <Dialog open={syncResultOpen} onOpenChange={setSyncResultOpen}>
-        <DialogContent className="astra-scope font-sans max-w-md" data-testid="dialog-sync-result">
+        <DialogContent className="astra-scope font-sans max-w-3xl" data-testid="dialog-sync-result">
           <DialogHeader><DialogTitle>Sync complete</DialogTitle></DialogHeader>
+          <StepPlanTable title="How each step now runs" />
           {syncResult && (
             <div className="flex flex-col gap-3 text-sm">
               <p className="text-muted-foreground">{syncResult.unchanged} step{syncResult.unchanged !== 1 ? "s" : ""} unchanged — nothing touched.</p>
