@@ -261,6 +261,8 @@ export interface IStorage {
   createKpiReading(reading: InsertKpiReading): Promise<KpiReading>;
   getKpiReadings(kpiId: string, limit?: number): Promise<KpiReading[]>;
   getKpiReadingsByOutcome(outcomeId: string): Promise<KpiReading[]>;
+  getKpiReading(id: string): Promise<KpiReading | undefined>;
+  deleteKpiReading(id: string): Promise<boolean>;
 
   getDeployments(orgId?: string): Promise<Deployment[]>;
   getDeployment(id: string, orgId?: string): Promise<Deployment | undefined>;
@@ -1292,6 +1294,16 @@ export class DatabaseStorage implements IStorage {
 
   async getKpiReadingsByOutcome(outcomeId: string) {
     return db.select().from(kpiReadings).where(eq(kpiReadings.outcomeId, outcomeId)).orderBy(desc(kpiReadings.takenAt));
+  }
+
+  async getKpiReading(id: string) {
+    const [reading] = await db.select().from(kpiReadings).where(eq(kpiReadings.id, id));
+    return reading;
+  }
+
+  async deleteKpiReading(id: string) {
+    await db.delete(kpiReadings).where(eq(kpiReadings.id, id));
+    return true;
   }
 
   async updateOutcome(id: string, data: Partial<OutcomeContract>, orgId?: string) {

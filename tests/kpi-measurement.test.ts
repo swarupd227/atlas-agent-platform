@@ -173,6 +173,20 @@ describe("recording a measurement", () => {
     expect(routes).toContain("delete (data as any).measurementSource;");
   });
 
+  it("can be removed when it was recorded in error, and the KPI falls back to what's left", () => {
+    expect(routes).toContain('router.delete("/api/kpis/:id/readings/:readingId", checkPermission("create_modify_outcomes")');
+    expect(actions).toContain("await storage.deleteKpiReading(reading.id);");
+    // What it reads afterwards is a measurement that still exists, or nothing.
+    expect(actions).toContain("const latest = left[0] ?? null;");
+    expect(actions).toContain('{ currentValue: null, valueSource: null, valueUpdatedAt: null, trend: "stable" }');
+    // The number goes; the fact that it was recorded and removed does not.
+    expect(actions).toContain('action: "kpi_value_removed"');
+  });
+
+  it("won't remove a measurement that belongs to another KPI", () => {
+    expect(actions).toContain('if (!reading || reading.kpiId !== kpi.id) throw new KpiActionError("No measurement with that id on this KPI.", 404);');
+  });
+
   it("keeps a reading taken before the current value as history, without rewriting it", () => {
     expect(actions).toContain("const appliedAsCurrent = !kpi.valueUpdatedAt || takenAt >= new Date(kpi.valueUpdatedAt);");
   });

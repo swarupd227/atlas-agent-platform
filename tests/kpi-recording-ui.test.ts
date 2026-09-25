@@ -79,6 +79,14 @@ describe("the panel", () => {
     expect(panel).toContain("Agent runs keep this up to date, so a recorded value would be overwritten.");
   });
 
+  it("asks once before removing a measurement, and only for one a person recorded", () => {
+    expect(panel).toContain("confirmRemove === r.id");
+    expect(panel).toContain("Remove it?");
+    expect(panel).toContain('r.source === "manual" &&');
+    // Removing says what the KPI reads afterwards rather than just "done".
+    expect(panel).toContain("Nothing measures this KPI now.");
+  });
+
   it("shows the author's own note about how it should be measured", () => {
     expect(panel).toContain("How it was meant to be measured:");
   });

@@ -24,7 +24,7 @@ import {
 import type { ProcessNode } from "@shared/process-flow";
 import { createOutcomeFromProposal, OutcomeInputError, prepareOutcomeFromProposal } from "../outcome-create";
 import { describeSource, parseMeasurementSource, suggestMeasurement, validateMeasurementSource } from "@shared/kpi-measurement";
-import { KpiActionError, declareKpiMeasurement, recordKpiReading } from "../kpi-actions";
+import { KpiActionError, declareKpiMeasurement, recordKpiReading, removeKpiReading } from "../kpi-actions";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 
 const router = Router();
@@ -2185,6 +2185,21 @@ async function createOutcomeVersion(
         note: body.data.note ?? null,
       });
       res.status(201).json(recorded);
+    } catch (e) {
+      if (e instanceof KpiActionError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  });
+
+  /**
+   * Remove a measurement recorded in error. The KPI then reads whatever
+   * measurement is left, or goes back to unmeasured; the audit trail keeps
+   * both the recording and the removal.
+   */
+  router.delete("/api/kpis/:id/readings/:readingId", checkPermission("create_modify_outcomes"), async (req, res) => {
+    try {
+      const result = await removeKpiReading(actorFor(req), req.params.id as string, req.params.readingId as string);
+      res.json(result);
     } catch (e) {
       if (e instanceof KpiActionError) return res.status(e.status).json({ error: e.message });
       throw e;

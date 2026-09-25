@@ -68,6 +68,53 @@ export async function declareKpiMeasurement(actor: KpiActor, kpiId: string, sour
   return { kpi: updated, describes: describeSource(source), was: describeSource(before) };
 }
 
+/**
+ * Remove a measurement recorded in error.
+ *
+ * The number is gone, but the fact that it was recorded and then removed is
+ * not: both are in the audit trail. What the KPI reads afterwards is whatever
+ * measurement is left, and when none is left it goes back to being unmeasured
+ * rather than keeping a value no reading supports.
+ */
+export async function removeKpiReading(actor: KpiActor, kpiId: string, readingId: string): Promise<{ kpi: KpiDefinition; nowReads: number | null; remaining: number }> {
+  const kpi = await requireKpi(kpiId, actor.orgId);
+  const reading = await storage.getKpiReading(readingId);
+  if (!reading || reading.kpiId !== kpi.id) throw new KpiActionError("No measurement with that id on this KPI.", 404);
+
+  await storage.deleteKpiReading(reading.id);
+  const left = await storage.getKpiReadings(kpi.id, 100);
+  const latest = left[0] ?? null;
+
+  const updated = (await storage.updateKpi(kpi.id, latest
+    ? {
+        currentValue: latest.value,
+        valueSource: latest.source,
+        valueUpdatedAt: new Date(latest.takenAt as any),
+        trend: trendBetween(left[1]?.value ?? null, latest.value),
+      }
+    : { currentValue: null, valueSource: null, valueUpdatedAt: null, trend: "stable" } as any)) ?? kpi;
+
+  await storage.createAuditEvent({
+    organizationId: actor.orgId,
+    actorType: "user",
+    actorId: actor.actorId ?? actor.actorLabel,
+    objectType: "kpi",
+    objectId: kpi.id,
+    action: "kpi_value_removed",
+    details: JSON.stringify({
+      kpi: kpi.name,
+      value: reading.value,
+      unit: kpi.unit,
+      takenAt: reading.takenAt ? new Date(reading.takenAt as any).toISOString() : null,
+      wasRecordedBy: reading.recordedByName,
+      nowReads: latest ? latest.value : "not measured",
+      via: actor.via,
+    }),
+  });
+
+  return { kpi: updated, nowReads: latest ? latest.value : null, remaining: left.length };
+}
+
 export interface RecordedReading {
   reading: KpiReading;
   kpi: KpiDefinition;

@@ -11,7 +11,7 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Plus } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -87,6 +87,8 @@ export function KpiMeasurement({ kpi }: { kpi: KpiDefinition }) {
   const view = useQuery<MeasurementView>({ queryKey: key });
 
   const [recording, setRecording] = useState(false);
+  // Removing a measurement asks once: the number goes, and only the audit trail keeps it.
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [value, setValue] = useState("");
   const [takenAt, setTakenAt] = useState(() => dateInputValue(new Date()));
   const [note, setNote] = useState("");
@@ -136,6 +138,25 @@ export function KpiMeasurement({ kpi }: { kpi: KpiDefinition }) {
       });
     },
     onError: (e: Error) => toast({ title: "Not recorded", description: e.message, variant: "destructive" }),
+  });
+
+  const remove = useMutation({
+    mutationFn: async (readingId: string) => {
+      const res = await apiRequest("DELETE", `/api/kpis/${kpi.id}/readings/${readingId}`);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "That measurement could not be removed.");
+      return res.json();
+    },
+    onSuccess: (data: { nowReads?: number | null; remaining?: number }) => {
+      refresh();
+      setConfirmRemove(null);
+      toast({
+        title: "Measurement removed",
+        description: data?.nowReads === null || data?.nowReads === undefined
+          ? "Nothing measures this KPI now."
+          : `It now reads ${data.nowReads}${kpi.unit ? ` ${kpi.unit}` : ""}, from the measurement before it.`,
+      });
+    },
+    onError: (e: Error) => toast({ title: "Not removed", description: e.message, variant: "destructive" }),
   });
 
   if (view.isLoading) return <p className="text-xs text-muted-foreground">Loading what measures it…</p>;
@@ -231,9 +252,30 @@ export function KpiMeasurement({ kpi }: { kpi: KpiDefinition }) {
       {readings.length > 0 && (
         <ul className="flex flex-col gap-0.5" data-testid={`kpi-readings-${kpi.id}`}>
           {readings.slice(0, 5).map((r) => (
-            <li key={r.id} className="text-[11px] text-muted-foreground">
-              {readingLine(r, kpi.unit)}
-              {r.note && <span className="italic"> — {r.note}</span>}
+            <li key={r.id} className="group flex items-start gap-1.5 text-[11px] text-muted-foreground">
+              <span className="min-w-0 flex-1">
+                {readingLine(r, kpi.unit)}
+                {r.note && <span className="italic"> — {r.note}</span>}
+              </span>
+              {r.source === "manual" && (confirmRemove === r.id ? (
+                <span className="flex shrink-0 items-center gap-1">
+                  <span>Remove it?</span>
+                  <button type="button" className="underline hover:text-foreground" onClick={() => remove.mutate(r.id)} disabled={remove.isPending} data-testid={`kpi-remove-confirm-${r.id}`}>
+                    {remove.isPending ? "Removing…" : "Yes"}
+                  </button>
+                  <button type="button" className="underline hover:text-foreground" onClick={() => setConfirmRemove(null)}>No</button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="shrink-0 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+                  onClick={() => setConfirmRemove(r.id)}
+                  aria-label={`Remove the measurement of ${r.value}${kpi.unit ? ` ${kpi.unit}` : ""}`}
+                  data-testid={`kpi-remove-${r.id}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              ))}
             </li>
           ))}
           {readings.length > 5 && <li className="text-[11px] text-muted-foreground">and {readings.length - 5} earlier</li>}
