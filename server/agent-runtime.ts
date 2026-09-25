@@ -3419,6 +3419,34 @@ const VERIFIED_FACTS_MAX_CHARS = 32_000;
  * worse than no fact, and a result that large is a payload the pipeline should
  * not be carrying anyway.
  */
+/**
+ * Why a step captured no source values, in one line.
+ *
+ * Absence is the failure mode that hides: verified facts simply not appearing
+ * looks identical whether the step called nothing, the results were too large,
+ * or this code never ran at all. Live 2026-09-25: no _verified key appeared on
+ * any step for three runs and the cause could not be told apart from outside
+ * the server. So the capture now says what it saw.
+ */
+export function describeFactCapture(steps: any[]): string {
+  const all = steps || [];
+  const calls = all.filter((s: any) => s.type === "api_call");
+  if (calls.length === 0) return `no connector calls were dispatched by this step (${all.length} step(s) recorded)`;
+  const completed = calls.filter((s: any) => s.status === "completed");
+  if (completed.length === 0) return `${calls.length} connector call(s), none completed`;
+  const reasons: string[] = [];
+  for (const call of completed) {
+    const tool = String(call.mcpTool || call.name || "").trim() || "(unnamed tool)";
+    const wrapper = call.output ?? {};
+    const data = typeof wrapper === "object" && wrapper !== null && "data" in wrapper ? (wrapper as any).data : wrapper;
+    if (data == null || typeof data !== "object") { reasons.push(`${tool}: result was ${data === null ? "null" : typeof data}, not structured data`); continue; }
+    let size = -1;
+    try { size = JSON.stringify(data).length; } catch { reasons.push(`${tool}: result could not be serialized`); continue; }
+    if (size > VERIFIED_FACT_MAX_CHARS) reasons.push(`${tool}: result ${size} chars, over the ${VERIFIED_FACT_MAX_CHARS} limit`);
+  }
+  return reasons.length > 0 ? reasons.join("; ") : `${completed.length} completed call(s) captured`;
+}
+
 export function verifiedToolFacts(steps: any[]): Record<string, unknown> | null {
   const calls = (steps || []).filter((s: any) => s.type === "api_call" && s.status === "completed");
   if (calls.length === 0) return null;
@@ -3832,6 +3860,9 @@ export async function executeWorkerAgent(
       // The connectors' own answers, unedited, for anything downstream that
       // should check a figure rather than trust it was copied correctly.
       verifiedFacts: stepFacts,
+      // Always present, so "no source values" is a statement rather than a
+      // silence someone has to diagnose from outside the server.
+      verifiedFactsNote: describeFactCapture(result.steps),
       // The figures this step asserted, for the engine to check against every
       // connector answer in the run.
       writtenFields,

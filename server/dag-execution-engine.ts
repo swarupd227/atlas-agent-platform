@@ -852,7 +852,13 @@ export function visibleStateKeys(
     visible.add(`${key}${GENERATED_FILES_STATE_SUFFIX}`);
     // An ancestor's source values are visible wherever its narrative is, so a
     // later step can check a figure instead of inheriting a retyping of it.
-    visible.add(`${key}${VERIFIED_FACTS_STATE_SUFFIX}`);
+    // The "nothing captured, and here is why" marker is deliberately NOT
+    // shown: it exists for whoever is diagnosing a run, and putting it in
+    // every downstream prompt would spend tokens telling an agent about
+    // plumbing it cannot act on.
+    const factsKey = `${key}${VERIFIED_FACTS_STATE_SUFFIX}`;
+    const facts = state?.[factsKey];
+    if (facts && typeof facts === "object" && (facts as any).captured !== false) visible.add(factsKey);
   };
   for (const id of ancestorsOf(nodeId, plan.edgeMap)) show(id);
   show(nodeId);
@@ -1869,7 +1875,10 @@ export class DAGExecutionEngine {
     // whole control depends on.
     const runFacts: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(currentState)) {
-      if (key.endsWith(VERIFIED_FACTS_STATE_SUFFIX) && value && typeof value === "object") Object.assign(runFacts, value);
+      // Skip the "nothing captured here, and here is why" markers.
+      if (key.endsWith(VERIFIED_FACTS_STATE_SUFFIX) && value && typeof value === "object" && (value as any).captured !== false) {
+        Object.assign(runFacts, value);
+      }
     }
     if (workerResult.verifiedFacts) Object.assign(runFacts, workerResult.verifiedFacts);
     const drift = detectTranscriptionDrift(workerResult.writtenFields, runFacts);
@@ -1890,7 +1899,13 @@ export class DAGExecutionEngine {
         // What the connectors returned to THIS step, verbatim, under its own
         // state key. A later step that needs a figure can read the source
         // rather than the retyping, and an assertion can compare the two.
-        ...(workerResult.verifiedFacts ? { [`${nc.stateKey}${VERIFIED_FACTS_STATE_SUFFIX}`]: workerResult.verifiedFacts } : {}),
+        //
+        // Written even when there is nothing to record, carrying the reason:
+        // an absent key is indistinguishable from a step that called nothing,
+        // from results too large to keep, and from this code not running at
+        // all -- which cost three runs and a lot of guessing to tell apart.
+        [`${nc.stateKey}${VERIFIED_FACTS_STATE_SUFFIX}`]: workerResult.verifiedFacts
+          ?? { captured: false, why: workerResult.verifiedFactsNote ?? "the runtime reported nothing about connector calls" },
       },
       durationMs,
       promptTokens: workerResult.promptTokens || 0,

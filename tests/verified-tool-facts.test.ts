@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { verifiedToolFacts } from "../server/agent-runtime";
+import { verifiedToolFacts, describeFactCapture } from "../server/agent-runtime";
 
 /**
  * The connectors' own answers, kept verbatim beside a step's narrative.
@@ -55,5 +55,32 @@ describe("verifiedToolFacts", () => {
   it("ignores a result that isn't structured data", () => {
     expect(verifiedToolFacts([call("some_tool", "just a string")])).toBeNull();
     expect(verifiedToolFacts([call("some_tool", null)])).toBeNull();
+  });
+});
+
+describe("describeFactCapture", () => {
+  /**
+   * Absence is the failure mode that hides. For three runs no source values
+   * appeared and, from outside the server, "the step called nothing", "the
+   * results were too big" and "this code isn't running" looked identical.
+   * Each now reads differently.
+   */
+  it("distinguishes the reasons nothing was captured", () => {
+    expect(describeFactCapture([])).toMatch(/no connector calls were dispatched/);
+    expect(describeFactCapture([{ type: "llm_call", status: "completed" }])).toMatch(/no connector calls were dispatched/);
+    expect(describeFactCapture([call("fetch_submission", { a: 1 }, "failed")])).toMatch(/none completed/);
+    expect(describeFactCapture([call("some_tool", "a string")])).toMatch(/not structured data/);
+    expect(describeFactCapture([call("some_tool", null)])).toMatch(/result was null/);
+  });
+
+  it("names the tool and the size when a result was too large to keep", () => {
+    const huge = { rows: Array.from({ length: 2000 }, (_, i) => ({ i, note: "a reasonably long line of padding" })) };
+    const note = describeFactCapture([call("get_sov_locations", huge)]);
+    expect(note).toContain("get_sov_locations");
+    expect(note).toMatch(/over the \d+ limit/);
+  });
+
+  it("confirms plainly when capture did work", () => {
+    expect(describeFactCapture([call("fetch_submission", { scheduleSummary: { totalTiv: 1 } })])).toMatch(/1 completed call\(s\) captured/);
   });
 });
