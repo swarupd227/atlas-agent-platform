@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../server/agent-runtime", () => ({
+  detectTranscriptionDrift: () => [],
   executeWorkerAgent: vi.fn().mockResolvedValue({ success: true, output: "ok" }),
   waitForApproval: vi.fn(),
   evaluateCondition: vi.fn().mockResolvedValue(true),

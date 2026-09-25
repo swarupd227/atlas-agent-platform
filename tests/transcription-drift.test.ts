@@ -72,6 +72,22 @@ describe("detectTranscriptionDrift", () => {
     expect(detectTranscriptionDrift({ tiv: 18500000 }, facts)).toEqual([]);
   });
 
+  it("catches a figure reported by a step that never fetched it", () => {
+    // The live miss (2026-09-24): the treaty step called get_treaty_terms for
+    // the LIMITS, then stated a coastal aggregate of $48M and concluded "no
+    // breach" — against a true $72.4M that breaches. The aggregate came from
+    // the submission system, called by an earlier step, so checking a step
+    // against only its own calls said nothing about the one number the whole
+    // control depends on. The engine pools every connector answer in the run.
+    const runFacts = {
+      ...submissionFacts,
+      get_treaty_terms: { treatyId: "CP-2026-17", singleRiskLimit: 25000000, coastalTier1AggregateLimit: 50000000 },
+    };
+    const drift = detectTranscriptionDrift({ coastalTier1AggregateTiv: 48000000, breached: 0 }, runFacts);
+    expect(drift).toHaveLength(1);
+    expect(drift[0]).toMatchObject({ field: "coastalTier1AggregateTiv", wrote: 48000000, source: 72400000 });
+  });
+
   it("is quiet when there is nothing to compare", () => {
     expect(detectTranscriptionDrift(null, submissionFacts)).toEqual([]);
     expect(detectTranscriptionDrift({ totalTiv: 1 }, null)).toEqual([]);

@@ -3786,13 +3786,15 @@ export async function executeWorkerAgent(
     // mis-transcribed number is invisible otherwise: it is plausible,
     // internally consistent, and every step after it reasons on it in good
     // faith (live 2026-09-24, $8,947,000 written for a returned $18,500,000).
+    // The drift check itself runs in the DAG engine, not here: a step usually
+    // reports figures a DIFFERENT step obtained. Live 2026-09-24, the treaty
+    // step stated a coastal aggregate of $48M against a true $72.4M and
+    // concluded "no breach" -- but that aggregate came from the submission
+    // system, which the COPE step had called, so checking a step against only
+    // its own tool calls had nothing to compare and said nothing. The engine
+    // sees every connector answer in the run.
     const stepFacts = verifiedToolFacts(result.steps);
-    const drift = detectTranscriptionDrift(extraFields, stepFacts);
-    if (drift.length > 0) {
-      const lines = drift.map((d) => `- ${d.field}: this step wrote ${d.wrote}, but ${d.sourcePath} returned ${d.source}`);
-      enrichedOutput = `${enrichedOutput}\n\nFIGURES THAT DISAGREE WITH THE SOURCE (platform check, not the model's narrative):\n${lines.join("\n")}`;
-      console.warn(`[agent-runtime] "${workerAgent.name}" wrote ${drift.length} figure(s) that disagree with the connector's answer: ${drift.map((d) => `${d.field} ${d.wrote}!=${d.source}`).join(", ")}`);
-    }
+    const writtenFields = extraFields ?? null;
 
     // On failure, executePromptWithMcp already recorded a real reason on the
     // failing step (e.g. "No MCP Server integrations... linked") -- surface it
@@ -3830,7 +3832,9 @@ export async function executeWorkerAgent(
       // The connectors' own answers, unedited, for anything downstream that
       // should check a figure rather than trust it was copied correctly.
       verifiedFacts: stepFacts,
-      ...(drift.length > 0 ? { transcriptionDrift: drift } : {}),
+      // The figures this step asserted, for the engine to check against every
+      // connector answer in the run.
+      writtenFields,
       success: nodeSucceeded,
       startTime,
       endTime,

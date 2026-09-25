@@ -19,6 +19,7 @@ import { currentLlmAbortSignal } from "../server/llm-abort-context";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 vi.mock("../server/agent-runtime", () => ({
+  detectTranscriptionDrift: () => [],
   executeWorkerAgent: vi.fn(),
   waitForApproval: vi.fn(),
   evaluateCondition: vi.fn().mockResolvedValue(true),

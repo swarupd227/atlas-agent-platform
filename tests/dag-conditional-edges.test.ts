@@ -14,6 +14,7 @@ import { computeWaves, DAGExecutionEngine, getRoutingFieldSpecs, agentNodeTimeou
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 vi.mock("../server/agent-runtime", () => ({
+  detectTranscriptionDrift: () => [],
   executeWorkerAgent: vi.fn().mockResolvedValue({ success: true, output: "ok" }),
   waitForApproval: vi.fn(),
   evaluateCondition: vi.fn().mockResolvedValue(true),

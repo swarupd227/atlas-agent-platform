@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { storage } from "./storage";
-import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineState, extractStructuredOutput, canonicalJsonStringify } from "./agent-runtime";
+import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineState, extractStructuredOutput, canonicalJsonStringify, detectTranscriptionDrift } from "./agent-runtime";
 import { publishDagRunEvent, previewOutput } from "./dag-run-events";
 import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
@@ -1848,12 +1848,32 @@ export class DAGExecutionEngine {
       };
     }
 
+    // Every connector answer obtained so far in this run, not just by this
+    // step. A step routinely reports a figure an EARLIER step fetched: live
+    // 2026-09-24 the treaty step stated a coastal aggregate of $48M against a
+    // true $72.4M and concluded "no breach" -- the aggregate came from the
+    // submission system, called by the COPE step, so a per-step check had
+    // nothing to compare it with and stayed silent on the one number the
+    // whole control depends on.
+    const runFacts: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(currentState)) {
+      if (key.endsWith(VERIFIED_FACTS_STATE_SUFFIX) && value && typeof value === "object") Object.assign(runFacts, value);
+    }
+    if (workerResult.verifiedFacts) Object.assign(runFacts, workerResult.verifiedFacts);
+    const drift = detectTranscriptionDrift(workerResult.writtenFields, runFacts);
+    let outputText = workerResult.output;
+    if (drift.length > 0) {
+      const lines = drift.map((d) => `- ${d.field}: this step reported ${d.wrote}, but ${d.sourcePath} returned ${d.source}`);
+      outputText = `${outputText}\n\nFIGURES THAT DISAGREE WITH THE SOURCE (platform check against the connectors' own answers, not the model's narrative):\n${lines.join("\n")}`;
+      console.warn(`[dag] "${nc.label}" reported ${drift.length} figure(s) that disagree with a connector's answer: ${drift.map((d) => `${d.field} ${d.wrote}!=${d.source}`).join(", ")}`);
+    }
+
     return {
       nodeId,
       agentId: nc.agentId,
       status: "completed",
       output: {
-        [nc.stateKey]: workerResult.output,
+        [nc.stateKey]: outputText,
         ...(workerResult.generatedFiles?.length ? { [`${nc.stateKey}${GENERATED_FILES_STATE_SUFFIX}`]: workerResult.generatedFiles } : {}),
         // What the connectors returned to THIS step, verbatim, under its own
         // state key. A later step that needs a figure can read the source

@@ -14,6 +14,7 @@ const runs = new Map<string, any>();
 let claimAllowed = true;
 
 vi.mock("../server/agent-runtime", () => ({
+  detectTranscriptionDrift: () => [],
   executeWorkerAgent: vi.fn(),
   waitForApproval: vi.fn(),
   evaluateCondition: vi.fn().mockResolvedValue(true),
