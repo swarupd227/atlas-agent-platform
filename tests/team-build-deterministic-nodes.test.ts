@@ -12,6 +12,8 @@ import { join } from "path";
 import { teamAgentProposalSchema } from "../server/team-build";
 import { classifyStep } from "../shared/flow-execution-kind";
 import { parseConditionToRule } from "../shared/condition-to-rule";
+import { stateKeyForLabel } from "../shared/state-key";
+import { evaluateRule } from "../server/rule-evaluator";
 
 const source = readFileSync(join(__dirname, "..", "server", "team-build.ts"), "utf8").replace(/\r\n/g, "\n");
 
@@ -73,6 +75,69 @@ describe("the node a step becomes", () => {
     // and the built node can never disagree.
     expect(classifyStep({ type: "expression", config: { expression: "a" } } as any)).toBe("expression");
     expect(classifyStep({ type: "take_action", config: { toolName: "t", toolServerId: "s" } } as any)).toBe("tool_call");
+  });
+});
+
+/**
+ * A gate is only deterministic if the author can name the field it reads.
+ *
+ * The result of a built node lands under a state key, and edge rules resolve
+ * fields by exact dotted path from the top of state -- no nested search. Until
+ * this, a node built from an authored step took its key from a slug of the
+ * agent NAME THE PROPOSER INVENTED, which nobody drawing the flow could know in
+ * advance. An edge written at authoring time therefore named a field no step
+ * wrote, so BOTH branches of the decision evaluated false and the run
+ * dead-ended, having paid for every step before it.
+ */
+describe("the state key a deterministic step writes to", () => {
+  it("is the author's own label for the step", () => {
+    expect(stateKeyForLabel("Evaluate Treaty Limits")).toBe("evaluate_treaty_limits");
+    expect(stateKeyForLabel("Pre-Bind Quality Check")).toBe("pre_bind_quality_check");
+    expect(stateKeyForLabel("  Rate & Tax  ")).toBe("rate_tax");
+  });
+
+  it("carries that label onto the node, for every deterministic kind", () => {
+    expect(source).toContain("const stateKey = stateKeyForLabel(step.label ?? \"\");");
+    // All four kinds, or an author would learn the rule on one step and find it
+    // untrue on the next.
+    for (const kind of ["expression", "knowledge_base", "tool_call", "skill"]) {
+      expect(source, kind).toMatch(new RegExp(`kind: "${kind}",[^}]*stateKey`));
+    }
+    // And onto both worker-node paths (tiered and flat).
+    expect(source.match(/stateKey: det\?\.stateKey,/g) ?? []).toHaveLength(2);
+  });
+
+  it("leaves a proposer-supplied descriptor on the engine's default", () => {
+    // Only an authored step has a label an author chose. A node the proposer
+    // described keeps the slug-of-the-node-label behaviour it had.
+    expect(source).toContain("const stateKey = text(exec.stateKey) || undefined;");
+  });
+
+  it("makes a gate written while authoring resolve against what the step wrote", () => {
+    // The whole round trip: label -> key -> the condition an author types ->
+    // a parsed rule -> evaluated against state shaped as the engine writes it.
+    const key = stateKeyForLabel("Evaluate Treaty Limits");
+    const breached = parseConditionToRule(`${key}.breached == true`)!;
+    const clear = parseConditionToRule(`${key}.breached == false`)!;
+    expect(breached).not.toBeNull();
+
+    // What the expression node writes: output is { [stateKey]: result }.
+    const state = { [key]: { breached: true, coastalTier1AggregateTiv: 72_400_000, coastalTier1AggregateLimit: 50_000_000 } };
+    expect(evaluateRule(breached, state).result).toBe(true);
+    expect(evaluateRule(clear, state).result).toBe(false);
+
+    // Exactly one branch is satisfied either way -- the dead-end this prevents
+    // is both being false at once.
+    const withinAuthority = { [key]: { breached: false } };
+    expect(evaluateRule(breached, withinAuthority).result).toBe(false);
+    expect(evaluateRule(clear, withinAuthority).result).toBe(true);
+  });
+
+  it("explains itself in the rule's trace, so a routing decision is auditable", () => {
+    const key = stateKeyForLabel("Evaluate Treaty Limits");
+    const trace = evaluateRule(parseConditionToRule(`${key}.breached == true`)!, { [key]: { breached: true } });
+    expect(trace.reason).toContain(`${key}.breached`);
+    expect(trace.inputs[`${key}.breached`]).toBe(true);
   });
 });
 

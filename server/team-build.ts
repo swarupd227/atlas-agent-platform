@@ -16,6 +16,7 @@ import { resolveBindingServer } from "./team-bindings";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
 import { parseConditionToRule } from "@shared/condition-to-rule";
 import { classifyStep } from "@shared/flow-execution-kind";
+import { stateKeyForLabel } from "@shared/state-key";
 
 export class TeamBuildNotFoundError extends Error {
   constructor(message: string) {
@@ -131,15 +132,22 @@ function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any
   const step = stepsByLabel.get(String(labels[0]).trim().toLowerCase());
   if (!step) return null;
   const config = (step.config ?? {}) as Record<string, any>;
+  // The authored step's own name is the key its result lands under, so a gate
+  // written while drawing the flow ("treaty_check.breached == true") names a
+  // field that exists. Without it the key is a slug of the agent name the
+  // proposer invented, which nobody authoring the flow could have predicted --
+  // and an edge rule naming a field no step writes leaves every branch
+  // unsatisfied, dead-ending the run. See shared/state-key.ts.
+  const stateKey = stateKeyForLabel(step.label ?? "");
   switch (classifyStep({ type: step.type, config })) {
     case "expression":
-      return { kind: "expression", expression: config.expression };
+      return { kind: "expression", expression: config.expression, stateKey };
     case "knowledge_base":
-      return { kind: "knowledge_base", knowledgeBaseId: config.kbId, knowledgeBaseQuery: config.kbQuery || step.description || step.label };
+      return { kind: "knowledge_base", knowledgeBaseId: config.kbId, knowledgeBaseQuery: config.kbQuery || step.description || step.label, stateKey };
     case "tool_call":
-      return { kind: "tool_call", toolServerId: config.toolServerId, toolName: config.toolName, toolArgs: config.toolArgs };
+      return { kind: "tool_call", toolServerId: config.toolServerId, toolName: config.toolName, toolArgs: config.toolArgs, stateKey };
     case "skill":
-      return { kind: "skill", skillId: config.skillId };
+      return { kind: "skill", skillId: config.skillId, stateKey };
     default:
       return null;
   }
@@ -148,25 +156,28 @@ function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any
 function deterministicNodeFor(
   proposal: any,
   stepsByLabel?: Map<string, any>,
-): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; config: Record<string, unknown> } | null {
+): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; stateKey?: string; config: Record<string, unknown> } | null {
   const exec = proposal?.execution ?? executionFromAuthoredStep(proposal, stepsByLabel);
   if (!exec || typeof exec !== "object") return null;
   const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  // Only an authored step carries one; a proposer-supplied `execution` does not,
+  // and those nodes keep the engine's slug-of-the-node-label default.
+  const stateKey = text(exec.stateKey) || undefined;
   switch (exec.kind) {
     case "expression":
-      return text(exec.expression) ? { nodeType: "expression", config: { expression: text(exec.expression) } } : null;
+      return text(exec.expression) ? { nodeType: "expression", stateKey, config: { expression: text(exec.expression) } } : null;
     case "knowledge_base":
       return text(exec.knowledgeBaseId)
         // The query is fixed at authoring time: this is retrieval scoped to the
         // graph, not an agent that can reformulate what it asks for. The step's
         // own description is the sensible default for what to look up.
-        ? { nodeType: "knowledge_base", refKnowledgeBaseId: text(exec.knowledgeBaseId), config: { kbQuery: text(exec.knowledgeBaseQuery) || text(proposal?.description) } }
+        ? { nodeType: "knowledge_base", refKnowledgeBaseId: text(exec.knowledgeBaseId), stateKey, config: { kbQuery: text(exec.knowledgeBaseQuery) || text(proposal?.description) } }
         : null;
     case "skill":
-      return text(exec.skillId) ? { nodeType: "skill", refSkillId: text(exec.skillId), config: {} } : null;
+      return text(exec.skillId) ? { nodeType: "skill", refSkillId: text(exec.skillId), stateKey, config: {} } : null;
     case "tool_call":
       return text(exec.toolServerId) && text(exec.toolName)
-        ? { nodeType: "tool_call", config: { toolServerId: text(exec.toolServerId), toolName: text(exec.toolName), toolArgs: (exec.toolArgs && typeof exec.toolArgs === "object") ? exec.toolArgs : {} } }
+        ? { nodeType: "tool_call", stateKey, config: { toolServerId: text(exec.toolServerId), toolName: text(exec.toolName), toolArgs: (exec.toolArgs && typeof exec.toolArgs === "object") ? exec.toolArgs : {} } }
         : null;
     default:
       return null;
@@ -877,6 +888,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
           refAgentId: isGate || det ? null : worker.id,
           refSkillId: det?.refSkillId,
           refKnowledgeBaseId: det?.refKnowledgeBaseId,
+          stateKey: det?.stateKey,
           gateType: isGate ? "approval" : undefined,
           config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1, ...(det?.config ?? {}) },
         } as any);
@@ -957,6 +969,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         refAgentId: isGate || det ? null : createdWorkers[i].id,
         refSkillId: det?.refSkillId,
         refKnowledgeBaseId: det?.refKnowledgeBaseId,
+        stateKey: det?.stateKey,
         gateType: isGate ? "approval" : undefined,
         config: { role: "worker", workerIndex: i, ...(det?.config ?? {}) },
       } as any);

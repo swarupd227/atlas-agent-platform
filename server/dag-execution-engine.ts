@@ -12,6 +12,7 @@ import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, collectRuleLeaves, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
 import { collectRunFiles } from "@shared/run-files";
+import { stateKeyForLabel } from "@shared/state-key";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
 // that isn't caught by the cycle check but would still nest indefinitely.
@@ -52,15 +53,10 @@ async function recordDagRunOutcomeEvent(
 
 // Turns a node label like "Brief Approval Agent" into "brief_approval_agent"
 // -- a state key a person building a deterministic rule can actually guess,
-// instead of the node's random database id.
-function slugifyLabel(label: string): string {
-  return (label || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 60);
-}
+// instead of the node's random database id. The rule itself lives in
+// shared/state-key.ts, because authoring now depends on it too: a step drawn
+// on the canvas carries the same key into the team built from it.
+const slugifyLabel = stateKeyForLabel;
 
 // Handoff pattern: instead of a pre-declared condition/rule, the SOURCE
 // node's own structured output names which downstream node it hands off to
