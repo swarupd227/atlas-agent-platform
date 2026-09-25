@@ -28,6 +28,7 @@ import {
   redactPayload,
   redactWithOntologyKeys,
 } from "../permissions";
+import { RemovalPlanError, planAgentRemoval } from "../removal-plans";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveRequestOrgId, filterEvalSuitesForOrg, filterEvalRunsForOrg } from "../tenant-scope";
 import { buildBlastRadius } from "../blast-radius";
@@ -819,6 +820,16 @@ const router = Router();
       res.json({ valid, violations });
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  /** What deleting this agent would take, before anyone confirms. */
+  router.get("/api/agents/:id/removal", async (req, res) => {
+    try {
+      res.json(await planAgentRemoval(getOrgId(req), req.params.id as string));
+    } catch (e) {
+      if (e instanceof RemovalPlanError) return res.status(e.status).json({ error: e.message });
+      throw e;
     }
   });
 

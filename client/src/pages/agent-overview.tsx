@@ -18,8 +18,9 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link, useRoute } from "wouter";
+import { Link, useLocation, useRoute } from "wouter";
 import { ArrowLeft, ArrowUpRight, Bot, PlayCircle, Save } from "lucide-react";
+import { RemoveDialog } from "@/components/remove-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -131,6 +132,8 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 export default function AgentOverview() {
   const [, params] = useRoute("/agents/:id");
   const agentId = params?.id ?? "";
+  // After deleting the agent there is nothing left on this page to look at.
+  const [, navigate] = useLocation();
   // A ?section= link opens on that section: the registry deep-links straight to
   // an agent's Setup or Runs, and landing on Overview instead made those links
   // look broken.
@@ -165,6 +168,16 @@ export default function AgentOverview() {
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Button size="sm" variant="outline" asChild data-testid="link-playground"><Link href={`/agents/${agent.id}/playground`}><PlayCircle className="mr-1 h-3.5 w-3.5" />Try it</Link></Button>
                   <Button size="sm" variant="ghost" asChild data-testid="link-classic"><Link href={`/agents/${agent.id}/classic`}>Everything else</Link></Button>
+                  {/* Deleting an agent lived only on the classic page; it says what goes, including a team's workers. */}
+                  <RemoveDialog
+                    noun="agent"
+                    name={agent.name}
+                    planUrl={`/api/agents/${agent.id}/removal`}
+                    deleteUrl={`/api/agents/${agent.id}`}
+                    invalidate={["/api/agents", "/api/agents?summary=1"]}
+                    onDeleted={() => navigate("/agents")}
+                    testId="button-remove-agent"
+                  />
                 </div>
               </div>
               <div className="flex items-stretch divide-x overflow-x-auto px-2 pb-1">

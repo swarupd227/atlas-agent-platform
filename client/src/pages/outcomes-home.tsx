@@ -25,6 +25,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { QueryBoundary } from "@/components/ui-vocab";
 import { KpiMeasurement } from "./kpi-measurement";
+import { RemoveDialog } from "@/components/remove-dialog";
 import { formatDateTime } from "@/lib/format";
 import type { Agent, KpiDefinition, OutcomeContract } from "@shared/schema";
 
@@ -254,7 +255,18 @@ function OutcomePane({ outcome, kpis, agents }: { outcome: OutcomeContract; kpis
               {[STAGE_LABEL[stage], outcome.riskTier ? `${String(outcome.riskTier).toLowerCase()} risk` : null, outcome.createdAt ? `created ${formatDateTime(outcome.createdAt)}` : null].filter(Boolean).join(" · ")}
             </p>
           </div>
-          <Button size="sm" asChild data-testid="open-outcome"><Link href={`/outcomes/${outcome.id}`}>Open<ArrowUpRight className="ml-1 h-3.5 w-3.5" /></Link></Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button size="sm" asChild data-testid="open-outcome"><Link href={`/outcomes/${outcome.id}`}>Open<ArrowUpRight className="ml-1 h-3.5 w-3.5" /></Link></Button>
+            {/* The classic page could delete an outcome and this one couldn't; now it says what goes first. */}
+            <RemoveDialog
+              noun="outcome"
+              name={outcome.name}
+              planUrl={`/api/outcomes/${outcome.id}/removal`}
+              deleteUrl={`/api/outcomes/${outcome.id}`}
+              invalidate={["/api/outcomes", "/api/kpis"]}
+              testId="button-remove-outcome"
+            />
+          </div>
         </div>
 
         {next && <p className="rounded border bg-muted/30 px-3 py-2 text-sm" data-testid="next-step">{next}</p>}

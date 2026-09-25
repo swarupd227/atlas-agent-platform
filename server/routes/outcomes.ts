@@ -25,6 +25,7 @@ import type { ProcessNode } from "@shared/process-flow";
 import { createOutcomeFromProposal, OutcomeInputError, prepareOutcomeFromProposal } from "../outcome-create";
 import { describeSource, parseMeasurementSource, suggestMeasurement, validateMeasurementSource } from "@shared/kpi-measurement";
 import { KpiActionError, declareKpiMeasurement, recordKpiReading, removeKpiReading } from "../kpi-actions";
+import { RemovalPlanError, planOutcomeRemoval } from "../removal-plans";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 
 const router = Router();
@@ -459,6 +460,16 @@ async function createOutcomeVersion(
       });
     } catch (e) {
       handleZodError(res, e);
+    }
+  });
+
+  /** What deleting this outcome would take, before anyone confirms. */
+  router.get("/api/outcomes/:id/removal", async (req, res) => {
+    try {
+      res.json(await planOutcomeRemoval(getOrgId(req), req.params.id as string));
+    } catch (e) {
+      if (e instanceof RemovalPlanError) return res.status(e.status).json({ error: e.message });
+      throw e;
     }
   });
 
