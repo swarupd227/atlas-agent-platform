@@ -58,6 +58,16 @@ describe("sending", () => {
     expect(resolveSlash("/knowledge what is our refund window")).toEqual({ action: "send", text: "Search our knowledge bases for: what is our refund window" });
   });
 
+  it("/kpi asks for the measurement, and tells Astra to confirm before writing it", () => {
+    const sent = resolveSlash("/kpi fleet utilization was 62.5% in September");
+    expect(sent).toMatchObject({ action: "send" });
+    expect((sent as { text: string }).text).toContain("fleet utilization was 62.5% in September");
+    // Recording a value is a write, so the command never implies it is done.
+    expect((sent as { text: string }).text).toContain("confirm with me before recording");
+    // With nothing typed it asks what to measure rather than inventing a KPI.
+    expect(resolveSlash("/kpi")).toMatchObject({ action: "send", text: expect.stringContaining("Show me which KPIs") });
+  });
+
   it("opens a page for a go command", () => {
     expect(resolveSlash("/approvals")).toEqual({ action: "go", href: "/approvals" });
     expect(resolveSlash("/library")).toEqual({ action: "go", href: "library" });

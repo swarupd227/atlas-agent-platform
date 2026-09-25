@@ -29,6 +29,8 @@ const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8
 const helpers = read("server", "routes", "helpers.ts");
 const routes = read("server", "routes", "outcomes.ts");
 const db = read("server", "db.ts");
+// Declaring and recording live here, so the page and Astra do the same thing.
+const actions = read("server", "kpi-actions.ts");
 const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 const recompute = (() => {
   const at = helpers.indexOf("export async function recomputeOutcomeKpis(");
@@ -147,20 +149,32 @@ describe("the recompute", () => {
 });
 
 describe("recording a measurement", () => {
-  it("is a guarded, audited route of its own", () => {
+  it("is a guarded route, over a shared action that audits", () => {
     expect(routes).toContain('router.post("/api/kpis/:id/readings", checkPermission("create_modify_outcomes")');
-    expect(routes).toContain('action: "kpi_value_recorded"');
     expect(routes).toContain('router.put("/api/kpis/:id/measurement", checkPermission("create_modify_outcomes")');
-    expect(routes).toContain('action: "kpi_measurement_declared"');
+    expect(routes).toContain("await recordKpiReading(actorFor(req)");
+    expect(routes).toContain("await declareKpiMeasurement(actorFor(req)");
+    expect(actions).toContain('action: "kpi_value_recorded"');
+    expect(actions).toContain('action: "kpi_measurement_declared"');
   });
 
   it("refuses to record against a run-measured KPI instead of losing the value", () => {
-    expect(routes).toContain('if (source?.kind === "agent_runs") {');
-    expect(routes).toContain("would be overwritten on the next run");
+    expect(actions).toContain('if (source?.kind === "agent_runs") {');
+    expect(actions).toContain("would be overwritten on the next run");
+  });
+
+  it("finds a KPI only inside the caller's organization", () => {
+    // A KPI belongs to its outcome, and the outcome to an organization.
+    expect(actions).toContain("const outcome = await storage.getOutcome(kpi.outcomeId, orgId);");
+    expect(actions).toContain('throw new KpiActionError("No KPI with that id in this organization.", 404);');
   });
 
   it("can't have its declaration set through the ordinary PATCH", () => {
     expect(routes).toContain("delete (data as any).measurementSource;");
+  });
+
+  it("keeps a reading taken before the current value as history, without rewriting it", () => {
+    expect(actions).toContain("const appliedAsCurrent = !kpi.valueUpdatedAt || takenAt >= new Date(kpi.valueUpdatedAt);");
   });
 
   it("keeps a value set through PATCH in the history too", () => {

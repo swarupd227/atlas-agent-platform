@@ -74,6 +74,13 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     ask: (a) => (a ? `Turn this goal into an outcome: ${a}` : "I want to turn a goal into an outcome. Ask me what I'm trying to achieve."),
   },
   {
+    name: "kpi", kind: "ask", label: "Record a measurement", hint: "Say what a KPI actually measured", permission: "create_modify_outcomes",
+    arg: { kind: "text", label: "the KPI, and what it measured" },
+    ask: (a) => (a
+      ? `Record a KPI measurement: ${a}. Find the KPI first and confirm with me before recording anything.`
+      : "I want to record a KPI measurement. Show me which KPIs are measured by a person, or have nothing measuring them yet."),
+  },
+  {
     name: "connect", kind: "ask", label: "Find a connector", hint: "What your agents can be given access to",
     arg: { kind: "text", label: "what you need" },
     ask: (a) => (a ? `Which connectors can my agents use for ${a}?` : "What connectors can my agents use, and which are connected?"),

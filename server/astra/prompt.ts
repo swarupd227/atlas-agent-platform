@@ -66,6 +66,9 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     "6. Speak about the user's own agents by name. You are the platform; they are the user's team. An @Name in the user's message is one of their agents or teams, chosen from a list: that is the one to act on (pass the name without the @). To run a team, use run_team.",
     "7. End every turn by calling finish_turn with two to four suggestions, each phrased as the next thing the user would type.",
     "8. Never state a figure a tool marked as estimated or not measured as if it were real. Say it isn't measured. A decision the user made on a confirm or approval card is real and audited, even when their request calls the work a test -- never describe it as simulated. The user saw each card before deciding it.",
+    ...(has("record_kpi_value")
+      ? ["8a. A KPI value is something a person measured. Record only a number the user gave you, in the KPI's own unit, and never one you worked out, rounded or carried over from a run statistic. If they haven't said a number, ask for it. A KPI measured by agent runs is a proxy; say so rather than calling it the outcome's result."]
+      : []),
     ...(has("discover_outcome")
       ? ["9. When the user describes a goal, draft the outcome yourself in the conversation (name, what success means, KPIs with targets and units). Call discover_outcome to ground the draft before create_outcome. Only use a baseline or current figure the user or a tool actually gave you. Rules the user states -- who must approve what, what must never happen -- go into the outcome's constraints."]
       : []),

@@ -23,6 +23,8 @@ import { isSideEffectful, type AvailableTool } from "../tool-dispatcher";
 import { filterElicitationsForOrg, filterPolicyExceptionsForOrg, isMcpServerVisibleToOrg } from "../tenant-scope";
 import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
 import { acknowledgeAlert, decidePolicyException, decideRecommendation, getAlertInOrg, getRecommendationInOrg, recommendationEffect, respondToToolRequest } from "../action-decisions";
+import { KpiActionError, declareKpiMeasurement, getKpiInOrg, recordKpiReading } from "../kpi-actions";
+import { describeSource, parseMeasurementSource, suggestMeasurement, type MeasurementSource } from "@shared/kpi-measurement";
 import { bindPolicyToAgent, bindPolicyToOutcome, installPolicyPack, policyPackCatalog, type Enforcement } from "../policy-actions";
 import { resolvePolicyBundle } from "../routes/helpers";
 import { evalServices } from "./eval-services";
@@ -368,6 +370,68 @@ async function acknowledgeAlertAs(orgId: string, userId: string | null, actorLab
 }
 
 // ── decide_policy_exception / answer_tool_request ───────────────────────────
+
+// ── KPI measurement ─────────────────────────────────────────────────────────
+
+/** A KPI by id or by name, with what measures it and what it last read. */
+async function findKpisForMeasurement(orgId: string, query: { kpiId?: string; name?: string; outcomeName?: string }) {
+  const outcomes = await storage.getOutcomes(orgId);
+  const byOutcome = new Map(outcomes.map((o) => [o.id, o]));
+  let kpis = await storage.getKpisByOutcomeIds(outcomes.map((o) => o.id));
+
+  if (query.kpiId) kpis = kpis.filter((k) => k.id === query.kpiId);
+  const name = query.name?.trim().toLowerCase();
+  if (name) kpis = kpis.filter((k) => (k.name || "").toLowerCase().includes(name));
+  const outcomeName = query.outcomeName?.trim().toLowerCase();
+  if (outcomeName) kpis = kpis.filter((k) => (byOutcome.get(k.outcomeId)?.name || "").toLowerCase().includes(outcomeName));
+
+  return Promise.all(kpis.slice(0, 25).map(async (k) => {
+    const source = parseMeasurementSource((k as any).measurementSource);
+    const [latest] = await storage.getKpiReadings(k.id, 1);
+    return {
+      id: k.id,
+      name: k.name,
+      unit: k.unit,
+      target: k.target,
+      targetOperator: k.targetOperator,
+      outcomeId: k.outcomeId,
+      outcomeName: byOutcome.get(k.outcomeId)?.name ?? "an outcome",
+      measuredBy: describeSource(source),
+      sourceKind: source?.kind ?? null,
+      // What it reads now, only when something measured it.
+      current: k.valueUpdatedAt ? { value: k.currentValue, source: k.valueSource, at: new Date(k.valueUpdatedAt).toISOString() } : null,
+      lastReading: latest ? { value: latest.value, at: new Date(latest.takenAt as any).toISOString(), by: latest.recordedByName, note: latest.note } : null,
+      authorNote: k.measurement || null,
+      suggestion: source ? null : suggestMeasurement(k),
+    };
+  }));
+}
+
+/** One KPI, for a confirm card; null when it isn't in the organization. */
+async function getKpiForMeasurement(orgId: string, kpiId: string) {
+  const kpi = await getKpiInOrg(kpiId, orgId);
+  if (!kpi) return null;
+  const [found] = await findKpisForMeasurement(orgId, { kpiId });
+  return found ?? null;
+}
+
+async function declareKpiMeasurementAs(orgId: string, userId: string | null, actorLabel: string, kpiId: string, source: MeasurementSource | null) {
+  return declareKpiMeasurement({ orgId, actorId: userId, actorLabel, via: "Astra Cowork" }, kpiId, source);
+}
+
+async function recordKpiValueAs(orgId: string, userId: string | null, actorLabel: string, kpiId: string, value: number, takenAt?: string, note?: string) {
+  try {
+    return await recordKpiReading({ orgId, actorId: userId, actorLabel, via: "Astra Cowork" }, kpiId, {
+      value,
+      takenAt: takenAt ? new Date(takenAt) : undefined,
+      note: note ?? null,
+    });
+  } catch (e) {
+    // The refusal reads the same in the conversation as it does on the page.
+    if (e instanceof KpiActionError) throw new Error(e.message);
+    throw e;
+  }
+}
 
 /** A requested policy exception in the organization: which policy, who for, why, until when. */
 async function getPolicyExceptionForDecision(orgId: string, exceptionId: string) {
@@ -1168,6 +1232,10 @@ export function createAstraServices(): AstraServices {
     decideRecommendationAs,
     getAlertForDecision,
     acknowledgeAlertAs,
+    findKpisForMeasurement,
+    getKpiForMeasurement,
+    declareKpiMeasurementAs,
+    recordKpiValueAs,
     getPolicyExceptionForDecision,
     decidePolicyExceptionAs,
     getToolRequestForDecision,
