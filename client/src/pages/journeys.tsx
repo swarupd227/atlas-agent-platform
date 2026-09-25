@@ -17,6 +17,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useIndustry } from "@/components/industry-provider";
 import { Button } from "@/components/ui/button";
+import { RemoveJourney } from "./journey-removal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -366,6 +367,8 @@ function JourneyDetail({
           <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={cloning} onClick={onClone} data-testid={`button-clone-journey-${j.teamAgentId}`}>
             {cloning ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Cloning…</> : <><Copy className="w-3.5 h-3.5 mr-1.5" /> Clone to customize</>}
           </Button>
+          {/* A journey is a team wearing a library badge, so removing it asks which of the two you mean. */}
+          <RemoveJourney journeyId={j.teamAgentId} journeyName={j.name} />
         </div>
       </div>
 

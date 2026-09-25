@@ -1,9 +1,50 @@
 import { Router } from "express";
 import { storage } from "../storage";
-import { checkPermission } from "../permissions";
+import { checkPermission, getRequestActorLabel } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
+import { JourneyActionError, deleteJourney, planJourneyRemoval, unlistJourney } from "../journey-actions";
 
 const router = Router();
+
+/** Who is doing this, for the audit trail. */
+const actorFor = (req: any) => ({
+  orgId: getOrgId(req) ?? getDefaultOrgId() ?? undefined,
+  actorId: req.authUser?.userId ?? null,
+  actorLabel: getRequestActorLabel(req),
+  via: "Journey Library",
+});
+
+const handle = (res: any, e: unknown) => {
+  if (e instanceof JourneyActionError) return res.status(e.status).json({ error: e.message });
+  throw e;
+};
+
+/** What removing this journey would take, and what it would leave behind. */
+router.get("/api/journeys/:id/removal", async (req, res) => {
+  try {
+    res.json(await planJourneyRemoval(getOrgId(req), req.params.id as string));
+  } catch (e) {
+    handle(res, e);
+  }
+});
+
+/** Take it out of the library. The team still exists and still runs. */
+router.post("/api/journeys/:id/unlist", checkPermission("create_modify_blueprints"), async (req, res) => {
+  try {
+    res.json(await unlistJourney(actorFor(req), req.params.id as string));
+  } catch (e) {
+    handle(res, e);
+  }
+});
+
+/** Delete the journey's team: its orchestrator and the workers only it uses. */
+router.delete("/api/journeys/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+  try {
+    res.json(await deleteJourney(actorFor(req), req.params.id as string));
+  } catch (e) {
+    handle(res, e);
+  }
+});
 
 /**
  * Journey Library (ontology roadmap Phase 3): a browsing surface for curated,
