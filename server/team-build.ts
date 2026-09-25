@@ -653,8 +653,31 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // The steps as the business user drew them, by label, so a worker that covers
   // exactly one of them can be built as the node that step described rather than
   // as an agent that re-describes it.
+  //
+  // A caller that names the flow does not also have to send its steps. The
+  // Process Flow Studio sends processFlowId only -- it sends the steps to the
+  // DRAFTING call, not to this one -- so this map was always empty on the one
+  // path that has authored steps at all, and every deterministic node was built
+  // from whatever the model invented instead. The nodes still appeared, which
+  // is why this read as working: a treaty comparison authored against a
+  // connector's own schedule summary ran, live 2026-09-25, as the model's
+  // arithmetic over three field names that exist in no system.
+  let authoredSteps: any[] = Array.isArray(processFlowSteps) ? processFlowSteps : [];
+  if (authoredSteps.length === 0 && body.processFlowId) {
+    try {
+      const flow = await storage.getProcessFlow(body.processFlowId, orgId);
+      const nodes = (flow?.graph as any)?.nodes;
+      if (Array.isArray(nodes)) authoredSteps = nodes;
+    } catch (err: any) {
+      // Not fatal: without the steps every worker is built as an agent, which
+      // is the behaviour this had before. Say so, because the difference is
+      // otherwise invisible -- a working team that quietly costs a model call
+      // per step the author had already made deterministic.
+      console.warn(`[create-team] could not read process flow ${body.processFlowId} for its authored steps, so every worker will be built as an agent: ${err?.message}`);
+    }
+  }
   const authoredStepsByLabel = new Map<string, any>(
-    (Array.isArray(processFlowSteps) ? processFlowSteps : [])
+    authoredSteps
       .filter((step: any) => step && typeof step.label === "string")
       .map((step: any) => [String(step.label).trim().toLowerCase(), step]),
   );
@@ -778,7 +801,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       humanCheckpoints: pipeline?.humanCheckpoints || [],
       errorHandling: pipeline?.errorHandling || "retry then escalate",
       handoffRules: pipeline?.handoffRules || "pass output as input",
-      processFlowSteps: processFlowSteps || [],
+      processFlowSteps: authoredSteps,
     },
   });
 
@@ -1195,7 +1218,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       matchedSkills: orchestrator.matchedSkills || [],
       suggestedRagPipeline: orchestrator.suggestedRagPipeline || null,
       mcpToolBindings: orchestrator.mcpToolBindings || [],
-      processFlowSteps: processFlowSteps || [],
+      processFlowSteps: authoredSteps,
       orchestration: {
         pattern: pipeline?.pattern || "supervisor",
         patternReasoning: pipeline?.patternReasoning || "",

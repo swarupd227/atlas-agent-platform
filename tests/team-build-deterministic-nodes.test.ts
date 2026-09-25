@@ -71,6 +71,21 @@ describe("the node a step becomes", () => {
     expect(source).toContain("if (labels.length !== 1) return null;");
   });
 
+  it("reads the authored steps from the flow when the caller names it", () => {
+    // The gap this closes: the Process Flow Studio sends processFlowId to this
+    // call and the steps only to the DRAFTING call, so the map of authored
+    // steps was always empty on the one path that has any -- and every
+    // deterministic node was built from what the model invented instead. The
+    // nodes appeared either way, which is exactly why it read as working.
+    expect(source).toContain("if (authoredSteps.length === 0 && body.processFlowId)");
+    expect(source).toContain("const nodes = (flow?.graph as any)?.nodes;");
+    expect(source).toContain("if (Array.isArray(nodes)) authoredSteps = nodes;");
+    // The map is built from the resolved steps, not from the request field.
+    expect(source).toMatch(/authoredStepsByLabel = new Map<string, any>\(\s*authoredSteps/);
+    // A caller that sends the steps outright is still honoured.
+    expect(source).toContain("let authoredSteps: any[] = Array.isArray(processFlowSteps) ? processFlowSteps : [];");
+  });
+
   it("falls back to an agent when a descriptor is incomplete", () => {
     // An expression node with no expression fails the run; an agent merely costs
     // money. The cheap failure is the wrong one to choose.
