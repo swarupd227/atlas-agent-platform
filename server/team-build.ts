@@ -157,7 +157,17 @@ function deterministicNodeFor(
   proposal: any,
   stepsByLabel?: Map<string, any>,
 ): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; stateKey?: string; config: Record<string, unknown> } | null {
-  const exec = proposal?.execution ?? executionFromAuthoredStep(proposal, stepsByLabel);
+  // The authored step first, and only then whatever the proposer invented.
+  //
+  // This order is the point of the comment above, and it used to read the other
+  // way round: a proposer that volunteered an `execution` beat the tool binding
+  // and the expression the author had actually drawn. Live 2026-09-25, for a
+  // step configured to compare a coastal aggregate against a treaty limit, the
+  // model supplied an expression that compared the AGGREGATE against the
+  // SINGLE-RISK limit, over three field names that exist in no system, and
+  // would have run in place of the author's. It looks deterministic and is
+  // confidently wrong, which is worse than an agent that says it is unsure.
+  const exec = executionFromAuthoredStep(proposal, stepsByLabel) ?? proposal?.execution;
   if (!exec || typeof exec !== "object") return null;
   const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
   // Only an authored step carries one; a proposer-supplied `execution` does not,

@@ -55,8 +55,16 @@ describe("the node a step becomes", () => {
     expect(source).toContain("refAgentId: isGate || det ? null : createdWorkers[i].id");
   });
 
-  it("prefers the step the author configured over the proposal's prose", () => {
-    expect(source).toContain("const exec = proposal?.execution ?? executionFromAuthoredStep(proposal, stepsByLabel);");
+  it("prefers the step the author configured over anything the model wrote", () => {
+    // Order matters, and it used to be the other way round: a proposer that
+    // volunteered an `execution` beat the binding the author had drawn. Live
+    // 2026-09-25 that substituted an expression comparing a coastal AGGREGATE
+    // against a SINGLE-RISK limit, over fields no system has, for the author's
+    // own comparison. Confidently wrong beats an agent that says it is unsure,
+    // in the worst direction.
+    expect(source).toContain("const exec = executionFromAuthoredStep(proposal, stepsByLabel) ?? proposal?.execution;");
+    // Still falls through to the proposer for a step carrying no configuration.
+    expect(source).toContain("?? proposal?.execution");
   });
 
   it("only derives from an authored step when the agent covers exactly that one", () => {

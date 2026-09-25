@@ -17,6 +17,7 @@ import { getDefaultOrgId } from "./auth";
 import { parseProposalContent } from "./team-proposal-parse";
 import { completeWithFallback, isCallerAbort, type LLMCompletionResult } from "./llm-provider";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
+import { classifyStep } from "@shared/flow-execution-kind";
 
 
 export interface ProposeTeamInput {
@@ -35,6 +36,71 @@ export type ProposeTeamEvent =
   | { type: "progress"; status: string; message: string; [key: string]: unknown }
   | { type: "error"; error: string; details?: string; timeout?: boolean }
   | { type: "done"; result: any };
+
+/**
+ * One agent per authored step, wherever the author already made a step
+ * deterministic.
+ *
+ * A drafting model is free to fold several steps into one agent, and for prose
+ * steps that is good judgement -- "read the submission" and "check the
+ * mandatory fields" are one job. It is not good judgement for a step the author
+ * configured with a tool binding or an expression. Folding those in loses the
+ * per-step configuration entirely: the builder only derives a deterministic
+ * node from an authored step when the agent covers exactly that one step, so a
+ * merged group falls back to an agent and the tool calls simply never happen.
+ *
+ * Live 2026-09-25: a treaty check drawn as three steps -- fetch the schedule
+ * from the broker system, fetch the treaty from the rating engine, compare the
+ * two -- came back as a single "Treaty Evaluation Agent" carrying an expression
+ * the model wrote itself, over field names that exist in no system, comparing a
+ * coastal aggregate against a single-risk limit. Neither connector would have
+ * been called. Splitting here, before the edges are derived, means the flow's
+ * own connections wire the pieces back up in the order they were drawn.
+ *
+ * Only groups containing a configured step are split; a merge of plain steps is
+ * left exactly as the model proposed it.
+ */
+export function splitConfiguredSteps<T extends { name?: string; description?: string; flowStepLabels?: unknown; execution?: unknown }>(
+  agents: T[],
+  steps: Array<{ label?: string; type?: string; description?: string; config?: Record<string, any> }>,
+): T[] {
+  const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+  const stepByLabel = new Map<string, { label?: string; type?: string; description?: string; config?: Record<string, any> }>();
+  for (const step of steps) if (step?.label) stepByLabel.set(norm(step.label), step);
+  const isConfigured = (label: unknown) => {
+    const step = stepByLabel.get(norm(label));
+    return !!step && classifyStep({ type: step.type, config: step.config ?? {} } as any) !== "agent";
+  };
+
+  const taken = new Set(agents.map((a) => norm(a?.name)));
+  const out: T[] = [];
+  for (const agent of agents) {
+    const labels = Array.isArray(agent?.flowStepLabels) ? agent.flowStepLabels.filter((l) => typeof l === "string" && l.trim()) : [];
+    if (labels.length < 2 || !labels.some(isConfigured)) {
+      out.push(agent);
+      continue;
+    }
+    for (const label of labels) {
+      const step = stepByLabel.get(norm(label));
+      // The step's own name, so the split is legible on the canvas and in the
+      // run -- uniquified only if the plan already used it for something else.
+      let name = String(label).trim();
+      if (taken.has(norm(name)) && norm(name) !== norm(agent.name)) name = `${name} (${agent.name})`;
+      taken.add(norm(name));
+      out.push({
+        ...agent,
+        name,
+        description: step?.description || agent.description,
+        flowStepLabels: [label],
+        // Whatever the model wrote for the group was not written for this step,
+        // and for a configured step the author's own binding is the better
+        // evidence (deterministicNodeFor in team-build.ts prefers it).
+        execution: undefined,
+      });
+    }
+  }
+  return out;
+}
 
 /**
  * Turn the business flow's own connections into the team's execution edges.
@@ -600,7 +666,7 @@ BUSINESS PROCESS FLOW (authored by business users — align agent names and role
 ═══════════════════════════════════════════
 The business team has defined this process flow for the outcome. Each agent you propose should map to one or more of these business steps. Use the step labels as the primary inspiration for agent names.
 
-${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}${s.config?.skillName ? ` [REQUIRED SKILL: "${s.config.skillName}" — the business user explicitly bound this skill to this step; the agent handling it MUST include this exact name in matchedSkills]` : ""}${s.config?.kbName ? ` [REQUIRED KNOWLEDGE BASE: id="${s.config.kbId}" name="${s.config.kbName}" — the business user explicitly bound this KB to this step; the agent handling it MUST include this exact {id, name} in suggestedKnowledgeBases]` : ""}`).join("\n")}
+${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}${s.config?.skillName ? ` [REQUIRED SKILL: "${s.config.skillName}" — the business user explicitly bound this skill to this step; the agent handling it MUST include this exact name in matchedSkills]` : ""}${s.config?.kbName ? ` [REQUIRED KNOWLEDGE BASE: id="${s.config.kbId}" name="${s.config.kbName}" — the business user explicitly bound this KB to this step; the agent handling it MUST include this exact {id, name} in suggestedKnowledgeBases]` : ""}${s.config?.expression ? ` [ALREADY DETERMINISTIC: the business user wrote the expression this step evaluates. Give it its own agent covering ONLY this step, and do NOT write an "execution" for it.]` : ""}${s.config?.toolName ? ` [ALREADY DETERMINISTIC: the business user bound this step to the tool "${s.config.toolName}". Give it its own agent covering ONLY this step, and do NOT write an "execution" for it.]` : ""}`).join("\n")}
 
 ${Array.isArray(processFlowEdges) && processFlowEdges.length > 0 ? `
 HOW THOSE STEPS CONNECT (the business's own sequencing — not a suggestion):
@@ -610,6 +676,8 @@ ${processFlowEdges.map((e: any) => {
 }).join("\n")}
 
 MANDATORY: every agent you propose (and the orchestrator) MUST include "flowStepLabels": an array of the exact step labels above that it covers, copied verbatim. This is how the steps' connections become the team's execution order, so an agent with no flowStepLabels cannot be sequenced and the team will run every agent at once. A step that is a human checkpoint still belongs on whichever agent represents that checkpoint.
+
+MANDATORY: a step marked ALREADY DETERMINISTIC gets an agent of its own, covering that one step and no other. The business user already said exactly what it does; folding it in with neighbouring steps throws that configuration away, and the tool call or the calculation then never happens. Never write an "execution" for such a step — yours would replace theirs.
 ` : ""}
 IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above. Any step marked REQUIRED SKILL or REQUIRED KNOWLEDGE BASE is a business-user commitment, not a suggestion -- the resulting agent's matchedSkills / suggestedKnowledgeBases MUST include those exact values.
 The orchestrator's own "workflowSteps" must include one non-empty bullet per step above, IN ORDER, including "expert_approval"/human-checkpoint steps -- those don't get a dedicated worker agent, so describe them from the orchestrator's perspective instead, e.g. "Route to human approval: <step label>". Never leave a workflowSteps entry blank.
@@ -1080,6 +1148,13 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       // at all when the model returned none, which is what turned a 22-step
       // flow into 17 agents running in a single wave.
       if (Array.isArray(processFlowSteps) && processFlowSteps.length > 0 && Array.isArray(processFlowEdges) && processFlowEdges.length > 0) {
+        // Before the edges, so a step the author already made deterministic is
+        // its own agent and the flow's connections wire the pieces back up.
+        const splitAgents = splitConfiguredSteps(result.agents || [], processFlowSteps);
+        if (splitAgents.length !== (result.agents || []).length) {
+          console.info(`[propose-agents] split ${(result.agents || []).length} drafted agents into ${splitAgents.length}: a step configured with a tool or an expression gets its own node, or its configuration is lost`);
+          result.agents = splitAgents;
+        }
         const flowEdges = deriveEdgesFromFlow(
           [result.orchestrator, ...(result.agents || [])].filter(Boolean),
           processFlowSteps,
