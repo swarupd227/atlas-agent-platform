@@ -88,11 +88,22 @@ describe("what a flow will cost per run", () => {
     expect(cost.byKind.structural).toBe(2);
   });
 
-  it("counts a conditional edge with no rule as its own model call", () => {
+  it("counts a conditional edge as a model call only when its condition needs one", () => {
+    // "riskScore > 70" is parsed into a rule at build time, so it never reaches a
+    // model; the label-only "Approved" branch does. Counting both overstated the
+    // cost of exactly the flows an author had phrased well.
     const cost = estimateFlowCost(flow);
-    expect(cost.aiRoutedEdges).toBe(2);
-    expect(cost.minModelCalls).toBe(3);
+    expect(cost.aiRoutedEdges).toBe(1);
+    expect(cost.minModelCalls).toBe(2);
     expect(cost.approxUsdPerRun).toBeGreaterThan(0);
+  });
+
+  it("counts a branch that genuinely needs judging", () => {
+    const judged = {
+      ...flow,
+      edges: [{ id: "e9", from: "n4", to: "n5", condition: "the write-up reads as balanced" }],
+    };
+    expect(estimateFlowCost(judged as any).aiRoutedEdges).toBe(1);
   });
 
   it("stops counting an edge once it carries a rule", () => {
@@ -100,7 +111,7 @@ describe("what a flow will cost per run", () => {
       ...flow,
       edges: flow.edges.map((e) => (e.id === "e2" ? { ...e, rule: { combinator: "AND", conditions: [] } } : e)),
     };
-    expect(estimateFlowCost(withRule as any).aiRoutedEdges).toBe(1);
+    expect(estimateFlowCost(withRule as any).aiRoutedEdges).toBe(1);  // the label-only branch remains
   });
 
   it("prices a twenty-step judgement flow as the twenty model calls it is", () => {

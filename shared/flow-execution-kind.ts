@@ -22,6 +22,7 @@
  */
 
 import type { ProcessNode, ProcessFlowGraph } from "./process-flow";
+import { parseConditionToRule } from "./condition-to-rule";
 
 export type ExecutionKind =
   /** A language model call. The only kind that costs tokens. */
@@ -141,11 +142,17 @@ export function estimateFlowCost(graph: Pick<ProcessFlowGraph, "nodes" | "edges"
   for (const node of graph.nodes) byKind[classifyStep(node)]++;
 
   // An edge that guards a branch needs its condition evaluated. With a rule that
-  // happens in-process; without one the engine falls back to asking a model.
+  // happens in-process; without one the engine falls back to asking a model --
+  // unless the condition is plainly a comparison, which team-build parses into a
+  // rule at build time. Counting those as model calls overstated the cost of
+  // exactly the flows an author had got right: "score > 5" was reported as a
+  // model call it will never make.
   const aiRoutedEdges = graph.edges.filter((e) => {
-    const hasCondition = !!str(e.condition) || !!str(e.label);
-    const hasRule = !!(e as { rule?: unknown }).rule;
-    return hasCondition && !hasRule;
+    const condition = str(e.condition);
+    const hasCondition = !!condition || !!str(e.label);
+    if (!hasCondition) return false;
+    if ((e as { rule?: unknown }).rule) return false;
+    return !parseConditionToRule(condition);
   }).length;
 
   const modelSteps = byKind.agent;
