@@ -14,6 +14,8 @@ import { isKnownIndustry } from "@shared/industry-filter";
 import { generateOntologyEvalCases } from "./routes/helpers";
 import { resolveBindingServer } from "./team-bindings";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
+import { parseConditionToRule } from "@shared/condition-to-rule";
+import { classifyStep } from "@shared/flow-execution-kind";
 
 export class TeamBuildNotFoundError extends Error {
   constructor(message: string) {
@@ -74,7 +76,16 @@ function resolveEdgeRuleFromSpec(spec: any): { condition?: string; evaluationMod
   if (!spec) return {};
   const rule = normalizeBranchRule(spec.branchRule);
   if (rule) return { condition: spec.branchCondition || undefined, evaluationMode: "deterministic", rule };
-  if (spec.type === "conditional" && spec.branchCondition) return { condition: spec.branchCondition, evaluationMode: "ai" };
+  if (spec.type === "conditional" && spec.branchCondition) {
+    // No rule supplied, but the condition may still be a plain comparison --
+    // "amount > 50000" was costing a model call on every run to decide
+    // something the engine can evaluate itself, auditably. parseConditionToRule
+    // returns null for anything that is genuine judgement, which keeps the
+    // model on the decisions that need one.
+    const parsed = parseConditionToRule(spec.branchCondition);
+    if (parsed) return { condition: spec.branchCondition, evaluationMode: "deterministic", rule: parsed };
+    return { condition: spec.branchCondition, evaluationMode: "ai" };
+  }
   return {};
 }
 // Finds the proposed edge (if any) whose "to" matches this handoff's target agent/role
@@ -87,6 +98,79 @@ function resolveEdgeRule(pipelineEdges: unknown, toName: string): { condition?: 
   const edges = Array.isArray(pipelineEdges) ? pipelineEdges : [];
   const spec = edges.find((e: any) => e?.to === toName);
   return resolveEdgeRuleFromSpec(spec);
+}
+
+/**
+ * The blueprint node a step with an `execution` descriptor becomes, or null for
+ * an ordinary agent step.
+ *
+ * Returning null on an incomplete descriptor is deliberate: a step that costs a
+ * model call still does its job, whereas a node the engine would refuse
+ * (an expression node with no expression, a tool_call with no connector) fails
+ * the run. Cost is the lesser problem, so the fallback is always the agent.
+ */
+/**
+ * The `execution` descriptor an authored step implies, when the proposal did not
+ * carry one.
+ *
+ * This is the point of the whole change. An author draws an Expression step, or
+ * binds a knowledge base to a "gather the policy" step, or names the tool a
+ * "post the note" step calls -- and that intent used to be thrown away, because
+ * the conversion asked a language model to describe the step and the model
+ * described an agent. The authored configuration is better evidence than the
+ * proposal's prose, so it wins.
+ *
+ * Only for a step whose intent is unambiguous (classifyStep's own rules), and
+ * only when this agent covers exactly that one step: an agent that spans three
+ * steps is doing something no single node can.
+ */
+function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any>): Record<string, unknown> | null {
+  if (!stepsByLabel || stepsByLabel.size === 0) return null;
+  const labels = Array.isArray(proposal?.flowStepLabels) ? proposal.flowStepLabels.filter((l: unknown) => typeof l === "string") : [];
+  if (labels.length !== 1) return null;
+  const step = stepsByLabel.get(String(labels[0]).trim().toLowerCase());
+  if (!step) return null;
+  const config = (step.config ?? {}) as Record<string, any>;
+  switch (classifyStep({ type: step.type, config })) {
+    case "expression":
+      return { kind: "expression", expression: config.expression };
+    case "knowledge_base":
+      return { kind: "knowledge_base", knowledgeBaseId: config.kbId, knowledgeBaseQuery: config.kbQuery || step.description || step.label };
+    case "tool_call":
+      return { kind: "tool_call", toolServerId: config.toolServerId, toolName: config.toolName, toolArgs: config.toolArgs };
+    case "skill":
+      return { kind: "skill", skillId: config.skillId };
+    default:
+      return null;
+  }
+}
+
+function deterministicNodeFor(
+  proposal: any,
+  stepsByLabel?: Map<string, any>,
+): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; config: Record<string, unknown> } | null {
+  const exec = proposal?.execution ?? executionFromAuthoredStep(proposal, stepsByLabel);
+  if (!exec || typeof exec !== "object") return null;
+  const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  switch (exec.kind) {
+    case "expression":
+      return text(exec.expression) ? { nodeType: "expression", config: { expression: text(exec.expression) } } : null;
+    case "knowledge_base":
+      return text(exec.knowledgeBaseId)
+        // The query is fixed at authoring time: this is retrieval scoped to the
+        // graph, not an agent that can reformulate what it asks for. The step's
+        // own description is the sensible default for what to look up.
+        ? { nodeType: "knowledge_base", refKnowledgeBaseId: text(exec.knowledgeBaseId), config: { kbQuery: text(exec.knowledgeBaseQuery) || text(proposal?.description) } }
+        : null;
+    case "skill":
+      return text(exec.skillId) ? { nodeType: "skill", refSkillId: text(exec.skillId), config: {} } : null;
+    case "tool_call":
+      return text(exec.toolServerId) && text(exec.toolName)
+        ? { nodeType: "tool_call", config: { toolServerId: text(exec.toolServerId), toolName: text(exec.toolName), toolArgs: (exec.toolArgs && typeof exec.toolArgs === "object") ? exec.toolArgs : {} } }
+        : null;
+    default:
+      return null;
+  }
 }
 
 export const teamAgentProposalSchema = z.object({
@@ -123,6 +207,43 @@ export const teamAgentProposalSchema = z.object({
   // executeGateNode) instead of an internal_agent that merely
   // role-plays the human's decision via an LLM call.
   isHumanCheckpoint: z.boolean().optional(),
+  /**
+   * The business steps this agent covers, copied verbatim from the flow. The
+   * proposal prompt already asks for these to sequence the team; they are also
+   * how a step's own authored configuration reaches the builder, so an
+   * Expression step drawn on the canvas becomes an expression node even when the
+   * proposal forgot to say so.
+   */
+  flowStepLabels: z.array(z.string()).optional(),
+  /**
+   * How this step runs when it semantically needs no model at all -- the same idea as
+   * isHumanCheckpoint above, for the engine's zero-token node types.
+   *
+   * Until this existed, the conversion could only ever emit internal_agent or
+   * edge_gate, so an authored Expression step was handed to a language model to
+   * do arithmetic, and a step that was purely "post this record" paid for a
+   * model call to make one tool call. The engine has executed expression,
+   * knowledge_base, skill and (now) tool_call nodes for nothing all along; this
+   * is how a proposal reaches them.
+   *
+   * A malformed descriptor falls back to an ordinary agent rather than failing
+   * the build: a step that costs too much still works, while a step wired to a
+   * node the engine would refuse does not.
+   */
+  execution: z.object({
+    kind: z.enum(["expression", "knowledge_base", "skill", "tool_call"]),
+    /** expression: JSONata over the run's state. */
+    expression: z.string().optional(),
+    /** knowledge_base: the base to search, and the query to search it with. */
+    knowledgeBaseId: z.string().optional(),
+    knowledgeBaseQuery: z.string().optional(),
+    /** skill: the procedure whose text this step contributes. */
+    skillId: z.string().optional(),
+    /** tool_call: the connector, the tool, and its arguments (literal, or { "$expr": "<JSONata>" }). */
+    toolServerId: z.string().optional(),
+    toolName: z.string().optional(),
+    toolArgs: z.record(z.any()).optional(),
+  }).optional(),
 });
 
 export const teamBuildBodySchema = z.object({
@@ -508,6 +629,15 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
 
   storage.upsertAgentMandate(teamAgent.id, buildMandate(orchestrator, true), orgId).catch(() => {});
 
+  // The steps as the business user drew them, by label, so a worker that covers
+  // exactly one of them can be built as the node that step described rather than
+  // as an agent that re-describes it.
+  const authoredStepsByLabel = new Map<string, any>(
+    (Array.isArray(processFlowSteps) ? processFlowSteps : [])
+      .filter((step: any) => step && typeof step.label === "string")
+      .map((step: any) => [String(step.label).trim().toLowerCase(), step]),
+  );
+
   const createdWorkers: any[] = [];
   const workerLinkResults: Array<{ linked: string[]; unresolved: string[]; unconnected: string[] }> = [];
   for (const worker of workers) {
@@ -735,16 +865,21 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         if (!worker) continue;
 
         const isGate = humanCheckpointWorkerIds.has(worker.id);
+        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel);
         const node = await storage.createTeamBlueprintNode({
           blueprintId: blueprint.id,
-          nodeType: isGate ? "edge_gate" : "internal_agent",
+          nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
           label: worker.name,
           positionX: startX + j * 260,
           positionY: yOffset,
-          refAgentId: isGate ? null : worker.id,
+          // A deterministic node runs no agent, so it holds no agent reference --
+          // the same shape a gate node has.
+          refAgentId: isGate || det ? null : worker.id,
+          refSkillId: det?.refSkillId,
+          refKnowledgeBaseId: det?.refKnowledgeBaseId,
           gateType: isGate ? "approval" : undefined,
-          config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1 },
-        });
+          config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1, ...(det?.config ?? {}) },
+        } as any);
         tierAgentNodes.push(node);
         workerNodes.push(node);
       }
@@ -812,16 +947,19 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
       const posY = isSequential ? 150 + i * 120 : 220;
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
+      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel);
       const node = await storage.createTeamBlueprintNode({
         blueprintId: blueprint.id,
-        nodeType: isGate ? "edge_gate" : "internal_agent",
+        nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
         label: createdWorkers[i].name,
         positionX: posX,
         positionY: posY,
-        refAgentId: isGate ? null : createdWorkers[i].id,
+        refAgentId: isGate || det ? null : createdWorkers[i].id,
+        refSkillId: det?.refSkillId,
+        refKnowledgeBaseId: det?.refKnowledgeBaseId,
         gateType: isGate ? "approval" : undefined,
-        config: { role: "worker", workerIndex: i },
-      });
+        config: { role: "worker", workerIndex: i, ...(det?.config ?? {}) },
+      } as any);
       workerNodes.push(node);
     }
 

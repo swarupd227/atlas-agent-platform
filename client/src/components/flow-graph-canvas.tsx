@@ -242,6 +242,82 @@ function KbPicker({ kbId, kbName, onAttach, onRemove }: {
   );
 }
 
+/**
+ * Binds an action step to one real tool on one connector, so the step makes that
+ * call itself instead of an agent deciding to make it.
+ *
+ * Searches the connectors' discovered tools, which is what the engine will
+ * dispatch against -- a tool typed by hand is the classic way to author a step
+ * that fails at run time naming a tool its connector does not have.
+ */
+function ToolPicker({ serverId, toolName, onPick, onRemove }: {
+  serverId?: string;
+  toolName?: string;
+  onPick: (serverId: string, serverName: string, toolName: string) => void;
+  onRemove: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  // The tools the connectors actually discovered, which is what the engine
+  // dispatches against -- a hand-typed tool name is how a step ends up failing at
+  // run time against a connector that has no such tool.
+  const { data: tools } = useQuery<Array<{ id: string; serverId: string; name: string }>>({ queryKey: ["/api/mcp-tools"] });
+  const { data: servers } = useQuery<Array<{ id: string; name: string }>>({ queryKey: ["/api/mcp-servers"] });
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [] as Array<{ serverId: string; serverName: string; toolName: string }>;
+    const serverName = new Map((servers || []).map(s => [s.id, s.name]));
+    const out: Array<{ serverId: string; serverName: string; toolName: string }> = [];
+    for (const tool of tools || []) {
+      const owner = serverName.get(tool.serverId) || "";
+      if (!tool.name) continue;
+      if (tool.name.toLowerCase().includes(q) || owner.toLowerCase().includes(q)) {
+        out.push({ serverId: tool.serverId, serverName: owner, toolName: tool.name });
+      }
+      if (out.length >= 10) break;
+    }
+    return out;
+  }, [tools, servers, query]);
+
+  if (serverId && toolName) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-emerald-500/30 bg-emerald-500/5" data-testid="attached-tool">
+        <Zap className="w-3 h-3 text-emerald-500 shrink-0" />
+        <span className="text-[11px] font-mono truncate flex-1">{toolName}</span>
+        <button type="button" onClick={onRemove} className="p-0.5 rounded hover:bg-muted shrink-0" data-testid="button-remove-node-tool">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <Input
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search connector tools…"
+        className="h-7 text-xs"
+        data-testid="input-node-tool-search"
+      />
+      {matches.length > 0 && (
+        <div className="flex flex-col gap-0.5 max-h-32 overflow-y-auto rounded-md border p-0.5">
+          {matches.map(m => (
+            <button
+              key={`${m.serverId}:${m.toolName}`}
+              type="button"
+              onClick={() => { onPick(m.serverId, m.serverName, m.toolName); setQuery(""); }}
+              className="text-left px-1.5 py-1 rounded text-[11px] hover-elevate"
+              data-testid={`option-node-tool-${m.toolName}`}
+            >
+              <span className="font-mono">{m.toolName}</span>
+              <span className="text-muted-foreground"> · {m.serverName}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Same search-and-attach pattern as SkillPicker/KbPicker, for binding a
  *  sub_flow step to a deployed team agent (the executable target
  *  executeTeamReferenceNode calls). Excludes team agents with no blueprint --
@@ -754,6 +830,43 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
                       }}
                     />
                     <span className="text-[10px] text-muted-foreground">Runs the selected flow end to end and waits for it before continuing (Sync to Automation compiles this to a real Sub-Flow step).</span>
+                  </div>
+                )}
+                {/* A bound skill or knowledge base usually means "an agent should
+                    follow this" -- but sometimes the step IS just the lookup. The
+                    author is the only one who knows which, so this asks them
+                    rather than guessing and quietly removing the thinking. */}
+                {(d.config?.skillId || d.config?.kbId) && d.ntype !== "expert_approval" && (
+                  <label className="flex items-start gap-2 rounded-md border p-2 cursor-pointer" data-testid="toggle-node-deterministic">
+                    <input
+                      type="checkbox"
+                      checked={d.config?.deterministic === true}
+                      onChange={e => patchNode(selNode.id, { config: { ...(d.config || {}), deterministic: e.target.checked || undefined } })}
+                      className="mt-0.5"
+                    />
+                    <span className="flex flex-col gap-0.5">
+                      <span className="text-[11px] font-medium">Run this step without a model</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        This step is only the lookup — return what the {d.config?.kbId ? "knowledge base" : "skill"} holds and pass it on. Leave it off if anything here needs judging or writing, which needs an agent.
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {(d.ntype === "take_action" || d.ntype === "send_notification") && (
+                  <div className="flex flex-col gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2">
+                    <label className="text-[10px] text-emerald-700 dark:text-emerald-400 uppercase tracking-wide font-medium">Calls one tool directly</label>
+                    <ToolPicker
+                      serverId={d.config?.toolServerId as string | undefined}
+                      toolName={d.config?.toolName as string | undefined}
+                      onPick={(serverId, serverName, toolName) => patchNode(selNode.id, { config: { ...(d.config || {}), toolServerId: serverId, toolServerName: serverName, toolName } })}
+                      onRemove={() => {
+                        const { toolServerId: _s, toolServerName: _n, toolName: _t, toolArgs: _a, ...rest } = (d.config || {}) as Record<string, unknown>;
+                        patchNode(selNode.id, { config: rest });
+                      }}
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      Name the tool and this step makes that one call itself, with no model involved -- it still goes through the agent's policies, approvals and audit. Leave it empty and an agent decides the call, which costs a model call every run.
+                    </span>
                   </div>
                 )}
                 {d.ntype === "expression" && (

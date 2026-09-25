@@ -44,6 +44,7 @@ export function stageLayout(plan: WavePlan | undefined, nodes: TeamBlueprintNode
 const KIND_LABEL: Record<string, string> = {
   internal_agent: "Agent", tool_set: "Tool set", edge_gate: "Human approves", remote_agent: "Remote agent",
   skill: "Skill", knowledge_base: "Knowledge", sub_flow: "Sub-flow", expression: "Expression",
+  tool_call: "Tool call",
 };
 
 export interface StepMeta {
@@ -82,6 +83,7 @@ function TeamFlowNode({ data, selected }: NodeProps) {
     : node.nodeType === "internal_agent" ? [d.toolCount ? `${d.toolCount} tool${d.toolCount !== 1 ? "s" : ""}` : "", meta.model?.replace(/^claude-/, "")].filter(Boolean).join(" · ") || meta.agentName || "no agent chosen"
     : node.nodeType === "sub_flow" ? d.refTeamAgentName || "not configured"
     : node.nodeType === "expression" ? (node.config as any)?.expression || "not configured"
+    : node.nodeType === "tool_call" ? (node.config as any)?.toolName || "no tool chosen"
     : node.nodeType === "tool_set" ? `${d.toolCount} tool${d.toolCount !== 1 ? "s" : ""}`
     : node.nodeType === "edge_gate" ? (node.gateType === "approval" || !node.gateType ? "any approver" : node.gateType.replace(/_/g, " "))
     : node.nodeType === "skill" ? d.refSkillName || "no skill chosen"

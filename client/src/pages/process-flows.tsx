@@ -884,6 +884,31 @@ export default function ProcessFlows() {
                   </ul>
                 </div>
               )}
+              {/* What it costs to run, every run. An author could commission a
+                  twenty-step flow without ever being told it was twenty model
+                  calls; this is where they find out, before they commission it. */}
+              {compiled.cost && (
+                <div className="flex flex-col gap-1 rounded-md border p-2" data-testid="flow-cost">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs font-medium">
+                      {compiled.cost.minModelCalls === 0
+                        ? "No model calls — this flow runs entirely in-process."
+                        : `${compiled.cost.minModelCalls} model call${compiled.cost.minModelCalls !== 1 ? "s" : ""} per run`}
+                    </span>
+                    {compiled.cost.minModelCalls > 0 && (
+                      <span className="text-xs tabular-nums text-muted-foreground">approx. ${compiled.cost.approxUsdPerRun.toFixed(2)} a run</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {compiled.cost.modelSteps} step{compiled.cost.modelSteps !== 1 ? "s" : ""} run as agents
+                    {compiled.cost.freeSteps > 0 ? `, ${compiled.cost.freeSteps} run in-process for nothing` : ""}
+                    {compiled.cost.aiRoutedEdges > 0
+                      ? `, and ${compiled.cost.aiRoutedEdges} branch${compiled.cost.aiRoutedEdges !== 1 ? "es" : ""} ${compiled.cost.aiRoutedEdges !== 1 ? "are" : "is"} judged by a model`
+                      : ""}
+                    . A step that uses tools takes more than one call, so treat this as the floor.
+                  </p>
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Badge variant="secondary" className="text-[10px]">{compiled.totalNodes} steps</Badge>
                 <Badge variant="outline" className="text-[10px]">{compiled.totalWaves} stages</Badge>

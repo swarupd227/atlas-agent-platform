@@ -5,6 +5,8 @@
 
 import { computeWaves } from "./dag-execution-engine";
 import type { ProcessFlowGraph, ProcessEdge } from "@shared/process-flow";
+import { classifyStep, estimateFlowCost, type ExecutionKind, type FlowCostEstimate } from "@shared/flow-execution-kind";
+import { parseConditionToRule } from "@shared/condition-to-rule";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 export interface CompiledWave {
@@ -33,6 +35,14 @@ export interface CompiledIssue {
 
 export interface CompiledFlow {
   valid: boolean;
+  /**
+   * What running this flow will cost, from the steps as authored. An author had
+   * no way to see that a twenty-step flow is twenty model calls until this was
+   * reported back to the canvas.
+   */
+  cost?: FlowCostEstimate;
+  /** How each step will execute, so the canvas can say which ones are free. */
+  stepKinds?: Array<{ nodeId: string; label: string; kind: ExecutionKind }>;
   message?: string;
   totalNodes: number;
   totalEdges: number;
@@ -79,7 +89,11 @@ export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
   // `warnings` (the flat string list some consumers still read) is derived
   // from the structured `issues` at return time via finalize().
   const finalize = (flow: Omit<CompiledFlow, "warnings" | "issues">): CompiledFlow => ({
-    ...flow, issues, warnings: issues.map(i => i.message),
+    ...flow,
+    issues,
+    warnings: issues.map(i => i.message),
+    cost: estimateFlowCost(graph),
+    stepKinds: graph.nodes.map(n => ({ nodeId: n.id, label: n.label, kind: classifyStep(n) })),
   });
 
   const base = {
@@ -111,6 +125,33 @@ export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
   }
   if (ends.length === 0) {
     warn("no_end", "Flow has no End step, so it has no defined completion. Add an End step where the process finishes.");
+  }
+
+  // ---- What this flow will cost to run ----
+  // An author could previously commission a twenty-step flow without ever being
+  // told it was twenty model calls. Two findings carry that: a decision whose
+  // condition cannot be evaluated in-process, and a step that will run as an
+  // agent when what it describes needs no model.
+  for (const e of validEdges) {
+    const condition = String(e.condition ?? "").trim();
+    if (!condition) continue;
+    if ((e as { rule?: unknown }).rule) continue;
+    if (parseConditionToRule(condition)) continue;
+    const from = nodeById.get(e.from)?.label || e.from;
+    warn(
+      "ai_routed_decision",
+      `The branch from "${from}" ("${condition}") has to be judged by a model on every run. If it is really a comparison, write it as one — "amount > 50000", "status is Retired" — and the engine will decide it itself, for nothing and with an audit trail.`,
+      { edgeId: e.id },
+    );
+  }
+  for (const n of graph.nodes) {
+    if (classifyStep(n) !== "agent") continue;
+    const config = (n.config ?? {}) as { expression?: unknown; kbId?: unknown; skillId?: unknown; toolName?: unknown };
+    if (n.type === "expression" && !String(config.expression ?? "").trim()) {
+      warn("expression_not_configured", `"${n.label}" is an Expression step with no expression, so it will run as an agent. Give it an expression and it runs in-process instead.`, { nodeId: n.id });
+    } else if (String(config.toolName ?? "").trim()) {
+      warn("tool_step_needs_server", `"${n.label}" names a tool but not the connector it belongs to, so it will run as an agent. Pick the connector and the step calls the tool directly.`, { nodeId: n.id });
+    }
   }
 
   // Incoming-edge count per node (from valid edges), used for reachability and

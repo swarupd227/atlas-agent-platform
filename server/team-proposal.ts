@@ -683,6 +683,7 @@ Respond with a JSON object matching this schema exactly:
       "suggestedKnowledgeBases": [{"id": "string - KB id", "name": "string"}],
       "complianceTags": ["string - regulatory framework tags"],
       "systemPrompt": "string - 1-2 sentence role instruction",
+      "execution": "object | omit - set ONLY for a step that needs no model at all. {\"kind\":\"expression\",\"expression\":\"<JSONata over run state>\"} for arithmetic, counts, thresholds, reformatting; {\"kind\":\"knowledge_base\",\"knowledgeBaseId\":\"<id>\",\"knowledgeBaseQuery\":\"<fixed query>\"} for a pure lookup in a knowledge base; {\"kind\":\"tool_call\",\"toolServerId\":\"<connector id>\",\"toolName\":\"<tool>\",\"toolArgs\":{\"arg\":{\"$expr\":\"<JSONata>\"}}} for a step that is one fixed call (post this note, create this task). These run in-process for zero cost. OMIT it for anything involving judgement, interpretation, writing prose, or deciding between options - those must stay agents.",
       "isHumanCheckpoint": "boolean - true ONLY if this step is a MANUAL decision made by a real person (e.g. 'manager approval', 'compliance sign-off', 'underwriter review') that the outcome/description explicitly calls out as requiring a human, not an automated LLM judgment call. false for every other agent, including AI-judged decision/routing/scoring steps.",
       "outputSchema": {
         "type": "record_list | summary",
@@ -723,6 +724,20 @@ Also try to set "branchRule" — a single deterministic comparison — whenever 
 Leave "branchRule" as null (branchCondition only) when the condition genuinely requires judgment the source agent's structured output can't answer directly (sentiment, open-ended quality, "looks suspicious", etc) — never invent a field name that isn't in that agent's outputSchema.
 
 ═══════════════════════════════════════════
+STEPS THAT NEED NO MODEL (execution)
+Every agent you propose is a model call on every run, so a twenty-step plan of agents is twenty model calls. The engine can run four kinds of step for nothing, and you should use them wherever the step honestly is one:
+- Arithmetic, counting, totals, thresholds, percentages, reshaping or renaming fields, picking the top N of something already scored: "execution": {"kind":"expression","expression":"<JSONata over the run's state>"}.
+- Retrieving from a knowledge base with a fixed query, where nothing is interpreted: "execution": {"kind":"knowledge_base","knowledgeBaseId":"<id from the KB list>","knowledgeBaseQuery":"<what to look up>"}.
+- One fixed tool call whose arguments come from earlier steps -- posting a work note, creating a task, updating a record: "execution": {"kind":"tool_call","toolServerId":"<connector id>","toolName":"<tool name>","toolArgs":{"<arg>":{"$expr":"<JSONata>"},"<arg2>":"a literal"}}.
+- A step that only contributes a written procedure: "execution": {"kind":"skill","skillId":"<id>"}.
+What must STAY an agent: reading a document and deciding what it means, weighing evidence, inferring an owner or a tier, writing prose a person will read, choosing between options, judging whether something is good enough. Do not dress judgement up as an expression to save money -- a wrong deterministic step is far worse than an honest model call.
+
+CHOOSING A MODEL PER STEP (modelProvider / modelName)
+Match the model to the work, not to the team. A step that extracts fields, formats output, or follows a fixed procedure runs correctly on a small model; reserve a frontier model for the steps that actually reason.
+- Mechanical extraction, formatting, classification into a fixed set, summarising one short input: "openai" / "gpt-4.1-mini".
+- Real judgement, multi-source evidence, anything writing text a customer or regulator reads, anything whose mistake is expensive: "anthropic" / "claude-sonnet-4-5".
+Say which you chose in the agent's description when it is not obvious. A team where every agent is a frontier model costs several times what the same team costs with the cheap steps on a small one, and is no more accurate.
+
 HUMAN CHECKPOINTS (isHumanCheckpoint)
 ═══════════════════════════════════════════
 When the outcome/description explicitly requires a real person to make a decision — "manager approval", "requires sign-off", "must be a human approval step, not an automated one", "underwriter must review" — propose a dedicated agent for that step and set its "isHumanCheckpoint" to true. This is different from an agent that automates a judgment call (e.g. a fraud-scoring or risk-tiering agent): those are false. A true human checkpoint agent should still get a minimal outputSchema (e.g. {approved: boolean}) describing what the human's decision produces, since downstream conditional edges route on that field, but its systemPrompt/workflowSteps should describe presenting the case for a human decision, not making the decision itself.

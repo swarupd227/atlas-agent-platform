@@ -4,7 +4,8 @@ import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineSt
 import { publishDagRunEvent, previewOutput } from "./dag-run-events";
 import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
-import { recomputeOutcomeKpis } from "./routes/helpers";
+import { recomputeOutcomeKpis, resolvePolicyBundle } from "./routes/helpers";
+import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
@@ -159,6 +160,10 @@ export interface NodePlanConfig {
   refKnowledgeBaseId: string | null;
   kbQuery: string | null;
   expression: string | null;
+  /** tool_call: the connector holding the tool, the tool's name, and how its arguments are built. */
+  toolServerId: string | null;
+  toolName: string | null;
+  toolArgs: Record<string, unknown> | null;
   label: string;
   gateType: string | null;
   refToolIds: string[] | null;
@@ -439,6 +444,9 @@ export function computeWaves(
       refKnowledgeBaseId: (node as any).refKnowledgeBaseId || null,
       kbQuery: (node.config as any)?.kbQuery || null,
       expression: (node.config as any)?.expression || null,
+      toolServerId: (node.config as any)?.toolServerId || null,
+      toolName: (node.config as any)?.toolName || null,
+      toolArgs: ((node.config as any)?.toolArgs as Record<string, unknown> | undefined) || null,
       label: node.label,
       gateType: node.gateType || null,
       refToolIds: (node.refToolIds as string[] | null) || null,
@@ -1757,6 +1765,10 @@ export class DAGExecutionEngine {
       return this.executeExpressionNode(nodeId, nc, currentState, start);
     }
 
+    if (nc.nodeType === "tool_call" && nc.toolName && nc.toolServerId) {
+      return this.executeToolCallNode(nodeId, nc, currentState, config, start);
+    }
+
     if (this.isGateNode(nc)) {
       return this.executeGateNode(nodeId, nc, currentState, config, start);
     }
@@ -2036,6 +2048,103 @@ export class DAGExecutionEngine {
    * so there's no eval/Function-constructor surface here even though the
    * expression text is user-authored in the node inspector.
    */
+  /**
+   * Execute a "tool_call" node: make ONE bound tool call, with its arguments
+   * taken from the run's state, and no model anywhere in the path.
+   *
+   * This is the node the platform was missing. A step that is purely "post this
+   * work note" or "create this task" had to be an agent, because tool dispatch
+   * only ever happened inside an agent's tool loop -- so a deterministic API
+   * call cost a model call (and the model could decide not to make it, or to
+   * make it with arguments it invented).
+   *
+   * It goes through dispatchToolCall, the same path an agent's tool call takes,
+   * so policy, approvals, audit, idempotency and the tool's own schema all
+   * still apply. Skipping the model does not skip the governance.
+   *
+   * Arguments: `toolArgs` maps the tool's argument names to either a literal
+   * value, or `{ "$expr": "<JSONata>" }` evaluated against state. Literal and
+   * computed are spelled differently on purpose -- a bare string being silently
+   * treated as an expression is how an author ends up passing the text
+   * "cmdb_ci" as a query.
+   */
+  private async executeToolCallNode(
+    nodeId: string,
+    nc: NodePlanConfig,
+    currentState: Record<string, any>,
+    config: DAGExecutionConfig,
+    start: number,
+  ): Promise<NodeExecutionResult> {
+    const fail = (message: string): NodeExecutionResult => ({
+      nodeId,
+      agentId: "",
+      status: "failed",
+      output: {},
+      error: message,
+      durationMs: Date.now() - start,
+      promptTokens: 0,
+      completionTokens: 0,
+      traceId: "",
+    });
+
+    let args: Record<string, any> = {};
+    try {
+      for (const [name, spec] of Object.entries(nc.toolArgs ?? {})) {
+        const expr = (spec as { $expr?: unknown } | null)?.$expr;
+        if (typeof expr === "string") {
+          const value = await Promise.race([
+            jsonata(expr).evaluate(currentState),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`argument "${name}" timed out`)), 5000)),
+          ]);
+          args[name] = value === undefined ? null : value;
+        } else {
+          args[name] = spec;
+        }
+      }
+    } catch (e: any) {
+      return fail(`Could not build the arguments for ${nc.toolName}: ${e?.message || String(e)}`);
+    }
+
+    const tools = await gatherAvailableTools([nc.toolServerId!]).catch(() => []);
+    const tool = tools.find((t) => t.toolName.toLowerCase() === nc.toolName!.toLowerCase());
+    if (!tool) {
+      // Naming the tools that ARE there turns "it didn't work" into a fixable
+      // message: the usual cause is a tool renamed on the connector since the
+      // step was authored.
+      const names = tools.map((t) => t.toolName).slice(0, 12).join(", ");
+      return fail(`"${nc.toolName}" is not a tool on that connector.${names ? ` It has: ${names}.` : " The connector reported no tools."}`);
+    }
+
+    // The team agent owns this call: its organization scopes credentials, and
+    // its policies are the ones that apply -- the same bundle an agent step
+    // would be held to.
+    const owner = await storage.getAgent(config.teamAgentId).catch(() => undefined);
+    const orgId = owner?.organizationId ?? null;
+    const policyBundle = await resolvePolicyBundle(config.teamAgentId, orgId ?? undefined).catch(() => null);
+    const dispatch = await dispatchToolCall({
+      agentId: config.teamAgentId,
+      orgId,
+      tool,
+      args,
+      policyBundle,
+      ...(config.dagRunId ? { traceId: config.dagRunId, idempotencyScope: config.dagRunId } : {}),
+    });
+
+    const blocked = dispatch.outcome !== "success" && dispatch.outcome !== "deduplicated";
+    return {
+      nodeId,
+      agentId: "",
+      status: blocked ? "failed" : "completed",
+      output: blocked ? {} : { [nc.stateKey]: dispatch.result ?? null },
+      error: blocked ? `${nc.toolName} did not run: ${dispatch.reason || dispatch.outcome}` : undefined,
+      durationMs: Date.now() - start,
+      promptTokens: 0,
+      completionTokens: 0,
+      traceId: "",
+      toolCallCount: 1,
+    };
+  }
+
   private async executeExpressionNode(
     nodeId: string,
     nc: NodePlanConfig,
