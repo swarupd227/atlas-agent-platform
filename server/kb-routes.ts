@@ -505,12 +505,25 @@ async function extractTextFromFile(buffer: Buffer, mimeType: string, filename: s
   return result.text;
 }
 
-async function fetchWebContent(url: string): Promise<string> {
-  const { text } = await fetchWebContentWithLinks(url);
-  return text;
+async function fetchWebContent(url: string): Promise<{ text: string; sourceDate?: string }> {
+  const { text, sourceDate } = await fetchWebContentWithLinks(url);
+  return { text, sourceDate };
 }
 
-async function fetchWebContentWithLinks(url: string): Promise<{ text: string; links: string[] }> {
+// Backlog B44: the only source type with a real, automatic date signal is a
+// URL fetch's own response headers -- a plain text paste or an uploaded file
+// carries no such signal without per-format metadata extraction, which is
+// separate, larger work. Last-Modified is the server's own claim about when
+// the page's content changed; Date (always present) is a weaker fallback --
+// only when the page came back, not when it was written.
+function sourceDateFromResponse(response: globalThis.Response): string | undefined {
+  const raw = response.headers.get("last-modified") || response.headers.get("date");
+  if (!raw) return undefined;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+async function fetchWebContentWithLinks(url: string): Promise<{ text: string; links: string[]; sourceDate?: string }> {
   // SSRF guard: resolves the hostname and refuses private/loopback/link-local
   // targets before the real request is made. Applied to every page fetched
   // (root ingestion AND each crawled link), since a same-domain link can
@@ -520,6 +533,7 @@ async function fetchWebContentWithLinks(url: string): Promise<{ text: string; li
     headers: { "User-Agent": "NousAgent-KB/1.0" },
     signal: AbortSignal.timeout(15000),
   });
+  const sourceDate = sourceDateFromResponse(response);
   const html = await response.text();
   const cheerio = await import("cheerio");
   const $ = cheerio.load(html);
@@ -548,7 +562,7 @@ async function fetchWebContentWithLinks(url: string): Promise<{ text: string; li
     } catch {}
   });
 
-  return { text, links };
+  return { text, links, sourceDate };
 }
 
 async function crawlAndIngest(parentSourceId: string, kbId: string, rootUrl: string, crawlDepth: number, maxPages: number) {
@@ -647,9 +661,12 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
     await storage.updateKnowledgeSource(sourceId, { status: "processing" });
 
     let text = source.content || "";
+    let sourceDate: string | undefined;
 
     if (source.sourceType === "url" && source.url) {
-      text = await fetchWebContent(source.url);
+      const fetched = await fetchWebContent(source.url);
+      text = fetched.text;
+      sourceDate = fetched.sourceDate;
       await storage.updateKnowledgeSource(sourceId, { content: text });
     }
 
@@ -672,7 +689,7 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
         sourceId,
         content: chunks[i],
         chunkIndex: i,
-        metadata: {},
+        metadata: sourceDate ? { sourceDate } : {},
         tokenCount: Math.ceil(chunks[i].length / 4),
       });
 
@@ -702,7 +719,7 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
       processedAt: new Date(),
       freshnessStatus: "fresh",
       lastFreshnessCheckAt: new Date(),
-      metadata: { ...existingMeta, ...ontologyMeta },
+      metadata: { ...existingMeta, ...ontologyMeta, ...(sourceDate ? { sourceDate } : {}) },
     });
 
     const allSources = await storage.getKnowledgeSources(kbId);
