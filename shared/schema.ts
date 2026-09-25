@@ -86,7 +86,7 @@ export const kpiDefinitions = pgTable("kpi_definitions", {
   /**
    * What measures this KPI, declared rather than guessed from its name:
    * {kind:"manual"} or {kind:"agent_runs",statistic,windowDays}. Null means
-   * nothing measures it yet. See server/kpi-measurement.ts.
+   * nothing measures it yet. See shared/kpi-measurement.ts.
    */
   measurementSource: jsonb("measurement_source"),
 });

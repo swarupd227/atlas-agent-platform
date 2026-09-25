@@ -25,18 +25,21 @@ const list = read("client", "src", "pages", "outcomes.tsx");
 const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("the KPI chart", () => {
-  it("has no point for a day with no runs, and draws no line to fill the gap", () => {
+  // It first stopped drawing a line between baseline and current value, then
+  // stopped deriving points from the KPI's name at all: each point is now a
+  // measurement that was taken and kept (tests/kpi-recording-ui.test.ts).
+  it("plots measurements that were taken, and fills no gap between them", () => {
     const at = route.indexOf('router.get("/api/outcomes/:id/evidence"');
     const body = route.slice(at, at + 4000);
     expect(body).not.toContain("const progress = baseline + ((current - baseline)");
-    expect(body).toContain("let value: number | null = null;");
-    expect(body).toContain('basis: "agent_runs"');
+    expect(body).not.toContain("value = kpi.currentValue || kpi.baseline || 0;");
+    expect(body).toContain("await storage.getKpiReadingsByOutcome(outcomeId)");
     expect(body).toContain("measuredDays");
   });
 
-  it("the page plots only the days that had runs", () => {
+  it("the page plots only what was measured", () => {
     expect(detail).toContain("const measured = (points ?? []).filter((p): p is { date: string; value: number } => p.value !== null);");
-    expect(detail).toContain('if (withRuns.length < 2) return "Not enough days with runs";');
+    expect(detail).toContain('if (withRuns.length < 2) return "Not enough measurements";');
   });
 
   it("no projection is extrapolated from it", () => {

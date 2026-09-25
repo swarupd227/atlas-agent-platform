@@ -469,7 +469,9 @@ export default function OutcomeDetail() {
       baseline: number;
       measuredDays?: number;
       basis?: string;
-      points: Array<{ date: string; value: number | null }>;
+      describes?: string;
+      windowDays?: number;
+      points: Array<{ date: string; value: number | null; takenAt?: string; source?: string; note?: string | null; recordedBy?: string | null }>;
     }>;
     correlatedMetrics: {
       successRate: number;
@@ -2207,7 +2209,10 @@ export default function OutcomeDetail() {
               // No projection: it extrapolated a line the chart had itself drawn
               // between baseline and current value, then coloured the result
               // green or amber as if it were a forecast.
+              // Each point is a measurement that was taken and kept, not a run
+              // statistic matched to the KPI by its name.
               const measuredDays = kpiTs?.measuredDays ?? 0;
+              const measuredBy = kpiTs?.describes ?? null;
 
               return (
                 <Card key={kpi.id} data-testid={`card-kpi-${kpi.id}`}>
@@ -2229,9 +2234,14 @@ export default function OutcomeDetail() {
                             <span className="text-[11px] text-muted-foreground">
                               Weight: {((kpi.weight || 1) * 100).toFixed(0)}% | Unit: {kpi.unit}
                             </span>
+                            {measuredBy && (
+                              <span className="text-[11px] text-muted-foreground" data-testid={`text-measured-by-${kpi.id}`}>
+                                {measuredBy}
+                              </span>
+                            )}
                             {kpi.measurement && (
                               <span className="text-[11px] text-muted-foreground/80 italic" data-testid={`text-measurement-${kpi.id}`}>
-                                Measured by: {kpi.measurement}
+                                How it was meant to be measured: {kpi.measurement}
                               </span>
                             )}
                             <div className="flex items-center gap-4 mt-1 flex-wrap">
@@ -2248,9 +2258,9 @@ export default function OutcomeDetail() {
                                 <span className="text-sm font-medium" data-testid={`text-sla-${kpi.id}`}>{kpi.slaThreshold ?? "N/A"}</span>
                               </div>
                               <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Days with runs</span>
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Measurements</span>
                                 <span className="text-sm font-medium" data-testid={`text-measured-days-${kpi.id}`}>
-                                  {measuredDays} of 7
+                                  {measuredDays === 0 ? "None" : `${measuredDays} in ${kpiTs?.windowDays ?? 30}d`}
                                 </span>
                               </div>
                             </div>
@@ -2330,9 +2340,9 @@ export default function OutcomeDetail() {
                             />
                             <span className="text-[10px] text-muted-foreground">
                               {(() => {
-                                // Only days that actually had runs say anything about a trend.
+                                // Two measurements are the fewest that can show a direction.
                                 const withRuns = kpiTs.points.filter((p) => p.value !== null);
-                                if (withRuns.length < 2) return "Not enough days with runs";
+                                if (withRuns.length < 2) return "Not enough measurements";
                                 const last = withRuns[withRuns.length - 1].value!;
                                 const first = withRuns[0].value!;
                                 return last > first ? "Trending up" : last < first ? "Trending down" : "Stable";

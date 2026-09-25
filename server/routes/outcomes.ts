@@ -23,7 +23,7 @@ import {
 } from "./helpers";
 import type { ProcessNode } from "@shared/process-flow";
 import { createOutcomeFromProposal, OutcomeInputError, prepareOutcomeFromProposal } from "../outcome-create";
-import { describeSource, parseMeasurementSource, suggestMeasurement, trendBetween, breachesThreshold, validateMeasurementSource } from "../kpi-measurement";
+import { describeSource, parseMeasurementSource, suggestMeasurement, trendBetween, breachesThreshold, validateMeasurementSource } from "@shared/kpi-measurement";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 
 const router = Router();
@@ -486,58 +486,35 @@ async function createOutcomeVersion(
       const relevantTraces = (await Promise.all(boundAgents.map(a => storage.getTracesByAgent(a.id, getOrgId(req), 500)))).flat();
 
       const now = Date.now();
+      // The chart plots what was measured -- the KPI's own readings -- not a
+      // run statistic re-derived from its name. The old series matched the
+      // name to a statistic and, on a day with no runs, carried the current
+      // value forward, which drew a flat line through days nothing measured.
+      const EVIDENCE_WINDOW_DAYS = 30;
+      const windowFrom = now - EVIDENCE_WINDOW_DAYS * 86400000;
+      const allReadings = await storage.getKpiReadingsByOutcome(outcomeId);
+      const readingsByKpi = new Map<string, typeof allReadings>();
+      for (const r of allReadings) {
+        const at = new Date(r.takenAt || r.createdAt || 0).getTime();
+        if (at < windowFrom) continue;
+        const list = readingsByKpi.get(r.kpiId) ?? [];
+        list.push(r);
+        readingsByKpi.set(r.kpiId, list);
+      }
+
       const kpiTimeSeries = kpis.map(kpi => {
-        const points = [];
-        for (let i = 6; i >= 0; i--) {
-          const dayStart = new Date(now - (i + 1) * 86400000);
-          const dayEnd = new Date(now - i * 86400000);
-          const dayTraces = relevantTraces.filter(t => {
-            const ts = new Date(t.startedAt || 0).getTime();
-            return ts >= dayStart.getTime() && ts < dayEnd.getTime();
-          });
-
-          // A day with no runs has no value: nothing is carried forward and nothing
-          // is interpolated. The chart used to draw a straight line from baseline to
-          // the current value whenever there was no data to draw.
-          let value: number | null = null;
-          const kpiNameLower = (kpi.name || "").toLowerCase();
-          if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
-            if (dayTraces.length > 0) {
-              const failed = dayTraces.filter(t => t.status === "failed" || t.status === "error").length;
-              value = Math.round(((dayTraces.length - failed) / dayTraces.length) * 10000) / 100;
-            } else {
-              value = kpi.currentValue || kpi.baseline || 0;
-            }
-          } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
-            if (dayTraces.length > 0) {
-              const avgMs = dayTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / dayTraces.length;
-              const unitLower = (kpi.unit || "").toLowerCase();
-              if (unitLower === "minutes" || unitLower === "min") {
-                value = Math.round((avgMs / 60000) * 100) / 100;
-              } else if (unitLower === "seconds" || unitLower === "sec" || unitLower === "s") {
-                value = Math.round((avgMs / 1000) * 10) / 10;
-              } else {
-                value = Math.round(avgMs);
-              }
-            } else {
-              value = kpi.currentValue || kpi.baseline || 0;
-            }
-          } else if (kpiNameLower.includes("cost")) {
-            if (dayTraces.length > 0) {
-              value = parseFloat((dayTraces.length * (kpi.currentValue || 0.01)).toFixed(4));
-            } else {
-              value = kpi.currentValue || kpi.baseline || 0;
-            }
-          } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput")) {
-            value = dayTraces.length > 0 ? dayTraces.length : null;
-          }
-
-          points.push({
-            date: dayEnd.toISOString().split("T")[0],
-            value,
-            traceCount: dayTraces.length,
-          });
-        }
+        const source = parseMeasurementSource((kpi as any).measurementSource);
+        const points = (readingsByKpi.get(kpi.id) ?? [])
+          .slice()
+          .sort((a, b) => new Date(a.takenAt as any).getTime() - new Date(b.takenAt as any).getTime())
+          .map(r => ({
+            date: new Date(r.takenAt as any).toISOString().split("T")[0],
+            takenAt: new Date(r.takenAt as any).toISOString(),
+            value: r.value as number | null,
+            source: r.source,
+            note: r.note,
+            recordedBy: r.recordedByName,
+          }));
         return {
           kpiId: kpi.id,
           kpiName: kpi.name,
@@ -545,10 +522,12 @@ async function createOutcomeVersion(
           target: kpi.target,
           baseline: kpi.baseline,
           points,
-          // What these points are: run statistics matched to the KPI by its name,
-          // not a business measurement. Days with no runs have no point.
-          basis: "agent_runs",
-          measuredDays: points.filter((p: { value: number | null }) => p.value !== null).length,
+          // Each point is a measurement that was taken and kept, so there is no
+          // point for a moment nothing measured.
+          basis: source?.kind === "manual" ? "recorded" : source?.kind === "agent_runs" ? "agent_runs" : "not_measured",
+          describes: describeSource(source),
+          measuredDays: points.length,
+          windowDays: EVIDENCE_WINDOW_DAYS,
         };
       });
 

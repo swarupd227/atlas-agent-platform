@@ -23,7 +23,7 @@ import {
   trendBetween,
   validateMeasurementSource,
   type AgentRunsSource,
-} from "../server/kpi-measurement";
+} from "../shared/kpi-measurement";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const helpers = read("server", "routes", "helpers.ts");

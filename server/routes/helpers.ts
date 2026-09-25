@@ -4,7 +4,7 @@ import { storage } from "../storage";
 import { getDefaultOrgId } from "../auth";
 import { callClaude, stripJsonFences } from "../claude";
 import { insertEvalTestCaseSchema } from "@shared/schema";
-import { breachesThreshold, parseMeasurementSource, statisticValue, trendBetween, type AgentRunsSource, type RunWindow } from "../kpi-measurement";
+import { breachesThreshold, parseMeasurementSource, statisticValue, trendBetween, type AgentRunsSource, type RunWindow } from "@shared/kpi-measurement";
 
 async function routeAIComplete(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,

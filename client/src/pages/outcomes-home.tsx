@@ -7,11 +7,12 @@
  * made every one of them look under way, so this leads with where each stands
  * and what it is measured by.
  *
- * Truthfulness: a KPI's current value comes from matching its name against
- * run statistics (recomputeOutcomeKpis in server/routes/helpers.ts). That is
- * a proxy, and every KPI here says so or says it isn't measured. The old
- * page's "value generated", uptime and compliance lights, industry benchmarks
- * and the rule that counted a targetless KPI as fully attained are gone.
+ * Truthfulness: a KPI is measured by what it declares -- a person recording
+ * readings, or a named run statistic, which is labelled a proxy -- and says so
+ * when nothing measures it. Declaring that, and recording a reading, both
+ * happen here (see kpi-measurement.tsx). The old page's "value generated",
+ * uptime and compliance lights, industry benchmarks and the rule that counted
+ * a targetless KPI as fully attained are gone.
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { QueryBoundary } from "@/components/ui-vocab";
+import { KpiMeasurement } from "./kpi-measurement";
 import { formatDateTime } from "@/lib/format";
 import type { Agent, KpiDefinition, OutcomeContract } from "@shared/schema";
 
@@ -268,6 +270,8 @@ function OutcomePane({ outcome, kpis, agents }: { outcome: OutcomeContract; kpis
                 <li key={k.id} className="p-2.5 text-sm">
                   <div className="truncate font-medium">{k.name}</div>
                   <div className="text-xs text-muted-foreground">{kpiLine(k)}</div>
+                  {/* What measures it, and the place to record what you measured. */}
+                  <KpiMeasurement kpi={k} />
                 </li>
               ))}
             </ul>
