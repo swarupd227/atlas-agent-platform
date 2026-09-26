@@ -1650,7 +1650,12 @@ export class DAGExecutionEngine {
     }
 
     // Built once per wave, not per node -- shared across every gating check.
-    const pipelineState = buildPipelineState(nodeOutputText, nodeLabelById);
+    // The state keys go in too, so a rule can name a step the way the author
+    // was told to name it (`evaluate_treaty_limits.breached`) and not only by
+    // the node's display label or a bare, collision-prone field name.
+    const stateKeyByNodeId = new Map<string, string>();
+    for (const [id, nc] of Object.entries(nodeConfig)) if (nc?.stateKey) stateKeyByNodeId.set(id, nc.stateKey);
+    const pipelineState = buildPipelineState(nodeOutputText, nodeLabelById, stateKeyByNodeId);
 
     const eligibleNodeIds: string[] = [];
     const skippedResults: NodeExecutionResult[] = [];

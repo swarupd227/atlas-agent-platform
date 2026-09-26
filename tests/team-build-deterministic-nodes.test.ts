@@ -14,6 +14,7 @@ import { classifyStep } from "../shared/flow-execution-kind";
 import { parseConditionToRule } from "../shared/condition-to-rule";
 import { stateKeyForLabel } from "../shared/state-key";
 import { evaluateRule } from "../server/rule-evaluator";
+import { buildPipelineState } from "../server/agent-runtime";
 
 const source = readFileSync(join(__dirname, "..", "server", "team-build.ts"), "utf8").replace(/\r\n/g, "\n");
 
@@ -177,8 +178,16 @@ describe("the state key a deterministic step writes to", () => {
     const clear = parseConditionToRule(`${key}.breached == false`)!;
     expect(breached).not.toBeNull();
 
-    // What the expression node writes: output is { [stateKey]: result }.
-    const state = { [key]: { breached: true, coastalTier1AggregateTiv: 72_400_000, coastalTier1AggregateLimit: 50_000_000 } };
+    // Through the engine's OWN builder, not a hand-made object. Building the
+    // state I wished for is exactly how this contract shipped broken: the
+    // qualified name resolved here and not in a run, because the real builder
+    // keyed only by display label, so both branches went unsatisfied and three
+    // runs skipped everything downstream of the decision.
+    const state = buildPipelineState(
+      new Map([["n-treaty", JSON.stringify({ breached: true, coastalTier1AggregateTiv: 72_400_000, coastalTier1AggregateLimit: 50_000_000 })]]),
+      new Map([["n-treaty", "Evaluate Treaty Limits"]]),
+      new Map([["n-treaty", key]]),
+    );
     expect(evaluateRule(breached, state).result).toBe(true);
     expect(evaluateRule(clear, state).result).toBe(false);
 

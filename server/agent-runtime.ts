@@ -3274,16 +3274,46 @@ export function unanimousRecordFields(parsed: Record<string, any>): Record<strin
   return out;
 }
 
-export function buildPipelineState(tierNodeOutputs: Map<string, string>, nodeLabelById: Map<string, string>): Record<string, any> {
+/**
+ * The state an edge's routing rule is evaluated against.
+ *
+ * Three ways to name the same value, because three different authors name it
+ * three different ways:
+ *   - flattened: a structured output's own top-level fields, so `approved`
+ *     works. Convenient, and collides as soon as two steps emit `approved`.
+ *   - by label: `state["Treaty Limit Evaluator"]`, what a model writing a rule
+ *     about a named step tends to produce.
+ *   - by state key: `state.evaluate_treaty_limits`, the name the step's result
+ *     is stored under everywhere else in the run (see shared/state-key.ts).
+ *
+ * The third was missing, and its absence was not visible from here: a rule
+ * saying `evaluate_treaty_limits.breached == true` resolved undefined, so BOTH
+ * branches of the decision went unsatisfied and the run skipped every node
+ * after it. Live 2026-09-26, three times. The state key is the name an author
+ * is told to use while drawing the flow -- it is the one that had to work.
+ *
+ * stateKeyByNodeId is optional so the pipeline caller, which has no node
+ * config, is unaffected.
+ */
+export function buildPipelineState(
+  tierNodeOutputs: Map<string, string>,
+  nodeLabelById: Map<string, string>,
+  stateKeyByNodeId?: Map<string, string>,
+): Record<string, any> {
   const state: Record<string, any> = {};
   for (const [nodeId, text] of Array.from(tierNodeOutputs.entries())) {
     const label = nodeLabelById.get(nodeId) || nodeId;
+    const stateKey = stateKeyByNodeId?.get(nodeId);
     const parsed = extractStructuredOutput(text);
     if (parsed) {
       Object.assign(state, parsed, unanimousRecordFields(parsed));
       state[label] = parsed;
+      // Last, and only when it differs: a step whose label already slugifies to
+      // its state key must not have its own entry overwritten by a second one.
+      if (stateKey && stateKey !== label) state[stateKey] = parsed;
     } else {
       state[label] = text;
+      if (stateKey && stateKey !== label) state[stateKey] = text;
     }
   }
   return state;
