@@ -20,6 +20,7 @@ import { MemoryThreadStore } from "../server/astra/memory-store";
 import { scriptedComplete, result, call } from "../server/astra/scripted-brain";
 import { finishTurnTool } from "../server/astra/tools/finish-turn";
 import { createProcessFlowTool, flowShape, stepLines } from "../server/astra/tools/process-flow";
+import { askAstraAbout } from "../client/src/pages/process-flows";
 import { hasPermission, type RoleId } from "../server/permissions";
 import type { AstraContext } from "../server/astra/types";
 
@@ -207,6 +208,25 @@ describe("the shape, in words", () => {
     const lines = stepLines(many);
     expect(lines).toHaveLength(13);
     expect(lines.at(-1)).toBe("…and 3 more");
+  });
+});
+
+describe("coming back to a flow from the Studio", () => {
+  it("hands over which flow it is, and leaves the change to the person", () => {
+    const studio = read("client", "src", "pages", "process-flows.tsx");
+    const layout = read("client", "src", "astra", "astra-layout.tsx");
+    expect(studio).toContain('data-testid="button-ask-astra-about-flow"');
+    // The id travels, so the conversation doesn't open by asking which flow.
+    expect(askAstraAbout("Claims intake", "flow-1")).toBe('In the process flow "Claims intake" (flow flow-1), ');
+    // Put in the box, not sent: a message sent by a link is one nobody chose.
+    expect(layout).toContain('setComposerInsert({ text: asked, nonce: Date.now(), replace: true });');
+    expect(layout).toContain('params.delete("ask");');
+  });
+
+  it("is only offered for a flow that has been saved", () => {
+    const studio = read("client", "src", "pages", "process-flows.tsx");
+    const at = studio.indexOf('data-testid="button-ask-astra-about-flow"');
+    expect(studio.slice(at - 600, at)).toContain("{savedFlowId && (");
   });
 });
 

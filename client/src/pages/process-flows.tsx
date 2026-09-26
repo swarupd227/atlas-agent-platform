@@ -5,7 +5,7 @@ import {
   Workflow, Zap, Users, Brain, Bell, Square,
   Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
   Play, Database, GitBranch, Save, Mic, MicOff, FolderOpen, AlertTriangle, CheckCircle2,
-  Maximize2, Minimize2, X,
+  Maximize2, Minimize2, X, MessageSquare,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -111,6 +111,15 @@ interface ClarifyQuestion { id: string; question: string; why: string; options: 
 const PALETTE_OFFSET = "left-[76px]";
 
 const GEN_MESSAGES = ["Reading your description…", "Drafting the steps…", "Wiring up the branches…", "Laying it out cleanly…"];
+
+/**
+ * What the Studio hands to Cowork: which flow, and a sentence left unfinished.
+ * The id travels so the conversation doesn't open by asking which flow you
+ * mean; the change itself is the part only the person can say.
+ */
+export function askAstraAbout(name: string, flowId: string): string {
+  return `In the process flow "${name}" (flow ${flowId}), `;
+}
 
 export default function ProcessFlows() {
   const [, navigate] = useLocation();
@@ -590,6 +599,20 @@ export default function ProcessFlows() {
             <FolderOpen className="w-3.5 h-3.5 mr-1.5" />
             Open
           </Button>
+          {savedFlowId && (
+            // Carries which flow it is, so the conversation doesn't start by
+            // asking which one you mean. The sentence is left unfinished on
+            // purpose: the change is the part only you can say.
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(`/astra?ask=${encodeURIComponent(askAstraAbout(flowName || "this flow", savedFlowId))}`)}
+              data-testid="button-ask-astra-about-flow"
+            >
+              <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
+              Ask Astra to change this
+            </Button>
+          )}
           {nodeCount > 0 && (
             <Button
               size="sm"

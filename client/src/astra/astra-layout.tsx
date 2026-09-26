@@ -67,6 +67,22 @@ function Workspace() {
   const canUse = useCallback((permission?: PermissionAction) => !permission || getPermission(permission).access !== "denied", [getPermission]);
   const mention = useCallback((name: string) => setComposerInsert({ text: `@${name} `, nonce: Date.now() }), []);
 
+  // Arriving from elsewhere in the platform with something to ask -- the
+  // Studio's "Ask Astra to change this", for instance. It is put in the box
+  // rather than sent: what to change is the person's sentence to finish, and
+  // a message sent by a link is a message nobody chose to send.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const asked = params.get("ask");
+    if (!asked) return;
+    setComposerInsert({ text: asked, nonce: Date.now(), replace: true });
+    // Once it is in the box, take it out of the URL so a refresh doesn't
+    // put it back over whatever has been typed since.
+    params.delete("ask");
+    const query = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+  }, []);
+
   // Files attached to the next message. They upload as soon as they are chosen
   // -- the extraction is the slow part, and doing it at send time would leave
   // the person watching a spinner after they hit Enter.
