@@ -211,8 +211,9 @@ describe("the shape, in words", () => {
 });
 
 describe("/flow", () => {
-  it("asks Astra to find out what it needs before drawing", () => {
+  it("covers drawing a new flow and changing one that exists", () => {
     expect(slash).toContain('name: "flow"');
-    expect(slash).toContain("Ask me anything you need to know first, then show me the steps before creating it.");
+    expect(slash).toContain("If I named an existing flow, find it and change only what I asked for");
+    expect(slash).toContain("show me the steps before creating it");
   });
 });

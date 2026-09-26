@@ -26,6 +26,7 @@ import { createOutcomeFromProposal, OutcomeInputError, prepareOutcomeFromProposa
 import { describeSource, parseMeasurementSource, suggestMeasurement, validateMeasurementSource } from "@shared/kpi-measurement";
 import { KpiActionError, declareKpiMeasurement, recordKpiReading, removeKpiReading } from "../kpi-actions";
 import { RemovalPlanError, planOutcomeRemoval } from "../removal-plans";
+import { listFlowVersions, recordFlowVersion, versionLine } from "../process-flow-versions";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 
 const router = Router();
@@ -1645,6 +1646,35 @@ async function createOutcomeVersion(
     res.json(flow);
   });
 
+  /** What this flow has looked like, newest first. */
+  router.get("/api/process-flows/:id/versions", async (req, res) => {
+    const flow = await storage.getProcessFlow(req.params.id as string, getOrgId(req));
+    if (!flow) return res.status(404).json({ message: "Process flow not found" });
+    const versions = await listFlowVersions(flow.id, getOrgId(req) ?? undefined);
+    res.json({
+      versions: versions.map((v) => ({ id: v.id, name: v.name, via: v.via, changeNote: v.changeNote, savedBy: v.savedBy, createdAt: v.createdAt, line: versionLine(v) })),
+    });
+  });
+
+  /** Put a version back. Restoring is itself a save, so it too can be undone. */
+  router.post("/api/process-flows/:id/restore/:versionId", checkPermission("create_modify_outcomes"), async (req, res) => {
+    const flow = await storage.getProcessFlow(req.params.id as string, getOrgId(req));
+    if (!flow) return res.status(404).json({ message: "Process flow not found" });
+    const versions = await listFlowVersions(flow.id, getOrgId(req) ?? undefined, 50);
+    const wanted = versions.find((v) => v.id === req.params.versionId);
+    if (!wanted) return res.status(404).json({ error: "No such version of this flow." });
+
+    const updated = await storage.updateProcessFlow(flow.id, { name: wanted.name, graph: wanted.graph } as any, getOrgId(req));
+    if (!updated) return res.status(404).json({ message: "Process flow not found" });
+    await recordFlowVersion(flow.id, wanted.name, wanted.graph, {
+      via: "Studio",
+      changeNote: `Restored the version from ${wanted.createdAt ? new Date(wanted.createdAt).toLocaleString() : "earlier"}`,
+      savedBy: getRequestActorLabel(req),
+      orgId: getOrgId(req) ?? getDefaultOrgId(),
+    }).catch(() => {});
+    res.json(updated);
+  });
+
   router.post("/api/process-flows", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       const parsed = processFlowBodySchema.parse(req.body);
@@ -1656,6 +1686,12 @@ async function createOutcomeVersion(
         teamAgentId: parsed.teamAgentId,
         graph: { ...graph, name: parsed.name },
       } as any);
+      await recordFlowVersion(created.id, parsed.name, { ...graph, name: parsed.name }, {
+        via: "Studio",
+        changeNote: "Created",
+        savedBy: getRequestActorLabel(req),
+        orgId: getOrgId(req) ?? getDefaultOrgId(),
+      }).catch(() => {});
       res.status(201).json(created);
     } catch (e) {
       handleZodError(res, e);
@@ -1676,6 +1712,14 @@ async function createOutcomeVersion(
         graph: { ...graph, name: parsed.name },
       } as any, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Process flow not found" });
+      // A version per save, so an edit here can be undone as readily as one
+      // Astra made.
+      await recordFlowVersion(updated.id, parsed.name, { ...graph, name: parsed.name }, {
+        via: "Studio",
+        changeNote: "Edited in the Studio",
+        savedBy: getRequestActorLabel(req),
+        orgId: getOrgId(req) ?? getDefaultOrgId(),
+      }).catch(() => {});
       res.json(updated);
     } catch (e) {
       handleZodError(res, e);

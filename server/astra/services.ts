@@ -25,6 +25,8 @@ import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval
 import { acknowledgeAlert, decidePolicyException, decideRecommendation, getAlertInOrg, getRecommendationInOrg, recommendationEffect, respondToToolRequest } from "../action-decisions";
 import { KpiActionError, declareKpiMeasurement, getKpiInOrg, recordKpiReading } from "../kpi-actions";
 import { draftProcessFlow } from "../process-flow-draft";
+import { applyChangeSet, proposeChangeSet } from "../process-flow-revise";
+import { listFlowVersions, previousFlowVersion, recordFlowVersion } from "../process-flow-versions";
 import { compileProcessFlow } from "../process-flow-compile";
 import { normalizeToGraph } from "@shared/process-flow";
 import { describeSource, parseMeasurementSource, suggestMeasurement, type MeasurementSource } from "@shared/kpi-measurement";
@@ -390,7 +392,7 @@ async function draftFlow(orgId: string, input: { description?: string; fileIds?:
 }
 
 /** Save it to the library, where the Studio will find it. */
-async function saveFlow(orgId: string, name: string, graph: { nodes: unknown[]; edges: unknown[] }) {
+async function saveFlow(orgId: string, name: string, graph: { nodes: unknown[]; edges: unknown[] }, savedBy?: string) {
   const normalized = normalizeToGraph({ name, ...graph } as any, name);
   if (!normalized) throw new Error("That flow has no steps to save.");
   const created = await storage.createProcessFlow({
@@ -398,7 +400,69 @@ async function saveFlow(orgId: string, name: string, graph: { nodes: unknown[]; 
     graph: { ...normalized, name },
     organizationId: orgId,
   } as any);
+  await recordFlowVersion(created.id, name, { ...normalized, name }, { via: "Astra Cowork", changeNote: "Drawn from a description", savedBy, orgId }).catch(() => {});
   return { id: created.id, name: created.name };
+}
+
+/** The flows a person might mean, by name. */
+async function findFlows(orgId: string, query?: string) {
+  const flows = await storage.getProcessFlows(orgId);
+  const needle = query?.trim().toLowerCase();
+  const matched = needle ? flows.filter((f) => (f.name ?? "").toLowerCase().includes(needle)) : flows;
+  return matched.slice(0, 10).map((f) => ({ id: f.id, name: f.name, steps: ((f.graph as any)?.nodes ?? []).length }));
+}
+
+/**
+ * Work out what a described change would do, without doing it. The change set
+ * is applied to the stored graph -- untouched steps keep their ids and their
+ * positions -- and the result is compiled, so the card can show both what
+ * moves and what the compiler makes of the result.
+ */
+async function planFlowRevision(orgId: string, flowId: string, instruction: string) {
+  const flow = await storage.getProcessFlow(flowId, orgId);
+  if (!flow) throw new Error("No flow with that id in this organization.");
+  const current = normalizeToGraph(flow.graph, flow.name);
+  if (!current) throw new Error(`"${flow.name}" has no steps to change yet.`);
+
+  const changeSet = await proposeChangeSet(current, instruction);
+  const { graph, changed, skipped } = applyChangeSet(current, changeSet);
+  if (changed.length === 0) {
+    return { flow: { id: flow.id, name: flow.name }, changed, skipped, warnings: [], graph: null };
+  }
+  const compiled = compileProcessFlow(graph);
+  return { flow: { id: flow.id, name: flow.name }, changed, skipped, warnings: compiled.warnings, graph };
+}
+
+/** Save a revision, keeping the state it replaced. */
+async function saveFlowRevision(orgId: string, flowId: string, graph: unknown, changeNote: string, savedBy?: string) {
+  const flow = await storage.getProcessFlow(flowId, orgId);
+  if (!flow) throw new Error("No flow with that id in this organization.");
+  // The state being replaced is recorded first, so undo has something to
+  // return to even for a flow that predates version history.
+  const existing = await listFlowVersions(flowId, orgId, 1);
+  if (existing.length === 0) {
+    await recordFlowVersion(flowId, flow.name, flow.graph, { via: "Studio", changeNote: "As it was before Astra's first change", orgId }).catch(() => {});
+  }
+  const updated = await storage.updateProcessFlow(flowId, { graph } as any, orgId);
+  if (!updated) throw new Error("That flow could not be saved.");
+  await recordFlowVersion(flowId, flow.name, graph, { via: "Astra Cowork", changeNote, savedBy, orgId }).catch(() => {});
+  return { id: flow.id, name: flow.name };
+}
+
+/** Put back the state before the last change. */
+async function undoFlowChange(orgId: string, flowId: string, savedBy?: string) {
+  const flow = await storage.getProcessFlow(flowId, orgId);
+  if (!flow) throw new Error("No flow with that id in this organization.");
+  const previous = await previousFlowVersion(flowId, orgId);
+  if (!previous) throw new Error(`There is nothing to go back to for "${flow.name}" -- no earlier version was recorded.`);
+  await storage.updateProcessFlow(flowId, { name: previous.name, graph: previous.graph } as any, orgId);
+  await recordFlowVersion(flowId, previous.name, previous.graph, {
+    via: "Astra Cowork",
+    changeNote: `Undid the last change, back to ${previous.createdAt ? new Date(previous.createdAt).toLocaleString() : "the earlier version"}`,
+    savedBy,
+    orgId,
+  }).catch(() => {});
+  return { id: flow.id, name: flow.name, restoredFrom: previous.createdAt };
 }
 
 // ── KPI measurement ─────────────────────────────────────────────────────────
@@ -1264,6 +1328,10 @@ export function createAstraServices(): AstraServices {
     acknowledgeAlertAs,
     draftFlow,
     saveFlow,
+    findFlows,
+    planFlowRevision,
+    saveFlowRevision,
+    undoFlowChange,
     findKpisForMeasurement,
     getKpiForMeasurement,
     declareKpiMeasurementAs,

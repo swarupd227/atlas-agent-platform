@@ -84,8 +84,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: "flow", kind: "ask", label: "Draw a process flow", hint: "Describe how the work runs, or attach the document that does", permission: "create_modify_outcomes",
     arg: { kind: "text", label: "how the process runs" },
     ask: (a) => (a
-      ? `Draw a process flow for this: ${a}. Ask me anything you need to know first, then show me the steps before creating it.`
-      : "I want to draw a process flow. Ask me how the process runs — or I can attach the document that describes it."),
+      ? `Draw or change a process flow: ${a}. If I named an existing flow, find it and change only what I asked for; otherwise ask me anything you need and then show me the steps before creating it.`
+      : "I want to draw a process flow, or change one I already have. Ask me how the process runs — or I can attach the document that describes it."),
   },
   {
     name: "connect", kind: "ask", label: "Find a connector", hint: "What your agents can be given access to",

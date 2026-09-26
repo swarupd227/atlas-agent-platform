@@ -131,4 +131,120 @@ export const createProcessFlowTool: AstraTool<Input> = {
   },
 };
 
-export const PROCESS_FLOW_TOOLS: AstraTool[] = [createProcessFlowTool] as AstraTool[];
+type ReviseInput = { flow: string; instruction: string };
+
+interface RevisionPlan {
+  flow: { id: string; name: string };
+  changed: string[];
+  skipped: string[];
+  warnings: string[];
+  graph: unknown | null;
+}
+
+export const listProcessFlowsTool: AstraTool<{ name?: string }> = {
+  name: "list_process_flows",
+  description: "The organization's process flows, with their ids — needed to change one.",
+  input: z.object({ name: z.string().max(120).optional().describe("Only flows whose name contains this.") }),
+  confirm: false,
+  run: async (ctx, input) => {
+    const flows = await ctx.services.findFlows(ctx.orgId, input.name);
+    return {
+      payload: {
+        total: flows.length,
+        flows: flows.map((f: { id: string; name: string; steps: number }) => ({ id: f.id, name: f.name, steps: f.steps, openIn: `/process-flows?flowId=${f.id}` })),
+      },
+    };
+  },
+};
+
+export const reviseProcessFlowTool: AstraTool<ReviseInput> = {
+  name: "revise_process_flow",
+  description:
+    "Change an existing process flow by describing the change ('put a fraud check before the payout'). Only what was asked for moves; everything else keeps its place on the canvas. The user sees exactly what will change, and can undo it afterwards.",
+  input: z.object({
+    flow: z.string().min(1).describe("The flow's id, from list_process_flows."),
+    instruction: z.string().min(3).max(1000).describe("The change, in the user's own words."),
+  }),
+  permission: "create_modify_outcomes",
+  confirm: true,
+  preview: async (ctx, input): Promise<ConfirmPreview> => {
+    let plan: RevisionPlan;
+    try {
+      plan = await ctx.services.planFlowRevision(ctx.orgId, input.flow, input.instruction);
+    } catch (e) {
+      return { refuse: (e as Error).message };
+    }
+    if (!plan.graph || plan.changed.length === 0) {
+      return {
+        refuse: plan.skipped.length
+          ? `I couldn't make that change: ${plan.skipped.join(" ")}`
+          : "I couldn't see what to change from that. Name the step, and say what should happen before or after it.",
+      };
+    }
+
+    holdDraft(reviseKey(ctx.orgId, input), { name: plan.flow.name, graph: plan.graph as HeldGraph, warnings: plan.warnings });
+    return {
+      summary: `Change "${plan.flow.name}"`,
+      details: [
+        ...plan.changed,
+        // What it could not do belongs on the card too: a step it failed to
+        // find is usually a step the person named differently.
+        ...(plan.skipped.length ? ["", "What I couldn't do:", ...plan.skipped.map((sk) => `• ${sk}`)] : []),
+        ...(plan.warnings.length
+          ? ["", "Worth checking after this:", ...plan.warnings.map((w) => `• ${w}`)]
+          : ["", "The compiler flags nothing about the result."]),
+        "",
+        "Everything not listed above keeps its place. You can undo this afterwards.",
+      ],
+      frozen: { flow: plan.flow.id, changes: plan.changed.length },
+    };
+  },
+  run: async (ctx, input) => {
+    const held = takeDraft(reviseKey(ctx.orgId, input));
+    if (!held?.graph) {
+      throw new Error("The change I worked out is no longer held (the server restarted). Ask for it again and I'll show you what it would do.");
+    }
+    const saved = await ctx.services.saveFlowRevision(ctx.orgId, input.flow, held.graph, input.instruction, await actorLabel(ctx));
+    return {
+      payload: { changed: true, flow: saved.name, openIn: `/process-flows?flowId=${saved.id}`, toCheck: held.warnings, undo: "Ask me to undo it and I will put the previous version back." },
+      proof: { context: { status: "measured", summary: "The state it replaced was kept, so this can be undone" } },
+    };
+  },
+};
+
+export const undoFlowChangeTool: AstraTool<{ flow: string }> = {
+  name: "undo_flow_change",
+  description: "Put a process flow back to how it was before the last change, whoever made it.",
+  input: z.object({ flow: z.string().min(1).describe("The flow's id, from list_process_flows.") }),
+  permission: "create_modify_outcomes",
+  confirm: true,
+  preview: async (ctx, input): Promise<ConfirmPreview> => ({
+    summary: "Undo the last change to this flow",
+    details: [
+      "The flow goes back to the state before its last save.",
+      "That state is itself kept, so this can be undone in turn.",
+    ],
+    frozen: { flow: input.flow },
+  }),
+  run: async (ctx, input) => {
+    const restored = await ctx.services.undoFlowChange(ctx.orgId, input.flow, await actorLabel(ctx));
+    return {
+      payload: { undone: true, flow: restored.name, openIn: `/process-flows?flowId=${restored.id}` },
+      proof: { context: { status: "measured", summary: "Restored from the recorded version history" } },
+    };
+  },
+};
+
+/** Who is asking, for the version history. */
+async function actorLabel(ctx: { services: { getUserDisplayName?: (id: string | null) => Promise<string | null> }; userId: string | null; role: string }): Promise<string> {
+  return (await ctx.services.getUserDisplayName?.(ctx.userId)) ?? ctx.role;
+}
+
+/** A revision is held by the flow and the words that described the change. */
+function reviseKey(orgId: string, input: ReviseInput): string {
+  return draftKey(orgId, { name: input.flow, description: input.instruction });
+}
+
+type HeldGraph = { name: string; nodes: unknown[]; edges: unknown[] };
+
+export const PROCESS_FLOW_TOOLS: AstraTool[] = [createProcessFlowTool, listProcessFlowsTool, reviseProcessFlowTool, undoFlowChangeTool] as AstraTool[];

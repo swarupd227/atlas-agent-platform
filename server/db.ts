@@ -327,6 +327,21 @@ export async function runStartupMigrations() {
       -- Which Cowork conversation a file was attached to, so deleting the
       -- conversation can take it too.
       ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS thread_id VARCHAR;
+      -- Every saved state of a process flow, so a change can be undone. One
+      -- graph overwritten in place was tolerable while every edit was a
+      -- deliberate drag; it is not once a model can rewrite a flow.
+      CREATE TABLE IF NOT EXISTS process_flow_versions (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        flow_id VARCHAR NOT NULL,
+        organization_id VARCHAR,
+        name TEXT NOT NULL,
+        graph JSONB NOT NULL,
+        via TEXT,
+        change_note TEXT,
+        saved_by VARCHAR,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_process_flow_versions_flow ON process_flow_versions (flow_id, created_at DESC);
       CREATE TABLE IF NOT EXISTS kpi_readings (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         kpi_id VARCHAR NOT NULL,

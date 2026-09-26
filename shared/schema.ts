@@ -1591,6 +1591,32 @@ export type TeamBlueprintEdge = typeof teamBlueprintEdges.$inferSelect;
 // React state (+ a one-shot sessionStorage handoff), so navigating away lost
 // the work. This gives Studio a first-class save/load library independent of
 // any outcome. `graph` holds the canonical { version, name, nodes, edges }.
+/**
+ * Every saved state of a flow, so a change can be undone.
+ *
+ * process_flows holds one graph, overwritten in place. That was tolerable
+ * while every edit was a deliberate drag on a canvas; it is not once a model
+ * can rewrite a flow from a sentence. A row is written on each save -- by the
+ * Studio or by Astra -- and restoring one is itself a save, so the thing you
+ * undid is still there if you undid it by mistake.
+ */
+export const processFlowVersions = pgTable("process_flow_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  flowId: varchar("flow_id").notNull(),
+  organizationId: varchar("organization_id"),
+  name: text("name").notNull(),
+  graph: jsonb("graph").notNull(),
+  /** "Studio", "Astra Cowork" — where the save came from. */
+  via: text("via"),
+  /** What changed, in the words shown to whoever approved it. */
+  changeNote: text("change_note"),
+  savedBy: varchar("saved_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_process_flow_versions_flow").on(table.flowId, table.createdAt),
+]);
+export type ProcessFlowVersion = typeof processFlowVersions.$inferSelect;
+
 export const processFlows = pgTable("process_flows", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   organizationId: varchar("organization_id").references(() => organizations.id),
