@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDown, Check, CircleAlert, Loader2, PanelRight, Pencil, RotateCcw, Square } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { CopyButton } from "@/components/copy-button";
+import { MessageFeedback } from "./message-feedback";
 import { Composer, type ComposerInsert, type DecisionOption } from "./composer";
 import type { PermissionAction } from "@/components/role-provider";
 import type { Mentionable } from "./mention";
@@ -121,6 +122,9 @@ function MessageView({
                 </time>
               )}
               <CopyButton text={message.markdown} testId="astra-copy-message" />
+              {message.role === "astra" && message.threadId && (
+                <MessageFeedback threadId={message.threadId} messageId={message.id} />
+              )}
             </div>
           </div>
         )}

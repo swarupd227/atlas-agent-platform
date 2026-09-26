@@ -13,6 +13,7 @@ import { getDefaultOrgId, getOrgId } from "../auth";
 import { checkPermission, getRequestActorLabel, getRequestRole, hasPermission } from "../permissions";
 import { ThreadRemovalError, planThreadRemoval, removeThread } from "../astra/thread-actions";
 import { requestStop } from "../astra/stop-turn";
+import { MessageFeedbackError, recordMessageFeedback } from "../astra/message-feedback";
 import { llmInvokeRateLimiter } from "../rate-limits";
 import { openSse as openSseStream } from "../sse";
 import { storage } from "../storage";
@@ -107,6 +108,34 @@ router.post("/api/astra/threads/:id/stop", checkPermission("use_astra"), async (
   }
   requestStop(found.thread.id);
   res.json({ stopping: true });
+});
+
+const messageFeedbackSchema = z.object({
+  rating: z.enum(["up", "down"]),
+  note: z.string().max(2000).optional(),
+});
+
+/**
+ * Rate one of Astra's answers. It goes to the platform's Feedback store --
+ * the same one the Feedback page reads -- with the exchange it is about.
+ */
+router.post("/api/astra/threads/:id/messages/:messageId/feedback", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  const parsed = messageFeedbackSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "A rating is \"up\" or \"down\", with an optional note." });
+  const { store } = getAstraRuntime();
+  try {
+    res.status(201).json(await recordMessageFeedback(store, { ...ctx, actorLabel: getRequestActorLabel(req) }, {
+      threadId: req.params.id as string,
+      messageId: req.params.messageId as string,
+      rating: parsed.data.rating,
+      note: parsed.data.note ?? null,
+    }));
+  } catch (e) {
+    if (e instanceof MessageFeedbackError) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
 });
 
 /** Find a phrase in the conversations you can open. */
