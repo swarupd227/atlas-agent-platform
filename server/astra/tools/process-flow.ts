@@ -235,6 +235,111 @@ export const undoFlowChangeTool: AstraTool<{ flow: string }> = {
   },
 };
 
+/**
+ * Turning a flow into a running automation.
+ *
+ * The Studio has had this since it was built ("Turn into a live automation"),
+ * but only from the Studio: Cowork could draw a flow, change it, and then had
+ * nothing to say when the user asked how to make it run. It plans, it does not
+ * build -- build_team does that, behind its own confirm card -- because a plan
+ * is worth reading before six agents exist.
+ *
+ * "Live" is three separate things in this platform, and conflating them is the
+ * overclaim to avoid: built, deployed, and run. This tool does the first only,
+ * and the reply says so.
+ */
+type AutomateInput = { flow: string; feedback?: string };
+
+export const automateProcessFlowTool: AstraTool<AutomateInput> = {
+  name: "automate_process_flow",
+  description:
+    "Plan the agent team that would run a saved process flow: one agent per step, the flow's own connections as the team's order, and its approval steps as gates a person must pass. Takes a few minutes and narrates progress. Plans only -- build_team then builds it, and the team is created attached to no outcome. Use the user's requirements as feedback.",
+  input: z.object({
+    flow: z.string().min(1).describe("The flow's id, from list_process_flows."),
+    feedback: z.string().max(2000).optional().describe("The user's requirements for the team, or what to change about the previous plan, in their words."),
+  }),
+  permission: "create_modify_blueprints",
+  confirm: false,
+  run: async (ctx, input) => {
+    const said = new Set<string>();
+    const narrate = (message: string) => {
+      if (said.has(message)) return;
+      said.add(message);
+      ctx.onProgress?.({ type: "working", label: message.replace(/\.\.\.$/, "") });
+    };
+    const r = await ctx.services.proposeTeamForFlow(ctx.orgId, ctx.threadId, input.flow, ctx.industryId ?? null, input.feedback, narrate);
+    if (!r.ok) {
+      return { payload: { planned: false, error: r.error, ...(r.likelyTooLarge || r.timeout ? { tip: "Split the flow into stages and automate each one." } : {}) } };
+    }
+
+    const plan = r.plan;
+    const workers: any[] = plan.agents;
+    const byAgent = new Map<string, { connectors: string[]; issues: Array<{ message: string; code: string }> }>(
+      r.bindings.agents.map((a: any) => [a.name, a]),
+    );
+    const gates = workers.filter((w) => w.isHumanCheckpoint).map((w) => w.name);
+
+    return {
+      payload: {
+        planned: true,
+        proposalId: r.proposalId,
+        ...(r.proposalId ? {} : { note: "The plan couldn't be saved as a draft, so it can't be built from here." }),
+        flow: r.flow,
+        orchestrator: plan.orchestrator?.name ?? null,
+        pattern: plan.pipeline?.pattern ?? null,
+        agents: workers.map((w) => ({
+          name: w.name,
+          role: w.role,
+          ...(w.isHumanCheckpoint ? { approvalGate: true } : {}),
+          // Which of the flow's steps this agent says it covers: the link
+          // between the drawing and the team, and what the ordering rests on.
+          covers: w.flowStepLabels ?? [],
+          connectors: byAgent.get(w.name)?.connectors ?? [],
+          issues: (byAgent.get(w.name)?.issues ?? []).map((i) => i.message),
+        })),
+        approvalGates: gates,
+        ...(r.sequencing.ok
+          ? { orderedFromTheFlow: true }
+          : { orderedFromTheFlow: false, sequencing: r.sequencing.warning }),
+        ...(r.flow.warnings.length ? { flowNeedsChecking: r.flow.warnings } : {}),
+        bindingIssues: r.bindings.issues.length,
+        next: "build_team with this proposal id creates the agents. It is attached to no outcome, so nothing measures it: attach_team_to_outcome afterwards if its runs should count towards one. Building is not deploying, and nothing runs until the user asks.",
+      },
+      artifact: {
+        kind: "teamProposal",
+        title: plan.orchestrator?.name ?? `Team for ${r.flow.name}`,
+        props: {
+          outcome: null,
+          work: `The process flow "${r.flow.name}" (${r.flow.steps} steps)`,
+          proposalId: r.proposalId,
+          orchestrator: plan.orchestrator ? { name: plan.orchestrator.name, description: plan.orchestrator.description } : null,
+          pipeline: plan.pipeline ? { pattern: plan.pipeline.pattern, description: plan.pipeline.description } : null,
+          workers: workers.map((w) => ({
+            name: w.name,
+            role: w.role,
+            description: w.description,
+            isHumanCheckpoint: !!w.isHumanCheckpoint,
+            tools: (w.tools ?? []).map((t: any) => t.name),
+            connectors: byAgent.get(w.name)?.connectors ?? [],
+            issues: byAgent.get(w.name)?.issues ?? [],
+            estimatedImpact: w.estimatedImpact || null,
+          })),
+        },
+        fullViewHref: `/process-flows?flowId=${r.flow.id}`,
+      },
+      proof: {
+        compliance: {
+          status: "measured",
+          summary: `${gates.length} approval ${gates.length === 1 ? "gate" : "gates"} in the plan · ${r.bindings.issues.length} connector binding ${r.bindings.issues.length === 1 ? "issue" : "issues"}`,
+        },
+        context: r.sequencing.ok
+          ? { status: "measured", summary: `Ordered by the flow's own ${r.flow.steps}-step design` }
+          : { status: "not_measured", reason: "The plan carried no step coverage, so the flow's order could not be applied" },
+      },
+    };
+  },
+};
+
 /** Who is asking, for the version history. */
 async function actorLabel(ctx: { services: { getUserDisplayName?: (id: string | null) => Promise<string | null> }; userId: string | null; role: string }): Promise<string> {
   return (await ctx.services.getUserDisplayName?.(ctx.userId)) ?? ctx.role;
@@ -247,4 +352,4 @@ function reviseKey(orgId: string, input: ReviseInput): string {
 
 type HeldGraph = { name: string; nodes: unknown[]; edges: unknown[] };
 
-export const PROCESS_FLOW_TOOLS: AstraTool[] = [createProcessFlowTool, listProcessFlowsTool, reviseProcessFlowTool, undoFlowChangeTool] as AstraTool[];
+export const PROCESS_FLOW_TOOLS: AstraTool[] = [createProcessFlowTool, listProcessFlowsTool, reviseProcessFlowTool, undoFlowChangeTool, automateProcessFlowTool] as AstraTool[];

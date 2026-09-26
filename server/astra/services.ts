@@ -31,7 +31,7 @@ import { compileProcessFlow } from "../process-flow-compile";
 import { normalizeToGraph } from "@shared/process-flow";
 import { describeSource, parseMeasurementSource, suggestMeasurement, type MeasurementSource } from "@shared/kpi-measurement";
 import { bindPolicyToAgent, bindPolicyToOutcome, installPolicyPack, policyPackCatalog, type Enforcement } from "../policy-actions";
-import { resolvePolicyBundle } from "../routes/helpers";
+import { generateKpiAlignedEvalSuite, recomputeOutcomeKpis, resolvePolicyBundle } from "../routes/helpers";
 import { evalServices } from "./eval-services";
 import { knowledgeServices } from "./knowledge-services";
 import { deployServices } from "./deploy-services";
@@ -45,7 +45,7 @@ import { extractHtmlDocument } from "@shared/html-document";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 import { similarOutcomeNames } from "./outcome-names";
 import { decisionRoute } from "./needs-you";
-import { isThreadOwned, threadIdOf, threadOwnerId, workTitle } from "./team-draft";
+import { flowIdOf, flowOwnerId, isThreadOwned, threadIdOf, threadOwnerId, workTitle } from "./team-draft";
 import { createOutcomeFromProposal, prepareOutcomeFromProposal, type OutcomeProposalBody } from "../outcome-create";
 import type { AstraServices } from "./types";
 
@@ -964,6 +964,90 @@ async function proposeTeamForWork(
   return { ok: true as const, work: outcomeContract.name as string, plan: result, proposalId: result.proposalId ?? null, bindings };
 }
 
+/**
+ * Plan the team that would run a saved process flow.
+ *
+ * The flow is the authored design, so it travels to the planner as the
+ * business's own: its steps name the agents, and its connections -- not the
+ * planner's guess at an order -- sequence them. Without the connections a
+ * 22-step flow became 17 agents running in one wave, which looks like a team
+ * and enforces nothing, so this path always passes both.
+ *
+ * Nothing is built here. The plan is owned by the conversation and remembers
+ * the flow it came from, which is what links flow to team at build time.
+ */
+async function proposeTeamForFlow(
+  orgId: string,
+  threadId: string,
+  flowId: string,
+  industryId: string | null,
+  feedback: string | undefined,
+  onProgress: (message: string) => void,
+) {
+  const flow = await storage.getProcessFlow(flowId, orgId);
+  if (!flow) return { ok: false as const, error: "No process flow with that id in this organization." };
+  const graph = normalizeToGraph(flow.graph, flow.name);
+  if (!graph || graph.nodes.length === 0) {
+    return { ok: false as const, error: `"${flow.name}" has no steps yet, so there is nothing to automate. Draw it first.` };
+  }
+  const steps = flattenGraphToSteps(graph);
+  // What the compiler makes of the flow travels with the plan: a flow with no
+  // trigger or a decision with no condition automates into a team with the
+  // same hole in it, and the person deciding should see that before it exists.
+  const compiled = compileProcessFlow(graph);
+
+  const ownerId = flowOwnerId(threadId, flow.id);
+  const draft = feedback ? await storage.getAgentProposalByOutcome(ownerId).catch(() => undefined) : undefined;
+  const previousPlan = draft ? { orchestrator: draft.orchestrator, workers: draft.workers, pipeline: draft.pipeline } : undefined;
+  // Shaped like an outcome for the planner, with no KPIs and no targets: a
+  // flow says how the work runs, not what it is worth.
+  const outcomeContract: Record<string, unknown> = {
+    id: ownerId,
+    name: flow.name,
+    description: flow.description || `The process "${flow.name}", as it is drawn in the process flow library.`,
+    riskTier: "MEDIUM",
+    ...(feedback && !previousPlan ? { requirementsFromTheUser: feedback } : {}),
+  };
+
+  let result: any = null;
+  let failure: { error: string; details?: string; timeout?: boolean } | null = null;
+  await proposeTeam(
+    {
+      outcomeContract,
+      kpis: [],
+      feedback: previousPlan ? feedback : undefined,
+      previousPlan,
+      industryContext: industryId ? { industryId } : null,
+      processFlowSteps: steps,
+      processFlowEdges: graph.edges,
+    },
+    {
+      orgId,
+      onEvent: (event) => {
+        if (event.type === "progress") onProgress(event.message);
+        else if (event.type === "done") result = event.result;
+        else if (event.type === "error") failure = event;
+      },
+    },
+  );
+  if (failure) return { ok: false as const, error: (failure as any).error, details: (failure as any).details, timeout: (failure as any).timeout };
+  if (!result || result.error || !Array.isArray(result.agents) || result.agents.length === 0) {
+    return { ok: false as const, error: result?.error ?? "No team plan was produced.", likelyTooLarge: !!result?.likelyTooLarge };
+  }
+  const bindings = await assessBindings(orgId, [...(result.orchestrator ? [result.orchestrator] : []), ...result.agents]);
+  return {
+    ok: true as const,
+    flow: { id: flow.id, name: flow.name, steps: steps.length, warnings: compiled.warnings },
+    plan: result,
+    proposalId: result.proposalId ?? null,
+    bindings,
+    // The planner sets this when no agent claimed a step, so the flow's order
+    // could not be carried into the team. It is the one thing about a
+    // flow-derived plan that must not be summarized away.
+    sequencing: result.structureWarning ? { ok: false as const, warning: result.structureWarning as string } : { ok: true as const },
+  };
+}
+
 // ── build_team ───────────────────────────────────────────────────────────────
 
 /** A fingerprint of a plan: the draft is overwritten when the outcome is proposed for again. */
@@ -981,10 +1065,18 @@ async function getProposalForBuild(orgId: string, proposalId: string) {
   if (threadId) {
     const [thread] = await db.select({ organizationId: astraThreads.organizationId }).from(astraThreads).where(eq(astraThreads.id, threadId)).limit(1);
     if (!thread || thread.organizationId !== orgId) return null;
+    // Planned from a process flow: the flow is passed to the build, which
+    // reads its authored steps and links the flow to the team it becomes.
+    const flowId = flowIdOf(row.outcomeId);
+    const flow = flowId ? await storage.getProcessFlow(flowId, orgId).catch(() => undefined) : undefined;
     return {
       proposal: { id: row.id, status: row.status, orchestrator: row.orchestrator as any, workers: (row.workers as any[]) ?? [], pipeline: row.pipeline as any },
       outcome: null,
       pendingReviewApprovalId: null,
+      ...(flow ? { flow: { id: flow.id, name: flow.name, steps: ((flow.graph as any)?.nodes ?? []).length } } : {}),
+      // Planned from a flow that has since been deleted: the team can still be
+      // built from the plan, but it no longer mirrors anything.
+      ...(flowId && !flow ? { flowGone: true } : {}),
       hash: planHash(row),
     };
   }
@@ -1017,6 +1109,93 @@ async function buildTeam(orgId: string, body: unknown) {
 
 async function markProposalBuilt(proposalId: string) {
   await storage.updateAgentProposal(proposalId, { status: "created" });
+}
+
+// ── attach_team_to_outcome ───────────────────────────────────────────────────
+
+/**
+ * What attaching a team to this outcome would actually move. A KPI is only
+ * re-read from runs when it declares that is what measures it; the rest are
+ * somebody's readings, and attaching a team does not change them. The card
+ * says which is which instead of implying the outcome starts measuring itself.
+ */
+async function outcomeMeasurement(orgId: string, outcomeId: string) {
+  const outcome = await storage.getOutcome(outcomeId, orgId);
+  if (!outcome) throw new Error("No outcome with that id in this organization.");
+  const kpis = await storage.getKpisByOutcome(outcome.id);
+  let fromRuns = 0;
+  let byHand = 0;
+  let undeclared = 0;
+  for (const k of kpis) {
+    const source = parseMeasurementSource((k as any).measurementSource);
+    if (source?.kind === "agent_runs") fromRuns += 1;
+    else if (source?.kind === "manual") byHand += 1;
+    else undeclared += 1;
+  }
+  return {
+    outcome: { id: outcome.id, name: outcome.name, status: outcome.status },
+    kpis: kpis.length,
+    fromRuns,
+    byHand,
+    undeclared,
+    agentsAttached: (await storage.getAgents(orgId)).filter((a) => a.outcomeId === outcome.id).length,
+  };
+}
+
+/**
+ * Attach a team to one of the organization's outcomes, so its runs count
+ * towards something measured. A team built from a process flow or from a
+ * description has no outcome behind it: it runs, and nothing it does moves a
+ * number anybody agreed to. This is the step that closes that.
+ *
+ * The same two things the agent route does on a newly bound outcome happen
+ * here: the outcome's KPIs are re-read, and a KPI-aligned eval suite is
+ * scaffolded for the team. Re-reading only moves KPIs that declare they are
+ * measured by agent runs; the rest are somebody's reading and are left alone.
+ */
+async function attachTeamToOutcomeAs(
+  orgId: string,
+  userId: string | null,
+  actorLabel: string,
+  teamAgentId: string,
+  outcomeId: string,
+) {
+  const [agent, outcome] = await Promise.all([storage.getAgent(teamAgentId, orgId), storage.getOutcome(outcomeId, orgId)]);
+  if (!agent) throw new Error("No agent with that id in this organization.");
+  if (!outcome) throw new Error("No outcome with that id in this organization.");
+  if (agent.outcomeId === outcome.id) throw new Error(`"${agent.name}" is already attached to "${outcome.name}".`);
+  const previousOutcomeId = agent.outcomeId ?? null;
+
+  const updated = await storage.updateAgent(agent.id, { outcomeId: outcome.id } as any, orgId);
+  if (!updated) throw new Error("That agent could not be updated.");
+
+  await recordAudit(orgId, userId, {
+    action: "agent.config_changed",
+    objectType: "agent",
+    objectId: agent.id,
+    details: {
+      summary: `${actorLabel} attached "${agent.name}" to the outcome "${outcome.name}"${previousOutcomeId ? " (moved from another outcome)" : ""}`,
+      agentName: agent.name,
+      changedFields: ["outcomeId"],
+      outcomeId: outcome.id,
+      previousOutcomeId,
+      via: "Astra Cowork",
+    },
+  }).catch(() => {});
+
+  const reEvaluation = await recomputeOutcomeKpis(outcome.id, orgId).catch(() => null);
+  const suite = await generateKpiAlignedEvalSuite(agent.id, outcome.id, orgId).catch(() => null);
+  const kpis = await storage.getKpisByOutcome(outcome.id).catch(() => []);
+  return {
+    agent: { id: agent.id, name: agent.name },
+    outcome: { id: outcome.id, name: outcome.name, status: outcome.status },
+    movedFrom: previousOutcomeId,
+    kpiCount: kpis.length,
+    // Only KPIs that declare agent_runs are re-read; a manual KPI stays at
+    // whatever a person last recorded.
+    kpisReRead: reEvaluation?.changes?.length ?? 0,
+    evalCases: suite?.testCases?.length ?? 0,
+  };
 }
 
 // ── verify_wiring ────────────────────────────────────────────────────────────
@@ -1351,10 +1530,13 @@ export function createAstraServices(): AstraServices {
     assessBindings,
     proposeTeamForOutcome,
     proposeTeamForWork,
+    proposeTeamForFlow,
     getProposalForBuild,
     resolvePolicyNames,
     buildTeam,
     markProposalBuilt,
+    attachTeamToOutcomeAs,
+    outcomeMeasurement,
     listTeams,
     verifyTeamWiring,
     startTeamRun,

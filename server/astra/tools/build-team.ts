@@ -16,6 +16,10 @@ interface Loaded {
   outcome: { id: string; name: string; status: string; riskTier: string } | null;
   pendingReviewApprovalId: string | null;
   processFlowSteps?: any[];
+  /** Set when the plan was made from a saved process flow (automate_process_flow). */
+  flow?: { id: string; name: string; steps: number };
+  /** That flow has since been deleted, so the team it becomes mirrors nothing. */
+  flowGone?: boolean;
   hash: string;
 }
 
@@ -102,16 +106,27 @@ export const buildTeamTool: AstraTool<Input> = {
     if (!loaded.outcome) {
       warnings.push({
         title: "No outcome behind this team",
-        detail: "Nothing measures whether it works: no KPI targets, no review, and it won't appear under an outcome. Create one later and bind the team to it if you want that.",
+        detail: "Nothing measures whether it works: no KPI targets, no review, and it won't appear under an outcome. Ask me to attach it to one afterwards and its runs count towards that outcome's KPIs.",
       });
       if (gates.length === 0) warnings.push({ title: "Nothing pauses for a person", detail: "No step in this team waits for an approval." });
     }
+    if (loaded.flowGone) {
+      warnings.push({
+        title: "The process flow this was planned from is gone",
+        detail: "It was deleted after the plan was made, so the team is built from the plan alone and nothing will be linked to it.",
+      });
+    }
 
     return {
-      summary: `Build ${orchestrator.name} (${workers.length} ${workers.length === 1 ? "agent" : "agents"}) ${loaded.outcome ? `for ${loaded.outcome.name}` : "for the work described in this conversation"}`,
+      summary: `Build ${orchestrator.name} (${workers.length} ${workers.length === 1 ? "agent" : "agents"}) ${loaded.outcome ? `for ${loaded.outcome.name}` : loaded.flow ? `from the process flow "${loaded.flow.name}"` : "for the work described in this conversation"}`,
       details: [
         `Agents: ${workers.map((w) => `${w.name}${w.isHumanCheckpoint ? " (pauses for a person)" : ""}`).join(", ")}.`,
         ...(input.excludeWorkers?.length ? [`Left out: ${input.excludeWorkers.join(", ")}.`] : []),
+        // A flow-derived team is checked against the drawing, so say what it
+        // is being held to and that the flow itself records the journey.
+        ...(loaded.flow
+          ? [`Follows "${loaded.flow.name}" as it is drawn now (${loaded.flow.steps} ${loaded.flow.steps === 1 ? "step" : "steps"}), and the flow is linked to the team it becomes.`]
+          : []),
         connectors.length ? `Links connectors: ${connectors.join(", ")}.` : "Links no connectors.",
         policies.resolved.length || policies.unresolved.length
           ? `Policies bound: ${policies.resolved.length ? policies.resolved.join(", ") : "none"}${policies.unresolved.length ? `; named but not found here: ${policies.unresolved.join(", ")}` : ""}.`
@@ -136,6 +151,9 @@ export const buildTeamTool: AstraTool<Input> = {
       workers,
       pipeline,
       ...(loaded.processFlowSteps ? { processFlowSteps: loaded.processFlowSteps } : {}),
+      // The build reads the flow's authored steps itself and links the flow to
+      // the team, the same way the Studio's own path does.
+      ...(loaded.flow ? { processFlowId: loaded.flow.id } : {}),
     };
 
     let built: any;
@@ -156,6 +174,11 @@ export const buildTeamTool: AstraTool<Input> = {
       unconnectedBindings: built.unconnectedBindings,
       unresolvedBindings: built.unresolvedBindings,
     };
+    // What the build itself found about the team's shape -- a team with no
+    // order, a step whose configuration couldn't be carried over. The build
+    // has always reported these; nothing here used to read them, so a team
+    // that lost its sequencing was announced as built and nothing more.
+    const structureWarnings: string[] = Array.isArray(built.structureWarnings) ? built.structureWarnings : [];
     const proof: Partial<ProofEnvelope> = {
       context: {
         status: "measured",
@@ -171,7 +194,11 @@ export const buildTeamTool: AstraTool<Input> = {
         approvalGates: workers.filter((w) => w.isHumanCheckpoint).map((w) => w.name),
         unconnectedConnectors: team.unconnectedBindings,
         connectorsNotFound: team.unresolvedBindings,
-        next: "Check the wiring with verify_wiring before running it.",
+        ...(structureWarnings.length ? { toTellTheUser: structureWarnings } : {}),
+        ...(loaded.flow ? { fromProcessFlow: loaded.flow.name, linkedToFlow: true } : {}),
+        next: loaded.outcome
+          ? "Check the wiring with verify_wiring before running it."
+          : "Check the wiring with verify_wiring before running it. It is attached to no outcome, so nothing measures it: attach_team_to_outcome if its runs should count towards one.",
       },
       artifact: { kind: "team", title: team.name, props: { team }, fullViewHref: `/agents/${team.id}` },
       proof,
