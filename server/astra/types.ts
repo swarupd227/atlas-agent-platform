@@ -186,6 +186,13 @@ export interface Checkpoint {
   iterationsUsed: number;
   costUsd: number;
   tokens: { prompt: number; completion: number; total: number };
+  /**
+   * What the conversation had spent when the current turn began. It lives in
+   * the checkpoint rather than in the request's own state because a turn
+   * paused on a confirm card is finished by a DIFFERENT request -- and those
+   * are the expensive turns, the ones that build a team or draw a flow.
+   */
+  spentBeforeTurn?: { costUsd: number; tokens: number };
   turn: TurnAccumulator;
 }
 

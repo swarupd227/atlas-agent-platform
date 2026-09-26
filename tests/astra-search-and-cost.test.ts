@@ -111,7 +111,7 @@ describe("what a turn cost", () => {
 
   it("is this turn's spend, not the conversation's running total", () => {
     // The checkpoint accumulates across the whole conversation.
-    expect(engine).toContain("const costUsd = Math.max(0, s.cp.costUsd - s.spentBefore.costUsd);");
+    expect(engine).toContain("const costUsd = Math.max(0, s.cp.costUsd - before.costUsd);");
   });
 
   it("is recorded by the function that STARTS a turn, not the one that resumes it", () => {
@@ -125,13 +125,21 @@ describe("what a turn cost", () => {
       const next = engine.indexOf("\nexport ", at + 10);
       return engine.slice(at, next > 0 ? next : undefined);
     };
-    expect(body("runTurn")).toContain("spentBefore: { costUsd: cp.costUsd, tokens: cp.tokens.total }");
-    expect(body("resolveAction")).not.toContain("spentBefore");
+    expect(body("runTurn")).toContain("cp.spentBeforeTurn = { costUsd: cp.costUsd, tokens: cp.tokens.total };");
+    expect(body("resolveAction")).not.toContain("spentBeforeTurn =");
   });
 
-  it("reports nothing rather than a wrong figure for a resumed turn", () => {
-    // A turn finished by a confirm card was started by a different request.
-    expect(engine).toContain("if (!s.spentBefore) return { costUsd: null, tokensTotal: null };");
+  it("survives a pause for confirmation, which is where the expensive turns are", () => {
+    // Live, a turn finished from a confirm card reported nothing — and those
+    // are the turns that build a team or draw a flow. The starting totals live
+    // on the checkpoint, which the pause preserves, not on the request.
+    const types = read("server", "astra", "types.ts");
+    expect(types).toContain("spentBeforeTurn?: { costUsd: number; tokens: number };");
+    expect(engine).toContain("const before = s.cp.spentBeforeTurn;");
+  });
+
+  it("reports nothing for a turn that began before this was recorded", () => {
+    expect(engine).toContain("if (!before) return { costUsd: null, tokensTotal: null };");
   });
 
   it("says what the figure covers, and what it doesn't", () => {

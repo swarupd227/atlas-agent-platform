@@ -140,32 +140,26 @@ interface Session {
   /** The action the user just decided, handed to the tool it resumes. */
   approved?: PendingAction;
   decision?: PendingDecision;
-  /**
-   * The conversation's running totals when this turn began. The checkpoint
-   * accumulates across the whole conversation, so what THIS turn cost is the
-   * difference -- which is the figure worth showing next to its answer.
-   */
-  spentBefore?: { costUsd: number; tokens: number };
 }
 
-/** Send a user message and run the turn until it finishes, fails or pauses for confirmation. */
+/** What the transcript shows for attached files: their names, not their contents. */
+export function attachedLine(names: string[]): string {
+  return `_Attached: ${names.join(", ")}_`;
+}
+
 /**
  * Files the person attached to this turn: what the model reads, and what the
  * conversation shows. They are separate on purpose -- the model gets the whole
  * extracted text, the transcript gets the file's name, because a conversation
  * with a spreadsheet pasted into it is unreadable.
  */
-/** What the transcript shows for attached files: their names, not their contents. */
-export function attachedLine(names: string[]): string {
-  return `_Attached: ${names.join(", ")}_`;
-}
-
 export interface TurnAttachments {
   /** The extracted text, framed, as buildAttachmentContext writes it. */
   context: string;
   names: string[];
 }
 
+/** Send a user message and run the turn until it finishes, fails or pauses for confirmation. */
 export async function runTurn(
   deps: EngineDeps,
   ctx: AstraContext,
@@ -209,9 +203,10 @@ export async function runTurn(
   });
   onEvent({ type: "turn_started", threadId });
 
-  // The totals as this turn begins: the checkpoint accumulates across the
-  // whole conversation, so the turn's own spend is the difference.
-  return loop({ deps, ctx, threadId, cp, emit: onEvent, spentBefore: { costUsd: cp.costUsd, tokens: cp.tokens.total } }, null);
+  // The totals as this turn begins, recorded on the checkpoint so the figure
+  // survives a pause for confirmation: the turn's own spend is the difference.
+  cp.spentBeforeTurn = { costUsd: cp.costUsd, tokens: cp.tokens.total };
+  return loop({ deps, ctx, threadId, cp, emit: onEvent }, null);
 }
 
 /** The user pressed Confirm or Not now on a pending action. */
@@ -506,9 +501,12 @@ ${stoppedMessage(didWork)}`
  * it), so it reports nothing rather than the conversation's whole bill.
  */
 export function turnSpend(s: Session): { costUsd: number | null; tokensTotal: number | null } {
-  if (!s.spentBefore) return { costUsd: null, tokensTotal: null };
-  const costUsd = Math.max(0, s.cp.costUsd - s.spentBefore.costUsd);
-  const tokensTotal = Math.max(0, s.cp.tokens.total - s.spentBefore.tokens);
+  const before = s.cp.spentBeforeTurn;
+  // A turn from before this was recorded has no starting point; nothing is
+  // better than a figure that would really be the whole conversation's bill.
+  if (!before) return { costUsd: null, tokensTotal: null };
+  const costUsd = Math.max(0, s.cp.costUsd - before.costUsd);
+  const tokensTotal = Math.max(0, s.cp.tokens.total - before.tokens);
   return { costUsd, tokensTotal: tokensTotal || null };
 }
 

@@ -117,6 +117,34 @@ describe("paths and conditions", () => {
   });
 });
 
+describe("never the same path twice", () => {
+  it("ignores a connection the splice already made", () => {
+    // Live, the model asked to add a step before another AND asked for the two
+    // connections that splicing it in already creates, so the saved flow had
+    // n3->n9 and n9->n4 twice over.
+    const { graph, changed } = applyChangeSet(flow(), {
+      addNodes: [{ label: "Fraud check", before: "Pay out" }],
+      // The two connections splicing it in front of "Pay out" already makes.
+      addEdges: [{ from: "Over £10k?", to: "Fraud check" }, { from: "Fraud check", to: "Pay out" }],
+    });
+    const added = graph.nodes.find((n) => n.label === "Fraud check")!;
+    expect(added).toBeTruthy();
+    const seen = graph.edges.map((e) => `${e.from}->${e.to}`);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(graph.edges.filter((e) => e.to === added.id)).toHaveLength(1);
+    expect(graph.edges.filter((e) => e.from === added.id)).toHaveLength(1);
+    // The splice is reported once; the redundant connections add nothing.
+    expect(changed.filter((line) => line.includes("Connects"))).toEqual([]);
+  });
+
+  it("still applies a condition asked for on a path that already exists", () => {
+    const { graph, changed } = applyChangeSet(flow(), { addEdges: [{ from: "n1", to: "n2", condition: "always" }] });
+    expect(graph.edges.filter((e) => e.from === "n1" && e.to === "n2")).toHaveLength(1);
+    expect(graph.edges.find((e) => e.from === "n1")!.condition).toBe("always");
+    expect(changed[0]).toContain("Changes when");
+  });
+});
+
 describe("naming a step", () => {
   it("is by id or by label, because people say the label", () => {
     expect(findNode(flow(), "n2")!.label).toBe("Over £10k?");

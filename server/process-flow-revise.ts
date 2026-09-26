@@ -132,6 +132,18 @@ export function applyChangeSet(graph: ProcessFlowGraph, changes: ChangeSet): { g
       skipped.push(`Couldn't connect "${add.from}" to "${add.to}": one of them isn't there.`);
       continue;
     }
+    // Splicing a step in already connects it, and the model tends to ask for
+    // those same connections explicitly as well. Adding them a second time
+    // produced duplicate paths -- which read fine on the canvas and would show
+    // a decision as having branches it doesn't.
+    const already = edges.find((e) => e.from === from.id && e.to === to.id);
+    if (already) {
+      if (add.condition && already.condition !== add.condition) {
+        already.condition = add.condition;
+        changed.push(`Changes when "${from.label}" goes to "${to.label}": ${add.condition}.`);
+      }
+      continue;
+    }
     edges.push({ id: newEdgeId(), from: from.id, to: to.id, ...(add.label ? { label: add.label } : {}), ...(add.condition ? { condition: add.condition } : {}) });
     changed.push(`Connects "${from.label}" to "${to.label}"${add.condition ? ` when ${add.condition}` : ""}.`);
   }
@@ -157,7 +169,16 @@ export function applyChangeSet(graph: ProcessFlowGraph, changes: ChangeSet): { g
     edge.condition = set.condition;
   }
 
-  return { graph: { ...graph, nodes, edges }, changed, skipped };
+  // Whatever the change set asked for, a flow never has the same path twice.
+  const seen = new Set<string>();
+  const deduped = edges.filter((e) => {
+    const key = `${e.from}->${e.to}|${e.condition ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { graph: { ...graph, nodes, edges: deduped }, changed, skipped };
 }
 
 /** Ask for a change set, not a new flow. */
