@@ -61,6 +61,9 @@ export interface AstraMessage {
   suggestions: Suggestion[];
   proof: ProofEnvelope | null;
   pendingAction: PendingAction | null;
+  /** What this turn's model calls cost, and the tokens behind it. */
+  costUsd?: number | null;
+  tokensTotal?: number | null;
   createdAt: string;
 }
 

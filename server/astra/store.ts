@@ -6,7 +6,7 @@
  * a thread started by one user is only listed for and opened by that user
  * (canAccessThread), even within the same organization.
  */
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { astraMessages, astraThreads, type AstraMessage, type AstraThread } from "@shared/schema";
 import type {
@@ -69,6 +69,8 @@ export function toMessageRecord(row: AstraMessage): AstraMessageRecord {
     suggestions: (row.suggestions as AstraMessageRecord["suggestions"]) ?? [],
     proof: (row.proof as AstraMessageRecord["proof"]) ?? null,
     pendingAction: (row.pendingAction as AstraMessageRecord["pendingAction"]) ?? null,
+    costUsd: (row as { costUsd?: number | null }).costUsd ?? null,
+    tokensTotal: (row as { tokensTotal?: number | null }).tokensTotal ?? null,
     createdAt: iso(row.createdAt) ?? new Date().toISOString(),
   };
 }
@@ -83,6 +85,28 @@ function toSummary(row: AstraThread): ThreadSummary {
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
+}
+
+export interface MessageHit {
+  threadId: string;
+  title: string;
+  role: string;
+  /** The phrase in its own words, with a little either side. */
+  snippet: string;
+  at: string | null;
+}
+
+/** How much of a message to show around the phrase that matched. */
+const SNIPPET_PAD = 60;
+
+/** The matching phrase with context, on one line. */
+export function snippetAround(markdown: string, needle: string, pad = SNIPPET_PAD): string {
+  const text = markdown.replace(/\s+/g, " ").trim();
+  const at = text.toLowerCase().indexOf(needle.toLowerCase());
+  if (at < 0) return text.slice(0, pad * 2);
+  const from = Math.max(0, at - pad);
+  const to = Math.min(text.length, at + needle.length + pad);
+  return `${from > 0 ? "…" : ""}${text.slice(from, to)}${to < text.length ? "…" : ""}`;
 }
 
 export class DbThreadStore implements ThreadStore {
@@ -156,6 +180,8 @@ export class DbThreadStore implements ThreadStore {
         suggestions: message.suggestions,
         proof: message.proof,
         pendingAction: message.pendingAction,
+        costUsd: message.costUsd ?? null,
+        tokensTotal: message.tokensTotal ?? null,
       })
       .returning();
     return toMessageRecord(row);
@@ -213,6 +239,55 @@ export class DbThreadStore implements ThreadStore {
     await db.delete(astraMessages).where(and(eq(astraMessages.threadId, threadId), eq(astraMessages.organizationId, orgId)));
     await db.delete(astraThreads).where(and(eq(astraThreads.id, threadId), eq(astraThreads.organizationId, orgId)));
     return true;
+  }
+
+  /**
+   * Find a phrase in the conversations this caller may open.
+   *
+   * The palette could only match a conversation's title -- which is the first
+   * thing you happened to type in it -- so "the one where we set the canary to
+   * 10%" meant opening conversations until you found it.
+   *
+   * The same access rule as opening one, expressed in SQL: the caller's
+   * organization, and a thread that is theirs or nobody's in particular.
+   */
+  async searchMessages(orgId: string, userId: string | null, query: string, limit = 20): Promise<MessageHit[]> {
+    const needle = query.trim();
+    if (needle.length < 2) return [];
+    const mine = userId
+      ? or(isNull(astraThreads.actorUserId), eq(astraThreads.actorUserId, userId))
+      : undefined;
+    const rows = await db
+      .select({
+        threadId: astraMessages.threadId,
+        title: astraThreads.title,
+        role: astraMessages.role,
+        markdown: astraMessages.markdown,
+        createdAt: astraMessages.createdAt,
+      })
+      .from(astraMessages)
+      .innerJoin(astraThreads, eq(astraThreads.id, astraMessages.threadId))
+      .where(and(eq(astraMessages.organizationId, orgId), ilike(astraMessages.markdown, `%${needle}%`), ...(mine ? [mine] : [])))
+      .orderBy(desc(astraMessages.createdAt))
+      .limit(limit * 3);
+
+    // One hit per conversation: ten lines from the same long answer are one
+    // result to a person looking for the conversation.
+    const seen = new Set<string>();
+    const hits: MessageHit[] = [];
+    for (const row of rows) {
+      if (seen.has(row.threadId)) continue;
+      seen.add(row.threadId);
+      hits.push({
+        threadId: row.threadId,
+        title: row.title,
+        role: row.role,
+        snippet: snippetAround(row.markdown ?? "", needle),
+        at: iso(row.createdAt),
+      });
+      if (hits.length >= limit) break;
+    }
+    return hits;
   }
 
   /**

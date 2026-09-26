@@ -101,6 +101,15 @@ function MessageView({
             <Markdown text={message.markdown} className="astra-md text-sm" />
             {/* Quiet until the message is hovered or the button is focused. */}
             <div className="absolute -top-1 right-0 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100">
+              {typeof message.costUsd === "number" && message.costUsd > 0 && (
+                <span
+                  className="text-[11px] text-muted-foreground"
+                  title="What this turn's model calls cost, as the provider reported them. Work the turn started — an agent or team run — is billed against that run, not here."
+                  data-testid="astra-message-cost"
+                >
+                  {turnCostLabel(message.costUsd, message.tokensTotal)}
+                </span>
+              )}
               {message.createdAt && (
                 <time
                   dateTime={message.createdAt}
@@ -151,6 +160,19 @@ function MessageView({
       </div>
     </div>
   );
+}
+
+/**
+ * What a turn cost, short enough to sit beside the time. A turn is usually
+ * worth fractions of a cent to a few cents, so anything under a dollar keeps
+ * three decimals: rounding $0.012 to "$0.01" throws away most of what
+ * distinguishes one turn from another.
+ */
+export function turnCostLabel(costUsd: number, tokensTotal?: number | null): string {
+  const money = costUsd >= 1 ? `$${costUsd.toFixed(2)}` : `$${costUsd.toFixed(3)}`;
+  if (!tokensTotal) return money;
+  const tokens = tokensTotal >= 1000 ? `${(tokensTotal / 1000).toFixed(1)}k` : String(tokensTotal);
+  return `${money} · ${tokens} tokens`;
 }
 
 /**

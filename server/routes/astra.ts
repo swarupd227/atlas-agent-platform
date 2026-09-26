@@ -109,6 +109,15 @@ router.post("/api/astra/threads/:id/stop", checkPermission("use_astra"), async (
   res.json({ stopping: true });
 });
 
+/** Find a phrase in the conversations you can open. */
+router.get("/api/astra/search", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  const q = typeof req.query.q === "string" ? req.query.q : "";
+  const { store } = getAstraRuntime();
+  res.json({ q, hits: await store.searchMessages(ctx.orgId, ctx.userId, q) });
+});
+
 const renameThreadSchema = z.object({ title: z.string().min(1).max(200) });
 
 /** Rename a conversation; its auto-title is only the first thing you typed. */

@@ -140,6 +140,12 @@ interface Session {
   /** The action the user just decided, handed to the tool it resumes. */
   approved?: PendingAction;
   decision?: PendingDecision;
+  /**
+   * The conversation's running totals when this turn began. The checkpoint
+   * accumulates across the whole conversation, so what THIS turn cost is the
+   * difference -- which is the figure worth showing next to its answer.
+   */
+  spentBefore?: { costUsd: number; tokens: number };
 }
 
 /** Send a user message and run the turn until it finishes, fails or pauses for confirmation. */
@@ -212,7 +218,7 @@ export async function resolveAction(
     await deps.store.markActionDecided(ctx.orgId, action.messageId, decision === "confirm" ? "confirmed" : "declined");
   }
   onEvent({ type: "turn_started", threadId });
-  const session: Session = { deps, ctx, threadId, cp, emit: onEvent };
+  const session: Session = { deps, ctx, threadId, cp, emit: onEvent, spentBefore: { costUsd: cp.costUsd, tokens: cp.tokens.total } };
 
   const resumable = deps.registry.get(call.name, ctx.role);
   if (decision === "cancel" && resumable?.resumesOnDecline) {
@@ -473,6 +479,18 @@ ${stoppedMessage(didWork)}`
   return finishTurn(s, text);
 }
 
+/**
+ * What this turn spent, as the provider reported it. A turn resumed from a
+ * confirm card has no starting point recorded (a different request finished
+ * it), so it reports nothing rather than the conversation's whole bill.
+ */
+export function turnSpend(s: Session): { costUsd: number | null; tokensTotal: number | null } {
+  if (!s.spentBefore) return { costUsd: null, tokensTotal: null };
+  const costUsd = Math.max(0, s.cp.costUsd - s.spentBefore.costUsd);
+  const tokensTotal = Math.max(0, s.cp.tokens.total - s.spentBefore.tokens);
+  return { costUsd, tokensTotal: tokensTotal || null };
+}
+
 async function finishTurn(s: Session, markdown: string): Promise<ThreadState["status"]> {
   const { deps, ctx, threadId, cp, emit } = s;
   // However the turn ended, nothing is left waiting to stop it.
@@ -488,6 +506,7 @@ async function finishTurn(s: Session, markdown: string): Promise<ThreadState["st
     suggestions: cp.turn.suggestions,
     proof: cp.turn.sources.length > 0 ? completeProof(cp.turn.proof) : null,
     pendingAction: null,
+    ...turnSpend(s),
   });
   closeDanglingToolCalls(cp, "Not run: the turn ended before reaching this step.");
   await deps.store.saveState(threadId, ctx.orgId, { status: "idle", checkpoint: cp, pendingAction: null });

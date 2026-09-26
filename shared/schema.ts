@@ -4025,6 +4025,14 @@ export const astraMessages = pgTable("astra_messages", {
   suggestions: jsonb("suggestions").notNull().default(sql`'[]'::jsonb`),
   proof: jsonb("proof"),
   pendingAction: jsonb("pending_action"),
+  /**
+   * What this turn's model calls cost, as the provider reported them, and the
+   * tokens behind it. Null for a message that wasn't the end of a turn. NOT
+   * the cost of work the turn started: an agent or team run is billed against
+   * the run, not against the conversation that asked for it.
+   */
+  costUsd: real("cost_usd"),
+  tokensTotal: integer("tokens_total"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_astra_messages_thread").on(table.threadId, table.createdAt),

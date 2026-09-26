@@ -321,6 +321,9 @@ export async function runStartupMigrations() {
       -- What measures a KPI, declared instead of guessed from its name, and
       -- every reading it has ever had. See shared/kpi-measurement.ts.
       ALTER TABLE kpi_definitions ADD COLUMN IF NOT EXISTS measurement_source JSONB;
+      -- What a Cowork turn cost, kept with the answer it paid for.
+      ALTER TABLE astra_messages ADD COLUMN IF NOT EXISTS cost_usd REAL;
+      ALTER TABLE astra_messages ADD COLUMN IF NOT EXISTS tokens_total INTEGER;
       CREATE TABLE IF NOT EXISTS kpi_readings (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         kpi_id VARCHAR NOT NULL,

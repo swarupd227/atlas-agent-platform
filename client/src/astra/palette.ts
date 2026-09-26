@@ -10,11 +10,15 @@
 export type PaletteRow =
   | { kind: "ask"; key: string; label: string; text: string }
   | { kind: "conversation"; key: string; label: string; detail: string | null; href: string }
+  // A phrase found inside a conversation, rather than in its name.
+  | { kind: "message"; key: string; label: string; detail: string | null; href: string }
   | { kind: "item"; key: string; label: string; detail: string | null; section: string; href: string; inShell: boolean; duplicate?: boolean }
   | { kind: "prompt"; key: string; label: string; text: string };
 
 export interface PaletteSources {
   threads: Array<{ id: string; title: string; status?: string }>;
+  /** Phrase matches from the server; titles are matched locally above. */
+  messages?: Array<{ threadId: string; title: string; snippet: string; role: string; at: string | null }>;
   library: Array<{ id: string; label: string; items: Array<{ id: string; name: string; detail: string | null; href: string; inShell?: boolean }> }> | null;
   prompts: Array<{ label: string; prompt: string }>;
 }
@@ -47,6 +51,22 @@ export function buildPaletteRows(query: string, sources: PaletteSources): Palett
 
   for (const t of best(sources.threads, (t) => t.title, q)) {
     rows.push({ kind: "conversation", key: `t:${t.id}`, label: t.title, detail: t.status === "awaiting_confirmation" ? "waiting on you" : null, href: `/t/${encodeURIComponent(t.id)}` });
+  }
+
+  // Then the same phrase inside conversations, skipping any whose title
+  // already matched -- one row per conversation, not one per mention.
+  if (q && sources.messages?.length) {
+    const alreadyShown = new Set(rows.filter((r) => r.kind === "conversation").map((r) => r.key));
+    for (const hit of sources.messages.slice(0, PER_GROUP)) {
+      if (alreadyShown.has(`t:${hit.threadId}`)) continue;
+      rows.push({
+        kind: "message",
+        key: `m:${hit.threadId}`,
+        label: hit.title,
+        detail: hit.snippet,
+        href: `/t/${encodeURIComponent(hit.threadId)}`,
+      });
+    }
   }
 
   // Library items only once something is typed: the index is long, and "go to" needs a name.

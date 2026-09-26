@@ -211,6 +211,13 @@ export interface AstraMessageRecord {
   suggestions: Suggestion[];
   proof: ProofEnvelope | null;
   pendingAction: (PendingAction & { decision?: PendingDecision }) | null;
+  /**
+   * What this turn's model calls cost, as the provider reported them, and the
+   * tokens behind that. NOT the cost of work the turn started: an agent or
+   * team run is billed against the run, not the conversation.
+   */
+  costUsd?: number | null;
+  tokensTotal?: number | null;
   createdAt: string;
 }
 

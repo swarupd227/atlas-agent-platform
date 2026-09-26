@@ -12,6 +12,7 @@ import type { Library, ThreadSummary } from "./types";
 const GROUPS: Array<{ kind: PaletteRow["kind"]; heading: string | undefined }> = [
   { kind: "ask", heading: undefined },
   { kind: "conversation", heading: "Conversations" },
+  { kind: "message", heading: "Said in a conversation" },
   { kind: "item", heading: "Go to" },
   { kind: "prompt", heading: "Suggested" },
 ];
@@ -69,20 +70,36 @@ export function AstraCommandPalette({
     placeholderData: (previous) => previous,
   });
 
+  // Searching inside conversations needs the server: the rail holds 50 titles,
+  // and the phrase you remember is usually in the middle of an answer.
+  const { data: found } = useQuery<{ hits: Array<{ threadId: string; title: string; snippet: string; role: string; at: string | null }> }>({
+    queryKey: ["/api/astra/search", searched],
+    queryFn: async () => {
+      const res = await fetch(`/api/astra/search?q=${encodeURIComponent(searched)}`, { credentials: "include", headers: getApiHeaders() });
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json();
+    },
+    enabled: open && searched.length > 1,
+    staleTime: 30_000,
+    retry: false,
+    placeholderData: (previous) => previous,
+  });
+
   const rows = useMemo(
     () =>
       buildPaletteRows(query, {
         threads,
         library: library ? library.sections.map((s) => ({ id: s.id, label: s.label, items: s.items })) : null,
+        messages: found?.hits ?? [],
         prompts: STARTERS,
       }),
-    [query, threads, library],
+    [query, threads, library, found],
   );
 
   const run = (row: PaletteRow) => {
     setOpen(false);
     if (row.kind === "ask" || row.kind === "prompt") onSend(row.text);
-    else if (row.kind === "conversation") onNavigate(row.href, true);
+    else if (row.kind === "conversation" || row.kind === "message") onNavigate(row.href, true);
     else onNavigate(row.href, row.inShell);
   };
 
@@ -114,6 +131,7 @@ export function AstraCommandPalette({
                       {row.kind === "item" && row.duplicate && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{row.key.split(":").pop()!.slice(0, 8)}</span>}
                       {row.kind === "item" && <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{row.section}</span>}
                       {row.kind === "conversation" && row.detail && <span className="shrink-0 text-xs text-primary">{row.detail}</span>}
+                      {row.kind === "message" && row.detail && <span className="min-w-0 flex-[2] truncate text-xs text-muted-foreground">{row.detail}</span>}
                       {row.kind === "ask" && <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />}
                     </CommandItem>
                   ))}
