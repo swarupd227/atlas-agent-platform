@@ -292,10 +292,15 @@ export function useThread(threadId: string | null, options: { industryId?: strin
    */
   const [stopping, setStopping] = useState(false);
   const stop = useCallback(async () => {
-    if (!threadId) return;
+    // The turn of a conversation started a moment ago streams into a thread
+    // the URL hasn't caught up with yet, so `threadId` is still null: stopping
+    // has to aim at the thread being streamed to, or the first turn of every
+    // new conversation is unstoppable.
+    const id = freshRef.current ?? threadId;
+    if (!id) return;
     setStopping(true);
     try {
-      const res = await apiRequest("POST", `/api/astra/threads/${threadId}/stop`);
+      const res = await apiRequest("POST", `/api/astra/threads/${id}/stop`);
       if (!res.ok) setStopping(false);
     } catch {
       setStopping(false);

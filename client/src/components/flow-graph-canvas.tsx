@@ -406,7 +406,19 @@ function toRFNodes(nodes: ProcessNode[]): RFNode[] {
  * theme token resolves in it -- which is why this is a var() and not a literal
  * that would look right in one theme and wrong in the other.
  */
-export const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "hsl(var(--muted-foreground))" } as const;
+export const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "hsl(var(--foreground) / 0.55)" } as const;
+
+/**
+ * A head the colour of the line it ends. The canvas already draws an edge four
+ * ways -- normal, the selected step's, the selected edge's, and amber for one
+ * the compiler flagged -- and a head that stayed grey through all of them
+ * would read as a different object stuck on the end. React Flow keys markers
+ * by their options, so this is four marker definitions in total, not one per
+ * edge.
+ */
+export function markerFor(stroke: string) {
+  return { ...EDGE_MARKER, color: stroke };
+}
 
 /** Exported for the round-trip test: this conversion is lossy by construction. */
 export function toRFEdges(edges: ProcessEdge[]): RFEdge[] {
@@ -673,19 +685,21 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
     const isBackEdge = (nodeX.get(e.target) ?? 0) <= (nodeX.get(e.source) ?? 0);
     const nothingSelected = !selectedNodeId && !selectedEdgeId;
     const hot = e.id === selectedEdgeId || e.source === selectedNodeId || e.target === selectedNodeId;
+    const drawn = e.id === selectedEdgeId ? EDGE_SELECTED_STYLE : hot ? EDGE_HOT_STYLE : EDGE_STYLE;
     const base = {
       ...e, ...EDGE_LABEL_PROPS,
       label: hot || nothingSelected ? e.label : undefined,
       style: {
         ...(e.style || {}),
-        ...(e.id === selectedEdgeId ? EDGE_SELECTED_STYLE : hot ? EDGE_HOT_STYLE : EDGE_STYLE),
+        ...drawn,
         opacity: hot || nothingSelected ? 1 : 0.45,
       },
+      markerEnd: markerFor(drawn.stroke),
       ...(isBackEdge ? { pathOptions: { curvature: 1.1 } } : {}),
     };
     // A compiler-flagged issue is worth seeing regardless of selection -- it's not decoration.
     return edgeIssues?.length
-      ? { ...base, label: e.label || "no condition", style: { ...base.style, stroke: "#f59e0b", strokeWidth: 2.5, opacity: 1 } }
+      ? { ...base, label: e.label || "no condition", style: { ...base.style, stroke: "#f59e0b", strokeWidth: 2.5, opacity: 1 }, markerEnd: markerFor("#f59e0b") }
       : base;
   }), [edges, issuesByEdge, selectedEdgeId, selectedNodeId, nodeX]);
 

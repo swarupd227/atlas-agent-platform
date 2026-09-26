@@ -409,13 +409,9 @@
 @media (prefers-reduced-motion: reduce) { .run-bar-running, .run-dot-live { animation: none; } }
 
 /* Process flow / blueprint canvases (React Flow).
-   A flow is a directed graph and the canvas drew it undirected: no arrowheads,
-   so which way a step led was readable only by dragging a node and seeing
-   which end followed. The heads themselves carry their colour (see
-   EDGE_MARKER); this is the line they sit on, for the canvases that don't
-   style their edges inline. */
-.react-flow__edge-path { stroke: hsl(var(--muted-foreground)); stroke-width: 1.5; }
-/* The edge under the pointer, or selected, lifts out of the page. The head
-   can't follow: every edge of one colour shares a single marker definition. */
-.react-flow__edge.selected .react-flow__edge-path,
-.react-flow__edge:hover .react-flow__edge-path { stroke: hsl(var(--foreground)); stroke-width: 2; }
+   A flow is a directed graph and the canvases drew it undirected: no
+   arrowheads, so which way a step led was readable only by dragging a node and
+   seeing which end followed. The heads live with the edges that carry them
+   (EDGE_MARKER, markerFor) rather than here, because each canvas already
+   styles its own edges inline -- per selection, per highlight, per compiler
+   warning -- and an inline style outranks any rule written here. */

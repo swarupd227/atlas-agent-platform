@@ -167,12 +167,23 @@ describe("the route and the button", () => {
 
   it("is a button next to what the turn is doing", () => {
     expect(thread).toContain('data-testid="astra-stop"');
-    expect(thread).toContain('{stopping ? "Stopping…" : "Stop"}');
+    expect(thread).toContain('data-testid="astra-stop"');
+    expect(thread).toContain('"Stop"}');
+  });
+
+  it("aims at the thread being streamed to, so a new conversation's first turn can be stopped", () => {
+    // Live: the button did nothing in a fresh conversation, because the URL --
+    // and so threadId -- lags the thread the first turn streams into.
+    expect(api).toContain("const id = freshRef.current ?? threadId;");
+    expect(api).toContain("`/api/astra/threads/${id}/stop`");
+  });
+
+  it("says a stop is waiting on the step in flight, rather than looking stuck", () => {
+    expect(thread).toContain('live.steps.some((s) => s.state === "running") ? "Stopping after this step" : "Stopping…"');
   });
 
   it("asks the server rather than dropping the stream", () => {
     // Aborting the stream client-side would leave the turn running and spending.
-    expect(api).toContain("`/api/astra/threads/${threadId}/stop`");
     const at = api.indexOf("const stop = useCallback");
     expect(api.slice(at, at + 400)).not.toContain("abort()");
   });

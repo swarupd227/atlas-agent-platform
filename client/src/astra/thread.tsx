@@ -295,7 +295,7 @@ export function Thread({
                       data-testid="astra-stop"
                     >
                       <Square className="h-3 w-3 fill-current" aria-hidden />
-                      {stopping ? "Stopping…" : "Stop"}
+                      {stopping ? (live.steps.some((s) => s.state === "running") ? "Stopping after this step" : "Stopping…") : "Stop"}
                     </button>
                   )}
                 </div>

@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { EDGE_MARKER, toRFEdges } from "../client/src/components/flow-graph-canvas";
+import { EDGE_MARKER, markerFor, toRFEdges } from "../client/src/components/flow-graph-canvas";
 import type { ProcessEdge } from "../shared/process-flow";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
@@ -52,17 +52,28 @@ describe("the colour", () => {
   it("is carried by the marker, because React Flow defaults it to invisible", () => {
     // Its arrow symbol writes the colour into an inline style defaulting to
     // "none": a marker with no colour renders as nothing at all.
-    expect(EDGE_MARKER.color).toBe("hsl(var(--muted-foreground))");
+    expect(EDGE_MARKER.color).toBeTruthy();
   });
 
   it("is a theme token rather than a literal, so it follows light and dark", () => {
     // That works because React Flow writes it as a style, where var() resolves.
     expect(EDGE_MARKER.color).toContain("var(--");
-    expect(canvas).not.toMatch(/color: "#|color: "rgb|color: "hsl\(\d/);
   });
 
-  it("matches the line it sits on", () => {
-    expect(css).toContain(".react-flow__edge-path { stroke: hsl(var(--muted-foreground)); stroke-width: 1.5; }");
+  it("matches the line it ends, in each of the states the canvas draws", () => {
+    // Live, the head was muted while the line was foreground/0.55: the canvas
+    // styles every edge inline, per selection and per compiler warning, and an
+    // inline style outranks any stylesheet rule.
+    expect(EDGE_MARKER.color).toBe("hsl(var(--foreground) / 0.55)");
+    expect(markerFor("hsl(var(--primary))").color).toBe("hsl(var(--primary))");
+    expect(canvas).toContain("markerEnd: markerFor(drawn.stroke),");
+    // Including the amber one the compiler flags.
+    expect(canvas).toContain('markerEnd: markerFor("#f59e0b")');
+  });
+
+  it("doesn't try to colour edges from the stylesheet, where inline styles win", () => {
+    expect(css).not.toContain(".react-flow__edge-path {");
+    expect(css).toContain("an inline style outranks any rule written here");
   });
 });
 
