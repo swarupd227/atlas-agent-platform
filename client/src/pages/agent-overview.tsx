@@ -174,6 +174,7 @@ export default function AgentOverview() {
                     name={agent.name}
                     planUrl={`/api/agents/${agent.id}/removal`}
                     deleteUrl={`/api/agents/${agent.id}`}
+                    teamDeleteUrl={`/api/agents/${agent.id}/team`}
                     invalidate={["/api/agents", "/api/agents?summary=1"]}
                     onDeleted={() => navigate("/agents")}
                     testId="button-remove-agent"

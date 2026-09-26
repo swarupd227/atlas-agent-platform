@@ -41,6 +41,8 @@ vi.mock("../server/storage", () => ({
   },
 }));
 
+// Deleting a journey IS deleting a team (server/team-removal.ts); what is
+// particular to a journey is unlisting and the "is it in the library" check.
 const { deleteJourney, planJourneyRemoval, unlistJourney, JourneyActionError } = await import("../server/journey-actions");
 
 const actor = { orgId: ORG, actorId: "user-1", actorLabel: "admin", via: "Journey Library" };
@@ -65,6 +67,8 @@ beforeEach(() => {
 describe("what removal would take", () => {
   it("names what goes and what stays, and why it stays", async () => {
     const plan = await planJourneyRemoval(ORG, "team-1");
+    expect(plan.teamName).toBe("Claims intake journey");
+    expect(plan.inLibrary).toBe(true);
     expect(plan.deletes).toEqual(["Claims intake journey", "Intake worker"]);
     expect(plan.keeps).toEqual(["Shared assessor (also used by Another team)"]);
     expect(plan.runCount).toBe(4);
@@ -100,9 +104,12 @@ describe("deleting the team", () => {
     expect(agents.get("w-2")).toBeTruthy();
   });
 
-  it("clears this team's membership rows without touching the other team's", async () => {
-    await deleteJourney(actor, "team-1");
-    expect(teams.map((t) => t.id)).toEqual(["m3"]);
+  it("leaves the membership rows to deleteAgent, which clears them both ways", async () => {
+    // storage.deleteAgent removes agent_teams rows for the agent it deletes,
+    // as the orchestrator and as a member, so this code doesn't repeat it.
+    const teamRemoval = read("server", "team-removal.ts");
+    expect(teamRemoval).toContain("deleteAgent clears this team's membership rows in both directions");
+    expect(teamRemoval).not.toContain("deleteAgentTeamMember");
   });
 
   it("keeps the runs, and says how many it kept", async () => {
@@ -110,7 +117,10 @@ describe("deleting the team", () => {
     expect(result.runCount).toBe(4);
     const details = JSON.parse(audits[0].details);
     expect(details).toMatchObject({ runsKept: 4, processFlowKept: "Claims intake" });
-    expect(audits[0].action).toBe("journey_deleted");
+    // One action for both paths: deleting a journey is deleting a team.
+    expect(audits[0].action).toBe("team_deleted");
+    expect(details.fromLibrary).toBe(true);
+    expect(details.via).toBe("Journey Library");
     expect(details.deleted).toContain("Claims intake journey");
   });
 

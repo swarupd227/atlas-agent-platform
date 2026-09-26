@@ -13,6 +13,7 @@
  * staying, because that is the part people are afraid of.
  */
 import { storage } from "./storage";
+import { planTeamRemoval, type TeamRemovalPlan } from "./team-removal";
 
 export interface RemovalPlan {
   id: string;
@@ -23,6 +24,8 @@ export interface RemovalPlan {
   stays: string[];
   /** Said last, when the thing is more than it looks. */
   warning: string | null;
+  /** When this agent leads a team: what deleting the whole team would take. */
+  team?: TeamRemovalPlan | null;
 }
 
 export class RemovalPlanError extends Error {
@@ -84,11 +87,12 @@ export async function planAgentRemoval(orgId: string | undefined, agentId: strin
   }
 
   // A team's workers are agents in their own right: deleting the orchestrator
-  // does not delete them, and saying so is the difference between removing a
-  // team and stranding one.
-  const warning = members.length
-    ? `This agent leads a team of ${plural(members.length, "worker")}. Deleting it removes the orchestrator only — the workers stay, with no team to run them.`
+  // does not delete them. Rather than only warn about that, the plan carries
+  // what deleting the whole team would take, so the dialog can offer it.
+  const team = members.length ? await planTeamRemoval(orgId, agent.id) : null;
+  const warning = team
+    ? `This agent leads a team of ${plural(members.length, "worker")}. Deleting the agent alone leaves them with no team to run them.`
     : null;
 
-  return { id: agent.id, name: agent.name, goes, stays, warning };
+  return { id: agent.id, name: agent.name, goes, stays, warning, team };
 }

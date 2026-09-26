@@ -44,6 +44,9 @@ vi.mock("../server/storage", () => ({
     getAgentTeamsByMember: vi.fn(async (memberAgentId: string) => state.teams.filter((t) => t.memberAgentId === memberAgentId)),
     getAgentKnowledgeBases: vi.fn(async (agentId: string) => state.kbLinks.filter((l) => l.agentId === agentId)),
     getAgentMcpServers: vi.fn(async (agentId: string) => state.mcpLinks.filter((l) => l.agentId === agentId)),
+    // An agent's plan carries what deleting its whole team would take.
+    summarizeDagExecutionRunsByTeamAgent: vi.fn(async () => ({ total: 0, completed: 0, failed: 0, latest: null })),
+    getProcessFlows: vi.fn(async () => []),
   },
 }));
 
@@ -89,10 +92,16 @@ describe("deleting an outcome", () => {
 });
 
 describe("deleting an agent", () => {
-  it("warns that a team's workers are left behind, with no team to run them", async () => {
+  it("warns that deleting the agent alone strands its workers, and offers the team instead", async () => {
     const plan = await planAgentRemoval(ORG, "a-1");
     expect(plan.warning).toContain("leads a team of 1 worker");
-    expect(plan.warning).toContain("the workers stay, with no team to run them");
+    expect(plan.warning).toContain("leaves them with no team to run them");
+    // The plan carries the team's own list, so the dialog can offer deleting it.
+    expect(plan.team?.deletes).toEqual(["Fleet orchestrator", "Idle scanner"]);
+  });
+
+  it("carries no team for an agent that leads nobody", async () => {
+    expect((await planAgentRemoval(ORG, "a-3")).team).toBeNull();
   });
 
   it("separates the links it deletes from the things they point at", async () => {

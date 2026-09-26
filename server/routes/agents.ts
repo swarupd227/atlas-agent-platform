@@ -29,6 +29,7 @@ import {
   redactWithOntologyKeys,
 } from "../permissions";
 import { RemovalPlanError, planAgentRemoval } from "../removal-plans";
+import { TeamRemovalError, deleteTeam } from "../team-removal";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveRequestOrgId, filterEvalSuitesForOrg, filterEvalRunsForOrg } from "../tenant-scope";
 import { buildBlastRadius } from "../blast-radius";
@@ -829,6 +830,25 @@ const router = Router();
       res.json(await planAgentRemoval(getOrgId(req), req.params.id as string));
     } catch (e) {
       if (e instanceof RemovalPlanError) return res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  });
+
+  /**
+   * Delete a whole team: the orchestrator and the workers only it uses. A
+   * worker another team also uses stays, and is named in the result.
+   */
+  router.delete("/api/agents/:id/team", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const result = await deleteTeam({
+        orgId: getOrgId(req) ?? getDefaultOrgId() ?? undefined,
+        actorId: (req as any).authUser?.userId ?? null,
+        actorLabel: getRequestActorLabel(req),
+        via: "Agents page",
+      }, req.params.id as string);
+      res.json(result);
+    } catch (e) {
+      if (e instanceof TeamRemovalError) return res.status(e.status).json({ error: e.message });
       throw e;
     }
   });
