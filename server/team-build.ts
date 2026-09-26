@@ -126,11 +126,34 @@ function resolveEdgeRule(pipelineEdges: unknown, toName: string): { condition?: 
  * only when this agent covers exactly that one step: an agent that spans three
  * steps is doing something no single node can.
  */
-function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any>): Record<string, unknown> | null {
+/**
+ * The one authored step a proposal covers, or null when it covers none or many.
+ */
+function soleAuthoredStep(proposal: any, stepsByLabel?: Map<string, any>): any | null {
   if (!stepsByLabel || stepsByLabel.size === 0) return null;
   const labels = Array.isArray(proposal?.flowStepLabels) ? proposal.flowStepLabels.filter((l: unknown) => typeof l === "string") : [];
   if (labels.length !== 1) return null;
-  const step = stepsByLabel.get(String(labels[0]).trim().toLowerCase());
+  return stepsByLabel.get(String(labels[0]).trim().toLowerCase()) ?? null;
+}
+
+/**
+ * The state key an authored step's result belongs under, whatever KIND of node
+ * it becomes -- including a human checkpoint.
+ *
+ * A gate's result is the thing a following decision has to read: "was the
+ * contract certainty review approved?". Its key was a slug of the agent name
+ * the proposer invented, so the decision node after it had no reliable name to
+ * read, and the same unsatisfiable-branch dead-end followed. An approval drawn
+ * as "Contract Certainty Review" now writes contract_certainty_review.
+ */
+export function authoredStateKey(proposal: any, stepsByLabel?: Map<string, any>): string | undefined {
+  const step = soleAuthoredStep(proposal, stepsByLabel);
+  const key = step ? stateKeyForLabel(step.label ?? "") : "";
+  return key || undefined;
+}
+
+function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any>): Record<string, unknown> | null {
+  const step = soleAuthoredStep(proposal, stepsByLabel);
   if (!step) return null;
   const config = (step.config ?? {}) as Record<string, any>;
   // The authored step's own name is the key its result lands under, so a gate
@@ -178,10 +201,14 @@ function compiles(expression: string): string | null {
   }
 }
 
+/** A connector id, as opposed to a connector's human name. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function deterministicNodeFor(
   proposal: any,
   stepsByLabel?: Map<string, any>,
   warn?: (message: string) => void,
+  servers?: Array<{ id: string; name: string }>,
 ): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; stateKey?: string; config: Record<string, unknown> } | null {
   // The authored step first, and only then whatever the proposer invented.
   //
@@ -222,6 +249,27 @@ function deterministicNodeFor(
       return text(exec.skillId) ? { nodeType: "skill", refSkillId: text(exec.skillId), stateKey, config: {} } : null;
     case "tool_call": {
       if (!text(exec.toolServerId) || !text(exec.toolName)) return null;
+      // A proposer names connectors the way a person does -- "Insurity Rating &
+      // Predict Engine" -- and that string lands in toolServerId, where the
+      // dispatcher looks up a server BY ID and finds nothing. The run then says
+      // "the connector reported no tools", which reads like a broken connector
+      // rather than a wrong id: live 2026-09-26 it killed both rating steps of a
+      // journey whose other tool calls, authored with real ids, worked fine.
+      //
+      // So resolve a non-id by name, with the same matcher the worker-binding
+      // path already uses. If nothing matches, fall back to an agent rather than
+      // building a node whose call can never dispatch.
+      let serverId = text(exec.toolServerId);
+      if (!UUID.test(serverId)) {
+        const matched = servers && servers.length ? resolveBindingServer(serverId, servers) : undefined;
+        if (!matched) {
+          warn?.(`"${proposal?.name ?? "A step"}" was going to call ${text(exec.toolName)} on a connector named "${serverId}", and no connector of that name is available to this organization, so it runs as an agent instead.`);
+          console.warn(`[team-build] toolServerId "${serverId}" for "${proposal?.name}" is not an id and matches no connector by name; falling back to an agent`);
+          return null;
+        }
+        console.info(`[team-build] resolved connector name "${serverId}" to ${matched.id} ("${matched.name}") for "${proposal?.name}"`);
+        serverId = matched.id;
+      }
       const toolArgs = (exec.toolArgs && typeof exec.toolArgs === "object") ? exec.toolArgs as Record<string, any> : {};
       // An argument's $expr is evaluated against run state exactly as a node's
       // expression is, and fails the node the same way -- the call is never
@@ -236,7 +284,7 @@ function deterministicNodeFor(
           return null;
         }
       }
-      return { nodeType: "tool_call", stateKey, config: { toolServerId: text(exec.toolServerId), toolName: text(exec.toolName), toolArgs } };
+      return { nodeType: "tool_call", stateKey, config: { toolServerId: serverId, toolName: text(exec.toolName), toolArgs } };
     }
     default:
       return null;
@@ -958,7 +1006,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         if (!worker) continue;
 
         const isGate = humanCheckpointWorkerIds.has(worker.id);
-        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m));
+        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers);
         const node = await storage.createTeamBlueprintNode({
           blueprintId: blueprint.id,
           nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
@@ -970,7 +1018,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
           refAgentId: isGate || det ? null : worker.id,
           refSkillId: det?.refSkillId,
           refKnowledgeBaseId: det?.refKnowledgeBaseId,
-          stateKey: det?.stateKey,
+          stateKey: det?.stateKey ?? (isGate ? authoredStateKey(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel) : undefined),
           gateType: isGate ? "approval" : undefined,
           config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1, ...(det?.config ?? {}) },
         } as any);
@@ -1041,7 +1089,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
       const posY = isSequential ? 150 + i * 120 : 220;
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
-      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m));
+      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers);
       const node = await storage.createTeamBlueprintNode({
         blueprintId: blueprint.id,
         nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
@@ -1051,7 +1099,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         refAgentId: isGate || det ? null : createdWorkers[i].id,
         refSkillId: det?.refSkillId,
         refKnowledgeBaseId: det?.refKnowledgeBaseId,
-        stateKey: det?.stateKey,
+        stateKey: det?.stateKey ?? (isGate ? authoredStateKey(workers[i], authoredStepsByLabel) : undefined),
         gateType: isGate ? "approval" : undefined,
         config: { role: "worker", workerIndex: i, ...(det?.config ?? {}) },
       } as any);

@@ -110,7 +110,37 @@ describe("the node a step becomes", () => {
     // ...and says so, through the warnings the build already returns.
     expect(source).toContain("does not parse (${broken}), so it runs as an agent instead");
     // Both worker-node paths (tiered and flat) pass the sink.
-    expect(source.match(/authoredStepsByLabel, \(m\) => structureWarnings\.push\(m\)\)/g) ?? []).toHaveLength(2);
+    expect(source.match(/authoredStepsByLabel, \(m\) => structureWarnings\.push\(m\), allMcpServers\)/g) ?? []).toHaveLength(2);
+  });
+
+  it("resolves a connector named in prose to its id", () => {
+    // A proposer names connectors the way a person does. That string landed in
+    // toolServerId, where the dispatcher looks a server up BY ID and found
+    // nothing, and the run said "the connector reported no tools" -- which
+    // reads as a broken connector, not a wrong id. Live 2026-09-26 it killed
+    // both rating steps of a journey whose other tool calls worked.
+    expect(source).toContain("if (!UUID.test(serverId))");
+    expect(source).toContain("resolveBindingServer(serverId, servers)");
+    // The same matcher the worker-binding path uses, not a second one.
+    expect(source).toContain('import { resolveBindingServer } from "./team-bindings"');
+    // No match is an agent, not a node whose call can never dispatch.
+    expect(source).toMatch(/if \(!matched\) \{[\s\S]{0,500}?return null;/);
+    expect(source).toContain("and no connector of that name is available to this organization");
+    // And the resolved id is what the node actually stores.
+    expect(source).toContain("config: { toolServerId: serverId,");
+    // A real id is still used as-is.
+    expect(/\^\[0-9a-f\]\{8\}-/.test(source)).toBe(true);
+  });
+
+  it("gives a human checkpoint the authored step's state key as well", () => {
+    // A gate's result is what the decision after it must read ("was the
+    // contract certainty review approved?"). Its key was a slug of the agent
+    // name the proposer invented, so that decision had no reliable name to read
+    // and produced the same unsatisfiable-branch dead-end.
+    expect(source).toContain("export function authoredStateKey(");
+    expect(source.match(/isGate \? authoredStateKey\(/g) ?? []).toHaveLength(2);
+    // Shared with the deterministic path, so both name a step the same way.
+    expect(source).toContain("const key = step ? stateKeyForLabel(step.label ?? \"\") : \"\";");
   });
 
   it("checks a tool argument's expression too, which fails the same way", () => {
@@ -161,7 +191,7 @@ describe("the state key a deterministic step writes to", () => {
       expect(source, kind).toMatch(new RegExp(`kind: "${kind}",[^}]*stateKey`));
     }
     // And onto both worker-node paths (tiered and flat).
-    expect(source.match(/stateKey: det\?\.stateKey,/g) ?? []).toHaveLength(2);
+    expect(source.match(/stateKey: det\?\.stateKey \?\? \(isGate \? authoredStateKey\(/g) ?? []).toHaveLength(2);
   });
 
   it("leaves a proposer-supplied descriptor on the engine's default", () => {
