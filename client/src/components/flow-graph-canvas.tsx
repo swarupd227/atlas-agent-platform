@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ReactFlow, ReactFlowProvider, Background, Controls, MiniMap,
+  ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, MarkerType,
   useNodesState, useEdgesState, addEdge, Handle, Position, useReactFlow,
   type Node as RFNode, type Edge as RFEdge, type Connection, type NodeProps,
 } from "@xyflow/react";
@@ -393,6 +393,21 @@ function toRFNodes(nodes: ProcessNode[]): RFNode[] {
     initialHeight: 64,
   }));
 }
+/**
+ * A flow is a directed graph, and without arrowheads the canvas drew it as an
+ * undirected one: which way a step leads was readable only by dragging a node
+ * and watching which end followed. The triangle is filled and small -- large
+ * enough to read at the default zoom, not so large that a short edge between
+ * two close nodes becomes mostly arrow.
+ *
+ * The colour matters more than it looks. React Flow writes it into the
+ * symbol's INLINE style and defaults it to "none", so a marker with no colour
+ * renders invisible. Because that is a style rather than an attribute, a
+ * theme token resolves in it -- which is why this is a var() and not a literal
+ * that would look right in one theme and wrong in the other.
+ */
+export const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "hsl(var(--muted-foreground))" } as const;
+
 /** Exported for the round-trip test: this conversion is lossy by construction. */
 export function toRFEdges(edges: ProcessEdge[]): RFEdge[] {
   return edges.map((e) => ({
@@ -405,6 +420,7 @@ export function toRFEdges(edges: ProcessEdge[]): RFEdge[] {
     // here is gone from the page's graph before the user touches it.
     data: { condition: e.condition, maxRounds: e.maxRounds },
     animated: !!e.condition,
+    markerEnd: EDGE_MARKER,
   }));
 }
 /** Exported for the round-trip test: see toRFEdges. */
@@ -506,7 +522,7 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
 
   const onConnect = useCallback((c: Connection) => {
     snapshot();
-    setEdges(eds => addEdge({ ...c, id: `e_${newId()}` }, eds));
+    setEdges(eds => addEdge({ ...c, id: `e_${newId()}`, markerEnd: EDGE_MARKER }, eds));
   }, [setEdges, snapshot]);
 
   const placeNode = useCallback((ntype: ProcessNodeType, position?: { x: number; y: number }) => {
@@ -575,6 +591,7 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
       label: patch.label !== undefined ? patch.label : e.label,
       data: { ...(e.data as any), ...(patch.condition !== undefined ? { condition: patch.condition } : {}) },
       animated: patch.condition !== undefined ? !!patch.condition : e.animated,
+      markerEnd: EDGE_MARKER,
     } : e));
   }, [setEdges, snapshot]);
 
@@ -726,6 +743,7 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
       <div className="flex-1 min-w-0 relative bg-background" onDrop={onDrop} onDragOver={onDragOver}>
         {overlay}
         <ReactFlow
+          defaultEdgeOptions={{ markerEnd: EDGE_MARKER }}
           nodes={displayNodes}
           edges={displayEdges}
           onNodesChange={onNodesChange}

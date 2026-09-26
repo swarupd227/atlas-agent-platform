@@ -281,6 +281,8 @@ const EDGE_CONDITIONAL = {
 } as const;
 const EDGE_FALLBACK = {
   style: { strokeWidth: 1, strokeDasharray: "4 3", stroke: "hsl(var(--muted-foreground) / 0.5)" },
+  // The only edge preset here that had no head, so a fallback path read as undirected.
+  markerEnd: { type: MarkerType.ArrowClosed, color: "hsl(var(--muted-foreground) / 0.5)", width: 12, height: 12 },
 } as const;
 const EDGE_CHECKPOINT = {
   animated: true,

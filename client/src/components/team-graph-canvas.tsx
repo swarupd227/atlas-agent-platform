@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow, ReactFlowProvider, Background, Controls,
   useReactFlow, Handle, Position,
+  MarkerType,
   type Node as RFNode, type Edge as RFEdge, type Connection, type NodeProps, type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -288,6 +289,15 @@ function Canvas({
       label: hot ? edge.label || undefined : undefined,
       animated: !!edge.condition,
       selected: edge.id === selectedEdgeId,
+      // The head takes the line's own colour, so a highlighted link is
+      // highlighted end to end. React Flow keys markers by their options, so
+      // the two colours cost two marker definitions, not one per edge.
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 16,
+        height: 16,
+        color: hot ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
+      },
       style: {
         stroke: hot ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
         strokeWidth: edge.id === selectedEdgeId ? 2.5 : hot ? 1.8 : 1.4,
