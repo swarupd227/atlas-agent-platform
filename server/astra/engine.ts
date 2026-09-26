@@ -190,7 +190,9 @@ export async function runTurn(
   });
   onEvent({ type: "turn_started", threadId });
 
-  return loop({ deps, ctx, threadId, cp, emit: onEvent }, null);
+  // The totals as this turn begins: the checkpoint accumulates across the
+  // whole conversation, so the turn's own spend is the difference.
+  return loop({ deps, ctx, threadId, cp, emit: onEvent, spentBefore: { costUsd: cp.costUsd, tokens: cp.tokens.total } }, null);
 }
 
 /** The user pressed Confirm or Not now on a pending action. */
@@ -218,7 +220,7 @@ export async function resolveAction(
     await deps.store.markActionDecided(ctx.orgId, action.messageId, decision === "confirm" ? "confirmed" : "declined");
   }
   onEvent({ type: "turn_started", threadId });
-  const session: Session = { deps, ctx, threadId, cp, emit: onEvent, spentBefore: { costUsd: cp.costUsd, tokens: cp.tokens.total } };
+  const session: Session = { deps, ctx, threadId, cp, emit: onEvent };
 
   const resumable = deps.registry.get(call.name, ctx.role);
   if (decision === "cancel" && resumable?.resumesOnDecline) {

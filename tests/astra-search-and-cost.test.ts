@@ -111,8 +111,22 @@ describe("what a turn cost", () => {
 
   it("is this turn's spend, not the conversation's running total", () => {
     // The checkpoint accumulates across the whole conversation.
-    expect(engine).toContain("spentBefore: { costUsd: cp.costUsd, tokens: cp.tokens.total }");
     expect(engine).toContain("const costUsd = Math.max(0, s.cp.costUsd - s.spentBefore.costUsd);");
+  });
+
+  it("is recorded by the function that STARTS a turn, not the one that resumes it", () => {
+    // Live, this was set in resolveAction instead of runTurn, so every ordinary
+    // turn recorded nothing -- and the earlier test passed because it only
+    // asked whether the line existed somewhere in the file.
+    const body = (name: string) => {
+      const at = engine.indexOf(`export async function ${name}(`);
+      // To the next top-level export: turnSpend sits between these two and
+      // naturally mentions spentBefore, so it would otherwise be counted in.
+      const next = engine.indexOf("\nexport ", at + 10);
+      return engine.slice(at, next > 0 ? next : undefined);
+    };
+    expect(body("runTurn")).toContain("spentBefore: { costUsd: cp.costUsd, tokens: cp.tokens.total }");
+    expect(body("resolveAction")).not.toContain("spentBefore");
   });
 
   it("reports nothing rather than a wrong figure for a resumed turn", () => {
