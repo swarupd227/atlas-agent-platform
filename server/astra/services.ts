@@ -1381,6 +1381,85 @@ export function stepSummary(output: Record<string, unknown> | null | undefined):
     const sentence = prose.match(/^.*?[.!?](\s|$)/)?.[0]?.trim() ?? prose;
     return sentence.length > 220 ? `${sentence.slice(0, 217).trimEnd()}…` : sentence;
   }
+  // No prose. That used to be the end of it, which meant every step that runs
+  // WITHOUT a model -- a calculation, a connector call -- said nothing at all
+  // while it worked: four of thirty-one steps narrated themselves, and the
+  // deterministic ones, the steps whose numbers a person is being asked to act
+  // on, were exactly the silent ones. A structured answer is not unreadable,
+  // it just has not been read out.
+  return composeSummary(output);
+}
+
+/** The fields a step writes to explain itself, in the order they are trusted. */
+const REASON_KEYS = ["basis", "summary", "reason", "rationale", "explanation", "note", "guidance"];
+/** Bookkeeping that means nothing to a person reading a one-line summary. */
+// Named exactly, not by shape: a pattern like /.*Id$/ also eats ratingId,
+// treatyId and submissionId -- the identifiers a reader most wants to see.
+const SKIP_KEYS = /^(id|runId|nodeId|orgId|organizationId|agentId|threadId|traceId|requestId|correlationId|createdAt|updatedAt|retrievedAt|timestamp|ts|raw|meta|_.*|__.*)$/;
+
+function humanizeKey(key: string): string {
+  const words = key.replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+function humanizeValue(value: unknown): string | null {
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString("en-US") : null;
+  if (typeof value === "string") {
+    const v = value.trim();
+    return v && v.length <= 60 ? v : null;
+  }
+  if (Array.isArray(value)) {
+    const items = value.filter((v) => typeof v === "string" || typeof v === "number").map(String);
+    if (items.length) return items.slice(0, 3).join(", ") + (items.length > 3 ? `, +${items.length - 3} more` : "");
+    return value.length ? `${value.length} items` : null;
+  }
+  return null;
+}
+
+/**
+ * A sentence for a step whose answer is structured rather than written.
+ *
+ * Deliberately not a model call: this runs for every step of every run, and a
+ * summary that costs tokens to produce would undo the thing it is describing.
+ * It reads what the step already wrote -- its own `basis` where it has one,
+ * otherwise its scalar fields -- so the line is always traceable to the output.
+ */
+export function composeSummary(output: Record<string, unknown> | null | undefined): string | null {
+  const cap = (s: string) => (s.length > 220 ? `${s.slice(0, 217).trimEnd()}…` : s);
+  for (const value of Object.values(output ?? {})) {
+    const record = asRecord(value);
+    if (!record) continue;
+
+    // A step that explained itself in its own output. Every expression this
+    // platform builds is asked to carry one.
+    for (const key of REASON_KEYS) {
+      const reason = record[key];
+      if (typeof reason === "string" && reason.trim().length >= 15) return cap(reason.trim().replace(/\s+/g, " "));
+    }
+
+    // Otherwise read the fields out. Decisions first -- a boolean is the thing
+    // a reader wants before any number.
+    const entries = Object.entries(record).filter(([k, v]) => !SKIP_KEYS.test(k) && humanizeValue(v) !== null);
+    if (!entries.length) continue;
+    entries.sort((a, b) => Number(typeof b[1] === "boolean") - Number(typeof a[1] === "boolean"));
+    const parts = entries.slice(0, 4).map(([k, v]) => `${humanizeKey(k)}: ${humanizeValue(v)}`);
+    if (parts.length) return cap(parts.join(" · "));
+  }
+  return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === "string") {
+    // A fenced block and a bare one are the same answer; reading one and not
+    // the other would make the summary depend on how a step chose to quote it.
+    const text = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
+    if (!/^[[{][\s\S]*[\]}]$/.test(text)) return null;
+    try {
+      const parsed = JSON.parse(text);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch { return null; }
+  }
   return null;
 }
 
