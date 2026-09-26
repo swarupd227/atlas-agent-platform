@@ -5,6 +5,8 @@ import { storage } from "../storage";
 import { checkPermission, getOntologySensitivityKeys, invalidateOntologySensitivityCache } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveOntologyTags, runParameterMatching } from "./helpers";
+import { ontologyCoverage } from "../ontology-coverage";
+import { checkVocabulary } from "@shared/ontology-vocabulary";
 import { executeKGQueryTemplate } from "../agent-runtime";
 import {
   insertSkillSchema,
@@ -396,50 +398,8 @@ const router = Router();
       const industryId = req.query.industryId as string | undefined;
       if (!industryId) return res.status(400).json({ message: "industryId query parameter is required" });
       const subVertical = req.query.subVertical as string | undefined;
-
-      const concepts = await storage.getOntologyConcepts(industryId, subVertical);
-      const allAgents = await storage.getAgents(getOrgId(req));
-
-      const usedConceptIds = new Set<string>();
-      for (const a of allAgents) {
-        const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId?: string }>) : [];
-        for (const t of tags) {
-          if (t?.conceptId) usedConceptIds.add(t.conceptId);
-        }
-      }
-
-      const unused = concepts
-        .filter((c) => !usedConceptIds.has(c.id))
-        .map((c) => ({ id: c.id, label: c.label, category: c.category, subVerticals: c.subVerticals || [] }));
-
-      // Sub-vertical breakdown only makes sense on the unscoped (industry-wide)
-      // view -- a concept counts toward every sub-vertical it's tagged with,
-      // and industry-wide concepts (no subVerticals) count toward none.
-      let bySubVertical: Array<{ subVertical: string; total: number; unused: number }> | undefined;
-      if (!subVertical) {
-        const counts = new Map<string, { total: number; unused: number }>();
-        for (const c of concepts) {
-          for (const sv of c.subVerticals || []) {
-            const entry = counts.get(sv) || { total: 0, unused: 0 };
-            entry.total += 1;
-            if (!usedConceptIds.has(c.id)) entry.unused += 1;
-            counts.set(sv, entry);
-          }
-        }
-        bySubVertical = Array.from(counts.entries())
-          .map(([sv, v]) => ({ subVertical: sv, total: v.total, unused: v.unused }))
-          .sort((a, b) => b.unused / b.total - a.unused / a.total);
-      }
-
-      res.json({
-        industryId,
-        subVertical: subVertical || null,
-        totalConcepts: concepts.length,
-        usedCount: concepts.length - unused.length,
-        unusedCount: unused.length,
-        unused,
-        bySubVertical,
-      });
+      // Shared with Astra's ontology_coverage tool, so both count the same way.
+      res.json(await ontologyCoverage(getOrgId(req), industryId, subVertical));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -714,185 +674,12 @@ const router = Router();
       if (!text || typeof text !== "string") {
         return res.status(400).json({ message: "text is required" });
       }
-
+      // The matching itself is shared with Astra's check_vocabulary tool
+      // (shared/ontology-vocabulary.ts), so both give the same answer.
       const allConcepts = industryId
         ? await storage.getOntologyConcepts(industryId)
         : await storage.getAllOntologyConcepts();
-
-      if (allConcepts.length === 0) {
-        return res.json({ mismatches: [], validTerms: [], totalTermsChecked: 0 });
-      }
-
-      const conceptIndex = allConcepts.map(c => ({
-        id: c.id,
-        label: c.label,
-        labelNorm: c.label.toLowerCase().replace(/[\s_-]+/g, ""),
-        labelWords: c.label.toLowerCase().split(/\s+/),
-        synonyms: (c.synonyms || []).map((s: string) => s.toLowerCase()),
-        synonymsNorm: (c.synonyms || []).map((s: string) => s.toLowerCase().replace(/[\s_-]+/g, "")),
-        tags: (c.tags || []).map((t: string) => t.toLowerCase()),
-        category: c.category,
-      }));
-
-      const stopWords = new Set([
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "shall", "can", "to", "of", "in", "for",
-        "on", "with", "at", "by", "from", "as", "into", "through", "during",
-        "before", "after", "above", "below", "between", "and", "but", "or",
-        "not", "no", "nor", "so", "yet", "both", "each", "all", "any", "few",
-        "more", "most", "other", "some", "such", "than", "too", "very", "just",
-        "about", "up", "out", "if", "then", "that", "this", "these", "those",
-        "it", "its", "they", "them", "their", "we", "our", "you", "your",
-        "he", "she", "him", "her", "his", "who", "which", "what", "when",
-        "where", "how", "why", "also", "only", "here", "there", "must",
-      ]);
-
-      const cleanedText = text.replace(/[{}[\]"':,]/g, " ");
-      const words = cleanedText.split(/\s+/).filter(w => w.length > 2);
-
-      const phrases: string[] = [];
-      for (let i = 0; i < words.length; i++) {
-        const w = words[i].toLowerCase();
-        if (!stopWords.has(w)) {
-          phrases.push(w);
-        }
-        if (i + 1 < words.length) {
-          const bigram = `${words[i].toLowerCase()} ${words[i + 1].toLowerCase()}`;
-          phrases.push(bigram);
-        }
-        if (i + 2 < words.length) {
-          const trigram = `${words[i].toLowerCase()} ${words[i + 1].toLowerCase()} ${words[i + 2].toLowerCase()}`;
-          phrases.push(trigram);
-        }
-      }
-
-      const seen = new Set<string>();
-      const uniquePhrases = phrases.filter(p => {
-        if (seen.has(p)) return false;
-        seen.add(p);
-        return true;
-      });
-
-      interface TermMismatch {
-        term: string;
-        suggestedTerm: string;
-        conceptId: string;
-        category: string;
-        matchMethod: string;
-        confidence: number;
-      }
-      interface ValidTerm {
-        term: string;
-        conceptId: string;
-        conceptLabel: string;
-        category: string;
-      }
-
-      const mismatches: TermMismatch[] = [];
-      const validTerms: ValidTerm[] = [];
-      const processedTerms = new Set<string>();
-
-      const levenshtein = function(a: string, b: string): number {
-        const matrix: number[][] = [];
-        for (let i = 0; i <= a.length; i++) matrix[i] = [i];
-        for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
-        for (let i = 1; i <= a.length; i++) {
-          for (let j = 1; j <= b.length; j++) {
-            matrix[i][j] = Math.min(
-              matrix[i - 1][j] + 1,
-              matrix[i][j - 1] + 1,
-              matrix[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
-            );
-          }
-        }
-        return matrix[a.length][b.length];
-      }
-
-      for (const phrase of uniquePhrases) {
-        const norm = phrase.replace(/[\s_-]+/g, "");
-
-        let exactMatch = false;
-        for (const c of conceptIndex) {
-          if (c.labelNorm === norm || c.label.toLowerCase() === phrase) {
-            validTerms.push({ term: phrase, conceptId: c.id, conceptLabel: c.label, category: c.category });
-            processedTerms.add(phrase);
-            exactMatch = true;
-            break;
-          }
-          if (c.synonymsNorm.includes(norm) || c.synonyms.includes(phrase)) {
-            validTerms.push({ term: phrase, conceptId: c.id, conceptLabel: c.label, category: c.category });
-            processedTerms.add(phrase);
-            exactMatch = true;
-            break;
-          }
-        }
-        if (exactMatch) continue;
-
-        let bestMismatch: TermMismatch | null = null;
-        for (const c of conceptIndex) {
-          const dist = levenshtein(norm, c.labelNorm);
-          const maxLen = Math.max(norm.length, c.labelNorm.length);
-          const similarity = 1 - dist / maxLen;
-          if (similarity >= 0.6 && similarity < 1.0 && norm.length > 3) {
-            const conf = Math.round(similarity * 100) / 100;
-            if (!bestMismatch || conf > bestMismatch.confidence) {
-              bestMismatch = {
-                term: phrase,
-                suggestedTerm: c.label,
-                conceptId: c.id,
-                category: c.category,
-                matchMethod: "fuzzy",
-                confidence: conf,
-              };
-            }
-          }
-          for (const syn of c.synonyms) {
-            const synDist = levenshtein(phrase, syn);
-            const synMaxLen = Math.max(phrase.length, syn.length);
-            const synSim = 1 - synDist / synMaxLen;
-            if (synSim >= 0.6 && synSim < 1.0 && phrase.length > 3) {
-              const conf = Math.round(synSim * 100) / 100;
-              if (!bestMismatch || conf > bestMismatch.confidence) {
-                bestMismatch = {
-                  term: phrase,
-                  suggestedTerm: c.label,
-                  conceptId: c.id,
-                  category: c.category,
-                  matchMethod: "fuzzy_synonym",
-                  confidence: conf,
-                };
-              }
-            }
-          }
-        }
-
-        if (bestMismatch && !processedTerms.has(bestMismatch.term)) {
-          const alreadyValid = validTerms.some(v => v.term === bestMismatch!.suggestedTerm.toLowerCase());
-          if (!alreadyValid) {
-            mismatches.push(bestMismatch);
-            processedTerms.add(bestMismatch.term);
-          }
-        }
-      }
-
-      const dedupedMismatches = mismatches.reduce<TermMismatch[]>((acc, m) => {
-        const existing = acc.find(a => a.suggestedTerm === m.suggestedTerm);
-        if (existing) {
-          if (m.confidence > existing.confidence) {
-            acc[acc.indexOf(existing)] = m;
-          }
-        } else {
-          acc.push(m);
-        }
-        return acc;
-      }, []);
-
-      res.json({
-        mismatches: dedupedMismatches,
-        validTerms,
-        totalTermsChecked: uniquePhrases.length,
-      });
+      res.json(checkVocabulary(allConcepts as any, text));
     } catch (err: any) {
       console.error("Ontology validate-text error:", err);
       res.status(500).json({ message: err.message || "Failed to validate text" });

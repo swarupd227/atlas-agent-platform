@@ -12,6 +12,7 @@ import { TeamRun } from "./renderers/team-run";
 import { AuditChain, ExamPackage, Policies, Readiness } from "./renderers/governance";
 import { EvalCompare, EvalFailures, EvalRun } from "./renderers/evaluation";
 import { AgentHealth, Deployments } from "./renderers/deploy";
+import { Concept, Concepts, OntologyAlignment, OntologyCoverage, VocabularyCheck } from "./renderers/ontology";
 
 function AgentList({ props }: { props: Record<string, any> }) {
   const agents: any[] = props.agents ?? [];
@@ -242,6 +243,26 @@ function Run({ props }: { props: Record<string, any> }) {
   );
 }
 
+/**
+ * A card that is only words: a saved flow's summary, an industry profile, a
+ * one-line confirmation. Without this, every tool sending `kind: "text"` fell
+ * through to the JSON dump below.
+ */
+function TextCard({ props }: { props: Record<string, any> }) {
+  const lines: string[] = Array.isArray(props.lines) ? props.lines.filter(Boolean) : [];
+  if (typeof props.text === "string" && props.text.trim()) {
+    return <Markdown text={props.text} className="astra-md text-sm" />;
+  }
+  if (lines.length > 0) {
+    return (
+      <ul className="space-y-2 text-sm">
+        {lines.map((line, i) => <li key={i}>{line}</li>)}
+      </ul>
+    );
+  }
+  return <Fallback props={props} />;
+}
+
 function Fallback({ props }: { props: Record<string, any> }) {
   return <pre className="overflow-x-auto rounded bg-muted p-3 font-mono text-xs">{JSON.stringify(props, null, 2)}</pre>;
 }
@@ -273,6 +294,12 @@ const RENDERERS: Record<string, (p: { props: Record<string, any>; onAsk?: (text:
   evalFailures: EvalFailures,
   deployments: Deployments,
   agentHealth: AgentHealth,
+  text: TextCard,
+  concepts: Concepts,
+  concept: Concept,
+  ontologyCoverage: OntologyCoverage,
+  ontologyAlignment: OntologyAlignment,
+  vocabularyCheck: VocabularyCheck,
 };
 
 export function ArtifactPane({ artifact, onClose, onAsk, onDecide, activeActionId }: {

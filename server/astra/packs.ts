@@ -12,6 +12,7 @@ export const PACKS = [
   { id: "evaluation", label: "Evaluation", description: "Eval datasets and runs: run an agent's evaluation, follow it, compare with the previous run, explain failures." },
   { id: "deploy", label: "Deploy & Operate", description: "Deploy an agent, promote it through staging, pilot and production, shift canary or shadow traffic, roll back, check health and incidents." },
   { id: "knowledge", label: "Skills & Knowledge", description: "Find and attach skills; create knowledge bases, add sources, search them, attach them to agents." },
+  { id: "ontology", label: "Ontology & Graph", description: "The industry's vocabulary: what a concept means and what it links to, which agents carry it, how much of the vocabulary is used, an agent's tool alignment for production, and checking text against the vocabulary." },
 ] as const;
 
 export type PackId = (typeof PACKS)[number]["id"];

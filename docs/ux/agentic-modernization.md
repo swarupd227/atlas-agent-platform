@@ -77,7 +77,7 @@ Industry stored on the tenant and agent (not the browser); presets read industry
 ### E-UX7 · Information architecture — increment 3 (done)
 Home briefing, Needs-you inbox, @-mentioning your agents, Library (one index of everything), five-item rail, natural-language ⌘K.
 
-### E-UX8 · Studio packs — increment 4 (done: Governance, Evaluation, Skills & Knowledge, Deploy & Operate)
+### E-UX8 · Studio packs — increment 4 (done: Governance, Evaluation, Skills & Knowledge, Deploy & Operate, Ontology & Graph)
 Tool packs loaded by context: Skills, Flows, Templates & Journeys, Ontology & Graph, Knowledge, Evaluation, Governance, Deploy & Operate, Publish.
 
 ### E-UX9 · Converge — increment 5+

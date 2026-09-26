@@ -17,6 +17,7 @@ import { loadToolsTool } from "./tools/load-tools";
 import { GOVERNANCE_TOOLS } from "./tools/governance";
 import { EVALUATION_TOOLS } from "./tools/evaluation";
 import { KNOWLEDGE_TOOLS } from "./tools/knowledge";
+import { ONTOLOGY_TOOLS } from "./tools/ontology";
 import { DEPLOY_TOOLS } from "./tools/deploy";
 import { listAgentsTool } from "./tools/list-agents";
 import { getAgentTool } from "./tools/get-agent";
@@ -44,7 +45,7 @@ import { getTeamRunTool, runTeamTool } from "./tools/run-team";
 /** Claude Sonnet 5 by default; override with ASTRA_MODEL. */
 export const ASTRA_MODEL = process.env.ASTRA_MODEL || "claude-sonnet-5";
 
-export const ASTRA_TOOLS: AstraTool[] = [finishTurnTool, loadToolsTool, listAgentsTool, getAgentTool, findConnectorsTool, getIndustryContextTool, attachConnectorTool, runAgentTool, getRunTool, decideApprovalTool, decideRecommendationTool, acknowledgeAlertTool, decidePolicyExceptionTool, answerToolRequestTool, discoverOutcomeTool, listOutcomesTool, createOutcomeTool, ...KPI_TOOLS, ...PROCESS_FLOW_TOOLS, listNeedsMeTool, proposeTeamTool, buildTeamTool, attachTeamToOutcomeTool, verifyWiringTool, runTeamTool, getTeamRunTool, ...GOVERNANCE_TOOLS, ...EVALUATION_TOOLS, ...KNOWLEDGE_TOOLS, ...DEPLOY_TOOLS];
+export const ASTRA_TOOLS: AstraTool[] = [finishTurnTool, loadToolsTool, listAgentsTool, getAgentTool, findConnectorsTool, getIndustryContextTool, attachConnectorTool, runAgentTool, getRunTool, decideApprovalTool, decideRecommendationTool, acknowledgeAlertTool, decidePolicyExceptionTool, answerToolRequestTool, discoverOutcomeTool, listOutcomesTool, createOutcomeTool, ...KPI_TOOLS, ...PROCESS_FLOW_TOOLS, listNeedsMeTool, proposeTeamTool, buildTeamTool, attachTeamToOutcomeTool, verifyWiringTool, runTeamTool, getTeamRunTool, ...GOVERNANCE_TOOLS, ...EVALUATION_TOOLS, ...KNOWLEDGE_TOOLS, ...DEPLOY_TOOLS, ...ONTOLOGY_TOOLS];
 
 function modelCall(): CompleteFn {
   const primaryName = ASTRA_MODEL.startsWith("gpt") || ASTRA_MODEL.startsWith("o") ? "openai" : "anthropic";

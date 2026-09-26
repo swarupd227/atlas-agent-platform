@@ -1,5 +1,16 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import { Link } from "wouter";
+
+/**
+ * A concept named in the address bar opens selected, so a card in Cowork (or
+ * any link to one concept) lands on that concept rather than on the whole list.
+ * Read once, as the initial state: the user's clicks own the selection after that.
+ */
+function conceptFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  const asked = new URLSearchParams(window.location.search).get("concept");
+  return asked?.trim() || null;
+}
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search,
@@ -340,7 +351,7 @@ export default function OntologyExplorer() {
   const { industry } = useIndustry();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
+  const [selectedConceptId, setSelectedConceptId] = useState<string | null>(conceptFromUrl);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [domainFilter, setDomainFilter] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");

@@ -9,6 +9,7 @@
  */
 import * as nodeCrypto from "crypto";
 import { storage } from "./storage";
+import { assessToolAlignment } from "./ontology-alignment";
 import { insertDeploymentSchema } from "@shared/schema";
 import { resolveOntologyTags, resolvePolicyBundle } from "./routes/helpers";
 import { ensureAarConfig } from "./routes/aar";
@@ -58,53 +59,11 @@ export async function createDeploymentAction(ctx: DeploymentActionContext, body:
     const agent = await storage.getAgent(data.agentId, ctx.orgId);
 
     if (env === "prod" && agent) {
-      const blueprints = await storage.getBlueprints();
-      const agentBlueprint = blueprints.find(b => b.agentId === data.agentId);
-      if (agentBlueprint) {
-        const bpJson = agentBlueprint.blueprintJson as any;
-        const nodes = bpJson?.nodes || [];
-        const toolNodes = nodes.filter((n: any) => {
-          const nodeType = (n.type || n.data?.type || "").toLowerCase();
-          return nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action");
-        });
-        const requiredToolNames = toolNodes.map((n: any) => n.data?.toolName || n.data?.tool || n.toolName || n.label || n.id || "unknown");
-
-        const mcpLinks = await storage.getAgentMcpServers(data.agentId);
-        const agentMcpServerIds = mcpLinks.map(l => l.serverId);
-
-        const lowAlignmentTools: Array<{ toolName: string; serverName: string; score: number; matched: number; total: number }> = [];
-
-        if (agentMcpServerIds.length > 0) {
-          for (const serverId of agentMcpServerIds) {
-            const server = await storage.getMcpServer(serverId);
-            if (!server) continue;
-            const serverTools = await storage.getMcpServerTools(serverId);
-            const matches = await storage.getMcpParameterMatches(serverId);
-
-            for (const tool of serverTools) {
-              const isReferenced = requiredToolNames.length === 0 || requiredToolNames.some((name: string) =>
-                name.toLowerCase().includes(tool.name.toLowerCase()) ||
-                tool.name.toLowerCase().includes(name.toLowerCase())
-              );
-              if (!isReferenced) continue;
-
-              const toolMatches = matches.filter(m => m.toolName === tool.name);
-              const matchedCount = toolMatches.filter(m => m.matchStatus === "matched" || m.matchStatus === "partial").length;
-              const totalCount = toolMatches.length;
-              const score = totalCount > 0 ? matchedCount / totalCount : 0;
-
-              if (score < 0.5) {
-                lowAlignmentTools.push({
-                  toolName: tool.name,
-                  serverName: server.name,
-                  score: Math.round(score * 100) / 100,
-                  matched: matchedCount,
-                  total: totalCount,
-                });
-              }
-            }
-          }
-        }
+      // The same assessment Astra's agent_ontology_alignment reports, so what
+      // a refusal here says and what the conversation explains cannot drift.
+      const alignment = await assessToolAlignment(data.agentId);
+      if (alignment.hasBlueprint) {
+        const lowAlignmentTools = alignment.low;
 
         if (lowAlignmentTools.length > 0 && !bypassOntologyCheck) {
           return { status: 400, body: {
@@ -338,46 +297,9 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
 
     const bypassOntologyCheck = body.bypassOntologyCheck === true;
     if (nextEnv === "prod") {
-      const blueprints = await storage.getBlueprints();
-      const agentBlueprint = blueprints.find(b => b.agentId === source.agentId);
-      if (agentBlueprint) {
-        const bpJson = agentBlueprint.blueprintJson as any;
-        const nodes = bpJson?.nodes || [];
-        const toolNodes = nodes.filter((n: any) => {
-          const nodeType = (n.type || n.data?.type || "").toLowerCase();
-          return nodeType.includes("tool") || nodeType.includes("mcp") || nodeType.includes("action");
-        });
-        const requiredToolNames = toolNodes.map((n: any) => n.data?.toolName || n.data?.tool || n.toolName || n.label || n.id || "unknown");
-        const mcpLinks = await storage.getAgentMcpServers(source.agentId);
-        const agentMcpServerIds = mcpLinks.map(l => l.serverId);
-        const lowAlignmentTools: Array<{ toolName: string; serverName: string; score: number; matched: number; total: number }> = [];
-
-        for (const serverId of agentMcpServerIds) {
-          const server = await storage.getMcpServer(serverId);
-          if (!server) continue;
-          const serverTools = await storage.getMcpServerTools(serverId);
-          const matches = await storage.getMcpParameterMatches(serverId);
-          for (const tool of serverTools) {
-            const isReferenced = requiredToolNames.length === 0 || requiredToolNames.some((name: string) =>
-              name.toLowerCase().includes(tool.name.toLowerCase()) ||
-              tool.name.toLowerCase().includes(name.toLowerCase())
-            );
-            if (!isReferenced) continue;
-            const toolMatches = matches.filter(m => m.toolName === tool.name);
-            const matchedCount = toolMatches.filter(m => m.matchStatus === "matched" || m.matchStatus === "partial").length;
-            const totalCount = toolMatches.length;
-            const score = totalCount > 0 ? matchedCount / totalCount : 0;
-            if (score < 0.5) {
-              lowAlignmentTools.push({
-                toolName: tool.name,
-                serverName: server.name,
-                score: Math.round(score * 100) / 100,
-                matched: matchedCount,
-                total: totalCount,
-              });
-            }
-          }
-        }
+      const alignment = await assessToolAlignment(source.agentId);
+      if (alignment.hasBlueprint) {
+        const lowAlignmentTools = alignment.low;
 
         if (lowAlignmentTools.length > 0 && !bypassOntologyCheck) {
           return { status: 400, body: {
