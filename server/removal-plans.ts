@@ -36,6 +36,19 @@ export class RemovalPlanError extends Error {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/**
+ * Names, capped. An outcome with three teams on it listed fifteen agents in
+ * one sentence -- with names repeating, because separate teams name their
+ * workers alike -- which reads as noise rather than as information. The count
+ * stays exact; only the naming is cut short.
+ */
+export const NAMES_SHOWN = 5;
+export function namedList(names: string[]): string {
+  if (names.length <= NAMES_SHOWN) return names.join(", ");
+  const rest = names.length - NAMES_SHOWN;
+  return `${names.slice(0, NAMES_SHOWN).join(", ")} and ${rest} more`;
+}
+
 /** An outcome, its KPIs and their measurements; its agents and approvals are detached. */
 export async function planOutcomeRemoval(orgId: string | undefined, outcomeId: string): Promise<RemovalPlan> {
   const outcome = await storage.getOutcome(outcomeId, orgId);
@@ -46,12 +59,12 @@ export async function planOutcomeRemoval(orgId: string | undefined, outcomeId: s
   const agents = (await storage.getAgents(orgId)).filter((a) => a.outcomeId === outcomeId);
 
   const goes: string[] = [];
-  if (kpis.length) goes.push(`${plural(kpis.length, "KPI")}: ${kpis.map((k) => k.name).join(", ")}`);
+  if (kpis.length) goes.push(`${plural(kpis.length, "KPI")}: ${namedList(kpis.map((k) => k.name))}`);
   if (readings.length) goes.push(`${plural(readings.length, "recorded measurement")} of those KPIs`);
   goes.push("its events, invoices and billing disputes");
 
   const stays: string[] = [];
-  if (agents.length) stays.push(`${plural(agents.length, "agent")} stay, no longer bound to an outcome: ${agents.map((a) => a.name).join(", ")}`);
+  if (agents.length) stays.push(`${plural(agents.length, "agent")} stay, no longer bound to an outcome: ${namedList(agents.map((a) => a.name))}`);
   stays.push("its approvals stay in the audit trail, detached from it");
 
   return {
@@ -83,7 +96,7 @@ export async function planAgentRemoval(orgId: string | undefined, agentId: strin
   const stays: string[] = ["its past runs stay in the run history"];
   if (memberships.length) {
     const teams = (await Promise.all(memberships.map((m) => storage.getAgent(m.teamAgentId, orgId)))).filter(Boolean);
-    if (teams.length) stays.push(`the ${plural(teams.length, "team")} it worked in: ${teams.map((t) => t!.name).join(", ")}`);
+    if (teams.length) stays.push(`the ${plural(teams.length, "team")} it worked in: ${namedList(teams.map((t) => t!.name))}`);
   }
 
   // A team's workers are agents in their own right: deleting the orchestrator

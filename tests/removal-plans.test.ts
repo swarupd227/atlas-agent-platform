@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { removeTitle } from "../client/src/components/remove-dialog";
+import { NAMES_SHOWN, namedList } from "../server/removal-plans";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const dialog = read("client", "src", "components", "remove-dialog.tsx");
@@ -115,6 +116,27 @@ describe("deleting an agent", () => {
     const plan = await planAgentRemoval(ORG, "a-2");
     expect(plan.warning).toBeNull();
     expect(plan.stays).toContain("the 1 team it worked in: Fleet orchestrator");
+  });
+});
+
+describe("naming what is affected", () => {
+  it("names a few and counts the rest, rather than printing a wall of names", () => {
+    // Live, one outcome carried three teams: fifteen agents in one sentence,
+    // with names repeating because separate teams name their workers alike.
+    const many = ["A", "B", "C", "D", "E", "F", "G"];
+    expect(namedList(many)).toBe("A, B, C, D, E and 2 more");
+    expect(namedList(["A", "B"])).toBe("A, B");
+    expect(namedList(many.slice(0, NAMES_SHOWN))).toBe("A, B, C, D, E");
+  });
+
+  it("keeps the count exact even when the names are cut short", async () => {
+    state.agents = [
+      { id: "a-1", name: "Fleet orchestrator", organizationId: ORG },
+      ...Array.from({ length: 8 }, (_, i) => ({ id: `w-${i}`, name: `Worker ${i}`, organizationId: ORG, outcomeId: "out-1" })),
+    ];
+    const plan = await planOutcomeRemoval(ORG, "out-1");
+    expect(plan.stays[0]).toContain("8 agents stay");
+    expect(plan.stays[0]).toContain("and 3 more");
   });
 });
 
