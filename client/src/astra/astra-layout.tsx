@@ -13,7 +13,9 @@ import { Library } from "./library";
 import { ConversationTitle } from "./conversation-title";
 import { transcript } from "./transcript";
 import { CopyButton } from "@/components/copy-button";
-import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { sortIncoming, type Attachment } from "./attach";
+import { apiRequest, getApiHeaders } from "@/lib/queryClient";
 import { AstraCommandPalette } from "./command-palette";
 import { ArtifactPane } from "./artifact-pane";
 import type { ArtifactRef } from "./types";
@@ -43,6 +45,7 @@ function Workspace() {
   const { industry, industrySource, tenantIndustryId, organizationName } = useIndustry();
   const personalView = industrySource === "local" && !!tenantIndustryId;
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { data: threads = [] } = useThreads();
   const [artifact, setArtifact] = useState<ArtifactRef | null>(null);
   const [creating, setCreating] = useState(false);
@@ -64,6 +67,35 @@ function Workspace() {
   const canUse = useCallback((permission?: PermissionAction) => !permission || getPermission(permission).access !== "denied", [getPermission]);
   const mention = useCallback((name: string) => setComposerInsert({ text: `@${name} `, nonce: Date.now() }), []);
 
+  // Files attached to the next message. They upload as soon as they are chosen
+  // -- the extraction is the slow part, and doing it at send time would leave
+  // the person watching a spinner after they hit Enter.
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const attach = useCallback(async (files: File[]) => {
+    const { accepted, refusals } = sortIncoming(files, attachments.length);
+    for (const why of refusals) toast({ title: "Not attached", description: why, variant: "destructive" });
+    if (!accepted.length) return;
+
+    const pending: Attachment[] = accepted.map((f, i) => ({ id: `pending-${Date.now()}-${i}`, filename: f.name, kind: null, uploading: true }));
+    setAttachments((current) => [...current, ...pending]);
+
+    const form = new FormData();
+    for (const f of accepted) form.append("files", f);
+    form.append("context", "cowork");
+    try {
+      const res = await fetch("/api/files/upload", { method: "POST", body: form, credentials: "include", headers: getApiHeaders() });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || body?.message || "That file couldn't be read.");
+      const uploaded: Array<{ id: string; filename: string; kind?: string | null }> = body?.files ?? body ?? [];
+      setAttachments((current) => {
+        const withoutPending = current.filter((a) => !pending.some((p) => p.id === a.id));
+        return [...withoutPending, ...uploaded.map((u) => ({ id: u.id, filename: u.filename, kind: u.kind ?? null }))];
+      });
+    } catch (e) {
+      setAttachments((current) => current.map((a) => (pending.some((p) => p.id === a.id) ? { ...a, uploading: false, error: (e as Error).message } : a)));
+    }
+  }, [attachments.length, toast]);
+
   // A result opens by itself only where the pane sits beside the conversation;
   // on narrower screens it would cover the answer, so it waits for a tap.
   const autoOpen = useCallback((a: ArtifactRef) => {
@@ -84,19 +116,23 @@ function Workspace() {
 
   const send = useCallback(
     async (text: string) => {
-      if (threadId) return thread.send(text);
+      // Only files that finished uploading; a failed one is left on screen
+      // with its reason rather than silently dropped.
+      const fileIds = attachments.filter((a) => !a.uploading && !a.error).map((a) => a.id);
+      if (fileIds.length) setAttachments([]);
+      if (threadId) return thread.send(text, undefined, fileIds);
       if (creating) return;
       setCreating(true);
       try {
         const created = await createThread();
-        void thread.send(text, created.id);
+        void thread.send(text, created.id, fileIds);
         navigate(`/t/${encodeURIComponent(created.id)}`);
         queryClient.invalidateQueries({ queryKey: ["/api/astra/threads"] });
       } finally {
         setCreating(false);
       }
     },
-    [threadId, thread, creating, navigate, queryClient],
+    [threadId, thread, creating, navigate, queryClient, attachments],
   );
 
   const newConversation = () => {
@@ -194,6 +230,9 @@ function Workspace() {
             onSend={(text) => void send(text)}
             onStop={() => void thread.stop()}
             stopping={thread.stopping}
+            attachments={attachments}
+            onAttach={attach}
+            onRemoveAttachment={(id) => setAttachments((current) => current.filter((a) => a.id !== id))}
             onEdit={(text) => setComposerInsert({ text, nonce: Date.now(), replace: true })}
             onRetry={() => {
               // Ask the same thing again, as a new message: nothing in the

@@ -149,12 +149,30 @@ interface Session {
 }
 
 /** Send a user message and run the turn until it finishes, fails or pauses for confirmation. */
+/**
+ * Files the person attached to this turn: what the model reads, and what the
+ * conversation shows. They are separate on purpose -- the model gets the whole
+ * extracted text, the transcript gets the file's name, because a conversation
+ * with a spreadsheet pasted into it is unreadable.
+ */
+/** What the transcript shows for attached files: their names, not their contents. */
+export function attachedLine(names: string[]): string {
+  return `_Attached: ${names.join(", ")}_`;
+}
+
+export interface TurnAttachments {
+  /** The extracted text, framed, as buildAttachmentContext writes it. */
+  context: string;
+  names: string[];
+}
+
 export async function runTurn(
   deps: EngineDeps,
   ctx: AstraContext,
   threadId: string,
   userText: string,
   onEvent: OnAstraEvent,
+  attachments?: TurnAttachments,
 ): Promise<ThreadState["status"]> {
   // Lock first, then read: reading before the lock could pick up a checkpoint
   // that a turn finishing in between is about to replace, and lose its messages.
@@ -176,12 +194,13 @@ export async function runTurn(
   closeDanglingToolCalls(cp, "The previous turn stopped before this ran.");
   cp.turn = freshTurn();
   cp.iterationsUsed = 0;
-  cp.messages.push({ role: "user", content: userText });
+  // The model sees the attached text; the stored message names the files.
+  cp.messages.push({ role: "user", content: attachments?.context ? `${userText}\n\n${attachments.context}` : userText });
 
   await deps.store.appendMessage(ctx.orgId, {
     threadId,
     role: "user",
-    markdown: userText,
+    markdown: attachments?.names.length ? `${userText}\n\n${attachedLine(attachments.names)}` : userText,
     artifacts: [],
     sources: [],
     suggestions: [],

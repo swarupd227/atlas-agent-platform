@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Loader2, Mic, Square } from "lucide-react";
+import { ArrowUp, Loader2, Mic, Paperclip, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { applyMention, duplicateNames, findMentionQuery, isCompletedMention, rankMentionables, type Mentionable } from "./mention";
 import { applyCommand, fillArg, findSlashQuery, rankCommands, resolveSlash, type SlashCommand } from "./slash";
 import { useVoiceInput } from "./use-voice-input";
 import { insertSpoken, micLabel } from "./voice";
+import { chipLabel, filesFrom, readyToSend, type Attachment } from "./attach";
 import type { PermissionAction } from "@/components/role-provider";
 
 /** Something waiting on the person, for /approve and /reject to pick from. */
@@ -32,6 +33,9 @@ export function Composer({
   decisions = [],
   canUse = () => true,
   onCommandNavigate,
+  attachments = [],
+  onAttach,
+  onRemoveAttachment,
 }: {
   disabled: boolean;
   onSend: (text: string) => void;
@@ -44,6 +48,10 @@ export function Composer({
   canUse?: (permission?: PermissionAction) => boolean;
   /** Where a "go" command sends the person. */
   onCommandNavigate?: (href: string) => void;
+  /** Files attached to the next message, and how to change them. */
+  attachments?: Attachment[];
+  onAttach?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
 }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
@@ -159,9 +167,14 @@ export function Composer({
     setText(next);
   };
 
+  const fileInput = useRef<HTMLInputElement>(null);
+
   const submit = () => {
     const t = text.trim();
-    if (!t || disabled) return;
+    // A file still being read isn't part of the message yet; an attachment on
+    // its own is a legitimate message ("what do you make of this?").
+    if (disabled || !readyToSend(t, attachments)) return;
+    if (!t && attachments.length === 0) return;
     // Sending ends the dictation: nobody expects the mic to stay live after
     // the message has gone.
     voice.stop();
@@ -302,10 +315,64 @@ export function Composer({
           ))}
         </ul>
       )}
+      {attachments.length > 0 && (
+        <ul className="absolute bottom-full left-0 mb-1 flex w-full flex-wrap gap-1" data-testid="astra-attachments">
+          {attachments.map((a) => (
+            <li
+              key={a.id}
+              className={`flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] ${a.error ? "border-[hsl(var(--astra-fail)/0.4)] text-[hsl(var(--astra-fail))]" : "border-border bg-card text-muted-foreground"}`}
+            >
+              <Paperclip className="h-3 w-3 shrink-0" aria-hidden />
+              <span className="max-w-[16rem] truncate">{chipLabel(a)}</span>
+              {onRemoveAttachment && !a.uploading && (
+                <button type="button" onClick={() => onRemoveAttachment(a.id)} aria-label={`Remove ${a.filename}`} className="hover:text-foreground">
+                  <X className="h-3 w-3" aria-hidden />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {onAttach && (
+        <>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              onAttach(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+            data-testid="astra-file-input"
+          />
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 shrink-0"
+            onClick={() => fileInput.current?.click()}
+            disabled={disabled}
+            aria-label="Attach a file"
+            title="Attach a file"
+            data-testid="astra-attach"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
+        </>
+      )}
       <textarea
         ref={ref}
         rows={1}
         value={text}
+        onPaste={(e) => {
+          // A file pasted from the clipboard, not text: a screenshot, usually.
+          const pasted = filesFrom(e.clipboardData);
+          if (onAttach && pasted.length) {
+            e.preventDefault();
+            onAttach(pasted);
+          }
+        }}
         onChange={(e) => {
           setText(e.target.value);
           syncCaret(e.target);
@@ -389,7 +456,7 @@ export function Composer({
           )}
         </Button>
       )}
-      <Button type="submit" size="icon" className="h-8 w-8 shrink-0" disabled={disabled || !text.trim()} aria-label="Send">
+      <Button type="submit" size="icon" className="h-8 w-8 shrink-0" disabled={disabled || !readyToSend(text, attachments)} aria-label="Send">
         <ArrowUp className="h-4 w-4" />
       </Button>
     </form>

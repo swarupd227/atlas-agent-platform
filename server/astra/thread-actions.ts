@@ -13,6 +13,7 @@
  * says so rather than letting the person imagine they are undoing something.
  */
 import { storage } from "../storage";
+import { deleteThreadAttachments, threadAttachments } from "./attachments";
 import type { AstraMessageRecord } from "./types";
 // ThreadSummary is declared by the store, not the engine's type module.
 import type { ThreadSummary } from "./store";
@@ -55,7 +56,9 @@ export async function planThreadRemoval(store: ThreadRemovalStore, actor: Thread
   if (!found) throw new ThreadRemovalError("No conversation with that id that you can open.", 404);
   const { thread, messages } = found;
 
+  const attached = await threadAttachments(threadId, actor.orgId);
   const goes = [`${plural(messages.length, "message")} in this conversation`];
+  if (attached.length) goes.push(`${plural(attached.length, "attached file")}: ${attached.map((f) => f.filename).join(", ")}`);
   const stays = [
     "anything Astra did here — an outcome created, a team built, an approval you decided — stays",
     "the audit trail keeps who asked for it, and when",
@@ -78,6 +81,9 @@ export async function planThreadRemoval(store: ThreadRemovalStore, actor: Thread
 /** Delete it. Refuses a running turn, and a conversation that isn't the caller's. */
 export async function removeThread(store: ThreadRemovalStore, actor: ThreadActor, threadId: string): Promise<{ deleted: true; title: string }> {
   const plan = await planThreadRemoval(store, actor, threadId);
+  // The files go with the conversation they were attached to; the message that
+  // carried them is about to stop existing.
+  await deleteThreadAttachments(threadId, actor.orgId);
   const result = await store.deleteThread(threadId, actor.orgId, actor.userId);
   if (result === null) throw new ThreadRemovalError("No conversation with that id that you can delete.", 404);
   if (result === false) throw new ThreadRemovalError("Astra is working in this conversation. Wait for the turn to finish, then delete it.", 409);

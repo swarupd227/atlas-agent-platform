@@ -324,6 +324,9 @@ export async function runStartupMigrations() {
       -- What a Cowork turn cost, kept with the answer it paid for.
       ALTER TABLE astra_messages ADD COLUMN IF NOT EXISTS cost_usd REAL;
       ALTER TABLE astra_messages ADD COLUMN IF NOT EXISTS tokens_total INTEGER;
+      -- Which Cowork conversation a file was attached to, so deleting the
+      -- conversation can take it too.
+      ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS thread_id VARCHAR;
       CREATE TABLE IF NOT EXISTS kpi_readings (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         kpi_id VARCHAR NOT NULL,

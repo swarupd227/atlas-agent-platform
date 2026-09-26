@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDown, Check, CircleAlert, Loader2, PanelRight, Pencil, RotateCcw, Square } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { CopyButton } from "@/components/copy-button";
+import { filesFrom, type Attachment } from "./attach";
 import { MessageFeedback } from "./message-feedback";
 import { Composer, type ComposerInsert, type DecisionOption } from "./composer";
 import type { PermissionAction } from "@/components/role-provider";
@@ -207,6 +208,9 @@ export function Thread({
   stopping,
   onEdit,
   onRetry,
+  attachments,
+  onAttach,
+  onRemoveAttachment,
   onDecide,
   onOpenArtifact,
   mentionables,
@@ -227,6 +231,10 @@ export function Thread({
   stopping?: boolean;
   /** Put one of your earlier messages back in the composer to amend. */
   onEdit?: (text: string) => void;
+  /** Files attached to the next message. */
+  attachments?: Attachment[];
+  onAttach?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
   /** Send the last thing you asked again, as a new message. */
   onRetry?: () => void;
   onDecide: (actionId: string, decision: "confirm" | "cancel") => void;
@@ -255,8 +263,39 @@ export function Thread({
   const suggestions = !streaming && !waiting && last?.role === "astra" ? last.suggestions : [];
   const empty = messages.length === 0 && !streaming;
 
+  const [dropping, setDropping] = useState(false);
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      onDragOver={(e) => {
+        if (!onAttach || !e.dataTransfer?.types?.includes("Files")) return;
+        e.preventDefault();
+        setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        // Only when the pointer leaves the pane itself, not a child of it.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDropping(false);
+      }}
+      onDrop={(e) => {
+        if (!onAttach) return;
+        const dropped = filesFrom(e.dataTransfer);
+        if (!dropped.length) return;
+        e.preventDefault();
+        setDropping(false);
+        onAttach(dropped);
+      }}
+      data-testid="astra-thread-pane"
+    >
+      {dropping && (
+        <div
+          className="pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-background/80 text-sm font-medium"
+          data-testid="astra-drop-target"
+        >
+          Drop to attach to your next message
+        </div>
+      )}
       <div
         ref={scrollerRef}
         onScroll={() => {
@@ -386,6 +425,9 @@ export function Thread({
           <Composer
             disabled={streaming || waiting}
             onSend={onSend}
+            attachments={attachments}
+            onAttach={onAttach}
+            onRemoveAttachment={onRemoveAttachment}
             mentionables={mentionables}
             insert={composerInsert}
             decisions={decisions}

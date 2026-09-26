@@ -22,6 +22,15 @@ const store = read("server", "astra", "store.ts");
 const audits: any[] = [];
 vi.mock("../server/storage", () => ({ storage: { createAuditEvent: vi.fn(async (e: any) => { audits.push(e); return e; }) } }));
 
+// Attachments read the real database; what they do with a conversation's files
+// is proven in tests/astra-attachments.test.ts.
+const attachmentsOf = vi.fn(async () => [] as Array<{ id: string; filename: string }>);
+const deletedAttachments = vi.fn(async () => 0);
+vi.mock("../server/astra/attachments", () => ({
+  threadAttachments: (...args: any[]) => attachmentsOf(...(args as [])),
+  deleteThreadAttachments: (...args: any[]) => deletedAttachments(...(args as [])),
+}));
+
 const { planThreadRemoval, removeThread, ThreadRemovalError } = await import("../server/astra/thread-actions");
 
 const ORG = "org-a";
@@ -55,6 +64,17 @@ describe("what deleting a conversation takes", () => {
 
   it("refuses a conversation the caller can't open", async () => {
     await expect(planThreadRemoval(threads as any, { ...actor, orgId: "org-b" }, threadId)).rejects.toBeInstanceOf(ThreadRemovalError);
+  });
+});
+
+describe("the files attached to it", () => {
+  it("are named in the plan, and deleted with the conversation", async () => {
+    attachmentsOf.mockResolvedValueOnce([{ id: "f1", filename: "q3.xlsx" }, { id: "f2", filename: "notes.pdf" }]);
+    const plan = await planThreadRemoval(threads as any, actor, threadId);
+    expect(plan.goes).toContain("2 attached files: q3.xlsx, notes.pdf");
+
+    await removeThread(threads as any, actor, threadId);
+    expect(deletedAttachments).toHaveBeenCalled();
   });
 });
 

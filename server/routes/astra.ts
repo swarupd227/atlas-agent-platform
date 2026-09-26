@@ -14,6 +14,7 @@ import { checkPermission, getRequestActorLabel, getRequestRole, hasPermission } 
 import { ThreadRemovalError, planThreadRemoval, removeThread } from "../astra/thread-actions";
 import { requestStop } from "../astra/stop-turn";
 import { MessageFeedbackError, recordMessageFeedback } from "../astra/message-feedback";
+import { attachFilesToThread } from "../astra/attachments";
 import { llmInvokeRateLimiter } from "../rate-limits";
 import { openSse as openSseStream } from "../sse";
 import { storage } from "../storage";
@@ -442,6 +443,8 @@ router.get("/api/astra/needs-you", checkPermission("use_astra"), async (req, res
 const sendMessageSchema = z.object({
   text: z.string().trim().min(1).max(8000),
   industryId: z.string().max(100).nullable().optional(),
+  /** Files uploaded through /api/files/upload and attached to this message. */
+  fileIds: z.array(z.string().min(1)).max(5).optional(),
 });
 
 router.post("/api/astra/threads/:id/messages/stream", llmInvokeRateLimiter, checkPermission("use_astra"), async (req, res) => {
@@ -458,7 +461,10 @@ router.post("/api/astra/threads/:id/messages/stream", llmInvokeRateLimiter, chec
   const send = openSse(res);
   try {
     await store.titleIfDefault(threadId, ctx.orgId, parsed.data.text).catch(() => {});
-    await runTurn(deps, ctx, threadId, parsed.data.text, send);
+    // Attachments are uploaded before the conversation may exist, so they are
+    // tied to it here, on the message that carries them.
+    const attached = await attachFilesToThread(parsed.data.fileIds ?? [], ctx.orgId, threadId);
+    await runTurn(deps, ctx, threadId, parsed.data.text, send, attached);
   } catch (err) {
     if (err instanceof AstraBusyError || err instanceof AstraNotFoundError) streamError(send, err);
     else {

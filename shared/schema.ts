@@ -2133,8 +2133,14 @@ export const uploadedFiles = pgTable("uploaded_files", {
   extractedText: text("extracted_text"),
   /** Sheet names, slide count, truncation flag — surfaced in the UI chip. */
   extractMeta: jsonb("extract_meta"),
-  /** Where it was uploaded: workspace | wizard | process_flow | eval. */
+  /** Where it was uploaded: workspace | wizard | process_flow | eval | cowork. */
   context: text("context"),
+  /**
+   * The Cowork conversation this was attached to, stamped when the message is
+   * sent (a file can be attached before a new conversation exists). It is what
+   * makes deleting a conversation able to take its attachments with it.
+   */
+  threadId: varchar("thread_id"),
   /** Set once the file has also been pushed to Anthropic's Files API for
    *  code-execution analysis; null when only the extracted text is used. */
   anthropicFileId: text("anthropic_file_id"),

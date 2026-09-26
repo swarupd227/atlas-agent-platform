@@ -257,7 +257,7 @@ export function useThread(threadId: string | null, options: { industryId?: strin
 
   /** Send to the open thread, or to `toThread` -- a thread created a moment ago that isn't open yet. */
   const send = useCallback(
-    (text: string, toThread?: string) => {
+    (text: string, toThread?: string, fileIds?: string[]) => {
       const id = toThread ?? threadId;
       if (!id) return;
       if (toThread) {
@@ -266,7 +266,7 @@ export function useThread(threadId: string | null, options: { industryId?: strin
         setStatus("idle");
         setTitle("New conversation");
       }
-      return stream(id, "messages/stream", { text, industryId: options.industryId ?? null }, text);
+      return stream(id, "messages/stream", { text, industryId: options.industryId ?? null, ...(fileIds?.length ? { fileIds } : {}) }, text);
     },
     [stream, threadId, options.industryId],
   );
