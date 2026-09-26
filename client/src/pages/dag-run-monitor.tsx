@@ -26,6 +26,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import type { DagExecutionRun, Agent, Approval } from "@shared/schema";
+import { stepKindLabel, runsWithoutAModel } from "@shared/run-step-kind";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
 import { splitWorkingNotes, extractHtmlDocument, openRunStepHtml } from "@/lib/agent-output";
 
@@ -95,12 +96,21 @@ type DagExecutionRunWithPattern = DagExecutionRun & { orchestrationPattern?: str
 /** What a step is doing, as the page shows it. Live states come from the plan + feed, not the stored results. */
 type StepState = "completed" | "failed" | "skipped" | "running" | "waiting" | "pending";
 
+
 interface Step {
   id: string;
   /** Unique per rendered row: a revision re-runs the same node. */
   key: string;
   label: string;
   kind: "agent" | "gate";
+  /**
+   * What the step actually is, for display only.
+   *
+   * `kind` stays two-valued because eight branches of this page key off
+   * `kind === "gate"`, and a step that is neither a gate nor an agent must keep
+   * taking the non-gate branch everywhere. This is what the badge reads from.
+   */
+  nodeType?: string;
   state: StepState;
   /** ms from run start. */
   offset: number;
@@ -370,6 +380,7 @@ export default function DagRunMonitor() {
     const t0 = startedMs ?? Date.now();
     const labelOf = (nodeId: string, node?: DagWaveNodeResult) => cfg[nodeId]?.label || node?.output?.selectedAgentName || nodeId;
     const kindOf = (nodeId: string): Step["kind"] => (cfg[nodeId]?.nodeType === "edge_gate" ? "gate" : "agent");
+    const nodeTypeOf = (nodeId: string): string | undefined => cfg[nodeId]?.nodeType ?? undefined;
 
     const out: Stage[] = waveResults.map((w, i) => {
       const offset = Math.max(0, new Date(w.startedAt).getTime() - t0);
@@ -382,6 +393,7 @@ export default function DagRunMonitor() {
           key: `${n.nodeId}-${i}`,
           label: labelOf(n.nodeId, n),
           kind: kindOf(n.nodeId),
+          nodeType: nodeTypeOf(n.nodeId),
           state: (["completed", "failed", "skipped"].includes(n.status) ? n.status : "completed") as StepState,
           offset,
           durationMs: n.durationMs,
@@ -704,7 +716,12 @@ export default function DagRunMonitor() {
                     <div className="flex items-baseline gap-2.5 px-1.5 pb-1">
                       <span className="font-mono text-xs font-medium">{stepWord} {stage.number}{stage.revisionRound ? ` · revision ${stage.revisionRound}` : ""}</span>
                       <Eyebrow>
-                        {stage.steps.length > 1 ? `${stage.steps.length} side by side` : stage.steps[0]?.kind === "gate" ? "person decides" : "one step"}
+                        {stage.steps.length > 1 ? `${stage.steps.length} side by side`
+                          : stage.steps[0]?.kind === "gate" ? "person decides"
+                          // Worth saying at a glance: a stage that cost nothing
+                          // reads the same as one that made a model call otherwise.
+                          : stage.steps[0] && runsWithoutAModel(stage.steps[0]) ? "no model"
+                          : "one step"}
                       </Eyebrow>
                     </div>
                     {stage.steps.map((s) => {
@@ -1050,7 +1067,8 @@ function StepDetail({
             <Dot state={step.state} /> {pillLabel}
           </span>
           {step.durationMs != null && step.state !== "pending" && <span>{durationLabel(step.durationMs)}</span>}
-          <span>{step.kind === "gate" ? "Approval step" : "Agent"}</span>
+          <span>{stepKindLabel(step)}</span>
+          {runsWithoutAModel(step) && <span className="text-muted-foreground">· no model</span>}
           {canExpand && (
             <Button variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs font-sans" onClick={() => setExpanded(true)} data-testid="button-expand-output">
               <Maximize2 className="w-3.5 h-3.5 mr-1.5" /> Expand
