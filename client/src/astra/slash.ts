@@ -81,6 +81,13 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       : "I want to record a KPI measurement. Show me which KPIs are measured by a person, or have nothing measuring them yet."),
   },
   {
+    name: "flow", kind: "ask", label: "Draw a process flow", hint: "Describe how the work runs, or attach the document that does", permission: "create_modify_outcomes",
+    arg: { kind: "text", label: "how the process runs" },
+    ask: (a) => (a
+      ? `Draw a process flow for this: ${a}. Ask me anything you need to know first, then show me the steps before creating it.`
+      : "I want to draw a process flow. Ask me how the process runs — or I can attach the document that describes it."),
+  },
+  {
     name: "connect", kind: "ask", label: "Find a connector", hint: "What your agents can be given access to",
     arg: { kind: "text", label: "what you need" },
     ask: (a) => (a ? `Which connectors can my agents use for ${a}?` : "What connectors can my agents use, and which are connected?"),

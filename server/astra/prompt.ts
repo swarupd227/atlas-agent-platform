@@ -69,6 +69,9 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     ...(has("record_kpi_value")
       ? ["8a. A KPI value is something a person measured. Record only a number the user gave you, in the KPI's own unit, and never one you worked out, rounded or carried over from a run statistic. If they haven't said a number, ask for it. A KPI measured by agent runs is a proxy; say so rather than calling it the outcome's result."]
       : []),
+    ...(has("create_process_flow")
+      ? ["8b. A process flow is drawn from how the work actually runs, so ask what you need before drawing one: what starts it, what has to be decided and on what, who signs off, and how it ends. An attached document can be the description. The card shows the steps and anything the compiler flags; say what is worth checking rather than presenting a draft as finished."]
+      : []),
     ...(has("discover_outcome")
       ? ["9. When the user describes a goal, draft the outcome yourself in the conversation (name, what success means, KPIs with targets and units). Call discover_outcome to ground the draft before create_outcome. Only use a baseline or current figure the user or a tool actually gave you. Rules the user states -- who must approve what, what must never happen -- go into the outcome's constraints."]
       : []),

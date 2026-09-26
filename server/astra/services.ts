@@ -24,6 +24,9 @@ import { filterElicitationsForOrg, filterPolicyExceptionsForOrg, isMcpServerVisi
 import { decideApproval, whoMayDecide, type ApprovalDecision } from "../approval-decision";
 import { acknowledgeAlert, decidePolicyException, decideRecommendation, getAlertInOrg, getRecommendationInOrg, recommendationEffect, respondToToolRequest } from "../action-decisions";
 import { KpiActionError, declareKpiMeasurement, getKpiInOrg, recordKpiReading } from "../kpi-actions";
+import { draftProcessFlow } from "../process-flow-draft";
+import { compileProcessFlow } from "../process-flow-compile";
+import { normalizeToGraph } from "@shared/process-flow";
 import { describeSource, parseMeasurementSource, suggestMeasurement, type MeasurementSource } from "@shared/kpi-measurement";
 import { bindPolicyToAgent, bindPolicyToOutcome, installPolicyPack, policyPackCatalog, type Enforcement } from "../policy-actions";
 import { resolvePolicyBundle } from "../routes/helpers";
@@ -370,6 +373,33 @@ async function acknowledgeAlertAs(orgId: string, userId: string | null, actorLab
 }
 
 // ── decide_policy_exception / answer_tool_request ───────────────────────────
+
+// ── Process flows ───────────────────────────────────────────────────────────
+
+/**
+ * Draw a flow from a description, and say what the compiler makes of it. The
+ * drafting is the Studio's own (server/process-flow-draft.ts); the compile is
+ * the same check the Studio's "Check flow" button runs, so a flow drawn in a
+ * conversation is held to the same standard as one drawn by hand.
+ */
+async function draftFlow(orgId: string, input: { description?: string; fileIds?: string[] }) {
+  const draft = await draftProcessFlow({ description: input.description, fileIds: input.fileIds, orgId });
+  const graph = normalizeToGraph({ name: draft.name, nodes: draft.nodes, edges: draft.edges } as any, draft.name);
+  const compiled = graph ? compileProcessFlow(graph) : null;
+  return { ...draft, warnings: compiled?.warnings ?? [] };
+}
+
+/** Save it to the library, where the Studio will find it. */
+async function saveFlow(orgId: string, name: string, graph: { nodes: unknown[]; edges: unknown[] }) {
+  const normalized = normalizeToGraph({ name, ...graph } as any, name);
+  if (!normalized) throw new Error("That flow has no steps to save.");
+  const created = await storage.createProcessFlow({
+    name,
+    graph: { ...normalized, name },
+    organizationId: orgId,
+  } as any);
+  return { id: created.id, name: created.name };
+}
 
 // ── KPI measurement ─────────────────────────────────────────────────────────
 
@@ -1232,6 +1262,8 @@ export function createAstraServices(): AstraServices {
     decideRecommendationAs,
     getAlertForDecision,
     acknowledgeAlertAs,
+    draftFlow,
+    saveFlow,
     findKpisForMeasurement,
     getKpiForMeasurement,
     declareKpiMeasurementAs,
