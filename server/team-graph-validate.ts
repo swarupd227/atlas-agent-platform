@@ -8,6 +8,7 @@
  * Workspace's wiring check applies exactly the same rules. Pure.
  */
 import type { TeamBlueprintEdge, TeamBlueprintNode } from "@shared/schema";
+import { isTeamNodeType, missingRequirement, nodeTypeLabel } from "@shared/team-node-types";
 
 export interface TeamGraphFinding {
   type: string;
@@ -27,32 +28,22 @@ export function validateTeamGraph(
   if (teamNodes.length === 0) {
     teamErrors.push({ type: "schema", severity: "error", message: "Team blueprint must contain at least one node" });
   } else {
-    // Was missing "knowledge_base" (a pre-existing gap -- every KB node in
-    // a real blueprint failed compile validation with a false "invalid
-    // type" error), "sub_flow", and "expression".
-    const validTeamNodeTypes = ["internal_agent", "tool_set", "edge_gate", "remote_agent", "skill", "knowledge_base", "sub_flow", "expression"];
+    // The list lives in shared/team-node-types.ts, beside the engine dispatch it
+    // mirrors. Maintaining it here by hand failed three times -- knowledge_base,
+    // then sub_flow and expression, then tool_call -- each time rejecting a node
+    // the engine runs perfectly as "invalid type". The last one was the worst:
+    // it refused a team from Astra Cowork ("the team's wiring has 6 blocking
+    // errors") while the same team bound a policy through the run API.
     for (const node of teamNodes) {
-      if (!validTeamNodeTypes.includes(node.nodeType)) {
+      if (!isTeamNodeType(node.nodeType)) {
         teamErrors.push({ type: "schema", severity: "error", message: `Node '${node.label}' has invalid type '${node.nodeType}'`, nodeId: node.id });
         continue;
       }
-      if (node.nodeType === "internal_agent" && !node.refAgentId && !node.refTeamAgentId) {
-        teamErrors.push({ type: "schema", severity: "error", message: `Internal Agent node '${node.label}' has no agent selected`, nodeId: node.id });
-      }
-      if (node.nodeType === "remote_agent" && !node.refRemoteAgentId) {
-        teamErrors.push({ type: "schema", severity: "error", message: `Remote Agent node '${node.label}' has no remote agent selected`, nodeId: node.id });
-      }
-      if (node.nodeType === "skill" && !node.refSkillId) {
-        teamErrors.push({ type: "schema", severity: "error", message: `Skill node '${node.label}' has no skill selected`, nodeId: node.id });
-      }
-      if (node.nodeType === "knowledge_base" && !(node as any).refKnowledgeBaseId) {
-        teamErrors.push({ type: "schema", severity: "error", message: `Knowledge Base node '${node.label}' has no knowledge base selected`, nodeId: node.id });
-      }
-      if (node.nodeType === "sub_flow" && !node.refTeamAgentId) {
-        teamErrors.push({ type: "schema", severity: "error", message: `Sub-Flow node '${node.label}' has no flow selected`, nodeId: node.id });
-      }
-      if (node.nodeType === "expression" && !(node.config as any)?.expression) {
-        teamErrors.push({ type: "schema", severity: "error", message: `Expression node '${node.label}' has no expression written`, nodeId: node.id });
+      // Accepting the type but not its requirements is half a check: a
+      // tool_call with no tool bound is as unrunnable as an unknown type.
+      const missing = missingRequirement(node as any);
+      if (missing) {
+        teamErrors.push({ type: "schema", severity: "error", message: `${nodeTypeLabel(node.nodeType)} node '${node.label}' ${missing}`, nodeId: node.id });
       }
       if (node.nodeType === "edge_gate" && !node.gateType) {
         teamWarnings.push({ type: "schema", severity: "warning", message: `Edge Gate node '${node.label}' has no gate type selected`, nodeId: node.id });
