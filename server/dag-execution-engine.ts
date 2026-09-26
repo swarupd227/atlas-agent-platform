@@ -2647,7 +2647,20 @@ export class DAGExecutionEngine {
     timeoutMs: number,
     toolAllowlist?: string[],
     upstreamGeneratedFileIds?: string[],
-  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; providerFallbacks?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean; failedFileAttempts?: string[] }> {
+  // This return type is a CONTRACT, not a summary: the body below rebuilds the
+  // worker's result field by field, so anything missing from this list is
+  // silently dropped on the way up -- produced by the worker, read for by the
+  // caller, and gone in between.
+  //
+  // That is not hypothetical. verifiedFacts/verifiedFactsNote/writtenFields
+  // were returned by executeWorkerAgent and read by executeWorkerNode for four
+  // runs while dying here, so every step recorded "nothing captured" and the
+  // transcription-drift check compared against an empty set. TypeScript said
+  // so the whole time -- "Property 'verifiedFacts' does not exist on type" --
+  // and it read as a missing declaration rather than a missing value.
+  //
+  // Adding a field to the worker result means adding it in BOTH places.
+  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; providerFallbacks?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean; failedFileAttempts?: string[]; verifiedFacts?: Record<string, unknown> | null; verifiedFactsNote?: string; writtenFields?: Record<string, unknown> | null }> {
     const mockTeamAgent = {
       deploymentId: undefined,
       agentId: "__dag_orchestrator__",
@@ -2706,6 +2719,14 @@ export class DAGExecutionEngine {
         traceId: (result as any).step?.id || "",
         ...(Array.isArray((result as any).generatedFiles) && (result as any).generatedFiles.length ? { generatedFiles: (result as any).generatedFiles } : {}),
         ...(Array.isArray((result as any).failedFileAttempts) && (result as any).failedFileAttempts.length ? { failedFileAttempts: (result as any).failedFileAttempts } : {}),
+        // The connectors' own answers, and the figures the step asserted, so
+        // the caller can record the first and check the second against it.
+        // Passed through unconditionally: "nothing captured, and here is why"
+        // is a result worth carrying, and dropping the note is what made the
+        // absence unreadable from outside the server.
+        verifiedFacts: (result as any).verifiedFacts ?? null,
+        verifiedFactsNote: (result as any).verifiedFactsNote,
+        writtenFields: (result as any).writtenFields ?? null,
       };
     } catch (err: any) {
       return { success: false, output: "", error: err.message };
