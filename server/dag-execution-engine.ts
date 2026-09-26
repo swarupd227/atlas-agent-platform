@@ -13,6 +13,7 @@ import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNo
 import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, collectRuleLeaves, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
 import { collectRunFiles } from "@shared/run-files";
 import { stateKeyForLabel } from "@shared/state-key";
+import { gateEdgeSatisfied } from "@shared/gate-edge-polarity";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
 // that isn't caught by the cycle check but would still nest indefinitely.
@@ -1692,7 +1693,13 @@ export class DAGExecutionEngine {
         if (this.isGateNode(nodeConfig[edge.sourceNodeId])) {
           try {
             const parsed = JSON.parse(sourceOutput);
-            if (typeof parsed.approved === "boolean") return parsed.approved;
+            // ...but WITH the edge's sign. Handing the same boolean to every
+            // outgoing edge meant a checkpoint drawn with an approve branch and
+            // a decline branch ran both: live 2026-09-26 one run bound
+            // POL-2026-8891-CP and told the broker it was declined, and nothing
+            // reported a problem. An edge whose polarity cannot be read still
+            // follows the approval, so a single onward edge behaves as before.
+            if (typeof parsed.approved === "boolean") return gateEdgeSatisfied(parsed.approved, edge);
           } catch { /* fall through to normal evaluation below */ }
         }
 
