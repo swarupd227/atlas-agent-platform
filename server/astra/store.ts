@@ -215,6 +215,24 @@ export class DbThreadStore implements ThreadStore {
     return true;
   }
 
+  /**
+   * Rename a conversation. A title is otherwise the first 60 characters of
+   * whatever you happened to type first, which is a poor name for something
+   * you come back to.
+   */
+  async renameThread(threadId: string, orgId: string, userId: string | null, title: string): Promise<ThreadSummary | null> {
+    const [row] = await db.select().from(astraThreads).where(and(eq(astraThreads.id, threadId), eq(astraThreads.organizationId, orgId)));
+    if (!row || !canAccessThread({ organizationId: row.organizationId, actorUserId: row.actorUserId }, { orgId, userId })) return null;
+    const clean = title.replace(/\s+/g, " ").trim().slice(0, 200);
+    if (!clean) return toSummary(row);
+    const [updated] = await db
+      .update(astraThreads)
+      .set({ title: clean })
+      .where(and(eq(astraThreads.id, threadId), eq(astraThreads.organizationId, orgId)))
+      .returning();
+    return updated ? toSummary(updated) : null;
+  }
+
   /** Name a new thread after its first message. */
   async titleIfDefault(threadId: string, orgId: string, firstMessage: string): Promise<void> {
     const text = firstMessage.replace(/\s+/g, " ").trim();

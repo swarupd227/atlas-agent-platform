@@ -10,6 +10,10 @@ import type { ComposerInsert } from "./composer";
 import { Rail } from "./rail";
 import { Thread } from "./thread";
 import { Library } from "./library";
+import { ConversationTitle } from "./conversation-title";
+import { transcript } from "./transcript";
+import { CopyButton } from "@/components/copy-button";
+import { apiRequest } from "@/lib/queryClient";
 import { AstraCommandPalette } from "./command-palette";
 import { ArtifactPane } from "./artifact-pane";
 import type { ArtifactRef } from "./types";
@@ -128,7 +132,26 @@ function Workspace() {
           <Link href="~/dashboard" className="md:hidden" aria-label="Back to the classic app">
             <ArrowLeft className="h-4 w-4 text-muted-foreground" />
           </Link>
-          <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{onLibrary ? "Library" : threadId ? thread.title || "Conversation" : "Astra Cowork"}</h1>
+          {threadId && !onLibrary ? (
+            <ConversationTitle
+              title={thread.title || "Conversation"}
+              onRename={async (next) => {
+                await apiRequest("PATCH", `/api/astra/threads/${threadId}`, { title: next });
+                queryClient.invalidateQueries({ queryKey: ["/api/astra/threads"] });
+                thread.setTitle(next);
+              }}
+            />
+          ) : (
+            <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{onLibrary ? "Library" : "Astra Cowork"}</h1>
+          )}
+          {threadId && !onLibrary && thread.messages.length > 0 && (
+            <CopyButton
+              text={transcript(thread.title || "Conversation", thread.messages)}
+              label="Copy transcript"
+              className="hidden shrink-0 sm:inline-flex"
+              testId="astra-copy-transcript"
+            />
+          )}
           {industry && (
             <span
               className="hidden shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground sm:inline"

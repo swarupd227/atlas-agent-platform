@@ -308,5 +308,5 @@ export function useThread(threadId: string | null, options: { industryId?: strin
     setStopping(false);
   }, [streaming]);
 
-  return { messages, status, title, live, error, loading, streaming, send, decide, stop, stopping };
+  return { messages, status, title, setTitle, live, error, loading, streaming, send, decide, stop, stopping };
 }

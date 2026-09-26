@@ -100,11 +100,19 @@ function MessageView({
           <div className="group/msg relative">
             <Markdown text={message.markdown} className="astra-md text-sm" />
             {/* Quiet until the message is hovered or the button is focused. */}
-            <CopyButton
-              text={message.markdown}
-              className="absolute -top-1 right-0 opacity-0 transition-opacity focus:opacity-100 group-hover/msg:opacity-100"
-              testId="astra-copy-message"
-            />
+            <div className="absolute -top-1 right-0 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100">
+              {message.createdAt && (
+                <time
+                  dateTime={message.createdAt}
+                  title={new Date(message.createdAt).toLocaleString()}
+                  className="text-[11px] text-muted-foreground"
+                  data-testid="astra-message-time"
+                >
+                  {messageTime(message.createdAt)}
+                </time>
+              )}
+              <CopyButton text={message.markdown} testId="astra-copy-message" />
+            </div>
           </div>
         )}
 
@@ -143,6 +151,19 @@ function MessageView({
       </div>
     </div>
   );
+}
+
+/**
+ * When a message was written. A conversation here can span a morning -- a turn
+ * that runs a team takes minutes, and you come back to it -- so "when" is a
+ * real question. The clock is enough for today; older messages say the day.
+ */
+export function messageTime(iso: string, now = new Date()): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const sameDay = at.toDateString() === now.toDateString();
+  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return sameDay ? time : `${at.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
 }
 
 /** Close enough to the bottom to count as still following the turn. */

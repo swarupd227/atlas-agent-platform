@@ -109,6 +109,20 @@ router.post("/api/astra/threads/:id/stop", checkPermission("use_astra"), async (
   res.json({ stopping: true });
 });
 
+const renameThreadSchema = z.object({ title: z.string().min(1).max(200) });
+
+/** Rename a conversation; its auto-title is only the first thing you typed. */
+router.patch("/api/astra/threads/:id", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  const parsed = renameThreadSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "A conversation needs a name of 1 to 200 characters." });
+  const { store } = getAstraRuntime();
+  const renamed = await store.renameThread(req.params.id as string, ctx.orgId, ctx.userId, parsed.data.title);
+  if (!renamed) return res.status(404).json({ error: "No conversation with that id that you can rename." });
+  res.json(renamed);
+});
+
 /** What deleting this conversation would take. */
 router.get("/api/astra/threads/:id/removal", checkPermission("use_astra"), async (req, res) => {
   const ctx = await callerContext(req);
