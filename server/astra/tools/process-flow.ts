@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { draftKey, holdDraft, takeDraft } from "../flow-drafts";
-import type { AstraTool, ConfirmPreview, ProofEnvelope } from "../types";
+import type { AstraTool, ConfirmPreview, ConfirmWarning, ProofEnvelope } from "../types";
 
 /**
  * Drawing a process flow from a description, in the conversation.
@@ -183,6 +183,10 @@ export const reviseProcessFlowTool: AstraTool<ReviseInput> = {
     }
 
     holdDraft(reviseKey(ctx.orgId, input), { name: plan.flow.name, graph: plan.graph as HeldGraph, warnings: plan.warnings });
+    // A flow that already runs as a team is the case where changing the drawing
+    // alone is misleading: the automation keeps the old steps until it is
+    // synced, and nothing about the saved flow would tell the user that.
+    const automation = await ctx.services.automationForFlow?.(ctx.orgId, plan.flow.id).catch(() => null);
     return {
       summary: `Change "${plan.flow.name}"`,
       details: [
@@ -195,6 +199,9 @@ export const reviseProcessFlowTool: AstraTool<ReviseInput> = {
           : ["", "The compiler flags nothing about the result."]),
         "",
         "Everything not listed above keeps its place. You can undo this afterwards.",
+        ...(automation
+          ? ["", `This flow runs as "${automation.name}". That automation keeps the steps it was built with until you sync it — ask me to, and I'll show you what would change in it first.`]
+          : []),
       ],
       frozen: { flow: plan.flow.id, changes: plan.changed.length },
     };
@@ -205,8 +212,20 @@ export const reviseProcessFlowTool: AstraTool<ReviseInput> = {
       throw new Error("The change I worked out is no longer held (the server restarted). Ask for it again and I'll show you what it would do.");
     }
     const saved = await ctx.services.saveFlowRevision(ctx.orgId, input.flow, held.graph, input.instruction, await actorLabel(ctx));
+    const automation = await ctx.services.automationForFlow?.(ctx.orgId, input.flow).catch(() => null);
     return {
-      payload: { changed: true, flow: saved.name, openIn: `/process-flows?flowId=${saved.id}`, toCheck: held.warnings, undo: "Ask me to undo it and I will put the previous version back." },
+      payload: {
+        changed: true,
+        flow: saved.name,
+        openIn: `/process-flows?flowId=${saved.id}`,
+        toCheck: held.warnings,
+        undo: "Ask me to undo it and I will put the previous version back.",
+        // Said every time, because the drawing and the running team are now
+        // different and only the drawing changed.
+        ...(automation
+          ? { automationOutOfDate: `"${automation.name}" still runs the steps it was built with. Use sync_flow_to_automation to bring it in line, or say so and it stays as it is.` }
+          : {}),
+      },
       proof: { context: { status: "measured", summary: "The state it replaced was kept, so this can be undone" } },
     };
   },
@@ -340,6 +359,134 @@ export const automateProcessFlowTool: AstraTool<AutomateInput> = {
   },
 };
 
+/**
+ * Bringing the automation in line with the flow.
+ *
+ * The half that was missing: Cowork could draw a flow, change it, and build a
+ * team from it, and then the drawing and the running team drifted apart with
+ * nothing saying so. The Studio has had this since it was built, outcome-scoped
+ * and behind a button that reported what it had done only after doing it.
+ *
+ * Here the card shows the diff first -- which steps are added, changed and
+ * removed, which agents are superseded, how many will be written by a model --
+ * because every one of those is a real change to something that runs.
+ */
+type SyncInput = { flow: string; rebuild?: boolean };
+
+interface SyncPlanView {
+  flow: { id: string; name: string };
+  team: { id: string; name: string };
+  unchanged: number;
+  changed: string[];
+  added: string[];
+  removed: string[];
+  supersedes: Array<{ label: string; agentId: string; agentName: string }>;
+  drafts: number;
+  rebuild: boolean;
+  block?: { kind: string; message: string; runId?: string };
+}
+
+export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
+  name: "sync_flow_to_automation",
+  description:
+    "Bring the automation built from a process flow in line with the flow as it is drawn now: steps added, changed or removed since it was built. Use it after revise_process_flow, or when the user asks why a change they made isn't happening. The card shows exactly what would change before anything does. Refuses while a run is in progress. Set rebuild only when the user accepts rebuilding every agent from scratch.",
+  input: z.object({
+    flow: z.string().min(1).describe("The flow's id, from list_process_flows."),
+    rebuild: z.boolean().optional().describe("Rebuild every agent from scratch: only for an automation whose agents can't be matched to steps, and only when the user agreed."),
+  }),
+  permission: "create_modify_blueprints",
+  confirm: true,
+  preview: async (ctx, input): Promise<ConfirmPreview> => {
+    let plan: SyncPlanView;
+    try {
+      plan = await ctx.services.planFlowSyncFor(ctx.orgId, input.flow, input.rebuild);
+    } catch (e) {
+      return { refuse: (e as Error).message };
+    }
+    if (plan.block) {
+      // A blueprint whose agents can't be matched to steps can still be rebuilt
+      // wholesale -- but that supersedes every agent, so the user has to say so.
+      if (plan.block.kind === "legacy_blueprint" && !input.rebuild) {
+        return { refuse: `${plan.block.message} If rebuilding is what you want, say so and I'll show you what that would replace.` };
+      }
+      return { refuse: plan.block.message };
+    }
+    const nothing = plan.changed.length === 0 && plan.added.length === 0 && plan.removed.length === 0;
+    if (nothing && !plan.rebuild) {
+      return { refuse: `"${plan.team.name}" already matches "${plan.flow.name}" step for step. There is nothing to sync.` };
+    }
+
+    const warnings: ConfirmWarning[] = [];
+    if (plan.supersedes.length) {
+      warnings.push({
+        title: `${plan.supersedes.length} ${plan.supersedes.length === 1 ? "agent is" : "agents are"} superseded`,
+        detail: `${plan.supersedes.slice(0, 5).map((x) => x.agentName).join(", ")}${plan.supersedes.length > 5 ? ` and ${plan.supersedes.length - 5} more` : ""}: they leave the team and stop running. Their past runs and audit history stay.`,
+      });
+    }
+    if (plan.drafts > 0) {
+      warnings.push({
+        title: `${plan.drafts} ${plan.drafts === 1 ? "agent is" : "agents are"} written by a model`,
+        detail: "Each new step gets a drafted agent: a name, a prompt and its tools. Read them afterwards; a draft is a starting point, not a reviewed agent.",
+      });
+    }
+    if (plan.rebuild) {
+      warnings.push({ title: "This rebuilds the whole automation", detail: "Every current agent is superseded and every step gets a fresh one, because none of them could be matched to a step." });
+    }
+
+    return {
+      summary: `Sync "${plan.flow.name}" into ${plan.team.name}`,
+      details: [
+        ...(plan.added.length ? [`Adds: ${plan.added.join(", ")}.`] : []),
+        ...(plan.changed.length ? [`Changes: ${plan.changed.join(", ")}.`] : []),
+        ...(plan.removed.length ? [`Removes: ${plan.removed.join(", ")}.`] : []),
+        `${plan.unchanged} ${plan.unchanged === 1 ? "step is" : "steps are"} untouched, and a step's hardened rules survive with it.`,
+        "The flow's own connections become the team's order again.",
+        "Nothing is deployed and nothing runs. The next run uses the new shape.",
+      ],
+      warnings,
+      frozen: { flow: plan.flow.id, team: plan.team.id, changes: plan.changed.length + plan.added.length + plan.removed.length },
+    };
+  },
+  run: async (ctx, input) => {
+    const r = await ctx.services.applyFlowSyncFor(ctx.orgId, input.flow, { forceFullRebuild: input.rebuild, actor: await actorLabel(ctx) });
+    if (r.needsChoice) throw new Error(r.message);
+    if (r.blocked) throw new Error(r.blocked.message);
+    const s = r.summary;
+    return {
+      payload: {
+        synced: true,
+        flow: r.flow.name,
+        team: r.team.name,
+        unchanged: s.unchanged,
+        added: s.added,
+        changed: s.changed,
+        superseded: s.superseded.map((x: any) => x.label),
+        ...(s.draftFailures.length ? { couldNotDraft: s.draftFailures } : {}),
+        next: "Check the wiring with verify_wiring before the next run, and read the agents a model wrote.",
+      },
+      artifact: {
+        kind: "text",
+        title: `${r.team.name} — synced`,
+        props: {
+          text: [
+            `**${r.team.name}** now matches **${r.flow.name}**.`,
+            "",
+            ...(s.added.length ? [`- Added: ${s.added.join(", ")}`] : []),
+            ...(s.changed.length ? [`- Changed: ${s.changed.join(", ")}`] : []),
+            ...(s.superseded.length ? [`- Superseded: ${s.superseded.map((x: any) => x.label).join(", ")}`] : []),
+            `- Untouched: ${s.unchanged}`,
+            ...(s.draftFailures.length ? ["", "Could not draft:", ...s.draftFailures.map((f: any) => `- ${f.label}: ${f.error}`)] : []),
+          ].join("\n"),
+        },
+        fullViewHref: `/agents/${r.team.id}`,
+      },
+      proof: {
+        context: { status: "measured", summary: `${s.added.length} added · ${s.changed.length} changed · ${s.superseded.length} superseded · ${s.unchanged} untouched` },
+      },
+    };
+  },
+};
+
 /** Who is asking, for the version history. */
 async function actorLabel(ctx: { services: { getUserDisplayName?: (id: string | null) => Promise<string | null> }; userId: string | null; role: string }): Promise<string> {
   return (await ctx.services.getUserDisplayName?.(ctx.userId)) ?? ctx.role;
@@ -352,4 +499,4 @@ function reviseKey(orgId: string, input: ReviseInput): string {
 
 type HeldGraph = { name: string; nodes: unknown[]; edges: unknown[] };
 
-export const PROCESS_FLOW_TOOLS: AstraTool[] = [createProcessFlowTool, listProcessFlowsTool, reviseProcessFlowTool, undoFlowChangeTool, automateProcessFlowTool] as AstraTool[];
+export const PROCESS_FLOW_TOOLS: AstraTool[] = [createProcessFlowTool, listProcessFlowsTool, reviseProcessFlowTool, undoFlowChangeTool, automateProcessFlowTool, syncFlowToAutomationTool] as AstraTool[];

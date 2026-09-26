@@ -17,6 +17,7 @@ import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema"
 import { parseConditionToRule } from "@shared/condition-to-rule";
 import { classifyStep } from "@shared/flow-execution-kind";
 import { stateKeyForLabel } from "@shared/state-key";
+import { stepCorrelation } from "@shared/process-flow-correlation";
 import jsonata from "jsonata";
 
 export class TeamBuildNotFoundError extends Error {
@@ -150,6 +151,21 @@ export function authoredStateKey(proposal: any, stepsByLabel?: Map<string, any>)
   const step = soleAuthoredStep(proposal, stepsByLabel);
   const key = step ? stateKeyForLabel(step.label ?? "") : "";
   return key || undefined;
+}
+
+/**
+ * What the step this worker covers should be recorded as on its blueprint node.
+ *
+ * Without it, a team built from a flow could never be synced back from that
+ * flow: the sync correlates by a persisted step id (shared/process-flow-correlation.ts)
+ * and, finding none, can only offer to rebuild every agent from scratch. Only a
+ * worker covering exactly ONE step gets a correlation -- a node covering two
+ * cannot be diffed per step, and claiming otherwise would let a sync rewrite a
+ * step nobody touched.
+ */
+function correlationFor(proposal: any, stepsByLabel?: Map<string, any>): Record<string, unknown> | null {
+  const step = soleAuthoredStep(proposal, stepsByLabel);
+  return step ? (stepCorrelation(step) as unknown as Record<string, unknown>) : null;
 }
 
 function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any>): Record<string, unknown> | null {
@@ -1007,6 +1023,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
 
         const isGate = humanCheckpointWorkerIds.has(worker.id);
         const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers);
+        const correlation = correlationFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel);
         const node = await storage.createTeamBlueprintNode({
           blueprintId: blueprint.id,
           nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
@@ -1020,7 +1037,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
           refKnowledgeBaseId: det?.refKnowledgeBaseId,
           stateKey: det?.stateKey ?? (isGate ? authoredStateKey(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel) : undefined),
           gateType: isGate ? "approval" : undefined,
-          config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1, ...(det?.config ?? {}) },
+          config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1, ...(det?.config ?? {}), ...(correlation ?? {}) },
         } as any);
         tierAgentNodes.push(node);
         workerNodes.push(node);
@@ -1090,6 +1107,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       const posY = isSequential ? 150 + i * 120 : 220;
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
       const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers);
+      const correlation = correlationFor(workers[i], authoredStepsByLabel);
       const node = await storage.createTeamBlueprintNode({
         blueprintId: blueprint.id,
         nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
@@ -1101,7 +1119,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         refKnowledgeBaseId: det?.refKnowledgeBaseId,
         stateKey: det?.stateKey ?? (isGate ? authoredStateKey(workers[i], authoredStepsByLabel) : undefined),
         gateType: isGate ? "approval" : undefined,
-        config: { role: "worker", workerIndex: i, ...(det?.config ?? {}) },
+        config: { role: "worker", workerIndex: i, ...(det?.config ?? {}), ...(correlation ?? {}) },
       } as any);
       workerNodes.push(node);
     }

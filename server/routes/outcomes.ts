@@ -27,6 +27,7 @@ import { describeSource, parseMeasurementSource, suggestMeasurement, validateMea
 import { KpiActionError, declareKpiMeasurement, recordKpiReading, removeKpiReading } from "../kpi-actions";
 import { RemovalPlanError, planOutcomeRemoval } from "../removal-plans";
 import { listFlowVersions, recordFlowVersion, versionLine } from "../process-flow-versions";
+import { applyFlowSync } from "../process-flow-sync";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 
 const router = Router();
@@ -1732,38 +1733,10 @@ async function createOutcomeVersion(
     res.status(204).send();
   });
 
-  // Process-flow node types that never get their own blueprint node: "trigger"
-  // is the kickoff signal (the orchestrator's own dispatch already plays that
-  // role) and "end" is a terminal marker with no work to do.
-  const STRUCTURAL_NODE_TYPES = new Set(["trigger", "end"]);
-  // Types that become a pause-and-wait edge_gate node (a real human decision)
-  // instead of an LLM-drafted worker agent -- same convention as
-  // create-team-from-proposals' isHumanCheckpoint flag.
-  const HUMAN_CHECKPOINT_NODE_TYPES = new Set(["expert_approval"]);
-
-  function processNodeConfig(n: ProcessNode) {
-    return {
-      sourceProcessNodeId: n.id, sourceLabel: n.label, sourceDescription: n.description || "", sourceType: n.type, sourceActor: n.actor || "",
-      // Persisted so a re-sync can tell "the referenced flow changed" apart
-      // from "nothing changed" -- the label/description/type/actor comparison
-      // alone can't see a change confined to config.refTeamAgentId.
-      sourceRefTeamAgentId: (n.config as any)?.refTeamAgentId || null,
-      sourceExpression: (n.config as any)?.expression || null,
-    };
-  }
-
-  // Sync an already-saved process flow into the live blueprint of the team
-  // agent it was used to build -- see the plan at
-  // C:\Users\swarupd\.claude\plans\snappy-puzzling-sprout.md for the full
-  // design rationale (TC_PROCESS_WORKFLOW_001). Diffs the flow's nodes
-  // against the blueprint's existing ones by a persisted sourceProcessNodeId
-  // correlation (stored in each blueprint node's config, alongside the
-  // process node's label/description/type/actor at the time it was last
-  // synced -- NOT the blueprint node's own `label`, which for an
-  // internal_agent node is the LLM-drafted agent's name, not the process
-  // step's label, so it can never be compared directly to a ProcessNode).
-  // Only changed/added nodes get a fresh LLM draft; unchanged nodes and their
-  // agents are left completely untouched.
+  // Sync an already-saved process flow into the live blueprint of the team it
+  // was used to build. The reconciliation is server/process-flow-sync.ts, shared
+  // with Astra's sync_flow_to_automation tool, so the Studio and the
+  // conversation cannot answer differently.
   router.post("/api/outcomes/:id/process-flow/sync-to-automation", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const outcomeId = String(req.params.id);
@@ -1779,320 +1752,32 @@ async function createOutcomeVersion(
       if (!graph || graph.nodes.length === 0) {
         return res.status(400).json({ message: "This outcome has no saved process flow to sync. Save one from Process Flow Studio first." });
       }
-
       const teamAgent = await storage.getAgent(teamAgentId, orgId);
       if (!teamAgent || teamAgent.agentType !== "team" || teamAgent.outcomeId !== outcomeId) {
         return res.status(404).json({ message: "Team agent not found for this outcome." });
       }
-      const blueprintId = (teamAgent as any).blueprintId as string | null;
-      if (!blueprintId) {
-        return res.status(400).json({ message: "This automation has no blueprint yet -- use \"Turn into a live automation\" first." });
-      }
 
-      // Guard: an in-flight run reads the blueprint live at start/resume with
-      // no snapshot insulation (see dag-execution-engine.ts's
-      // setupTeamAgentDagRun/setupResumeForDagRun) -- mutating it underneath
-      // a running or approval-paused run can execute the wrong node or
-      // resume against a stale approval. Block instead of racing it.
-      const recentRuns = await storage.listDagExecutionRunsByTeamAgent(teamAgentId, 50);
-      const inFlight = recentRuns.find(r => r.status === "running" || r.status === "waiting_approval");
-      if (inFlight) {
-        return res.status(409).json({
-          message: "This automation has a run in progress. Finish or cancel it before syncing.",
-          runId: inFlight.id,
-          runStatus: inFlight.status,
-        });
-      }
+      const result = await applyFlowSync(orgId, {
+        graph,
+        flowName: outcome.name || "Process Flow",
+        teamAgent: teamAgent as any,
+        outcomeId,
+      }, { forceFullRebuild, via: "Studio" });
 
-      const blueprint = await storage.getBlueprint(blueprintId);
-      if (!blueprint) return res.status(404).json({ message: "Blueprint not found." });
-      const [existingNodes, existingEdges] = await Promise.all([
-        storage.getTeamBlueprintNodes(blueprintId),
-        storage.getTeamBlueprintEdges(blueprintId),
-      ]);
-
-      const orchestratorNode = existingNodes.find(n => (n.config as any)?.role === "orchestrator");
-      const existingProcessNodes = existingNodes.filter(n => n.id !== orchestratorNode?.id);
-      const hasCorrelation = existingProcessNodes.some(n => !!(n.config as any)?.sourceProcessNodeId);
-
-      // First-ever sync of a blueprint that predates this feature: existing
-      // node labels are drafted agent names, not process-flow labels, so any
-      // automatic match would be a guess presented as certainty. Surface the
-      // choice explicitly instead of silently reconciling.
-      if (!hasCorrelation && existingProcessNodes.length > 0 && !forceFullRebuild) {
-        return res.json({
-          needsChoice: "legacy_blueprint",
-          message: "This automation predates edit-tracking, so its current agents can't be matched to specific process-flow steps. Rebuild it fully (every current step gets a fresh agent; existing ones are superseded) or skip syncing for now.",
-        });
-      }
-
-      const runNodes = graph.nodes.filter(n => !STRUCTURAL_NODE_TYPES.has(n.type));
-      const byProcessNodeId = new Map<string, typeof existingProcessNodes[number]>();
-      if (!forceFullRebuild) {
-        for (const n of existingProcessNodes) {
-          const srcId = (n.config as any)?.sourceProcessNodeId;
-          if (srcId) byProcessNodeId.set(srcId, n);
+      if ("needsChoice" in result) return res.json(result);
+      if ("blocked" in result) {
+        const blocked = result.blocked;
+        if (blocked.kind === "run_in_flight") {
+          return res.status(409).json({ message: blocked.message, runId: blocked.runId, runStatus: blocked.runStatus });
         }
+        return res.status(400).json({ message: blocked.kind === "no_blueprint" ? "This automation has no blueprint yet -- use \"Turn into a live automation\" first." : blocked.message });
       }
-
-      const unchanged: typeof existingProcessNodes = [];
-      const changed: ProcessNode[] = [];
-      const added: ProcessNode[] = [];
-      const runNodeIds = new Set(runNodes.map(n => n.id));
-
-      for (const pn of runNodes) {
-        const existing = byProcessNodeId.get(pn.id);
-        if (!existing) { added.push(pn); continue; }
-        const cfg = (existing.config as any) || {};
-        const same = cfg.sourceLabel === pn.label && (cfg.sourceDescription || "") === (pn.description || "")
-          && cfg.sourceType === pn.type && (cfg.sourceActor || "") === (pn.actor || "")
-          && (cfg.sourceRefTeamAgentId || null) === ((pn.config as any)?.refTeamAgentId || null)
-          && (cfg.sourceExpression || null) === ((pn.config as any)?.expression || null);
-        if (same) unchanged.push(existing); else changed.push(pn);
-      }
-      // forceFullRebuild deliberately leaves byProcessNodeId empty (nothing
-      // correlates), so "removed" there means every existing process node,
-      // not "nodes byProcessNodeId knows about that vanished" -- the latter
-      // would silently leave every legacy node in place forever.
-      const removedNodes = forceFullRebuild
-        ? existingProcessNodes
-        : Array.from(byProcessNodeId.entries())
-            .filter(([pnId]) => !runNodeIds.has(pnId))
-            .map(([, node]) => node);
-      // A "changed" node's old blueprint row is mechanically identical to a
-      // removed one -- it gets deleted and its agent superseded, same as
-      // §removedNodes, then rebuilt fresh in the "toCreate" pass below. New
-      // identity for the new role, not an in-place prompt rewrite -- keeps
-      // each agent's own trace/audit history meaning what it says.
-      const changedOldNodes = changed
-        .map(pn => byProcessNodeId.get(pn.id))
-        .filter((n): n is NonNullable<typeof n> => !!n);
-
-      const industryId = (teamAgent as any).industry || "general";
-      const superseded: Array<{ label: string; agentId: string }> = [];
-      const nodeIdMap = new Map<string, string>(); // ProcessNode.id -> new/kept teamBlueprintNode.id
-      for (const n of unchanged) nodeIdMap.set((n.config as any).sourceProcessNodeId, n.id);
-
-      // Delete removed + changed-old blueprint nodes, superseding (not
-      // retiring -- that's a real, optionally approval-gated workflow this
-      // background sync shouldn't short-circuit) their now-orphaned agents.
-      for (const node of [...removedNodes, ...changedOldNodes]) {
-        const refAgentId = (node as any).refAgentId as string | null;
-        if (refAgentId) {
-          const agent = await storage.getAgent(refAgentId, orgId);
-          if (agent) superseded.push({ label: (node.config as any)?.sourceLabel || node.label, agentId: refAgentId });
-        }
-        await storage.deleteTeamBlueprintNode(node.id);
-      }
-
-      // Draft/create changed + added nodes -- isolated failures, one node's
-      // draft failing doesn't roll back the others.
-      const toCreate = [...changed, ...added];
-      const created = await Promise.all(toCreate.map(async (pn) => {
-        try {
-          if (HUMAN_CHECKPOINT_NODE_TYPES.has(pn.type)) {
-            const node = await storage.createTeamBlueprintNode({
-              blueprintId,
-              nodeType: "edge_gate",
-              gateType: "approval",
-              label: pn.label,
-              refAgentId: null,
-              config: processNodeConfig(pn),
-            });
-            return { pn, node, ok: true as const };
-          }
-          if (pn.type === "sub_flow") {
-            const refTeamAgentId = (pn.config as any)?.refTeamAgentId || null;
-            if (!refTeamAgentId) {
-              return { pn, node: null, ok: false as const, error: `"${pn.label}" has no flow selected -- pick one in Process Flow Studio before syncing.` };
-            }
-            const node = await storage.createTeamBlueprintNode({
-              blueprintId,
-              nodeType: "sub_flow",
-              label: pn.label,
-              refAgentId: null,
-              refTeamAgentId,
-              stateKey: pn.id.replace(/-/g, "_"),
-              config: processNodeConfig(pn),
-            });
-            return { pn, node, ok: true as const };
-          }
-          if (pn.type === "expression") {
-            const expression = (pn.config as any)?.expression || null;
-            if (!expression) {
-              return { pn, node: null, ok: false as const, error: `"${pn.label}" has no expression -- write one in Process Flow Studio before syncing.` };
-            }
-            const node = await storage.createTeamBlueprintNode({
-              blueprintId,
-              nodeType: "expression",
-              label: pn.label,
-              refAgentId: null,
-              stateKey: pn.id.replace(/-/g, "_"),
-              config: { ...processNodeConfig(pn), expression },
-            });
-            return { pn, node, ok: true as const };
-          }
-          const description = `${pn.label}${pn.description ? ": " + pn.description : ""}${pn.actor ? ` (performed by ${pn.actor})` : ""}`;
-          const { draft } = await draftSingleAgent(description, industryId, orgId);
-          const agent = await storage.createAgent({
-            // The outcome's organization, not the default one createAgent falls back to.
-            organizationId: outcome.organizationId ?? orgId ?? undefined,
-            name: draft.name,
-            description: draft.description,
-            owner: "system",
-            agentType: "single",
-            outcomeId,
-            riskTier: draft.riskTier || "MEDIUM",
-            autonomyMode: draft.autonomyMode || "assisted",
-            systemPrompt: draft.systemPrompt || "",
-            toolsConfig: draft.toolsConfig || [],
-            // An ARRAY of bindings, not { policies: [names] }. Everything that
-            // consumes this field -- the agent detail page, and the MCP-link
-            // route's policy check -- expects an array; the object shape made
-            // that route throw, so an agent created here could never be given
-            // tools. Keep the policy name on both keys the readers look for.
-            policyBindings: (draft.policyBindings ?? []).map((b: any) => ({
-              policyId: b.policyId,
-              policyName: b.policyName,
-              name: b.policyName,
-              domain: b.domain,
-              enforcement: b.enforcement ?? "soft",
-            })),
-            ontologyTags: draft.ontologyTags || [],
-            preloadedSkills: draft.preloadedSkills || [],
-            runtimeConfig: { prompt: description, guardrailsConfig: draft.guardrailsConfig, evalSuiteConfig: draft.evalSuiteConfig },
-          } as any);
-          const node = await storage.createTeamBlueprintNode({
-            blueprintId,
-            nodeType: "internal_agent",
-            label: agent.name,
-            refAgentId: agent.id,
-            config: processNodeConfig(pn),
-          });
-          return { pn, node, ok: true as const };
-        } catch (err: any) {
-          console.error(`[process-flow-sync] failed to draft node "${pn.label}":`, err.message);
-          return { pn, node: null, ok: false as const, error: err.message };
-        }
-      }));
-      for (const c of created) if (c.ok && c.node) nodeIdMap.set(c.pn.id, c.node.id);
-      const draftFailures = created.filter(c => !c.ok).map(c => ({ label: c.pn.label, error: (c as any).error }));
-
-      // Rebuild ONLY edges between two real process nodes -- edges touching
-      // the orchestrator are synthesized (dispatch/fork/return), never 1:1
-      // from a ProcessEdge, and are reconciled separately below by topology,
-      // not by diffing ProcessEdge entries.
-      const existingProcessEdges = existingEdges.filter(e => e.sourceNodeId !== orchestratorNode?.id && e.targetNodeId !== orchestratorNode?.id);
-      const oldEndpointsByPnPair = new Map<string, typeof existingProcessEdges[number]>();
-      for (const e of existingProcessEdges) {
-        const srcPn = existingProcessNodes.find(n => n.id === e.sourceNodeId);
-        const tgtPn = existingProcessNodes.find(n => n.id === e.targetNodeId);
-        const srcId = (srcPn?.config as any)?.sourceProcessNodeId;
-        const tgtId = (tgtPn?.config as any)?.sourceProcessNodeId;
-        if (srcId && tgtId) oldEndpointsByPnPair.set(`${srcId}::${tgtId}`, e);
-      }
-      const runEdges = graph.edges.filter(e => runNodeIds.has(e.from) && runNodeIds.has(e.to));
-      const keptPairKeys = new Set<string>();
-      for (const e of runEdges) {
-        const key = `${e.from}::${e.to}`;
-        const srcNodeId = nodeIdMap.get(e.from);
-        const tgtNodeId = nodeIdMap.get(e.to);
-        if (!srcNodeId || !tgtNodeId) continue; // endpoint failed to draft -- skip, already reported in draftFailures
-        const existingEdge = oldEndpointsByPnPair.get(key);
-        // Endpoints both unchanged (same blueprint node ids as before) AND an
-        // edge already connects them -- leave it untouched. This is what
-        // preserves any evaluationMode:"deterministic" + rule an admin
-        // hardened after creation; recreating the edge fresh would silently
-        // downgrade it back to "ai".
-        if (existingEdge && existingEdge.sourceNodeId === srcNodeId && existingEdge.targetNodeId === tgtNodeId) {
-          keptPairKeys.add(key);
-          continue;
-        }
-        if (existingEdge) await storage.deleteTeamBlueprintEdge(existingEdge.id);
-        await storage.createTeamBlueprintEdge({
-          blueprintId,
-          sourceNodeId: srcNodeId,
-          targetNodeId: tgtNodeId,
-          label: e.label || undefined,
-          condition: e.condition || undefined,
-          failureMode: "escalate",
-        });
-        keptPairKeys.add(key);
-      }
-      // Drop process-to-process edges whose pair no longer exists in the new graph.
-      for (const [key, edge] of Array.from(oldEndpointsByPnPair.entries())) {
-        if (!keptPairKeys.has(key)) await storage.deleteTeamBlueprintEdge(edge.id);
-      }
-
-      // Reconcile the orchestrator's synthesized edges by topology (entry /
-      // terminal nodes among the process-to-process edges), not by copying
-      // ProcessEdge entries -- the orchestrator has no sourceProcessNodeId
-      // and its dispatch/return edges were never 1:1 with the process graph
-      // in the first place (see create-team-from-proposals' tier-adjacency
-      // synthesis). This produces the same edges as that heuristic for the
-      // common single-tier case and degrades gracefully for more complex
-      // flows -- execution readiness depends on connectivity, not the exact
-      // "dispatch" vs "fork" vs "handoff" label wording.
-      if (orchestratorNode) {
-        const hasIncoming = new Set(runEdges.map(e => e.to));
-        const hasOutgoing = new Set(runEdges.map(e => e.from));
-        const entryNodeIds = runNodes.filter(n => !hasIncoming.has(n.id)).map(n => n.id);
-        const isFanOutFanIn = (blueprint.blueprintJson as any)?.pattern === "fan_out_fan_in";
-        const terminalNodeIds = isFanOutFanIn ? runNodes.filter(n => !hasOutgoing.has(n.id)).map(n => n.id) : [];
-
-        const existingDispatch = existingEdges.filter(e => e.sourceNodeId === orchestratorNode.id);
-        const existingReturn = existingEdges.filter(e => e.targetNodeId === orchestratorNode.id);
-        const dispatchTargets = new Set(entryNodeIds.map(id => nodeIdMap.get(id)).filter(Boolean) as string[]);
-        const returnSources = new Set(terminalNodeIds.map(id => nodeIdMap.get(id)).filter(Boolean) as string[]);
-
-        for (const e of existingDispatch) if (!dispatchTargets.has(e.targetNodeId)) await storage.deleteTeamBlueprintEdge(e.id);
-        for (const e of existingReturn) if (!returnSources.has(e.sourceNodeId)) await storage.deleteTeamBlueprintEdge(e.id);
-        const existingDispatchTargets = new Set(existingDispatch.map(e => e.targetNodeId));
-        const existingReturnSources = new Set(existingReturn.map(e => e.sourceNodeId));
-        for (const targetId of Array.from(dispatchTargets)) {
-          if (!existingDispatchTargets.has(targetId)) {
-            await storage.createTeamBlueprintEdge({ blueprintId, sourceNodeId: orchestratorNode.id, targetNodeId: targetId, label: "dispatch", failureMode: "escalate" });
-          }
-        }
-        for (const sourceId of Array.from(returnSources)) {
-          if (!existingReturnSources.has(sourceId)) {
-            await storage.createTeamBlueprintEdge({ blueprintId, sourceNodeId: sourceId, targetNodeId: orchestratorNode.id, label: "return results", failureMode: "escalate" });
-          }
-        }
-      }
-
-      await storage.createAuditEvent({
-        actorType: "system",
-        actorId: "process_flow_sync",
-        action: "outcome.process_flow_synced",
-        objectType: "blueprint",
-        objectId: blueprintId,
-        organizationId: orgId,
-        details: JSON.stringify({
-          outcomeId,
-          teamAgentId,
-          unchanged: unchanged.length,
-          changed: changed.map(n => n.label),
-          added: added.map(n => n.label),
-          removed: removedNodes.map(n => (n.config as any)?.sourceLabel || n.label),
-          draftFailures,
-        }),
-        ontologyTags: resolveOntologyTags("outcome", "outcome.process_flow_synced"),
-      });
-
-      res.json({
-        summary: {
-          unchanged: unchanged.length,
-          changed: changed.map(n => n.label),
-          added: added.map(n => n.label),
-          superseded,
-          draftFailures,
-        },
-      });
+      res.json({ summary: result.summary });
     } catch (e) {
       handleZodError(res, e);
     }
   });
+
 
   router.post("/api/kpis", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {

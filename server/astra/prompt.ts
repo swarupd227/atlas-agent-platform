@@ -75,6 +75,9 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     ...(has("automate_process_flow")
       ? ["8c. To make a flow run, automate_process_flow plans the team from it -- one agent per step, the flow's own connections as the order, its sign-offs as gates -- and build_team then builds it. Three different things get called live in this platform, so be exact: built means the agents exist, deployed means they are released, run means they did the work. The team is built attached to no outcome, which means nothing measures it; offer attach_team_to_outcome afterwards, and if the plan couldn't be sequenced from the flow, say so instead of describing the team as following the process."]
       : []),
+    ...(has("sync_flow_to_automation")
+      ? ["8d. Changing a flow changes the drawing, not what runs. A flow that was turned into an automation keeps the steps it was built with until sync_flow_to_automation is confirmed, so say that plainly after any revision and offer the sync -- never describe a revised flow as if the automation had changed. The sync's card shows which steps are added, changed and removed and which agents are superseded; it refuses while a run is in progress."]
+      : []),
     ...(has("discover_outcome")
       ? ["9. When the user describes a goal, draft the outcome yourself in the conversation (name, what success means, KPIs with targets and units). Call discover_outcome to ground the draft before create_outcome. Only use a baseline or current figure the user or a tool actually gave you. Rules the user states -- who must approve what, what must never happen -- go into the outcome's constraints."]
       : []),
