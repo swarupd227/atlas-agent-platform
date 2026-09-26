@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { resolveAgentRef } from "./refs";
-import type { AstraTool, AstraToolContext, ProofEnvelope, ToolRunResult } from "../types";
+import type { AstraTool, AstraToolContext, ProofEnvelope } from "../types";
 
 /**
  * Ontology & Graph studio pack.
@@ -27,7 +27,6 @@ function industryOf(ctx: AstraToolContext): { industryId: string } | { refuse: s
   return { industryId: ctx.industryId };
 }
 
-const refused = (message: string): ToolRunResult => ({ payload: { ok: false, error: message } });
 
 export const listConceptsTool: AstraTool<{ query?: string; subVertical?: string }> = {
   name: "list_concepts",
@@ -42,10 +41,14 @@ export const listConceptsTool: AstraTool<{ query?: string; subVertical?: string 
   confirm: false,
   run: async (ctx, input) => {
     const ind = industryOf(ctx);
-    if ("refuse" in ind) return refused(ind.refuse);
+    if ("refuse" in ind) throw new Error(ind.refuse);
     const r = await ctx.services.findConcepts(ind.industryId, input.query, input.subVertical ?? ctx.subVertical ?? undefined);
     return {
       payload: {
+        // The step in the conversation is labelled from this.
+        message: input.query
+          ? `${r.matched} of ${r.total} concepts match "${input.query}"`
+          : `${r.total} concepts in this industry's vocabulary`,
         industryId: ind.industryId,
         total: r.total,
         matched: r.matched,
@@ -71,15 +74,11 @@ export const getConceptTool: AstraTool<{ concept: string }> = {
   pack: PACK,
   confirm: false,
   run: async (ctx, input) => {
-    let detail: any;
-    try {
-      detail = await ctx.services.conceptDetail(ctx.orgId, input.concept);
-    } catch (e) {
-      return refused((e as Error).message);
-    }
+    const detail = await ctx.services.conceptDetail(ctx.orgId, input.concept);
     const dangling = detail.relatedTo.filter((r: any) => r.dangling).length;
     return {
       payload: {
+        message: `${detail.label} — ${detail.category}, carried by ${detail.agents.length} of this organization's agents`,
         ...detail,
         agentCount: detail.agents.length,
         ...(dangling ? { danglingRelationships: dangling } : {}),
@@ -106,11 +105,12 @@ export const ontologyCoverageTool: AstraTool<{ subVertical?: string }> = {
   confirm: false,
   run: async (ctx, input) => {
     const ind = industryOf(ctx);
-    if ("refuse" in ind) return refused(ind.refuse);
+    if ("refuse" in ind) throw new Error(ind.refuse);
     const c = await ctx.services.conceptCoverage(ctx.orgId, ind.industryId, input.subVertical ?? ctx.subVertical ?? undefined);
     const worst = (c.bySubVertical ?? []).slice(0, 3);
     return {
       payload: {
+        message: `${c.usedCount} of ${c.totalConcepts} concepts are carried by an agent`,
         industryId: c.industryId,
         subVertical: c.subVertical,
         totalConcepts: c.totalConcepts,
@@ -118,6 +118,7 @@ export const ontologyCoverageTool: AstraTool<{ subVertical?: string }> = {
         unusedCount: c.unusedCount,
         agentsTagged: c.agentsTagged,
         agentsTotal: c.agentsTotal,
+        ...(c.agentsWithLabelOnlyTags ? { agentsTaggedByLabelOnly: c.agentsWithLabelOnlyTags } : {}),
         unusedShown: c.unusedShown,
         unused: c.unused.map((u: any) => u.label),
         ...(worst.length ? { mostUnusedSubVerticals: worst } : {}),
@@ -143,21 +144,24 @@ export const agentAlignmentTool: AstraTool<{ agent: string }> = {
   confirm: false,
   run: async (ctx, input) => {
     const found = await resolveAgentRef(ctx, input.agent);
-    if ("refuse" in found) return refused(found.refuse);
-    let r: any;
-    try {
-      r = await ctx.services.agentAlignment(ctx.orgId, found.item.id);
-    } catch (e) {
-      return refused((e as Error).message);
-    }
+    if ("refuse" in found) throw new Error(found.refuse);
+    const r: any = await ctx.services.agentAlignment(ctx.orgId, found.item.id);
 
     const unrecorded = r.unmatchedBecauseNothingRecorded.length;
     const blocked = r.low.length > 0;
     return {
       payload: {
+        message: r.hasBlueprint
+          ? `${r.low.length} of ${r.examined.length} tools below the production threshold`
+          : "No blueprint, so the production gate examines no tools",
         agent: r.agent.name,
         agentId: r.agent.id,
         concepts: r.concepts.map((c: any) => c.label).filter(Boolean),
+        ...(r.concepts.some((c: any) => !c.linkedToAConcept)
+          ? {
+              taggedByLabelOnly: `${r.concepts.filter((c: any) => !c.linkedToAConcept).length} of those tags name a concept by label with no concept id, so they are not matched to the ontology and count towards nothing.`,
+            }
+          : {}),
         needsRevalidation: r.needsRevalidation,
         ...(r.revalidationReason ? { revalidationReason: r.revalidationReason } : {}),
         threshold: "50% of a tool's parameters matched to concepts",
@@ -174,9 +178,11 @@ export const agentAlignmentTool: AstraTool<{ agent: string }> = {
       },
       artifact: { kind: "ontologyAlignment", title: `${r.agent.name} — ontology alignment`, props: r, fullViewHref: `/agents/${r.agent.id}` },
       proof: {
-        industry: r.concepts.length
-          ? { status: "measured", summary: r.concepts.slice(0, 4).map((c: any) => c.label).filter(Boolean).join(" · ") }
-          : { status: "not_measured", reason: "This agent carries no ontology tags." },
+        industry: r.concepts.some((c: any) => c.linkedToAConcept)
+          ? { status: "measured", summary: r.concepts.filter((c: any) => c.linkedToAConcept).slice(0, 4).map((c: any) => c.label).filter(Boolean).join(" · ") }
+          : r.concepts.length
+            ? { status: "not_measured", reason: "Its tags name concepts by label only, with no concept id to match" }
+            : { status: "not_measured", reason: "This agent carries no ontology tags." },
         compliance: r.hasBlueprint
           ? { status: "measured", summary: `${r.low.length} of ${r.examined.length} tools below the production threshold` }
           : { status: "not_measured", reason: "No blueprint, so the production gate examines no tools." },
@@ -195,14 +201,15 @@ export const checkVocabularyTool: AstraTool<{ text: string }> = {
   confirm: false,
   run: async (ctx, input) => {
     const ind = industryOf(ctx);
-    if ("refuse" in ind) return refused(ind.refuse);
+    if ("refuse" in ind) throw new Error(ind.refuse);
     const r = await ctx.services.vocabularyCheck(ind.industryId, input.text);
     if (r.conceptsChecked === 0) {
-      return refused(`There is no vocabulary for ${ind.industryId} yet, so there is nothing to check this against.`);
+      throw new Error(`There is no vocabulary for ${ind.industryId} yet, so there is nothing to check this against.`);
     }
     const recognised = Array.from(new Set(r.validTerms.map((v: any) => v.conceptLabel)));
     return {
       payload: {
+        message: `${recognised.length} ${recognised.length === 1 ? "concept" : "concepts"} recognised · ${r.mismatches.length} look-alike`,
         industryId: r.industryId,
         conceptsChecked: r.conceptsChecked,
         phrasesChecked: r.totalTermsChecked,

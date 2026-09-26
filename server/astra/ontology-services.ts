@@ -105,11 +105,20 @@ async function conceptCoverage(orgId: string, industryId: string, subVertical?: 
 async function agentAlignment(orgId: string, agentId: string) {
   const agent = await storage.getAgent(agentId, orgId);
   if (!agent) throw new Error("No agent with that id in this organization.");
-  const tags = (Array.isArray(agent.ontologyTags) ? agent.ontologyTags : []) as Array<{ conceptId?: string; conceptLabel?: string; category?: string }>;
+  // Two tag shapes exist in the data: {conceptId, conceptLabel} written by the
+  // build and the audit helpers, and {label} alone written by older paths. Only
+  // an id can be matched to a concept, so a label-only tag makes an agent look
+  // tagged while counting towards nothing -- read both, and say which is which.
+  const tags = (Array.isArray(agent.ontologyTags) ? agent.ontologyTags : []) as Array<{ conceptId?: string; conceptLabel?: string; label?: string; category?: string }>;
   const assessment = await assessToolAlignment(agent.id);
   return {
     agent: { id: agent.id, name: agent.name, status: agent.status, industryId: agent.industryId ?? null },
-    concepts: tags.map((t) => ({ id: t.conceptId ?? null, label: t.conceptLabel ?? null, category: t.category ?? null })),
+    concepts: tags.map((t) => ({
+      id: t.conceptId ?? null,
+      label: t.conceptLabel ?? t.label ?? null,
+      category: t.category ?? null,
+      linkedToAConcept: !!t.conceptId,
+    })),
     needsRevalidation: !!(agent as any).requiresRevalidation,
     revalidationReason: (agent as any).revalidationReason ?? null,
     ...assessment,

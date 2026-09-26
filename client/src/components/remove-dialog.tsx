@@ -177,8 +177,14 @@ export function RemoveDialog({
                         )}
                         {plan.data.team.runCount > 0 && (
                           <p className="mt-1.5 text-muted-foreground">
-                            Its {plan.data.team.runCount === 1 ? "past run stays" : `${plan.data.team.runCount} past runs stay`} in the run history
-                            {plan.data.team.processFlowName ? `, and the process flow "${plan.data.team.processFlowName}" stays` : ""}.
+                            Its {plan.data.team.runCount === 1 ? "past run stays" : `${plan.data.team.runCount} past runs stay`} in the run history.
+                          </p>
+                        )}
+                        {/* Said whether or not the team ever ran: a team built
+                            from a flow and never run still leaves that flow. */}
+                        {plan.data.team.processFlowName && (
+                          <p className="mt-1.5 text-muted-foreground" data-testid="text-team-process-flow">
+                            The process flow "{plan.data.team.processFlowName}" stays, no longer linked to this team.
                           </p>
                         )}
                       </div>

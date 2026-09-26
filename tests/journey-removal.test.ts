@@ -37,6 +37,8 @@ vi.mock("../server/storage", () => ({
     deleteAgent: vi.fn(async (id: string) => { deleted.push(id); agents.delete(id); return true; }),
     deleteAgentTeamMember: vi.fn(async (id: string) => { const i = teams.findIndex((t) => t.id === id); if (i >= 0) teams.splice(i, 1); return true; }),
     updateAgent: vi.fn(async (id: string, patch: any) => { updates.push([id, patch]); Object.assign(agents.get(id) ?? {}, patch); return agents.get(id); }),
+    // Deleting the team clears the flow's link to it (the flow itself stays).
+    updateProcessFlow: vi.fn(async (id: string, patch: any) => ({ id, ...patch })),
     createAuditEvent: vi.fn(async (e: any) => { audits.push(e); return e; }),
   },
 }));

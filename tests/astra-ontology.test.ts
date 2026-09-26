@@ -46,6 +46,8 @@ interface Options {
   conceptAgents?: any[];
   coverage?: Partial<{ totalConcepts: number; usedCount: number; unusedCount: number; unused: any[]; agentsTagged: number; agentsTotal: number }>;
   vocabulary?: { conceptsChecked: number; mismatches: any[]; validTerms: any[]; totalTermsChecked: number };
+  /** Tags that name a concept by label with no concept id -- the shape older paths wrote. */
+  labelOnlyTags?: boolean;
 }
 
 function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}) {
@@ -96,11 +98,17 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
       bySubVertical: [{ subVertical: "Workers Compensation", total: 10, unused: 9 }],
       agentsTagged: 3,
       agentsTotal: 11,
+      agentsWithLabelOnlyTags: 2,
       ...(opts.coverage ?? {}),
     })),
     agentAlignment: vi.fn(async (_org: string, agentId: string) => ({
       agent: { id: agentId, name: "Claims Intake", status: "active", industryId: "insurance" },
-      concepts: [{ id: "c1", label: "Insurance Claim", category: "entity" }],
+      concepts: opts.labelOnlyTags
+        ? [
+            { id: null, label: "Peer Benchmark", category: null, linkedToAConcept: false },
+            { id: null, label: "Envelope Audit Trail", category: null, linkedToAConcept: false },
+          ]
+        : [{ id: "c1", label: "Insurance Claim", category: "entity", linkedToAConcept: true }],
       needsRevalidation: false,
       revalidationReason: null,
       ...align,
@@ -169,7 +177,7 @@ describe("reading the vocabulary", () => {
   });
 
   it("says there is nothing to read when no industry is set", async () => {
-    const t = setup([load(), use("list_concepts"), (m) => { expect(lastTool(m).result.error).toContain("No industry is set"); return done("No industry."); }]);
+    const t = setup([load(), use("list_concepts"), (m) => { expect(lastTool(m).error).toContain("No industry is set"); return done("No industry."); }]);
     await runTurn(t.deps, as("admin", null), t.threadId, "Show the ontology", t.onEvent);
     expect(t.services.findConcepts).not.toHaveBeenCalled();
   });
@@ -191,7 +199,7 @@ describe("reading the vocabulary", () => {
   });
 
   it("refuses a concept id that isn't there", async () => {
-    const t = setup([load(), use("get_concept", { concept: "nope" }), (m) => { expect(lastTool(m).result.error).toContain("No ontology concept"); return done("Not found."); }]);
+    const t = setup([load(), use("get_concept", { concept: "nope" }), (m) => { expect(lastTool(m).error).toContain("No ontology concept"); return done("Not found."); }]);
     await runTurn(t.deps, as("admin"), t.threadId, "Show concept nope", t.onEvent);
   });
 });
@@ -205,6 +213,7 @@ describe("coverage", () => {
         const p = lastTool(m).result;
         expect(p).toMatchObject({ totalConcepts: 40, usedCount: 6, unusedCount: 34, agentsTagged: 3, agentsTotal: 11 });
         expect(p.basis).toContain("industry's shared vocabulary");
+        expect(p.agentsTaggedByLabelOnly).toBe(2);
         expect(p.mostUnusedSubVerticals[0]).toMatchObject({ subVertical: "Workers Compensation", unused: 9 });
         return done("Six of forty.");
       },
@@ -257,8 +266,27 @@ describe("what the production gate is actually measuring", () => {
     await runTurn(t.deps, as("admin"), t.threadId, "Is it aligned?", t.onEvent);
   });
 
+  it("doesn't call a label-only tag a concept, because nothing can match it", async () => {
+    // Live, an agent carrying three tags of the shape {label} was reported as
+    // carrying no concepts at all: only a conceptId can be matched to the
+    // ontology, but "none" was the wrong way to say that.
+    const t = setup([
+      load(),
+      use("agent_ontology_alignment", { agent: "Claims Intake" }),
+      (m) => {
+        const p = lastTool(m).result;
+        expect(p.concepts).toEqual(["Peer Benchmark", "Envelope Audit Trail"]);
+        expect(p.taggedByLabelOnly).toContain("no concept id");
+        return done("Tagged, but not to the ontology.");
+      },
+    ], { labelOnlyTags: true });
+    await runTurn(t.deps, as("admin"), t.threadId, "Is it aligned?", t.onEvent);
+    const message = t.store.threadMessages(t.threadId).at(-1)!;
+    expect((message.proof as any)?.industry).toMatchObject({ status: "not_measured" });
+  });
+
   it("refuses an agent that isn't this organization's", async () => {
-    const t = setup([load(), use("agent_ontology_alignment", { agent: "Someone Else" }), (m) => { expect(lastTool(m).result.error).toContain('No agent named "Someone Else"'); return done("Not here."); }]);
+    const t = setup([load(), use("agent_ontology_alignment", { agent: "Someone Else" }), (m) => { expect(lastTool(m).error).toContain('No agent named "Someone Else"'); return done("Not here."); }]);
     await runTurn(t.deps, as("admin"), t.threadId, "Check it", t.onEvent);
     expect(t.services.agentAlignment).not.toHaveBeenCalled();
   });
@@ -284,9 +312,38 @@ describe("checking text against the vocabulary", () => {
   });
 
   it("says so rather than passing text when the industry has no vocabulary yet", async () => {
-    const t = setup([load(), use("check_vocabulary", { text: "anything at all" }), (m) => { expect(lastTool(m).result.error).toContain("no vocabulary for insurance yet"); return done("Nothing to check against."); }],
+    const t = setup([load(), use("check_vocabulary", { text: "anything at all" }), (m) => { expect(lastTool(m).error).toContain("no vocabulary for insurance yet"); return done("Nothing to check against."); }],
       { vocabulary: { conceptsChecked: 0, mismatches: [], validTerms: [], totalTermsChecked: 0 } });
     await runTurn(t.deps, as("admin"), t.threadId, "Check this", t.onEvent);
+  });
+});
+
+describe("what the conversation shows for each step", () => {
+  // Live, every one of these steps rendered as the tool name and nothing else,
+  // because the engine builds a step's label from `message` (or a `total`,
+  // which for list_concepts was the whole vocabulary rather than the matches).
+  const labels = (events: any[]) => events.filter((e) => e.type === "tool_result").map((e) => e.preview);
+
+  it("labels each step with the figure the step is about", async () => {
+    const seen: any[] = [];
+    const t = setup([load(), use("list_concepts", { query: "claim" }), use("ontology_coverage"), use("agent_ontology_alignment", { agent: "Claims Intake" }), use("check_vocabulary", { text: "Log the subrigation." }), done("Done.")]);
+    await runTurn(t.deps, as("admin"), t.threadId, "Look at our ontology", (e) => seen.push(e));
+    expect(labels(seen)).toEqual([
+      "Ontology & Graph tools loaded",
+      '1 of 2 concepts match "claim"',
+      "6 of 40 concepts are carried by an agent",
+      "1 of 2 tools below the production threshold",
+      "1 concept recognised · 1 look-alike",
+    ]);
+  });
+
+  it("shows a refusal as a failed step, not a silent success", async () => {
+    const seen: any[] = [];
+    const t = setup([load(), use("get_concept", { concept: "guessed-id" }), done("Not found.")]);
+    await runTurn(t.deps, as("admin"), t.threadId, "Show concept guessed-id", (e) => seen.push(e));
+    const step = seen.filter((e) => e.type === "tool_result").at(-1);
+    expect(step).toMatchObject({ tool: "get_concept", ok: false });
+    expect(step.preview).toContain("No ontology concept with that id");
   });
 });
 

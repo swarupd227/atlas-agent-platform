@@ -45,6 +45,8 @@ export interface TeamRemovalPlan {
   keeps: string[];
   runCount: number;
   processFlowName: string | null;
+  /** Set when a flow points at this team: the flow stays, the link is cleared. */
+  processFlowId: string | null;
   /** Whether this team is also listed in the Journey Library. */
   inLibrary: boolean;
 }
@@ -83,13 +85,18 @@ export async function planTeamRemoval(orgId: string | undefined, teamAgentId: st
     keeps: workers.filter((w) => w.alsoUsedBy.length > 0).map((w) => `${w.name} (also used by ${w.alsoUsedBy.join(", ")})`),
     runCount: runs.total ?? 0,
     processFlowName: flow ? (flow as any).name ?? null : null,
+    processFlowId: flow ? (flow as any).id ?? null : null,
     inLibrary: !!orchestrator.isCuratedJourney,
   };
 }
 
 /**
  * Delete the team. Its runs stay in the run history because they happened, and
- * its process flow stays because a flow can outlive the team that ran it.
+ * its process flow stays because a flow can outlive the team that ran it -- but
+ * the flow's link to this team is cleared, or the Studio would keep offering to
+ * sync a flow to an agent that no longer exists. Cowork can now create that
+ * link from a conversation (automate_process_flow), so the dangling id would
+ * have gone from rare to ordinary.
  */
 export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise<{ deleted: string[]; kept: string[]; runCount: number }> {
   const plan = await planTeamRemoval(actor.orgId, teamAgentId);
@@ -105,6 +112,10 @@ export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise
   await storage.deleteAgent(plan.teamId, actor.orgId);
   deleted.unshift(plan.teamName);
 
+  if (plan.processFlowId) {
+    await storage.updateProcessFlow(plan.processFlowId, { teamAgentId: null } as any, actor.orgId).catch(() => {});
+  }
+
   await storage.createAuditEvent({
     organizationId: actor.orgId,
     actorType: "user",
@@ -118,6 +129,7 @@ export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise
       kept: plan.keeps,
       runsKept: plan.runCount,
       processFlowKept: plan.processFlowName,
+      processFlowUnlinked: !!plan.processFlowId,
       fromLibrary: plan.inLibrary,
       via: actor.via,
     }),

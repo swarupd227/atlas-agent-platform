@@ -24,6 +24,7 @@ const agents = new Map<string, any>();
 const teams: Array<{ id: string; teamAgentId: string; memberAgentId: string }> = [];
 const audits: any[] = [];
 const deleted: string[] = [];
+const flowUpdates: Array<{ id: string; patch: any }> = [];
 
 vi.mock("../server/storage", () => ({
   storage: {
@@ -43,6 +44,7 @@ vi.mock("../server/storage", () => ({
       for (let i = teams.length - 1; i >= 0; i--) if (teams[i].teamAgentId === id || teams[i].memberAgentId === id) teams.splice(i, 1);
       return true;
     }),
+    updateProcessFlow: vi.fn(async (id: string, patch: any) => { flowUpdates.push({ id, patch }); return { id, ...patch }; }),
     createAuditEvent: vi.fn(async (e: any) => { audits.push(e); return e; }),
   },
 }));
@@ -56,6 +58,7 @@ beforeEach(() => {
   teams.length = 0;
   audits.length = 0;
   deleted.length = 0;
+  flowUpdates.length = 0;
   const add = (id: string, name: string, over: any = {}) => agents.set(id, { id, name, organizationId: ORG, isCuratedJourney: false, ...over });
   add("team-1", "Claims intake team");
   add("team-2", "Another team");
@@ -111,7 +114,7 @@ describe("deleting it", () => {
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({ action: "team_deleted", actorId: "user-1", objectId: "team-1" });
     const details = JSON.parse(audits[0].details);
-    expect(details).toMatchObject({ via: "Agents page", runsKept: 2, processFlowKept: "Claims intake", fromLibrary: false });
+    expect(details).toMatchObject({ via: "Agents page", runsKept: 2, processFlowKept: "Claims intake", processFlowUnlinked: true, fromLibrary: false });
     expect(details.kept).toEqual(["Shared assessor (also used by Another team)"]);
   });
 });
@@ -143,5 +146,17 @@ describe("the Journey Library", () => {
     expect(journeyActions).toContain("return deleteTeam(actor, teamAgentId);");
     // Unlisting has no equivalent elsewhere, so it stays in the journey module.
     expect(journeyActions).toContain('action: "journey_unlisted"');
+  });
+});
+
+describe("the process flow it was built from", () => {
+  it("stays, but stops pointing at an agent that no longer exists", async () => {
+    // Cowork can now build a team from a library flow, which links the two. The
+    // Studio reads that link to offer "sync to automation", so leaving it behind
+    // after the team is gone offers a sync to nothing.
+    await deleteTeam(actor, "team-1");
+    expect(flowUpdates).toEqual([{ id: "flow-1", patch: { teamAgentId: null } }]);
+    // The flow itself is never deleted: a process can outlive the team that ran it.
+    expect(deleted).not.toContain("flow-1");
   });
 });

@@ -167,7 +167,8 @@ export function OntologyCoverage({ props }: { props: Record<string, any> }) {
           <div className="h-full bg-primary" style={{ width: `${Math.round(used * 100)}%` }} />
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          {props.agentsTagged} of {props.agentsTotal} agents carry any concept. The vocabulary is the industry's; the usage is this organization's.
+          {props.agentsTagged} of {props.agentsTotal} agents carry a concept id. The vocabulary is the industry's; the usage is this organization's.
+        {props.agentsWithLabelOnlyTags > 0 && ` A further ${props.agentsWithLabelOnlyTags} tag concepts by label only, with no id to match, so they count towards nothing here.`}
         </p>
       </div>
 
@@ -220,11 +221,24 @@ export function OntologyAlignment({ props }: { props: Record<string, any> }) {
         {concepts.length === 0 ? (
           <p className="text-sm text-muted-foreground">None. Nothing ties this agent to the industry's vocabulary.</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {concepts.map((c, i) => (
-              <span key={`${c.id}-${i}`} className="rounded border border-border px-1.5 py-0.5 text-[11px]">{c.label}</span>
-            ))}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {concepts.map((c, i) => (
+                <span
+                  key={`${c.id}-${i}`}
+                  className={`rounded border px-1.5 py-0.5 text-[11px] ${c.linkedToAConcept ? "border-border" : "border-dashed border-border text-muted-foreground"}`}
+                  title={c.linkedToAConcept ? undefined : "Named by label only: no concept id, so it isn't matched to the ontology"}
+                >
+                  {c.label}
+                </span>
+              ))}
+            </div>
+            {concepts.some((c) => !c.linkedToAConcept) && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Dashed tags name a concept by label with no id, so they aren't matched to the ontology and count towards nothing.
+              </p>
+            )}
+          </>
         )}
       </div>
 

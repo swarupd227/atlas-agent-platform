@@ -28,6 +28,12 @@ export interface OntologyCoverage {
   /** How many of the organization's agents carry any ontology tag at all. */
   agentsTagged: number;
   agentsTotal: number;
+  /**
+   * Agents whose tags name a concept by label with no concept id. Both shapes
+   * exist in the data, and only an id can be matched to a concept -- so these
+   * agents look tagged and count towards nothing. Part of any coverage gap.
+   */
+  agentsWithLabelOnlyTags: number;
 }
 
 export async function ontologyCoverage(orgId: string | undefined, industryId: string, subVertical?: string): Promise<OntologyCoverage> {
@@ -36,9 +42,11 @@ export async function ontologyCoverage(orgId: string | undefined, industryId: st
 
   const usedConceptIds = new Set<string>();
   let agentsTagged = 0;
+  let agentsWithLabelOnlyTags = 0;
   for (const a of allAgents) {
-    const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId?: string }>) : [];
+    const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId?: string; label?: string }>) : [];
     if (tags.some((t) => t?.conceptId)) agentsTagged += 1;
+    if (tags.some((t) => !t?.conceptId && t?.label)) agentsWithLabelOnlyTags += 1;
     for (const t of tags) {
       if (t?.conceptId) usedConceptIds.add(t.conceptId);
     }
@@ -77,5 +85,6 @@ export async function ontologyCoverage(orgId: string | undefined, industryId: st
     bySubVertical,
     agentsTagged,
     agentsTotal: allAgents.length,
+    agentsWithLabelOnlyTags,
   };
 }
