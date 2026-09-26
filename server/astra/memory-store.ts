@@ -84,6 +84,25 @@ export class MemoryThreadStore implements ThreadStore {
     return before;
   }
 
+  /** The DbThreadStore reader, so thread-actions can be tested against this double. */
+  async getThreadForCaller(threadId: string, orgId: string, _userId: string | null) {
+    const t = this.scoped(threadId, orgId);
+    if (!t) return null;
+    return {
+      thread: { id: t.id, title: (t as any).title ?? "New conversation", status: t.status, outcomeId: null, pendingAction: clone(t.pendingAction), createdAt: null, updatedAt: null } as any,
+      messages: this.messages.filter((m) => m.threadId === threadId),
+    };
+  }
+
+  async deleteThread(threadId: string, orgId: string, _userId: string | null): Promise<boolean | null> {
+    const thread = this.threads.get(threadId);
+    if (!thread || thread.orgId !== orgId) return null;
+    if (thread.status === "running") return false;
+    this.threads.delete(threadId);
+    for (let i = this.messages.length - 1; i >= 0; i--) if (this.messages[i].threadId === threadId) this.messages.splice(i, 1);
+    return true;
+  }
+
   async appendMessage(orgId: string, message: NewMessage): Promise<AstraMessageRecord> {
     const record: AstraMessageRecord & { orgId: string } = {
       ...clone(message),

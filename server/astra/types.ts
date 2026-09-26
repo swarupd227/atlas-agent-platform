@@ -229,6 +229,11 @@ export interface ThreadStore {
    * the action is unknown, already decided, or belongs to another organization.
    */
   claimPendingAction(threadId: string, orgId: string, actionId: string): Promise<ThreadState | null>;
+  /**
+   * Delete a conversation and its messages. Null when it isn't the caller's to
+   * delete; false when it is running, because a live turn is mid-write.
+   */
+  deleteThread(threadId: string, orgId: string, userId: string | null): Promise<boolean | null>;
   appendMessage(orgId: string, message: NewMessage): Promise<AstraMessageRecord>;
   markActionDecided(orgId: string, messageId: string, decision: PendingDecision): Promise<void>;
 }

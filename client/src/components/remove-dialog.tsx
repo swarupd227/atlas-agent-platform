@@ -63,6 +63,7 @@ export function RemoveDialog({
   invalidate,
   onDeleted,
   buttonLabel = "Delete",
+  iconOnly = false,
   testId,
 }: {
   /** "outcome", "agent" — used in the title and the toast. */
@@ -77,6 +78,8 @@ export function RemoveDialog({
   invalidate: string[];
   onDeleted?: () => void;
   buttonLabel?: string;
+  /** A bare ✕ instead of a labelled button, for a row in a list. */
+  iconOnly?: boolean;
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -110,15 +113,29 @@ export function RemoveDialog({
 
   return (
     <>
-      <Button
-        size="sm"
-        variant="ghost"
-        className="text-muted-foreground"
-        onClick={() => setOpen(true)}
-        data-testid={testId ?? `button-remove-${noun}`}
-      >
-        <Trash2 className="mr-1.5 h-3.5 w-3.5" />{buttonLabel}
-      </Button>
+      {iconOnly ? (
+        <button
+          type="button"
+          // Shown on hover or keyboard focus, so a list of rows stays quiet.
+          className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring group-hover:opacity-100"
+          onClick={() => setOpen(true)}
+          aria-label={`Delete ${noun} ${name}`}
+          title={`Delete this ${noun}`}
+          data-testid={testId ?? `button-remove-${noun}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-muted-foreground"
+          onClick={() => setOpen(true)}
+          data-testid={testId ?? `button-remove-${noun}`}
+        >
+          <Trash2 className="mr-1.5 h-3.5 w-3.5" />{buttonLabel}
+        </Button>
+      )}
 
       <AlertDialog open={open} onOpenChange={(next) => !remove.isPending && setOpen(next)}>
         <AlertDialogContent data-testid="dialog-remove">

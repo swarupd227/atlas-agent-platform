@@ -10,7 +10,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { getDefaultOrgId, getOrgId } from "../auth";
-import { checkPermission, getRequestRole, hasPermission } from "../permissions";
+import { checkPermission, getRequestActorLabel, getRequestRole, hasPermission } from "../permissions";
+import { ThreadRemovalError, planThreadRemoval, removeThread } from "../astra/thread-actions";
 import { llmInvokeRateLimiter } from "../rate-limits";
 import { openSse as openSseStream } from "../sse";
 import { storage } from "../storage";
@@ -87,6 +88,32 @@ router.post("/api/astra/threads", checkPermission("use_astra"), async (req, res)
   if (!parsed.success) return res.status(400).json({ message: "Invalid request", errors: parsed.error.issues });
   const { store } = getAstraRuntime();
   res.status(201).json(await store.createThread(ctx.orgId, ctx.userId, parsed.data.title));
+});
+
+/** What deleting this conversation would take. */
+router.get("/api/astra/threads/:id/removal", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  const { store } = getAstraRuntime();
+  try {
+    res.json(await planThreadRemoval(store, { ...ctx, actorLabel: getRequestActorLabel(req) }, req.params.id as string));
+  } catch (e) {
+    if (e instanceof ThreadRemovalError) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+});
+
+/** Delete a conversation. What Astra did in it is not undone. */
+router.delete("/api/astra/threads/:id", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  const { store } = getAstraRuntime();
+  try {
+    res.json(await removeThread(store, { ...ctx, actorLabel: getRequestActorLabel(req) }, req.params.id as string));
+  } catch (e) {
+    if (e instanceof ThreadRemovalError) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
 });
 
 router.get("/api/astra/threads/:id", checkPermission("use_astra"), async (req, res) => {

@@ -199,6 +199,22 @@ export class DbThreadStore implements ThreadStore {
     return { thread: toSummary(row), messages: messages.map(toMessageRecord) };
   }
 
+  /**
+   * Delete a conversation and its messages. What Astra did in it — an outcome
+   * created, a team built, an approval decided — is not undone: those live in
+   * their own tables and in the audit trail.
+   */
+  async deleteThread(threadId: string, orgId: string, userId: string | null): Promise<boolean | null> {
+    const [row] = await db.select().from(astraThreads).where(and(eq(astraThreads.id, threadId), eq(astraThreads.organizationId, orgId)));
+    if (!row || !canAccessThread({ organizationId: row.organizationId, actorUserId: row.actorUserId }, { orgId, userId })) return null;
+    // A running turn is still writing messages and will save state when it
+    // finishes; deleting underneath it would resurrect the thread as a stub.
+    if (row.status === "running") return false;
+    await db.delete(astraMessages).where(and(eq(astraMessages.threadId, threadId), eq(astraMessages.organizationId, orgId)));
+    await db.delete(astraThreads).where(and(eq(astraThreads.id, threadId), eq(astraThreads.organizationId, orgId)));
+    return true;
+  }
+
   /** Name a new thread after its first message. */
   async titleIfDefault(threadId: string, orgId: string, firstMessage: string): Promise<void> {
     const text = firstMessage.replace(/\s+/g, " ").trim();

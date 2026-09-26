@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, House, Library as LibraryIcon, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNeedsYou } from "./api";
+import { RemoveDialog } from "@/components/remove-dialog";
 import type { NeedsYou, NeedsYouItem, ThreadSummary } from "./types";
 import type { Mentionable } from "./mention";
 
@@ -166,19 +167,34 @@ export function Rail({
           ) : (
             <ul className="space-y-0.5">
               {threads.map((t) => (
-                <li key={t.id}>
+                // The row and its delete are siblings: a button inside a button
+                // is invalid, and the delete must not open the conversation.
+                <li
+                  key={t.id}
+                  className={`group flex items-center gap-1 rounded pr-1 ${
+                    t.id === activeId ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent/60"
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={() => onSelect(t.id)}
                     aria-current={t.id === activeId ? "page" : undefined}
-                    className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-                      t.id === activeId ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent/60"
-                    }`}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                     data-testid="astra-thread-item"
                   >
                     <span className="truncate">{t.title}</span>
                     {t.status === "failed" && <span className="ml-auto shrink-0 font-mono text-[10px] text-[hsl(var(--astra-fail))]">failed</span>}
                   </button>
+                  <RemoveDialog
+                    noun="conversation"
+                    name={t.title}
+                    planUrl={`/api/astra/threads/${t.id}/removal`}
+                    deleteUrl={`/api/astra/threads/${t.id}`}
+                    invalidate={["/api/astra/threads"]}
+                    onDeleted={() => { if (t.id === activeId) onNew(); }}
+                    iconOnly
+                    testId={`astra-thread-remove-${t.id}`}
+                  />
                 </li>
               ))}
             </ul>
