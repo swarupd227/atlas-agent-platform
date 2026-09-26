@@ -86,11 +86,44 @@ describe("the node a step becomes", () => {
     expect(source).toContain("let authoredSteps: any[] = Array.isArray(processFlowSteps) ? processFlowSteps : [];");
   });
 
+  it("falls back to an agent when an expression does not parse", async () => {
+    // The rule below was applied only to a MISSING expression. One that is
+    // present and does not compile is the same case, and cost a whole run:
+    // live 2026-09-25 a drafting model wrote this for a confidence gate, the
+    // node was built, and at wave 3 of 20 it failed to compile and every node
+    // after it was skipped -- including a treaty evaluation that was correct.
+    const jsonata = (await import("jsonata")).default;
+    const MODELS_BROKEN_EXPRESSION =
+      `$copeData := $states.cope_normalization_agent.output; {"confidenceMet": $copeData.extractionConfidence >= 0.85}`;
+    // `;` is only legal inside a ( ) block. Knowable at build time.
+    expect(() => jsonata(MODELS_BROKEN_EXPRESSION)).toThrow();
+    // Wrapped, the same text is valid -- so the check must be a real compile,
+    // not a substring rule that would reject both or neither.
+    expect(() => jsonata(`(${MODELS_BROKEN_EXPRESSION})`)).not.toThrow();
+
+    expect(source).toContain("function compiles(expression: string): string | null");
+    expect(source).toContain("const broken = compiles(expression);");
+    expect(source).toContain("if (broken) {");
+    // Falls back rather than building a node guaranteed to fail...
+    expect(source).toMatch(/if \(broken\) \{[\s\S]{0,400}?return null;/);
+    // ...and says so, through the warnings the build already returns.
+    expect(source).toContain("does not parse (${broken}), so it runs as an agent instead");
+    // Both worker-node paths (tiered and flat) pass the sink.
+    expect(source.match(/authoredStepsByLabel, \(m\) => structureWarnings\.push\(m\)\)/g) ?? []).toHaveLength(2);
+  });
+
+  it("checks a tool argument's expression too, which fails the same way", () => {
+    // A $expr in toolArgs is evaluated against run state exactly as a node's
+    // expression is; a broken one means the call is never dispatched.
+    expect(source).toContain("const expr = (spec as { $expr?: unknown } | null)?.$expr;");
+    expect(source).toMatch(/const broken = compiles\(expr\);[\s\S]{0,400}?return null;/);
+  });
+
   it("falls back to an agent when a descriptor is incomplete", () => {
     // An expression node with no expression fails the run; an agent merely costs
     // money. The cheap failure is the wrong one to choose.
-    expect(source).toContain('text(exec.expression) ? { nodeType: "expression"');
-    expect(source).toContain('text(exec.toolServerId) && text(exec.toolName)');
+    expect(source).toContain("if (!expression) return null;");
+    expect(source).toContain("if (!text(exec.toolServerId) || !text(exec.toolName)) return null;");
   });
 
   it("classifies the authored steps the derivation reads", () => {

@@ -17,6 +17,7 @@ import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema"
 import { parseConditionToRule } from "@shared/condition-to-rule";
 import { classifyStep } from "@shared/flow-execution-kind";
 import { stateKeyForLabel } from "@shared/state-key";
+import jsonata from "jsonata";
 
 export class TeamBuildNotFoundError extends Error {
   constructor(message: string) {
@@ -153,9 +154,34 @@ function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any
   }
 }
 
+/**
+ * Why a JSONata string is compiled here and not left to the run.
+ *
+ * The rule above -- an incomplete descriptor falls back to an agent, because a
+ * failed run is a worse outcome than a model call -- was only applied to a
+ * MISSING expression. An expression that is present and does not parse is the
+ * same case and was not covered, so a typo became a dead run.
+ *
+ * Live 2026-09-25: a drafting model wrote `$x := $states.foo.output; {...}` for
+ * a confidence gate -- `;` is only legal inside a ( ) block, and `$states` is
+ * a namespace this engine does not have. The node was built, the run reached
+ * it at wave 3 of 20, the node failed to compile, and every node after it was
+ * skipped: twenty agents' worth of work lost to one unparsed string that was
+ * knowable at build time.
+ */
+function compiles(expression: string): string | null {
+  try {
+    jsonata(expression);
+    return null;
+  } catch (e: any) {
+    return String(e?.message || e).slice(0, 200);
+  }
+}
+
 function deterministicNodeFor(
   proposal: any,
   stepsByLabel?: Map<string, any>,
+  warn?: (message: string) => void,
 ): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; stateKey?: string; config: Record<string, unknown> } | null {
   // The authored step first, and only then whatever the proposer invented.
   //
@@ -174,8 +200,17 @@ function deterministicNodeFor(
   // and those nodes keep the engine's slug-of-the-node-label default.
   const stateKey = text(exec.stateKey) || undefined;
   switch (exec.kind) {
-    case "expression":
-      return text(exec.expression) ? { nodeType: "expression", stateKey, config: { expression: text(exec.expression) } } : null;
+    case "expression": {
+      const expression = text(exec.expression);
+      if (!expression) return null;
+      const broken = compiles(expression);
+      if (broken) {
+        warn?.(`"${proposal?.name ?? "A step"}" was going to run without a model, but its expression does not parse (${broken}), so it runs as an agent instead. Fix the expression to make the step free and deterministic.`);
+        console.warn(`[team-build] expression for "${proposal?.name}" does not compile, falling back to an agent: ${broken}`);
+        return null;
+      }
+      return { nodeType: "expression", stateKey, config: { expression } };
+    }
     case "knowledge_base":
       return text(exec.knowledgeBaseId)
         // The query is fixed at authoring time: this is retrieval scoped to the
@@ -185,10 +220,24 @@ function deterministicNodeFor(
         : null;
     case "skill":
       return text(exec.skillId) ? { nodeType: "skill", refSkillId: text(exec.skillId), stateKey, config: {} } : null;
-    case "tool_call":
-      return text(exec.toolServerId) && text(exec.toolName)
-        ? { nodeType: "tool_call", stateKey, config: { toolServerId: text(exec.toolServerId), toolName: text(exec.toolName), toolArgs: (exec.toolArgs && typeof exec.toolArgs === "object") ? exec.toolArgs : {} } }
-        : null;
+    case "tool_call": {
+      if (!text(exec.toolServerId) || !text(exec.toolName)) return null;
+      const toolArgs = (exec.toolArgs && typeof exec.toolArgs === "object") ? exec.toolArgs as Record<string, any> : {};
+      // An argument's $expr is evaluated against run state exactly as a node's
+      // expression is, and fails the node the same way -- the call is never
+      // dispatched. Checked here for the same reason.
+      for (const [name, spec] of Object.entries(toolArgs)) {
+        const expr = (spec as { $expr?: unknown } | null)?.$expr;
+        if (typeof expr !== "string") continue;
+        const broken = compiles(expr);
+        if (broken) {
+          warn?.(`"${proposal?.name ?? "A step"}" was going to call ${text(exec.toolName)} without a model, but the expression for its "${name}" argument does not parse (${broken}), so it runs as an agent instead.`);
+          console.warn(`[team-build] toolArgs.${name} for "${proposal?.name}" does not compile, falling back to an agent: ${broken}`);
+          return null;
+        }
+      }
+      return { nodeType: "tool_call", stateKey, config: { toolServerId: text(exec.toolServerId), toolName: text(exec.toolName), toolArgs } };
+    }
     default:
       return null;
   }
@@ -909,7 +958,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         if (!worker) continue;
 
         const isGate = humanCheckpointWorkerIds.has(worker.id);
-        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel);
+        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m));
         const node = await storage.createTeamBlueprintNode({
           blueprintId: blueprint.id,
           nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
@@ -992,7 +1041,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
       const posY = isSequential ? 150 + i * 120 : 220;
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
-      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel);
+      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m));
       const node = await storage.createTeamBlueprintNode({
         blueprintId: blueprint.id,
         nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
