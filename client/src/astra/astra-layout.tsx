@@ -158,6 +158,10 @@ function Workspace() {
             <Library onAsk={(text) => void send(text)} />
           ) : (
           <Thread
+            // Keyed by the conversation: without this the Composer instance
+            // survives a switch and an unsent draft written in one
+            // conversation follows you into the next.
+            key={threadId ?? "home"}
             messages={thread.messages}
             status={thread.status}
             live={thread.live}
@@ -165,6 +169,15 @@ function Workspace() {
             error={thread.error}
             hasThread={!!threadId}
             onSend={(text) => void send(text)}
+            onStop={() => void thread.stop()}
+            stopping={thread.stopping}
+            onEdit={(text) => setComposerInsert({ text, nonce: Date.now(), replace: true })}
+            onRetry={() => {
+              // Ask the same thing again, as a new message: nothing in the
+              // conversation is rewritten or hidden.
+              const lastAsked = [...thread.messages].reverse().find((m) => m.role === "user")?.markdown;
+              if (lastAsked) void send(lastAsked);
+            }}
             onDecide={(actionId, decision) => void thread.decide(actionId, decision)}
             onOpenArtifact={setArtifact}
             mentionables={mentionables}

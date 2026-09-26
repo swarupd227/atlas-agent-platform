@@ -12,6 +12,7 @@
  *    injected, so the engine imports no database code.
  */
 import type { LLMMessage } from "../llm-provider";
+import { clearStop, isStopRequested, stoppedMessage } from "./stop-turn";
 import type {
   AstraContext,
   AstraEvent,
@@ -48,6 +49,8 @@ export interface EngineDeps {
   /** Grounding for the system prompt, beyond the tool list. */
   grounding?: (ctx: AstraContext) => Promise<Omit<PromptGrounding, "toolNames">>;
   maxIterations?: number;
+  /** Whether the user has asked this turn to stop (default: the in-memory registry). */
+  stopRequested?: (threadId: string) => boolean;
   /** User turns of history replayed to the model. */
   historyTurns?: number;
   maxTokens?: number;
@@ -159,6 +162,8 @@ export async function runTurn(
   }
   const thread = await deps.store.loadThread(threadId, ctx.orgId);
   if (!thread) throw new AstraNotFoundError("Thread");
+  // A stop asked for while the last turn was ending must not kill this one.
+  clearStop(threadId);
 
   const cp = thread.checkpoint;
   // A turn that crashed mid-batch (e.g. a restart) leaves tool calls without results.
@@ -253,6 +258,10 @@ async function loop(s: Session, approvedIndex: number | null): Promise<ThreadSta
   }
 
   while (true) {
+    // Between model calls: the cheapest place to stop, and the most likely one
+    // to be reached while the user is watching a long turn.
+    if (stopping(s)) return stopTurn(s);
+
     if (cp.iterationsUsed >= maxIterations) {
       return finishTurn(s, cp.turn.lastAssistantText
         ? `${cp.turn.lastAssistantText}\n\nI stopped here: this turn reached its limit of ${maxIterations} steps.`
@@ -337,6 +346,15 @@ async function continueCalls(s: Session, approvedIndex: number | null, fromLoop 
   for (let i = cp.pendingToolIndex; i < cp.pendingToolCalls.length; i++) {
     const call = cp.pendingToolCalls[i];
     cp.pendingToolIndex = i;
+
+    // Between tool calls, never inside one: a tool that has started finishes
+    // and records its result, because a half-written record is worse than a
+    // slow stop. The calls not yet made are closed off so the next turn does
+    // not see them dangling.
+    if (stopping(s)) {
+      closeDanglingToolCalls(cp, "The turn was stopped before this ran.");
+      return stopTurn(s);
+    }
 
     if (call.name === FINISH_TURN) {
       cp.turn.suggestions = parseSuggestions(call.arguments);
@@ -433,8 +451,32 @@ async function pauseForConfirmation(s: Session, action: PendingAction): Promise<
   return "awaiting_confirmation";
 }
 
+/** Whether the user has asked this turn to stop. */
+function stopping(s: Session): boolean {
+  const asked = s.deps.stopRequested ?? isStopRequested;
+  return asked(s.threadId);
+}
+
+/**
+ * End a stopped turn like any other: the thread goes back to idle with a
+ * message saying what happened, rather than being left running or failed.
+ */
+async function stopTurn(s: Session): Promise<ThreadState["status"]> {
+  clearStop(s.threadId);
+  s.emit({ type: "working", label: "Stopping" });
+  const didWork = s.cp.turn.sources.length > 0 || s.cp.iterationsUsed > 1;
+  const text = s.cp.turn.lastAssistantText
+    ? `${s.cp.turn.lastAssistantText}
+
+${stoppedMessage(didWork)}`
+    : stoppedMessage(didWork);
+  return finishTurn(s, text);
+}
+
 async function finishTurn(s: Session, markdown: string): Promise<ThreadState["status"]> {
   const { deps, ctx, threadId, cp, emit } = s;
+  // However the turn ended, nothing is left waiting to stop it.
+  clearStop(threadId);
   const text = markdown.trim() || (cp.turn.sources.length > 0 ? "Done." : "I don't have anything to add.");
   // Save before emitting, so a reload shows exactly what the stream showed.
   const message = await deps.store.appendMessage(ctx.orgId, {
@@ -473,6 +515,7 @@ export function closeDanglingToolCalls(cp: Checkpoint, reason: string): void {
 
 async function failThread(s: Session, reason: string): Promise<void> {
   const { deps, ctx, threadId, cp, emit } = s;
+  clearStop(threadId);
   closeDanglingToolCalls(cp, "Not run: the turn failed before reaching this step.");
   const message = await deps.store.appendMessage(ctx.orgId, {
     threadId,

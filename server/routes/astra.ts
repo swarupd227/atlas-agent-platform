@@ -12,6 +12,7 @@ import { z } from "zod";
 import { getDefaultOrgId, getOrgId } from "../auth";
 import { checkPermission, getRequestActorLabel, getRequestRole, hasPermission } from "../permissions";
 import { ThreadRemovalError, planThreadRemoval, removeThread } from "../astra/thread-actions";
+import { requestStop } from "../astra/stop-turn";
 import { llmInvokeRateLimiter } from "../rate-limits";
 import { openSse as openSseStream } from "../sse";
 import { storage } from "../storage";
@@ -88,6 +89,24 @@ router.post("/api/astra/threads", checkPermission("use_astra"), async (req, res)
   if (!parsed.success) return res.status(400).json({ message: "Invalid request", errors: parsed.error.issues });
   const { store } = getAstraRuntime();
   res.status(201).json(await store.createThread(ctx.orgId, ctx.userId, parsed.data.title));
+});
+
+/**
+ * Ask the turn running in this conversation to stop. Cooperative: the engine
+ * checks between model calls and between tool calls, so a tool already running
+ * finishes and records its result.
+ */
+router.post("/api/astra/threads/:id/stop", checkPermission("use_astra"), async (req, res) => {
+  const ctx = await callerContext(req);
+  if (!ctx) return res.status(403).json({ message: "No organization context." });
+  const { store } = getAstraRuntime();
+  const found = await store.getThreadForCaller(req.params.id as string, ctx.orgId, ctx.userId);
+  if (!found) return res.status(404).json({ error: "No conversation with that id that you can open." });
+  if (found.thread.status !== "running") {
+    return res.status(409).json({ error: "Nothing is running in this conversation." });
+  }
+  requestStop(found.thread.id);
+  res.json({ stopping: true });
 });
 
 /** What deleting this conversation would take. */

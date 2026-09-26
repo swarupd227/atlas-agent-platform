@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
-import { Check, CircleAlert, Loader2, PanelRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowDown, Check, CircleAlert, Loader2, PanelRight, Pencil, RotateCcw, Square } from "lucide-react";
 import { Markdown } from "@/components/markdown";
+import { CopyButton } from "@/components/copy-button";
 import { Composer, type ComposerInsert, type DecisionOption } from "./composer";
 import type { PermissionAction } from "@/components/role-provider";
 import type { Mentionable } from "./mention";
@@ -50,16 +51,33 @@ function MessageView({
   busy,
   onDecide,
   onOpenArtifact,
+  onEdit,
 }: {
   message: AstraMessage;
   activeActionId: string | null;
   busy: boolean;
   onDecide: (actionId: string, decision: "confirm" | "cancel") => void;
   onOpenArtifact: (a: ArtifactRef) => void;
+  /** Put this message back in the composer to amend. */
+  onEdit?: (text: string) => void;
 }) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="group/user flex items-start justify-end gap-1">
+        {/* Editing puts it back in the box to amend and ask again; nothing in
+            the conversation is rewritten, because nothing here is erasable. */}
+        {onEdit && (
+          <button
+            type="button"
+            onClick={() => onEdit(message.markdown)}
+            className="mt-1 shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring group-hover/user:opacity-100"
+            aria-label="Edit this message and ask again"
+            title="Edit and ask again"
+            data-testid="astra-edit-message"
+          >
+            <Pencil className="h-3 w-3" aria-hidden />
+          </button>
+        )}
         <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-md bg-secondary px-3.5 py-2 text-sm">{message.markdown}</div>
       </div>
     );
@@ -78,7 +96,17 @@ function MessageView({
     <div className="flex gap-3">
       <AstraMark />
       <div className="min-w-0 flex-1 space-y-3">
-        {message.markdown && <Markdown text={message.markdown} className="astra-md text-sm" />}
+        {message.markdown && (
+          <div className="group/msg relative">
+            <Markdown text={message.markdown} className="astra-md text-sm" />
+            {/* Quiet until the message is hovered or the button is focused. */}
+            <CopyButton
+              text={message.markdown}
+              className="absolute -top-1 right-0 opacity-0 transition-opacity focus:opacity-100 group-hover/msg:opacity-100"
+              testId="astra-copy-message"
+            />
+          </div>
+        )}
 
         {message.pendingAction && (
           <ConfirmCard
@@ -117,6 +145,9 @@ function MessageView({
   );
 }
 
+/** Close enough to the bottom to count as still following the turn. */
+const NEAR_BOTTOM_PX = 120;
+
 export function Thread({
   messages,
   status,
@@ -125,6 +156,10 @@ export function Thread({
   error,
   hasThread,
   onSend,
+  onStop,
+  stopping,
+  onEdit,
+  onRetry,
   onDecide,
   onOpenArtifact,
   mentionables,
@@ -140,6 +175,13 @@ export function Thread({
   error: string | null;
   hasThread: boolean;
   onSend: (text: string) => void;
+  /** Ask the running turn to stop; it ends itself and says so. */
+  onStop?: () => void;
+  stopping?: boolean;
+  /** Put one of your earlier messages back in the composer to amend. */
+  onEdit?: (text: string) => void;
+  /** Send the last thing you asked again, as a new message. */
+  onRetry?: () => void;
   onDecide: (actionId: string, decision: "confirm" | "cancel") => void;
   onOpenArtifact: (a: ArtifactRef) => void;
   mentionables?: Mentionable[];
@@ -150,9 +192,15 @@ export function Thread({
   onCommandNavigate?: (href: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  // Following the turn is the default, but reading is allowed: scroll up and
+  // the view stops dragging you back down on every new step. Scroll back to
+  // the bottom and it resumes.
+  const [following, setFollowing] = useState(true);
   useEffect(() => {
+    if (!following) return;
     bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [messages.length, live.steps.length, live.working, streaming]);
+  }, [messages.length, live.steps.length, live.working, streaming, following]);
 
   const waiting = status === "awaiting_confirmation";
   const activeAction = waiting ? [...messages].reverse().find((m) => m.pendingAction && !m.pendingAction.decision)?.pendingAction ?? null : null;
@@ -162,7 +210,15 @@ export function Thread({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={scrollerRef}
+        onScroll={() => {
+          const el = scrollerRef.current;
+          if (!el) return;
+          setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX);
+        }}
+        className="relative min-h-0 flex-1 overflow-y-auto"
+      >
         <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
           {empty && (
             <div className="space-y-8 pt-[4vh]" data-testid="astra-cowork-home">
@@ -198,6 +254,7 @@ export function Thread({
               busy={streaming}
               onDecide={onDecide}
               onOpenArtifact={onOpenArtifact}
+              onEdit={m.role === "user" ? onEdit : undefined}
             />
           ))}
 
@@ -208,6 +265,18 @@ export function Thread({
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" aria-hidden />
                   {live.working ?? "Working"}
+                  {onStop && (
+                    <button
+                      type="button"
+                      onClick={onStop}
+                      disabled={stopping}
+                      className="ml-1 inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+                      data-testid="astra-stop"
+                    >
+                      <Square className="h-3 w-3 fill-current" aria-hidden />
+                      {stopping ? "Stopping…" : "Stop"}
+                    </button>
+                  )}
                 </div>
                 <Steps steps={live.steps} />
               </div>
@@ -227,6 +296,31 @@ export function Thread({
 
       <div className="shrink-0 border-t border-border/60 bg-background px-4 pb-4 pt-3 sm:px-6">
         <div className="mx-auto w-full max-w-3xl space-y-2">
+          {!following && (
+            <button
+              type="button"
+              onClick={() => {
+                setFollowing(true);
+                bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+              }}
+              className="mx-auto flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              data-testid="astra-jump-to-latest"
+            >
+              <ArrowDown className="h-3 w-3" aria-hidden />
+              {streaming ? "Astra is still working — jump to latest" : "Jump to latest"}
+            </button>
+          )}
+          {onRetry && !streaming && !waiting && (last?.role === "astra" || error) && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              data-testid="astra-retry"
+            >
+              <RotateCcw className="h-3 w-3" aria-hidden />
+              {error ? "Try that again" : "Ask again"}
+            </button>
+          )}
           {suggestions.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {suggestions.map((s) => (

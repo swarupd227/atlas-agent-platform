@@ -13,7 +13,9 @@
  * says so rather than letting the person imagine they are undoing something.
  */
 import { storage } from "../storage";
-import type { AstraMessageRecord, ThreadSummary } from "./types";
+import type { AstraMessageRecord } from "./types";
+// ThreadSummary is declared by the store, not the engine's type module.
+import type { ThreadSummary } from "./store";
 
 /**
  * Only the two calls this needs. `getThreadForCaller` is a DbThreadStore

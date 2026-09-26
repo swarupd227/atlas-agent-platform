@@ -19,6 +19,8 @@ export interface DecisionOption {
 export interface ComposerInsert {
   text: string;
   nonce: number;
+  /** Replace what's in the box rather than adding to it: editing a past message. */
+  replace?: boolean;
 }
 
 export function Composer({
@@ -85,7 +87,9 @@ export function Composer({
   useEffect(() => {
     if (!insert) return;
     setText((current) => {
-      const next = current && !/\s$/.test(current) ? `${current} ${insert.text}` : `${current}${insert.text}`;
+      const next = insert.replace
+        ? insert.text
+        : current && !/\s$/.test(current) ? `${current} ${insert.text}` : `${current}${insert.text}`;
       pendingCaret.current = next.length;
       return next;
     });

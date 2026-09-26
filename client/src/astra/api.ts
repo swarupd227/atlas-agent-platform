@@ -285,5 +285,28 @@ export function useThread(threadId: string | null, options: { industryId?: strin
     [stream, threadId, options.industryId],
   );
 
-  return { messages, status, title, live, error, loading, streaming, send, decide };
+  /**
+   * Ask the running turn to stop. The turn ends itself, on the server, with a
+   * message saying so -- the stream is not dropped, because dropping it would
+   * leave the turn running and spending.
+   */
+  const [stopping, setStopping] = useState(false);
+  const stop = useCallback(async () => {
+    if (!threadId) return;
+    setStopping(true);
+    try {
+      const res = await apiRequest("POST", `/api/astra/threads/${threadId}/stop`);
+      if (!res.ok) setStopping(false);
+    } catch {
+      setStopping(false);
+    }
+  }, [threadId]);
+
+  // A new turn starts unstopped.
+  useEffect(() => {
+    if (streaming) return;
+    setStopping(false);
+  }, [streaming]);
+
+  return { messages, status, title, live, error, loading, streaming, send, decide, stop, stopping };
 }
