@@ -15352,6 +15352,15 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     res.json(server);
   });
 
+  // Same permission as creating/installing a connector (POST /api/marketplace/registry-sources,
+  // POST /api/openapi-import/create): removing one is part of managing the catalog, not a
+  // read-only action, so it carries the same guard rather than being left unguarded.
+  router.delete("/api/marketplace/servers/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
+    const deleted = await storage.deleteMarketplaceServer(req.params.id);
+    if (!deleted) return res.status(404).json({ message: "Not found" });
+    res.status(204).send();
+  });
+
   // ── Marketplace: Trusted Publishers ──────────────────────
   router.get("/api/marketplace/trusted-publishers", async (_req, res) => {
     const publishers = await storage.getTrustedPublishers();
@@ -15553,6 +15562,14 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
   router.get("/api/marketplace/install-requests", async (_req, res) => {
     const requests = await storage.getMarketplaceInstallRequests();
     res.json(requests);
+  });
+
+  // Same permission as deciding one (approve/reject below): removing a request record is part
+  // of managing them, not read-only.
+  router.delete("/api/marketplace/install-requests/:id", checkPermission("manage_security"), async (req, res) => {
+    const deleted = await storage.deleteMarketplaceInstallRequest(req.params.id);
+    if (!deleted) return res.status(404).json({ message: "Not found" });
+    res.status(204).send();
   });
 
   router.patch("/api/marketplace/install-requests/:id/approve", checkPermission("manage_security"), async (req, res) => {

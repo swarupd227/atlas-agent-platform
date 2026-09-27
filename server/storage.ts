@@ -588,6 +588,7 @@ export interface IStorage {
   getMarketplaceInstallRequest(id: string): Promise<MarketplaceInstallRequest | undefined>;
   createMarketplaceInstallRequest(request: InsertMarketplaceInstallRequest): Promise<MarketplaceInstallRequest>;
   updateMarketplaceInstallRequest(id: string, data: Partial<MarketplaceInstallRequest>): Promise<MarketplaceInstallRequest | undefined>;
+  deleteMarketplaceInstallRequest(id: string): Promise<boolean>;
 
   getPlatformSettings(): Promise<PlatformSetting[]>;
   getPlatformSetting(key: string): Promise<PlatformSetting | undefined>;
@@ -3224,6 +3225,10 @@ export class DatabaseStorage implements IStorage {
   async updateMarketplaceInstallRequest(id: string, data: Partial<MarketplaceInstallRequest>) {
     const [updated] = await db.update(marketplaceInstallRequests).set(data).where(eq(marketplaceInstallRequests.id, id)).returning();
     return updated;
+  }
+  async deleteMarketplaceInstallRequest(id: string) {
+    const result = await db.delete(marketplaceInstallRequests).where(eq(marketplaceInstallRequests.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   async getPlatformSettings() {
