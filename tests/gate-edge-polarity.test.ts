@@ -92,3 +92,52 @@ describe("applying the decision to a branch", () => {
     expect(bound && declined).toBe(false);
   });
 });
+
+/**
+ * Whether a rejection is a dead end, or a branch the author already drew.
+ *
+ * A rejected checkpoint used to halt the run unconditionally: "there is no
+ * sensible continue-anyway for a decision nobody made". True where a gate has
+ * one onward edge -- false where the flow draws a decline path. Live
+ * 2026-09-27, golden scenario G4: the carrier declined the breach exception on
+ * SUB-2026-8891, the run ended `failed` at the checkpoint, "Notify Broker -
+ * Declined" never ran, and the broker was never told a normal underwriting
+ * decision had been made about their submission.
+ *
+ * This mirrors the engine's gateHasDeclinePath: a gate continues on rejection
+ * only when some outgoing edge is polarity "reject".
+ */
+describe("a rejection that has somewhere to go", () => {
+  const hasDeclinePath = (outgoing: Array<{ condition?: string | null; label?: string | null }>) =>
+    outgoing.some((e) => gateEdgePolarity(e) === "reject");
+
+  it("continues down the decline branch the flow drew", () => {
+    const outgoing = [
+      { condition: "Carrier approves breach exception" },
+      { condition: "Carrier declines breach exception" },
+    ];
+    expect(hasDeclinePath(outgoing)).toBe(true);
+    // And the router sends it to exactly the decline edge.
+    expect(outgoing.filter((e) => gateEdgeSatisfied(false, e))).toEqual([outgoing[1]]);
+  });
+
+  it("still halts a gate with nowhere to go", () => {
+    // The behaviour that must not regress: one plain onward edge, rejected,
+    // stops the run. Continuing would run the approved path on a refusal.
+    expect(hasDeclinePath([{ condition: null, label: "handoff" }])).toBe(false);
+    expect(hasDeclinePath([])).toBe(false);
+  });
+
+  it("does not invent a decline path from an approve-only fan-out", () => {
+    // Two onward edges, both positive: still nowhere for a rejection to go.
+    expect(hasDeclinePath([
+      { condition: "Underwriter signs off" },
+      { condition: "Approved - proceed to bind" },
+    ])).toBe(false);
+  });
+
+  it("reads a compiled rule, not just wording", () => {
+    const rule = { combinator: "AND", conditions: [{ field: "approved", operator: "==", value: false }] } as any;
+    expect(hasDeclinePath([{ condition: "go to remediation", label: null, rule } as any])).toBe(true);
+  });
+});

@@ -13,7 +13,7 @@ import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNo
 import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, collectRuleLeaves, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
 import { collectRunFiles } from "@shared/run-files";
 import { stateKeyForLabel } from "@shared/state-key";
-import { gateEdgeSatisfied } from "@shared/gate-edge-polarity";
+import { gateEdgeSatisfied, gateEdgePolarity } from "@shared/gate-edge-polarity";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
 // that isn't caught by the cycle check but would still nest indefinitely.
@@ -2487,24 +2487,61 @@ export class DAGExecutionEngine {
       }
     }
 
+    // A rejection is only a dead end when the author drew no way out of it.
+    // Where a decline branch exists -- "Carrier declines breach exception" ->
+    // notify the broker -> Risk Declined -- the decision was MADE, and
+    // declining a risk is an ordinary business outcome an MGA has every day,
+    // not a system failure. Halting there left the branch as dead code, never
+    // told the broker, and recorded a legitimate decision as a failed run.
+    const declineRoute = !result.approved && this.gateHasDeclinePath(nodeId, config);
+
     return {
       nodeId,
       agentId: "",
-      status: result.approved ? "completed" : "failed",
+      status: result.approved || declineRoute ? "completed" : "failed",
       // The decision's own id travels with it. A downstream step that writes to
       // a system of record has to be able to cite the approval that authorized
       // the write -- without it, an agent facing a connector that demands an
       // approval reference either invents one or (correctly) refuses to write
       // at all, and the run finishes having changed nothing.
-      output: result.approved
-        ? { [nc.stateKey]: { approved: true, decidedBy: result.decidedBy, approvalId: result.approvalId || approvalId || undefined } }
+      //
+      // A rejection is written too, and used to not be. The edge router reads
+      // `approved` off this output to pick the branch (gateEdgeSatisfied), so
+      // an empty output on rejection meant the decline branch could not be
+      // routed to even once the run was allowed to continue.
+      output: result.approved || declineRoute
+        ? { [nc.stateKey]: { approved: !!result.approved, decidedBy: result.decidedBy, approvalId: result.approvalId || approvalId || undefined, ...(result.approved ? {} : { reason: result.reason || undefined }) } }
         : {},
-      error: result.approved ? undefined : (result.reason || "Approval gate rejected or timed out"),
+      // Only an error when there is nowhere to go. A decline that follows its
+      // own branch is not an error, and reporting one would put every declined
+      // risk into the fleet's failure numbers.
+      error: result.approved || declineRoute ? undefined : (result.reason || "Approval gate rejected or timed out"),
       durationMs: Date.now() - start,
       promptTokens: 0,
       completionTokens: 0,
       traceId: approvalId,
     };
+  }
+
+  /**
+   * Does this checkpoint have an outgoing edge meant for a rejection?
+   *
+   * Read from the edges the author drew, by the same polarity rules the router
+   * uses to pick between them, so a gate can never be told it has a decline
+   * path that routing would then decline to follow. Conservative by
+   * construction: `gateEdgePolarity` answers "reject" only on a compiled
+   * boolean rule or unambiguous wording, so a gate with one unlabelled onward
+   * edge still halts on rejection exactly as before.
+   */
+  private gateHasDeclinePath(nodeId: string, config: DAGExecutionConfig): boolean {
+    const incoming = config.executionPlan?.incomingEdges ?? {};
+    for (const edges of Object.values(incoming)) {
+      for (const edge of edges) {
+        if (edge.sourceNodeId !== nodeId) continue;
+        if (gateEdgePolarity(edge) === "reject") return true;
+      }
+    }
+    return false;
   }
 
   /**
