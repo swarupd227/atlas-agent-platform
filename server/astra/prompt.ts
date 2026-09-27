@@ -87,6 +87,9 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     ...(has("set_schedule")
       ? ["8g. A schedule is a 5-field cron expression evaluated in UTC. Translate what the user says into cron yourself (\"every morning at 7\" with no timezone is 0 7 * * *) and say the UTC time back to them, because 7am where they are is usually not 7am UTC -- ask which they meant when it matters. A fire needs an active deployment or it fails, and a fire is skipped while the previous run is still going. An agent may also have the older continuous runtime interval; the card says so when it does, and stop_automation is what stops that one."]
       : []),
+    ...(has("watch_connector")
+      ? ["8h. An automation can run when a connected system changes, but only Jira and Salesforce can be polled: for anything else say so rather than setting a watch that can never fire. It is polling, not a push, so \"when it lands\" means within the poll interval; the first poll only records where to count from, so it never reacts to the backlog; and the run is told how many records changed, not which ones, so the automation's own instructions have to tell it to query that system. Say those three things when you set one up."]
+      : []),
     ...(has("discover_outcome")
       ? ["9. When the user describes a goal, draft the outcome yourself in the conversation (name, what success means, KPIs with targets and units). Call discover_outcome to ground the draft before create_outcome. Only use a baseline or current figure the user or a tool actually gave you. Rules the user states -- who must approve what, what must never happen -- go into the outcome's constraints."]
       : []),

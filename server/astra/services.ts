@@ -40,6 +40,7 @@ import { flowSyncServices } from "./flow-sync-services";
 import { agentInstructionServices } from "./agent-instruction-services";
 import { automationControlServices } from "./automation-control-services";
 import { scheduleServices } from "./schedule-services";
+import { watchServices } from "./watch-services";
 import { resolveAgentIndustry } from "../agent-industry";
 import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-requirements";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
@@ -1582,6 +1583,7 @@ export function createAstraServices(): AstraServices {
     ...agentInstructionServices,
     ...automationControlServices,
     ...scheduleServices,
+    ...watchServices,
     listAgents,
     getAgent,
     listAgentConnectors,
