@@ -152,6 +152,7 @@ function FullAppSidebar() {
         { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
         { title: "Ontology", url: "/ontology", icon: Network },
         { title: "Connections", url: "/integrations", icon: Plug, testId: "integrations" },
+        { title: "Connector Library", url: "/integrations/marketplace", icon: Store, testId: "connector-library" },
       ],
     },
     {

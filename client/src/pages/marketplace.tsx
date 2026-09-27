@@ -13,11 +13,16 @@ import {
   Store, Search, Download, Star, Shield, CheckCircle2, Globe, Terminal,
   Package, ArrowRight, Filter, TrendingUp, Wrench, Brain, Database,
   MessageSquare, BookOpen, AlertTriangle, ShieldCheck, Users, Loader2, KeyRound,
+  Lock, FileCode2,
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { OpenApiImportDialog } from "@/components/openapi-import-dialog";
 import type { MarketplaceServer, RegistrySource, TrustedPublisher, MarketplaceInstallRequest } from "@shared/schema";
+
+const SOURCE_KIND_LABEL: Record<string, string> = { native: "Built-in", mcp: "Real MCP", openapi: "OpenAPI" };
+const SOURCE_KIND_ICON: Record<string, typeof Wrench> = { native: Lock, mcp: Globe, openapi: FileCode2 };
 
 const CATEGORY_ICONS: Record<string, typeof Wrench> = {
   "developer-tools": Wrench,
@@ -47,6 +52,7 @@ export default function MarketplacePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [publisherFilter, setPublisherFilter] = useState("all");
+  const [sourceKindFilter, setSourceKindFilter] = useState("all");
   const [tab, setTab] = useState("browse");
 
   const { data: servers, isLoading: loadingServers } = useQuery<MarketplaceServer[]>({
@@ -98,6 +104,28 @@ export default function MarketplacePage() {
     setInstallDialogServer(server);
   }
 
+  // sourceKind "openapi" doesn't use the auth-only dialog above -- POST /install for one of
+  // these returns a parsed spec instead of installing, and the operation-picker UI
+  // (OpenApiImportDialog, shared with the standalone /integrations/mcp-servers importer) takes
+  // it from there.
+  const [openApiPreview, setOpenApiPreview] = useState<{ marketplaceServerId: string; name: string; spec: any } | null>(null);
+  const openApiPreviewMutation = useMutation({
+    mutationFn: async (server: MarketplaceServer) => {
+      const res = await apiRequest("POST", `/api/marketplace/servers/${server.id}/install`, {});
+      return { server, data: await res.json() as { status: string; spec?: any; message?: string } };
+    },
+    onSuccess: ({ server, data }) => {
+      if (data.status !== "needs_operation_selection" || !data.spec) {
+        toast({ title: "Couldn't preview this connector", description: data.message || "Unexpected response.", variant: "destructive" });
+        return;
+      }
+      setOpenApiPreview({ marketplaceServerId: server.id, name: server.displayName || server.name, spec: data.spec });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't fetch the spec", description: err.message, variant: "destructive" });
+    },
+  });
+
   function confirmInstall() {
     if (!installDialogServer) return;
     const auth = installAuthType === "none" ? undefined
@@ -131,9 +159,10 @@ export default function MarketplacePage() {
       }
       if (categoryFilter !== "all" && s.category !== categoryFilter) return false;
       if (publisherFilter !== "all" && s.publisher !== publisherFilter) return false;
+      if (sourceKindFilter !== "all" && (s.sourceKind || "mcp") !== sourceKindFilter) return false;
       return true;
     });
-  }, [servers, searchQuery, categoryFilter, publisherFilter]);
+  }, [servers, searchQuery, categoryFilter, publisherFilter, sourceKindFilter]);
 
   const stats = useMemo(() => {
     if (!servers) return { total: 0, installed: 0, available: 0, categories: 0 };
@@ -275,6 +304,17 @@ export default function MarketplacePage() {
                 ))}
               </SelectContent>
             </Select>
+            <Select value={sourceKindFilter} onValueChange={setSourceKindFilter}>
+              <SelectTrigger className="w-[150px]" data-testid="select-sourcekind-filter">
+                <SelectValue placeholder="Origin" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" data-testid="option-sourcekind-all">All Origins</SelectItem>
+                <SelectItem value="native" data-testid="option-sourcekind-native">Built-in</SelectItem>
+                <SelectItem value="mcp" data-testid="option-sourcekind-mcp">Real MCP</SelectItem>
+                <SelectItem value="openapi" data-testid="option-sourcekind-openapi">OpenAPI</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           {filteredServers.length === 0 ? (
@@ -320,14 +360,26 @@ export default function MarketplacePage() {
                         {server.description}
                       </p>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className="text-[10px]">
-                          {server.transportType === "stdio" ? (
-                            <Terminal className="w-3 h-3 mr-1" />
-                          ) : (
-                            <Globe className="w-3 h-3 mr-1" />
-                          )}
-                          {server.transportType}
-                        </Badge>
+                        {(() => {
+                          const kind = server.sourceKind || "mcp";
+                          const KindIcon = SOURCE_KIND_ICON[kind] || Globe;
+                          return (
+                            <Badge variant="secondary" className="text-[10px]" data-testid={`badge-sourcekind-${server.id}`}>
+                              <KindIcon className="w-3 h-3 mr-1" />
+                              {SOURCE_KIND_LABEL[kind] || kind}
+                            </Badge>
+                          );
+                        })()}
+                        {server.sourceKind !== "openapi" && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {server.transportType === "stdio" ? (
+                              <Terminal className="w-3 h-3 mr-1" />
+                            ) : (
+                              <Globe className="w-3 h-3 mr-1" />
+                            )}
+                            {server.transportType}
+                          </Badge>
+                        )}
                         <Badge variant={RISK_VARIANT[server.riskTier || "MEDIUM"]} className="text-[10px]">
                           <Shield className="w-3 h-3 mr-1" />
                           {server.riskTier}
@@ -367,17 +419,29 @@ export default function MarketplacePage() {
                             <ArrowRight className="w-3.5 h-3.5 ml-1" />
                           </Button>
                         </Link>
-                        {server.installStatus !== "installed" && (
+                        {server.sourceKind === "native" ? (
+                          <Link href="/integrations" className="flex-1">
+                            <Button variant="secondary" size="sm" className="w-full" data-testid={`button-configure-${server.id}`}>
+                              <Lock className="w-3.5 h-3.5 mr-1" />
+                              Configure in Connections
+                            </Button>
+                          </Link>
+                        ) : server.installStatus !== "installed" && (
                           <Button
                             size="sm"
-                            disabled={installMutation.isPending || server.installStatus === "pending"}
+                            disabled={installMutation.isPending || openApiPreviewMutation.isPending || server.installStatus === "pending"}
                             onClick={(e) => {
                               e.stopPropagation();
-                              openInstallDialog(server);
+                              if (server.sourceKind === "openapi") openApiPreviewMutation.mutate(server);
+                              else openInstallDialog(server);
                             }}
                             data-testid={`button-install-${server.id}`}
                           >
-                            <Download className="w-3.5 h-3.5 mr-1" />
+                            {(server.sourceKind === "openapi" ? openApiPreviewMutation.isPending : false) ? (
+                              <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                            ) : (
+                              <Download className="w-3.5 h-3.5 mr-1" />
+                            )}
                             Install
                           </Button>
                         )}
@@ -519,6 +583,17 @@ export default function MarketplacePage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {openApiPreview && (
+        <OpenApiImportDialog
+          key={openApiPreview.marketplaceServerId}
+          open={!!openApiPreview}
+          onOpenChange={(o) => { if (!o) setOpenApiPreview(null); }}
+          initialSpec={openApiPreview.spec}
+          initialName={openApiPreview.name}
+          marketplaceServerId={openApiPreview.marketplaceServerId}
+        />
+      )}
     </div>
   );
 }

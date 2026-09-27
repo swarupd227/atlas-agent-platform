@@ -576,6 +576,7 @@ export interface IStorage {
   getMarketplaceServer(id: string): Promise<MarketplaceServer | undefined>;
   createMarketplaceServer(server: InsertMarketplaceServer): Promise<MarketplaceServer>;
   updateMarketplaceServer(id: string, data: Partial<MarketplaceServer>): Promise<MarketplaceServer | undefined>;
+  deleteMarketplaceServer(id: string): Promise<boolean>;
 
   getTrustedPublishers(): Promise<TrustedPublisher[]>;
   getTrustedPublisher(id: string): Promise<TrustedPublisher | undefined>;
@@ -3183,6 +3184,10 @@ export class DatabaseStorage implements IStorage {
   async updateMarketplaceServer(id: string, data: Partial<MarketplaceServer>) {
     const [updated] = await db.update(marketplaceServers).set(data).where(eq(marketplaceServers.id, id)).returning();
     return updated;
+  }
+  async deleteMarketplaceServer(id: string) {
+    const result = await db.delete(marketplaceServers).where(eq(marketplaceServers.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 
   async getTrustedPublishers() {

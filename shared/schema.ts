@@ -1795,6 +1795,17 @@ export const marketplaceServers = pgTable("marketplace_servers", {
   installedServerId: varchar("installed_server_id"),
   lastSyncedAt: timestamp("last_synced_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
+  // Which connector library this catalog entry represents, so one browsable list can span
+  // all three connector on-ramps (native hardcoded, real MCP, OpenAPI-imported) without forcing
+  // an OpenAPI-derived entry into the MCP-shaped transportType/url fields above. "native" entries
+  // are already-installed, read-only catalog rows for server/integrations/register.ts's hardcoded
+  // connectors -- installedServerId always set, install is a no-op (see the install route).
+  sourceKind: text("source_kind").notNull().default("mcp"),
+  // Only meaningful when sourceKind = "openapi". The spec itself is fetched and parsed lazily at
+  // install time (server/openapi-import.ts's parseOpenApiSpec), not at sync time, so a registry
+  // sync stays fast and side-effect-free even for a large curated catalog.
+  openApiSpecUrl: text("openapi_spec_url"),
+  openApiAuthHint: text("openapi_auth_hint"),
 });
 
 export const insertMarketplaceServerSchema = createInsertSchema(marketplaceServers).omit({ id: true, createdAt: true });

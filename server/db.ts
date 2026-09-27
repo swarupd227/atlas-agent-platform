@@ -1934,6 +1934,15 @@ export async function runStartupMigrations() {
       ALTER TABLE agents ADD COLUMN IF NOT EXISTS sub_vertical TEXT;
     `);
 
+    // Connector Library: which of the three connector on-ramps (native hardcoded, real MCP,
+    // OpenAPI-imported) a marketplace catalog row represents, plus the OpenAPI-only fields.
+    // See server/marketplace-seed-data.ts and shared/schema.ts's marketplaceServers table.
+    await client.query(`
+      ALTER TABLE marketplace_servers ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'mcp';
+      ALTER TABLE marketplace_servers ADD COLUMN IF NOT EXISTS openapi_spec_url TEXT;
+      ALTER TABLE marketplace_servers ADD COLUMN IF NOT EXISTS openapi_auth_hint TEXT;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

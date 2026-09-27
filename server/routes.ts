@@ -129,6 +129,7 @@ import evalStudioRouter from "./routes/eval-studio";
 import enterpriseIntegrationsRouter, { startTokenRefreshDaemon } from "./routes/enterprise-integrations";
 import filesRouter from "./routes/files";
 import { registerEnterpriseIntegrations } from "./integrations/register";
+import { ensureMarketplaceSeedData } from "./marketplace-seed-data";
 import { createSalesforceRouter } from "./integrations/salesforce/mcp-server";
 import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
 import { createServiceNowRouter } from "./integrations/servicenow/mcp-server";
@@ -543,6 +544,10 @@ export async function registerRoutes(
 
   // Start OAuth token refresh daemon (refreshes tokens expiring in next 5 min, runs every 4 min)
   startTokenRefreshDaemon();
+
+  // Connector Library: real registry sources (replacing the fake seeded ones) before the
+  // native connectors below upsert their catalog rows against NATIVE_REGISTRY_SOURCE_ID.
+  await ensureMarketplaceSeedData().catch((err: any) => console.error("[startup] ensureMarketplaceSeedData:", err?.message));
 
   // Register enterprise CRM integration MCP servers in catalog (idempotent)
   registerEnterpriseIntegrations().catch((err: any) =>

@@ -1,8 +1,9 @@
 import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
-import { parseOpenApiSpec, type ParsedOpenApiSpec } from "../openapi-import";
+import { parseOpenApiSpec, OpenApiParseError, type ParsedOpenApiSpec } from "../openapi-import";
 import { assertSafeOutboundUrl } from "../url-safety";
+import { CURATED_OPENAPI_CATALOG } from "../marketplace-seed-data";
 import { contextPriorityFor, wizardContextFor, wizardPresetFor } from "@shared/wizard-presets";
 import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
@@ -112,6 +113,7 @@ import OpenAI, { toFile } from "openai";
 import type Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
 import { getAnthropicClient } from "../claude";
+import { createLazyClient } from "../lazy-client";
 import {
   MCP_OAUTH_PROVIDERS,
   findMcpOAuthProvider,
@@ -119,10 +121,13 @@ import {
   getMcpOAuthClientCredentials,
 } from "../mcp-oauth-providers";
 
-const openai = new OpenAI({
+// Lazy: the OpenAI SDK throws synchronously if no apiKey resolves, which
+// would otherwise crash the whole server at boot on a self-host deployment
+// with no OpenAI key configured (see server/lazy-client.ts).
+const openai = createLazyClient(() => new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-});
+}));
 
 const router = Router();
 
@@ -15182,21 +15187,133 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     res.status(204).send();
   });
 
+  // Real registry sync, replacing the old stub (used to mark lastSyncStatus "success"
+  // unconditionally without fetching anything). Branches on registrySources.apiType -- see
+  // server/marketplace-seed-data.ts for what each source row actually is. Never touches a
+  // marketplace_servers row whose installStatus is "installed": an already-installed connector
+  // (including one a customer is actively using) is left exactly as it is on every sync run.
+  async function syncMcpRegistry(source: { id: string; apiUrl: string }): Promise<{ created: number; updated: number }> {
+    await assertSafeOutboundUrl(source.apiUrl);
+    let created = 0;
+    let updated = 0;
+    const existing = await storage.getMarketplaceServers();
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const url = new URL(source.apiUrl);
+      if (cursor) url.searchParams.set("cursor", cursor);
+      const resp = await fetch(url.toString(), { signal: AbortSignal.timeout(10_000) });
+      if (!resp.ok) throw new Error(`Registry returned HTTP ${resp.status}`);
+      const body: any = await resp.json();
+      const servers: any[] = Array.isArray(body.servers) ? body.servers : [];
+      for (const s of servers) {
+        // Only remote-callable entries can actually be dispatched by this platform -- a stdio/
+        // local-process entry (only listed under `packages`) has no per-tenant subprocess sandbox
+        // to run in, so it would sit in the catalog forever un-installable. Skip rather than create
+        // a row that can never work.
+        const remote = Array.isArray(s.remotes) ? s.remotes.find((r: any) => r.type === "streamable-http" || r.type === "sse") : null;
+        if (!remote?.url) continue;
+        const namespace = (typeof s.name === "string" && s.name.includes("/")) ? s.name.split("/")[0] : "mcp-registry";
+        const name = s.name || remote.url;
+        const match = existing.find((e) => e.registrySourceId === source.id && e.namespace === namespace && e.name === name);
+        if (match?.installStatus === "installed") continue;
+        const fields: any = {
+          registrySourceId: source.id,
+          namespace,
+          name,
+          displayName: s.title || s.name || name,
+          description: s.description || "",
+          version: s.version || "1.0.0",
+          transportType: remote.type === "sse" ? "sse" : "streamable-http",
+          url: remote.url,
+          sourceKind: "mcp",
+          installStatus: "available",
+        };
+        if (match) {
+          await storage.updateMarketplaceServer(match.id, fields);
+          updated++;
+        } else {
+          const createdRow = await storage.createMarketplaceServer(fields);
+          existing.push(createdRow);
+          created++;
+        }
+      }
+      cursor = body.metadata?.nextCursor || undefined;
+      pages++;
+    } while (cursor && pages < 20); // hard cap -- a misbehaving registry can't loop this forever
+    return { created, updated };
+  }
+
+  async function syncOpenApiCatalog(source: { id: string }): Promise<{ created: number; updated: number }> {
+    let created = 0;
+    let updated = 0;
+    const existing = await storage.getMarketplaceServers();
+    const namespace = "openapi-catalog";
+    for (const entry of CURATED_OPENAPI_CATALOG) {
+      const match = existing.find((e) => e.registrySourceId === source.id && e.namespace === namespace && e.name === entry.name);
+      if (match?.installStatus === "installed") continue;
+      const fields: any = {
+        registrySourceId: source.id,
+        namespace,
+        name: entry.name,
+        displayName: entry.name,
+        description: entry.description,
+        category: entry.category,
+        sourceKind: "openapi",
+        openApiSpecUrl: entry.specUrl,
+        openApiAuthHint: entry.authHint,
+        riskTier: entry.riskTier,
+        installStatus: "available",
+      };
+      if (match) {
+        await storage.updateMarketplaceServer(match.id, fields);
+        updated++;
+      } else {
+        await storage.createMarketplaceServer(fields);
+        created++;
+      }
+    }
+    return { created, updated };
+  }
+
   router.post("/api/marketplace/registry-sources/:id/sync", async (req, res) => {
     const source = await storage.getRegistrySource(req.params.id);
     if (!source) return res.status(404).json({ message: "Not found" });
-    const updated = await storage.updateRegistrySource(req.params.id, {
-      lastSyncAt: new Date(),
-      lastSyncStatus: "success",
-    });
-    await storage.createAuditEvent({
-      objectType: "registry_source",
-      objectId: req.params.id,
-      action: "marketplace.registry_synced",
-      actorId: "system",
-      details: JSON.stringify({ sourceId: req.params.id, sourceName: source.name }),
-    });
-    res.json(updated);
+    if (!source.enabled) return res.status(400).json({ message: "This registry source is disabled." });
+
+    try {
+      let created = 0;
+      let updated = 0;
+      if (source.apiType === "native") {
+        // Nothing to fetch -- these rows are upserted directly by registerEnterpriseIntegrations()
+        // whenever the server starts, not by this sync action.
+      } else if (source.apiType === "mcp-registry") {
+        ({ created, updated } = await syncMcpRegistry(source));
+      } else if (source.apiType === "openapi-catalog") {
+        ({ created, updated } = await syncOpenApiCatalog(source));
+      } else {
+        return res.status(400).json({ message: `Sync isn't implemented for apiType "${source.apiType}" yet.` });
+      }
+
+      const allServers = await storage.getMarketplaceServers();
+      const serverCount = allServers.filter((s) => s.registrySourceId === source.id).length;
+      const updated_ = await storage.updateRegistrySource(req.params.id, {
+        lastSyncAt: new Date(),
+        lastSyncStatus: "success",
+        serverCount,
+      });
+      await storage.createAuditEvent({
+        objectType: "registry_source",
+        objectId: req.params.id,
+        action: "marketplace.registry_synced",
+        actorId: "system",
+        details: JSON.stringify({ sourceId: req.params.id, sourceName: source.name, created, updated }),
+      });
+      res.json(updated_);
+    } catch (e: any) {
+      await storage.updateRegistrySource(req.params.id, { lastSyncAt: new Date(), lastSyncStatus: "failed" });
+      res.status(502).json({ message: `Sync failed: ${e.message}` });
+    }
   });
 
   // ── Marketplace: Servers ─────────────────────────────────
@@ -15307,6 +15424,29 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
         return res.status(400).json({ message: "Server is already installed or pending installation" });
       }
 
+      if (server.sourceKind === "native") {
+        return res.status(400).json({ message: "This is a built-in connector -- it's already installed. Go to Connections to configure credentials." });
+      }
+
+      if (server.sourceKind === "openapi") {
+        if (!server.openApiSpecUrl) return res.status(500).json({ message: "This catalog entry has no OpenAPI spec URL configured." });
+        try {
+          await assertSafeOutboundUrl(server.openApiSpecUrl);
+          const resp = await fetch(server.openApiSpecUrl, { signal: AbortSignal.timeout(10_000) });
+          if (!resp.ok) return res.status(502).json({ message: `Fetching the spec failed: HTTP ${resp.status}` });
+          const specText = await resp.text();
+          const parsed = parseOpenApiSpec(specText);
+          // Not installed yet -- this only previews the operations. The client shows the same
+          // pick-operations UI server/openapi-import.ts's standalone importer already has, then
+          // calls the existing POST /api/openapi-import/create to actually create the connector,
+          // so the two OpenAPI entry points (manual paste vs. catalog) share one creation path.
+          return res.json({ status: "needs_operation_selection", marketplaceServerId: server.id, spec: parsed });
+        } catch (e: any) {
+          const message = e instanceof OpenApiParseError ? e.message : e?.message || "Failed to fetch or parse the OpenAPI spec.";
+          return res.status(422).json({ message });
+        }
+      }
+
       const publishers = await storage.getTrustedPublishers();
       const trustedPublisher = publishers.find(p => p.namespace === server.namespace && p.status === "active");
 
@@ -15372,6 +15512,28 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     } catch (e) {
       handleZodError(res, e);
     }
+  });
+
+  // Closes the loop after a catalog-driven OpenAPI install: the client calls the existing,
+  // unchanged POST /api/openapi-import/create to actually make the connector (shared with the
+  // standalone importer), then this route just marks the originating catalog row installed --
+  // kept separate from openapi-import/create so that endpoint stays generic and doesn't need to
+  // know marketplace_servers exists.
+  router.post("/api/marketplace/servers/:id/complete-openapi-install", async (req, res) => {
+    const server = await storage.getMarketplaceServer(req.params.id);
+    if (!server) return res.status(404).json({ message: "Marketplace server not found" });
+    const { installedServerId } = req.body as { installedServerId?: string };
+    if (!installedServerId) return res.status(400).json({ message: "installedServerId is required" });
+
+    const updated = await storage.updateMarketplaceServer(server.id, { installStatus: "installed", installedServerId });
+    await storage.createAuditEvent({
+      objectType: "marketplace_server",
+      objectId: server.id,
+      action: "marketplace.openapi_install_completed",
+      actorId: req.body.requestedBy || "system",
+      details: JSON.stringify({ serverName: server.name, installedServerId }),
+    });
+    res.json(updated);
   });
 
   router.get("/api/marketplace/install-requests", async (_req, res) => {

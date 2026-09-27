@@ -122,6 +122,19 @@ export default function MarketplaceDetailPage() {
                   <Badge variant="default" data-testid="badge-detail-installed">Installed</Badge>
                 ) : server.installStatus === "pending" ? (
                   <Badge variant="outline" data-testid="badge-detail-pending">Pending Approval</Badge>
+                ) : server.sourceKind === "native" ? (
+                  <Link href="/integrations">
+                    <Button variant="secondary" data-testid="button-detail-configure">Configure in Connections</Button>
+                  </Link>
+                ) : server.sourceKind === "openapi" ? (
+                  // The operation-picker flow needs its own dialog (see marketplace.tsx) --
+                  // rather than duplicate it here, send the user to the browse list where it lives.
+                  <Link href="/integrations/marketplace">
+                    <Button data-testid="button-detail-install-openapi">
+                      <Download className="w-4 h-4 mr-1.5" />
+                      Review &amp; install from Connector Library
+                    </Button>
+                  </Link>
                 ) : (
                   <Button
                     onClick={() => installMutation.mutate()}

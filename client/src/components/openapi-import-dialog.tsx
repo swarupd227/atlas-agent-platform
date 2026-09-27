@@ -37,15 +37,30 @@ const RISK_BADGE_CLASS: Record<string, string> = {
   high: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 border-red-300 dark:border-red-700",
 };
 
-export function OpenApiImportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+interface OpenApiImportDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Set by the Connector Library's catalog-driven install: the spec has already been fetched
+   *  and parsed server-side (POST /api/marketplace/servers/:id/install for a sourceKind
+   *  "openapi" entry returns it), so this dialog skips straight to the operation picker instead
+   *  of asking for a URL. */
+  initialSpec?: ParsedSpec | null;
+  initialName?: string;
+  /** When set, a successful create also marks this catalog entry installed via
+   *  POST /api/marketplace/servers/:id/complete-openapi-install, so the Connector Library
+   *  reflects it without needing its own copy of the creation logic. */
+  marketplaceServerId?: string;
+}
+
+export function OpenApiImportDialog({ open, onOpenChange, initialSpec, initialName, marketplaceServerId }: OpenApiImportDialogProps) {
   const { toast } = useToast();
   const [specUrl, setSpecUrl] = useState("");
   const [specText, setSpecText] = useState("");
   const [inputTab, setInputTab] = useState<"url" | "paste">("url");
 
-  const [parsed, setParsed] = useState<ParsedSpec | null>(null);
-  const [connectorName, setConnectorName] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [parsed, setParsed] = useState<ParsedSpec | null>(initialSpec ?? null);
+  const [connectorName, setConnectorName] = useState(initialName ?? "");
+  const [selected, setSelected] = useState<Set<string>>(new Set((initialSpec?.operations ?? []).map((o) => o.name)));
   const [authType, setAuthType] = useState<"none" | "api_key" | "bearer" | "basic">("none");
   const [authValue, setAuthValue] = useState("");
   const [authUser, setAuthUser] = useState("");
@@ -86,10 +101,19 @@ export function OpenApiImportDialog({ open, onOpenChange }: { open: boolean; onO
         operations: parsed.operations.filter(o => selected.has(o.name)),
         auth,
       });
-      return res.json() as Promise<{ toolCount: number }>;
+      const created = await res.json() as { mcpServer: { id: string }; toolCount: number };
+      if (marketplaceServerId) {
+        await apiRequest("POST", `/api/marketplace/servers/${marketplaceServerId}/complete-openapi-install`, {
+          installedServerId: created.mcpServer.id,
+        });
+      }
+      return created;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers"] });
+      if (marketplaceServerId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/marketplace/servers"] });
+      }
       setCreateResult(data);
     },
     onError: (err: Error) => {

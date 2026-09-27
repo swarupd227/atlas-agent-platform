@@ -6,6 +6,7 @@
  */
 
 import { storage } from "../storage";
+import { NATIVE_REGISTRY_SOURCE_ID } from "../marketplace-seed-data";
 import { salesforceMcpServer } from "./salesforce/mcp-server";
 import { hubspotMcpServer } from "./hubspot/mcp-server";
 import { serviceNowMcpServer } from "./servicenow/mcp-server";
@@ -166,6 +167,43 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
   ];
 }
 
+// Makes each hardcoded native connector show up in the same browsable Connector Library as
+// real-MCP and OpenAPI-imported ones (see client/src/pages/marketplace.tsx), as an
+// already-installed, read-only entry -- installing here means nothing, the server already
+// exists. Purely additive: never writes to the mcp_servers row itself (patch/create for that
+// happens above, unchanged), only upserts a parallel marketplace_servers catalog row keyed on
+// (registrySourceId, namespace, name) so re-running this at every startup never duplicates it.
+async function upsertNativeCatalogEntry(def: EnterpriseServerDef, installedServerId: string): Promise<void> {
+  const namespace = "native";
+  const all = await storage.getMarketplaceServers();
+  const existing = all.find(
+    (m) => m.registrySourceId === NATIVE_REGISTRY_SOURCE_ID && m.namespace === namespace && m.name === def.catalogName,
+  );
+  const fields = {
+    registrySourceId: NATIVE_REGISTRY_SOURCE_ID,
+    namespace,
+    name: def.catalogName,
+    displayName: def.catalogName,
+    description: def.description,
+    category: def.tags[0] || "enterprise",
+    publisher: "Astra Agents",
+    publisherVerified: true,
+    transportType: "streamable-http",
+    riskTier: def.riskTier,
+    tags: def.tags,
+    sourceKind: "native" as const,
+    installStatus: "installed" as const,
+    installedServerId,
+  };
+  if (existing) {
+    if (existing.installedServerId !== installedServerId || existing.description !== def.description) {
+      await storage.updateMarketplaceServer(existing.id, fields);
+    }
+  } else {
+    await storage.createMarketplaceServer(fields as any);
+  }
+}
+
 export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]; tools: number }> {
   const defs = getEnterpriseServerDefs();
   const servers: any[] = [];
@@ -219,6 +257,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
         }
       }
       toolCount += existingTools.length;
+      await upsertNativeCatalogEntry(def, existing.id);
       continue;
     }
 
@@ -252,6 +291,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
     }
 
     servers.push(server);
+    await upsertNativeCatalogEntry(def, server.id);
   }
 
   return { servers, tools: toolCount };
