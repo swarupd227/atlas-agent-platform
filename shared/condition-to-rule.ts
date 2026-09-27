@@ -79,6 +79,24 @@ function normalizeValue(raw: string): string | number | boolean | null {
  * Null is the normal answer for real judgement, and the caller should leave such
  * an edge to the model rather than guessing.
  */
+/**
+ * How a team edge carrying this condition should be evaluated at run time.
+ *
+ * Both paths that build a team's edges have to answer this the same way, and
+ * they did not: the build ran the condition through parseConditionToRule, so
+ * "aggregate > 50000000" became a rule the engine evaluates itself, while the
+ * flow sync copied the text and left evaluationMode unset -- which the engine
+ * reads as "ai". Every conditional edge on a synced team was therefore a model
+ * call per run, deciding something arithmetic, and the same flow produced
+ * different run costs depending on which path had last touched it.
+ */
+export function edgeRuleForCondition(condition: string | null | undefined): { condition?: string; evaluationMode?: string; rule?: RuleGroup } {
+  const text = String(condition ?? "").trim();
+  if (!text) return {};
+  const rule = parseConditionToRule(text);
+  return rule ? { condition: text, evaluationMode: "deterministic", rule } : { condition: text, evaluationMode: "ai" };
+}
+
 export function parseConditionToRule(condition: string | null | undefined): RuleGroup | null {
   const text = String(condition ?? "").trim();
   if (!text) return null;

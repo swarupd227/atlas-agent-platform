@@ -381,6 +381,8 @@ interface SyncPlanView {
   added: string[];
   removed: string[];
   supersedes: Array<{ label: string; agentId: string; agentName: string }>;
+  /** How the connections differ, which a step-by-step diff cannot see. */
+  connections: { added: string[]; removed: string[]; changed: string[]; loopsAdded: string[]; loopsRemoved: string[] };
   drafts: number;
   rebuild: boolean;
   block?: { kind: string; message: string; runId?: string };
@@ -411,9 +413,15 @@ export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
       }
       return { refuse: plan.block.message };
     }
-    const nothing = plan.changed.length === 0 && plan.added.length === 0 && plan.removed.length === 0;
+    // Steps AND connections: a flow whose steps are all unchanged can still have
+    // had a condition removed or a loop drawn, and answering "nothing to sync"
+    // to that left the automation carrying what the flow no longer says -- the
+    // exact drift this tool exists to close (live 2026-09-27).
+    const c = plan.connections;
+    const connectionChanges = c.added.length + c.removed.length + c.changed.length + c.loopsAdded.length + c.loopsRemoved.length;
+    const nothing = plan.changed.length === 0 && plan.added.length === 0 && plan.removed.length === 0 && connectionChanges === 0;
     if (nothing && !plan.rebuild) {
-      return { refuse: `"${plan.team.name}" already matches "${plan.flow.name}" step for step. There is nothing to sync.` };
+      return { refuse: `"${plan.team.name}" already matches "${plan.flow.name}" -- same steps, same connections. There is nothing to sync.` };
     }
 
     const warnings: ConfirmWarning[] = [];
@@ -440,11 +448,18 @@ export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
         ...(plan.changed.length ? [`Changes: ${plan.changed.join(", ")}.`] : []),
         ...(plan.removed.length ? [`Removes: ${plan.removed.join(", ")}.`] : []),
         `${plan.unchanged} ${plan.unchanged === 1 ? "step is" : "steps are"} untouched, and a step's hardened rules survive with it.`,
-        "The flow's own connections become the team's order again.",
+        ...(c.added.length ? [`Connects: ${c.added.join(", ")}.`] : []),
+        ...(c.removed.length ? [`Disconnects: ${c.removed.join(", ")}.`] : []),
+        ...(c.changed.length ? [`Changes when work moves on: ${c.changed.join(", ")}.`] : []),
+        // A loop is the one thing not built as drawn, so the card says what it
+        // becomes rather than letting the user assume the team has that arrow.
+        ...(c.loopsAdded.length ? [`${c.loopsAdded.join("; ")} -- drawn as a loop, built as a rule on that step, because a team whose steps form a loop cannot run.`] : []),
+        ...(c.loopsRemoved.length ? [`${c.loopsRemoved.join("; ")}.`] : []),
+        ...(connectionChanges === 0 ? ["The flow's own connections become the team's order again."] : []),
         "Nothing is deployed and nothing runs. The next run uses the new shape.",
       ],
       warnings,
-      frozen: { flow: plan.flow.id, team: plan.team.id, changes: plan.changed.length + plan.added.length + plan.removed.length },
+      frozen: { flow: plan.flow.id, team: plan.team.id, changes: plan.changed.length + plan.added.length + plan.removed.length + connectionChanges },
     };
   },
   run: async (ctx, input) => {
@@ -462,7 +477,19 @@ export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
         changed: s.changed,
         superseded: s.superseded.map((x: any) => x.label),
         ...(s.draftFailures.length ? { couldNotDraft: s.draftFailures } : {}),
-        next: "Check the wiring with verify_wiring before the next run, and read the agents a model wrote.",
+        // A loop is the one thing not built as drawn -- it becomes a rule on the
+        // step it leaves -- so saying nothing about it leaves the user thinking
+        // the automation has a connection it does not have.
+        ...(s.revisionLoops?.set.length ? { sendsWorkBack: s.revisionLoops.set } : {}),
+        ...(s.revisionLoops?.cleared.length ? { stoppedSendingWorkBack: s.revisionLoops.cleared } : {}),
+        ...(s.revisionLoops?.unresolved.length ? { loopsLeftOff: s.revisionLoops.unresolved } : {}),
+        // Read back from the blueprint, not asserted: a sync that leaves the team
+        // unable to run used to report success either way.
+        runnable: s.invariants?.runnable !== false,
+        ...(s.invariants?.findings.length ? { problems: s.invariants.findings.map((f: any) => f.message) } : {}),
+        next: s.invariants?.runnable === false
+          ? "This team cannot run in this state -- fix what is listed under problems first; nothing else will surface it until someone presses run."
+          : "Check the wiring with verify_wiring before the next run, and read the agents a model wrote.",
       },
       artifact: {
         kind: "text",

@@ -50,6 +50,27 @@ export interface ProcessEdge {
   maxRounds?: number;
 }
 
+/**
+ * Edges carrying a condition while being the only way out of their step.
+ *
+ * Worth reporting, not worth rewriting. Such a condition still does something --
+ * the engine treats it as gating, so a false answer stops the work rather than
+ * choosing a branch -- and someone may well have meant exactly that. But it is
+ * also what a model produces when it writes a sentence describing what the step
+ * hands on into the condition field, and then every run pays a model call to
+ * answer a question with one possible answer. Live 2026-09-27: four revisions
+ * each wrote "Pass treaty clause citation to bordereau entry" and the like into
+ * the condition of a single-exit edge.
+ *
+ * So the compiler says so and the author decides. Silently moving the text to
+ * the label would have deleted a real gate wherever one was meant.
+ */
+export function conditionsWithNoChoice(edges: ProcessEdge[], exclude: Set<string> = new Set()): ProcessEdge[] {
+  const exits = new Map<string, number>();
+  for (const e of edges) exits.set(e.from, (exits.get(e.from) ?? 0) + 1);
+  return edges.filter((e) => !!e.condition && !exclude.has(e.id) && exits.get(e.from) === 1);
+}
+
 export const PROCESS_FLOW_VERSION = 2 as const;
 
 export interface ProcessFlowGraph {

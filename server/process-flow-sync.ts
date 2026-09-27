@@ -27,6 +27,10 @@
 import { storage } from "./storage";
 import { draftSingleAgent, resolveOntologyTags } from "./routes/helpers";
 import { HUMAN_CHECKPOINT_NODE_TYPES, STRUCTURAL_NODE_TYPES, stepCorrelation, stepUnchanged } from "@shared/process-flow-correlation";
+import { backEdgeKeys } from "@shared/graph-cycles";
+import { edgeRuleForCondition } from "@shared/condition-to-rule";
+import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
+import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
 import type { ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
 
 export { HUMAN_CHECKPOINT_NODE_TYPES, STRUCTURAL_NODE_TYPES };
@@ -60,6 +64,12 @@ export interface SyncPlan {
   removed: string[];
   /** Agents that stop being part of the team, by the step they came from. */
   supersedes: Array<{ label: string; agentId: string; agentName: string }>;
+  /**
+   * How the connections differ, which a step-by-step diff cannot see. A flow
+   * whose steps are all unchanged can still have had four conditions removed,
+   * and that has to be syncable -- and visible on the card before it happens.
+   */
+  connections: { added: string[]; removed: string[]; changed: string[]; loopsAdded: string[]; loopsRemoved: string[] };
   /** How many agents a model will have to write from scratch. */
   drafts: number;
   /** This plan replaces every process node, because none could be correlated. */
@@ -127,6 +137,94 @@ function diffFlowAgainstBlueprint(graph: ProcessFlowGraph, existingNodes: any[],
 }
 
 const labelOf = (node: any) => (node.config as any)?.sourceLabel || node.label;
+
+/**
+ * What the flow says the team's connections should be: ordinary edges, and loops
+ * expressed as revision rules rather than edges.
+ *
+ * One function, used by the plan and by the apply. The whole point of this module
+ * is that the card cannot describe something different from what then happens, and
+ * a second copy of this decision is exactly how that drifts -- it is what let the
+ * apply write a loop as an edge while the plan said "nothing to sync".
+ */
+function desiredConnections(graph: ProcessFlowGraph, runNodeIds: Set<string>, runNodes: ProcessNode[]) {
+  const runEdges = graph.edges.filter((e) => runNodeIds.has(e.from) && runNodeIds.has(e.to));
+  const loopKeys = backEdgeKeys(runNodes.map((n) => n.id), runEdges.map((e) => ({ from: e.from, to: e.to })));
+  const loops = new Map<string, { to: string; maxRounds: number }>();
+  for (const e of runEdges) {
+    if (loopKeys.has(`${e.from}::${e.to}`)) {
+      loops.set(e.from, { to: e.to, maxRounds: Math.min(3, Math.max(1, Number(e.maxRounds) || 1)) });
+    }
+  }
+  return { runEdges, loopKeys, loops, forward: runEdges.filter((e) => !loopKeys.has(`${e.from}::${e.to}`)) };
+}
+
+/**
+ * How the team's connections differ from the flow's, in the words a card can use.
+ *
+ * Without this the plan compared STEPS only, so removing four edge conditions from
+ * a flow was answered with "already matches the flow step for step, nothing to
+ * sync" while the automation still carried all four -- the same drift this module
+ * exists to close, with a hole in it (live 2026-09-27).
+ */
+function planConnections(graph: ProcessFlowGraph, diff: Diff, existingEdges: any[]): SyncPlan["connections"] {
+  const { forward, loops } = desiredConnections(graph, diff.runNodeIds, diff.runNodes);
+  const labelFor = (pnId: string) =>
+    diff.runNodes.find((n) => n.id === pnId)?.label ?? (diff.byProcessNodeId.get(pnId) ? labelOf(diff.byProcessNodeId.get(pnId)) : pnId);
+  const pairText = (from: string, to: string) => `"${labelFor(from)}" → "${labelFor(to)}"`;
+
+  const orchestratorId = diff.orchestratorNode?.id;
+  const byPair = new Map<string, any>();
+  for (const e of existingEdges) {
+    if (e.sourceNodeId === orchestratorId || e.targetNodeId === orchestratorId) continue;
+    const src = diff.existingProcessNodes.find((n) => n.id === e.sourceNodeId);
+    const tgt = diff.existingProcessNodes.find((n) => n.id === e.targetNodeId);
+    const s = (src?.config as any)?.sourceProcessNodeId;
+    const t = (tgt?.config as any)?.sourceProcessNodeId;
+    if (s && t) byPair.set(`${s}::${t}`, e);
+  }
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  const changed: string[] = [];
+  const wanted = new Set<string>();
+  for (const e of forward) {
+    const key = `${e.from}::${e.to}`;
+    wanted.add(key);
+    const existing = byPair.get(key);
+    if (!existing) {
+      added.push(pairText(e.from, e.to));
+      continue;
+    }
+    const before = String(existing.condition ?? "").trim();
+    const after = String(e.condition ?? "").trim();
+    if (before === after) continue;
+    changed.push(after ? `${pairText(e.from, e.to)} only when ${after}` : `${pairText(e.from, e.to)} no longer waits on a condition`);
+  }
+  for (const key of Array.from(byPair.keys())) {
+    if (wanted.has(key)) continue;
+    const [s, t] = key.split("::");
+    // A pair that is now a loop is not removed: it becomes a revision rule, and
+    // is reported as one below.
+    if (loops.get(s)?.to === t) continue;
+    removed.push(pairText(s, t));
+  }
+
+  const loopsAdded: string[] = [];
+  const loopsRemoved: string[] = [];
+  for (const [fromPn, loop] of Array.from(loops.entries())) {
+    const row = diff.byProcessNodeId.get(fromPn);
+    const targetRow = diff.byProcessNodeId.get(loop.to);
+    const revision = (row?.config as any)?.revision as { targetNodeId?: string; maxRounds?: number } | undefined;
+    const alreadyRight = !!row && !!targetRow && revision?.targetNodeId === targetRow.id && revision?.maxRounds === loop.maxRounds;
+    if (!alreadyRight) loopsAdded.push(`"${labelFor(fromPn)}" sends work back to "${labelFor(loop.to)}"`);
+  }
+  for (const [pnId, row] of Array.from(diff.byProcessNodeId.entries())) {
+    if ((row.config as any)?.revision && !loops.has(pnId)) loopsRemoved.push(`"${labelFor(pnId)}" stops sending work back`);
+  }
+
+  return { added, removed, changed, loopsAdded, loopsRemoved };
+}
 
 /** Drop this agent's membership of this team, if it has one. */
 async function removeMembership(teamAgentId: string, memberAgentId: string) {
@@ -205,6 +303,7 @@ export async function planFlowSync(orgId: string | undefined, target: SyncTarget
     added: [],
     removed: [],
     supersedes: [],
+    connections: { added: [], removed: [], changed: [], loopsAdded: [], loopsRemoved: [] },
     drafts: 0,
     rebuild: forceFullRebuild,
   };
@@ -226,6 +325,7 @@ export async function planFlowSync(orgId: string | undefined, target: SyncTarget
     added: diff.added.map((n) => n.label),
     removed: diff.removedNodes.map(labelOf),
     supersedes,
+    connections: planConnections(target.graph, diff, (loaded as any).existingEdges ?? []),
     // Gates, expressions and sub-flows are built from the step itself; only an
     // agent step costs a model call.
     drafts: toCreate.filter((pn) => !HUMAN_CHECKPOINT_NODE_TYPES.has(pn.type) && pn.type !== "sub_flow" && pn.type !== "expression").length,
@@ -239,6 +339,20 @@ export interface SyncSummary {
   added: string[];
   superseded: Array<{ label: string; agentId: string }>;
   draftFailures: Array<{ label: string; error: string }>;
+  /**
+   * What became of the flow's loops, by the step each one leaves. Reported
+   * because a loop is the one thing in a flow that is NOT built as drawn: it
+   * becomes a rule on a step, and nothing else would tell anyone it is there.
+   * `unresolved` is a loop left off because the step it sends work back to could
+   * not be built.
+   */
+  revisionLoops: { set: string[]; cleared: string[]; unresolved: string[] };
+  /**
+   * What the blueprint looks like AFTER the sync, read back from the rows. A
+   * sync that leaves a team unable to run must not report success on its own
+   * say-so -- that is exactly how an unrunnable team reached a demo.
+   */
+  invariants: BlueprintCheck;
 }
 
 /** Do it. The caller has established that the team and flow are the caller's. */
@@ -386,12 +500,30 @@ export async function applyFlowSync(
     const tgtId = (tgtPn?.config as any)?.sourceProcessNodeId;
     if (srcId && tgtId) oldEndpointsByPnPair.set(`${srcId}::${tgtId}`, e);
   }
-  const runEdges = graph.edges.filter((e) => diff.runNodeIds.has(e.from) && diff.runNodeIds.has(e.to));
+  // A flow is drawn with loops; a team cannot run with one. computeWaves refuses
+  // any cyclic graph, so an edge pointing back up the flow becomes a revision
+  // rule on the step it leaves -- exactly what the build does. Until this, the
+  // sync copied it as an edge and the team it produced could not run at all,
+  // while the sync, the deploy and the build all reported success (live
+  // 2026-09-27: three loops in the MGA journey, 22 nodes, zero runs).
+  const { runEdges, loopKeys, loops: loopsByProcessNode } = desiredConnections(graph, diff.runNodeIds, diff.runNodes);
   const keptPairKeys = new Set<string>();
   for (const e of runEdges) {
     const key = `${e.from}::${e.to}`;
     const srcNodeId = nodeIdMap.get(e.from);
     const tgtNodeId = nodeIdMap.get(e.to);
+    // A loop is registered even when an endpoint failed to draft, so it is
+    // reported as unresolved below rather than looking like a loop the flow no
+    // longer draws.
+    if (loopKeys.has(key)) {
+      // Any edge a previous sync wrote for this pair has to go with it: as an
+      // edge it is what makes the graph cyclic. keptPairKeys stops the sweep
+      // below from deleting it twice.
+      const stale = oldEndpointsByPnPair.get(key);
+      if (stale) await storage.deleteTeamBlueprintEdge(stale.id);
+      keptPairKeys.add(key);
+      continue;
+    }
     if (!srcNodeId || !tgtNodeId) continue; // endpoint failed to draft -- already reported
     const existingEdge = oldEndpointsByPnPair.get(key);
     // Endpoints both unchanged AND an edge already connects them: leave it
@@ -407,13 +539,54 @@ export async function applyFlowSync(
       sourceNodeId: srcNodeId,
       targetNodeId: tgtNodeId,
       label: e.label || undefined,
-      condition: e.condition || undefined,
+      // The same classification the build applies: a condition that states a
+      // plain comparison becomes a rule the engine evaluates itself. Copying the
+      // text and leaving evaluationMode unset made every conditional edge on a
+      // synced team a model call per run.
+      ...edgeRuleForCondition(e.condition),
       failureMode: "escalate",
     } as any);
     keptPairKeys.add(key);
   }
   for (const [key, edge] of Array.from(oldEndpointsByPnPair.entries())) {
     if (!keptPairKeys.has(key)) await storage.deleteTeamBlueprintEdge(edge.id);
+  }
+
+  // Revision rules, recomputed from the flow every sync rather than edited in
+  // place. That is also the only thing that repoints a loop across a supersede:
+  // a changed step's node is deleted and redrafted under a NEW id, and the
+  // pointer on the reviewing step was left aimed at the retired node, so the loop
+  // could never fire even once the cycle was gone. Live 2026-09-27: a revision
+  // target naming a node that was not in the blueprint at all.
+  const rowByProcessNode = new Map<string, any>();
+  for (const n of diff.unchanged) rowByProcessNode.set((n.config as any).sourceProcessNodeId, n);
+  for (const c of created) if (c.ok && c.node) rowByProcessNode.set(c.pn.id, c.node);
+  const revisionLoops: SyncSummary["revisionLoops"] = { set: [], cleared: [], unresolved: [] };
+  for (const pn of diff.runNodes) {
+    const row = rowByProcessNode.get(pn.id);
+    if (!row) continue;
+    const config = { ...((row.config ?? {}) as Record<string, unknown>) };
+    const wanted = loopsByProcessNode.get(pn.id);
+    const existing = config.revision as { targetNodeId?: string; maxRounds?: number } | undefined;
+    if (wanted) {
+      const targetNodeId = nodeIdMap.get(wanted.to);
+      if (!targetNodeId) {
+        // The step it sends work back to failed to draft; a pointer to nothing is
+        // worse than no loop, so it is left off and reported.
+        revisionLoops.unresolved.push(pn.label);
+        continue;
+      }
+      if (existing?.targetNodeId === targetNodeId && existing?.maxRounds === wanted.maxRounds) continue;
+      await storage.updateTeamBlueprintNode(row.id, {
+        config: { ...config, revision: { targetNodeId, when: REWORK_REQUESTED_RULE, maxRounds: wanted.maxRounds } },
+      } as any);
+      revisionLoops.set.push(pn.label);
+    } else if (existing) {
+      // The loop was removed from the flow, so it stops being a rule on the step.
+      delete config.revision;
+      await storage.updateTeamBlueprintNode(row.id, { config } as any);
+      revisionLoops.cleared.push(pn.label);
+    }
   }
 
   // Reconcile the orchestrator's synthesized edges by topology (entry/terminal
@@ -449,6 +622,10 @@ export async function applyFlowSync(
     }
   }
 
+  // Read back what was actually written, so "synced" cannot mean "left in a
+  // state no run can start from".
+  const invariants = await checkBlueprintInvariants(blueprintId);
+
   await storage.createAuditEvent({
     actorType: "system",
     actorId: "process_flow_sync",
@@ -466,6 +643,9 @@ export async function applyFlowSync(
       removed: diff.removedNodes.map(labelOf),
       rebuilt: forceFullRebuild,
       draftFailures,
+      revisionLoops,
+      runnable: invariants.runnable,
+      findings: invariants.findings.map((f) => f.message),
       via: opts.via ?? "Studio",
     }),
     ontologyTags: resolveOntologyTags("outcome", "outcome.process_flow_synced"),
@@ -478,6 +658,8 @@ export async function applyFlowSync(
       added: diff.added.map((n) => n.label),
       superseded,
       draftFailures,
+      revisionLoops,
+      invariants,
     },
   };
 }

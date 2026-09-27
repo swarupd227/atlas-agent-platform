@@ -11,6 +11,8 @@ const db = vi.hoisted(() => ({
   approvals: [] as any[],
   audit: [] as any[],
   stopped: [] as string[],
+  blueprintNodes: [] as any[],
+  blueprintEdges: [] as any[],
   n: 1,
 }));
 
@@ -33,6 +35,10 @@ vi.mock("../server/storage", () => ({
     getOutcomes: vi.fn(async () => []),
     getInvoices: vi.fn(async () => []),
     getIncident: vi.fn(async () => undefined),
+    // Read by the runnability gate: a team whose graph holds a loop cannot run
+    // in any environment, so it must not reach an active deployment.
+    getTeamBlueprintNodes: vi.fn(async () => db.blueprintNodes),
+    getTeamBlueprintEdges: vi.fn(async () => db.blueprintEdges),
   },
 }));
 vi.mock("../server/routes/helpers", () => ({ resolveOntologyTags: () => [], resolvePolicyBundle: vi.fn(async () => ({ appliedPolicies: [] })) }));
@@ -46,6 +52,7 @@ const ctx = { orgId: "org-a" };
 beforeEach(() => {
   db.deployments.clear(); db.agents.clear();
   db.approvals.length = 0; db.audit.length = 0; db.stopped.length = 0; db.n = 1;
+  db.blueprintNodes = []; db.blueprintEdges = [];
   db.agents.set("ag-1", { id: "ag-1", name: "Invoice Agent", organizationId: "org-a", riskTier: "MEDIUM", autonomyMode: "assisted", runtimeConfig: {} });
 });
 
@@ -54,6 +61,36 @@ describe("createDeploymentAction", () => {
     db.audit.push({ action: "deployment_freeze", details: JSON.stringify({ scope: "org", reason: "Quarter close" }) });
     const r = await createDeploymentAction(ctx, { agentId: "ag-1", agentName: "Invoice Agent", environment: "pilot" });
     expect(r).toMatchObject({ status: 423, body: { frozen: true, message: expect.stringContaining("Quarter close") } });
+  });
+
+  it("refuses a team whose steps form a loop, instead of deploying something that can only 500", async () => {
+    // Live 2026-09-27: a team rebuilt from a flow with three revision loops was
+    // deployed and went active; every run died at wave computation, and no
+    // surface said why until someone read the 500.
+    db.agents.set("team-1", { id: "team-1", name: "E&S Binding Team", organizationId: "org-a", agentType: "team", blueprintId: "bp-1", riskTier: "MEDIUM" });
+    db.blueprintNodes = [{ id: "n1", label: "Draft endorsement", config: {} }, { id: "n2", label: "Check contract certainty", config: {} }];
+    db.blueprintEdges = [
+      { id: "e1", sourceNodeId: "n1", targetNodeId: "n2" },
+      { id: "e2", sourceNodeId: "n2", targetNodeId: "n1" },
+    ];
+    const r = await createDeploymentAction(ctx, { agentId: "team-1", agentName: "E&S Binding Team", environment: "staging", version: "1.0.0" });
+    expect(r.status).toBe(400);
+    expect(r.body).toMatchObject({ blocked: true, reason: "unrunnable_blueprint" });
+    expect((r.body as any).message).toContain("Check contract certainty");
+    // Nothing was written: no deployment, no version, no approval.
+    expect(db.deployments.size).toBe(0);
+    expect(db.approvals).toEqual([]);
+  });
+
+  it("deploys a team whose loop is a revision rule, which is the shape the platform builds", async () => {
+    db.agents.set("team-2", { id: "team-2", name: "Endorsement Team", organizationId: "org-a", agentType: "team", blueprintId: "bp-2", riskTier: "LOW" });
+    db.blueprintNodes = [
+      { id: "n1", label: "Draft endorsement", config: {} },
+      { id: "n2", label: "Check contract certainty", config: { revision: { targetNodeId: "n1", maxRounds: 2 } } },
+    ];
+    db.blueprintEdges = [{ id: "e1", sourceNodeId: "n1", targetNodeId: "n2" }];
+    const r = await createDeploymentAction(ctx, { agentId: "team-2", agentName: "Endorsement Team", environment: "staging", version: "1.0.0" });
+    expect(r.status).toBe(201);
   });
 
   it("creates the deployment in the organization and a deployment review carrying the organization", async () => {

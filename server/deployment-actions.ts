@@ -14,6 +14,7 @@ import { insertDeploymentSchema } from "@shared/schema";
 import { resolveOntologyTags, resolvePolicyBundle } from "./routes/helpers";
 import { ensureAarConfig } from "./routes/aar";
 import { buildBlastRadius } from "./blast-radius";
+import { checkBlueprintInvariants } from "./blueprint-invariants";
 import { stopAgentRuntime } from "./agent-runtime";
 
 export interface DeploymentActionContext {
@@ -57,6 +58,22 @@ export async function createDeploymentAction(ctx: DeploymentActionContext, body:
     }
 
     const agent = await storage.getAgent(data.agentId, ctx.orgId);
+
+    // A team whose graph holds a loop cannot run in ANY environment: computing
+    // execution waves fails before the first step. Deploying it produced an
+    // active deployment for an automation that could only ever 500, with nothing
+    // anywhere saying why (live 2026-09-27). Refuse instead, and name the steps.
+    if (agent?.agentType === "team" && (agent as any).blueprintId) {
+      const check = await checkBlueprintInvariants((agent as any).blueprintId);
+      if (!check.runnable) {
+        return { status: 400, body: {
+          blocked: true,
+          reason: "unrunnable_blueprint",
+          message: `Deployment blocked: "${agent.name}" cannot run as it is. ${check.findings.filter((f) => f.blocksRun).map((f) => f.message).join(" ")}`,
+          findings: check.findings,
+        } };
+      }
+    }
 
     if (env === "prod" && agent) {
       // The same assessment Astra's agent_ontology_alignment reports, so what

@@ -178,6 +178,10 @@ export function applyChangeSet(graph: ProcessFlowGraph, changes: ChangeSet): { g
     return true;
   });
 
+  // A condition on a step's only exit is left exactly as asked for: it gates the
+  // work rather than choosing a branch, and somebody may have meant that. What it
+  // costs is reported by the compiler (condition_without_choice), which is where
+  // the author sees it without a revision quietly rewriting their flow.
   return { graph: { ...graph, nodes, edges: deduped }, changed, skipped };
 }
 

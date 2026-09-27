@@ -18,6 +18,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { stepCorrelation, stepUnchanged, STRUCTURAL_NODE_TYPES, HUMAN_CHECKPOINT_NODE_TYPES } from "../shared/process-flow-correlation";
+import { hasCycle } from "../shared/graph-cycles";
+import { REWORK_REQUESTED_RULE } from "../shared/rework-rule";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 
@@ -29,6 +31,7 @@ const state = {
   agents: new Map<string, any>(),
   created: [] as any[],
   deletedNodes: [] as string[],
+  updatedNodes: [] as Array<{ id: string; patch: any }>,
   audits: [] as any[],
   members: [] as Array<{ id: string; teamAgentId: string; memberAgentId: string }>,
 };
@@ -52,6 +55,14 @@ vi.mock("../server/storage", () => ({
       return node;
     }),
     deleteTeamBlueprintNode: vi.fn(async (id: string) => { state.deletedNodes.push(id); state.nodes = state.nodes.filter((n) => n.id !== id); return true; }),
+    // Config is REPLACED, as the real one does, so a test that asserts on a
+    // node's config sees exactly what the sync wrote.
+    updateTeamBlueprintNode: vi.fn(async (id: string, patch: any) => {
+      const node = state.nodes.find((n) => n.id === id);
+      if (node) Object.assign(node, patch);
+      state.updatedNodes.push({ id, patch });
+      return node;
+    }),
     createTeamBlueprintEdge: vi.fn(async (e: any) => { const edge = { id: `edge-${state.edges.length + 1}`, ...e }; state.edges.push(edge); return edge; }),
     deleteTeamBlueprintEdge: vi.fn(async (id: string) => { state.edges = state.edges.filter((e) => e.id !== id); return true; }),
     createAuditEvent: vi.fn(async (e: any) => { state.audits.push(e); return e; }),
@@ -121,6 +132,7 @@ beforeEach(() => {
   state.agents = new Map();
   state.created = [];
   state.deletedNodes = [];
+  state.updatedNodes = [];
   state.audits = [];
   state.members = [];
 });
@@ -305,6 +317,217 @@ describe("a synced-in agent joins the team", () => {
     // Removing the "Bind" step supersedes agent-s4.
     await applyFlowSync(ORG, target(graph({}, "s4")));
     expect(state.members.map((m) => m.memberAgentId)).not.toContain("agent-s4");
+  });
+});
+
+/**
+ * A flow's loops, which are the one thing a sync must NOT build as drawn.
+ *
+ * Found live 2026-09-27 by another session doing governance work: a team rebuilt
+ * from a flow with three revision loops had 26 edges including 3 back-edges, and
+ * every run died at wave computation -- "Cycle detected in team graph" -- while
+ * the build, the sync and the deploy had all reported success. Zero runs, and
+ * nothing anywhere said why.
+ */
+describe("a loop in the flow", () => {
+  /** draft -> review -> file, with review sending work back to draft twice over. */
+  const loopGraph = (over: { backEdge?: boolean; maxRounds?: number; draftLabel?: string } = {}) => ({
+    version: 1,
+    name: "Endorsement",
+    nodes: [
+      { id: "s0", type: "trigger", label: "Request arrives", description: "", actor: "Broker" },
+      { id: "s1", type: "take_action", label: over.draftLabel ?? "Draft endorsement", description: "", actor: "System" },
+      { id: "s2", type: "get_info", label: "Check contract certainty", description: "", actor: "System" },
+      { id: "s3", type: "take_action", label: "File it", description: "", actor: "System" },
+      { id: "s9", type: "end", label: "Filed", description: "", actor: "System" },
+    ],
+    edges: [
+      { id: "e1", from: "s1", to: "s2" },
+      { id: "e2", from: "s2", to: "s3" },
+      ...(over.backEdge === false ? [] : [{ id: "e3", from: "s2", to: "s1", label: "Send back", maxRounds: over.maxRounds ?? 2 }]),
+    ],
+  }) as any;
+
+  const nodeFor = (processNodeId: string) =>
+    state.nodes.find((n) => n.config?.sourceProcessNodeId === processNodeId);
+  const revisionOn = (processNodeId: string) => (nodeFor(processNodeId)?.config as any)?.revision;
+
+  it("becomes a revision rule on the reviewing step, never an edge", async () => {
+    const g = loopGraph();
+    state.nodes = blueprintFromFlow(g);
+    const r = await applyFlowSync(ORG, target(g));
+
+    // No edge for the pair that points backwards...
+    expect(state.edges.some((e) => e.sourceNodeId === "node-s2" && e.targetNodeId === "node-s1")).toBe(false);
+    // ...so the graph the engine has to plan is acyclic, which is the whole point.
+    expect(hasCycle(state.nodes.map((n) => n.id), state.edges.map((e) => ({ from: e.sourceNodeId, to: e.targetNodeId })))).toBe(false);
+    // ...and the loop is still there, as the rule the engine actually honours.
+    expect(revisionOn("s2")).toMatchObject({ targetNodeId: "node-s1", maxRounds: 2 });
+    expect(revisionOn("s2").when).toEqual(REWORK_REQUESTED_RULE);
+    expect((r as any).summary.revisionLoops.set).toEqual(["Check contract certainty"]);
+  });
+
+  it("deletes a back-edge a previous sync wrote, because that edge is what made the team unrunnable", async () => {
+    const g = loopGraph();
+    state.nodes = blueprintFromFlow(g);
+    // Exactly what the live blueprint held: the loop recorded twice, once as node
+    // config and once as a real edge.
+    state.edges = [
+      { id: "edge-fwd", sourceNodeId: "node-s1", targetNodeId: "node-s2" },
+      { id: "edge-loop", sourceNodeId: "node-s2", targetNodeId: "node-s1" },
+    ];
+    (nodeFor("s2")!.config as any).revision = { targetNodeId: "node-s1", when: REWORK_REQUESTED_RULE, maxRounds: 2 };
+
+    await applyFlowSync(ORG, target(g));
+    expect(state.edges.some((e) => e.id === "edge-loop")).toBe(false);
+    expect(hasCycle(state.nodes.map((n) => n.id), state.edges.map((e) => ({ from: e.sourceNodeId, to: e.targetNodeId })))).toBe(false);
+  });
+
+  it("repoints the loop when the step it sends work back to is superseded", async () => {
+    // The live one, and the reason a hand-fix wouldn't have helped: revising the
+    // target step deletes its node and redrafts it under a NEW id, and the
+    // pointer was left aimed at the retired node -- so the loop silently could
+    // not fire even once the cycle was resolved.
+    const before = loopGraph();
+    state.nodes = blueprintFromFlow(before);
+    (nodeFor("s2")!.config as any).revision = { targetNodeId: "node-s1", when: REWORK_REQUESTED_RULE, maxRounds: 2 };
+
+    const after = loopGraph({ draftLabel: "Draft endorsement with treaty citation" });
+    await applyFlowSync(ORG, target(after));
+
+    const redrafted = state.created.find((n) => n.config?.sourceProcessNodeId === "s1");
+    expect(state.deletedNodes).toContain("node-s1");
+    expect(redrafted.id).not.toBe("node-s1");
+    expect(revisionOn("s2")).toMatchObject({ targetNodeId: redrafted.id, maxRounds: 2 });
+  });
+
+  it("takes the rule off the step when the loop is removed from the flow", async () => {
+    const before = loopGraph();
+    state.nodes = blueprintFromFlow(before);
+    (nodeFor("s2")!.config as any).revision = { targetNodeId: "node-s1", when: REWORK_REQUESTED_RULE, maxRounds: 2 };
+
+    const r = await applyFlowSync(ORG, target(loopGraph({ backEdge: false })));
+    expect(revisionOn("s2")).toBeUndefined();
+    expect((r as any).summary.revisionLoops.cleared).toEqual(["Check contract certainty"]);
+  });
+
+  it("carries the number of rounds the flow drew, capped where the engine caps it", async () => {
+    state.nodes = blueprintFromFlow(loopGraph());
+    await applyFlowSync(ORG, target(loopGraph({ maxRounds: 9 })));
+    expect(revisionOn("s2").maxRounds).toBe(3);
+
+    state.nodes = blueprintFromFlow(loopGraph());
+    state.edges = [];
+    await applyFlowSync(ORG, target(loopGraph({ maxRounds: 1 })));
+    expect(revisionOn("s2").maxRounds).toBe(1);
+  });
+
+  it("leaves the loop off rather than pointing it at nothing, and says so", async () => {
+    const { draftSingleAgent } = await import("../server/routes/helpers");
+    const before = loopGraph();
+    state.nodes = blueprintFromFlow(before);
+    // The target step changed, so it is redrafted -- and the draft fails.
+    vi.mocked(draftSingleAgent).mockRejectedValueOnce(new Error("model unavailable"));
+
+    const r = await applyFlowSync(ORG, target(loopGraph({ draftLabel: "Draft endorsement, citing the treaty" })));
+    const summary = (r as any).summary;
+    expect(summary.draftFailures).toHaveLength(1);
+    expect(summary.revisionLoops.unresolved).toEqual(["Check contract certainty"]);
+    // A pointer to a node that does not exist is worse than no loop: it reads as
+    // configured and can never fire.
+    expect(revisionOn("s2")).toBeUndefined();
+  });
+});
+
+/**
+ * Connections, which a step-by-step diff cannot see.
+ *
+ * Live 2026-09-27: four edge conditions were removed from a flow through the
+ * API, and the sync answered "already matches the flow step for step, nothing to
+ * sync" while the automation still carried all four. An edge-only change could
+ * never reach the team built from the flow -- the same drift this module exists to
+ * close, with a hole in it.
+ */
+describe("a change to the connections only", () => {
+  const conditioned = (condition?: string) => {
+    const g = graph();
+    g.edges = [
+      { id: "e1", from: "s1", to: "s2" },
+      { id: "e2", from: "s2", to: "s3", ...(condition ? { condition } : {}) },
+      { id: "e3", from: "s3", to: "s4" },
+    ];
+    return g;
+  };
+
+  it("is planned, not answered with nothing to sync", async () => {
+    const before = conditioned("breached");
+    state.nodes = blueprintFromFlow(before);
+    state.edges = [
+      { id: "edge-1", sourceNodeId: "node-s1", targetNodeId: "node-s2" },
+      { id: "edge-2", sourceNodeId: "node-s2", targetNodeId: "node-s3", condition: "breached" },
+      { id: "edge-3", sourceNodeId: "node-s3", targetNodeId: "node-s4" },
+    ];
+
+    const plan = await planFlowSync(ORG, target(conditioned()));
+    // Every step is untouched -- this is exactly the case that used to report
+    // nothing to sync.
+    expect(plan.changed).toEqual([]);
+    expect(plan.added).toEqual([]);
+    expect(plan.removed).toEqual([]);
+    expect(plan.connections.changed).toEqual(['"Treaty check" → "Carrier referral" no longer waits on a condition']);
+  });
+
+  it("names a connection that was added and one that was dropped", async () => {
+    const before = conditioned();
+    state.nodes = blueprintFromFlow(before);
+    state.edges = [
+      { id: "edge-1", sourceNodeId: "node-s1", targetNodeId: "node-s2" },
+      { id: "edge-2", sourceNodeId: "node-s2", targetNodeId: "node-s3" },
+      { id: "edge-3", sourceNodeId: "node-s3", targetNodeId: "node-s4" },
+    ];
+    // Redrawn so the treaty check skips the referral and binds directly.
+    const after = conditioned();
+    after.edges = [
+      { id: "e1", from: "s1", to: "s2" },
+      { id: "e2", from: "s2", to: "s4" },
+    ];
+    const plan = await planFlowSync(ORG, target(after));
+    expect(plan.connections.added).toEqual(['"Treaty check" → "Bind"']);
+    expect(plan.connections.removed.sort()).toEqual(['"Carrier referral" → "Bind"', '"Treaty check" → "Carrier referral"']);
+  });
+
+  it("reports a loop being drawn, and one being taken away", async () => {
+    const withLoop = conditioned();
+    withLoop.edges.push({ id: "e4", from: "s3", to: "s2", maxRounds: 2 } as any);
+    state.nodes = blueprintFromFlow(conditioned());
+    const plan = await planFlowSync(ORG, target(withLoop));
+    expect(plan.connections.loopsAdded).toEqual(['"Carrier referral" sends work back to "Treaty check"']);
+
+    // And the other direction: the team holds the rule, the flow no longer draws it.
+    state.nodes = blueprintFromFlow(conditioned());
+    const reviewer = state.nodes.find((n) => n.config?.sourceProcessNodeId === "s3")!;
+    (reviewer.config as any).revision = { targetNodeId: "node-s2", when: REWORK_REQUESTED_RULE, maxRounds: 2 };
+    const without = await planFlowSync(ORG, target(conditioned()));
+    expect(without.connections.loopsRemoved).toEqual(['"Carrier referral" stops sending work back']);
+  });
+
+  it("applies the condition with the same classification the build uses, so a comparison is not a model call", async () => {
+    const g = conditioned("aggregate > 40000000");
+    state.nodes = blueprintFromFlow(conditioned());
+    await applyFlowSync(ORG, target(g));
+    const edge = state.edges.find((e) => e.sourceNodeId === "node-s2" && e.targetNodeId === "node-s3")!;
+    expect(edge.evaluationMode).toBe("deterministic");
+    expect(edge.rule).toMatchObject({ combinator: "AND", conditions: [{ field: "aggregate", operator: ">", value: 40000000 }] });
+  });
+
+  it("leaves genuine judgement to the model, which is the point of the classification", async () => {
+    const g = conditioned("the broker's story does not add up");
+    state.nodes = blueprintFromFlow(conditioned());
+    await applyFlowSync(ORG, target(g));
+    const edge = state.edges.find((e) => e.sourceNodeId === "node-s2" && e.targetNodeId === "node-s3")!;
+    expect(edge.evaluationMode).toBe("ai");
+    expect(edge.rule).toBeUndefined();
+    expect(edge.condition).toBe("the broker's story does not add up");
   });
 });
 

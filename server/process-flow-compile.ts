@@ -7,6 +7,8 @@ import { computeWaves } from "./dag-execution-engine";
 import type { ProcessFlowGraph, ProcessEdge } from "@shared/process-flow";
 import { classifyStep, estimateFlowCost, type ExecutionKind, type FlowCostEstimate } from "@shared/flow-execution-kind";
 import { parseConditionToRule } from "@shared/condition-to-rule";
+import { backEdgeIds } from "@shared/graph-cycles";
+import { conditionsWithNoChoice } from "@shared/process-flow";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 export interface CompiledWave {
@@ -55,29 +57,6 @@ export interface CompiledFlow {
   warnings: string[];
   /** Structured findings; `warnings` above is `issues.map(i => i.message)`. */
   issues: CompiledIssue[];
-}
-
-/** DFS back-edge detection — edges that close a cycle (loop / retry). */
-function findBackEdgeIds(graph: ProcessFlowGraph): Set<string> {
-  const adj = new Map<string, Array<{ id: string; to: string }>>();
-  for (const n of graph.nodes) adj.set(n.id, []);
-  for (const e of graph.edges) adj.get(e.from)?.push({ id: e.id, to: e.to });
-
-  const color = new Map<string, 0 | 1 | 2>(); // 0 white, 1 gray, 2 black
-  for (const n of graph.nodes) color.set(n.id, 0);
-  const back = new Set<string>();
-
-  const visit = (u: string) => {
-    color.set(u, 1);
-    for (const e of adj.get(u) || []) {
-      const c = color.get(e.to);
-      if (c === 1) back.add(e.id);              // edge into the recursion stack → back edge
-      else if (c === 0) visit(e.to);
-    }
-    color.set(u, 2);
-  };
-  for (const n of graph.nodes) if (color.get(n.id) === 0) visit(n.id);
-  return back;
 }
 
 export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
@@ -180,8 +159,11 @@ export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
     }
   }
 
-  // Loops (back edges) become runtime retries, not DAG dependencies.
-  const backIds = findBackEdgeIds({ ...graph, edges: validEdges });
+  // Loops (back edges) become runtime retries, not DAG dependencies. The same
+  // walk the build and the flow sync use, so all three agree on which edge of a
+  // loop is the loop -- three private copies of this was how a flow could compile
+  // clean here and still produce a team that could not run.
+  const backIds = backEdgeIds(graph.nodes.map(n => n.id), validEdges);
   const loops = validEdges.filter(e => backIds.has(e.id)).map(e => ({
     from: e.from, to: e.to, label: e.label, condition: e.condition,
   }));
@@ -195,6 +177,22 @@ export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
     if (!outByNode.has(e.from)) outByNode.set(e.from, []);
     outByNode.get(e.from)!.push(e);
   }
+  // A condition on a step's ONLY exit chooses nothing. It still gates -- a false
+  // answer stops the work -- so it may be exactly what the author wanted, but it
+  // is also what a model produces when it writes a description of the handoff
+  // into the condition field, and then every run of the team pays a model call to
+  // decide something with one outcome. Said here, where the author can see it,
+  // rather than rewritten behind their back.
+  for (const e of conditionsWithNoChoice(validEdges, backIds)) {
+    const from = nodeById.get(e.from)?.label || e.from;
+    const to = nodeById.get(e.to)?.label || e.to;
+    warn(
+      "condition_without_choice",
+      `"${from}" has only one path out, to "${to}", and it carries the condition "${e.condition}". With nothing to choose between, that condition only decides whether the work stops -- and if it is really a note about what is handed on, it belongs in the path's label, where it costs no model call per run.`,
+      { nodeId: e.from, edgeId: e.id },
+    );
+  }
+
   const branches: CompiledBranch[] = [];
   for (const [nodeId, outs] of Array.from(outByNode.entries())) {
     if (outs.length > 1) {

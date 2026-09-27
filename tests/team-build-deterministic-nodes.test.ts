@@ -11,7 +11,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { teamAgentProposalSchema } from "../server/team-build";
 import { classifyStep } from "../shared/flow-execution-kind";
-import { parseConditionToRule } from "../shared/condition-to-rule";
+import { edgeRuleForCondition, parseConditionToRule } from "../shared/condition-to-rule";
 import { stateKeyForLabel } from "../shared/state-key";
 import { evaluateRule } from "../server/rule-evaluator";
 import { buildPipelineState } from "../server/agent-runtime";
@@ -237,13 +237,36 @@ describe("the state key a deterministic step writes to", () => {
 });
 
 describe("a branch the engine can decide for itself", () => {
-  it("parses a comparison into a rule instead of paying a model per run", () => {
-    expect(source).toContain("const parsed = parseConditionToRule(spec.branchCondition);");
-    expect(source).toContain('if (parsed) return { condition: spec.branchCondition, evaluationMode: "deterministic", rule: parsed };');
+  // The classification moved into shared/condition-to-rule.ts because the flow
+  // sync needed the same answer and was giving a different one -- it copied the
+  // condition text and left evaluationMode unset, which the engine reads as
+  // "ai", so every conditional edge on a synced team was a model call per run.
+  // Asserted on the helper now rather than on the build's source text: one
+  // classifier, and the build only has to delegate to it.
+  it("turns a comparison into a rule instead of paying a model per run", () => {
+    expect(edgeRuleForCondition("aggregate > 50000000")).toMatchObject({
+      condition: "aggregate > 50000000",
+      evaluationMode: "deterministic",
+      rule: { combinator: "AND", conditions: [{ field: "aggregate", operator: ">", value: 50000000 }] },
+    });
   });
 
   it("still leaves judgement to the model", () => {
     expect(parseConditionToRule("the write-up reads as balanced")).toBeNull();
-    expect(source).toContain('return { condition: spec.branchCondition, evaluationMode: "ai" };');
+    expect(edgeRuleForCondition("the write-up reads as balanced")).toEqual({
+      condition: "the write-up reads as balanced",
+      evaluationMode: "ai",
+    });
+  });
+
+  it("says nothing about an edge with no condition, so an ordinary handoff stays one", () => {
+    expect(edgeRuleForCondition(undefined)).toEqual({});
+    expect(edgeRuleForCondition("   ")).toEqual({});
+  });
+
+  it("is what both builders call, so the two cannot drift again", () => {
+    expect(source).toContain("return edgeRuleForCondition(spec.branchCondition);");
+    const sync = readFileSync(join(__dirname, "..", "server", "process-flow-sync.ts"), "utf8");
+    expect(sync).toContain("edgeRuleForCondition(e.condition)");
   });
 });

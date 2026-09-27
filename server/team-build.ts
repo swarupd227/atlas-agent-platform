@@ -14,10 +14,13 @@ import { isKnownIndustry } from "@shared/industry-filter";
 import { generateOntologyEvalCases } from "./routes/helpers";
 import { resolveBindingServer } from "./team-bindings";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
-import { parseConditionToRule } from "@shared/condition-to-rule";
+import { edgeRuleForCondition, parseConditionToRule } from "@shared/condition-to-rule";
 import { classifyStep } from "@shared/flow-execution-kind";
 import { stateKeyForLabel } from "@shared/state-key";
 import { stepCorrelation } from "@shared/process-flow-correlation";
+import { backEdgeKeys, edgeKey } from "@shared/graph-cycles";
+import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
+import { checkBlueprintInvariants } from "./blueprint-invariants";
 import jsonata from "jsonata";
 
 export class TeamBuildNotFoundError extends Error {
@@ -82,12 +85,11 @@ function resolveEdgeRuleFromSpec(spec: any): { condition?: string; evaluationMod
   if (spec.type === "conditional" && spec.branchCondition) {
     // No rule supplied, but the condition may still be a plain comparison --
     // "amount > 50000" was costing a model call on every run to decide
-    // something the engine can evaluate itself, auditably. parseConditionToRule
-    // returns null for anything that is genuine judgement, which keeps the
-    // model on the decisions that need one.
-    const parsed = parseConditionToRule(spec.branchCondition);
-    if (parsed) return { condition: spec.branchCondition, evaluationMode: "deterministic", rule: parsed };
-    return { condition: spec.branchCondition, evaluationMode: "ai" };
+    // something the engine can evaluate itself, auditably. The shared helper
+    // returns an "ai" edge for anything that is genuine judgement, which keeps
+    // the model on the decisions that need one, and keeps this answer identical
+    // to the one the flow sync gives.
+    return edgeRuleForCondition(spec.branchCondition);
   }
   return {};
 }
@@ -432,30 +434,10 @@ export type TeamAgentProposal = z.infer<typeof teamAgentProposalSchema>;
 export type TeamBuildBody = z.infer<typeof teamBuildBodySchema>;
 
 /**
- * When a reviewing step has asked for the work to be redone.
- *
- * decideRevision evaluates this against the reviewer's structured output as
- * well as its raw text, so it has to cover the vocabularies a reviewer
- * actually uses, not one word. Live 2026-09-24: a contract-certainty step
- * emitted {"accepted":false,"escalate":false,"redraft":true} -- asking for a
- * redraft in as many words -- and the old rule, which matched only the text
- * "fail", did not fire. Neither outgoing branch matched either, so the six
- * steps after it were skipped and the run still reported success.
- *
- * A field that is absent reads as "undefined" and matches none of these, so a
- * reviewer that approves (or says nothing about rework) never triggers a loop.
+ * Re-exported from shared/ so the flow sync can write the same rule. Anything
+ * importing it from here keeps working.
  */
-export const REWORK_REQUESTED_RULE: RuleGroup = {
-  combinator: "OR",
-  conditions: [
-    { field: "output", operator: "contains", value: "fail" },
-    { field: "accepted", operator: "==", value: false },
-    { field: "approved", operator: "==", value: false },
-    { field: "redraft", operator: "==", value: true },
-    { field: "rejected", operator: "==", value: true },
-    { field: "requiresRevision", operator: "==", value: true },
-  ],
-};
+export { REWORK_REQUESTED_RULE };
 
 export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: string }) {
   // Everything the build creates or reads belongs to this organization.
@@ -1214,27 +1196,22 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     };
 
     const created: Array<{ sourceNodeId: string; targetNodeId: string }> = [];
-    // Does `to` already lead back to `from` through the edges built so far? Then an edge
-    // from -> to would close a loop, and computeWaves() rejects any graph with one.
-    const leadsTo = (from: string, to: string) => {
-      const seen = new Set([from]);
-      const queue = [from];
-      while (queue.length > 0) {
-        const id = queue.shift()!;
-        if (id === to) return true;
-        for (const e of created) if (e.sourceNodeId === id && !seen.has(e.targetNodeId)) { seen.add(e.targetNodeId); queue.push(e.targetNodeId); }
-      }
-      return false;
-    };
-    for (const edgeSpec of pipeline!.edges!) {
-      const source = resolveNode(edgeSpec.from);
-      const target = resolveNode(edgeSpec.to);
-      if (!source || !target || source.id === target.id) continue;
+    // Which edges point back up the flow is a property of the whole graph, so it
+    // is settled before a single edge is written. Deciding it from the edges
+    // created so far made it depend on the order the proposal happened to list
+    // them: the same loop became a revision rule when its forward path was listed
+    // first, and a real edge -- an unrunnable team -- when it was listed second.
+    const resolvedSpecs = pipeline!.edges!
+      .map((edgeSpec) => ({ edgeSpec, source: resolveNode(edgeSpec.from), target: resolveNode(edgeSpec.to) }))
+      .filter((r): r is { edgeSpec: typeof r.edgeSpec; source: any; target: any } => !!r.source && !!r.target && r.source.id !== r.target.id);
+    const specEdges = resolvedSpecs.map((r) => ({ from: r.source.id, to: r.target.id }));
+    const backKeys = backEdgeKeys(Array.from(new Set(specEdges.flatMap((e) => [e.from, e.to]))), specEdges);
+    for (const { edgeSpec, source, target } of resolvedSpecs) {
       // "Send it back for a rewrite" arrives as an edge pointing back up the flow. As an edge it
       // would make the graph cyclic -- no execution stages, so the team could not run at all. The
       // platform expresses rework as a revision rule on the reviewing step instead: when its output
       // says the work failed, the target step runs again, and everything after it follows.
-      if (leadsTo(target.id, source.id)) {
+      if (backKeys.has(edgeKey(source.id, target.id))) {
         const existing = (source.config ?? {}) as Record<string, unknown>;
         await storage.updateTeamBlueprintNode(source.id, {
           config: {
@@ -1422,6 +1399,12 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     ...workerLinkResults.flatMap(r => r.unresolved),
   ]));
 
+  // Read the graph back before calling this a success. A build that leaves a
+  // loop as an edge produces a team whose every run dies at wave computation,
+  // and until this the only way to find that out was to press run.
+  const invariants = await checkBlueprintInvariants(blueprint.id);
+  for (const finding of invariants.findings) structureWarnings.push(finding.message);
+
   return {
     teamAgent,
     workers: createdWorkers,
@@ -1431,5 +1414,6 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     unconnectedBindings,
     unresolvedBindings,
     structureWarnings,
+    runnable: invariants.runnable,
   };
 }

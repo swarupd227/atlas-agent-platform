@@ -73,6 +73,10 @@ vi.mock("../server/storage", () => {
         return row;
       }),
       createTeamBlueprintEdge: vi.fn(async (e: any) => { const row = { id: id("edge"), ...e }; state.edges.push(row); return row; }),
+      // Read back by the runnability check at the end of the build: a team whose
+      // graph holds a loop cannot run, and the build used to report success anyway.
+      getTeamBlueprintNodes: vi.fn(async (blueprintId: string) => state.nodes.filter((n: any) => n.blueprintId === blueprintId)),
+      getTeamBlueprintEdges: vi.fn(async (blueprintId: string) => state.edges.filter((e: any) => e.blueprintId === blueprintId)),
       updateOutcome: vi.fn(async (outcomeId: string, data: any, orgId?: string) => { state.outcomeUpdates.push({ outcomeId, data, orgId }); return {}; }),
       createEvalSuite: vi.fn(async (s: any) => { const row = { id: id("suite"), ...s }; state.suites.push(row); return row; }),
       updateEvalSuite: vi.fn(async () => ({})),
