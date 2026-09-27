@@ -15205,8 +15205,15 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
       const resp = await fetch(url.toString(), { signal: AbortSignal.timeout(10_000) });
       if (!resp.ok) throw new Error(`Registry returned HTTP ${resp.status}`);
       const body: any = await resp.json();
-      const servers: any[] = Array.isArray(body.servers) ? body.servers : [];
-      for (const s of servers) {
+      const entries: any[] = Array.isArray(body.servers) ? body.servers : [];
+      for (const entry of entries) {
+        // Each list entry wraps the actual server description one level deeper, as
+        // { server: {...}, _meta: {...} } -- confirmed against the live API, not the flattened
+        // shape it might look like from documentation alone.
+        const s = entry.server || entry;
+        // A name can have several published versions in the list; only the registry's own
+        // "isLatest" flag says which one is current (array order doesn't reliably match it).
+        if (entry._meta?.["io.modelcontextprotocol.registry/official"]?.isLatest === false) continue;
         // Only remote-callable entries can actually be dispatched by this platform -- a stdio/
         // local-process entry (only listed under `packages`) has no per-tenant subprocess sandbox
         // to run in, so it would sit in the catalog forever un-installable. Skip rather than create
