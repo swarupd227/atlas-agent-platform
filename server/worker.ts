@@ -23,7 +23,7 @@ import { runMeetingTranscription } from "./meeting-transcription";
 import { readFile, unlink } from "fs/promises";
 import { pollDueResourceChangeTriggers } from "./connector-poller";
 import { pollDueScheduleTriggers } from "./schedule-trigger-poller";
-import { runTeamAgentDag, extractFinalOutputText } from "./dag-execution-engine";
+import { runTeamAgentDag, extractFinalOutputText, startTeamAgentDagRun } from "./dag-execution-engine";
 import { pollWaitingApprovalDagRuns, pollInterruptedDagRuns } from "./dag-resume-poller";
 
 // ── Meeting transcription (async long-meeting path) ─────────────────────────────
@@ -630,8 +630,38 @@ async function processAgentScheduledRun(job: Job): Promise<Record<string, unknow
 
   console.log(`[worker] Executing scheduled cycle for agent: ${agentName} (deployment: ${deploymentId})`);
   let cycleError: Error | undefined;
+  let skipped: string | undefined;
+  let startedDagRunId: string | undefined;
   try {
-    await executeScheduledAgentCycle(deploymentId);
+    // A team with a blueprint runs the way a team run always runs: through the
+    // DAG engine, writing a dag_execution_runs row. executeScheduledAgentCycle
+    // would send it through executeTeamPipeline instead -- a different executor
+    // that records no run row, so a journey scheduled to run every hour was
+    // invisible to the run history, the monitor, list_runs and cancel_run.
+    const deployment = await storage.getDeployment(deploymentId);
+    const scheduledAgent = deployment ? await storage.getAgent(deployment.agentId) : undefined;
+    const blueprintId = (scheduledAgent as any)?.blueprintId as string | undefined;
+    if (scheduledAgent && scheduledAgent.agentType === "team" && blueprintId) {
+      // Its task instructions are the request: the same text the single-agent
+      // cycle runs on, and the field update_agent_instructions edits.
+      const request = ((scheduledAgent.runtimeConfig as Record<string, any>) || {}).prompt
+        || scheduledAgent.description
+        || `Scheduled run of ${scheduledAgent.name}`;
+      const recent = await storage.listDagExecutionRunsByTeamAgent(scheduledAgent.id, 20);
+      const inFlight = recent.find((r) => r.status === "running" || r.status === "waiting_approval");
+      if (inFlight) {
+        // A run that takes longer than the interval must not be doubled up: two
+        // runs of the same journey would both write to the same systems.
+        skipped = `previous run ${inFlight.id} is still ${inFlight.status}`;
+        console.log(`[worker] Skipping scheduled run for ${agentName}: ${skipped}`);
+      } else {
+        const started = await startTeamAgentDagRun(scheduledAgent.id, blueprintId, request);
+        startedDagRunId = started.dagRunId;
+        console.log(`[worker] Started scheduled team run ${started.dagRunId} for ${agentName}`);
+      }
+    } else {
+      await executeScheduledAgentCycle(deploymentId);
+    }
   } catch (err: any) {
     cycleError = err;
     console.error(`[worker] Scheduled cycle failed for ${agentName}:`, err.message);
@@ -662,7 +692,14 @@ async function processAgentScheduledRun(job: Job): Promise<Record<string, unknow
   }
 
   if (cycleError) throw cycleError;
-  return { deploymentId, agentName, completedAt: new Date().toISOString(), nextIntervalMs: intervalMs };
+  return {
+    deploymentId,
+    agentName,
+    completedAt: new Date().toISOString(),
+    nextIntervalMs: intervalMs,
+    ...(startedDagRunId ? { dagRunId: startedDagRunId } : {}),
+    ...(skipped ? { skipped } : {}),
+  };
 }
 
 const AUDIT_CHAIN_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes

@@ -84,6 +84,9 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     ...(has("stop_automation")
       ? ["8f. Stopping and cancelling are different acts and the difference matters: cancel_run ends one run in flight (and rejects the approval it was waiting on), stop_automation stops an agent starting work on its own. Neither undoes what already happened, and stopping does NOT prevent someone running it by hand -- say that rather than letting \"stopped\" sound like \"out of service\"; rolling the deployment back is what takes it out of service. Use list_runs to see what is in flight before either."]
       : []),
+    ...(has("set_schedule")
+      ? ["8g. A schedule is a 5-field cron expression evaluated in UTC. Translate what the user says into cron yourself (\"every morning at 7\" with no timezone is 0 7 * * *) and say the UTC time back to them, because 7am where they are is usually not 7am UTC -- ask which they meant when it matters. A fire needs an active deployment or it fails, and a fire is skipped while the previous run is still going. An agent may also have the older continuous runtime interval; the card says so when it does, and stop_automation is what stops that one."]
+      : []),
     ...(has("discover_outcome")
       ? ["9. When the user describes a goal, draft the outcome yourself in the conversation (name, what success means, KPIs with targets and units). Call discover_outcome to ground the draft before create_outcome. Only use a baseline or current figure the user or a tool actually gave you. Rules the user states -- who must approve what, what must never happen -- go into the outcome's constraints."]
       : []),
