@@ -104,6 +104,7 @@ export type PermissionAction =
   | "view_traces"
   | "export_audit_bundle"
   | "approve_changes"
+  | "manage_mcp_servers"
   | "billing_invoices";
 
 export type AccessLevel = "full" | "conditional" | "denied";
@@ -126,6 +127,7 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
     export_audit_bundle: { access: "full" },
     approve_changes: { access: "full" },
     billing_invoices: { access: "full" },
+    manage_mcp_servers: { access: "full" },
   },
   outcome_owner: {
     create_modify_outcomes: { access: "full" },
@@ -137,6 +139,7 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
     export_audit_bundle: { access: "conditional", annotation: "scoped" },
     approve_changes: { access: "denied" },
     billing_invoices: { access: "conditional", annotation: "outcome" },
+    manage_mcp_servers: { access: "denied" },
   },
   agent_engineer: {
     create_modify_outcomes: { access: "conditional", annotation: "draft only" },
@@ -148,6 +151,7 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
     export_audit_bundle: { access: "denied" },
     approve_changes: { access: "denied" },
     billing_invoices: { access: "denied" },
+    manage_mcp_servers: { access: "conditional" },
   },
   ops_sre: {
     create_modify_outcomes: { access: "denied" },
@@ -159,6 +163,7 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
     export_audit_bundle: { access: "conditional", annotation: "incident scope" },
     approve_changes: { access: "denied" },
     billing_invoices: { access: "denied" },
+    manage_mcp_servers: { access: "denied" },
   },
   compliance_security: {
     create_modify_outcomes: { access: "conditional", annotation: "policy constraints" },
@@ -170,6 +175,7 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
     export_audit_bundle: { access: "full" },
     approve_changes: { access: "denied" },
     billing_invoices: { access: "denied" },
+    manage_mcp_servers: { access: "full" },
   },
   expert_validator: {
     create_modify_outcomes: { access: "conditional", annotation: "approve" },
@@ -181,6 +187,7 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
     export_audit_bundle: { access: "full" },
     approve_changes: { access: "full" },
     billing_invoices: { access: "denied" },
+    manage_mcp_servers: { access: "conditional" },
   },
   finance: {
     create_modify_outcomes: { access: "denied" },
@@ -192,6 +199,7 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
     export_audit_bundle: { access: "conditional", annotation: "billing evidence" },
     approve_changes: { access: "denied" },
     billing_invoices: { access: "full" },
+    manage_mcp_servers: { access: "denied" },
   },
 };
 
@@ -204,6 +212,7 @@ export const ACTION_LABELS: Record<PermissionAction, string> = {
   view_traces: "View traces",
   export_audit_bundle: "Export audit bundle",
   approve_changes: "Approve changes",
+  manage_mcp_servers: "Manage connectors",
   billing_invoices: "Billing and invoices",
 };
 

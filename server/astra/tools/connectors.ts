@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { checkedAgo, healthWords, type ConnectorHealthState } from "@shared/connector-health-words";
 import type { AstraTool, ConfirmPreview } from "../types";
 
 /** Loaded on demand: find_connectors and attach_connector stay core. */
@@ -20,13 +21,10 @@ const PACK = "connectors";
  * platform needs so that refusal ends somewhere useful.
  */
 
-const ago = (days: number | null) => (days == null ? "never checked" : days === 0 ? "checked today" : days === 1 ? "checked yesterday" : `checked ${days} days ago`);
-
-const stateWords = (state: string, days: number | null) => {
-  if (state === "never_checked") return "never checked — nothing has probed it, so its state is unknown";
-  if (state === "reachable") return `reachable when last probed, ${ago(days)}`;
-  return `failing its check as of ${ago(days)}`;
-};
+// The page says it the same way, from the same functions: a badge and a sentence
+// that disagree about the same connector are worse than either alone.
+const ago = checkedAgo;
+const stateWords = (state: string, days: number | null) => healthWords(state as ConnectorHealthState, days);
 
 export const connectorHealthTool: AstraTool<{ connector?: string }> = {
   name: "connector_health",

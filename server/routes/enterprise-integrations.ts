@@ -1832,4 +1832,76 @@ router.delete("/api/integrations/:id", async (req, res) => {
   res.redirect(307, `/api/enterprise-integrations/${req.params.id}`);
 });
 
+// ── One page's worth of connectors ───────────────────────────────────────────
+//
+// The audit these serve (2026-09-27): the connectors surface was nine routes over
+// three registries, and its health column showed "healthy" for 113 connectors of
+// which 129 had not been probed in over a week. Answering "what can my agents
+// reach, is it working, who uses it" meant reading four tabs and two other pages.
+//
+// Both handlers call the same functions Cowork's connector tools call
+// (server/connector-actions.ts), so a badge on the page and a sentence in a
+// conversation cannot disagree about the same connector.
+
+/** Every connector with the age of its health measurement, plus the counts. */
+router.get("/api/connectors/overview", async (req: Request, res: Response) => {
+  try {
+    const orgId = getOrgId(req) ?? getDefaultOrgId() ?? undefined;
+    const { connectorHealth } = await import("../connector-actions");
+    const health = await connectorHealth(orgId);
+
+    const connections = orgId ? await storage.listIntegrationConnections(orgId) : [];
+    const connMap = new Map(connections.map((c) => [c.integrationId, c]));
+    const platforms = INTEGRATION_REGISTRY.map((def) => ({
+      id: def.id,
+      name: def.name,
+      category: def.category,
+      authMethod: def.authMethod ?? null,
+      capabilities: def.capabilities ?? [],
+      connected: connMap.has(def.id),
+      connection: connMap.get(def.id)
+        ? { status: connMap.get(def.id)!.status, lastTestedAt: connMap.get(def.id)!.lastTestedAt, lastError: connMap.get(def.id)!.lastError }
+        : null,
+      /** Field NAMES only; a value never leaves the vault. */
+      credentialFields: (def.credentialFields ?? []).map((f: any) => ({ key: f.key, label: f.label ?? f.key, required: f.required !== false, secret: String(f.type) === "password" || /secret|token|key/i.test(String(f.key)) })),
+    }));
+
+    res.json({
+      connectors: health.connectors,
+      counts: {
+        connectors: health.total,
+        checkedWithinAWeek: health.checkedWithinAWeek,
+        staleOverAWeek: health.staleOverAWeek,
+        neverChecked: health.neverChecked,
+        unreachableAtLastCheck: health.unreachable,
+        usedByNoAgent: health.usedByNobody,
+        mockEndpoints: health.mock,
+        platforms: platforms.length,
+        platformsConnected: platforms.filter((p) => p.connected).length,
+      },
+      platforms,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Probe one now. A real call to that system, so it carries the same permission as managing one. */
+router.post("/api/connectors/:id/verify", checkPermission("manage_mcp_servers"), async (req: Request, res: Response) => {
+  try {
+    const orgId = getOrgId(req) ?? getDefaultOrgId() ?? undefined;
+    const { verifyConnectorNow, ConnectorActionError } = await import("../connector-actions");
+    const actor = (req as any).authUser?.username ?? "the connectors page";
+    try {
+      const result = await verifyConnectorNow(orgId, String(req.params.id), actor);
+      res.json(result);
+    } catch (e) {
+      if (e instanceof ConnectorActionError) return res.status(404).json({ error: e.message });
+      throw e;
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
