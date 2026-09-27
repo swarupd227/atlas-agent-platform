@@ -18,7 +18,7 @@ const LIMIT_MAX = 25;
 export const findConnectorsTool: AstraTool<{ query?: string; integrationId?: string; includeLinkedAgents?: boolean; limit?: number }> = {
   name: "find_connectors",
   description:
-    "Find connectors (MCP servers and enterprise integrations) this organization can use, with whether each is connected, how many tools it exposes and how many of those change data. Set includeLinkedAgents to see which of the organization's agents can already reach each one.",
+    "Find connectors (MCP servers and enterprise integrations) this organization can use, with whether each is connected, how many tools it exposes and how many of those change data. Set includeLinkedAgents to see which of the organization's agents can already reach each one. This says what is INSTALLED, not whether it works: for whether a connector is actually reachable and when that was last checked, which connector carries a tool that does a particular job, who uses one, or what connecting a platform needs, load the connectors pack first — this tool cannot answer those and guessing from a name is how a dead connector gets attached.",
   input: z.object({
     query: z.string().optional().describe("Text matched against connector name, description and integration id, e.g. \"dealer\" or \"salesforce\"."),
     integrationId: z.string().optional().describe("Exact integration id, e.g. dealer-operations."),

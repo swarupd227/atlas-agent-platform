@@ -23,15 +23,29 @@ export function checkedAgo(ageDays: number | null): string {
   return `checked ${ageDays} days ago`;
 }
 
-/** The whole claim: what was measured, and when. Never "is healthy". */
-export function healthWords(state: ConnectorHealthState, ageDays: number | null): string {
+/**
+ * The whole claim: what was measured, and when. Never "is healthy".
+ *
+ * `canProbe` false is its own answer, and the common one: measured live on
+ * 2026-09-27, 131 of 132 connectors had no health check path, so the scheduled
+ * scan covered exactly ONE of them and 112 displayed a state written in a single
+ * bulk sweep on 26 August that nothing can refresh. "Never checked" understates
+ * that — there is no mechanism by which it ever could be.
+ */
+export function healthWords(state: ConnectorHealthState, ageDays: number | null, canProbe = true): string {
+  if (!canProbe) {
+    return state === "never_checked"
+      ? "cannot be verified — no health check is configured for it, so nothing can probe it"
+      : `${state === "reachable" ? "recorded as reachable" : "recorded as failing"} ${checkedAgo(ageDays)}, and cannot be re-checked — no health check is configured for it`;
+  }
   if (state === "never_checked") return "never checked — nothing has probed it, so its state is unknown";
   if (state === "reachable") return `reachable when last probed, ${checkedAgo(ageDays)}`;
   return `failing its check as of ${checkedAgo(ageDays)}`;
 }
 
 /** Two or three words for a badge, still tensed. */
-export function healthBadge(state: ConnectorHealthState): string {
+export function healthBadge(state: ConnectorHealthState, canProbe = true): string {
+  if (!canProbe) return state === "never_checked" ? "Cannot be verified" : "Recorded, unverifiable";
   if (state === "never_checked") return "Not verified";
   return state === "reachable" ? "Reachable" : "Last call failed";
 }
@@ -45,8 +59,9 @@ export const STALE_AFTER_DAYS = 7;
 export const isStale = (ageDays: number | null) => ageDays != null && ageDays >= STALE_AFTER_DAYS;
 
 /** Semantic role for a state, so a caller's palette never leaves one uncoloured. */
-export function healthTone(state: ConnectorHealthState, ageDays: number | null): "good" | "warn" | "bad" {
+export function healthTone(state: ConnectorHealthState, ageDays: number | null, canProbe = true): "good" | "warn" | "bad" {
   if (state === "unreachable") return "bad";
-  if (state === "never_checked") return "warn";
+  // A state nothing can refresh is never "good", however recently it was written.
+  if (!canProbe || state === "never_checked") return "warn";
   return isStale(ageDays) ? "warn" : "good";
 }

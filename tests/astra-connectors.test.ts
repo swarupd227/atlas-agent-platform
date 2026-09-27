@@ -48,6 +48,7 @@ const serviceNow = {
   stale: true,
   detail: "OK",
   mock: false,
+  canProbe: true,
   riskTier: "MEDIUM",
   transport: "streamable-http",
   agentsBound: 4,
@@ -75,6 +76,7 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
       unreachable: 0,
       mock: 85,
       usedByNobody: 115,
+      canBeProbed: 1,
     })),
     verifyConnector: vi.fn(async () => opts.verify ?? {
       connector: { id: "srv-snow", name: "ServiceNow" },
@@ -165,7 +167,7 @@ describe("whether a connector is working", () => {
   });
 
   it("says a connector nothing has probed is unknown, rather than giving it a state", async () => {
-    const never = { ...serviceNow, name: "Figma Design Generator", state: "never_checked" as const, checkedAt: null, ageDays: null, stale: false, detail: null };
+    const never = { ...serviceNow, name: "Figma Design Generator", state: "never_checked" as const, checkedAt: null, ageDays: null, stale: false, detail: null, canProbe: true };
     const t = setup([
       load(),
       use("connector_health", { connector: "Figma" }),
@@ -188,6 +190,10 @@ describe("whether a connector is working", () => {
         const p = lastTool(m).result;
         expect(p).toMatchObject({ total: 131, checkedWithinAWeek: 2, staleOverAWeek: 129, neverChecked: 18, usedByNoAgent: 115, mockEndpoints: 85 });
         expect(p.basis).toContain("state of its last check, not of now");
+        // Measured on Azure the day this shipped: 131 of 132 connectors have no
+        // health path, so the scheduled scan covers exactly one of them.
+        expect(p.canBeProbedAtAll).toBe("1 of 131");
+        expect(p.worthKnowing).toContain("nothing can probe them");
         return done("2 of 131 checked this week.");
       },
     ]);
@@ -201,6 +207,37 @@ describe("whether a connector is working", () => {
       (m) => { expect(lastTool(m).result.mockEndpoint).toContain("not a real system"); return done("It's a mock."); },
     ], { connectors: [{ ...serviceNow, name: "Mock CMDB", mock: true }] });
     await runTurn(t.deps, as("admin"), t.threadId, "Is Mock CMDB up?", t.onEvent);
+  });
+});
+
+describe("a connector nothing can probe", () => {
+  // The live shape on the day this shipped: 131 of 132 connectors had no health
+  // check path, and 112 of them displayed a state written in one bulk sweep on
+  // 26 August that nothing could refresh. "Never checked" understates that.
+  const unprobeable = { ...serviceNow, name: "BB Market Intelligence", canProbe: false };
+
+  it("says so, rather than calling it never checked", async () => {
+    const t = setup([
+      load(),
+      use("connector_health", { connector: "BB Market" }),
+      (m) => {
+        const p = lastTool(m).result;
+        expect(p.message).toContain("cannot be re-checked");
+        expect(p.cannotBeVerified).toContain("No health check path is configured");
+        expect(p.verify).toBeUndefined();
+        return done("It can't be checked.");
+      },
+    ], { connectors: [unprobeable] });
+    await runTurn(t.deps, as("admin"), t.threadId, "Is BB Market Intelligence healthy?", t.onEvent);
+  });
+
+  it("refuses to probe it up front instead of confirming something that cannot work", async () => {
+    const t = setup([load(), use("verify_connector", { connector: "BB Market" }), (m) => {
+      expect(lastTool(m).error).toContain("no health check path configured");
+      return done("Can't probe it.");
+    }], { connectors: [unprobeable] });
+    expect(await runTurn(t.deps, as("admin"), t.threadId, "Verify BB Market Intelligence", t.onEvent)).toBe("idle");
+    expect(t.services.verifyConnector).not.toHaveBeenCalled();
   });
 });
 

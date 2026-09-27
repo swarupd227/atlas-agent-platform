@@ -44,6 +44,7 @@ interface ConnectorRow {
   stale: boolean;
   detail: string | null;
   mock: boolean;
+  canProbe: boolean;
   riskTier: string | null;
   transport: string | null;
   agentsBound: number;
@@ -70,6 +71,7 @@ interface Overview {
     unreachableAtLastCheck: number;
     usedByNoAgent: number;
     mockEndpoints: number;
+    canBeProbed: number;
     platforms: number;
     platformsConnected: number;
   };
@@ -191,6 +193,12 @@ export default function Connectors() {
             tone={counts && counts.checkedWithinAWeek < counts.connectors / 2 ? TONE_TEXT.warn : undefined}
           />
           <Stat label="Failing at last check" value={counts ? String(counts.unreachableAtLastCheck) : "—"} tone={counts && counts.unreachableAtLastCheck > 0 ? TONE_TEXT.bad : undefined} />
+          <Stat
+            label="Can be probed at all"
+            value={counts ? `${counts.canBeProbed} of ${counts.connectors}` : "—"}
+            hint={counts ? `${counts.connectors - counts.canBeProbed} have no health check configured` : undefined}
+            tone={counts && counts.canBeProbed < counts.connectors ? TONE_TEXT.warn : undefined}
+          />
           <Stat label="Mock endpoints" value={counts ? String(counts.mockEndpoints) : "—"} hint="on this host, not a real system" />
         </div>
       </div>
@@ -218,7 +226,7 @@ export default function Connectors() {
           <ScrollArea className="flex-1 min-w-0">
             <div className="divide-y" data-testid="list-connectors">
               {inFacet.map((c) => {
-                const tone = healthTone(c.state, c.ageDays);
+                const tone = healthTone(c.state, c.ageDays, c.canProbe);
                 return (
                   <button
                     key={c.id}
@@ -239,7 +247,7 @@ export default function Connectors() {
                       {c.agentsBound === 0 ? "no agent" : `${c.agentsBound} ${c.agentsBound === 1 ? "agent" : "agents"}`}
                     </div>
                     <div className="flex flex-col gap-0.5">
-                      <span className={`text-sm font-medium ${TONE_TEXT[tone]}`}>{healthBadge(c.state)}</span>
+                      <span className={`text-sm font-medium ${TONE_TEXT[tone]}`}>{healthBadge(c.state, c.canProbe)}</span>
                       <span className={`font-mono text-[11px] ${isStale(c.ageDays) || c.state === "never_checked" ? TONE_TEXT.warn : "text-muted-foreground"}`}>{checkedAgo(c.ageDays)}</span>
                     </div>
                   </button>
@@ -261,15 +269,15 @@ export default function Connectors() {
                   </div>
 
                   {/* The claim, with its age, and the one control that changes it. */}
-                  <div className={`rounded-md border p-3 flex flex-col gap-2 ${healthTone(selected.state, selected.ageDays) === "good" ? "" : "border-amber-500/40 bg-amber-500/5"}`}>
-                    <div className={`text-sm font-medium flex items-start gap-2 ${TONE_TEXT[healthTone(selected.state, selected.ageDays)]}`} data-testid="text-health-claim">
-                      {healthTone(selected.state, selected.ageDays) === "good" ? <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />}
-                      <span>{healthWords(selected.state, selected.ageDays)}</span>
+                  <div className={`rounded-md border p-3 flex flex-col gap-2 ${healthTone(selected.state, selected.ageDays, selected.canProbe) === "good" ? "" : "border-amber-500/40 bg-amber-500/5"}`}>
+                    <div className={`text-sm font-medium flex items-start gap-2 ${TONE_TEXT[healthTone(selected.state, selected.ageDays, selected.canProbe)]}`} data-testid="text-health-claim">
+                      {healthTone(selected.state, selected.ageDays, selected.canProbe) === "good" ? <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />}
+                      <span>{healthWords(selected.state, selected.ageDays, selected.canProbe)}</span>
                     </div>
                     {selected.detail && <p className="text-xs text-muted-foreground">Last probe said: {selected.detail}</p>}
                     {selected.checkedAt && <p className="font-mono text-[11px] text-muted-foreground">{formatDateTime(selected.checkedAt)}</p>}
                     <p className="text-xs text-muted-foreground">Nothing re-checks a connector on its own, so this is the age of the answer rather than the state now.</p>
-                    {canManage && (
+                    {canManage && selected.canProbe && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -282,7 +290,11 @@ export default function Connectors() {
                         {verify.isPending ? "Probing…" : "Verify now"}
                       </Button>
                     )}
-                    <p className="text-[11px] text-muted-foreground">Verifying calls that system for real, with the credentials stored for it.</p>
+                    {selected.canProbe ? (
+                      <p className="text-[11px] text-muted-foreground">Verifying calls that system for real, with the credentials stored for it.</p>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">No health check path is configured for it, so neither the scheduled scan nor this page can probe it. Whatever state it shows was written once and cannot be refreshed.</p>
+                    )}
                   </div>
 
                   <div className="flex flex-col gap-2">

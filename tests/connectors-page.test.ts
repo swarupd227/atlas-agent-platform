@@ -52,8 +52,8 @@ describe("how a connector's health is worded", () => {
 describe("one vocabulary, two surfaces", () => {
   it("has the page import the shared words rather than writing its own", () => {
     expect(page).toContain('from "@shared/connector-health-words"');
-    expect(page).toContain("healthWords(selected.state, selected.ageDays)");
-    expect(page).toContain("healthBadge(c.state)");
+    expect(page).toContain("healthWords(selected.state, selected.ageDays, selected.canProbe)");
+    expect(page).toContain("healthBadge(c.state, c.canProbe)");
     // And no hand-rolled copy of the claim in the page's CODE. Its header comment
     // quotes the audit's own wording, which is where that word belongs.
     const code = page.slice(page.indexOf("import "));
@@ -90,7 +90,7 @@ describe("what the page does not pretend", () => {
 
   it("hides the only write from a role that may not manage connectors", () => {
     expect(page).toContain('usePermission("manage_mcp_servers")');
-    expect(page).toMatch(/canManage && \(/);
+    expect(page).toMatch(/canManage && selected\.canProbe && \(/);
   });
 });
 
@@ -122,6 +122,18 @@ describe("who the page lets probe", () => {
     expect(client.ops_sre.manage_mcp_servers.access).toBe("denied");
     expect(client.agent_engineer.manage_mcp_servers.access).toBe("conditional");
     expect(ACTION_LABELS.manage_mcp_servers).toBe("Manage connectors");
+  });
+});
+
+describe("a connector nothing can probe", () => {
+  it("does not offer a control that cannot work, and says why", () => {
+    expect(page).toContain("No health check path is configured for it");
+    expect(page).toContain("cannot be refreshed");
+  });
+
+  it("counts them on the page, since 131 of 132 was the live answer", () => {
+    expect(page).toContain("Can be probed at all");
+    expect(page).toContain("have no health check configured");
   });
 });
 

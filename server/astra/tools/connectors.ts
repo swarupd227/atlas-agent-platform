@@ -24,7 +24,7 @@ const PACK = "connectors";
 // The page says it the same way, from the same functions: a badge and a sentence
 // that disagree about the same connector are worse than either alone.
 const ago = checkedAgo;
-const stateWords = (state: string, days: number | null) => healthWords(state as ConnectorHealthState, days);
+const stateWords = (state: string, days: number | null, canProbe = true) => healthWords(state as ConnectorHealthState, days, canProbe);
 
 export const connectorHealthTool: AstraTool<{ connector?: string }> = {
   name: "connector_health",
@@ -43,7 +43,7 @@ export const connectorHealthTool: AstraTool<{ connector?: string }> = {
     if (one) {
       return {
         payload: {
-          message: `${one.name}: ${stateWords(one.state, one.ageDays)}`,
+          message: `${one.name}: ${stateWords(one.state, one.ageDays, one.canProbe)}`,
           connector: one.name,
           state: one.state,
           lastChecked: one.checkedAt,
@@ -52,9 +52,11 @@ export const connectorHealthTool: AstraTool<{ connector?: string }> = {
           agentsBound: one.agentsBound,
           ...(one.agentsBound === 0 ? { note: "No agent is bound to it, so nothing in the platform calls it." } : {}),
           ...(one.mock ? { mockEndpoint: "This points at a mock endpoint on this host, not a real system." } : {}),
-          ...(one.stale || one.state === "never_checked"
-            ? { verify: "verify_connector probes it now — that makes a real call to the system with the stored credentials." }
-            : {}),
+          ...(one.canProbe
+            ? (one.stale || one.state === "never_checked"
+                ? { verify: "verify_connector probes it now — that makes a real call to the system with the stored credentials." }
+                : {})
+            : { cannotBeVerified: "No health check path is configured for it, so neither the scheduled scan nor verify_connector can probe it. Whatever state it shows was written once and cannot be refreshed." }),
         },
         artifact: {
           kind: "text",
@@ -76,8 +78,13 @@ export const connectorHealthTool: AstraTool<{ connector?: string }> = {
         unreachableAtLastCheck: r.unreachable,
         usedByNoAgent: r.usedByNobody,
         mockEndpoints: r.mock,
+        canBeProbedAtAll: `${r.canBeProbed} of ${r.total}`,
         basis: "Read from each connector's stored probe result and its timestamp. A connector reports the state of its last check, not of now, and nothing re-checks on its own.",
-        ...(r.staleOverAWeek > 0 ? { worthKnowing: `${r.staleOverAWeek} connectors show a state older than a week. verify_connector re-probes one.` } : {}),
+        ...(r.total - r.canBeProbed > 0
+          ? { worthKnowing: `${r.total - r.canBeProbed} of ${r.total} have no health check path, so nothing can probe them — the state they show cannot be refreshed by the scan or by verify_connector. Only ${r.canBeProbed} can be checked at all.` }
+          : r.staleOverAWeek > 0
+            ? { worthKnowing: `${r.staleOverAWeek} connectors show a state older than a week. verify_connector re-probes one.` }
+            : {}),
       },
       artifact: {
         kind: "text",
@@ -121,6 +128,9 @@ export const verifyConnectorTool: AstraTool<{ connector: string }> = {
       return { refuse: `"${input.connector}" matches ${health.connectors.length} connectors: ${health.connectors.map((c: any) => c.name).join(", ")}. Name one.` };
     }
     const c = health.connectors[0];
+    if (!c.canProbe) {
+      return { refuse: `${c.name} has no health check path configured, so nothing can probe it — not this and not the scheduled scan. ${c.state === "never_checked" ? "It has never been checked." : `The state it shows was written ${checkedAgo(c.ageDays)} and cannot be refreshed.`} A health check path has to be set on the connector first.` };
+    }
     return {
       summary: `Probe ${c.name} now`,
       details: [
@@ -226,7 +236,7 @@ export const connectorUsageTool: AstraTool<{ connector: string }> = {
       payload: {
         message: r.agents.length === 0 ? `Nothing uses ${r.connector.name}` : `${r.agents.length} ${r.agents.length === 1 ? "agent uses" : "agents use"} ${r.connector.name}`,
         connector: r.connector.name,
-        health: `${stateWords(r.connector.state, r.connector.ageDays)}`,
+        health: `${stateWords(r.connector.state, r.connector.ageDays, r.connector.canProbe)}`,
         agents: r.agents.map((a: any) => a.name),
         tools: r.tools,
         ...(r.note ? { note: r.note } : {}),

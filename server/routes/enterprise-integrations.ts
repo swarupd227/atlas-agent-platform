@@ -1876,6 +1876,7 @@ router.get("/api/connectors/overview", async (req: Request, res: Response) => {
         unreachableAtLastCheck: health.unreachable,
         usedByNoAgent: health.usedByNobody,
         mockEndpoints: health.mock,
+        canBeProbed: health.canBeProbed,
         platforms: platforms.length,
         platformsConnected: platforms.filter((p) => p.connected).length,
       },

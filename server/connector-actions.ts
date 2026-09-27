@@ -39,6 +39,13 @@ export interface ConnectorHealthView {
   detail: string | null;
   /** A localhost or /api/mock/ endpoint: demo scaffolding, not a real system. */
   mock: boolean;
+  /**
+   * False when no health check path is configured, so nothing — neither the
+   * scheduled scan nor a person — can ever probe it. Live on 2026-09-27 that was
+   * 131 of 132 connectors, and 112 of them displayed a state from a single bulk
+   * sweep on 26 August that cannot be refreshed. "Never checked" understates it.
+   */
+  canProbe: boolean;
   riskTier: string | null;
   transport: string | null;
   agentsBound: number;
@@ -59,6 +66,7 @@ function viewOf(server: any, agentsBound: number): ConnectorHealthView {
     stale: ageDays != null && ageDays >= 7,
     detail: server.healthDetail ?? null,
     mock: isMock(server.url),
+    canProbe: !!server.healthCheckPath,
     riskTier: server.riskTier ? String(server.riskTier).toUpperCase() : null,
     transport: server.transportType ?? null,
     agentsBound,
@@ -75,6 +83,8 @@ export async function connectorHealth(orgId: string | undefined, ref?: string): 
   unreachable: number;
   mock: number;
   usedByNobody: number;
+  /** How many can be probed at all. The rest can never leave the state they hold. */
+  canBeProbed: number;
 }> {
   const servers = (await storage.getMcpServers(orgId)) as any[];
   const wanted = ref ? matchOne(servers, ref) : servers;
@@ -92,6 +102,7 @@ export async function connectorHealth(orgId: string | undefined, ref?: string): 
     unreachable: views.filter((v) => v.state === "unreachable").length,
     mock: views.filter((v) => v.mock).length,
     usedByNobody: views.filter((v) => v.agentsBound === 0).length,
+    canBeProbed: views.filter((v) => v.canProbe).length,
   };
 }
 
