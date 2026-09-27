@@ -139,6 +139,7 @@ import { createFigmaRouter } from "./integrations/figma/mcp-server";
 import { createSlackRouter } from "./integrations/slack/mcp-server";
 import { createMicrosoftGraphRouter } from "./integrations/msgraph/mcp-server";
 import { createSnowflakeRouter } from "./integrations/snowflake/mcp-server";
+import { createDatabricksRouter } from "./integrations/databricks/mcp-server";
 import { createWorkdayRouter } from "./integrations/workday/mcp-server";
 import { createSapRouter } from "./integrations/sap/mcp-server";
 import { createPostgresRouter } from "./integrations/sql/postgres/mcp-server";
@@ -475,6 +476,7 @@ export async function registerRoutes(
   app.use("/api/integrations/msgraph", createMicrosoftGraphRouter());
   // ── Enterprise Integration routers (Wave 4: Data & ERP) ──────────────────
   app.use("/api/integrations/snowflake", createSnowflakeRouter());
+  app.use("/api/integrations/databricks", createDatabricksRouter());
   app.use("/api/integrations/workday", createWorkdayRouter());
   app.use("/api/integrations/sap", createSapRouter());
   // ── Enterprise Integration routers (Wave 5: General-purpose SQL) ─────────

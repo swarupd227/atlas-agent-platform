@@ -16,6 +16,7 @@ import { figmaMcpServer } from "./figma/mcp-server";
 import { slackMcpServer } from "./slack/mcp-server";
 import { microsoftGraphMcpServer } from "./msgraph/mcp-server";
 import { snowflakeMcpServer } from "./snowflake/mcp-server";
+import { databricksMcpServer } from "./databricks/mcp-server";
 import { workdayMcpServer } from "./workday/mcp-server";
 import { sapMcpServer } from "./sap/mcp-server";
 import { postgresMcpServer } from "./sql/postgres/mcp-server";
@@ -114,6 +115,14 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
       route: "/api/integrations/snowflake",
       riskTier: "MEDIUM",
       tags: ["data", "snowflake", "data-warehouse", "enterprise", "wave-4"],
+    },
+    {
+      server: databricksMcpServer,
+      catalogName: "Databricks (Lakehouse)",
+      description: "Databricks SQL Statement Execution API + Unity Catalog API — 9 read-only tools for query execution, catalog/schema/table metadata, column statistics, table search, and job listing. All queries are enforced read-only; DDL/DML/maintenance verbs (OPTIMIZE, VACUUM, etc.) are blocked. Requires workspace URL, a Personal Access Token, and a SQL Warehouse id. Setup complexity: Advanced.",
+      route: "/api/integrations/databricks",
+      riskTier: "MEDIUM",
+      tags: ["data", "databricks", "lakehouse", "data-warehouse", "enterprise", "wave-4"],
     },
     {
       server: workdayMcpServer,
@@ -297,7 +306,7 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
   return { servers, tools: toolCount };
 }
 
-export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer, workdayMcpServer, sapMcpServer, postgresMcpServer, mysqlMcpServer, sqlServerMcpServer };
+export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer, databricksMcpServer, workdayMcpServer, sapMcpServer, postgresMcpServer, mysqlMcpServer, sqlServerMcpServer };
 
 // ── In-process enterprise connector registry ──────────────────────────────────
 // Maps integrationId → connector singleton so the agent runtime can dispatch tool
@@ -314,7 +323,7 @@ const ENTERPRISE_SERVER_BY_ID = new Map<string, RealMcpBase>(
   [
     salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer,
     githubMcpServer, figmaMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer,
-    workdayMcpServer, sapMcpServer, postgresMcpServer, mysqlMcpServer, sqlServerMcpServer,
+    databricksMcpServer, workdayMcpServer, sapMcpServer, postgresMcpServer, mysqlMcpServer, sqlServerMcpServer,
     dealerOperationsMcpServer,
   ].map((s) => [s.integrationId, s]),
 );
