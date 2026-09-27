@@ -29,7 +29,7 @@ import { draftSingleAgent, resolveOntologyTags } from "./routes/helpers";
 import { HUMAN_CHECKPOINT_NODE_TYPES, STRUCTURAL_NODE_TYPES, stepCorrelation, stepUnchanged } from "@shared/process-flow-correlation";
 import { backEdgeKeys } from "@shared/graph-cycles";
 import { edgeRuleForCondition } from "@shared/condition-to-rule";
-import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
+import { isCurrentReworkRule, REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
 import type { ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
 
@@ -567,7 +567,7 @@ export async function applyFlowSync(
     if (!row) continue;
     const config = { ...((row.config ?? {}) as Record<string, unknown>) };
     const wanted = loopsByProcessNode.get(pn.id);
-    const existing = config.revision as { targetNodeId?: string; maxRounds?: number } | undefined;
+    const existing = config.revision as { targetNodeId?: string; maxRounds?: number; when?: unknown } | undefined;
     if (wanted) {
       const targetNodeId = nodeIdMap.get(wanted.to);
       if (!targetNodeId) {
@@ -576,7 +576,15 @@ export async function applyFlowSync(
         revisionLoops.unresolved.push(pn.label);
         continue;
       }
-      if (existing?.targetNodeId === targetNodeId && existing?.maxRounds === wanted.maxRounds) continue;
+      // The matcher counts as much as the target: a rule written before the
+      // rework matcher was widened tests only the text "fail", so it points at the
+      // right step for the right number of rounds and never fires. Leaving it
+      // alone because the target and rounds look right is how a stale matcher
+      // survives every re-sync.
+      const current = existing?.targetNodeId === targetNodeId
+        && existing?.maxRounds === wanted.maxRounds
+        && isCurrentReworkRule(existing?.when);
+      if (current) continue;
       await storage.updateTeamBlueprintNode(row.id, {
         config: { ...config, revision: { targetNodeId, when: REWORK_REQUESTED_RULE, maxRounds: wanted.maxRounds } },
       } as any);

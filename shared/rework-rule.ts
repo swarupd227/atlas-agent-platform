@@ -19,6 +19,36 @@ import type { RuleGroup } from "./schema";
  * (server/process-flow-sync.ts). Two copies would drift, and a loop written with
  * a weaker rule is a loop that silently never fires.
  */
+/**
+ * Is this stored matcher the current one?
+ *
+ * Asked by the flow sync before it decides a loop is already correct. A rule
+ * written before 2026-09-24 tests only the text "fail", and that rule did not
+ * fire on {"accepted":false,"escalate":false,"redraft":true} -- a reviewer asking
+ * for a redraft in as many words. Such a loop points at the right step for the
+ * right number of rounds and still never fires, so matching on target and rounds
+ * alone let a stale matcher survive every re-sync (found by a peer session's
+ * measurement of af9a6f18, 2026-09-27, before it reached a run).
+ *
+ * Compared by content rather than by identity, and insensitive to the order the
+ * conditions happen to be stored in, because this reads rows written months apart.
+ */
+export function isCurrentReworkRule(when: unknown): boolean {
+  const canonical = (rule: unknown): string => {
+    const group = rule as { combinator?: unknown; conditions?: unknown } | null;
+    if (!group || typeof group !== "object" || !Array.isArray(group.conditions)) return "";
+    const conditions = group.conditions
+      .map((c) => {
+        const leaf = c as { field?: unknown; operator?: unknown; value?: unknown };
+        return `${String(leaf?.field)}|${String(leaf?.operator)}|${JSON.stringify(leaf?.value)}`;
+      })
+      .sort()
+      .join(";");
+    return `${String(group.combinator)}:${conditions}`;
+  };
+  return canonical(when) === canonical(REWORK_REQUESTED_RULE);
+}
+
 export const REWORK_REQUESTED_RULE: RuleGroup = {
   combinator: "OR",
   conditions: [

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { REWORK_REQUESTED_RULE } from "../server/team-build";
+import { isCurrentReworkRule } from "../shared/rework-rule";
 import { evaluateRule } from "../server/rule-evaluator";
 
 /**
@@ -39,5 +40,32 @@ describe("REWORK_REQUESTED_RULE", () => {
     // false, every step with a revision policy would loop on its first pass.
     const r = evaluateRule(REWORK_REQUESTED_RULE, { output: "done" });
     expect(r.result).toBe(false);
+  });
+});
+
+/**
+ * Telling a stored matcher apart from the current one, which the flow sync asks
+ * before deciding a loop needs no change. A rule with the right target and the
+ * right number of rounds can still be the old text-only matcher, and then the
+ * loop reads as configured, passes an invariant check and never fires.
+ */
+describe("recognising the current matcher", () => {
+  const TEXT_ONLY = { combinator: "OR", conditions: [{ field: "output", operator: "contains", value: "fail" }] };
+
+  it("accepts the current rule, whatever order its conditions are stored in", () => {
+    expect(isCurrentReworkRule(REWORK_REQUESTED_RULE)).toBe(true);
+    expect(isCurrentReworkRule({ combinator: "OR", conditions: [...REWORK_REQUESTED_RULE.conditions].reverse() })).toBe(true);
+  });
+
+  it("rejects the matcher that tested only the text, which is the one that silently never fired", () => {
+    expect(isCurrentReworkRule(TEXT_ONLY)).toBe(false);
+    // And a rule that is merely missing one of the vocabularies a reviewer uses.
+    expect(isCurrentReworkRule({ combinator: "OR", conditions: REWORK_REQUESTED_RULE.conditions.slice(0, 4) })).toBe(false);
+  });
+
+  it("rejects nothing at all, rather than reading a missing rule as current", () => {
+    for (const absent of [undefined, null, {}, { combinator: "OR" }, "fail"]) {
+      expect(isCurrentReworkRule(absent)).toBe(false);
+    }
   });
 });

@@ -422,6 +422,52 @@ describe("a loop in the flow", () => {
     expect(revisionOn("s2").maxRounds).toBe(1);
   });
 
+  it("refreshes a matcher that predates the current rework rule, even when the target and rounds look right", async () => {
+    // Found by a peer session measuring af9a6f18 before it ever ran: matching on
+    // target and rounds alone let a rule written before 2026-09-24 survive every
+    // re-sync. That rule tests only the text "fail", so it does not fire on
+    // {"accepted":false,"redraft":true} -- a loop that reads as configured, is
+    // reported as set, and never fires.
+    const stale = { combinator: "OR", conditions: [{ field: "output", operator: "contains", value: "fail" }] };
+    const g = loopGraph();
+    state.nodes = blueprintFromFlow(g);
+    (nodeFor("s2")!.config as any).revision = { targetNodeId: "node-s1", when: stale, maxRounds: 2 };
+
+    const r = await applyFlowSync(ORG, target(g));
+    expect(revisionOn("s2").when).toEqual(REWORK_REQUESTED_RULE);
+    expect((r as any).summary.revisionLoops.set).toEqual(["Check contract certainty"]);
+  });
+
+  it("leaves a loop that is already right alone, so a sync does not churn what it agrees with", async () => {
+    const g = loopGraph();
+    state.nodes = blueprintFromFlow(g);
+    (nodeFor("s2")!.config as any).revision = { targetNodeId: "node-s1", when: REWORK_REQUESTED_RULE, maxRounds: 2 };
+
+    const r = await applyFlowSync(ORG, target(g));
+    expect(state.updatedNodes.map((u) => u.id)).not.toContain("node-s2");
+    expect((r as any).summary.revisionLoops).toMatchObject({ set: [], cleared: [], unresolved: [] });
+  });
+
+  it("follows a target superseded twice, because the pointer is rebuilt from the step and never from a supersede record", async () => {
+    // A peer's caution: their loop target had been replaced, and then the
+    // replacement was replaced. Depth cannot matter -- the pointer is recomputed
+    // as "whichever node now carries this step" -- and this pins that, so a later
+    // change that reads a supersede record instead fails here.
+    state.nodes = blueprintFromFlow(loopGraph());
+
+    await applyFlowSync(ORG, target(loopGraph({ draftLabel: "Draft endorsement with treaty citation" })));
+    const first = nodeFor("s1")!;
+    expect(first.id).not.toBe("node-s1");
+    expect(revisionOn("s2")).toMatchObject({ targetNodeId: first.id, maxRounds: 2 });
+
+    await applyFlowSync(ORG, target(loopGraph({ draftLabel: "Draft endorsement citing treaty and roof age" })));
+    const second = nodeFor("s1")!;
+    expect(second.id).not.toBe(first.id);
+    expect(state.deletedNodes).toContain(first.id);
+    expect(revisionOn("s2")).toMatchObject({ targetNodeId: second.id, maxRounds: 2 });
+    expect(revisionOn("s2").when).toEqual(REWORK_REQUESTED_RULE);
+  });
+
   it("leaves the loop off rather than pointing it at nothing, and says so", async () => {
     const { draftSingleAgent } = await import("../server/routes/helpers");
     const before = loopGraph();
