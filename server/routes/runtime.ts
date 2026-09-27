@@ -15519,7 +15519,12 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
   // standalone importer), then this route just marks the originating catalog row installed --
   // kept separate from openapi-import/create so that endpoint stays generic and doesn't need to
   // know marketplace_servers exists.
-  router.post("/api/marketplace/servers/:id/complete-openapi-install", async (req, res) => {
+  //
+  // Guarded with the same permission as the create it completes
+  // (openapi-connectors.ts's POST /api/openapi-import/create): marking a catalog
+  // row installed and pointing it at a connector is part of installing one, so
+  // the two halves of that flow must not disagree about who may do it.
+  router.post("/api/marketplace/servers/:id/complete-openapi-install", checkPermission("manage_mcp_servers"), async (req, res) => {
     const server = await storage.getMarketplaceServer(req.params.id);
     if (!server) return res.status(404).json({ message: "Marketplace server not found" });
     const { installedServerId } = req.body as { installedServerId?: string };
