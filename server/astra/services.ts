@@ -39,6 +39,7 @@ import { ontologyServices } from "./ontology-services";
 import { flowSyncServices } from "./flow-sync-services";
 import { agentInstructionServices } from "./agent-instruction-services";
 import { automationControlServices } from "./automation-control-services";
+import { connectorServices } from "./connector-services";
 import { scheduleServices } from "./schedule-services";
 import { watchServices } from "./watch-services";
 import { resolveAgentIndustry } from "../agent-industry";
@@ -1582,6 +1583,7 @@ export function createAstraServices(): AstraServices {
     ...flowSyncServices,
     ...agentInstructionServices,
     ...automationControlServices,
+    ...connectorServices,
     ...scheduleServices,
     ...watchServices,
     listAgents,
