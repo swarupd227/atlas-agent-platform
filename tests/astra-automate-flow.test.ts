@@ -13,13 +13,13 @@
  * flow is attached to no outcome, which is stated with the action that fixes it
  * rather than left as a dead warning.
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { runTurn, resolveAction, type EngineDeps } from "../server/astra/engine";
 import { ToolRegistry } from "../server/astra/registry";
 import { MemoryThreadStore } from "../server/astra/memory-store";
-import { scriptedComplete, result, call, assertNoStepErrors, type ScriptedComplete } from "../server/astra/scripted-brain";
+import { scriptedComplete, result, call } from "../server/astra/scripted-brain";
 import { finishTurnTool } from "../server/astra/tools/finish-turn";
 import { automateProcessFlowTool } from "../server/astra/tools/process-flow";
 import { buildTeamTool } from "../server/astra/tools/build-team";
@@ -118,7 +118,6 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
     getUserDisplayName: vi.fn(async () => "admin"),
   };
   const complete = scriptedComplete(steps);
-  lastComplete = complete;
   const deps: EngineDeps = {
     store,
     registry: new ToolRegistry([finishTurnTool, automateProcessFlowTool, buildTeamTool, attachTeamToOutcomeTool], hasPermission),
@@ -139,13 +138,6 @@ const attach = (args: Record<string, unknown> = { team: "Refund Handling Team", 
 const done = (text: string) => result(text, [call("finish_turn", { suggestions: [] })]);
 const lastTool = (messages: any[]) => JSON.parse(messages.filter((m) => m.role === "tool").at(-1).content);
 const pending = async (t: ReturnType<typeof setup>) => (await t.store.loadThread(t.threadId, ORG))!.pendingAction!;
-
-/**
- * The engine catches whatever complete() throws, so an expect() inside a script
- * step would end the turn quietly and leave the test passing. This rethrows it.
- */
-let lastComplete: ScriptedComplete | null = null;
-afterEach(() => assertNoStepErrors(lastComplete));
 
 describe("planning the team a flow would become", () => {
   it("plans from the saved flow, and says what building it does and does not do", async () => {

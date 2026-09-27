@@ -57,6 +57,15 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts"],
+    /**
+     * The one setup file, and it is deliberately the kind the warning above says
+     * is safe: it imports vitest's afterEach and server/astra/scripted-brain,
+     * whose own imports are all `import type` and so leave no runtime module
+     * graph. Nothing real is pulled in ahead of a suite's vi.mock calls. Keep it
+     * that way -- a setup file that reaches ./storage or ./db would trade flaky
+     * timeouts for flaky mocks.
+     */
+    setupFiles: ["tests/setup/scripted-step-errors.ts"],
     testTimeout: 60000,
     hookTimeout: 60000,
     poolOptions: {

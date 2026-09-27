@@ -16,13 +16,13 @@
  *   examined, which is not alignment;
  * - a term "resembling" a concept is string similarity, never meaning.
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { runTurn, type EngineDeps } from "../server/astra/engine";
 import { ToolRegistry } from "../server/astra/registry";
 import { MemoryThreadStore } from "../server/astra/memory-store";
-import { scriptedComplete, result, call, assertNoStepErrors, type ScriptedComplete } from "../server/astra/scripted-brain";
+import { scriptedComplete, result, call } from "../server/astra/scripted-brain";
 import { finishTurnTool } from "../server/astra/tools/finish-turn";
 import { loadToolsTool } from "../server/astra/tools/load-tools";
 import { ONTOLOGY_TOOLS } from "../server/astra/tools/ontology";
@@ -123,7 +123,6 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
     listAgents: vi.fn(async () => [{ id: "a1", name: "Claims Intake", organizationId: ORG }]),
   };
   const complete = scriptedComplete(steps);
-  lastComplete = complete;
   const deps: EngineDeps = {
     store,
     registry: new ToolRegistry([finishTurnTool, loadToolsTool, ...ONTOLOGY_TOOLS], hasPermission),
@@ -140,13 +139,6 @@ const load = () => ({ toolCalls: [{ name: "load_tools", arguments: { pack: "onto
 const use = (name: string, args: Record<string, unknown> = {}) => ({ toolCalls: [{ name, arguments: args }] });
 const done = (text: string) => result(text, [call("finish_turn", { suggestions: [] })]);
 const lastTool = (messages: any[]) => JSON.parse(messages.filter((m) => m.role === "tool").at(-1).content);
-
-/**
- * The engine catches whatever complete() throws, so an expect() inside a script
- * step would end the turn quietly and leave the test passing. This rethrows it.
- */
-let lastComplete: ScriptedComplete | null = null;
-afterEach(() => assertNoStepErrors(lastComplete));
 
 describe("the pack itself", () => {
   it("is loadable, and is the studio pack that was missing", () => {

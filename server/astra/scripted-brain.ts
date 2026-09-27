@@ -31,12 +31,47 @@ export function call(name: string, args: Record<string, unknown> = {}, id?: stri
 export type ScriptedComplete = CompleteFn & {
   requests: Array<{ messages: LLMMessage[]; options: LLMCompletionOptions }>;
   /**
-   * Anything a step function threw. The engine catches errors from the model
-   * call, so an `expect()` inside a step would otherwise end the turn quietly
-   * and leave the test passing -- see assertNoStepErrors.
+   * Assertion failures raised by a step function. The engine catches whatever
+   * the model call throws, so an `expect()` inside a step would otherwise end
+   * the turn quietly and leave the test passing -- tests/setup/scripted-step-errors.ts
+   * drains these after every test so that cannot happen.
    */
   stepErrors: unknown[];
 };
+
+/**
+ * Every ScriptedComplete built in this worker since the last drain. The global
+ * afterEach empties it, so no suite has to remember a hook of its own.
+ */
+const liveScripts: ScriptedComplete[] = [];
+
+/**
+ * Only an assertion failure is recorded. A step that throws on purpose is a
+ * fixture, not a bug -- tests/astra-engine.test.ts makes the model throw to
+ * prove the engine survives it -- and failing those tests would be wrong.
+ */
+function isAssertionFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.name === "AssertionError" || (err as { matcherResult?: unknown }).matcherResult != null;
+}
+
+/**
+ * The first assertion failure any step raised, clearing what it read. Returns
+ * undefined when every step was clean.
+ */
+export function takeScriptedStepError(): unknown {
+  let first: unknown;
+  let found = false;
+  for (const script of liveScripts) {
+    if (!found && script.stepErrors.length > 0) {
+      first = script.stepErrors[0];
+      found = true;
+    }
+    script.stepErrors.length = 0;
+  }
+  liveScripts.length = 0;
+  return first;
+}
 
 /** A CompleteFn that plays the script in order and records every request it saw. */
 export function scriptedComplete(steps: ScriptStep[]): ScriptedComplete {
@@ -52,7 +87,7 @@ export function scriptedComplete(steps: ScriptStep[]): ScriptedComplete {
         return await step(messages, options);
       } catch (err) {
         // Recorded as well as rethrown: the engine will swallow the rethrow.
-        stepErrors.push(err);
+        if (isAssertionFailure(err)) stepErrors.push(err);
         throw err;
       }
     }
@@ -60,16 +95,6 @@ export function scriptedComplete(steps: ScriptStep[]): ScriptedComplete {
   }) as ScriptedComplete;
   fn.requests = requests;
   fn.stepErrors = stepErrors;
+  liveScripts.push(fn);
   return fn;
-}
-
-/**
- * Fail the test if a script step threw -- typically an `expect()` checking a
- * tool's payload mid-turn. Call it in an afterEach: without it, the engine's
- * error handling turns a failed assertion into a quietly abandoned turn and the
- * test passes regardless.
- */
-export function assertNoStepErrors(fn: ScriptedComplete | null | undefined): void {
-  const first = fn?.stepErrors?.[0];
-  if (first) throw first;
 }

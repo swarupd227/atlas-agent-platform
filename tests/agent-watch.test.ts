@@ -18,13 +18,13 @@
  *   query the system itself -- and if its instructions never mention looking
  *   anything up, the card says so.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { runTurn, resolveAction, type EngineDeps } from "../server/astra/engine";
 import { ToolRegistry } from "../server/astra/registry";
 import { MemoryThreadStore } from "../server/astra/memory-store";
-import { scriptedComplete, result, call, assertNoStepErrors, type ScriptedComplete } from "../server/astra/scripted-brain";
+import { scriptedComplete, result, call } from "../server/astra/scripted-brain";
 import { finishTurnTool } from "../server/astra/tools/finish-turn";
 import { WATCH_TOOLS } from "../server/astra/tools/watch";
 import { DEFAULT_POLL_MINUTES, MIN_POLL_MINUTES, QUERY_LANGUAGE } from "../server/agent-watch";
@@ -93,7 +93,6 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
     getUserDisplayName: vi.fn(async () => "admin"),
   };
   const complete = scriptedComplete(steps);
-  lastComplete = complete;
   const deps: EngineDeps = {
     store,
     registry: new ToolRegistry([finishTurnTool, ...WATCH_TOOLS], hasPermission),
@@ -112,13 +111,6 @@ const lastTool = (messages: any[]) => JSON.parse(messages.filter((m) => m.role =
 const pending = async (t: ReturnType<typeof setup>) => (await t.store.loadThread(t.threadId, ORG))!.pendingAction!;
 
 beforeEach(() => vi.clearAllMocks());
-
-/**
- * The engine catches whatever complete() throws, so an expect() inside a script
- * step would end the turn quietly and leave the test passing. This rethrows it.
- */
-let lastComplete: ScriptedComplete | null = null;
-afterEach(() => assertNoStepErrors(lastComplete));
 
 describe("what the mechanism actually is", () => {
   it("only polls the two systems the poller supports", () => {

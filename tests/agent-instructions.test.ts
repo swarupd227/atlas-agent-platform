@@ -15,13 +15,13 @@
  * - an agent drafted from a process-flow step loses the edit the next time that
  *   flow is synced, which only this warning would ever tell anyone.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { runTurn, resolveAction, type EngineDeps } from "../server/astra/engine";
 import { ToolRegistry } from "../server/astra/registry";
 import { MemoryThreadStore } from "../server/astra/memory-store";
-import { scriptedComplete, result, call, assertNoStepErrors, type ScriptedComplete } from "../server/astra/scripted-brain";
+import { scriptedComplete, result, call } from "../server/astra/scripted-brain";
 import { finishTurnTool } from "../server/astra/tools/finish-turn";
 import { AGENT_INSTRUCTION_TOOLS } from "../server/astra/tools/agent-instructions";
 import { hasPermission, type RoleId } from "../server/permissions";
@@ -68,7 +68,6 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
     getUserDisplayName: vi.fn(async () => "admin"),
   };
   const complete = scriptedComplete(steps);
-  lastComplete = complete;
   const deps: EngineDeps = {
     store,
     registry: new ToolRegistry([finishTurnTool, ...AGENT_INSTRUCTION_TOOLS], hasPermission),
@@ -89,13 +88,6 @@ const pending = async (t: ReturnType<typeof setup>) => (await t.store.loadThread
 const STRICTER = "You assess coastal property risk. Flag anything within 5 miles of the shoreline, and treat any named-storm history as high risk.";
 
 beforeEach(() => vi.clearAllMocks());
-
-/**
- * The engine catches whatever complete() throws, so an expect() inside a script
- * step would end the turn quietly and leave the test passing. This rethrows it.
- */
-let lastComplete: ScriptedComplete | null = null;
-afterEach(() => assertNoStepErrors(lastComplete));
 
 describe("reading what an agent is told", () => {
   it("gives both fields, and says which one the runtime would use for the task", async () => {
