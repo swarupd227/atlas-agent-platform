@@ -15525,7 +15525,9 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
   // row installed and pointing it at a connector is part of installing one, so
   // the two halves of that flow must not disagree about who may do it.
   router.post("/api/marketplace/servers/:id/complete-openapi-install", checkPermission("manage_mcp_servers"), async (req, res) => {
-    const server = await storage.getMarketplaceServer(req.params.id);
+    // String(): with a middleware argument in front of the handler, Express's
+    // overload resolution widens req.params to string | string[].
+    const server = await storage.getMarketplaceServer(String(req.params.id));
     if (!server) return res.status(404).json({ message: "Marketplace server not found" });
     const { installedServerId } = req.body as { installedServerId?: string };
     if (!installedServerId) return res.status(400).json({ message: "installedServerId is required" });

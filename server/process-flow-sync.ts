@@ -128,6 +128,14 @@ function diffFlowAgainstBlueprint(graph: ProcessFlowGraph, existingNodes: any[],
 
 const labelOf = (node: any) => (node.config as any)?.sourceLabel || node.label;
 
+/** Drop this agent's membership of this team, if it has one. */
+async function removeMembership(teamAgentId: string, memberAgentId: string) {
+  const members = await storage.getAgentTeamMembers(teamAgentId).catch(() => []);
+  for (const m of members as any[]) {
+    if (m.memberAgentId === memberAgentId) await storage.deleteAgentTeamMember(m.id).catch(() => {});
+  }
+}
+
 /** The blueprint and the guards, shared by the plan and the apply. */
 async function load(orgId: string | undefined, target: SyncTarget, forceFullRebuild: boolean) {
   const { graph, teamAgent } = target;
@@ -262,6 +270,10 @@ export async function applyFlowSync(
     if (refAgentId) {
       const agent = await storage.getAgent(refAgentId, orgId);
       if (agent) superseded.push({ label: labelOf(node), agentId: refAgentId });
+      // It stops being a member of the team, not just a node in its blueprint.
+      // Membership is what planTeamRemoval and flowStepBehind read; leaving the
+      // row behind would keep a superseded agent listed as part of the team.
+      await removeMembership(teamAgent.id, refAgentId);
     }
     await storage.deleteTeamBlueprintNode(node.id);
   }
@@ -348,6 +360,11 @@ export async function applyFlowSync(
         refAgentId: agent.id,
         config: processNodeConfig(pn),
       } as any);
+      // The build writes this row for every worker it creates; without it here a
+      // synced-in agent is in the blueprint but not in the team, so deleting the
+      // team orphans it and the removal plan cannot even list it (live
+      // 2026-09-27).
+      await storage.createAgentTeamMember({ teamAgentId: teamAgent.id, memberAgentId: agent.id, role: "member" } as any).catch(() => {});
       return { pn, node, ok: true as const };
     } catch (err: any) {
       console.error(`[process-flow-sync] failed to draft node "${pn.label}":`, err?.message);

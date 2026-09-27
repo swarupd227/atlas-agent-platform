@@ -30,6 +30,7 @@ const state = {
   created: [] as any[],
   deletedNodes: [] as string[],
   audits: [] as any[],
+  members: [] as Array<{ id: string; teamAgentId: string; memberAgentId: string }>,
 };
 
 vi.mock("../server/storage", () => ({
@@ -54,6 +55,15 @@ vi.mock("../server/storage", () => ({
     createTeamBlueprintEdge: vi.fn(async (e: any) => { const edge = { id: `edge-${state.edges.length + 1}`, ...e }; state.edges.push(edge); return edge; }),
     deleteTeamBlueprintEdge: vi.fn(async (id: string) => { state.edges = state.edges.filter((e) => e.id !== id); return true; }),
     createAuditEvent: vi.fn(async (e: any) => { state.audits.push(e); return e; }),
+    // Membership is a separate table from the blueprint, and what
+    // planTeamRemoval and flowStepBehind read.
+    getAgentTeamMembers: vi.fn(async (teamAgentId: string) => state.members.filter((m) => m.teamAgentId === teamAgentId)),
+    createAgentTeamMember: vi.fn(async (m: any) => {
+      const row = { id: `m-${state.members.length + 1}`, ...m };
+      state.members.push(row);
+      return row;
+    }),
+    deleteAgentTeamMember: vi.fn(async (id: string) => { state.members = state.members.filter((m) => m.id !== id); return true; }),
   },
 }));
 
@@ -112,6 +122,7 @@ beforeEach(() => {
   state.created = [];
   state.deletedNodes = [];
   state.audits = [];
+  state.members = [];
 });
 
 describe("the correlation itself", () => {
@@ -267,6 +278,33 @@ describe("applying it", () => {
     // Three agents, not four: the approval step is a gate and runs no agent, so
     // there is nothing to supersede for it.
     expect(summary.superseded.map((s: any) => s.label).sort()).toEqual(["Bind Agent", "Normalise COPE Agent", "Treaty check Agent"]);
+  });
+});
+
+describe("a synced-in agent joins the team", () => {
+  it("gets a membership row, or deleting the team orphans it", async () => {
+    // Live 2026-09-27: the sync created an agent with a blueprint node and no
+    // membership, so deleting the team left it behind and the removal plan --
+    // which reads membership, not blueprint nodes -- could not even list it.
+    const before = graph();
+    state.nodes = blueprintFromFlow(before);
+    state.members = [{ id: "m-0", teamAgentId: "team-1", memberAgentId: "agent-s4" }];
+    const after = graph();
+    after.nodes.push({ id: "s5", type: "take_action", label: "File surplus lines", description: "", actor: "System" });
+
+    await applyFlowSync(ORG, target(after));
+    const added = state.created.find((n) => n.config?.sourceProcessNodeId === "s5");
+    expect(added.refAgentId).toBeTruthy();
+    expect(state.members.map((m) => m.memberAgentId)).toContain(added.refAgentId);
+  });
+
+  it("and a superseded agent leaves it", async () => {
+    const before = graph();
+    state.nodes = blueprintFromFlow(before);
+    state.members = [{ id: "m-1", teamAgentId: "team-1", memberAgentId: "agent-s4" }];
+    // Removing the "Bind" step supersedes agent-s4.
+    await applyFlowSync(ORG, target(graph({}, "s4")));
+    expect(state.members.map((m) => m.memberAgentId)).not.toContain("agent-s4");
   });
 });
 
