@@ -393,6 +393,23 @@ function scheduleSummary(s: Submission) {
   const classCounts: Record<number, number> = {};
   for (const l of locs) classCounts[l.isoConstructionClass] = (classCounts[l.isoConstructionClass] || 0) + 1;
   const predominantIsoClass = Number(Object.entries(classCounts).sort((a, b) => b[1] - a[1])[0][0]);
+
+  // Accumulation is a county question, not a state one: a treaty is exhausted
+  // by one storm crossing one coastline, and "FL" spans both Pensacola and
+  // Ocala. Computed here, with byState, so a step can read where the exposure
+  // is concentrated without pulling 120 rows through the pipeline to count
+  // them -- the same reason the aggregates above exist.
+  const byCatZone: Record<string, { county: string; state: string; locationCount: number; tiv: number; tier1Tiv: number; tier1LocationCount: number }> = {};
+  for (const l of locs) {
+    const key = `${l.state}/${l.county}`;
+    byCatZone[key] = byCatZone[key] || { county: l.county, state: l.state, locationCount: 0, tiv: 0, tier1Tiv: 0, tier1LocationCount: 0 };
+    byCatZone[key].locationCount++;
+    byCatZone[key].tiv += l.tiv;
+    if (l.coastalTier === 1) {
+      byCatZone[key].tier1Tiv += l.tiv;
+      byCatZone[key].tier1LocationCount++;
+    }
+  }
   return {
     locationCount: locs.length,
     totalTiv: tivOf(locs),
@@ -401,6 +418,9 @@ function scheduleSummary(s: Submission) {
     coastalTier2: { locationCount: locs.filter((l) => l.coastalTier === 2).length, aggregateTiv: tivOf(locs.filter((l) => l.coastalTier === 2)) },
     femaHighHazard: { locationCount: locs.filter((l) => l.femaFloodZone === "VE" || l.femaFloodZone === "AE").length, zones: Array.from(new Set(locs.map((l) => l.femaFloodZone))).sort() },
     byState,
+    // Heaviest zone first: the reader wants the concentration, not an
+    // alphabetical list of counties.
+    byCatZone: Object.fromEntries(Object.entries(byCatZone).sort((a, b) => b[1].tier1Tiv - a[1].tier1Tiv || b[1].tiv - a[1].tiv)),
     predominantIsoClass,
     sprinkleredPct: Math.round((locs.filter((l) => l.sprinklered === true).length / locs.length) * 100),
     unknownProtectionCount: locs.filter((l) => l.sprinklered === null).length,

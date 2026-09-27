@@ -64,12 +64,17 @@ const TREATIES: Record<string, Record<string, unknown>> = {
     delegatedAuthority: {
       singleRiskLimit: 25_000_000,
       coastalTier1AggregateLimit: 50_000_000,
+      // A treaty minimum, not an underwriter's preference. Without it, a
+      // cheaper deductible is merely cheaper, and the difference between
+      // pricing and authority -- which is the whole argument -- disappears.
+      minWindstormDeductiblePct: 5,
       maxPolicyTermMonths: 12,
       permittedStates: ["FL", "TX", "AL", "LA", "MA", "RI", "OK"],
     },
     clauses: {
       "4.2": "Single risk limit: the Managing General Agent shall not bind any single location whose total insured value exceeds USD 25,000,000 without prior written referral.",
       "4.3": "Coastal aggregate: the Managing General Agent shall not bind business where the aggregate total insured value of Tier 1 windstorm locations exceeds USD 50,000,000 without prior written referral.",
+      "5.1": "Minimum named storm deductible: any risk with Tier 1 windstorm exposure shall carry a named storm deductible of not less than 5% of the insured value at the affected location. A lower deductible is outside delegated authority whatever premium it produces.",
       "6.1": "Mandatory endorsement: any risk with Tier 1 windstorm exposure shall carry the approved coastal windstorm and flood provision, unamended.",
     },
     referralPath: { queue: "Carrier A Property Referrals", slaHours: 24, requires: ["breach summary", "exposure detail", "loss history", "requested exception"] },

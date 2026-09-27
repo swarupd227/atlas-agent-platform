@@ -347,3 +347,79 @@ describe("reset restores every simulator to its seed", () => {
     expect((await get("/compliance/bordereau?period=2026-11")).body.rowCount).toBe(0);
   });
 });
+
+/**
+ * Accumulation is a county question, not a state one.
+ *
+ * A treaty is exhausted by one storm crossing one coastline, and "FL" spans
+ * both Pensacola Beach and Ocala. byState cannot answer "where is the
+ * exposure concentrated"; byCatZone can, and it is computed here with the
+ * other aggregates so a step never pulls 120 rows through the pipeline to
+ * count them.
+ */
+describe("CAT accumulation by zone", () => {
+  it("aggregates Tier 1 exposure by county, heaviest first", async () => {
+    const { body } = await get("/intake/submission?submissionId=SUB-2026-8891");
+    const zones = body.scheduleSummary.byCatZone;
+    expect(zones).toBeDefined();
+    const rows = Object.values(zones) as Array<{ county: string; state: string; tiv: number; tier1Tiv: number; tier1LocationCount: number }>;
+    expect(rows.length).toBeGreaterThan(1);
+
+    // Ordered by Tier 1 exposure, so the concentration reads first.
+    const tier1 = rows.map((r) => r.tier1Tiv);
+    expect(tier1).toEqual([...tier1].sort((a, b) => b - a));
+
+    // It must reconcile with the aggregates the treaty check already uses --
+    // two views of one schedule that disagree would be worse than one view.
+    const zoneTotal = rows.reduce((sum, r) => sum + r.tiv, 0);
+    expect(zoneTotal).toBe(body.scheduleSummary.totalTiv);
+    const zoneTier1 = rows.reduce((sum, r) => sum + r.tier1Tiv, 0);
+    expect(zoneTier1).toBe(body.scheduleSummary.coastalTier1.aggregateTiv);
+    const zoneTier1Count = rows.reduce((sum, r) => sum + r.tier1LocationCount, 0);
+    expect(zoneTier1Count).toBe(body.scheduleSummary.coastalTier1.locationCount);
+  });
+
+  it("still carries no location rows", async () => {
+    // The whole point of computing it here rather than downstream.
+    const { body } = await get("/intake/submission?submissionId=SUB-2026-8891");
+    expect(body.locations).toBeUndefined();
+  });
+});
+
+/**
+ * A minimum named storm deductible is authority, not preference.
+ *
+ * Without it in the treaty, a cheaper deductible is merely cheaper, and the
+ * difference between pricing and authority -- the thing this journey exists to
+ * show -- cannot be demonstrated on the number a client actually sells.
+ */
+describe("the treaty's minimum named storm deductible", () => {
+  it("states the minimum and the clause that carries it", async () => {
+    const { body } = await get("/rating/treaty?treatyId=CP-2026-17");
+    expect(body.delegatedAuthority.minWindstormDeductiblePct).toBe(5);
+    expect(body.clauses["5.1"]).toMatch(/not less than 5%/i);
+    // The existing limits are untouched.
+    expect(body.delegatedAuthority.coastalTier1AggregateLimit).toBe(50_000_000);
+    expect(body.delegatedAuthority.singleRiskLimit).toBe(25_000_000);
+  });
+
+  it("still rates a deductible below the minimum, so the options can be compared", async () => {
+    // The engine prices what it is asked within its filed range; whether an
+    // option is within authority is decided against the treaty, in the flow,
+    // exactly as the coastal aggregate is. An engine that refused to quote it
+    // would make the comparison impossible to show.
+    const args = { submissionId: "SUB-2026-8891", totalTiv: 386_479_000, coastalTier1Tiv: 72_400_000, predominantIsoClass: 5 };
+    const asSubmitted = await post("/rating/rate", { ...args, windstormDeductiblePct: 2, irpmCreditPct: 0 });
+    const ruleEnforced = await post("/rating/rate", { ...args, windstormDeductiblePct: 5, irpmCreditPct: 0 });
+    expect(asSubmitted.status).toBe(200);
+    expect(ruleEnforced.status).toBe(200);
+
+    // A higher deductible earns a credit, so complying costs less premium --
+    // which is the point worth showing an underwriter.
+    expect(ruleEnforced.body.premium.grossPremium).toBeLessThan(asSubmitted.body.premium.grossPremium);
+    // Different inputs, different rating id: neither can be passed off as the other.
+    expect(ruleEnforced.body.ratingId).not.toBe(asSubmitted.body.ratingId);
+    // Every factor shows its working.
+    for (const f of ruleEnforced.body.factors) expect(f.basis).toBeTruthy();
+  });
+});
