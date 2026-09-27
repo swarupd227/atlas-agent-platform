@@ -37,6 +37,7 @@ import { knowledgeServices } from "./knowledge-services";
 import { deployServices } from "./deploy-services";
 import { ontologyServices } from "./ontology-services";
 import { flowSyncServices } from "./flow-sync-services";
+import { agentInstructionServices } from "./agent-instruction-services";
 import { resolveAgentIndustry } from "../agent-industry";
 import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-requirements";
 import { buildMyActions, loadMyActionsRows } from "../my-actions-build";
@@ -1554,6 +1555,7 @@ export function createAstraServices(): AstraServices {
     ...deployServices,
     ...ontologyServices,
     ...flowSyncServices,
+    ...agentInstructionServices,
     listAgents,
     getAgent,
     listAgentConnectors,
