@@ -7,10 +7,14 @@
  * page uses. Nothing here retires or rolls back a deployment: that is gated
  * separately, and the cards say so.
  */
-import { cancelRunAs, cancellableRun, planStopAutomation, runningWork, stopAutomationAs } from "../automation-control";
+import { cancelRunAs, cancellableRun, planStopAutomation, runningWork, stopAutomationAs, teamRunHistory } from "../automation-control";
 
 async function runningWorkFor(orgId: string) {
   return runningWork(orgId);
+}
+
+async function teamRunHistoryFor(orgId: string, teamAgentId: string, limit?: number) {
+  return teamRunHistory(orgId, teamAgentId, limit);
 }
 
 async function cancellableRunFor(orgId: string, dagRunId: string) {
@@ -31,6 +35,7 @@ async function stopAutomationFor(orgId: string, agentId: string, actorLabel: str
 
 export const automationControlServices = {
   runningWork: runningWorkFor,
+  teamRunHistory: teamRunHistoryFor,
   cancellableRun: cancellableRunFor,
   cancelRunAs: cancelRunFor,
   planStopAutomation: planStopAutomationFor,

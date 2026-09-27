@@ -28,17 +28,48 @@ export function call(name: string, args: Record<string, unknown> = {}, id?: stri
   return { id: id ?? `call_${name}_${callCounter}`, name, arguments: args };
 }
 
+export type ScriptedComplete = CompleteFn & {
+  requests: Array<{ messages: LLMMessage[]; options: LLMCompletionOptions }>;
+  /**
+   * Anything a step function threw. The engine catches errors from the model
+   * call, so an `expect()` inside a step would otherwise end the turn quietly
+   * and leave the test passing -- see assertNoStepErrors.
+   */
+  stepErrors: unknown[];
+};
+
 /** A CompleteFn that plays the script in order and records every request it saw. */
-export function scriptedComplete(steps: ScriptStep[]): CompleteFn & { requests: Array<{ messages: LLMMessage[]; options: LLMCompletionOptions }> } {
+export function scriptedComplete(steps: ScriptStep[]): ScriptedComplete {
   const requests: Array<{ messages: LLMMessage[]; options: LLMCompletionOptions }> = [];
+  const stepErrors: unknown[] = [];
   let index = 0;
   const fn = (async (messages: LLMMessage[], options: LLMCompletionOptions) => {
     requests.push({ messages: JSON.parse(JSON.stringify(messages)), options });
     const step = steps[index++];
     if (!step) throw new Error(`Scripted brain ran out of steps after ${steps.length}`);
-    if (typeof step === "function") return step(messages, options);
+    if (typeof step === "function") {
+      try {
+        return await step(messages, options);
+      } catch (err) {
+        // Recorded as well as rethrown: the engine will swallow the rethrow.
+        stepErrors.push(err);
+        throw err;
+      }
+    }
     return result(step.reply ?? "", (step.toolCalls ?? []).map((c) => call(c.name, c.arguments, c.id)), step.stopReason);
-  }) as CompleteFn & { requests: typeof requests };
+  }) as ScriptedComplete;
   fn.requests = requests;
+  fn.stepErrors = stepErrors;
   return fn;
+}
+
+/**
+ * Fail the test if a script step threw -- typically an `expect()` checking a
+ * tool's payload mid-turn. Call it in an afterEach: without it, the engine's
+ * error handling turns a failed assertion into a quietly abandoned turn and the
+ * test passes regardless.
+ */
+export function assertNoStepErrors(fn: ScriptedComplete | null | undefined): void {
+  const first = fn?.stepErrors?.[0];
+  if (first) throw first;
 }

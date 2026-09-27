@@ -97,6 +97,46 @@ export async function runningWork(orgId: string | undefined): Promise<RunningWor
   };
 }
 
+export interface TeamRunRow {
+  id: string;
+  status: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  minutes: number | null;
+  request: string | null;
+  waitingOnApprovalId: string | null;
+  error: string | null;
+  steps: { done: number; total: number } | null;
+}
+
+/**
+ * A team's recent runs, newest first: what it was asked, how it ended, how long
+ * it took. This is the run HISTORY, which nothing in the conversation could reach
+ * -- list_runs answers "what is running", and get_team_run needs an id a person
+ * does not have. It cannot be searched by a business fact (a policy number lives
+ * in a step's output, not in a run column), so the caller lists and recognises.
+ */
+export async function teamRunHistory(orgId: string | undefined, teamAgentId: string, limit = 20): Promise<TeamRunRow[]> {
+  const team = await storage.getAgent(teamAgentId, orgId);
+  if (!team) throw new AutomationControlError("No team with that id in this organization.");
+  const runs = await storage.listDagExecutionRunsByTeamAgent(teamAgentId, Math.min(Math.max(limit, 1), 50)).catch(() => []);
+  return (runs as any[]).map((r) => {
+    const started = r.startedAt ?? r.createdAt ?? null;
+    const finished = r.completedAt ?? null;
+    return {
+      id: r.id,
+      status: String(r.status),
+      startedAt: started ? new Date(started).toISOString() : null,
+      finishedAt: finished ? new Date(finished).toISOString() : null,
+      minutes: started ? Math.max(0, Math.round(((finished ? new Date(finished).getTime() : Date.now()) - new Date(started).getTime()) / 60000)) : null,
+      request: requestOf(r),
+      waitingOnApprovalId: r.pendingApprovalId ?? null,
+      error: typeof r.error === "string" && r.error.trim() ? r.error : null,
+      steps: typeof r.totalWaves === "number" && r.totalWaves > 0 ? { done: Number(r.currentWave ?? 0), total: Number(r.totalWaves) } : null,
+    };
+  });
+}
+
 /** One in-flight team run, only when its team belongs to the caller. */
 export async function cancellableRun(orgId: string | undefined, dagRunId: string) {
   const run = await storage.getDagExecutionRun(dagRunId);

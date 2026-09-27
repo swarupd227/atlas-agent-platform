@@ -13,13 +13,13 @@
  * it by hand. Both limits are on the card, because "stopped" otherwise sounds
  * like "out of service".
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { runTurn, resolveAction, type EngineDeps } from "../server/astra/engine";
 import { ToolRegistry } from "../server/astra/registry";
 import { MemoryThreadStore } from "../server/astra/memory-store";
-import { scriptedComplete, result, call } from "../server/astra/scripted-brain";
+import { scriptedComplete, result, call, assertNoStepErrors, type ScriptedComplete } from "../server/astra/scripted-brain";
 import { finishTurnTool } from "../server/astra/tools/finish-turn";
 import { AUTOMATION_CONTROL_TOOLS } from "../server/astra/tools/automation-control";
 import { hasPermission, type RoleId } from "../server/permissions";
@@ -31,6 +31,7 @@ const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60000).toISOString();
 
 interface Options {
+  history?: any[];
   teamRuns?: any[];
   agentRuns?: any[];
   runStatus?: string;
@@ -45,6 +46,11 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
   const done: any[] = [];
   const services = {
     listAgents: vi.fn(async () => [{ id: "team-1", name: "E&S Binding Team", organizationId: ORG }]),
+    listTeams: vi.fn(async () => [{ id: "team-1", name: "E&S Binding Team", status: "active", riskTier: "MEDIUM", blueprintId: "bp-1" }]),
+    teamRunHistory: vi.fn(async () => opts.history ?? [
+      { id: "run-9", status: "completed_with_skips", startedAt: minutesAgo(90), finishedAt: minutesAgo(64), minutes: 26, request: "Bind submission 4417 for Gulf Coast Storage", waitingOnApprovalId: null, error: null, steps: { done: 7, total: 7 } },
+      { id: "run-8", status: "failed", startedAt: minutesAgo(300), finishedAt: minutesAgo(297), minutes: 3, request: "Bind submission 4390", waitingOnApprovalId: null, error: "Integration 'sap' is not connected", steps: { done: 2, total: 7 } },
+    ]),
     runningWork: vi.fn(async () => ({
       teamRuns: opts.teamRuns ?? [
         { id: "run-1", team: "E&S Binding Team", teamAgentId: "team-1", status: "waiting_approval", waitingOnApprovalId: "apr-9", startedAt: minutesAgo(12), request: "Bind submission 4417 for Gulf Coast Storage" },
@@ -76,10 +82,12 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
     }),
     getUserDisplayName: vi.fn(async () => "admin"),
   };
+  const complete = scriptedComplete(steps);
+  lastComplete = complete;
   const deps: EngineDeps = {
     store,
     registry: new ToolRegistry([finishTurnTool, ...AUTOMATION_CONTROL_TOOLS], hasPermission),
-    complete: scriptedComplete(steps),
+    complete,
     can: hasPermission,
     audit: vi.fn(async () => {}),
     services,
@@ -94,6 +102,13 @@ const lastTool = (messages: any[]) => JSON.parse(messages.filter((m) => m.role =
 const pending = async (t: ReturnType<typeof setup>) => (await t.store.loadThread(t.threadId, ORG))!.pendingAction!;
 
 beforeEach(() => vi.clearAllMocks());
+
+/**
+ * The engine catches whatever complete() throws, so an expect() inside a script
+ * step would end the turn quietly and leave the test passing. This rethrows it.
+ */
+let lastComplete: ScriptedComplete | null = null;
+afterEach(() => assertNoStepErrors(lastComplete));
 
 describe("what's running", () => {
   it("answers the question that had no tool behind it, and says what each run is waiting on", async () => {
@@ -112,8 +127,57 @@ describe("what's running", () => {
   });
 
   it("says nothing is running rather than returning an empty list", async () => {
-    const t = setup([use("list_runs"), (m) => { expect(lastTool(m).result).toMatchObject({ total: 0, message: "Nothing is running" }); expect(lastTool(m).result.note).toContain("run history"); return reply("Nothing."); }], { teamRuns: [], agentRuns: [] });
+    const t = setup([use("list_runs"), (m) => {
+      expect(lastTool(m).result).toMatchObject({ total: 0, message: "Nothing is running" });
+      expect(lastTool(m).result.note).toContain("in flight");
+      // Where the finished runs are moved out of the note into its own field
+      // when list_team_runs arrived; this assertion caught that, once a failing
+      // step assertion could fail a test at all.
+      expect(lastTool(m).result.whereTheRestAre).toContain("list_team_runs");
+      return reply("Nothing.");
+    }], { teamRuns: [], agentRuns: [] });
     await runTurn(t.deps, as("admin"), t.threadId, "Anything running?", t.onEvent);
+  });
+});
+
+describe("the run history", () => {
+  it("makes a finished run reachable without its uuid, which nothing else did", async () => {
+    // Found on the live app: list_runs returns only in-flight work, so asking
+    // about a completed run left the model correctly but uselessly asking for
+    // a run id it had no way to produce.
+    const t = setup([
+      use("list_team_runs", { team: "E&S Binding Team" }),
+      (m) => {
+        const p = lastTool(m).result;
+        expect(p.message).toBe("2 recent runs of E&S Binding Team");
+        expect(p.runs[0]).toMatchObject({ runId: "run-9", status: "completed with skips", minutes: 26 });
+        expect(p.runs[0].asked).toContain("Gulf Coast Storage");
+        expect(p.runs[1]).toMatchObject({ status: "failed", error: "Integration 'sap' is not connected" });
+        expect(p.failed).toBe(1);
+        return reply("Two runs.");
+      },
+    ]);
+    await runTurn(t.deps, as("admin"), t.threadId, "Show me the recent runs of the binding team", t.onEvent);
+  });
+
+  it("says it cannot search by a policy number, because that is in a step not on the run", async () => {
+    const t = setup([use("list_team_runs", { team: "E&S Binding Team" }), (m) => { expect(lastTool(m).result.basis).toContain("can't be found by a policy or reference number"); return reply("Pick one."); }]);
+    await runTurn(t.deps, as("admin"), t.threadId, "Which run bound POL-2026-8891-CP?", t.onEvent);
+  });
+
+  it("says a team has never run rather than returning an empty list", async () => {
+    const t = setup([use("list_team_runs", { team: "E&S Binding Team" }), (m) => { expect(lastTool(m).result.message).toContain("has never run"); expect(lastTool(m).result.note).toContain("run_team starts one"); return reply("Never run."); }], { history: [] });
+    await runTurn(t.deps, as("admin"), t.threadId, "Any runs?", t.onEvent);
+  });
+
+  it("points from the in-flight list to where the finished runs are", async () => {
+    const t = setup([use("list_runs"), (m) => { expect(lastTool(m).result.whereTheRestAre).toContain("list_team_runs"); return reply("Three going."); }]);
+    await runTurn(t.deps, as("admin"), t.threadId, "What's running?", t.onEvent);
+  });
+
+  it("refuses a team that isn't this organization's", async () => {
+    const t = setup([use("list_team_runs", { team: "Someone Else" }), (m) => { expect(lastTool(m).error).toContain('No team named "Someone Else"'); return reply("Not here."); }]);
+    await runTurn(t.deps, as("admin"), t.threadId, "Its runs?", t.onEvent);
   });
 });
 

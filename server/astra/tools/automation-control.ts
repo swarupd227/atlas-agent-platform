@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { resolveAgentRef } from "./refs";
+import { resolveTeam } from "./team-ref";
 import type { AstraTool, ConfirmPreview, ConfirmWarning } from "../types";
 
 /**
@@ -50,7 +51,11 @@ export const listRunsTool: AstraTool<{}> = {
           request: clip(t.request),
         })),
         agentRuns: r.agentRuns.map((a) => ({ runId: a.id, agent: a.agent, status: a.status, minutesRunning: minutesSince(a.startedAt), request: clip(a.request) })),
-        ...(total === 0 ? { note: "No team run or agent run is in flight. A run that finished is in the run history, not here." } : {}),
+        ...(total === 0 ? { note: "No team run or agent run is in flight." } : {}),
+        // Said whether or not anything is running: this tool is deliberately
+        // only about work in flight, and a person asking about a run that
+        // finished would otherwise be told nothing exists.
+        whereTheRestAre: "A run that has finished is in its team's history: list_team_runs shows those, and get_team_run opens one.",
       },
       artifact: {
         kind: "text",
@@ -67,6 +72,76 @@ export const listRunsTool: AstraTool<{}> = {
       },
       proof: {
         context: { status: "measured", summary: `${r.teamRuns.length} team ${r.teamRuns.length === 1 ? "run" : "runs"} · ${r.agentRuns.length} agent ${r.agentRuns.length === 1 ? "run" : "runs"} in flight` },
+      },
+    };
+  },
+};
+
+interface TeamRunRow {
+  id: string;
+  status: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  minutes: number | null;
+  request: string | null;
+  waitingOnApprovalId: string | null;
+  error: string | null;
+  steps: { done: number; total: number } | null;
+}
+
+const FINISHED = new Set(["completed", "completed_with_skips", "failed", "cancelled"]);
+
+export const listTeamRunsTool: AstraTool<{ team: string; limit?: number }> = {
+  name: "list_team_runs",
+  description:
+    "A team's recent runs, newest first: what each was asked, how it ended, how long it took, and its run id. This is the run history -- use it to FIND the run someone means (get_team_run then shows its steps). It cannot be searched by a business fact like a policy or reference number, because those live inside a step's output rather than on the run; list the recent runs and let the user recognise theirs.",
+  input: z.object({
+    team: z.string().min(1).describe("The team's name or id."),
+    limit: z.number().int().min(1).max(50).optional().describe("How many of the most recent runs to show (default 10)."),
+  }),
+  permission: "view_agents",
+  confirm: false,
+  run: async (ctx, input) => {
+    const t = await resolveTeam(ctx, input.team);
+    if ("refuse" in t) throw new Error(t.refuse);
+    const rows: TeamRunRow[] = await ctx.services.teamRunHistory(ctx.orgId, t.team.id, input.limit ?? 10);
+    const finished = rows.filter((r) => FINISHED.has(r.status));
+    const failed = rows.filter((r) => r.status === "failed").length;
+    return {
+      payload: {
+        message: rows.length === 0 ? `"${t.team.name}" has never run` : `${rows.length} recent ${rows.length === 1 ? "run" : "runs"} of ${t.team.name}`,
+        team: t.team.name,
+        teamAgentId: t.team.id,
+        runs: rows.map((r) => ({
+          runId: r.id,
+          status: r.status.replace(/_/g, " "),
+          started: r.startedAt ? `${r.startedAt.slice(0, 16).replace("T", " ")} UTC` : null,
+          ...(r.minutes != null ? { minutes: r.minutes } : {}),
+          ...(r.steps ? { waves: `${r.steps.done} of ${r.steps.total}` } : {}),
+          ...(r.waitingOnApprovalId ? { waitingOnApprovalId: r.waitingOnApprovalId } : {}),
+          ...(r.error ? { error: clip(r.error, 140) } : {}),
+          asked: clip(r.request, 140),
+        })),
+        ...(rows.length
+          ? {
+              basis: "Listed from the team's own run history, newest first. A run can't be found by a policy or reference number -- that is in a step's output, not on the run -- so pick the one the user recognises and open it with get_team_run.",
+              finished: finished.length,
+              ...(failed ? { failed } : {}),
+            }
+          : { note: "Nothing has run yet. run_team starts one." }),
+      },
+      artifact: {
+        kind: "text",
+        title: `${t.team.name} — recent runs`,
+        props: {
+          text: rows.length === 0
+            ? `**${t.team.name}** has no runs yet.`
+            : [`**${t.team.name}** — ${rows.length} recent ${rows.length === 1 ? "run" : "runs"}`, "", ...rows.map((r) => `- ${r.status.replace(/_/g, " ")}${r.startedAt ? ` · ${r.startedAt.slice(0, 16).replace("T", " ")} UTC` : ""}${r.minutes != null ? ` · ${r.minutes} min` : ""}${r.request ? ` · ${clip(r.request, 80)}` : ""}`)].join("\n"),
+        },
+        fullViewHref: `/agents/${t.team.id}`,
+      },
+      proof: {
+        context: { status: "measured", summary: `${rows.length} ${rows.length === 1 ? "run" : "runs"} read from ${t.team.name}'s history` },
       },
     };
   },
@@ -208,4 +283,4 @@ export const stopAutomationTool: AstraTool<{ agent: string }> = {
   },
 };
 
-export const AUTOMATION_CONTROL_TOOLS: AstraTool[] = [listRunsTool, cancelRunTool, stopAutomationTool] as AstraTool[];
+export const AUTOMATION_CONTROL_TOOLS: AstraTool[] = [listRunsTool, listTeamRunsTool, cancelRunTool, stopAutomationTool] as AstraTool[];

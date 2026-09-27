@@ -21,13 +21,13 @@
  * runs were invisible to the run history, list_runs and cancel_run. The cron
  * path's agent_run job already routed teams correctly; the interval path did not.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { runTurn, resolveAction, type EngineDeps } from "../server/astra/engine";
 import { ToolRegistry } from "../server/astra/registry";
 import { MemoryThreadStore } from "../server/astra/memory-store";
-import { scriptedComplete, result, call } from "../server/astra/scripted-brain";
+import { scriptedComplete, result, call, assertNoStepErrors, type ScriptedComplete } from "../server/astra/scripted-brain";
 import { finishTurnTool } from "../server/astra/tools/finish-turn";
 import { SCHEDULE_TOOLS } from "../server/astra/tools/schedule";
 import { describeCron, nextFire } from "../server/agent-schedule";
@@ -83,10 +83,12 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
     }),
     getUserDisplayName: vi.fn(async () => "admin"),
   };
+  const complete = scriptedComplete(steps);
+  lastComplete = complete;
   const deps: EngineDeps = {
     store,
     registry: new ToolRegistry([finishTurnTool, ...SCHEDULE_TOOLS], hasPermission),
-    complete: scriptedComplete(steps),
+    complete,
     can: hasPermission,
     audit: vi.fn(async () => {}),
     services,
@@ -102,6 +104,13 @@ const pending = async (t: ReturnType<typeof setup>) => (await t.store.loadThread
 const DAILY_7 = "0 7 * * *";
 
 beforeEach(() => vi.clearAllMocks());
+
+/**
+ * The engine catches whatever complete() throws, so an expect() inside a script
+ * step would end the turn quietly and leave the test passing. This rethrows it.
+ */
+let lastComplete: ScriptedComplete | null = null;
+afterEach(() => assertNoStepErrors(lastComplete));
 
 describe("reading a cron the way a person would say it", () => {
   it("says the time, and says it in UTC", () => {
