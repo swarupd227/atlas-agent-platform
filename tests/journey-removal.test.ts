@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { deletesLine, keepsLines } from "../client/src/pages/journey-removal";
+import { alsoLines, deletesLine, keepsLines } from "../client/src/pages/journey-removal";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const routes = read("server", "routes", "journeys.ts");
@@ -21,6 +21,7 @@ const ORG = "org-a";
 const agents = new Map<string, any>();
 const teams: Array<{ id: string; teamAgentId: string; memberAgentId: string }> = [];
 const audits: any[] = [];
+let deployments: any[] = [];
 const deleted: string[] = [];
 const updates: Array<[string, any]> = [];
 
@@ -40,6 +41,14 @@ vi.mock("../server/storage", () => ({
     // Deleting the team clears the flow's link to it (the flow itself stays).
     updateProcessFlow: vi.fn(async (id: string, patch: any) => ({ id, ...patch })),
     createAuditEvent: vi.fn(async (e: any) => { audits.push(e); return e; }),
+    // Retired with the agents they name, so a deleted journey leaves no row
+    // claiming to be deployed.
+    getDeployments: vi.fn(async () => deployments),
+    updateDeployment: vi.fn(async (id: string, patch: any) => {
+      const row = deployments.find((d) => d.id === id);
+      if (row) Object.assign(row, patch);
+      return row;
+    }),
   },
 }));
 
@@ -146,6 +155,24 @@ describe("what the dialog says", () => {
     ]);
     expect(keepsLines({ keeps: [], runCount: 1, processFlowName: null })).toEqual(["1 past run stays in the run history"]);
     expect(keepsLines({ keeps: [], runCount: 0, processFlowName: null })).toEqual([]);
+  });
+
+  it("names the deployments that are retired with it, and says the record stays", () => {
+    // Worth a line of its own: a deployment row cannot be reached once its agent
+    // is deleted, so if the dialog does not say it, nobody ever finds out.
+    expect(alsoLines({ liveDeployments: [{ id: "d1", agentName: "Claims intake team", environment: "pilot", status: "active" }] })).toEqual([
+      "1 deployment is retired: pilot (active) — the record that it ran stays",
+    ]);
+    expect(alsoLines({
+      liveDeployments: [
+        { id: "d1", agentName: "A", environment: "pilot", status: "active" },
+        { id: "d2", agentName: "B", environment: "staging", status: "pending" },
+      ],
+    })).toEqual(["2 deployments are retired: pilot (active), staging (pending) — the record that it ran stays"]);
+    // Silent when there is nothing to say, including for a plan from an older
+    // server that does not carry the field at all.
+    expect(alsoLines({ liveDeployments: [] })).toEqual([]);
+    expect(alsoLines({})).toEqual([]);
   });
 
   it("offers both acts, and says deleting can't be undone", () => {

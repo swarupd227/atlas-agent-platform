@@ -32,6 +32,7 @@ const state = {
   teams: [] as any[],
   kbLinks: [] as any[],
   mcpLinks: [] as any[],
+  deployments: [] as any[],
 };
 
 vi.mock("../server/storage", () => ({
@@ -48,6 +49,14 @@ vi.mock("../server/storage", () => ({
     // An agent's plan carries what deleting its whole team would take.
     summarizeDagExecutionRunsByTeamAgent: vi.fn(async () => ({ total: 0, completed: 0, failed: 0, latest: null })),
     getProcessFlows: vi.fn(async () => []),
+    // A live deployment has to be named before the delete: afterwards the row
+    // cannot be reached, since there is no delete route for one.
+    getDeployments: vi.fn(async (orgId?: string) => state.deployments.filter((d) => !orgId || d.organizationId === orgId)),
+    updateDeployment: vi.fn(async (id: string, patch: any) => {
+      const row = state.deployments.find((d) => d.id === id);
+      if (row) Object.assign(row, patch);
+      return row;
+    }),
   },
 }));
 
@@ -65,6 +74,7 @@ beforeEach(() => {
   state.teams = [{ id: "m-1", teamAgentId: "a-1", memberAgentId: "a-2" }];
   state.kbLinks = [{ id: "kb-1", agentId: "a-1" }];
   state.mcpLinks = [];
+  state.deployments = [];
 });
 
 describe("deleting an outcome", () => {
@@ -110,6 +120,28 @@ describe("deleting an agent", () => {
     expect(plan.goes).toContain("1 knowledge base link (the knowledge bases themselves stay)");
     expect(plan.goes).toContain("its mandate, task classes and warrants");
     expect(plan.stays).toContain("its past runs stay in the run history");
+  });
+
+  it("names a live deployment, because afterwards nobody can act on it", async () => {
+    // A deployment row outlives the agent it names and there is no delete route
+    // for one, so "it is still deployed somewhere" has to be said before the
+    // delete rather than discovered in a deployment list months later.
+    state.deployments = [
+      { id: "d-1", organizationId: ORG, agentId: "a-1", agentName: "Fleet orchestrator", environment: "pilot", status: "active" },
+      { id: "d-2", organizationId: ORG, agentId: "a-1", agentName: "Fleet orchestrator", environment: "staging", status: "promoted" },
+    ];
+    const plan = await planAgentRemoval(ORG, "a-1");
+    const line = plan.goes.find((g) => g.includes("deployment"))!;
+    expect(line).toContain("1 deployment");
+    expect(line).toContain("pilot, now active");
+    // The finished one is not mentioned: there is nothing to retire about it.
+    expect(line).not.toContain("staging");
+    expect(line).toContain("retired, not deleted");
+  });
+
+  it("says nothing about deployments when the agent has none in a live state", async () => {
+    const plan = await planAgentRemoval(ORG, "a-1");
+    expect(plan.goes.some((g) => g.includes("deployment"))).toBe(false);
   });
 
   it("tells a worker which teams it worked in", async () => {

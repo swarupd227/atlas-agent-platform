@@ -33,12 +33,25 @@ export interface RemovalPlan {
   keeps: string[];
   runCount: number;
   processFlowName: string | null;
+  /** Deployments that are retired with the agents, which nothing could reach afterwards. */
+  liveDeployments?: Array<{ id: string; agentName: string | null; environment: string; status: string }>;
 }
 
 /** What deleting takes, in one line, for the dialog's first sentence. */
 export function deletesLine(plan: Pick<RemovalPlan, "deletes">): string {
   const n = plan.deletes.length;
   return n === 1 ? "1 agent is deleted:" : `${n} agents are deleted:`;
+}
+
+/**
+ * What else deleting it does, beyond removing agents. A deployment row cannot be
+ * reached once its agent is gone, so a still-live one has to be named here.
+ */
+export function alsoLines(plan: Pick<RemovalPlan, "liveDeployments">): string[] {
+  const live = plan.liveDeployments ?? [];
+  if (live.length === 0) return [];
+  const where = live.map((d) => `${d.environment} (${d.status})`).join(", ");
+  return [`${live.length === 1 ? "1 deployment is" : `${live.length} deployments are`} retired: ${where} — the record that it ran stays`];
 }
 
 /** What survives it, in the order it matters. Empty when nothing does. */
@@ -88,6 +101,7 @@ export function RemoveJourney({ journeyId, journeyName, onRemoved }: { journeyId
 
   const busy = unlist.isPending || remove.isPending;
   const keeps = plan.data ? keepsLines(plan.data) : [];
+  const also = plan.data ? alsoLines(plan.data) : [];
 
   return (
     <>
@@ -121,6 +135,11 @@ export function RemoveJourney({ journeyId, journeyName, onRemoved }: { journeyId
                       <ul className="mt-1 list-disc pl-5 text-muted-foreground" data-testid="list-journey-deletes">
                         {plan.data.deletes.map((name) => <li key={name}>{name}</li>)}
                       </ul>
+                      {also.length > 0 && (
+                        <ul className="mt-1.5 list-disc pl-5 text-muted-foreground" data-testid="list-journey-also">
+                          {also.map((line) => <li key={line}>{line}</li>)}
+                        </ul>
+                      )}
                       {keeps.length > 0 && (
                         <ul className="mt-1.5 list-disc pl-5 text-muted-foreground" data-testid="list-journey-keeps">
                           {keeps.map((line) => <li key={line}>{line}</li>)}

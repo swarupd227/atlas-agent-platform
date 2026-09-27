@@ -29,7 +29,7 @@ import {
   redactWithOntologyKeys,
 } from "../permissions";
 import { RemovalPlanError, planAgentRemoval } from "../removal-plans";
-import { TeamRemovalError, deleteTeam } from "../team-removal";
+import { TeamRemovalError, deleteTeam, retireDeploymentsFor } from "../team-removal";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveRequestOrgId, filterEvalSuitesForOrg, filterEvalRunsForOrg } from "../tenant-scope";
 import { buildBlastRadius } from "../blast-radius";
@@ -857,6 +857,11 @@ const router = Router();
     try {
       const agent = await storage.getAgent(req.params.id as string, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
+      // A deployment row outlives the agent it names, and nothing can reach it
+      // afterwards -- there is no delete route for one. Close them here, while the
+      // agent still exists to match them to (402 stranded rows on Azure,
+      // 2026-09-27). The same happens for a whole team in deleteTeam.
+      const deploymentsRetired = await retireDeploymentsFor(getOrgId(req), [agent.id]);
       await storage.deleteAgent(req.params.id as string, getOrgId(req));
       const delTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
       await storage.createAuditEvent({
@@ -865,10 +870,10 @@ const router = Router();
         action: "delete_agent",
         objectType: "agent",
         objectId: agent.id,
-        details: `Agent "${agent.name}" deleted`,
+        details: `Agent "${agent.name}" deleted${deploymentsRetired.length ? `; ${deploymentsRetired.length} deployment(s) retired: ${deploymentsRetired.map((d) => d.environment).join(", ")}` : ""}`,
         ontologyTags: resolveOntologyTags("agent", "delete_agent", { agentOntologyTags: delTags }),
       });
-      res.json({ success: true });
+      res.json({ success: true, deploymentsRetired });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to delete agent" });
     }

@@ -25,6 +25,7 @@ const teams: Array<{ id: string; teamAgentId: string; memberAgentId: string }> =
 const audits: any[] = [];
 const deleted: string[] = [];
 const flowUpdates: Array<{ id: string; patch: any }> = [];
+let deployments: any[] = [];
 
 vi.mock("../server/storage", () => ({
   storage: {
@@ -45,6 +46,14 @@ vi.mock("../server/storage", () => ({
       return true;
     }),
     updateProcessFlow: vi.fn(async (id: string, patch: any) => { flowUpdates.push({ id, patch }); return { id, ...patch }; }),
+    // A deployment row outlives the agent it names, and nothing can reach it
+    // afterwards -- there is no delete route for one.
+    getDeployments: vi.fn(async (orgId?: string) => deployments.filter((d) => !orgId || d.organizationId === orgId)),
+    updateDeployment: vi.fn(async (id: string, patch: any) => {
+      const row = deployments.find((d) => d.id === id);
+      if (row) Object.assign(row, patch);
+      return row;
+    }),
     createAuditEvent: vi.fn(async (e: any) => { audits.push(e); return e; }),
   },
 }));
@@ -59,6 +68,13 @@ beforeEach(() => {
   audits.length = 0;
   deleted.length = 0;
   flowUpdates.length = 0;
+  deployments = [
+    { id: "dep-team-live", organizationId: ORG, agentId: "team-1", agentName: "Claims intake team", environment: "pilot", status: "active" },
+    { id: "dep-team-old", organizationId: ORG, agentId: "team-1", agentName: "Claims intake team", environment: "staging", status: "promoted" },
+    { id: "dep-worker", organizationId: ORG, agentId: "w-1", agentName: "Intake worker", environment: "staging", status: "pending" },
+    { id: "dep-shared", organizationId: ORG, agentId: "w-2", agentName: "Shared assessor", environment: "staging", status: "active" },
+    { id: "dep-other-org", organizationId: "org-b", agentId: "team-1", agentName: "Claims intake team", environment: "prod", status: "active" },
+  ];
   const add = (id: string, name: string, over: any = {}) => agents.set(id, { id, name, organizationId: ORG, isCuratedJourney: false, ...over });
   add("team-1", "Claims intake team");
   add("team-2", "Another team");
@@ -93,6 +109,69 @@ describe("what deleting a team would take", () => {
 
   it("won't reach into another organization", async () => {
     await expect(planTeamRemoval("org-b", "team-1")).rejects.toBeInstanceOf(TeamRemovalError);
+  });
+});
+
+/**
+ * A deployment row names an agent and outlives it. Nothing here or in the agent
+ * delete route used to touch them, and there is no delete route for one, so a
+ * removed team left its deployments behind still saying "active" or "pending" for
+ * an agent that no longer exists -- 402 such rows measured on Azure 2026-09-27,
+ * mostly from long-deleted test agents.
+ */
+describe("the deployments of a team being deleted", () => {
+  it("are listed in the plan before anything happens, so the dialog can say so", async () => {
+    const plan = await planTeamRemoval(ORG, "team-1");
+    expect(plan.liveDeployments.map((d) => d.id).sort()).toEqual(["dep-team-live", "dep-worker"]);
+  });
+
+  it("leaves out one that is already over, because there is nothing to retire", async () => {
+    const plan = await planTeamRemoval(ORG, "team-1");
+    expect(plan.liveDeployments.map((d) => d.id)).not.toContain("dep-team-old");
+  });
+
+  it("leaves out a shared worker's, because that worker keeps running for its other team", async () => {
+    const plan = await planTeamRemoval(ORG, "team-1");
+    expect(plan.liveDeployments.map((d) => d.id)).not.toContain("dep-shared");
+  });
+
+  it("leaves another organization's alone", async () => {
+    const plan = await planTeamRemoval(ORG, "team-1");
+    expect(plan.liveDeployments.map((d) => d.id)).not.toContain("dep-other-org");
+  });
+
+  it("are retired when the team goes, not deleted, so the record that it ran stays", async () => {
+    const result = await deleteTeam(actor, "team-1");
+    expect(deployments.find((d) => d.id === "dep-team-live").status).toBe("retired");
+    expect(deployments.find((d) => d.id === "dep-worker").status).toBe("retired");
+    // Still there, and still naming the agent.
+    expect(deployments.find((d) => d.id === "dep-team-live").agentName).toBe("Claims intake team");
+    expect(result.deploymentsRetired.map((d) => d.id).sort()).toEqual(["dep-team-live", "dep-worker"]);
+  });
+
+  it("spares the shared worker's and the other organization's when it happens", async () => {
+    await deleteTeam(actor, "team-1");
+    expect(deployments.find((d) => d.id === "dep-shared").status).toBe("active");
+    expect(deployments.find((d) => d.id === "dep-other-org").status).toBe("active");
+  });
+
+  it("says what it retired on the audit event, since the rows are all that is left afterwards", async () => {
+    await deleteTeam(actor, "team-1");
+    const details = JSON.parse(audits.at(-1).details);
+    expect(details.deploymentsRetired).toEqual([
+      "Claims intake team pilot (was active)",
+      "Intake worker staging (was pending)",
+    ]);
+  });
+
+  it("closes them while the agents still exist, or they could never be matched again", () => {
+    // Order matters: getDeployments is by organization, but the agent ids are what
+    // identify the rows, and after deleteAgent there is nothing to match.
+    const source = read("server", "team-removal.ts");
+    const retireAt = source.indexOf("retireDeploymentsFor(actor.orgId");
+    const deleteAt = source.indexOf("await storage.deleteAgent(worker.id");
+    expect(retireAt).toBeGreaterThan(0);
+    expect(retireAt).toBeLessThan(deleteAt);
   });
 });
 

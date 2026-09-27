@@ -35,10 +35,55 @@ export interface WorkerPlan {
   alsoUsedBy: string[];
 }
 
+/** A deployment in one of these states is already over; nothing to retire. */
+const FINISHED_DEPLOYMENT = new Set(["rolled_back", "promoted", "superseded", "retired", "failed"]);
+
+export interface LiveDeployment {
+  id: string;
+  agentId: string;
+  agentName: string | null;
+  environment: string;
+  status: string;
+}
+
+/**
+ * The deployments of these agents that are still in a live state.
+ *
+ * Read before anything is deleted, because a deployment row outlives the agent it
+ * names: nothing here or in the agent delete route used to touch them, so a
+ * removed team left its deployments behind, still listed and still saying
+ * "pending" or "deployed" for an agent that no longer exists. Measured on Azure
+ * 2026-09-27: 402 such rows, most of them from long-deleted test agents.
+ */
+export async function liveDeploymentsFor(orgId: string | undefined, agentIds: string[]): Promise<LiveDeployment[]> {
+  if (agentIds.length === 0) return [];
+  const wanted = new Set(agentIds);
+  const all = (await storage.getDeployments(orgId).catch(() => [])) as any[];
+  return all
+    .filter((d) => d.agentId && wanted.has(d.agentId) && !FINISHED_DEPLOYMENT.has(String(d.status)))
+    .map((d) => ({ id: d.id, agentId: d.agentId, agentName: d.agentName ?? null, environment: String(d.environment ?? "staging"), status: String(d.status) }));
+}
+
+/**
+ * Retire them, rather than delete them: what was deployed and when is history
+ * worth keeping, and the row still carries the agent's name. Retiring takes it
+ * out of everything that reads live deployments; deleting it would erase the
+ * record that the agent ever ran anywhere.
+ */
+export async function retireDeploymentsFor(orgId: string | undefined, agentIds: string[]): Promise<LiveDeployment[]> {
+  const live = await liveDeploymentsFor(orgId, agentIds);
+  for (const d of live) {
+    await storage.updateDeployment(d.id, { status: "retired" } as any).catch(() => {});
+  }
+  return live;
+}
+
 export interface TeamRemovalPlan {
   teamId: string;
   teamName: string;
   workers: WorkerPlan[];
+  /** Deployments that would be retired with these agents, by agent. */
+  liveDeployments: LiveDeployment[];
   /** Names of the agents that would be deleted, orchestrator first. */
   deletes: string[];
   /** Workers that stay, each with the team that keeps it. */
@@ -77,10 +122,15 @@ export async function planTeamRemoval(orgId: string | undefined, teamAgentId: st
   const flows = await storage.getProcessFlows(orgId);
   const flow = flows.find((f) => (f as any).teamAgentId === orchestrator.id);
 
+  // Only the agents actually going: a worker another team keeps is still running
+  // for that team, so its deployment is not this team's to retire.
+  const goingIds = [orchestrator.id, ...workers.filter((w) => w.alsoUsedBy.length === 0).map((w) => w.id)];
+
   return {
     teamId: orchestrator.id,
     teamName: orchestrator.name,
     workers,
+    liveDeployments: await liveDeploymentsFor(orgId, goingIds),
     deletes: [orchestrator.name, ...workers.filter((w) => w.alsoUsedBy.length === 0).map((w) => w.name)],
     keeps: workers.filter((w) => w.alsoUsedBy.length > 0).map((w) => `${w.name} (also used by ${w.alsoUsedBy.join(", ")})`),
     runCount: runs.total ?? 0,
@@ -98,9 +148,14 @@ export async function planTeamRemoval(orgId: string | undefined, teamAgentId: st
  * link from a conversation (automate_process_flow), so the dangling id would
  * have gone from rare to ordinary.
  */
-export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise<{ deleted: string[]; kept: string[]; runCount: number }> {
+export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise<{ deleted: string[]; kept: string[]; runCount: number; deploymentsRetired: LiveDeployment[] }> {
   const plan = await planTeamRemoval(actor.orgId, teamAgentId);
   const deleted: string[] = [];
+
+  // Before the agents go, so the rows can still be matched to them. A deployment
+  // whose agent is deleted is unreachable and untouchable -- there is no delete
+  // route for one -- so it has to be closed here or not at all.
+  const deploymentsRetired = await retireDeploymentsFor(actor.orgId, [plan.teamId, ...plan.workers.filter((w) => w.alsoUsedBy.length === 0).map((w) => w.id)]);
 
   for (const worker of plan.workers) {
     if (worker.alsoUsedBy.length > 0) continue;
@@ -128,6 +183,7 @@ export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise
       deleted,
       kept: plan.keeps,
       runsKept: plan.runCount,
+      deploymentsRetired: deploymentsRetired.map((d) => `${d.agentName ?? d.agentId} ${d.environment} (was ${d.status})`),
       processFlowKept: plan.processFlowName,
       processFlowUnlinked: !!plan.processFlowId,
       fromLibrary: plan.inLibrary,
@@ -135,5 +191,5 @@ export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise
     }),
   });
 
-  return { deleted, kept: plan.keeps, runCount: plan.runCount };
+  return { deleted, kept: plan.keeps, runCount: plan.runCount, deploymentsRetired };
 }

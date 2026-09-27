@@ -13,7 +13,7 @@
  * staying, because that is the part people are afraid of.
  */
 import { storage } from "./storage";
-import { planTeamRemoval, type TeamRemovalPlan } from "./team-removal";
+import { liveDeploymentsFor, planTeamRemoval, type TeamRemovalPlan } from "./team-removal";
 
 export interface RemovalPlan {
   id: string;
@@ -89,6 +89,13 @@ export async function planAgentRemoval(orgId: string | undefined, agentId: strin
   ]);
 
   const goes: string[] = ["its mandate, task classes and warrants"];
+  // Said before the delete, because afterwards nobody can act on it: a deployment
+  // row cannot be reached once its agent is gone, so "it is still deployed" has to
+  // be answered here rather than discovered in a deployment list months later.
+  const live = await liveDeploymentsFor(orgId, [agent.id]);
+  if (live.length) {
+    goes.push(`${plural(live.length, "deployment")} (${namedList(live.map((d) => `${d.environment}, now ${d.status}`))}) — retired, not deleted, so the record that it ran stays`);
+  }
   if (kbLinks.length) goes.push(`${plural(kbLinks.length, "knowledge base link")} (the knowledge bases themselves stay)`);
   if (mcpLinks.length) goes.push(`${plural(mcpLinks.length, "connector link")} (the connectors themselves stay)`);
   goes.push("its API keys, channels and triggers");
