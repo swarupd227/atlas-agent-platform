@@ -166,12 +166,28 @@ router.post("/api/journeys/:id/clone", checkPermission("create_modify_blueprints
       // (set below once the new blueprint exists).
     });
 
+    /**
+     * An agent's connectors are part of what makes it work, so the copy gets them
+     * too. Without this a cloned journey looked complete -- agents, blueprint,
+     * graph, tool_set nodes all present -- and then every step reached for a tool
+     * it had no connector for, made no calls, and emitted the JSON of the call it
+     * wanted to make as its answer. Nothing reported an error, because nothing
+     * had failed: the agents simply had nothing to call.
+     */
+    const copyConnectorLinks = async (fromAgentId: string, toAgentId: string) => {
+      for (const link of await storage.getAgentMcpServers(fromAgentId)) {
+        await storage.createAgentMcpServer({ agentId: toAgentId, serverId: link.serverId, assignedBy: "journey clone" });
+      }
+    };
+
     const newOrchestrator = await storage.createAgent(cloneAgentFields(source) as any);
+    await copyConnectorLinks(source.id, newOrchestrator.id);
 
     const workerIdMap = new Map<string, string>(); // old worker agent id -> new worker agent id
     for (const w of sourceWorkers) {
       const newWorker = await storage.createAgent(cloneAgentFields(w) as any);
       workerIdMap.set(w.id, newWorker.id);
+      await copyConnectorLinks(w.id, newWorker.id);
       await storage.createAgentTeamMember({ teamAgentId: newOrchestrator.id, memberAgentId: newWorker.id, role: "member" });
     }
 
