@@ -107,6 +107,89 @@ const edgePairs = () => state.edges.map((e) => `${nodeLabel(e.sourceNodeId)} -> 
 
 beforeEach(reset);
 
+/**
+ * A proposer-invented expression must not replace a decision whose branches the
+ * author wrote as sentences.
+ *
+ * Live 2026-09-27, af9a6f18: the flow drew "Endorsement Accepted?" as a
+ * make_decision with NO expression of its own, and branches reading "Endorsement
+ * approved" / "Endorsement rejected". The proposer volunteered an expression over
+ * `review.*` -- fields no step writes, so it answered "escalate" every run -- while
+ * the branches kept asking about approved and rejected. Neither matched, the seven
+ * steps after it were skipped, and the run reported success having bound nothing.
+ */
+describe("a decision whose branches are sentences", () => {
+  const router = (extra: Record<string, unknown> = {}) => worker("Endorsement Decision Router", {
+    execution: { kind: "expression", expression: '{ "route": review.approved ? "approved" : "escalate" }' },
+    ...extra,
+  });
+  const proseBranches = (from = "Endorsement Decision Router") => ({
+    pattern: "conditional",
+    edges: [
+      { from: "orchestrator", to: from },
+      { from, to: "Filing Lookup", type: "conditional", branchCondition: "Endorsement approved" },
+      { from, to: "Escalation", type: "conditional", branchCondition: "Endorsement rejected" },
+    ],
+  });
+
+  it("runs as an agent instead, so the branches can be judged against what it says", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("E&S Team"),
+      workers: [router(), worker("Filing Lookup"), worker("Escalation")],
+      pipeline: proseBranches(),
+    });
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    const node = state.nodes.find((n) => n.label === "Endorsement Decision Router");
+    expect(node!.nodeType).toBe("internal_agent");
+    expect(node!.refAgentId).toBeTruthy();
+    expect(node!.config?.expression).toBeUndefined();
+    // And says why, with the cheaper fix rather than only the refusal.
+    const warning = result.structureWarnings.find((w: string) => w.includes("Endorsement Decision Router"))!;
+    expect(warning).toContain("sentences, which only a model can judge");
+    expect(warning).toContain("skipped every step after it while the run still reported success");
+    expect(warning).toContain("write its branches as rules over the fields its own expression emits");
+  });
+
+  it("matches the step by its flow label too, since the agent is named something else", async () => {
+    // The flow says "Endorsement Accepted?"; the proposer called the agent
+    // "Endorsement Decision Router". The edge may use either.
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("E&S Team"),
+      workers: [router({ flowStepLabels: ["Endorsement Accepted?"] }), worker("Filing Lookup"), worker("Escalation")],
+      pipeline: proseBranches("Endorsement Accepted?"),
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(state.nodes.find((n) => n.label === "Endorsement Decision Router")!.nodeType).toBe("internal_agent");
+  });
+
+  it("keeps the expression when a branch is a rule the engine can check itself", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("E&S Team"),
+      workers: [router(), worker("Filing Lookup"), worker("Escalation")],
+      pipeline: {
+        pattern: "conditional",
+        edges: [
+          { from: "orchestrator", to: "Endorsement Decision Router" },
+          { from: "Endorsement Decision Router", to: "Filing Lookup", type: "conditional", branchCondition: "route == approved" },
+          { from: "Endorsement Decision Router", to: "Escalation", type: "conditional", branchCondition: "Endorsement rejected" },
+        ],
+      },
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(state.nodes.find((n) => n.label === "Endorsement Decision Router")!.nodeType).toBe("expression");
+  });
+
+  it("keeps an expression with no branches at all, which is an ordinary computation", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("E&S Team"),
+      workers: [router(), worker("Filing Lookup")],
+      pipeline: { pattern: "sequential" },
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(state.nodes.find((n) => n.label === "Endorsement Decision Router")!.nodeType).toBe("expression");
+  });
+});
+
 describe("buildTeamFromProposal", () => {
   it("builds a sequential team: orchestrator, workers in order, a blueprint and eval suites", async () => {
     const body = teamBuildBodySchema.parse({

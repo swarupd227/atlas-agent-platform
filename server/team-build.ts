@@ -222,11 +222,35 @@ function compiles(expression: string): string | null {
 /** A connector id, as opposed to a connector's human name. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * The conditions on the branches leaving this step, as the proposal draws them.
+ *
+ * Matched by every name the edge's `from` might use: the agent the proposer named,
+ * its role, or the flow step label the worker covers -- a flow's "Endorsement
+ * Accepted?" becomes an agent called "Endorsement Decision Router", and the edge
+ * may say either. No match means no conditions, which leaves the build exactly as
+ * it was rather than guessing.
+ */
+function branchConditionsFor(proposal: any, pipeline: any): string[] {
+  const edges = Array.isArray(pipeline?.edges) ? pipeline.edges : [];
+  const names = new Set(
+    [proposal?.name, proposal?.role, ...(Array.isArray(proposal?.flowStepLabels) ? proposal.flowStepLabels : [])]
+      .map((v) => String(v ?? "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (names.size === 0) return [];
+  return edges
+    .filter((e: any) => names.has(String(e?.from ?? "").trim().toLowerCase()))
+    .map((e: any) => (typeof e?.branchCondition === "string" ? e.branchCondition.trim() : ""))
+    .filter((c: string) => !!c);
+}
+
 function deterministicNodeFor(
   proposal: any,
   stepsByLabel?: Map<string, any>,
   warn?: (message: string) => void,
   servers?: Array<{ id: string; name: string }>,
+  branchConditions?: string[],
 ): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; stateKey?: string; config: Record<string, unknown> } | null {
   // The authored step first, and only then whatever the proposer invented.
   //
@@ -238,7 +262,8 @@ function deterministicNodeFor(
   // SINGLE-RISK limit, over three field names that exist in no system, and
   // would have run in place of the author's. It looks deterministic and is
   // confidently wrong, which is worse than an agent that says it is unsure.
-  const exec = executionFromAuthoredStep(proposal, stepsByLabel) ?? proposal?.execution;
+  const authored = executionFromAuthoredStep(proposal, stepsByLabel);
+  const exec = authored ?? proposal?.execution;
   if (!exec || typeof exec !== "object") return null;
   const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
   // Only an authored step carries one; a proposer-supplied `execution` does not,
@@ -252,6 +277,32 @@ function deterministicNodeFor(
       if (broken) {
         warn?.(`"${proposal?.name ?? "A step"}" was going to run without a model, but its expression does not parse (${broken}), so it runs as an agent instead. Fix the expression to make the step free and deterministic.`);
         console.warn(`[team-build] expression for "${proposal?.name}" does not compile, falling back to an agent: ${broken}`);
+        return null;
+      }
+      // A proposer-invented expression must not replace a decision whose branches
+      // the author wrote as sentences.
+      //
+      // Live 2026-09-27, af9a6f18: the flow drew "Endorsement Accepted?" as a
+      // make_decision with NO expression, and three branches reading "Endorsement
+      // approved", "Endorsement rejected AND fewer than 2 redraft rounds used",
+      // "Endorsement rejected". The proposer volunteered
+      //   { "route": review.approved ? "approved" : (review.redraftCount < 2 ? "redraft" : "escalate") }
+      // over `review.*`, which no step writes -- so it evaluated to "escalate" on
+      // every run -- while the branches kept asking about approved/rejected. The
+      // step completed, neither branch matched, and every remaining step (filing,
+      // pre-bind, both sign-offs, the binder, the bordereau, the notification) was
+      // skipped. The run reported success having bound nothing.
+      //
+      // An agent's answer is prose, which is what those branches can actually be
+      // judged against, so the step runs as an agent and the author is told how to
+      // get determinism back. An expression the AUTHOR wrote is left alone: the
+      // platform does not overrule a person's own step, it refuses a model's
+      // invention that contradicts what the person drew (checkBlueprintInvariants
+      // reports the authored case instead).
+      const branches = (branchConditions ?? []).filter(Boolean);
+      if (!authored && branches.length > 0 && branches.every((c) => !parseConditionToRule(c))) {
+        warn?.(`"${proposal?.name ?? "A step"}" is drawn as a decision whose branches read ${branches.map((c) => `"${c}"`).join(" and ")} — sentences, which only a model can judge. It runs as an agent so those branches can be judged against what it says; the expression offered for it would have emitted fields of its own, satisfied neither branch, and skipped every step after it while the run still reported success. To make the step free and deterministic, write its branches as rules over the fields its own expression emits.`);
+        console.warn(`[team-build] refusing a proposer-invented expression for "${proposal?.name}": its ${branches.length} branch condition(s) are prose and would never match the emitted fields`);
         return null;
       }
       return { nodeType: "expression", stateKey, config: { expression } };
@@ -1004,7 +1055,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         if (!worker) continue;
 
         const isGate = humanCheckpointWorkerIds.has(worker.id);
-        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers);
+        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline));
         const correlation = correlationFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel);
         const node = await storage.createTeamBlueprintNode({
           blueprintId: blueprint.id,
@@ -1088,7 +1139,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
       const posY = isSequential ? 150 + i * 120 : 220;
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
-      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers);
+      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[i], pipeline));
       const correlation = correlationFor(workers[i], authoredStepsByLabel);
       const node = await storage.createTeamBlueprintNode({
         blueprintId: blueprint.id,

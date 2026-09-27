@@ -63,7 +63,12 @@ describe("the node a step becomes", () => {
     // against a SINGLE-RISK limit, over fields no system has, for the author's
     // own comparison. Confidently wrong beats an agent that says it is unsure,
     // in the worst direction.
-    expect(source).toContain("const exec = executionFromAuthoredStep(proposal, stepsByLabel) ?? proposal?.execution;");
+    // Kept as two statements now, because the PROVENANCE is used further down: a
+    // proposer-invented expression is refused for a decision whose branches are
+    // prose, while an authored one is left alone (see the branch-conditions rule
+    // below, and tests/team-build.test.ts for the behaviour).
+    expect(source).toContain("const authored = executionFromAuthoredStep(proposal, stepsByLabel);");
+    expect(source).toContain("const exec = authored ?? proposal?.execution;");
     // Still falls through to the proposer for a step carrying no configuration.
     expect(source).toContain("?? proposal?.execution");
   });
@@ -110,7 +115,9 @@ describe("the node a step becomes", () => {
     // ...and says so, through the warnings the build already returns.
     expect(source).toContain("does not parse (${broken}), so it runs as an agent instead");
     // Both worker-node paths (tiered and flat) pass the sink.
-    expect(source.match(/authoredStepsByLabel, \(m\) => structureWarnings\.push\(m\), allMcpServers\)/g) ?? []).toHaveLength(2);
+    // Both worker-node paths (tiered and flat) pass the sink, and now the step's
+    // branch conditions with it.
+    expect(source.match(/authoredStepsByLabel, \(m\) => structureWarnings\.push\(m\), allMcpServers, branchConditionsFor\(/g) ?? []).toHaveLength(2);
   });
 
   it("resolves a connector named in prose to its id", () => {
