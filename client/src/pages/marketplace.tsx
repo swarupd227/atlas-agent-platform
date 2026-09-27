@@ -200,8 +200,8 @@ export default function MarketplacePage() {
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-marketplace-title">MCP Marketplace</h1>
-          <p className="text-sm text-muted-foreground">Discover, install, and manage MCP servers from curated registries</p>
+          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-marketplace-title">Connector Library</h1>
+          <p className="text-sm text-muted-foreground">Discover, install, and manage connectors — native, real MCP, and OpenAPI-imported — from curated registries</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Link href="/integrations/marketplace/publishers">

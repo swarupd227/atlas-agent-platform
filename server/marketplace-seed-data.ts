@@ -83,11 +83,35 @@ export const CURATED_OPENAPI_CATALOG: CuratedOpenApiEntry[] = [
   },
   {
     name: "Stripe",
-    description: "Payments, invoicing, and subscription billing. Verified real OpenAPI 3.0 spec, but it is very large (10MB+) -- confirm the import pipeline's fetch timeout and payload size before relying on a full import; consider trimming to the specific path prefixes actually needed (e.g. /v1/charges, /v1/customers) rather than importing everything.",
+    description: "Payments, invoicing, and subscription billing. Verified real OpenAPI 3.0 spec (612 operations) -- fetches and parses in a few seconds despite its size, no special timeout handling needed. Select a focused subset at install time (e.g. balance/customers/charges/payment_intents/invoices/subscriptions) rather than importing all 612.",
     category: "business",
     specUrl: "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
     authHint: "bearer",
     riskTier: "HIGH",
+  },
+  {
+    name: "Klaviyo",
+    description: "Email/SMS marketing automation and customer data platform. Verified official OpenAPI 3.0.2 spec (klaviyo/openapi), full GA surface across campaigns, profiles, lists, and flows.",
+    category: "business",
+    specUrl: "https://raw.githubusercontent.com/klaviyo/openapi/main/openapi/stable.json",
+    authHint: "bearer (Klaviyo private API key)",
+    riskTier: "MEDIUM",
+  },
+  {
+    name: "SendGrid",
+    description: "Transactional email send API (Twilio SendGrid). Verified official OpenAPI 3.1.0 spec -- this is the Mail Send slice specifically (send/batch operations); SendGrid publishes ~45 other per-category spec files at github.com/twilio/sendgrid-oai for marketing contacts, templates, stats, etc. if broader coverage is wanted later.",
+    category: "business",
+    specUrl: "https://raw.githubusercontent.com/twilio/sendgrid-oai/main/spec/json/tsg_mail_v3.json",
+    authHint: "bearer",
+    riskTier: "MEDIUM",
+  },
+  {
+    name: "Confluence Cloud",
+    description: "Atlassian Confluence wiki/knowledge-base REST API. Verified official OpenAPI 3.0.1 spec, but its servers[0].url is a literal template (\"//your-domain.atlassian.net\") -- Confluence Cloud is multi-tenant, so installing this one requires supplying the real tenant's base URL via baseUrlOverride at install time, not the spec's own default.",
+    category: "knowledge",
+    specUrl: "https://developer.atlassian.com/cloud/confluence/swagger.v3.json",
+    authHint: "oauth2 (or basic with an API token)",
+    riskTier: "MEDIUM",
   },
 ];
 
