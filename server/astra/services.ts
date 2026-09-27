@@ -1425,6 +1425,13 @@ function humanizeValue(value: unknown): string | null {
     // -- RTG-8FD741DC, CP-2026-17, SUB-2026-8891 -- are not UUIDs and survive,
     // which a key-shaped rule like /.*Id$/ would have thrown away with it.
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return null;
+    // A full timestamp says when a row was written, which is bookkeeping: live
+    // 2026-09-27 two steps read out "Scored at: 2026-09-26T12:52:05.524Z". A
+    // bare DATE is the opposite -- "Expiry date: 2027-11-01", "Period end:
+    // 2026-12-31" are the policy and treaty terms themselves -- so the time
+    // part is what disqualifies it, not the key name, which would need a new
+    // entry for every scoredAt/ratedAt/filedAt a connector invents.
+    if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(v)) return null;
     return v && v.length <= 60 ? v : null;
   }
   if (Array.isArray(value)) {

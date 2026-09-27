@@ -130,6 +130,19 @@ describe("a step that answers in structured data", () => {
     expect(s).toContain("386,479,000");
   });
 
+  it("drops a write timestamp but keeps a date that is a policy term", () => {
+    // Verbatim from the live run panel: "Scored at: 2026-09-26T12:52:05.524Z"
+    // told the reader when a row was written and nothing about the risk.
+    const scored = stepSummary({ s: { score: 62, scoredAt: "2026-09-26T12:52:05.524Z" } })!;
+    expect(scored).toBe("Score: 62");
+    // A bare date is the opposite: these ARE the treaty and policy terms, and
+    // a key-shaped rule on *At/*Date would have taken them too.
+    const treaty = stepSummary({ t: { treatyId: "CP-2026-17", periodEnd: "2026-12-31" } })!;
+    expect(treaty).toContain("2026-12-31");
+    const sub = stepSummary({ u: { status: "new", expiryDate: "2027-11-01" } })!;
+    expect(sub).toContain("2027-11-01");
+  });
+
   it("drops a bare UUID but keeps a business identifier", () => {
     // "Approval id: 9d0e0b80-..." was the entire line on a carrier gate.
     const gate = stepSummary({ g: { approvalId: "9d0e0b80-3f2a-4c11-9b77-1e5d2a8c4f60", approved: true } })!;
