@@ -1547,15 +1547,33 @@ export class DAGExecutionEngine {
     // redraft, neither of its two branches ("passed review" / "rejected after
     // two rounds") was true, and the six steps that bind the policy and file
     // it were skipped -- reported as completed_with_skips.
-    const routingDeadEndNodeIds = Array.from(nodeOutcomes.entries())
-      .filter(([nodeId, o]) => {
-        if (o.status !== "completed") return false;
+    // Read the completed steps from waveResults, NOT from nodeOutcomes.
+    // nodeOutcomes is a map of PROBLEMS -- it deletes a node the moment it
+    // completes cleanly (see the two `nodeOutcomes.delete` calls above), because
+    // its job is upstream failure and truncation notices. Filtering it for
+    // status "completed" therefore matched nothing, ever, and this detector was
+    // dead code from the day it was written: live 2026-09-27, run 925ee58d
+    // reached a decision step, satisfied neither branch, skipped the nine steps
+    // behind them -- binding no policy and filing no bordereau -- and still
+    // reported completed_with_skips.
+    const completedNodeIds = new Set(
+      waveResults.flatMap((w) => w.nodes ?? []).filter((n) => n.status === "completed").map((n) => n.nodeId),
+    );
+    const routingDeadEndNodeIds = Array.from(completedNodeIds)
+      .filter((nodeId) => {
         const targets = config.executionPlan.edgeMap[nodeId] ?? [];
         const branching = targets.filter((t) =>
           (config.executionPlan.incomingEdges[t] ?? []).some((e) => e.sourceNodeId === nodeId && e.isGating));
-        return branching.length > 0 && branching.every((t) => skippedNodeIds.has(t));
-      })
-      .map(([nodeId]) => nodeId);
+        // Two or more branches, none taken: the step was meant to CHOOSE and
+        // chose nothing. A single conditional edge that does not fire is an
+        // ordinary stop -- "below the threshold, so no approval is needed" --
+        // and dag-conditional-edges has asserted that is a success since before
+        // this check existed. Making the detector live turned that assertion
+        // red, which is the test doing its job: the live defect is a decision
+        // step with two branches and no answer, not a path deliberately not
+        // taken.
+        return branching.length >= 2 && branching.every((t) => skippedNodeIds.has(t));
+      });
     if (routingDeadEndNodeIds.length > 0) success = false;
 
     return {
