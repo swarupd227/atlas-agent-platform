@@ -113,11 +113,20 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
     if (node.nodeType === "expression") continue;
     if (!outs.every(guarded)) continue;
     if (outs.some((e: any) => e.evaluationMode === "deterministic" && e.rule)) continue;
+    const where = outs.map((e: any) => `"${labelOf(e.targetNodeId)}"`).join(", ");
     findings.push({
       kind: "no_fallback_branch",
       blocksRun: false,
       steps: [node.label, ...outs.map((e: any) => labelOf(e.targetNodeId))],
-      message: `"${node.label}" has ${outs.length === 1 ? "one way on and it is conditional" : `${outs.length} ways on and every one of them is conditional`} (to ${outs.map((e: any) => `"${labelOf(e.targetNodeId)}"`).join(", ")}). If none of them matches at run time, every step after it is skipped and the run still reports completed — so a run that did nothing looks like a run that worked. An unconditional path out, or a condition that is always true, gives it somewhere to go.`,
+      // What happens AFTER such a run differs by shape, and the difference is
+      // deliberate on the engine's side: it calls a step a dead end only when two
+      // or more branching paths were all skipped (`branching.length >= 2` in
+      // execute()), because a lone conditional path that does not fire has always
+      // counted as success -- dag-conditional-edges asserts it. So for one way on,
+      // this finding is the only warning anyone will ever get, and it says so.
+      message: outs.length >= 2
+        ? `"${node.label}" has ${outs.length} ways on and every one of them is conditional (to ${where}). If none of them matches at run time, every step after it is skipped; the run then fails and names this step — but nothing says so until it has run. An unconditional path out, or a rule the engine can check itself, settles it before then.`
+        : `"${node.label}" has one way on and it is conditional (to ${where}). If it answers false at run time, every step after it is skipped and the run still reports completed: a single conditional path that does not fire counts as success, so nothing after the fact will raise it. This is the only warning it gets.`,
     });
   }
 
@@ -171,7 +180,7 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
       kind: "branch_judged_by_model",
       blocksRun: false,
       steps: [node.label],
-      message: `"${node.label}" produces a structured result, but every path out of it is judged by a model reading a sentence (${outs.map((e: any) => `"${String(e.condition ?? "").trim()}"`).join(", ")}). That costs a model call on every run to decide something the engine could evaluate itself, and nothing notices when the sentence and the step's own field names disagree. Writing these as rules on the fields the step emits removes both risks.`,
+      message: `"${node.label}" produces a structured result, but every path out of it is judged by a model reading a sentence (${outs.map((e: any) => `"${String(e.condition ?? "").trim()}"`).join(", ")}). That costs a model call on every run to decide something the engine could evaluate itself, and nothing notices when the sentence and the step's own field names disagree. ${outs.length >= 2 ? "A run where none of them matches fails and names this step, which is after the fact." : "A run where it does not match still reports completed, so nothing after the fact will raise it."} Writing these as rules on the fields the step emits removes both risks.`,
     });
   }
 

@@ -13,6 +13,8 @@
  * refusing a deployment over, because refusing would help nobody.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 const db = vi.hoisted(() => ({ nodes: [] as any[], edges: [] as any[] }));
 
@@ -112,7 +114,11 @@ describe("a decision with no way through", () => {
     const found = check.findings.find((f) => f.kind === "no_fallback_branch")!;
     expect(found).toBeTruthy();
     expect(found.message).toContain("2 ways on and every one of them is conditional");
-    expect(found.message).toContain("every step after it is skipped and the run still reports completed");
+    // With two or more ways on, the engine now calls this a dead end and fails the
+    // run (fd8cba5). Saying "the run still reports completed" here would be false.
+    expect(found.message).toContain("the run then fails and names this step");
+    expect(found.message).toContain("nothing says so until it has run");
+    expect(found.message).not.toContain("still reports completed");
     // Never asserts the conditions are unsatisfiable.
     expect(found.message).not.toMatch(/never match|cannot match|impossible/i);
   });
@@ -143,11 +149,28 @@ describe("a decision with no way through", () => {
     expect(check.findings.map((f) => f.kind)).not.toContain("no_fallback_branch");
   });
 
-  it("still fires for a single conditional way on, where a false answer skips the rest", async () => {
+  it("still fires for a single conditional way on, and says nothing at run time will raise it", async () => {
+    // Two of the four steps this found across the fleet are this shape. The engine
+    // deliberately does not treat a lone conditional path as a dead end, so this
+    // finding is the only warning those two will ever get -- and the message has to
+    // say that rather than implying the run will catch it.
     db.edges = [edge("n1", "n2", { condition: "All assets meet brand guide standards" })];
     const check = await checkBlueprintInvariants("bp-1");
     const found = check.findings.find((f) => f.kind === "no_fallback_branch")!;
     expect(found.message).toContain("one way on and it is conditional");
+    expect(found.message).toContain("the run still reports completed");
+    expect(found.message).toContain("This is the only warning it gets");
+    expect(found.message).not.toContain("fails and names this step");
+  });
+
+  it("matches the engine's own rule for what counts as a dead end", () => {
+    // My copy promises a failed run for two or more ways on and none for one. That
+    // promise is only true while execute() keeps `branching.length >= 2`. If this
+    // fails, the engine changed and the messages above are now lying: re-read
+    // server/dag-execution-engine.ts and fix the wording, do not delete the test.
+    const engine = readFileSync(join(__dirname, "..", "server", "dag-execution-engine.ts"), "utf8");
+    expect(engine).toContain("branching.length >= 2");
+    expect(engine).toContain("if (routingDeadEndNodeIds.length > 0) success = false;");
   });
 
   it("exempts an approval gate, which resolves its own approve and reject paths", async () => {
