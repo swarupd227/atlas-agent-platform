@@ -1394,12 +1394,21 @@ export function stepSummary(output: Record<string, unknown> | null | undefined):
   return composeSummary(output);
 }
 
-/** The fields a step writes to explain itself, in the order they are trusted. */
-const REASON_KEYS = ["basis", "summary", "reason", "rationale", "explanation", "note", "guidance"];
+/**
+ * The fields a step writes to explain itself, in the order they are trusted.
+ *
+ * `guidance` is deliberately NOT one of them. A connector writes guidance to
+ * instruct whoever calls it -- "use scheduleSummary rather than carrying the
+ * rows through the pipeline" -- so reading it out puts an instruction where an
+ * outcome belongs, and every step calling the same connector narrates the same
+ * sentence. Live 2026-09-27: two steps of the underwriting run said the same
+ * paragraph about what to pass downstream, and neither said what it fetched.
+ */
+const REASON_KEYS = ["basis", "summary", "reason", "rationale", "explanation", "note"];
 /** Bookkeeping that means nothing to a person reading a one-line summary. */
 // Named exactly, not by shape: a pattern like /.*Id$/ also eats ratingId,
 // treatyId and submissionId -- the identifiers a reader most wants to see.
-const SKIP_KEYS = /^(id|runId|nodeId|orgId|organizationId|agentId|threadId|traceId|requestId|correlationId|createdAt|updatedAt|retrievedAt|timestamp|ts|raw|meta|_.*|__.*)$/;
+const SKIP_KEYS = /^(id|runId|nodeId|orgId|organizationId|agentId|threadId|traceId|requestId|correlationId|createdAt|updatedAt|retrievedAt|timestamp|ts|raw|meta|guidance|_.*|__.*)$/;
 
 function humanizeKey(key: string): string {
   const words = key.replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim().toLowerCase();
@@ -1410,6 +1419,12 @@ function humanizeValue(value: unknown): string | null {
   if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString("en-US") : null;
   if (typeof value === "string") {
     const v = value.trim();
+    // A bare UUID identifies the record to the database and nothing to the
+    // reader, so it is dropped by VALUE rather than by key name: "Approval id:
+    // 9d0e0b80-..." was the whole line on a carrier gate. Business identifiers
+    // -- RTG-8FD741DC, CP-2026-17, SUB-2026-8891 -- are not UUIDs and survive,
+    // which a key-shaped rule like /.*Id$/ would have thrown away with it.
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return null;
     return v && v.length <= 60 ? v : null;
   }
   if (Array.isArray(value)) {

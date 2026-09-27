@@ -113,6 +113,34 @@ describe("a step that answers in structured data", () => {
     expect(s).toBe("Approved: yes");
   });
 
+  it("does not read a connector's instructions back as what the step did", () => {
+    // `guidance` is written to whoever CALLS the connector, so every step that
+    // calls it narrated the same paragraph and none of them said what it
+    // fetched. Verbatim from the live submission connector (2026-09-27).
+    const s = stepSummary({
+      fetch_submission_schedule: {
+        guidance: "scheduleSummary is computed from the full location schedule held here: use it for treaty limits and rating rather than carrying the rows through the pipeline.",
+        submissionId: "SUB-2026-8891",
+        totalTiv: 386479000,
+        locationCount: 120,
+      },
+    })!;
+    expect(s).not.toContain("carrying the rows");
+    expect(s).toContain("SUB-2026-8891");
+    expect(s).toContain("386,479,000");
+  });
+
+  it("drops a bare UUID but keeps a business identifier", () => {
+    // "Approval id: 9d0e0b80-..." was the entire line on a carrier gate.
+    const gate = stepSummary({ g: { approvalId: "9d0e0b80-3f2a-4c11-9b77-1e5d2a8c4f60", approved: true } })!;
+    expect(gate).toBe("Approved: yes");
+    // A key-shaped rule would have taken these with it; they are the figures a
+    // reader is being asked to act on.
+    const rated = stepSummary({ r: { ratingId: "RTG-8FD741DC", treatyId: "CP-2026-17" } })!;
+    expect(rated).toContain("RTG-8FD741DC");
+    expect(rated).toContain("CP-2026-17");
+  });
+
   it("says nothing when there is genuinely nothing to say", () => {
     expect(stepSummary({})).toBeNull();
     expect(stepSummary({ a: {} })).toBeNull();
