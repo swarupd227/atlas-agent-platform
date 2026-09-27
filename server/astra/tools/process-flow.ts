@@ -486,7 +486,11 @@ export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
         // Read back from the blueprint, not asserted: a sync that leaves the team
         // unable to run used to report success either way.
         runnable: s.invariants?.runnable !== false,
-        ...(s.invariants?.findings.length ? { problems: s.invariants.findings.map((f: any) => f.message) } : {}),
+        // Split, because they are different claims: one stops every run, the other
+        // is worth reading and may be exactly what the author intended. Listing a
+        // note as a problem trains people to ignore both.
+        ...(s.invariants?.findings.some((f: any) => f.blocksRun) ? { problems: s.invariants.findings.filter((f: any) => f.blocksRun).map((f: any) => f.message) } : {}),
+        ...(s.invariants?.findings.some((f: any) => !f.blocksRun) ? { worthKnowing: s.invariants.findings.filter((f: any) => !f.blocksRun).map((f: any) => f.message) } : {}),
         next: s.invariants?.runnable === false
           ? "This team cannot run in this state -- fix what is listed under problems first; nothing else will surface it until someone presses run."
           : "Check the wiring with verify_wiring before the next run, and read the agents a model wrote.",
