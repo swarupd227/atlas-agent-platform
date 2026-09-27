@@ -81,6 +81,9 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     ...(has("update_agent_instructions")
       ? ["8e. To change how an agent behaves, read get_agent_instructions first and pass the COMPLETE new text: the field is replaced, so a fragment deletes the rest. Keep the user's own wording and change only what they asked to change. Standing instructions are how it behaves every run; task instructions are what it does each run -- say which one you are changing. An edit reaches the next run of a live deployment with nothing gating it, and an agent drafted from a process-flow step loses the edit the next time that flow is synced, so say both when the card does."]
       : []),
+    ...(has("stop_automation")
+      ? ["8f. Stopping and cancelling are different acts and the difference matters: cancel_run ends one run in flight (and rejects the approval it was waiting on), stop_automation stops an agent starting work on its own. Neither undoes what already happened, and stopping does NOT prevent someone running it by hand -- say that rather than letting \"stopped\" sound like \"out of service\"; rolling the deployment back is what takes it out of service. Use list_runs to see what is in flight before either."]
+      : []),
     ...(has("discover_outcome")
       ? ["9. When the user describes a goal, draft the outcome yourself in the conversation (name, what success means, KPIs with targets and units). Call discover_outcome to ground the draft before create_outcome. Only use a baseline or current figure the user or a tool actually gave you. Rules the user states -- who must approve what, what must never happen -- go into the outcome's constraints."]
       : []),

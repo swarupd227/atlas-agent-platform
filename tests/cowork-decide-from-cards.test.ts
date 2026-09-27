@@ -41,7 +41,13 @@ describe("the cards", () => {
   });
 
   it("the card pane passes the conversation's send to every card", () => {
-    expect(read("client", "src", "astra", "artifact-pane.tsx")).toContain("<Render props={artifact.props} onAsk={onAsk} />");
+    // 9a8154f added onDecide/activeActionId so TeamRun's inline Approve resolves
+    // the real gate instead of posting a message; this assertion kept the old
+    // single-prop spelling and has been failing since. Assert what the pane has
+    // to pass rather than the exact line.
+    const pane = read("client", "src", "astra", "artifact-pane.tsx");
+    expect(pane).toContain("<Render props={artifact.props} onAsk={onAsk}");
+    expect(pane).toContain("onDecide={onDecide}");
     expect(read("client", "src", "astra", "astra-layout.tsx")).toContain("onAsk={(text) => void send(text)}");
   });
 });

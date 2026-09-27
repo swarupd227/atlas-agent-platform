@@ -22,6 +22,7 @@ import { DEPLOY_TOOLS } from "./tools/deploy";
 import { listAgentsTool } from "./tools/list-agents";
 import { getAgentTool } from "./tools/get-agent";
 import { AGENT_INSTRUCTION_TOOLS } from "./tools/agent-instructions";
+import { AUTOMATION_CONTROL_TOOLS } from "./tools/automation-control";
 import { findConnectorsTool } from "./tools/find-connectors";
 import { getIndustryContextTool } from "./tools/get-industry-context";
 import { attachConnectorTool } from "./tools/attach-connector";
@@ -46,7 +47,7 @@ import { getTeamRunTool, runTeamTool } from "./tools/run-team";
 /** Claude Sonnet 5 by default; override with ASTRA_MODEL. */
 export const ASTRA_MODEL = process.env.ASTRA_MODEL || "claude-sonnet-5";
 
-export const ASTRA_TOOLS: AstraTool[] = [finishTurnTool, loadToolsTool, listAgentsTool, getAgentTool, ...AGENT_INSTRUCTION_TOOLS, findConnectorsTool, getIndustryContextTool, attachConnectorTool, runAgentTool, getRunTool, decideApprovalTool, decideRecommendationTool, acknowledgeAlertTool, decidePolicyExceptionTool, answerToolRequestTool, discoverOutcomeTool, listOutcomesTool, createOutcomeTool, ...KPI_TOOLS, ...PROCESS_FLOW_TOOLS, listNeedsMeTool, proposeTeamTool, buildTeamTool, attachTeamToOutcomeTool, verifyWiringTool, runTeamTool, getTeamRunTool, ...GOVERNANCE_TOOLS, ...EVALUATION_TOOLS, ...KNOWLEDGE_TOOLS, ...DEPLOY_TOOLS, ...ONTOLOGY_TOOLS];
+export const ASTRA_TOOLS: AstraTool[] = [finishTurnTool, loadToolsTool, listAgentsTool, getAgentTool, ...AGENT_INSTRUCTION_TOOLS, findConnectorsTool, getIndustryContextTool, attachConnectorTool, runAgentTool, getRunTool, decideApprovalTool, decideRecommendationTool, acknowledgeAlertTool, decidePolicyExceptionTool, answerToolRequestTool, discoverOutcomeTool, listOutcomesTool, createOutcomeTool, ...KPI_TOOLS, ...PROCESS_FLOW_TOOLS, listNeedsMeTool, proposeTeamTool, buildTeamTool, attachTeamToOutcomeTool, verifyWiringTool, runTeamTool, getTeamRunTool, ...AUTOMATION_CONTROL_TOOLS, ...GOVERNANCE_TOOLS, ...EVALUATION_TOOLS, ...KNOWLEDGE_TOOLS, ...DEPLOY_TOOLS, ...ONTOLOGY_TOOLS];
 
 function modelCall(): CompleteFn {
   const primaryName = ASTRA_MODEL.startsWith("gpt") || ASTRA_MODEL.startsWith("o") ? "openai" : "anthropic";

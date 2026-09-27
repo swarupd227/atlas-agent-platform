@@ -100,7 +100,11 @@ describe("wiring", () => {
 
   it("creates cloned and synced agents in the caller's organization", () => {
     expect(read("server", "routes", "journeys.ts")).toContain("organizationId: orgId ?? getDefaultOrgId() ?? undefined,");
-    expect(read("server", "routes", "outcomes.ts")).toContain("organizationId: outcome.organizationId ?? orgId ?? undefined,");
+    // The flow sync moved out of routes/outcomes.ts into process-flow-sync.ts,
+    // shared with Astra's sync tool. It reads the organization off the TEAM
+    // rather than the outcome, because a flow-built team may have no outcome --
+    // for an outcome's own team the two are the same organization either way.
+    expect(read("server", "process-flow-sync.ts")).toContain("organizationId: teamAgent.organizationId ?? orgId ?? undefined,");
   });
 
   it("needs create_modify_blueprints to propose a team", () => {
