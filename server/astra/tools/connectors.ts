@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { checkedAgo, healthWords, type ConnectorHealthState } from "@shared/connector-health-words";
+import { checkedAgo, checkOffer, checkProves, healthWords, type ConnectorCheckKind, type ConnectorHealthState } from "@shared/connector-health-words";
 import type { AstraTool, ConfirmPreview } from "../types";
 
 /** Loaded on demand: find_connectors and attach_connector stay core. */
@@ -16,6 +16,12 @@ const PACK = "connectors";
  * 2026-09-27). Every health answer here states the AGE of its measurement, and
  * never presents a three-week-old probe as the state now.
  *
+ * It also states WHICH check produced it, because they are not equivalent: a
+ * tools/list handshake exercises the path an agent's call takes, a credential test
+ * proves the far system answered, a mock endpoint proves only that this process
+ * still serves the mock -- and a state carried over from before the platform
+ * recorded any of that proves nothing at all. See connector-health-probe.ts.
+ *
  * Credentials are not here on purpose. A conversation is stored and searchable, so
  * a secret never passes through one; connection_requirements says which fields a
  * platform needs so that refusal ends somewhere useful.
@@ -24,12 +30,15 @@ const PACK = "connectors";
 // The page says it the same way, from the same functions: a badge and a sentence
 // that disagree about the same connector are worse than either alone.
 const ago = checkedAgo;
-const stateWords = (state: string, days: number | null, canProbe = true) => healthWords(state as ConnectorHealthState, days, canProbe);
+const stateWords = (state: string, days: number | null, canProbe = true, opts: { measuredBy?: ConnectorCheckKind | null; why?: string } = {}) =>
+  healthWords(state as ConnectorHealthState, days, canProbe, opts);
+/** A connector as connectorHealth reports it, including which check applies to it. */
+const words = (c: any) => stateWords(c.state, c.ageDays, c.canProbe, { measuredBy: c.measuredBy, why: c.checkWhy });
 
 export const connectorHealthTool: AstraTool<{ connector?: string }> = {
   name: "connector_health",
   description:
-    "Whether connectors are reachable, and WHEN that was last actually checked. Nothing re-probes a connector on its own, so a connector's state is only as current as its last check -- this reports both, and says plainly when a connector has never been checked. Name one connector, or omit to get the whole organization's picture.",
+    "Whether connectors are reachable, WHEN that was last actually checked, and WHICH check produced the answer -- an MCP tools/list handshake, the far system's own credential test, a health endpoint, or a mock endpoint on this host. Says plainly when a connector has never been checked, when nothing can check it, and when a state on record names no check that produced it. Name one connector, or omit to get the whole organization's picture.",
   input: z.object({
     connector: z.string().optional().describe("A connector's name or id. Omit for every connector."),
   }),
@@ -43,28 +52,32 @@ export const connectorHealthTool: AstraTool<{ connector?: string }> = {
     if (one) {
       return {
         payload: {
-          message: `${one.name}: ${stateWords(one.state, one.ageDays, one.canProbe)}`,
+          message: `${one.name}: ${words(one)}`,
           connector: one.name,
           state: one.state,
           lastChecked: one.checkedAt,
           checkedDaysAgo: one.ageDays,
+          measuredBy: one.measuredBy ?? "a check this platform can no longer identify",
           ...(one.detail ? { lastDetail: one.detail } : {}),
           agentsBound: one.agentsBound,
           ...(one.agentsBound === 0 ? { note: "No agent is bound to it, so nothing in the platform calls it." } : {}),
           ...(one.mock ? { mockEndpoint: "This points at a mock endpoint on this host, not a real system." } : {}),
+          ...(one.protocolMounted === false
+            ? { protocolGap: "No MCP protocol endpoint is mounted for this connector, so no agent can call it over the protocol however healthy it looks — its REST routes answering says nothing about that." }
+            : {}),
           ...(one.canProbe
-            ? (one.stale || one.state === "never_checked"
-                ? { verify: "verify_connector probes it now — that makes a real call to the system with the stored credentials." }
+            ? (one.stale || one.state === "never_checked" || one.measuredBy == null
+                ? { verify: `verify_connector checks it now: it would ${checkOffer(one.checkKind)}.` }
                 : {})
-            : { cannotBeVerified: "No health check path is configured for it, so neither the scheduled scan nor verify_connector can probe it. Whatever state it shows was written once and cannot be refreshed." }),
+            : { cannotBeChecked: `Nothing can check it: ${one.checkWhy}. Whatever state it shows cannot be refreshed.` }),
         },
         artifact: {
           kind: "text",
           title: `${one.name} — connector health`,
-          props: { text: [`**${one.name}** — ${stateWords(one.state, one.ageDays)}`, "", `- ${one.agentsBound} ${one.agentsBound === 1 ? "agent is" : "agents are"} bound to it`, ...(one.mock ? ["- points at a mock endpoint on this host"] : []), ...(one.detail ? [`- last probe said: ${one.detail}`] : [])].join("\n") },
-          fullViewHref: "/integrations",
+          props: { text: [`**${one.name}** — ${words(one)}`, "", `- ${one.agentsBound} ${one.agentsBound === 1 ? "agent is" : "agents are"} bound to it`, ...(one.mock ? ["- points at a mock endpoint on this host"] : []), ...(one.protocolMounted === false ? ["- no MCP protocol endpoint is mounted, so no agent can call it over the protocol"] : []), ...(one.canProbe ? [`- a check now would ${checkOffer(one.checkKind)}`] : [`- nothing can check it: ${one.checkWhy}`]), ...(one.detail ? [`- last check said: ${one.detail}`] : [])].join("\n") },
+          fullViewHref: "/connectors",
         },
-        proof: { context: { status: "measured", summary: one.checkedAt ? `probe of ${one.name} recorded ${ago(one.ageDays)}` : `${one.name} has never been probed` } },
+        proof: { context: { status: "measured", summary: one.checkedAt ? `check of ${one.name} recorded ${ago(one.ageDays)}${one.measuredBy ? ` (${one.measuredBy})` : " by an unidentified check"}` : `${one.name} has never been checked` } },
       };
     }
 
@@ -78,13 +91,18 @@ export const connectorHealthTool: AstraTool<{ connector?: string }> = {
         unreachableAtLastCheck: r.unreachable,
         usedByNoAgent: r.usedByNobody,
         mockEndpoints: r.mock,
-        canBeProbedAtAll: `${r.canBeProbed} of ${r.total}`,
-        basis: "Read from each connector's stored probe result and its timestamp. A connector reports the state of its last check, not of now, and nothing re-checks on its own.",
-        ...(r.total - r.canBeProbed > 0
-          ? { worthKnowing: `${r.total - r.canBeProbed} of ${r.total} have no health check path, so nothing can probe them — the state they show cannot be refreshed by the scan or by verify_connector. Only ${r.canBeProbed} can be checked at all.` }
-          : r.staleOverAWeek > 0
-            ? { worthKnowing: `${r.staleOverAWeek} connectors show a state older than a week. verify_connector re-probes one.` }
-            : {}),
+        canBeCheckedAtAll: `${r.canBeProbed} of ${r.total}`,
+        checksAvailable: r.byCheckKind,
+        statesOfUnknownProvenance: r.unknownProvenance,
+        ...(r.protocolMountMissing > 0 ? { noProtocolEndpoint: r.protocolMountMissing } : {}),
+        basis: "Read from each connector's stored check result and its timestamp, and — for an enterprise connector — from this organization's own connection record, which is where its credential tests are written. A connector reports the state of its last check, not of now.",
+        ...(r.unknownProvenance > 0
+          ? { worthKnowing: `${r.unknownProvenance} of ${r.total} show a state that names no check that produced it, so what it proved is unknown. Each will be replaced by a real check on the next scan${r.protocolMountMissing > 0 ? `, and ${r.protocolMountMissing} enterprise connectors have no MCP protocol endpoint mounted, which no health check catches` : ""}.` }
+          : r.total - r.canBeProbed > 0
+            ? { worthKnowing: `${r.total - r.canBeProbed} of ${r.total} cannot be checked by anything; ask about one of them for the reason.` }
+            : r.staleOverAWeek > 0
+              ? { worthKnowing: `${r.staleOverAWeek} connectors show a state older than a week. verify_connector re-checks one.` }
+              : {}),
       },
       artifact: {
         kind: "text",
@@ -99,11 +117,14 @@ export const connectorHealthTool: AstraTool<{ connector?: string }> = {
             `- ${r.unreachable} failing at their last check`,
             `- ${r.usedByNobody} used by no agent`,
             `- ${r.mock} pointing at a mock endpoint`,
+            `- ${r.canBeProbed} can be checked at all`,
+            ...(r.unknownProvenance > 0 ? [`- ${r.unknownProvenance} show a state that names no check that produced it`] : []),
+            ...(r.protocolMountMissing > 0 ? [`- ${r.protocolMountMissing} have no MCP protocol endpoint mounted`] : []),
           ].join("\n"),
         },
-        fullViewHref: "/integrations",
+        fullViewHref: "/connectors",
       },
-      proof: { context: { status: "measured", summary: `${r.total} connectors read, with each one's last probe time` } },
+      proof: { context: { status: "measured", summary: `${r.total} connectors read, with each one's last check, what took it, and which check applies to it now` } },
     };
   },
 };
@@ -111,7 +132,7 @@ export const connectorHealthTool: AstraTool<{ connector?: string }> = {
 export const verifyConnectorTool: AstraTool<{ connector: string }> = {
   name: "verify_connector",
   description:
-    "Probe one connector NOW and record the result, so its health stops being a stale figure. This makes a real call to that system using the credentials held for it. Use it when a connector's last check is old, when an agent's tool call failed, or before relying on one.",
+    "Check one connector NOW and record the result, so its health stops being a stale figure. Makes the strongest check that connector allows -- an MCP handshake and tools/list for a real MCP server, the vendor's own credential test for an enterprise connector, a read-only endpoint for a mock this host serves -- which means a real call with the credentials held for it. Use it when a connector's last check is old, when an agent's tool call failed, or before relying on one.",
   input: z.object({ connector: z.string().min(1).describe("The connector's name or id.") }),
   pack: PACK,
   permission: "manage_mcp_servers",
@@ -129,14 +150,15 @@ export const verifyConnectorTool: AstraTool<{ connector: string }> = {
     }
     const c = health.connectors[0];
     if (!c.canProbe) {
-      return { refuse: `${c.name} has no health check path configured, so nothing can probe it — not this and not the scheduled scan. ${c.state === "never_checked" ? "It has never been checked." : `The state it shows was written ${checkedAgo(c.ageDays)} and cannot be refreshed.`} A health check path has to be set on the connector first.` };
+      return { refuse: `Nothing can check ${c.name}: ${c.checkWhy}. ${c.state === "never_checked" ? "It has never been checked." : `The state it shows was written ${checkedAgo(c.ageDays)} and cannot be refreshed.`}` };
     }
     return {
-      summary: `Probe ${c.name} now`,
+      summary: `Check ${c.name} now`,
       details: [
-        `It ${stateWords(c.state, c.ageDays)}.`,
-        "This calls that system for real, with the credentials stored for it, and records what comes back.",
-        c.mock ? "It points at a mock endpoint on this host, so the probe tests the mock, not a real system." : "Nothing else changes: no agent runs, and no data is written to that system.",
+        `It ${words(c)}.`,
+        `This would ${checkOffer(c.checkKind)}, and record what comes back — so a pass proves that ${checkProves(c.checkKind)}, and no more.`,
+        c.mock ? "It points at a mock endpoint on this host, so this tests the mock, not a real system." : "Nothing else changes: no agent runs, and no data is written to that system.",
+        ...(c.protocolMounted === false ? ["Separately: no MCP protocol endpoint is mounted for it, so no agent can call it over the protocol whatever this check says."] : []),
         ...(c.agentsBound > 0 ? [`${c.agentsBound} ${c.agentsBound === 1 ? "agent is" : "agents are"} bound to it and would be affected by it being down.`] : ["No agent is bound to it."]),
       ],
       frozen: { connector: c.id, name: c.name },
@@ -148,10 +170,10 @@ export const verifyConnectorTool: AstraTool<{ connector: string }> = {
     if (!r.probeWasPossible) {
       return {
         payload: {
-          message: `${r.connector.name} has no health check configured, so it cannot be probed`,
+          message: `Nothing checked ${r.connector.name}: ${r.detail}`,
           connector: r.connector.name,
           recorded: false,
-          note: "Its stored state is left exactly as it was rather than marked unhealthy — an unprobeable connector is not a failing one. A health path has to be set on the connector first.",
+          note: "Its stored state is left exactly as it was rather than marked unhealthy — a connector nothing can check is not a failing one.",
         },
       };
     }
@@ -161,20 +183,22 @@ export const verifyConnectorTool: AstraTool<{ connector: string }> = {
         message: `${r.connector.name} is ${r.healthy ? "reachable" : "not reachable"} as of now`,
         connector: r.connector.name,
         healthy: r.healthy,
+        checkedBy: r.checkKind,
+        proves: checkProves(r.checkKind),
         detail: r.detail,
         checkedAt: r.checkedAt,
-        previously: `${stateWords(r.before.state, r.before.ageDays)}`,
+        previously: `${words(r.before)}`,
         ...(moved ? { changed: `Its recorded state changed from ${r.before.state.replace(/_/g, " ")} to ${r.healthy ? "reachable" : "unreachable"}.` } : {}),
         ...(!r.healthy && r.before.agentsBound > 0 ? { affects: `${r.before.agentsBound} ${r.before.agentsBound === 1 ? "agent" : "agents"} bound to it` } : {}),
       },
       artifact: {
         kind: "text",
-        title: `${r.connector.name} — probed just now`,
-        props: { text: [`**${r.connector.name}** — ${r.healthy ? "reachable" : "not reachable"}`, "", `${r.detail}`, "", `Previously: ${stateWords(r.before.state, r.before.ageDays)}.`].join("\n") },
-        fullViewHref: "/integrations",
+        title: `${r.connector.name} — checked just now`,
+        props: { text: [`**${r.connector.name}** — ${r.healthy ? "reachable" : "not reachable"}`, "", `${r.detail}`, "", `That check proves ${checkProves(r.checkKind)}.`, "", `Previously: ${words(r.before)}.`].join("\n") },
+        fullViewHref: "/connectors",
       },
       proof: {
-        context: { status: "measured", summary: `live probe of ${r.connector.name} at ${r.checkedAt.slice(11, 16)} UTC` },
+        context: { status: "measured", summary: `live ${r.checkKind.replace(/_/g, " ")} check of ${r.connector.name} at ${r.checkedAt.slice(11, 16)} UTC` },
         compliance: { status: "measured", summary: "Recorded as connector.health_verified on the audit trail" },
       },
     };

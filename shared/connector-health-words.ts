@@ -15,6 +15,49 @@
 
 export type ConnectorHealthState = "reachable" | "unreachable" | "never_checked";
 
+/** Mirrors ProbeMethod in server/connector-health-probe.ts. */
+export type ConnectorCheckKind = "health_path" | "mcp_tools_list" | "vendor_connection_test" | "mock_endpoint" | "none";
+
+/**
+ * What each kind of check actually proves.
+ *
+ * Needed because the checks are not interchangeable: a tools/list handshake
+ * exercises the whole call path a real agent takes, while a health endpoint is
+ * only the service's own opinion of itself, and a mock endpoint answering says
+ * nothing about any real system. One word — "reachable" — cannot carry that, so
+ * the answer says which check ran.
+ */
+export function checkProves(kind: ConnectorCheckKind): string {
+  switch (kind) {
+    case "health_path":
+      return "its own health endpoint answered";
+    case "mcp_tools_list":
+      return "it completed an MCP handshake and listed its tools, which is the path an agent's call takes";
+    case "vendor_connection_test":
+      return "the system it connects to answered a credential test";
+    case "mock_endpoint":
+      return "one of its read-only endpoints answered, so the mock this platform serves is still mounted";
+    case "none":
+      return "nothing checked it";
+  }
+}
+
+/** What the check about to be made would be, phrased as an offer. */
+export function checkOffer(kind: ConnectorCheckKind): string {
+  switch (kind) {
+    case "health_path":
+      return "ask its health endpoint";
+    case "mcp_tools_list":
+      return "open an MCP connection and list its tools";
+    case "vendor_connection_test":
+      return "make a real call to that system with the credentials stored for it";
+    case "mock_endpoint":
+      return "call one of its read-only endpoints";
+    case "none":
+      return "nothing";
+  }
+}
+
 /** How long ago the measurement was taken, in the words a person would use. */
 export function checkedAgo(ageDays: number | null): string {
   if (ageDays == null) return "never checked";
@@ -32,15 +75,36 @@ export function checkedAgo(ageDays: number | null): string {
  * bulk sweep on 26 August that nothing can refresh. "Never checked" understates
  * that — there is no mechanism by which it ever could be.
  */
-export function healthWords(state: ConnectorHealthState, ageDays: number | null, canProbe = true): string {
+export function healthWords(
+  state: ConnectorHealthState,
+  ageDays: number | null,
+  canProbe = true,
+  opts: {
+    /**
+     * Which check produced the state on record. Null means the state predates the
+     * platform recording that — as 112 connectors' states do — and a measurement
+     * whose method is unknown cannot be read as proof of anything.
+     */
+    measuredBy?: ConnectorCheckKind | null;
+    /** Why nothing can be checked, when that is the case. More specific than the default. */
+    why?: string;
+  } = {},
+): string {
   if (!canProbe) {
+    const because = opts.why ? ` — ${opts.why}` : " — no check exists for it, so nothing can probe it";
     return state === "never_checked"
-      ? "cannot be verified — no health check is configured for it, so nothing can probe it"
-      : `${state === "reachable" ? "recorded as reachable" : "recorded as failing"} ${checkedAgo(ageDays)}, and cannot be re-checked — no health check is configured for it`;
+      ? `cannot be checked${because}`
+      : `${state === "reachable" ? "recorded as reachable" : "recorded as failing"} ${checkedAgo(ageDays)}, and cannot be re-checked${because}`;
   }
-  if (state === "never_checked") return "never checked — nothing has probed it, so its state is unknown";
-  if (state === "reachable") return `reachable when last probed, ${checkedAgo(ageDays)}`;
-  return `failing its check as of ${checkedAgo(ageDays)}`;
+  if (state === "never_checked") return "never checked — nothing has probed it yet, so its state is unknown";
+  const provenance =
+    opts.measuredBy === undefined
+      ? ""
+      : opts.measuredBy && opts.measuredBy !== "none"
+        ? ` — ${checkProves(opts.measuredBy)}`
+        : " — by a check this platform can no longer identify, so what it proved is unknown";
+  if (state === "reachable") return `reachable when last probed, ${checkedAgo(ageDays)}${provenance}`;
+  return `failing its check as of ${checkedAgo(ageDays)}${provenance}`;
 }
 
 /** Two or three words for a badge, still tensed. */

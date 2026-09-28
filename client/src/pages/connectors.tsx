@@ -12,6 +12,13 @@
  * never been probed at all, because nothing re-probes a connector on its own. The
  * defect was the tense: "is healthy" about a measurement taken weeks ago.
  *
+ * The deeper cause was that the platform had ONE check — an HTTP GET to a bespoke
+ * `healthCheckPath` — and 131 of 132 connectors had no such path, so the scan
+ * probed exactly one of them. There is now a check per kind (an MCP tools/list
+ * handshake, the vendor's own credential test, a mock's read-only endpoint), so
+ * this page also says WHICH check produced a state, and names the states that
+ * predate the platform recording that at all.
+ *
  * So: every health claim here is past tense and carries its age, from the same
  * functions Cowork uses (shared/connector-health-words.ts); 85 connectors that
  * point at a mock endpoint on this host are marked as such instead of looking like
@@ -33,7 +40,7 @@ import { usePermission } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatDateTime } from "@/lib/format";
-import { checkedAgo, healthBadge, healthTone, healthWords, isStale, type ConnectorHealthState } from "@shared/connector-health-words";
+import { checkedAgo, checkOffer, checkProves, healthBadge, healthTone, healthWords, isStale, type ConnectorCheckKind, type ConnectorHealthState } from "@shared/connector-health-words";
 
 interface ConnectorRow {
   id: string;
@@ -45,6 +52,13 @@ interface ConnectorRow {
   detail: string | null;
   mock: boolean;
   canProbe: boolean;
+  /** The check that would run now, and — when there is none — what is missing. */
+  checkKind: ConnectorCheckKind;
+  checkWhy: string;
+  /** What produced the state on record. Null where the state predates the platform recording that. */
+  measuredBy: ConnectorCheckKind | null;
+  /** For an enterprise connector: whether its MCP protocol endpoint is mounted at all. */
+  protocolMounted: boolean | null;
   riskTier: string | null;
   transport: string | null;
   agentsBound: number;
@@ -72,6 +86,9 @@ interface Overview {
     usedByNoAgent: number;
     mockEndpoints: number;
     canBeProbed: number;
+    unknownProvenance: number;
+    protocolMountMissing: number;
+    byCheckKind: Record<string, number>;
     platforms: number;
     platformsConnected: number;
   };
@@ -128,7 +145,7 @@ export default function Connectors() {
     onSuccess: (r: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/connectors/overview"] });
       if (r?.probeWasPossible === false) {
-        toast({ title: `${r.connector?.name ?? "It"} has no health check configured`, description: "Nothing was recorded: an unprobeable connector is not a failing one." });
+        toast({ title: `Nothing could check ${r.connector?.name ?? "it"}`, description: `${r?.detail ?? ""} Nothing was recorded: a connector nothing can check is not a failing one.` });
         return;
       }
       toast({
@@ -137,7 +154,7 @@ export default function Connectors() {
         variant: r?.healthy ? undefined : "destructive",
       });
     },
-    onError: (err: Error) => toast({ title: "Could not probe it", description: err.message, variant: "destructive" }),
+    onError: (err: Error) => toast({ title: "Could not check it", description: err.message, variant: "destructive" }),
   });
 
   const connectors = data?.connectors ?? [];
@@ -194,12 +211,29 @@ export default function Connectors() {
           />
           <Stat label="Failing at last check" value={counts ? String(counts.unreachableAtLastCheck) : "—"} tone={counts && counts.unreachableAtLastCheck > 0 ? TONE_TEXT.bad : undefined} />
           <Stat
-            label="Can be probed at all"
+            label="Can be checked at all"
             value={counts ? `${counts.canBeProbed} of ${counts.connectors}` : "—"}
-            hint={counts ? `${counts.connectors - counts.canBeProbed} have no health check configured` : undefined}
+            hint={counts ? `${counts.connectors - counts.canBeProbed} nothing can check` : undefined}
             tone={counts && counts.canBeProbed < counts.connectors ? TONE_TEXT.warn : undefined}
           />
           <Stat label="Mock endpoints" value={counts ? String(counts.mockEndpoints) : "—"} hint="on this host, not a real system" />
+          {/* Both of these exist only while the fleet has the problem they name. */}
+          {!!counts?.unknownProvenance && (
+            <Stat
+              label="State of unknown origin"
+              value={`${counts.unknownProvenance} of ${counts.connectors}`}
+              hint="names no check that produced it"
+              tone={TONE_TEXT.warn}
+            />
+          )}
+          {!!counts?.protocolMountMissing && (
+            <Stat
+              label="No protocol endpoint"
+              value={String(counts.protocolMountMissing)}
+              hint="no agent can call these over MCP"
+              tone={TONE_TEXT.bad}
+            />
+          )}
         </div>
       </div>
 
@@ -272,11 +306,22 @@ export default function Connectors() {
                   <div className={`rounded-md border p-3 flex flex-col gap-2 ${healthTone(selected.state, selected.ageDays, selected.canProbe) === "good" ? "" : "border-amber-500/40 bg-amber-500/5"}`}>
                     <div className={`text-sm font-medium flex items-start gap-2 ${TONE_TEXT[healthTone(selected.state, selected.ageDays, selected.canProbe)]}`} data-testid="text-health-claim">
                       {healthTone(selected.state, selected.ageDays, selected.canProbe) === "good" ? <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />}
-                      <span>{healthWords(selected.state, selected.ageDays, selected.canProbe)}</span>
+                      <span>{healthWords(selected.state, selected.ageDays, selected.canProbe, { measuredBy: selected.measuredBy, why: selected.checkWhy })}</span>
                     </div>
-                    {selected.detail && <p className="text-xs text-muted-foreground">Last probe said: {selected.detail}</p>}
+                    {selected.detail && <p className="text-xs text-muted-foreground">Last check said: {selected.detail}</p>}
                     {selected.checkedAt && <p className="font-mono text-[11px] text-muted-foreground">{formatDateTime(selected.checkedAt)}</p>}
-                    <p className="text-xs text-muted-foreground">Nothing re-checks a connector on its own, so this is the age of the answer rather than the state now.</p>
+                    <p className="text-xs text-muted-foreground">
+                      {selected.state === "never_checked"
+                        ? "The checks run on a schedule, and how often depends on what the check costs."
+                        : selected.measuredBy
+                          ? `That is the age of the answer rather than the state now, and it proves ${checkProves(selected.measuredBy)}.`
+                          : "That state names no check that produced it, so it is a record of something, not evidence of anything. The next scheduled check replaces it."}
+                    </p>
+                    {selected.protocolMounted === false && (
+                      <p className="text-xs text-red-600 dark:text-red-400" data-testid="text-protocol-gap">
+                        No MCP protocol endpoint is mounted for this connector, so no agent can call it over the protocol — whatever its health says. Its REST routes answering does not cover that.
+                      </p>
+                    )}
                     {canManage && selected.canProbe && (
                       <Button
                         size="sm"
@@ -287,13 +332,15 @@ export default function Connectors() {
                         data-testid="button-verify-connector"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 mr-1 ${verify.isPending ? "animate-spin" : ""}`} />
-                        {verify.isPending ? "Probing…" : "Verify now"}
+                        {verify.isPending ? "Checking…" : "Verify now"}
                       </Button>
                     )}
                     {selected.canProbe ? (
-                      <p className="text-[11px] text-muted-foreground">Verifying calls that system for real, with the credentials stored for it.</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Verifying would {checkOffer(selected.checkKind)} — {selected.mock ? "the mock this host serves, not a real system" : "which calls that system for real, with the credentials stored for it"}.
+                      </p>
                     ) : (
-                      <p className="text-[11px] text-muted-foreground">No health check path is configured for it, so neither the scheduled scan nor this page can probe it. Whatever state it shows was written once and cannot be refreshed.</p>
+                      <p className="text-[11px] text-muted-foreground">Nothing can check it: {selected.checkWhy}. Whatever state it shows cannot be refreshed.</p>
                     )}
                   </div>
 

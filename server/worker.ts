@@ -1054,8 +1054,12 @@ async function processDagResumeScan(job: Job): Promise<Record<string, unknown>> 
 }
 
 // ─── Connector Health Scan ───────────────────────────────────────────────────
-// Probes every connector that declares a health check path, and raises or
-// closes alerts for the agents that use it (see connector-health-probe.ts).
+// Checks every connector with whatever check its kind allows — a health path if
+// it has one, an MCP tools/list handshake, the vendor's own credential test, a
+// mock's read-only endpoint — and raises or closes alerts for the agents that use
+// it. Each check has its own cadence, so this job runs on the shortest of them and
+// skips what is not yet due; a connector nothing can check keeps no state at all
+// (see connector-health-probe.ts).
 
 async function processConnectorHealthScan(job: Job): Promise<Record<string, unknown>> {
   const { runConnectorHealthScan } = await import("./connector-health-scan");

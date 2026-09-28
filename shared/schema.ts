@@ -1281,6 +1281,15 @@ export const mcpServers = pgTable("mcp_servers", {
    */
   healthCheckPath: text("health_check_path"),
   healthDetail: text("health_detail"),
+  /**
+   * Which check produced healthStatus — one of ProbeMethod in
+   * server/connector-health-probe.ts. A connector with no healthCheckPath is
+   * still checkable (a tools/list handshake, the vendor's own credential test, a
+   * mock's read-only endpoint), and the checks prove different things, so the
+   * state is meaningless without knowing which one ran. Null on rows written
+   * before this existed, and on rows nothing has ever measured.
+   */
+  healthCheckKind: text("health_check_kind"),
   addedBy: text("added_by"),
   approvedBy: text("approved_by"),
   connectionId: varchar("connection_id"),

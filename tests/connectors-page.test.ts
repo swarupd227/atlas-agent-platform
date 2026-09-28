@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { checkedAgo, healthBadge, healthTone, healthWords, isStale, STALE_AFTER_DAYS } from "../shared/connector-health-words";
+import { checkedAgo, checkOffer, checkProves, healthBadge, healthTone, healthWords, isStale, STALE_AFTER_DAYS } from "../shared/connector-health-words";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "connectors.tsx");
@@ -28,6 +28,24 @@ describe("how a connector's health is worded", () => {
     for (const days of [0, 1, 3, 32, 400]) {
       expect(healthWords("reachable", days)).not.toMatch(/\bis healthy\b/);
     }
+  });
+
+  it("names the check that produced the state, since the checks do not prove the same thing", () => {
+    // A mock endpoint answering and a vendor's system answering are both
+    // "reachable", and only one of them means a real system is up.
+    expect(healthWords("reachable", 0, true, { measuredBy: "mcp_tools_list" })).toContain("completed an MCP handshake and listed its tools");
+    expect(healthWords("reachable", 0, true, { measuredBy: "mock_endpoint" })).toContain("the mock this platform serves is still mounted");
+    // And a state carried over from before the platform recorded the check — 112
+    // connectors on the day this shipped — claims nothing.
+    expect(healthWords("reachable", 32, true, { measuredBy: null })).toContain("by a check this platform can no longer identify");
+    expect(checkProves("vendor_connection_test")).toContain("credential test");
+    expect(checkOffer("mcp_tools_list")).toBe("open an MCP connection and list its tools");
+  });
+
+  it("says why nothing can check one, in that connector's own terms", () => {
+    const why = "it is a mock this process serves, and none of its endpoints is a read-only one, so nothing can be called without changing something";
+    expect(healthWords("never_checked", null, false, { why })).toBe(`cannot be checked — ${why}`);
+    expect(healthWords("reachable", 32, false, { why })).toContain(`cannot be re-checked — ${why}`);
   });
 
   it("says a connector nothing has probed has no state, rather than giving it one", () => {
@@ -52,7 +70,7 @@ describe("how a connector's health is worded", () => {
 describe("one vocabulary, two surfaces", () => {
   it("has the page import the shared words rather than writing its own", () => {
     expect(page).toContain('from "@shared/connector-health-words"');
-    expect(page).toContain("healthWords(selected.state, selected.ageDays, selected.canProbe)");
+    expect(page).toContain("healthWords(selected.state, selected.ageDays, selected.canProbe, { measuredBy: selected.measuredBy, why: selected.checkWhy })");
     expect(page).toContain("healthBadge(c.state, c.canProbe)");
     // And no hand-rolled copy of the claim in the page's CODE. Its header comment
     // quotes the audit's own wording, which is where that word belongs.
@@ -69,7 +87,10 @@ describe("one vocabulary, two surfaces", () => {
 
 describe("what the page does not pretend", () => {
   it("says the age is the age of the answer, not the state now", () => {
-    expect(page).toContain("Nothing re-checks a connector on its own");
+    expect(page).toContain("That is the age of the answer rather than the state now");
+    // It no longer claims nothing re-checks on its own, because now something does
+    // — on a cadence that depends on what each check costs.
+    expect(page).toContain("The checks run on a schedule, and how often depends on what the check costs");
   });
 
   it("says what verifying costs, next to the control that does it", () => {
@@ -125,15 +146,77 @@ describe("who the page lets probe", () => {
   });
 });
 
-describe("a connector nothing can probe", () => {
-  it("does not offer a control that cannot work, and says why", () => {
-    expect(page).toContain("No health check path is configured for it");
+describe("a connector nothing can check", () => {
+  it("does not offer a control that cannot work, and says why in that connector's own terms", () => {
+    expect(page).toContain("Nothing can check it: {selected.checkWhy}");
     expect(page).toContain("cannot be refreshed");
   });
 
-  it("counts them on the page, since 131 of 132 was the live answer", () => {
-    expect(page).toContain("Can be probed at all");
-    expect(page).toContain("have no health check configured");
+  it("counts them on the page, since 131 of 132 was the live answer before the checks existed", () => {
+    expect(page).toContain("Can be checked at all");
+    expect(page).toContain("nothing can check");
+  });
+
+  it("says what verifying would do for THIS connector, rather than one sentence for all of them", () => {
+    expect(page).toContain("checkOffer(selected.checkKind)");
+  });
+});
+
+describe("what no health check catches", () => {
+  it("shows the missing MCP protocol endpoint on the connector and counts it in the header", () => {
+    // Without createMcpProtocolRouter a connector's REST routes answer while every
+    // agent's protocol call 404s, so a green health answer is actively misleading.
+    expect(page).toContain("No MCP protocol endpoint is mounted for this connector");
+    expect(page).toContain("No protocol endpoint");
+    expect(page).toContain("no agent can call these over MCP");
+  });
+
+  it("names the states that name no check, so they are not read as measurements", () => {
+    expect(page).toContain("State of unknown origin");
+    expect(page).toContain("names no check that produced it");
+  });
+});
+
+describe("how the checks are chosen and metered", () => {
+  const probe = read("server", "connector-health-probe.ts");
+  const scan = read("server", "connector-health-scan.ts");
+  const transport = read("server", "real-mcp-transport.ts");
+
+  it("stopped selecting only the connectors with a bespoke health path", () => {
+    // The whole defect in one line: listTargets filtered on isNotNull(healthCheckPath),
+    // and 131 of 132 connectors had none, so the scan probed exactly one of them.
+    expect(scan).not.toContain("isNotNull(mcpServers.healthCheckPath)");
+    expect(scan).toContain("export async function listProbeTargets()");
+  });
+
+  it("asks a real MCP server for its tools, and reports the drift from the catalogue", () => {
+    expect(scan).toContain("mcpListTools(server as any, auth as any)");
+    expect(probe).toContain("catalogued here, so the two disagree");
+  });
+
+  it("runs the vendor test the Connect form runs, from a module a schedule can reach", () => {
+    const extracted = read("server", "connector-connection-test.ts");
+    expect(extracted).toContain("export async function testConnectionHealth(");
+    expect(read("server", "routes", "enterprise-integrations.ts")).toContain('import { testConnectionHealth } from "../connector-connection-test"');
+    expect(scan).toContain("export async function vendorConnectionTest(");
+    // Recorded where the rest of the platform already reads it from.
+    expect(scan).toContain("storage.recordIntegrationTestResult(conn.id, result.healthy");
+  });
+
+  it("records which check produced a state, so a stored state can never again claim more than it measured", () => {
+    expect(scan).toContain("healthCheckKind: method");
+    expect(read("shared", "schema.ts")).toContain('healthCheckKind: text("health_check_kind")');
+    expect(read("server", "db.ts")).toContain("ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS health_check_kind TEXT");
+  });
+
+  it("counts the protocol mounts at the point that does the mounting, so the list cannot drift", () => {
+    expect(transport).toContain("mountedIntegrations.add(integrationId)");
+    expect(transport).toContain("export function isMcpProtocolMounted(");
+  });
+
+  it("writes no state when nothing ran, and meters the check that spends someone's API quota", () => {
+    expect(probe).toMatch(/if \(!result\.probed\) \{/);
+    expect(probe).toContain("vendor_connection_test: 60 * 60 * 1000");
   });
 });
 

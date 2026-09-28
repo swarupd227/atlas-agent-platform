@@ -49,6 +49,10 @@ const serviceNow = {
   detail: "OK",
   mock: false,
   canProbe: true,
+  checkKind: "vendor_connection_test" as const,
+  checkWhy: "it can make a real call to the system it connects to",
+  measuredBy: "vendor_connection_test" as const,
+  protocolMounted: true,
   riskTier: "MEDIUM",
   transport: "streamable-http",
   agentsBound: 4,
@@ -76,7 +80,10 @@ function setup(steps: Parameters<typeof scriptedComplete>[0], opts: Options = {}
       unreachable: 0,
       mock: 85,
       usedByNobody: 115,
-      canBeProbed: 1,
+      canBeProbed: 118,
+      unknownProvenance: 112,
+      protocolMountMissing: 14,
+      byCheckKind: { vendor_connection_test: 6, mcp_tools_list: 2, mock_endpoint: 109, health_path: 1, none: 13 },
     })),
     verifyConnector: vi.fn(async () => opts.verify ?? {
       connector: { id: "srv-snow", name: "ServiceNow" },
@@ -159,7 +166,7 @@ describe("whether a connector is working", () => {
         expect(p.message).toContain("32 days ago");
         expect(p.checkedDaysAgo).toBe(32);
         // The escape from a stale answer is offered with what it costs.
-        expect(p.verify).toContain("real call to the system");
+        expect(p.verify).toContain("real call to that system");
         return done("Checked 32 days ago.");
       },
     ]);
@@ -190,10 +197,17 @@ describe("whether a connector is working", () => {
         const p = lastTool(m).result;
         expect(p).toMatchObject({ total: 131, checkedWithinAWeek: 2, staleOverAWeek: 129, neverChecked: 18, usedByNoAgent: 115, mockEndpoints: 85 });
         expect(p.basis).toContain("state of its last check, not of now");
-        // Measured on Azure the day this shipped: 131 of 132 connectors have no
-        // health path, so the scheduled scan covers exactly one of them.
-        expect(p.canBeProbedAtAll).toBe("1 of 131");
-        expect(p.worthKnowing).toContain("nothing can probe them");
+        // On the day the page shipped only ONE of 132 could be checked, because
+        // the only check the platform had needed a bespoke health path. Now each
+        // connector takes the strongest check its kind allows, and the answer says
+        // how many of each — so the fleet figure can be read rather than trusted.
+        expect(p.canBeCheckedAtAll).toBe("118 of 131");
+        expect(p.checksAvailable).toMatchObject({ mcp_tools_list: 2, vendor_connection_test: 6 });
+        // The state 112 connectors carry names no check that produced it, and that
+        // is a stronger statement than "stale".
+        expect(p.statesOfUnknownProvenance).toBe(112);
+        expect(p.worthKnowing).toContain("names no check that produced it");
+        expect(p.noProtocolEndpoint).toBe(14);
         return done("2 of 131 checked this week.");
       },
     ]);
@@ -210,46 +224,78 @@ describe("whether a connector is working", () => {
   });
 });
 
-describe("a connector nothing can probe", () => {
-  // The live shape on the day this shipped: 131 of 132 connectors had no health
-  // check path, and 112 of them displayed a state written in one bulk sweep on
-  // 26 August that nothing could refresh. "Never checked" understates that.
-  const unprobeable = { ...serviceNow, name: "BB Market Intelligence", canProbe: false };
+describe("a connector nothing can check", () => {
+  // What is left once every kind of check exists: a mock whose endpoints all
+  // change something, an integration that is no longer part of the build, a row
+  // with no endpoint at all. The reason is specific, so it can be acted on.
+  const uncheckable = {
+    ...serviceNow,
+    name: "BB Market Intelligence",
+    canProbe: false,
+    checkKind: "none" as const,
+    checkWhy: "it is a mock this process serves, and none of its endpoints is a read-only one, so nothing can be called without changing something",
+    measuredBy: null,
+  };
 
-  it("says so, rather than calling it never checked", async () => {
+  it("says what is missing, rather than calling it never checked", async () => {
     const t = setup([
       load(),
       use("connector_health", { connector: "BB Market" }),
       (m) => {
         const p = lastTool(m).result;
         expect(p.message).toContain("cannot be re-checked");
-        expect(p.cannotBeVerified).toContain("No health check path is configured");
+        expect(p.cannotBeChecked).toContain("none of its endpoints is a read-only one");
         expect(p.verify).toBeUndefined();
         return done("It can't be checked.");
       },
-    ], { connectors: [unprobeable] });
+    ], { connectors: [uncheckable] });
     await runTurn(t.deps, as("admin"), t.threadId, "Is BB Market Intelligence healthy?", t.onEvent);
   });
 
-  it("refuses to probe it up front instead of confirming something that cannot work", async () => {
+  it("refuses to check it up front instead of confirming something that cannot work", async () => {
     const t = setup([load(), use("verify_connector", { connector: "BB Market" }), (m) => {
-      expect(lastTool(m).error).toContain("no health check path configured");
-      return done("Can't probe it.");
-    }], { connectors: [unprobeable] });
+      expect(lastTool(m).error).toContain("without changing something");
+      return done("Can't check it.");
+    }], { connectors: [uncheckable] });
     expect(await runTurn(t.deps, as("admin"), t.threadId, "Verify BB Market Intelligence", t.onEvent)).toBe("idle");
     expect(t.services.verifyConnector).not.toHaveBeenCalled();
   });
 });
 
-describe("probing one now", () => {
-  it("confirms first, saying whose system is called and with whose credentials", async () => {
-    const t = setup([load(), use("verify_connector", { connector: "ServiceNow" }), done("Probed.")]);
+describe("a connector no agent can call at all", () => {
+  // The invariant from the Figma work: without createMcpProtocolRouter a
+  // connector's REST routes answer while every agent's protocol call 404s, and
+  // no health check of any kind catches it. Only 2 of 16 enterprise connectors
+  // mounted one when this was written, so it is reported alongside health rather
+  // than folded into it.
+  it("reports the missing protocol endpoint next to a green health answer", async () => {
+    const t = setup([
+      load(),
+      use("connector_health", { connector: "ServiceNow" }),
+      (m) => {
+        const p = lastTool(m).result;
+        expect(p.state).toBe("reachable");
+        expect(p.protocolGap).toContain("no agent can call it over the protocol");
+        return done("Reachable, but agents cannot call it over MCP.");
+      },
+    ], { connectors: [{ ...serviceNow, protocolMounted: false }] });
+    await runTurn(t.deps, as("admin"), t.threadId, "Is ServiceNow working?", t.onEvent);
+  });
+});
+
+describe("checking one now", () => {
+  it("confirms first, saying which check it will make, what that proves, and with whose credentials", async () => {
+    const t = setup([load(), use("verify_connector", { connector: "ServiceNow" }), done("Checked.")]);
     expect(await runTurn(t.deps, as("admin"), t.threadId, "Check ServiceNow now", t.onEvent)).toBe("awaiting_confirmation");
     const action = await pending(t);
-    expect(action.summary).toBe("Probe ServiceNow now");
+    expect(action.summary).toBe("Check ServiceNow now");
     const details = action.details!.join(" ");
     expect(details).toContain("32 days ago");
     expect(details).toContain("credentials stored for it");
+    // A confirm card that does not say which check it makes invites reading a
+    // mock endpoint answering as the vendor's system being up.
+    expect(details).toContain("make a real call to that system with the credentials stored for it");
+    expect(details).toContain("and no more");
     expect(details).toContain("4 agents are bound");
     expect(t.services.verifyConnector).not.toHaveBeenCalled();
 
@@ -257,13 +303,23 @@ describe("probing one now", () => {
     expect(t.services.verifyConnector).toHaveBeenCalledTimes(1);
   });
 
-  it("reports an unprobeable connector as unprobeable, not as failing", async () => {
+  it("reports a check that could not run as exactly that, not as failing", async () => {
     const t = setup([
       load(),
       use("verify_connector", { connector: "ServiceNow" }),
-      done("No health path."),
+      done("Nothing could check it."),
     ], {
-      verify: { connector: { id: "srv-snow", name: "ServiceNow" }, before: serviceNow, healthy: false, detail: "No valid health check configured", checkedAt: new Date().toISOString(), probeWasPossible: false },
+      // The live case: testConnectionHealth has no branch for this integration, so
+      // it answers not_verifiable. Recorded as unhealthy that reads as an outage.
+      verify: {
+        connector: { id: "srv-snow", name: "ServiceNow" },
+        before: serviceNow,
+        healthy: false,
+        detail: "Cannot be verified: this integration has no credential test that doesn't change something",
+        checkedAt: new Date().toISOString(),
+        probeWasPossible: false,
+        checkKind: "vendor_connection_test",
+      },
     });
     await runTurn(t.deps, as("admin"), t.threadId, "Verify ServiceNow", t.onEvent);
     const action = await pending(t);
@@ -271,8 +327,34 @@ describe("probing one now", () => {
     // The answer lands on the thread, not in resolveAction's return.
     const thread = await t.store.loadThread(t.threadId, ORG);
     const said = JSON.stringify(thread);
-    expect(said).toContain("cannot be probed");
+    expect(said).toContain("Nothing checked ServiceNow");
     expect(said).toContain("not a failing one");
+  });
+
+  it("says which check ran and what it proves, so 'verified' cannot be read as more than it is", async () => {
+    const t = setup([
+      load(),
+      use("verify_connector", { connector: "Mock CMDB" }),
+      done("The mock answered."),
+    ], {
+      connectors: [{ ...serviceNow, name: "Mock CMDB", mock: true, checkKind: "mock_endpoint", checkWhy: "it is a mock this process serves, with a read-only endpoint that can be called safely" }],
+      verify: {
+        connector: { id: "srv-snow", name: "Mock CMDB" },
+        before: serviceNow,
+        healthy: true,
+        detail: "Its /watchlists endpoint answered (HTTP 200), so the mock is mounted and serving",
+        checkedAt: new Date().toISOString(),
+        probeWasPossible: true,
+        checkKind: "mock_endpoint",
+      },
+    });
+    await runTurn(t.deps, as("admin"), t.threadId, "Verify Mock CMDB", t.onEvent);
+    const action = await pending(t);
+    expect(action.details!.join(" ")).toContain("call one of its read-only endpoints");
+    await resolveAction(t.deps, as("admin"), t.threadId, action.id, "confirm", t.onEvent);
+    const said = JSON.stringify(await t.store.loadThread(t.threadId, ORG));
+    expect(said).toContain("mock_endpoint");
+    expect(said).toContain("the mock this platform serves is still mounted");
   });
 
   it("is not offered to a role that cannot manage connectors, while reading health is", () => {
@@ -383,12 +465,32 @@ describe("connecting a platform", () => {
 });
 
 describe("one source for health", () => {
-  it("probes through the scan's own deps, so a conversation and the scheduled scan cannot disagree", () => {
+  it("checks through the scan's own deps, so a conversation and the scheduled scan cannot disagree", () => {
     const actions = read("server", "connector-actions.ts");
-    expect(actions).toContain('import { connectorHealthDeps } from "./connector-health-scan"');
-    expect(actions).toContain("connectorHealthDeps.probe(target as any)");
-    expect(actions).toContain("connectorHealthDeps.saveHealth(");
+    expect(actions).toContain('import { connectorHealthDeps, vendorConnectionTest } from "./connector-health-scan"');
+    // The same chooseProbe the schedule uses picks the check, so a person and the
+    // scan can never make different checks and call them the same thing.
+    expect(actions).toContain("const { method } = chooseProbe(target)");
+    expect(actions).toContain("connectorHealthDeps.probe(target, method)");
+    expect(actions).toContain("connectorHealthDeps.saveHealth(server.id, result.healthy, result.detail, at, result.method)");
     // And records it, since a verification is a real call to someone's system.
     expect(actions).toContain('connectorHealthDeps.audit("connector.health_verified"');
+  });
+
+  it("keeps one tenant's credential test off a row every tenant reads", () => {
+    const actions = read("server", "connector-actions.ts");
+    expect(actions).toContain("const sharedRow = !!server.integrationId && !server.organizationId");
+    expect(actions).toMatch(/if \(!\(sharedRow && result\.method === "vendor_connection_test"\)\)/);
+  });
+
+  it("reads an enterprise connector's real measurement from the connection, which is where its tests are written", () => {
+    const actions = read("server", "connector-actions.ts");
+    // POST /api/integrations/:id/test has always written last_tested_at on the
+    // connection, while the column this page read had nothing writing it for those
+    // connectors at all -- which is why Salesforce showed "never checked" on a page
+    // while /integrations showed a test from that morning.
+    expect(actions).toContain("function measurementFor(");
+    expect(actions).toContain("connection.lastTestResult === \"ok\"");
+    expect(actions).toContain("storage.listIntegrationConnections(orgId)");
   });
 });

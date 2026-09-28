@@ -327,6 +327,12 @@ export async function runStartupMigrations() {
       -- Which Cowork conversation a file was attached to, so deleting the
       -- conversation can take it too.
       ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS thread_id VARCHAR;
+      -- WHICH check produced a connector's health state: a tools/list handshake,
+      -- a vendor credential test, a mock endpoint, or the service's own health
+      -- path. Without it a stored state cannot say what it measured, which is how
+      -- 112 connectors came to display one bulk sweep from August as fact.
+      -- See server/connector-health-probe.ts.
+      ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS health_check_kind TEXT;
       -- Every saved state of a process flow, so a change can be undone. One
       -- graph overwritten in place was tolerable while every edit was a
       -- deliberate drag; it is not once a model can rewrite a flow.

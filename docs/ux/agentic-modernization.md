@@ -253,3 +253,41 @@ confirm card and the real approval gates; anything touching production also need
 4. Find and attach a skill; create a knowledge base, add text, search it, attach it.
 5. Deploy an agent to staging, promote to pilot (approval created and decided in the thread), start a canary, roll back
    -- each change visible on the classic pages and in the audit trail. Test data is listed afterwards.
+
+## Connectors — one surface, and health that names its own check
+
+**What it replaced.** Nine routes over three registries (a four-tab `/integrations` hub, a marketplace, a tool
+catalog, publishers, apps, prompts, resources, relay agents), and a health column that was a fossil: measured live on
+2026-09-27, 113 of 131 connectors displayed a state, 131 of 132 had no `healthCheckPath`, and the scheduled scan
+therefore probed exactly ONE of them. 112 of those states were written in a single ten-minute sweep on 26 August and
+nothing could refresh them.
+
+**Shipped** (`5f60a18`, `ada7ac8`, `850cd3b`, and the checks below): a Cowork **Connectors pack** loaded on demand
+(`connector_health`, `verify_connector` — the only write, confirmed — `find_tool`, `connector_usage`,
+`connection_requirements`; no tool in the pack accepts a secret, and a test asserts it over every input schema); a
+`/connectors` page built beside the nine routes, which are untouched; and `shared/connector-health-words.ts` as the one
+vocabulary both surfaces speak.
+
+**One check per kind of connector, named in every answer.** The cause of the fossil was one check — an HTTP GET to a
+bespoke path — for a fleet that is three different things. `chooseProbe` (pure, in
+`server/connector-health-probe.ts`) now picks the strongest check a connector can take:
+
+| Connector | Check | What a pass proves | Cadence |
+| --- | --- | --- | --- |
+| Publishes a health endpoint | ask it | the service's own opinion of itself | 5 min |
+| A real remote MCP server | MCP handshake + `tools/list` | the whole path an agent's call takes, and any drift from the catalogued tool list | 15 min |
+| An in-process enterprise connector | the vendor test its Connect form runs (`server/connector-connection-test.ts`, lifted out of the route so a schedule can reach it) | the customer's own system answered with the customer's credentials | 60 min |
+| A mock this process serves | one of its read-only endpoints | the mock is still mounted — a 404 means the row outlived its code | 60 min |
+| None of the above | nothing, and the reason is carried | — | never |
+
+- **Which check ran is recorded** (`mcp_servers.health_check_kind`) and stated wherever a state is shown. A state that
+  names no check — every row written before this — is reported as proving nothing, not as a measurement.
+- **Nothing measured is nothing written.** A check that could not run (an integration with no credential test answers
+  `not_verifiable`, which the Connect form reads as `ok: true`) leaves the stored state untouched rather than marking a
+  configuration gap as an outage.
+- **An enterprise connector's measurement is read from that organization's connection**, where
+  `POST /api/integrations/:id/test` has always written it; the shared catalog row carries one health column for every
+  tenant, so a per-tenant credential test never lands on it.
+- **The missing `/mcp` mount is counted**, recorded by `createMcpProtocolRouter` itself. Without it no agent can call a
+  connector over the protocol while its REST routes stay green, and no health check of any kind catches that — so it is
+  reported beside health rather than folded into it.

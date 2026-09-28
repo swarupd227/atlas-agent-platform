@@ -34,7 +34,28 @@ export async function isAgentAuthorizedForIntegration(agentId: string, integrati
   return links.some(l => l.serverId === server.id);
 }
 
+/**
+ * The integrations this build actually mounts a protocol endpoint for.
+ *
+ * Recorded here, by the function that does the mounting, because the absence of
+ * a /mcp route is invisible from outside: a connector's REST /tools and
+ * /connection-test stay green while no agent can call it over the protocol at
+ * all. Counting the mounts is the only way a health answer can say so, and
+ * recording it at the call site means the list cannot drift from the code the
+ * way a hand-kept one would.
+ */
+const mountedIntegrations = new Set<string>();
+
+export function isMcpProtocolMounted(integrationId: string): boolean {
+  return mountedIntegrations.has(integrationId);
+}
+
+export function mountedMcpIntegrations(): string[] {
+  return Array.from(mountedIntegrations).sort();
+}
+
 export function createMcpProtocolRouter(base: RealMcpBase, integrationId: string): Router {
+  mountedIntegrations.add(integrationId);
   const router = Router();
 
   router.post("/mcp", async (req: Request, res: Response) => {
