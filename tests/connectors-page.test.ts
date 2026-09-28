@@ -34,7 +34,7 @@ describe("how a connector's health is worded", () => {
     // A mock endpoint answering and a vendor's system answering are both
     // "reachable", and only one of them means a real system is up.
     expect(healthWords("reachable", 0, true, { measuredBy: "mcp_tools_list" })).toContain("completed an MCP handshake and listed its tools");
-    expect(healthWords("reachable", 0, true, { measuredBy: "mock_endpoint" })).toContain("the mock this platform serves is still mounted");
+    expect(healthWords("reachable", 0, true, { measuredBy: "mock_endpoint" })).toContain("the backend this platform serves is still mounted");
     // And a state carried over from before the platform recorded the check — 112
     // connectors on the day this shipped — claims nothing.
     expect(healthWords("reachable", 32, true, { measuredBy: null })).toContain("by a check this platform can no longer identify");
@@ -217,6 +217,58 @@ describe("how the checks are chosen and metered", () => {
   it("writes no state when nothing ran, and meters the check that spends someone's API quota", () => {
     expect(probe).toMatch(/if \(!result\.probed\) \{/);
     expect(probe).toContain("vendor_connection_test: 60 * 60 * 1000");
+  });
+
+  it("asks the app what it serves, rather than keeping a list beside sixty mount sites", () => {
+    const mounts = read("server", "app-mounts.ts");
+    expect(mounts).toContain("export function isPathHandled(");
+    // Only router layers: app-level middleware matches everything and would make
+    // every path look served.
+    expect(mounts).toContain('if (layer?.name !== "router") continue');
+    // And not knowing must never read as "not mounted".
+    expect(mounts).toContain("return sawUsableLayer ? false : null");
+    expect(read("server", "routes.ts")).toContain('(await import("./app-mounts")).recordApp(app)');
+  });
+});
+
+describe("a state is only written by something that checked", () => {
+  // Found on the live deployment the day the checks shipped: five writers set
+  // health_status and last_health_check without recording a kind, and three of
+  // them had contacted nothing at all — reading a tool list out of the
+  // in-process registry, keeping an existing catalog, or analysing drift from
+  // stored rows. Those writes are exactly how a state with no check behind it
+  // comes to exist, which is the defect this whole mechanism removes.
+  const runtime = read("server", "routes", "runtime.ts");
+
+  it("records the kind wherever a protocol handshake did happen", () => {
+    expect(runtime).toContain('healthCheckKind: "mcp_tools_list"');
+    expect(runtime).toContain("Completed an MCP handshake and listed its catalogs");
+    expect(runtime).toContain("Listed its tools, resources and prompts over the protocol");
+  });
+
+  it("claims health only on the path that contacted the server", () => {
+    expect(runtime).toContain('const contacted = discoveredFrom === "mcp"');
+    expect(runtime).toMatch(/\.\.\.\(contacted\s*\n\s*\? \{\s*\n\s*healthStatus: "healthy"/);
+  });
+
+  it("leaves no writer that sets a state without saying what produced it", () => {
+    // Every remaining health_status write must carry a health_check_kind within
+    // the same call. A new one that forgets fails here rather than quietly
+    // manufacturing another fossil.
+    // Checked line-wise rather than by matching the whole call: one of these
+    // writes spans twenty lines with a conditional spread, and a fixed-width
+    // window silently reported it as a violation.
+    const lines = runtime.split("\n");
+    const offenders: string[] = [];
+    let seen = 0;
+    lines.forEach((line, i) => {
+      if (!/healthStatus:/.test(line)) return;
+      seen++;
+      const near = lines.slice(Math.max(0, i - 10), i + 10).join("\n");
+      if (!/healthCheckKind:/.test(near)) offenders.push(`line ${i + 1}: ${line.trim().slice(0, 90)}`);
+    });
+    expect(seen).toBeGreaterThan(0);
+    expect(offenders).toEqual([]);
   });
 });
 

@@ -17,6 +17,7 @@ import {
   healthCheckUrl,
   isDueForProbe,
   isValidHealthCheckPath,
+  mountCheckResult,
   probeConnector,
   probeMockEndpoint,
   scanConnectorHealth,
@@ -194,12 +195,31 @@ describe("which check a connector can take", () => {
     expect(gone.why).toContain("not part of this build");
   });
 
-  it("calls a read-only endpoint of a mock this process serves, and refuses to call one that changes something", () => {
+  it("calls a read-only endpoint of a backend this process serves", () => {
     const mock = { ...base, url: "http://localhost:5000/api/mock/watchlist-screening", transportType: "streamable-http" };
-    expect(chooseProbe({ ...mock, readOnlyEndpoint: "/watchlists" }).method).toBe("mock_endpoint");
-    const noSafeCall = chooseProbe(mock);
-    expect(noSafeCall.method).toBe("none");
-    expect(noSafeCall.why).toContain("without changing something");
+    expect(chooseProbe({ ...mock, readOnlyEndpoint: "/watchlists", mountedHere: true }).method).toBe("mock_endpoint");
+  });
+
+  it("treats the demonstration surfaces as in-process backends too", () => {
+    // Measured live after the first release: twelve connectors on /demo-api —
+    // every one bound to an agent — fell through to "nothing here can call a
+    // streamable-http at that address", because the rule only knew /api/mock/.
+    const demo = { ...base, url: "http://localhost:5000/demo-api/kinective/signplus", transportType: "streamable-http" };
+    expect(chooseProbe({ ...demo, mountedHere: true }).method).toBe("mount_check");
+    expect(chooseProbe({ ...demo, mountedHere: true, readOnlyEndpoint: "/envelopes" }).method).toBe("mock_endpoint");
+  });
+
+  it("checks that the path is still served when every endpoint would change something", () => {
+    const mock = { ...base, url: "http://localhost:5000/api/mock/watchlist-screening", transportType: "streamable-http" };
+    const served = chooseProbe({ ...mock, mountedHere: true });
+    expect(served.method).toBe("mount_check");
+    expect(served.why).toContain("every one of its endpoints changes something");
+    // A row whose code is gone is a MEASUREMENT of a real failure, not an absence.
+    expect(chooseProbe({ ...mock, mountedHere: false }).method).toBe("mount_check");
+    // And not knowing is never reported as "not served".
+    const unknown = chooseProbe(mock);
+    expect(unknown.method).toBe("none");
+    expect(unknown.why).toContain("could not be determined");
   });
 
   it("says what is missing rather than defaulting to a state", () => {
@@ -228,12 +248,28 @@ describe("what each check reports", () => {
     const target: ProbeTarget = { id: "m", name: "m", url: "http://localhost:5000/api/mock/x", healthCheckPath: null, healthStatus: null, readOnlyEndpoint: "/watchlists" };
     const gone = await probeMockEndpoint(target, (async () => new Response("", { status: 404 })) as any);
     expect(gone).toMatchObject({ healthy: false, probed: true });
-    expect(gone.detail).toContain("no longer served");
+    expect(gone.detail).toContain("its backend is gone");
+    // Live on 2026-09-28 one connector 404'd on its endpoint while its path was
+    // still served. Reporting that as "no longer served" was an overclaim.
+    const endpointOnly = await probeMockEndpoint({ ...target, mountedHere: true }, (async () => new Response("", { status: 404 })) as any);
+    expect(endpointOnly.detail).toContain("though this build still serves its path");
+    expect(endpointOnly.detail).toContain("cannot be called");
     // A 400 for an empty request still proves the route is mounted and ran.
     const mounted = await probeMockEndpoint(target, (async () => new Response("", { status: 400 })) as any);
     expect(mounted.healthy).toBe(true);
     expect(mounted.detail).toContain("mounted and serving");
     expect((await probeMockEndpoint(target, (async () => new Response("", { status: 500 })) as any)).healthy).toBe(false);
+  });
+
+  it("says what a mount check does and does not prove", () => {
+    const served = mountCheckResult(true, "/api/mock/watchlist-screening");
+    expect(served).toMatchObject({ healthy: true, probed: true, method: "mount_check" });
+    expect(served.detail).toContain("its route exists and no more");
+    const gone = mountCheckResult(false, "/api/mock/insurity-policy-sor");
+    expect(gone).toMatchObject({ healthy: false, probed: true });
+    expect(gone.detail).toContain("every call to it fails");
+    // Unknown is not a failure: an introspection change must not kill a fleet.
+    expect(mountCheckResult(null, "/api/mock/x")).toMatchObject({ probed: false, method: "none" });
   });
 
   it("does not turn a credential test that could not run into a measurement", () => {

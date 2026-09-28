@@ -354,7 +354,7 @@ describe("checking one now", () => {
     await resolveAction(t.deps, as("admin"), t.threadId, action.id, "confirm", t.onEvent);
     const said = JSON.stringify(await t.store.loadThread(t.threadId, ORG));
     expect(said).toContain("mock_endpoint");
-    expect(said).toContain("the mock this platform serves is still mounted");
+    expect(said).toContain("the backend this platform serves is still mounted");
   });
 
   it("is not offered to a role that cannot manage connectors, while reading health is", () => {

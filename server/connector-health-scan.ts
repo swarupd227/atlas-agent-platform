@@ -16,12 +16,14 @@ import { storage } from "./storage";
 import { buildMcpAuthHeaders, mcpListTools } from "./mcp-client";
 import { decryptCredentialMap } from "./credential-vault";
 import { isMcpProtocolMounted } from "./real-mcp-transport";
+import { isPathHandled, pathnameOf } from "./app-mounts";
 import { testConnectionHealth } from "./connector-connection-test";
 import {
   CONNECTOR_ALERT_TYPE,
   chooseProbe,
   connectionTestResult,
   isLoopbackMockUrl,
+  mountCheckResult,
   nothingToProbe,
   probeConnector,
   probeMockEndpoint,
@@ -113,6 +115,7 @@ export async function listProbeTargets(): Promise<ProbeTarget[]> {
       : undefined,
     protocolMounted: row.integrationId ? isMcpProtocolMounted(row.integrationId) : null,
     readOnlyEndpoint: readOnlyEndpointOf(toolsByServer.get(row.id) ?? []),
+    mountedHere: isLoopbackMockUrl(row.url) ? isPathHandled(pathnameOf(row.url) ?? "") : null,
   }));
 }
 
@@ -188,6 +191,8 @@ export const connectorHealthDeps: HealthScanDeps = {
       }
       case "mock_endpoint":
         return probeMockEndpoint(target);
+      case "mount_check":
+        return mountCheckResult(target.mountedHere ?? null, pathnameOf(target.url));
       default:
         return nothingToProbe(chooseProbe(target).why);
     }

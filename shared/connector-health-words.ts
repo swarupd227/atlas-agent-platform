@@ -16,7 +16,13 @@
 export type ConnectorHealthState = "reachable" | "unreachable" | "never_checked";
 
 /** Mirrors ProbeMethod in server/connector-health-probe.ts. */
-export type ConnectorCheckKind = "health_path" | "mcp_tools_list" | "vendor_connection_test" | "mock_endpoint" | "none";
+export type ConnectorCheckKind =
+  | "health_path"
+  | "mcp_tools_list"
+  | "vendor_connection_test"
+  | "mock_endpoint"
+  | "mount_check"
+  | "none";
 
 /**
  * What each kind of check actually proves.
@@ -36,7 +42,9 @@ export function checkProves(kind: ConnectorCheckKind): string {
     case "vendor_connection_test":
       return "the system it connects to answered a credential test";
     case "mock_endpoint":
-      return "one of its read-only endpoints answered, so the mock this platform serves is still mounted";
+      return "one of its read-only endpoints answered, so the backend this platform serves is still mounted";
+    case "mount_check":
+      return "this build still serves the path it is registered at — which is its route existing, and nothing more";
     case "none":
       return "nothing checked it";
   }
@@ -53,6 +61,8 @@ export function checkOffer(kind: ConnectorCheckKind): string {
       return "make a real call to that system with the credentials stored for it";
     case "mock_endpoint":
       return "call one of its read-only endpoints";
+    case "mount_check":
+      return "check that this build still serves its path, without calling anything";
     case "none":
       return "nothing";
   }

@@ -559,6 +559,12 @@ export async function registerRoutes(
     console.error("[startup] registerEnterpriseIntegrations:", err?.message)
   );
 
+  // Every router this build serves is mounted by now, so the connector health
+  // checks can ask the app itself whether anything still serves a given path --
+  // which is how a connector row that outlived its code is caught, and it needs
+  // no bookkeeping at the sixty-odd mount sites above. See server/app-mounts.ts.
+  (await import("./app-mounts")).recordApp(app);
+
   return httpServer;
 }
 

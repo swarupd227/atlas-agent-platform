@@ -21,8 +21,9 @@
  */
 import { storage } from "./storage";
 import { connectorHealthDeps, vendorConnectionTest } from "./connector-health-scan";
-import { chooseProbe, type ProbeMethod, type ProbeTarget } from "./connector-health-probe";
+import { chooseProbe, isLoopbackMockUrl, type ProbeMethod, type ProbeTarget } from "./connector-health-probe";
 import { isMcpProtocolMounted } from "./real-mcp-transport";
+import { isPathHandled, pathnameOf } from "./app-mounts";
 
 export class ConnectorActionError extends Error {}
 
@@ -72,7 +73,7 @@ export interface ConnectorHealthView {
 
 const isMock = (url: unknown) => /localhost|127\.0\.0\.1|\/api\/mock\//.test(String(url ?? ""));
 
-const KNOWN_KINDS: ProbeMethod[] = ["health_path", "mcp_tools_list", "vendor_connection_test", "mock_endpoint"];
+const KNOWN_KINDS: ProbeMethod[] = ["health_path", "mcp_tools_list", "vendor_connection_test", "mock_endpoint", "mount_check"];
 const asKind = (v: unknown): ProbeMethod | null => (KNOWN_KINDS.includes(v as ProbeMethod) ? (v as ProbeMethod) : null);
 
 /**
@@ -96,6 +97,7 @@ function targetFor(server: any, connected: boolean, readOnlyEndpoint: string | n
     hasConnection: connected,
     protocolMounted: server.integrationId ? isMcpProtocolMounted(server.integrationId) : null,
     readOnlyEndpoint,
+    mountedHere: isLoopbackMockUrl(server.url) ? isPathHandled(pathnameOf(server.url) ?? "") : null,
   };
 }
 

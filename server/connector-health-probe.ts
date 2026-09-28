@@ -46,8 +46,15 @@ export type ProbeMethod =
   | "mcp_tools_list"
   /** The vendor call the Connect form makes, with the customer's stored credentials. */
   | "vendor_connection_test"
-  /** A read-only endpoint of a mock this process serves itself. */
+  /** A read-only endpoint of a backend this process serves itself. */
   | "mock_endpoint"
+  /**
+   * Whether this build still serves the path the connector is registered at.
+   * Weaker than calling an endpoint, and the only check available for a backend
+   * whose every endpoint changes something — but it catches the failure that
+   * matters for those: a row that outlived the code that served it.
+   */
+  | "mount_check"
   /** Nothing can be checked. `why` says what is missing; no state is written. */
   | "none";
 
@@ -70,8 +77,14 @@ export interface ProbeTarget {
   hasConnection?: boolean;
   /** Whether its MCP protocol endpoint is mounted. Null where the question doesn't apply. */
   protocolMounted?: boolean | null;
-  /** A GET endpoint of a mock that takes no required arguments, if it has one. */
+  /** A GET endpoint that takes no required arguments, if it has one. */
   readOnlyEndpoint?: string | null;
+  /**
+   * For a backend this process serves: whether anything in this build still
+   * handles its path. Null means the question could not be answered, which is
+   * NOT the same as false and must never be reported as "not served".
+   */
+  mountedHere?: boolean | null;
 }
 
 export interface ProbeResult {
@@ -98,10 +111,21 @@ function hostOf(url: string | null | undefined): string | null {
   }
 }
 
-/** A mock backend this process serves itself, callable only over the loopback interface. */
+/**
+ * A backend this process serves itself, callable only over the loopback
+ * interface: the simulated systems under `/api/mock/` and the demonstration
+ * surfaces under `/demo-api`.
+ *
+ * The `/demo-api` half was missed the first time, which left twelve connectors —
+ * every one of them bound to an agent — reported as "nothing here can call a
+ * streamable-http at that address". They are ordinary in-process REST backends
+ * like the mocks, and their tools carry the same endpoint annotations.
+ */
 export function isLoopbackMockUrl(url: string | null | undefined): boolean {
   const host = hostOf(url);
-  return !!host && LOOPBACK_HOST.test(host) && /\/api\/mock\//.test(String(url));
+  if (!host || !LOOPBACK_HOST.test(host)) return false;
+  const path = (() => { try { return new URL(String(url)).pathname; } catch { return ""; } })();
+  return path.startsWith("/api/mock/") || path === "/demo-api" || path.startsWith("/demo-api/");
 }
 
 /** A connector that really is somewhere else and really speaks MCP over HTTP. */
@@ -134,9 +158,18 @@ export function chooseProbe(target: ProbeTarget): { method: ProbeMethod; why: st
     return { method: "mcp_tools_list", why: "it speaks MCP, so a handshake and tools/list exercise the whole call path" };
   }
   if (isLoopbackMockUrl(target.url)) {
-    return target.readOnlyEndpoint
-      ? { method: "mock_endpoint", why: "it is a mock this process serves, with a read-only endpoint that can be called safely" }
-      : { method: "none", why: "it is a mock this process serves, and none of its endpoints is a read-only one, so nothing can be called without changing something" };
+    // Nothing serves its path any more: that is a measurement, and a serious one
+    // — the row is listed, agents are bound to it, and every call 404s.
+    if (target.mountedHere === false) {
+      return { method: "mount_check", why: "nothing in this build serves the path it is registered at" };
+    }
+    if (target.readOnlyEndpoint) {
+      return { method: "mock_endpoint", why: "it is a backend this process serves, with a read-only endpoint that can be called safely" };
+    }
+    if (target.mountedHere === true) {
+      return { method: "mount_check", why: "every one of its endpoints changes something, so the most that can be checked is that this build still serves its path" };
+    }
+    return { method: "none", why: "none of its endpoints is a read-only one, and whether this build still serves its path could not be determined" };
   }
   if (!target.url) return { method: "none", why: "no endpoint is recorded for it" };
   return { method: "none", why: `nothing here can call a ${target.transportType ?? "connector with no transport"} at that address` };
@@ -155,6 +188,7 @@ export const PROBE_CADENCE_MS: Record<ProbeMethod, number> = {
   mcp_tools_list: 15 * 60 * 1000,
   vendor_connection_test: 60 * 60 * 1000,
   mock_endpoint: 60 * 60 * 1000,
+  mount_check: 60 * 60 * 1000,
   none: Number.POSITIVE_INFINITY,
 };
 
@@ -244,12 +278,15 @@ export async function probeMockEndpoint(
   try {
     const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
     if (res.status === 404) {
-      return {
-        healthy: false,
-        detail: `Nothing is mounted at ${target.readOnlyEndpoint} any more: this connector is listed but no longer served`,
-        method: "mock_endpoint",
-        probed: true,
-      };
+      // Two different failures, and the difference matters to whoever fixes it:
+      // the whole backend can be gone, or its path can still be served while
+      // this one catalogued endpoint is not. Saying "no longer served" for the
+      // second is the same overclaiming these checks exist to stop.
+      const detail =
+        target.mountedHere === true
+          ? `Its ${target.readOnlyEndpoint} endpoint is not served (HTTP 404), though this build still serves its path: the catalogued tool behind it cannot be called`
+          : `Nothing is served at ${target.readOnlyEndpoint}: this connector is listed but its backend is gone`;
+      return { healthy: false, detail, method: "mock_endpoint", probed: true };
     }
     if (res.status >= 500) {
       const body = await res.text().catch(() => "");
@@ -328,6 +365,24 @@ export function connectionTestResult(result: { ok: boolean; status?: string; err
 
 export function nothingToProbe(why: string): ProbeResult {
   return { healthy: false, detail: why, method: "none", probed: false };
+}
+
+/**
+ * Whether this build still serves the path a connector is registered at.
+ *
+ * Deliberately modest about what it proves: a served path is not a working
+ * connector. It is stated that way in the detail so a reader cannot take it for
+ * more, and it is the only check available for a backend whose every endpoint
+ * writes something.
+ */
+export function mountCheckResult(mounted: boolean | null, path: string | null): ProbeResult {
+  if (mounted === null) {
+    return nothingToProbe("whether this build still serves its path could not be determined");
+  }
+  const where = path ? ` at ${path}` : "";
+  return mounted
+    ? { healthy: true, detail: `This build still serves its path${where}; nothing was called, so this says its route exists and no more`, method: "mount_check", probed: true }
+    : { healthy: false, detail: `Nothing in this build serves${where} any more: this connector is listed, but every call to it fails`, method: "mount_check", probed: true };
 }
 
 export interface LinkedAgent {

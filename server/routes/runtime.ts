@@ -12704,13 +12704,27 @@ async function performMcpServerInitialize(serverId: string, actorId: string = "s
     }
   }
 
+  // Health is claimed ONLY where something was actually contacted. Of the five
+  // paths above, one opens a real connection ("mcp"); the others read the
+  // in-process registry, parse an OpenAPI description, keep the existing catalog
+  // or fall back to a canned one. None of those establishes that the connector
+  // works, and writing "healthy" for them is precisely how a state with no check
+  // behind it comes to exist -- which the connectors surface then has to report
+  // as proving nothing. See server/connector-health-probe.ts.
+  const contacted = discoveredFrom === "mcp";
   await storage.updateMcpServer(server.id, {
     negotiatedProtocolVersion: negotiatedVersion,
     capabilities,
     serverInfo,
     status: "verified",
-    healthStatus: "healthy",
-    lastHealthCheck: new Date(),
+    ...(contacted
+      ? {
+          healthStatus: "healthy",
+          lastHealthCheck: new Date(),
+          healthCheckKind: "mcp_tools_list",
+          healthDetail: "Completed an MCP handshake and listed its catalogs",
+        }
+      : {}),
   });
 
   let toolSync: ToolSyncResult | null = null;
@@ -13553,7 +13567,10 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
             annotations: { endpoint: `/tools/${t.name}`, method: "POST", enterpriseIntegration: server.integrationId, requiresCredentials: true },
           });
         }
-        await storage.updateMcpServer(server.id, { lastHealthCheck: new Date(), healthStatus: "healthy" });
+        // Deliberately does NOT record health: this branch copies the tool list
+        // out of the in-process registry without contacting anything, so it
+        // establishes nothing about whether the connector works. The scheduled
+        // check covers these connectors properly.
         const tools = await storage.getMcpServerTools(server.id);
         const resources = await storage.getMcpServerResources(server.id);
         const prompts = await storage.getMcpServerPrompts(server.id);
@@ -13607,7 +13624,12 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
 
           if (catalogErrors.length > 0) {
             const allFailed = catalogErrors.length === 3;
-            await storage.updateMcpServer(req.params.id as string, { lastHealthCheck: new Date(), healthStatus: allFailed ? "degraded" : "healthy" });
+            await storage.updateMcpServer(req.params.id as string, {
+              lastHealthCheck: new Date(),
+              healthStatus: allFailed ? "degraded" : "healthy",
+              healthCheckKind: "mcp_tools_list",
+              healthDetail: `Listed its catalogs over the protocol; ${catalogErrors.join("; ")}`.slice(0, 300),
+            });
             return res.status(allFailed ? 502 : 207).json({
               synced: false,
               isRealProtocol: true,
@@ -13616,7 +13638,12 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
             });
           }
 
-          await storage.updateMcpServer(req.params.id as string, { lastHealthCheck: new Date(), healthStatus: "healthy" });
+          await storage.updateMcpServer(req.params.id as string, {
+            lastHealthCheck: new Date(),
+            healthStatus: "healthy",
+            healthCheckKind: "mcp_tools_list",
+            healthDetail: "Listed its tools, resources and prompts over the protocol",
+          });
 
           const tools = await storage.getMcpServerTools(req.params.id as string);
           const resources = await storage.getMcpServerResources(req.params.id as string);
@@ -13845,8 +13872,9 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
         }
       }
 
-      await storage.updateMcpServer(req.params.id as string, { lastHealthCheck: new Date(), healthStatus: "healthy" });
-
+      // No health write here either: this path reaches the drift analysis from
+      // the STORED catalog, without contacting the server (the real-protocol
+      // path has already returned above, having recorded what it did contact).
       res.json({
         synced: true,
         catalogs: { tools: tools.length, resources: resources.length, prompts: prompts.length },
