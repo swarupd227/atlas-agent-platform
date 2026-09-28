@@ -3176,7 +3176,13 @@ export async function waitForApproval(
 }
 
 // ── Conditional edge: use LLM to evaluate condition string against worker output
-export async function evaluateCondition(condition: string, workerOutput: string): Promise<boolean> {
+export async function evaluateCondition(
+  condition: string,
+  workerOutput: string,
+  // shadowSite: label for the shadow audit row when this is a replay of a stored
+  // pair rather than a live routing decision (server/routes/decision-audit.ts).
+  opts?: { shadowSite?: string },
+): Promise<boolean> {
   if (!condition || condition.trim().length === 0) return true;
   try {
     const startedAt = Date.now();
@@ -3187,7 +3193,7 @@ export async function evaluateCondition(condition: string, workerOutput: string)
     const verdict = (result.content?.trim().toLowerCase() || "").startsWith("true");
     // Shadow-only: the same question to Jev, recorded beside this verdict for
     // comparison. Fire-and-forget; the routing decision is `verdict`, unchanged.
-    shadowEvaluateCondition({ condition, workerOutput, llmDecision: verdict, llmModel: result.actualModel, llmLatencyMs: Date.now() - startedAt });
+    shadowEvaluateCondition({ condition, workerOutput, llmDecision: verdict, llmModel: result.actualModel, llmLatencyMs: Date.now() - startedAt, site: opts?.shadowSite });
     return verdict;
   } catch {
     return true; // default open: don't silently block on LLM errors

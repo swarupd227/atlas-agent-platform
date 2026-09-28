@@ -225,10 +225,13 @@ export function shadowEvaluateCondition(args: {
   llmDecision: boolean;
   llmModel?: string;
   llmLatencyMs: number;
+  /** Audit-row site; a replay of stored pairs labels itself so live and replayed rows stay separable. */
+  site?: string;
 }): void {
-  fireAndForget("evaluateCondition", () =>
+  const site = args.site ?? "evaluateCondition";
+  fireAndForget(site, () =>
     runShadow(
-      "evaluateCondition",
+      site,
       { condition: args.condition, worker_output: args.workerOutput.slice(0, 3000) },
       {
         holds: {
