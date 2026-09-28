@@ -1949,6 +1949,36 @@ export async function runStartupMigrations() {
       ALTER TABLE marketplace_servers ADD COLUMN IF NOT EXISTS openapi_auth_hint TEXT;
     `);
 
+    // Jev shadow measurement (Phase 0 of the decision-model evaluation): one row
+    // per judgment the incumbent LLM made that Jev was also asked, so agreement,
+    // confidence and latency can be compared before anything routes on Jev.
+    // Written only when DECISION_PROVIDER=shadow. See server/decision-shadow.ts.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS decision_audit (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        site TEXT NOT NULL,
+        question_kind TEXT NOT NULL,
+        subject TEXT,
+        jev_answer JSONB,
+        llm_answer JSONB,
+        jev_decision BOOLEAN,
+        llm_decision BOOLEAN,
+        agree BOOLEAN,
+        confidence REAL,
+        margin REAL,
+        latency_ms INTEGER,
+        llm_latency_ms INTEGER,
+        llm_model TEXT,
+        jev_model TEXT,
+        input_tokens INTEGER,
+        state_chars INTEGER,
+        state_hash TEXT,
+        error TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_decision_audit_site_created ON decision_audit (site, created_at DESC);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

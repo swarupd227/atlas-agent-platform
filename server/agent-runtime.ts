@@ -27,6 +27,9 @@ import type { RuleGroup, OutputContract } from "@shared/schema";
 // executePromptWithMcp). Kept as their own import lines rather than folded into
 // the ones above so the hunk stays independent of concurrent edits up there.
 import { ensureContainerFiles, ensureGeneratedContainerFiles } from "./anthropic-code-execution";
+// Jev shadow measurement (Phase 0; no-op unless DECISION_PROVIDER=shadow). Own
+// line for the same reason as above.
+import { shadowEvaluateCondition, shadowSoftPolicyCompliance } from "./decision-shadow";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
 import { resolveOutputMode, ownFinalAnswer, continuationMaxTokens, ANALYSIS_MAX_TOKENS } from "./output-mode";
@@ -975,10 +978,12 @@ AGENT OUTPUT (first 3000 chars):
 ${outputText.substring(0, 3000)}`;
 
   try {
+    const judgeStartedAt = Date.now();
     const judgeResult = await completeWithFallback(
       [{ role: "user", content: judgePrompt }],
       { temperature: 0, maxTokens: 1500, responseFormat: "json" }
     );
+    const judgeLatencyMs = Date.now() - judgeStartedAt;
 
     const raw = judgeResult.content.trim();
     const jsonStart = raw.indexOf("{");
@@ -992,7 +997,7 @@ ${outputText.substring(0, 3000)}`;
       parsed.policyResults.map((r: any) => [String(r.policyId || ""), r])
     );
 
-    return softPolicies.map(p => {
+    const results: SoftPolicyComplianceResult[] = softPolicies.map(p => {
       const r = judgeMap.get(p.id);
       if (!r) {
         return {
@@ -1017,6 +1022,18 @@ ${outputText.substring(0, 3000)}`;
         severity: (["low", "medium", "high"] as const).includes(r.severity) ? r.severity as "low" | "medium" | "high" : "low",
       };
     });
+
+    // Shadow-only: the same output and policies to Jev, recorded beside this
+    // verdict for comparison. Fire-and-forget; the verdict above is unchanged.
+    shadowSoftPolicyCompliance({
+      outputText,
+      policies: policyDescriptions.map(p => ({ id: p.id, name: p.name, description: String(p.description), requirements: p.requirements })),
+      llmVerdicts: results.map(r => ({ policyId: r.policyId, compliant: r.compliant, severity: r.severity })),
+      llmModel: judgeResult.actualModel,
+      llmLatencyMs: judgeLatencyMs,
+    });
+
+    return results;
   } catch {
     return null;
   }
@@ -3162,11 +3179,16 @@ export async function waitForApproval(
 export async function evaluateCondition(condition: string, workerOutput: string): Promise<boolean> {
   if (!condition || condition.trim().length === 0) return true;
   try {
+    const startedAt = Date.now();
     const result = await completeWithFallback([{
       role: "user",
       content: `You are evaluating a pipeline routing condition.\n\nCondition: "${condition}"\n\nWorker output:\n${workerOutput.slice(0, 3000)}\n\nRespond with ONLY "true" or "false".`,
     }], { maxTokens: 10 });
-    return (result.content?.trim().toLowerCase() || "").startsWith("true");
+    const verdict = (result.content?.trim().toLowerCase() || "").startsWith("true");
+    // Shadow-only: the same question to Jev, recorded beside this verdict for
+    // comparison. Fire-and-forget; the routing decision is `verdict`, unchanged.
+    shadowEvaluateCondition({ condition, workerOutput, llmDecision: verdict, llmModel: result.actualModel, llmLatencyMs: Date.now() - startedAt });
+    return verdict;
   } catch {
     return true; // default open: don't silently block on LLM errors
   }
