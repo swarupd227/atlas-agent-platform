@@ -16,12 +16,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const db = vi.hoisted(() => ({ nodes: [] as any[], edges: [] as any[] }));
+const db = vi.hoisted(() => ({ nodes: [] as any[], edges: [] as any[], teamAgents: [] as any[], runs: [] as any[] }));
 
 vi.mock("../server/storage", () => ({
   storage: {
     getTeamBlueprintNodes: vi.fn(async () => db.nodes),
     getTeamBlueprintEdges: vi.fn(async () => db.edges),
+    // The run-history side of the condition check. Mocked here as well as the
+    // graph side, because a check whose data source is missing answers "nothing
+    // to report" — which looks exactly like a passing check.
+    listAgentsByBlueprintId: vi.fn(async () => db.teamAgents),
+    listDagExecutionRunsByTeamAgent: vi.fn(async () => db.runs),
   },
 }));
 
@@ -48,6 +53,8 @@ const rule = (field: string) => ({ combinator: "AND", conditions: [{ field, oper
 beforeEach(() => {
   db.nodes = [node("n1", "Draft endorsement"), node("n2", "Check contract certainty"), node("n3", "File it")];
   db.edges = [edge("n1", "n2"), edge("n2", "n3")];
+  db.teamAgents = [];
+  db.runs = [];
 });
 
 describe("a team that can run", () => {
@@ -268,5 +275,108 @@ describe("a loop pointing at a step that is gone", () => {
     const check = await checkBlueprintInvariants("bp-1");
     expect(check.findings.map((f) => f.kind).sort()).toEqual(["cycle", "dangling_revision"]);
     expect(check.runnable).toBe(false);
+  });
+});
+
+/**
+ * A branch condition that can never be true.
+ *
+ * Measured live 2026-09-28: four conditions across the fleet tested a property
+ * no run has ever produced — `pre_bind_quality_check.passed` against a step that
+ * emits no `passed`. The branches behind them had never been taken in 85 runs,
+ * and one guarded the step that binds the policy. The existing prefix check
+ * misses these, because the step named before the dot is perfectly real.
+ */
+describe("a branch condition that can never be true", () => {
+  const ruleOn = (field: string) => ({ combinator: "AND", conditions: [{ field, operator: "==", value: true }] });
+  const gated = (from: string, to: string, field: string) =>
+    edge(from, to, { evaluationMode: "deterministic", rule: ruleOn(field) });
+
+  it("is decided by the producing step's schema when it declares one", async () => {
+    db.nodes = [
+      { ...node("n1", "Pre bind quality check"), outputSchema: { type: "object", properties: { score: {}, notes: {} } } },
+      node("n2", "Underwriter sign off"),
+    ];
+    db.edges = [gated("n1", "n2", "pre_bind_quality_check.passed")];
+    const check = await checkBlueprintInvariants("bp-1");
+    const f = check.findings.find((x) => x.kind === "unsatisfiable_condition")!;
+    expect(f).toBeTruthy();
+    expect(f.blocksRun).toBe(false);
+    expect(f.message).toContain('declares it produces "score", "notes"');
+    expect(f.message).toContain("never be true");
+  });
+
+  it("says nothing when the schema does declare the property", async () => {
+    db.nodes = [
+      { ...node("n1", "Pre bind quality check"), outputSchema: { type: "object", properties: { passed: {} } } },
+      node("n2", "Underwriter sign off"),
+    ];
+    db.edges = [gated("n1", "n2", "pre_bind_quality_check.passed")];
+    const check = await checkBlueprintInvariants("bp-1");
+    expect(check.findings.filter((f) => f.kind === "unsatisfiable_condition")).toEqual([]);
+  });
+
+  it("falls back to run history when no schema is declared — which was every live step", async () => {
+    db.nodes = [node("n1", "Pre bind quality check"), node("n2", "Underwriter sign off")];
+    db.edges = [gated("n1", "n2", "pre_bind_quality_check.passed")];
+    db.teamAgents = [{ id: "team-1" }];
+    db.runs = [
+      { finalState: { pre_bind_quality_check: { score: 0.8 } } },
+      { finalState: { pre_bind_quality_check: { score: 0.6 } } },
+      { finalState: { pre_bind_quality_check: { score: 0.9 } } },
+    ];
+    const check = await checkBlueprintInvariants("bp-1");
+    const f = check.findings.find((x) => x.kind === "unsatisfiable_condition")!;
+    expect(f).toBeTruthy();
+    expect(f.message).toContain("has not appeared in any of the last 3 runs");
+    // Stated as evidence, not as proof — the field could still appear in a rare case.
+    expect(f.message).toContain("evidence rather than proof");
+  });
+
+  it("says nothing when a run did produce the field", async () => {
+    db.nodes = [node("n1", "Pre bind quality check"), node("n2", "Underwriter sign off")];
+    db.edges = [gated("n1", "n2", "pre_bind_quality_check.passed")];
+    db.teamAgents = [{ id: "team-1" }];
+    db.runs = [
+      { finalState: { pre_bind_quality_check: { score: 0.8 } } },
+      { finalState: { pre_bind_quality_check: { passed: false } } },
+      { finalState: { pre_bind_quality_check: { score: 0.9 } } },
+    ];
+    const check = await checkBlueprintInvariants("bp-1");
+    expect(check.findings.filter((f) => f.kind === "unsatisfiable_condition")).toEqual([]);
+  });
+
+  it("stays silent below a floor of runs, because two runs prove nothing", async () => {
+    db.nodes = [node("n1", "Pre bind quality check"), node("n2", "Underwriter sign off")];
+    db.edges = [gated("n1", "n2", "pre_bind_quality_check.passed")];
+    db.teamAgents = [{ id: "team-1" }];
+    db.runs = [{ finalState: { pre_bind_quality_check: { score: 0.8 } } }, { finalState: { pre_bind_quality_check: { score: 0.6 } } }];
+    const check = await checkBlueprintInvariants("bp-1");
+    expect(check.findings.filter((f) => f.kind === "unsatisfiable_condition")).toEqual([]);
+  });
+
+  it("is reachable for a team that ALREADY EXISTS, not only when one is built", () => {
+    // The check ran at build, sync and deploy and nowhere else, so a team built
+    // before it existed carried its findings with nobody able to ask. Live on
+    // 2026-09-28 four dead conditions sat in blueprints the check already
+    // catches, unsurfaced. verify_wiring is the on-demand path.
+    const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
+    const service = read("server", "astra", "services.ts");
+    expect(service).toContain('const { checkBlueprintInvariants } = await import("../blueprint-invariants")');
+    expect(service).toContain("checkBlueprintInvariants(snapshot.team.blueprintId)");
+    const tool = read("server", "astra", "tools", "verify-wiring.ts");
+    expect(tool).toContain("branchesThatCanNeverBeTaken");
+    expect(tool).toContain('f.kind === "unsatisfiable_condition" || f.kind === "unreachable_rule_field"');
+    // And the model is told the tool now answers this, or it will never call it for that.
+    expect(tool).toContain("branch conditions that can never be true");
+  });
+
+  it("leaves the prefix case to the existing check, so one condition is not reported twice", async () => {
+    db.nodes = [node("n1", "Draft endorsement"), node("n2", "Underwriter sign off")];
+    db.edges = [gated("n1", "n2", "endorsement_accepted.rejected")];
+    db.teamAgents = [{ id: "team-1" }];
+    db.runs = [{ finalState: {} }, { finalState: {} }, { finalState: {} }];
+    const check = await checkBlueprintInvariants("bp-1");
+    expect(check.findings.map((f) => f.kind)).toEqual(["unreachable_rule_field"]);
   });
 });

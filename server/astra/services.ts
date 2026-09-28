@@ -1309,7 +1309,22 @@ async function verifyTeamWiring(orgId: string, teamAgentId: string) {
   for (const rows of Object.values(snapshot.links)) {
     for (const l of rows) if (l.visible) connectors.set(l.serverId, { name: l.name, writeTools: l.writeToolCount ?? 0, connected: l.connected });
   }
-  return { team: snapshot.team, report, steps: order, connectors: Array.from(connectors.values()) };
+  // The graph invariants too, for a team that already exists.
+  //
+  // They were only ever evaluated when a team was BUILT, SYNCED or DEPLOYED, so
+  // a team built before the check existed — or one whose blueprint drifted since
+  // — carried its findings with nobody able to ask for them. Measured
+  // 2026-09-28: four dead branch conditions across the live teams that the check
+  // already catches, and not one of them had ever been surfaced.
+  const { checkBlueprintInvariants } = await import("../blueprint-invariants");
+  const invariants = await checkBlueprintInvariants(snapshot.team.blueprintId).catch(() => null);
+  return {
+    team: snapshot.team,
+    report,
+    steps: order,
+    connectors: Array.from(connectors.values()),
+    invariants: invariants ? { runnable: invariants.runnable, findings: invariants.findings, checked: invariants.checked } : null,
+  };
 }
 
 // ── run_team / get_team_run ─────────────────────────────────────────────────

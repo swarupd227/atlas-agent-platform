@@ -20,9 +20,17 @@
  */
 import { storage } from "./storage";
 import { backEdgeKeys } from "@shared/graph-cycles";
+import { judgeConditionField, ruleFields, statePaths } from "@shared/rule-fields";
 
 export interface BlueprintFinding {
-  kind: "cycle" | "dangling_revision" | "no_fallback_branch" | "unreachable_rule_field" | "branch_judged_by_model";
+  kind:
+    | "cycle"
+    | "dangling_revision"
+    | "no_fallback_branch"
+    | "unreachable_rule_field"
+    /** A branch condition that cannot be true: see the check at the end of this file. */
+    | "unsatisfiable_condition"
+    | "branch_judged_by_model";
   /** Sentence naming the steps involved and what to do, for a card or a route. */
   message: string;
   /** True when no run can start at all. */
@@ -140,19 +148,9 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
   // flagging those would be guessing.
   const stateKeys = new Set(nodes.map((n) => String(n.stateKey ?? "")).filter(Boolean));
   const RUNTIME_PREFIXES = new Set(["state", "input", "output", "request", "run"]);
-  const fieldsOf = (rule: unknown, into: string[] = []): string[] => {
-    const group = rule as { conditions?: unknown[] } | null;
-    if (!group || !Array.isArray(group.conditions)) return into;
-    for (const c of group.conditions) {
-      const leaf = c as { field?: unknown; conditions?: unknown[] };
-      if (Array.isArray(leaf?.conditions)) fieldsOf(leaf, into);
-      else if (typeof leaf?.field === "string") into.push(leaf.field);
-    }
-    return into;
-  };
   for (const e of edges) {
     if (e.evaluationMode !== "deterministic" || !e.rule) continue;
-    for (const field of fieldsOf(e.rule)) {
+    for (const field of ruleFields(e.rule)) {
       const prefix = field.includes(".") ? field.split(".")[0] : "";
       if (!prefix || stateKeys.has(prefix) || RUNTIME_PREFIXES.has(prefix)) continue;
       findings.push({
@@ -184,5 +182,78 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
     });
   }
 
+  // --- a branch condition that cannot be true ---
+  //
+  // The check above compares the field's PREFIX with the team's state keys, and
+  // for nine of the thirteen dead edges found on the live fleet the prefix was a
+  // perfectly real step. What was missing was the property after the dot:
+  // `pre_bind_quality_check.passed` reads a step that exists and a property it
+  // never emits, so the branch behind it had never once been taken in 85 runs.
+  //
+  // Two sources decide it, and a finding always says which one it rests on: the
+  // producing step's declared output schema (decisive, before any run), or the
+  // fields recent runs actually produced (evidence, not proof -- hence never
+  // blocking, and never raised below a floor of runs).
+  const nodeByStateKey = new Map(nodes.filter((n) => n.stateKey).map((n) => [String(n.stateKey), n]));
+  const { observedPaths, runsObserved } = await observedStateFields(blueprintId);
+
+  for (const e of edges) {
+    if (e.evaluationMode !== "deterministic" || !e.rule) continue;
+    for (const field of ruleFields(e.rule)) {
+      const producer = nodeByStateKey.get(field.split(".")[0]);
+      const verdict = judgeConditionField({
+        field,
+        stateKeys,
+        producerSchema: producer?.outputSchema,
+        observedPaths,
+        runsObserved,
+      });
+      if (verdict.satisfiable) continue;
+      const from = labelOf(e.sourceNodeId);
+      const to = labelOf(e.targetNodeId);
+      findings.push({
+        kind: "unsatisfiable_condition",
+        blocksRun: false,
+        steps: [from, to],
+        message:
+          verdict.basis === "schema"
+            ? `The path from "${from}" to "${to}" is decided by "${field}", but "${producer?.label ?? field.split(".")[0]}" declares it produces ${verdict.declared.length > 0 ? verdict.declared.map((d) => `"${d}"`).join(", ") : "nothing"} — not "${field.split(".").slice(1).join(".")}". The condition can never be true, so that path is never taken and every step behind it is skipped.`
+            : `The path from "${from}" to "${to}" is decided by "${field}", and "${field}" has not appeared in any of the last ${verdict.runsObserved} runs of this team. That is evidence rather than proof — a rare case might still produce it — but if it is a typo for a field the step does emit, every step behind this path is being skipped on every run.`,
+      });
+    }
+  }
+
   return { runnable: !findings.some((f) => f.blocksRun), findings, checked: { nodes: nodes.length, edges: edges.length } };
+}
+
+/**
+ * The dotted paths recent runs of this team actually produced.
+ *
+ * Read from completed runs' final state, newest first, because that is the only
+ * evidence available when a step declares no output schema — which, measured on
+ * 2026-09-28, was every step of all six teams that skip anything.
+ *
+ * Returns nothing on any failure: a check that cannot see run history must say
+ * "no evidence" and let the condition pass, never invent a defect.
+ */
+async function observedStateFields(blueprintId: string): Promise<{ observedPaths: Set<string>; runsObserved: number }> {
+  const empty = { observedPaths: new Set<string>(), runsObserved: 0 };
+  try {
+    const agents = await storage.listAgentsByBlueprintId(blueprintId);
+    const teamAgentId = agents[0]?.id;
+    if (!teamAgentId) return empty;
+    const runs = await storage.listDagExecutionRunsByTeamAgent(teamAgentId, 10);
+    if (runs.length === 0) return empty;
+    const observedPaths = new Set<string>();
+    let runsObserved = 0;
+    for (const run of runs) {
+      const state = run?.finalState ?? run?.currentState;
+      if (!state || typeof state !== "object") continue;
+      runsObserved++;
+      for (const path of Array.from(statePaths(state))) observedPaths.add(path);
+    }
+    return { observedPaths, runsObserved };
+  } catch {
+    return empty;
+  }
 }

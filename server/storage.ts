@@ -241,6 +241,7 @@ export interface IStorage {
   getAgent(id: string, orgId?: string): Promise<Agent | undefined>;
   getAgentOrgMap(): Promise<Map<string, string | null>>;
   getAgentsByOntologyConcept(conceptId: string, orgId?: string): Promise<Agent[]>;
+  listAgentsByBlueprintId(blueprintId: string): Promise<Agent[]>;
   getCuratedJourneys(orgId?: string): Promise<Agent[]>;
   createAgent(agent: InsertAgent): Promise<Agent>;
 
@@ -1204,6 +1205,15 @@ export class DatabaseStorage implements IStorage {
     const clause = orgId ? and(eq(agents.id, id), eq(agents.organizationId, orgId)) : eq(agents.id, id);
     const [agent] = await db.select().from(agents).where(clause);
     return agent;
+  }
+
+  /**
+   * The agents built on a blueprint. Used by the invariant check to find the
+   * team whose run history is the only evidence available about a branch
+   * condition when the producing step declares no output schema.
+   */
+  async listAgentsByBlueprintId(blueprintId: string) {
+    return db.select().from(agents).where(eq(agents.blueprintId, blueprintId));
   }
 
   async getAgentsByOntologyConcept(conceptId: string, orgId?: string) {
