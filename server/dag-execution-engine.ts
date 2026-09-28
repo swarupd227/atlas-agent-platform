@@ -7,6 +7,7 @@ import { searchKnowledgeBaseChunks } from "./embeddings";
 import { recomputeOutcomeKpis, resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
+import { decide } from "./decision-provider";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
@@ -184,6 +185,8 @@ export interface DAGExecutionConfig {
   initialState: Record<string, any>;
   errorStrategy: "fail_fast" | "best_effort";
   teamAgentId: string;
+  /** The team's organization; routing questions carry it to the decision seam for residency. */
+  organizationId?: string | null;
   teamAgentRuntimeConfig?: Record<string, any>;
   onNodeStart?: (nodeId: string, wave: number) => void;
   onNodeComplete?: (nodeId: string, wave: number, result: NodeExecutionResult) => void;
@@ -1406,7 +1409,7 @@ export class DAGExecutionEngine {
         });
         if (ready.length === 0) continue;
         const { eligibleNodeIds, skippedResults } = await this.filterGatedNodes(
-          ready, config.executionPlan.incomingEdges, liveState, nodeOutputText, nodeLabelById, skippedNodeIds, config.executionPlan.nodeConfig,
+          ready, config.executionPlan.incomingEdges, liveState, nodeOutputText, nodeLabelById, skippedNodeIds, config.executionPlan.nodeConfig, config.organizationId ?? null,
         );
         for (const nodeId of eligibleNodeIds) launch(nodeId, w.wave_number);
         for (const sr of skippedResults) launch(sr.nodeId, w.wave_number, sr);
@@ -1434,6 +1437,7 @@ export class DAGExecutionEngine {
         nodeLabelById,
         skippedNodeIds,
         config.executionPlan.nodeConfig,
+        config.organizationId ?? null,
       );
       for (const nodeId of eligibleNodeIds) launch(nodeId, wave.wave_number);
       for (const sr of skippedResults) launch(sr.nodeId, wave.wave_number, sr);
@@ -1699,6 +1703,60 @@ export class DAGExecutionEngine {
    * engine's own addition since computeWaves supports arbitrary DAGs, not
    * just executeTeamPipeline's fixed linear tiers.
    */
+  // One handoff choice per (source, output), shared by every handoff edge out
+  // of that source across waves, so the seam is asked once and exactly one
+  // target can match. Keyed on the output too: a re-run source gets a fresh
+  // answer for its fresh output.
+  private handoffChoices = new Map<string, Promise<string | null>>();
+
+  /**
+   * Which handoff target a source output is for, when the source did not name
+   * one itself. Asked only with two or more valid targets: with one, the old
+   * behaviour (no target named, edge not satisfied) stands, because a choice
+   * with a single option cannot say "none of these".
+   */
+  private chooseHandoffTarget(
+    sourceNodeId: string,
+    sourceOutput: string,
+    incomingEdges: Record<string, IncomingEdgeInfo[]>,
+    nodeLabelById: Map<string, string>,
+    orgId: string | null,
+  ): Promise<string | null> {
+    const key = `${sourceNodeId}:${createHash("sha256").update(sourceOutput).digest("hex").slice(0, 16)}`;
+    let pending = this.handoffChoices.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const labels: string[] = [];
+        for (const [targetId, edges] of Object.entries(incomingEdges)) {
+          if (edges.some((e) => e.sourceNodeId === sourceNodeId && e.evaluationMode === "handoff")) {
+            const label = nodeLabelById.get(targetId);
+            if (label && !labels.includes(label)) labels.push(label);
+          }
+        }
+        if (labels.length < 2) return null;
+        const criteria: Record<string, string> = {};
+        for (const l of labels) criteria[l] = `Hand this work to the step "${l}"`;
+        try {
+          const r = await decide({
+            kind: "choice",
+            site: "handoff",
+            orgId,
+            state: sourceOutput.slice(0, 12000),
+            instructions: "This step's output must be handed to exactly one of the next steps listed. Which step is it for?",
+            criteria,
+            subject: labels.join(" | ").slice(0, 500),
+          });
+          return typeof r.answer === "string" ? r.answer : null;
+        } catch (err: unknown) {
+          console.warn(`[dag-engine] handoff choice for ${sourceNodeId} failed: ${err instanceof Error ? err.message : String(err)}`);
+          return null;
+        }
+      })();
+      this.handoffChoices.set(key, pending);
+    }
+    return pending;
+  }
+
   private async filterGatedNodes(
     nodeIds: string[],
     incomingEdges: Record<string, IncomingEdgeInfo[]>,
@@ -1707,6 +1765,9 @@ export class DAGExecutionEngine {
     nodeLabelById: Map<string, string>,
     skippedNodeIds: Set<string>,
     nodeConfig: Record<string, NodePlanConfig>,
+    // The owning organization, so a residency setting can keep its routing
+    // questions off the decision model (server/decision-settings.ts).
+    orgId: string | null = null,
   ): Promise<{ eligibleNodeIds: string[]; skippedResults: NodeExecutionResult[] }> {
     if (nodeIds.every((id) => (incomingEdges[id]?.length ?? 0) === 0)) {
       return { eligibleNodeIds: nodeIds, skippedResults: [] };
@@ -1797,7 +1858,14 @@ export class DAGExecutionEngine {
         }
         if (edge.evaluationMode === "handoff") {
           conditionsEvaluated++;
-          return isHandoffTarget(sourceOutput, nodeLabelById.get(nodeId) || "");
+          if (isHandoffTarget(sourceOutput, nodeLabelById.get(nodeId) || "")) return true;
+          // The source named no target (or named one that matches nothing).
+          // Rather than route nowhere, ask the decision seam once per source
+          // which of the valid targets this output is for; every handoff edge
+          // out of that source shares the one answer, so exactly one can match.
+          if (extractHandoffTarget(sourceOutput)) return false;
+          const chosen = await this.chooseHandoffTarget(edge.sourceNodeId, sourceOutput, incomingEdges, nodeLabelById, orgId);
+          return !!chosen && slugifyLabel(chosen) === slugifyLabel(nodeLabelById.get(nodeId) || "");
         }
         // A gating edge carrying no condition text has nothing to evaluate. It
         // is not a condition that came out false, and reporting it as one sends
@@ -1807,7 +1875,7 @@ export class DAGExecutionEngine {
           return false;
         }
         conditionsEvaluated++;
-        return evaluateCondition(edge.condition, sourceOutput);
+        return evaluateCondition(edge.condition, sourceOutput, { orgId });
       }));
 
       if (outcomes.some(Boolean)) {
@@ -2733,6 +2801,7 @@ export class DAGExecutionEngine {
       initialState: withoutRevisionBookkeeping(currentState),
       errorStrategy: config.errorStrategy,
       teamAgentId,
+      organizationId: teamAgent.organizationId ?? config.organizationId ?? null,
       teamAgentRuntimeConfig: (teamAgent.runtimeConfig as Record<string, any>) || {},
       // Forward the parked approval id so a resumed parent run whose paused
       // wave contains this Team Reference node lets the nested gate (however
@@ -3048,8 +3117,11 @@ async function executeTeamAgentDagRun(
   opts?: RunTeamAgentDagOptions,
 ): Promise<DAGExecutionResult> {
   const { dagRun, wavePlan, stateSchema, initialState, nodeWave, teamAgentRuntimeConfig, resumeFromWave, resumePriorWaveResults, resumePendingApprovalId } = setup;
-  // Only used to label approvals so a human can tell two pending gates apart.
-  const teamAgentName = await storage.getAgent(teamAgentId).then((a) => a?.name).catch(() => undefined);
+  // The name only labels approvals so a human can tell two pending gates
+  // apart; the organization reaches the decision seam for residency routing.
+  const teamAgentRow = await storage.getAgent(teamAgentId).catch(() => undefined);
+  const teamAgentName = teamAgentRow?.name;
+  const organizationId = teamAgentRow?.organizationId ?? null;
   const engine = new DAGExecutionEngine();
   // Registered for the strand's whole lifetime (cleared in `finally`), so a
   // same-process resume attempt defers to it -- see liveDagRunStrands.
@@ -3075,6 +3147,7 @@ async function executeTeamAgentDagRun(
       initialState,
       errorStrategy: opts?.errorStrategy || "best_effort",
       teamAgentId,
+      organizationId,
       teamAgentRuntimeConfig,
       dagRunId: dagRun.id,
       teamAgentName,

@@ -33,6 +33,11 @@ vi.mock("../server/agent-runtime", () => ({
   },
 }));
 
+// The decision seam behind handoff routing (server/decision-provider.ts);
+// only the handoff-fallback cases below make it answer.
+const decideMock = vi.fn(async (_req: any) => ({ kind: "choice", answer: "", confidence: 1, engine: "jev", mode: "jev", model: "jev", latencyMs: 1, inputTokens: 1, costUsd: 0 }));
+vi.mock("../server/decision-provider", () => ({ decide: (req: any) => decideMock(req) }));
+
 function node(overrides: Partial<TeamBlueprintNode>): TeamBlueprintNode {
   return {
     id: "n1",
@@ -483,5 +488,56 @@ describe("the reason a step was skipped", () => {
     expect(of("end")?.status).toBe("skipped");
     expect(of("end")?.error).toContain("The step before it did not run");
     expect(of("end")?.error).toContain("mid");
+  });
+});
+
+describe("DAGExecutionEngine — handoff edges fall back to the decision seam", () => {
+  const graph = () => {
+    const nodes = [
+      node({ id: "triage", label: "Triage", stateKey: "triage_out", refAgentId: "agent-triage" }),
+      node({ id: "approve", label: "Approve", stateKey: "approve_out", refAgentId: "agent-approve" }),
+      node({ id: "reject", label: "Reject", stateKey: "reject_out", refAgentId: "agent-reject" }),
+    ];
+    const edges = [
+      edge({ id: "h1", sourceNodeId: "triage", targetNodeId: "approve", evaluationMode: "handoff" }),
+      edge({ id: "h2", sourceNodeId: "triage", targetNodeId: "reject", evaluationMode: "handoff" }),
+    ];
+    return computeWaves(nodes, edges);
+  };
+  const statuses = (result: any) => Object.fromEntries(result.waveResults.flatMap((w: any) => w.nodes).map((n: any) => [n.nodeId, n.status]));
+
+  it("does not ask the seam when the source named its target", async () => {
+    decideMock.mockClear();
+    const { executeWorkerAgent } = await import("../server/agent-runtime");
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string) =>
+      agentId === "agent-triage" ? { success: true, output: JSON.stringify({ handoff_to: "Reject" }) } : { success: true, output: "done" });
+    const result = await new DAGExecutionEngine().execute({ executionPlan: graph(), stateSchema: {}, initialState: {}, errorStrategy: "best_effort", teamAgentId: "team-1" });
+    expect(statuses(result)).toMatchObject({ triage: "completed", approve: "skipped", reject: "completed" });
+    expect(decideMock).not.toHaveBeenCalled();
+  });
+
+  it("asks the seam once per source when no target was named, and routes exactly one branch", async () => {
+    decideMock.mockClear();
+    decideMock.mockResolvedValue({ kind: "choice", answer: "Approve", confidence: 0.93, engine: "jev", mode: "jev", model: "jev", latencyMs: 1, inputTokens: 1, costUsd: 0 } as any);
+    const { executeWorkerAgent } = await import("../server/agent-runtime");
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string) =>
+      agentId === "agent-triage" ? { success: true, output: "Looks fine to me, nothing to flag." } : { success: true, output: "done" });
+    const result = await new DAGExecutionEngine().execute({ executionPlan: graph(), stateSchema: {}, initialState: {}, errorStrategy: "best_effort", teamAgentId: "team-1", organizationId: "org-7" });
+    expect(statuses(result)).toMatchObject({ triage: "completed", approve: "completed", reject: "skipped" });
+    expect(decideMock).toHaveBeenCalledTimes(1);
+    const req = decideMock.mock.calls[0][0];
+    expect(req.kind).toBe("choice");
+    expect(req.site).toBe("handoff");
+    expect(req.orgId).toBe("org-7");
+    expect(Object.keys(req.criteria).sort()).toEqual(["Approve", "Reject"]);
+  });
+
+  it("keeps the old outcome when the seam cannot answer", async () => {
+    decideMock.mockClear();
+    decideMock.mockRejectedValueOnce(new Error("down"));
+    const { executeWorkerAgent } = await import("../server/agent-runtime");
+    (executeWorkerAgent as any).mockImplementation(async () => ({ success: true, output: "no target named" }));
+    const result = await new DAGExecutionEngine().execute({ executionPlan: graph(), stateSchema: {}, initialState: {}, errorStrategy: "best_effort", teamAgentId: "team-1" });
+    expect(statuses(result)).toMatchObject({ triage: "completed", approve: "skipped", reject: "skipped" });
   });
 });

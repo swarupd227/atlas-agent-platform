@@ -1740,6 +1740,33 @@ export async function seedDatabase() {
         description: "Inject ATLAS trace IDs into A2A metadata to enable cross-agent trace correlation.",
         category: "observability",
       },
+      // Decision routing (server/decision-settings.ts). The provider default
+      // follows the environment so a deployment already running the shadow
+      // measurement keeps doing so when its settings rows are first created.
+      {
+        key: "DECISION_PROVIDER",
+        value: ["llm", "shadow", "jev"].includes(String(process.env.DECISION_PROVIDER ?? "").toLowerCase()) ? String(process.env.DECISION_PROVIDER).toLowerCase() : "llm",
+        description: "Which engine answers judgment-shaped questions (routing conditions, handoffs, decision steps): llm = the language model as before; shadow = the LLM decides and the decision model is recorded beside it; jev = the decision model decides, falling back to the LLM below the act threshold.",
+        category: "decisions",
+      },
+      {
+        key: "DECISION_THRESHOLDS",
+        value: JSON.stringify({ review: 0.6, act: 0.85 }),
+        description: "Decision-model confidence (or noul margin) below which an answer is only flagged for review (review) or handed to the LLM instead (act). Measured defaults from the 2026-09-28 shadow run.",
+        category: "decisions",
+      },
+      {
+        key: "DECISION_SITE_OVERRIDES",
+        value: "{}",
+        description: "Per-site routing overrides as JSON, e.g. {\"evaluateCondition\":\"jev\",\"handoff\":{\"mode\":\"jev\",\"threshold\":0.9}}. Sites: evaluateCondition, handoff, decision_step.",
+        category: "decisions",
+      },
+      {
+        key: "DECISION_STEP_KIND",
+        value: "off",
+        description: "on = a make_decision step with labelled branches compiles to the decision execution kind (one decision call, exactly one branch) on its next build or sync; off = it stays an agent step. A flow can opt in on its own with config.decisionKind.",
+        category: "decisions",
+      },
     ];
     const missingSettings = seedRowsMissing(existingSettings, defaultSettings, "key");
     if (missingSettings.length > 0) {

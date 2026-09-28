@@ -111,7 +111,7 @@ interface Comparison {
   margin: number | null;
 }
 
-interface AuditRow extends Partial<Comparison> {
+export interface AuditRow extends Partial<Comparison> {
   site: string;
   questionKind: JevQuestion["type"];
   latencyMs: number | null;
@@ -122,9 +122,19 @@ interface AuditRow extends Partial<Comparison> {
   stateChars: number;
   stateHash: string;
   error: string | null;
+  /** Which engine's answer the caller used; absent for a pure shadow comparison. */
+  engine?: "jev" | "llm" | null;
+  /** The route that applied (llm | shadow | jev); absent for a pure shadow comparison. */
+  mode?: string | null;
+  fallbackReason?: string | null;
 }
 
-async function record(row: AuditRow): Promise<void> {
+/**
+ * One row of decision_audit. Shared by the shadow measurement (this file) and
+ * the live seam (server/decision-provider.ts), so both land in the same table
+ * and the same report.
+ */
+export async function recordDecisionAudit(row: AuditRow): Promise<void> {
   const agree =
     row.jevDecision === null || row.jevDecision === undefined || row.llmDecision === null || row.llmDecision === undefined
       ? null
@@ -133,16 +143,19 @@ async function record(row: AuditRow): Promise<void> {
     INSERT INTO decision_audit
       (site, question_kind, subject, jev_answer, llm_answer, jev_decision, llm_decision, agree,
        confidence, margin, latency_ms, llm_latency_ms, llm_model, jev_model, input_tokens,
-       state_chars, state_hash, error)
+       state_chars, state_hash, error, engine, mode, fallback_reason)
     VALUES
       (${row.site}, ${row.questionKind}, ${row.subject ?? null},
        ${row.jevAnswer === undefined ? null : JSON.stringify(row.jevAnswer)}::jsonb,
        ${row.llmAnswer === undefined ? null : JSON.stringify(row.llmAnswer)}::jsonb,
        ${row.jevDecision ?? null}, ${row.llmDecision ?? null}, ${agree},
        ${row.confidence ?? null}, ${row.margin ?? null}, ${row.latencyMs}, ${row.llmLatencyMs},
-       ${row.llmModel}, ${row.jevModel}, ${row.inputTokens}, ${row.stateChars}, ${row.stateHash}, ${row.error})
+       ${row.llmModel}, ${row.jevModel}, ${row.inputTokens}, ${row.stateChars}, ${row.stateHash}, ${row.error},
+       ${row.engine ?? null}, ${row.mode ?? null}, ${row.fallbackReason ?? null})
   `);
 }
+
+const record = recordDecisionAudit;
 
 interface LlmContext {
   model?: string;

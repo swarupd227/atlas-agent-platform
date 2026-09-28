@@ -27,9 +27,11 @@ import type { RuleGroup, OutputContract } from "@shared/schema";
 // executePromptWithMcp). Kept as their own import lines rather than folded into
 // the ones above so the hunk stays independent of concurrent edits up there.
 import { ensureContainerFiles, ensureGeneratedContainerFiles } from "./anthropic-code-execution";
-// Jev shadow measurement (Phase 0; no-op unless DECISION_PROVIDER=shadow). Own
-// line for the same reason as above.
-import { shadowEvaluateCondition, shadowSoftPolicyCompliance } from "./decision-shadow";
+// Decision seam and the Phase 0 shadow measurement. Own lines for the same
+// reason as above.
+import { shadowSoftPolicyCompliance } from "./decision-shadow";
+import { decide } from "./decision-provider";
+import { parseConditionToRule } from "@shared/condition-to-rule";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
 import { resolveOutputMode, ownFinalAnswer, continuationMaxTokens, ANALYSIS_MAX_TOKENS } from "./output-mode";
@@ -3179,22 +3181,40 @@ export async function waitForApproval(
 export async function evaluateCondition(
   condition: string,
   workerOutput: string,
-  // shadowSite: label for the shadow audit row when this is a replay of a stored
-  // pair rather than a live routing decision (server/routes/decision-audit.ts).
-  opts?: { shadowSite?: string },
+  // shadowSite: label for the audit row when this is a replay of a stored pair
+  // rather than a live routing decision (server/routes/decision-audit.ts).
+  // orgId: lets the organization's residency setting force the LLM route.
+  opts?: { shadowSite?: string; orgId?: string | null },
 ): Promise<boolean> {
   if (!condition || condition.trim().length === 0) return true;
+  // A condition that is really a comparison ("riskScore > 70") is answered by
+  // the rule evaluator when the output carries the field -- no model of any
+  // kind reads arithmetic. Only when the field is absent does it fall through.
+  const rule = parseConditionToRule(condition);
+  if (rule) {
+    const state = parseModelJsonObject(workerOutput);
+    if (state) {
+      const trace = evaluateRule(rule, state);
+      if (Object.values(trace.inputs).every(v => v !== undefined)) return trace.result;
+    }
+  }
   try {
-    const startedAt = Date.now();
-    const result = await completeWithFallback([{
-      role: "user",
-      content: `You are evaluating a pipeline routing condition.\n\nCondition: "${condition}"\n\nWorker output:\n${workerOutput.slice(0, 3000)}\n\nRespond with ONLY "true" or "false".`,
-    }], { maxTokens: 10 });
-    const verdict = (result.content?.trim().toLowerCase() || "").startsWith("true");
-    // Shadow-only: the same question to Jev, recorded beside this verdict for
-    // comparison. Fire-and-forget; the routing decision is `verdict`, unchanged.
-    shadowEvaluateCondition({ condition, workerOutput, llmDecision: verdict, llmModel: result.actualModel, llmLatencyMs: Date.now() - startedAt, site: opts?.shadowSite });
-    return verdict;
+    const slice = workerOutput.slice(0, 3000);
+    const result = await decide({
+      kind: "noul",
+      site: opts?.shadowSite ?? "evaluateCondition",
+      orgId: opts?.orgId ?? null,
+      state: { condition, worker_output: slice },
+      instructions: `You are evaluating a pipeline routing condition against a worker's output. Is the condition satisfied? Condition: ${condition}`,
+      criteria: {
+        true: "The worker output clearly satisfies the condition",
+        false: "The worker output does not satisfy the condition, or does not say",
+      },
+      // The incumbent model keeps the exact prompt it has always seen.
+      llmPrompt: `You are evaluating a pipeline routing condition.\n\nCondition: "${condition}"\n\nWorker output:\n${slice}\n\nRespond with ONLY "true" or "false".`,
+      subject: condition.slice(0, 500),
+    });
+    return result.answer === true;
   } catch {
     return true; // default open: don't silently block on LLM errors
   }

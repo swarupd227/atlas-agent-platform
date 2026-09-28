@@ -1977,6 +1977,11 @@ export async function runStartupMigrations() {
         created_at TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_decision_audit_site_created ON decision_audit (site, created_at DESC);
+      -- Phase 1: the live seam (server/decision-provider.ts) writes which engine
+      -- answered and under which route, beside the shadow comparisons.
+      ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS engine TEXT;
+      ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS mode TEXT;
+      ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS fallback_reason TEXT;
     `);
 
     console.log("[db] Startup migrations complete");
