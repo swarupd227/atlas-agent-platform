@@ -10,7 +10,7 @@
  * passes (OR), and is skipped (not failed) if none do.
  */
 import { describe, it, expect, vi } from "vitest";
-import { computeWaves, DAGExecutionEngine, getRoutingFieldSpecs, agentNodeTimeoutMs, AGENT_NODE_MIN_TIMEOUT_MS } from "../server/dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, getRoutingFieldSpecs, agentNodeTimeoutMs, AGENT_NODE_MIN_TIMEOUT_MS, skipReason } from "../server/dag-execution-engine";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
 vi.mock("../server/agent-runtime", () => ({
@@ -416,5 +416,72 @@ describe("a decision made only on the step's records", () => {
   it("never overrides a decision the step stated at the top level", async () => {
     const out = JSON.stringify({ resolutionDecision: "create", processedRecords: [{ accountId: "A", resolutionDecision: "match" }] });
     expect(await runWith(out)).toEqual({ create: "completed", screen: "skipped" });
+  });
+});
+
+/**
+ * Why a step was skipped.
+ *
+ * Measured on the live fleet 2026-09-28: 536 steps skipped across 85 runs, all
+ * reporting "No incoming edge condition was satisfied" -- including 14 steps
+ * whose condition was never evaluated at all, because the step before them
+ * never ran. For those the sentence is wrong, not merely vague: it sends a
+ * reader to inspect a condition that had no part in it. One of the 14 was the
+ * step that binds the policy.
+ */
+describe("the reason a step was skipped", () => {
+  it("separates a predecessor that never ran from a condition that came out false", () => {
+    expect(skipReason({ unresolvedSources: ["confidence_check"], emptyConditionSources: [], conditionsEvaluated: 0, missingFields: [] }))
+      .toBe("The step before it did not run (confidence_check), so its own condition was never evaluated");
+    // A condition DID run somewhere on this step: that is an ordinary not-taken
+    // branch, and keeps the wording run history is searchable by.
+    expect(skipReason({ unresolvedSources: ["a"], emptyConditionSources: [], conditionsEvaluated: 1, missingFields: [] }))
+      .toBe("No incoming edge condition was satisfied");
+  });
+
+  it("names an edge that carries no condition at all, rather than blaming one", () => {
+    expect(skipReason({ unresolvedSources: [], emptyConditionSources: ["endorsement_accepted_agent"], conditionsEvaluated: 0, missingFields: [] }))
+      .toBe("No condition to evaluate: the edge from endorsement_accepted_agent carries no condition");
+  });
+
+  it("keeps the missing-routing-field wording, which was already right", () => {
+    expect(skipReason({ unresolvedSources: [], emptyConditionSources: [], conditionsEvaluated: 1, missingFields: ["endorsement_accepted.rejected"] }))
+      .toBe("No incoming edge condition was satisfied (no upstream step output the routing field endorsement_accepted.rejected)");
+  });
+
+  it("pluralises and caps the list, so a wide fan-in stays readable", () => {
+    const r = skipReason({ unresolvedSources: ["a", "b", "c", "d", "e"], emptyConditionSources: [], conditionsEvaluated: 0, missingFields: [] });
+    expect(r).toContain("The steps before it did not run (a, b, c, +2 more)");
+  });
+
+  it("reports a cascade through the engine, not just in the helper", async () => {
+    const { executeWorkerAgent, extractStructuredOutput } = await import("../server/agent-runtime");
+    (extractStructuredOutput as any).mockImplementation((t: string) => { try { return JSON.parse(t); } catch { return null; } });
+    (executeWorkerAgent as any).mockImplementation(async () => ({ success: true, output: JSON.stringify({ decision: "no" }) }));
+
+    const rule = (value: string) => ({ combinator: "AND", conditions: [{ field: "decision", operator: "==", value }] } as any);
+    const nodes = [
+      node({ id: "start", stateKey: "start_out", refAgentId: "agent-start" }),
+      node({ id: "mid", stateKey: "mid_out", refAgentId: "agent-mid" }),
+      node({ id: "end", stateKey: "end_out", refAgentId: "agent-end" }),
+    ];
+    const edges = [
+      edge({ id: "e1", sourceNodeId: "start", targetNodeId: "mid", evaluationMode: "deterministic", rule: rule("yes") }),
+      edge({ id: "e2", sourceNodeId: "mid", targetNodeId: "end", evaluationMode: "deterministic", rule: rule("yes") }),
+    ];
+    const result = await new DAGExecutionEngine().execute({
+      executionPlan: computeWaves(nodes, edges), stateSchema: {}, initialState: {}, errorStrategy: "best_effort", teamAgentId: "team-1",
+    });
+    (extractStructuredOutput as any).mockReturnValue(null);
+
+    const of = (id: string) => result.waveResults.flatMap((w) => w.nodes).find((n) => n.nodeId === id);
+    expect(of("start")?.status).toBe("completed");
+    // Its own condition ran and was false.
+    expect(of("mid")?.status).toBe("skipped");
+    expect(of("mid")?.error).toBe("No incoming edge condition was satisfied");
+    // Its condition never ran, because "mid" produced nothing to judge.
+    expect(of("end")?.status).toBe("skipped");
+    expect(of("end")?.error).toContain("The step before it did not run");
+    expect(of("end")?.error).toContain("mid");
   });
 });

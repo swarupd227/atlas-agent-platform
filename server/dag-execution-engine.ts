@@ -762,6 +762,50 @@ function ancestorsOf(nodeId: string, edgeMap: Record<string, string[]>): string[
  * its own section, separate from steps that produced nothing, because the
  * right response differs: here the work exists but is incomplete.
  */
+/**
+ * Why a step was skipped, in the reader's terms.
+ *
+ * Three different things put a step in this position, and the platform said the
+ * same sentence for all of them. Measured on the live fleet 2026-09-28: of 536
+ * skipped steps across 85 runs, every one reported "No incoming edge condition
+ * was satisfied" -- including 14 steps whose own condition was never evaluated,
+ * because the step feeding them never ran. For those the sentence is not vague,
+ * it is wrong, and it points the reader at a condition that had nothing to do
+ * with it. One of them was the step that binds the policy.
+ *
+ * The distinction is cheap to make and decides what to do next:
+ *   - the step before it never ran        -> fix the branch further upstream
+ *   - its condition ran and was false     -> the data really did route elsewhere
+ *   - the edge carries no condition       -> nobody ever wrote one
+ */
+export function skipReason(d: {
+  /** Sources that were themselves skipped, so nothing of this step was judged. */
+  unresolvedSources: string[];
+  /** Gating edges carrying no condition text at all. */
+  emptyConditionSources: string[];
+  /** How many of this step's conditions were actually evaluated. */
+  conditionsEvaluated: number;
+  /** Fields a condition referenced that no upstream step ever produced. */
+  missingFields: string[];
+}): string {
+  const list = (xs: string[]) => xs.slice(0, 3).join(", ") + (xs.length > 3 ? `, +${xs.length - 3} more` : "");
+
+  if (d.conditionsEvaluated === 0 && d.unresolvedSources.length > 0) {
+    const plural = d.unresolvedSources.length > 1;
+    return `The step${plural ? "s" : ""} before it did not run (${list(d.unresolvedSources)}), so its own condition was never evaluated`;
+  }
+  if (d.conditionsEvaluated === 0 && d.emptyConditionSources.length > 0) {
+    const plural = d.emptyConditionSources.length > 1;
+    return `No condition to evaluate: the edge${plural ? "s" : ""} from ${list(d.emptyConditionSources)} carr${plural ? "y" : "ies"} no condition`;
+  }
+  // Wording kept verbatim from before for the two cases it was already right
+  // about, so stored run history stays searchable by it.
+  if (d.missingFields.length > 0) {
+    return `No incoming edge condition was satisfied (no upstream step output the routing field${d.missingFields.length > 1 ? "s" : ""} ${d.missingFields.join(", ")})`;
+  }
+  return "No incoming edge condition was satisfied";
+}
+
 export function upstreamTruncationNotice(
   nodeId: string,
   plan: Pick<ComputedWavePlan, "edgeMap" | "nodeConfig">,
@@ -1687,14 +1731,33 @@ export class DAGExecutionEngine {
       }
 
       const missingFields = new Set<string>();
+      // WHY each edge failed, so a skipped step can say which of three quite
+      // different things happened to it. They are not interchangeable, and one
+      // sentence for all three is how this went unnoticed: measured live
+      // 2026-09-28 over 85 runs, 536 steps were skipped and every one of them
+      // said "No incoming edge condition was satisfied" -- including 14 steps
+      // whose own condition was never evaluated at all because the step before
+      // them never ran. For those the sentence is simply false, and it sent a
+      // reader looking at the wrong condition.
+      const unresolvedSources = new Set<string>();
+      const emptyConditionSources = new Set<string>();
+      let conditionsEvaluated = 0;
+      const sourceName = (id: string) => nodeConfig[id]?.stateKey || nodeLabelById.get(id) || id.slice(0, 8);
+
       const outcomes = await Promise.all(incoming.map(async (edge) => {
-        if (!edge.isGating) return !skippedNodeIds.has(edge.sourceNodeId);
+        if (!edge.isGating) {
+          if (skippedNodeIds.has(edge.sourceNodeId)) unresolvedSources.add(sourceName(edge.sourceNodeId));
+          return !skippedNodeIds.has(edge.sourceNodeId);
+        }
 
         // An edge with an unresolved (skipped) source has no output to
         // judge a condition against -- treat it as not satisfied rather
         // than defaulting open, so a skip doesn't silently cascade approval.
         const sourceOutput = nodeOutputText.get(edge.sourceNodeId);
-        if (sourceOutput == null) return false;
+        if (sourceOutput == null) {
+          unresolvedSources.add(sourceName(edge.sourceNodeId));
+          return false;
+        }
 
         // An approval/HITL gate's output is always the deterministic
         // {approved: boolean} decision written by executeGateNode -- trust
@@ -1717,11 +1780,15 @@ export class DAGExecutionEngine {
             // POL-2026-8891-CP and told the broker it was declined, and nothing
             // reported a problem. An edge whose polarity cannot be read still
             // follows the approval, so a single onward edge behaves as before.
-            if (typeof parsed.approved === "boolean") return gateEdgeSatisfied(parsed.approved, edge);
+            if (typeof parsed.approved === "boolean") {
+              conditionsEvaluated++;
+              return gateEdgeSatisfied(parsed.approved, edge);
+            }
           } catch { /* fall through to normal evaluation below */ }
         }
 
         if (edge.evaluationMode === "deterministic" && edge.rule) {
+          conditionsEvaluated++;
           const trace = evaluateRule(edge.rule, withRoutedRecordValues(pipelineState, sourceOutput, edge.sourceNodeId, incomingEdges));
           if (!trace.result) {
             for (const [field, value] of Object.entries(trace.inputs)) if (value === undefined) missingFields.add(field);
@@ -1729,9 +1796,18 @@ export class DAGExecutionEngine {
           return trace.result;
         }
         if (edge.evaluationMode === "handoff") {
+          conditionsEvaluated++;
           return isHandoffTarget(sourceOutput, nodeLabelById.get(nodeId) || "");
         }
-        return evaluateCondition(edge.condition || "", sourceOutput);
+        // A gating edge carrying no condition text has nothing to evaluate. It
+        // is not a condition that came out false, and reporting it as one sends
+        // the reader hunting for a condition that was never written.
+        if (!edge.condition) {
+          emptyConditionSources.add(sourceName(edge.sourceNodeId));
+          return false;
+        }
+        conditionsEvaluated++;
+        return evaluateCondition(edge.condition, sourceOutput);
       }));
 
       if (outcomes.some(Boolean)) {
@@ -1742,9 +1818,12 @@ export class DAGExecutionEngine {
           agentId: "",
           status: "skipped",
           output: {},
-          error: missingFields.size > 0
-            ? `No incoming edge condition was satisfied (no upstream step output the routing field${missingFields.size > 1 ? "s" : ""} ${Array.from(missingFields).join(", ")})`
-            : "No incoming edge condition was satisfied",
+          error: skipReason({
+            unresolvedSources: Array.from(unresolvedSources),
+            emptyConditionSources: Array.from(emptyConditionSources),
+            conditionsEvaluated,
+            missingFields: Array.from(missingFields),
+          }),
           durationMs: 0,
           promptTokens: 0,
           completionTokens: 0,
