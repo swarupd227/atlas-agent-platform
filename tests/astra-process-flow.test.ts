@@ -186,8 +186,9 @@ describe("one generator, two callers", () => {
 
   it("Astra drafts through the same module, and compiles what it drew", () => {
     expect(services).toContain("await draftProcessFlow({ description: input.description, fileIds: input.fileIds, orgId });");
-    // The same check the Studio's "Check flow" button runs.
-    expect(services).toContain("compileProcessFlow(graph)");
+    // The same check the Studio's "Check flow" button runs, with the same
+    // decision-kind flag the Studio's route passes (server/decision-settings.ts).
+    expect(services).toMatch(/compileProcessFlow\(graph, \{ decisionKind: \(await getDecisionSettings\(\)\)\.stepKind \}\)/);
   });
 
   it("takes an attached document as the description, which is how people start", () => {
