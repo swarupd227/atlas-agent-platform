@@ -23,7 +23,7 @@ import {
   insertTemporalGraphEntrySchema,
 } from "@shared/schema";
 
-import { callClaude, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
+import { callClaude, callClaudeWithUsage, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
 import { decideMany, knownIncumbent } from "../decision-provider";
 import * as yaml from "js-yaml";
 import { filterByIndustry, industryQuery } from "@shared/industry-filter";
@@ -1563,14 +1563,18 @@ ${naturalLanguageInput}`,
 
       // Grade the REAL output with a lightweight judge call.
       let judge: Record<string, any> = {};
+      // What the judge call cost, so the seam's audit row carries the
+      // incumbent's tokens and price beside the decision model's.
+      let judgeUsage: { model?: string; latencyMs: number; inputTokens?: number; costUsd?: number } = { latencyMs: 0 };
       try {
-        const judgeRaw = await callClaude({
+        const judged = await callClaudeWithUsage({
           system: `You are grading a real AI agent execution. Return JSON with keys: "activationTriggered" (boolean — does the response visibly apply the skill named "${skillName || "n/a"}"?), "activationReason" (string), "qualityScore" (number 0-100), "issues" (string[]), "recommendations" (string[]).`,
           user: `Scenario:\n${testScenario}\n\nSkill active: ${withSkill ? "yes" : "no"}\n\nAgent's REAL output:\n${String(executionOutput).slice(0, 4000)}`,
           jsonMode: true,
           maxTokens: 800,
         });
-        judge = JSON.parse(stripJsonFences(judgeRaw));
+        judgeUsage = { model: judged.model, latencyMs: judged.latencyMs, inputTokens: judged.inputTokens, costUsd: judged.costUsd };
+        judge = JSON.parse(stripJsonFences(judged.text));
       } catch { /* grading is best-effort; the real output still returns */ }
 
       // "Did the response apply the skill?" is a judgment, so it goes through
@@ -1583,7 +1587,7 @@ ${naturalLanguageInput}`,
             site: "sandbox_judge",
             state: { scenario: testScenario, skill_name: skillName || "n/a", agent_output: String(executionOutput).slice(0, 4000) },
             questions: { activation: { kind: "noul", instructions: `Does the response visibly apply the skill named "${skillName || "n/a"}"?`, criteria: { true: "The response visibly applies the skill", false: "It does not" }, subject: String(skillName || "skill").slice(0, 500) } },
-            incumbent: knownIncumbent({ activation: Boolean(judge.activationTriggered) }, { latencyMs: 0 }),
+            incumbent: knownIncumbent({ activation: Boolean(judge.activationTriggered) }, judgeUsage),
           });
           activationTriggered = decided.activation?.answer === true;
         } catch { /* the judge's own answer stands */ }

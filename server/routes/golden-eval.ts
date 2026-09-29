@@ -163,7 +163,7 @@ ${actualOutput}`,
       const c = params.criteria[Number(k.slice(1))];
       answers[k] = examiner.met.some((m) => m.trim().toLowerCase() === c.trim().toLowerCase()) && !examiner.missed.some((m) => m.trim().toLowerCase() === c.trim().toLowerCase());
     }
-    return { answers, model: r.model, latencyMs: r.latencyMs, inputTokens: r.inputTokens };
+    return { answers, model: r.model, latencyMs: r.latencyMs, inputTokens: r.inputTokens, costUsd: r.costUsd };
   };
 
   const questions: Record<string, DecisionQuestion> = {};

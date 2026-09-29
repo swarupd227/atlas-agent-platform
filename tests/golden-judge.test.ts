@@ -30,7 +30,7 @@ vi.mock("../server/decision-shadow", () => ({
 }));
 vi.mock("../server/claude", () => ({
   callClaude: vi.fn(),
-  callClaudeWithUsage: vi.fn(async (opts: { user: string }) => { examinerCalls.push(opts.user); return { text: examinerReplies.shift() ?? "{}", model: "claude-opus-4-5", inputTokens: 2400, outputTokens: 120, latencyMs: 3200 }; }),
+  callClaudeWithUsage: vi.fn(async (opts: { user: string }) => { examinerCalls.push(opts.user); return { text: examinerReplies.shift() ?? "{}", model: "claude-opus-4-5", inputTokens: 2400, outputTokens: 120, costUsd: 0.015, latencyMs: 3200 }; }),
   createClaudeMessage: vi.fn(async () => ({ content: [{ type: "text", text: "The broker fee is $250, payable by the insured. Carrier: Lloyd's." }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 10 } })),
   stripJsonFences: (s: string) => s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""),
 }));
@@ -75,7 +75,9 @@ describe("on the jev route", () => {
     expect(r.criteriaMet).toEqual(["States the broker fee", "Names the carrier"]);
     expect(r.reasoning).toBe("The carrier is named at the end.");
     const c1 = audits.find((a) => a.subject === "Names the carrier");
-    expect(c1).toMatchObject({ engine: "llm", mode: "jev", fallbackReason: "below_threshold", llmInputTokens: 2400 });
+    expect(c1).toMatchObject({ engine: "llm", mode: "jev", fallbackReason: "below_threshold", llmInputTokens: 2400, llmCostUsd: 0.015 });
+    // The examiner's price is attributed to the batch once, not once per criterion.
+    expect(audits.filter((a) => a.site === "golden_judge" && (a.llmCostUsd as number) > 0)).toHaveLength(1);
   });
 
   it("fails the case, not passes it, when the examiner's reply cannot be parsed", async () => {
@@ -110,7 +112,8 @@ describe("the seams that carry it", () => {
   it("the sandbox judge asks its one judgment on its own site, with the judge call's answer as the known incumbent", () => {
     const src = read("server", "routes", "skills.ts");
     expect(src).toContain('site: "sandbox_judge"');
-    expect(src).toContain("incumbent: knownIncumbent({ activation: Boolean(judge.activationTriggered) }, { latencyMs: 0 }),");
+    expect(src).toContain("incumbent: knownIncumbent({ activation: Boolean(judge.activationTriggered) }, judgeUsage),");
+    expect(src).toContain("judgeUsage = { model: judged.model, latencyMs: judged.latencyMs, inputTokens: judged.inputTokens, costUsd: judged.costUsd };");
     expect(src).toContain("activationTriggered = decided.activation?.answer === true;");
   });
 
@@ -118,5 +121,7 @@ describe("the seams that carry it", () => {
     const src = read("server", "claude.ts");
     expect(src).toContain("export async function callClaudeWithUsage(");
     expect(src).toContain("return (await callClaudeWithUsage(opts)).text;");
+    expect(src).toContain("costUsd: priceTokens(usedModel, inputTokens, outputTokens),");
+    expect(read("server", "routes", "golden-eval.ts")).toContain("inputTokens: r.inputTokens, costUsd: r.costUsd };");
   });
 });

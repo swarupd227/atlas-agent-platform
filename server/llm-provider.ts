@@ -204,7 +204,7 @@ export interface LLMProviderInfo {
 // version is recorded in run provenance and exposed at
 // GET /api/llm-providers/pricing. Rates are provider list prices per 1k tokens.
 // ---------------------------------------------------------------------------
-export const PRICE_TABLE_VERSION = "2026-09-13";
+export const PRICE_TABLE_VERSION = "2026-09-29";
 
 // Conservative fallback when a model id is missing from the table — better to
 // overestimate spend than silently record $0 (rates ~ Claude Sonnet tier).
@@ -226,6 +226,7 @@ const OPENAI_EMBEDDING_MODELS: LLMProviderInfo["embeddingModels"] = [
 ];
 
 const ANTHROPIC_MODELS: LLMProviderInfo["models"] = [
+  { id: "claude-opus-4-5", name: "Claude Opus 4.5", contextWindow: 200000, costPer1kInput: 0.005, costPer1kOutput: 0.025, supportsToolCalling: true, supportsJson: true },
   { id: "claude-sonnet-5", name: "Claude Sonnet 5", contextWindow: 1000000, costPer1kInput: 0.002, costPer1kOutput: 0.01, supportsToolCalling: true, supportsJson: true },
   { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", contextWindow: 200000, costPer1kInput: 0.001, costPer1kOutput: 0.005, supportsToolCalling: true, supportsJson: true },
   { id: "claude-sonnet-4-5", name: "Claude Sonnet 4", contextWindow: 200000, costPer1kInput: 0.003, costPer1kOutput: 0.015, supportsToolCalling: true, supportsJson: true },
@@ -269,6 +270,16 @@ export function getPriceTable() {
       google: { models: GOOGLE_MODELS },
     },
   };
+}
+
+/**
+ * Price a call by model id across every provider's table, for a caller that
+ * holds tokens from an SDK call of its own (server/claude.ts) rather than a
+ * provider result, so what it records is the price the providers record. An
+ * unknown model takes the conservative fallback, with one warning.
+ */
+export function priceTokens(modelId: string, promptTokens: number, completionTokens: number): number {
+  return estimateCost(promptTokens, completionTokens, [...OPENAI_MODELS, ...ANTHROPIC_MODELS, ...GOOGLE_MODELS], modelId);
 }
 
 // ---------------------------------------------------------------------------

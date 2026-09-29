@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { resolveProviderKey } from "./llm-provider-keys";
+import { priceTokens } from "./llm-provider";
 
 // Lazily rebuilds the SDK client only when the resolved key/baseURL actually
 // changes (vault-set key via Admin, env var, or a rotation between the two) --
@@ -80,7 +81,7 @@ export async function callClaudeWithUsage(opts: {
   maxTokens?: number;
   jsonMode?: boolean;
   model?: string;
-}): Promise<{ text: string; model: string; inputTokens: number; outputTokens: number; latencyMs: number }> {
+}): Promise<{ text: string; model: string; inputTokens: number; outputTokens: number; costUsd: number; latencyMs: number }> {
   const systemPrompt = opts.jsonMode
     ? `${opts.system}\n\nReturn ONLY valid JSON with no markdown fences or prose.`
     : opts.system;
@@ -95,11 +96,17 @@ export async function callClaudeWithUsage(opts: {
   const textBlock = response.content.find(
     (b): b is Anthropic.TextBlock => b.type === "text"
   );
+  const usedModel = response.model ?? model;
+  const inputTokens = response.usage?.input_tokens ?? 0;
+  const outputTokens = response.usage?.output_tokens ?? 0;
   return {
     text: textBlock?.text ?? "",
-    model: response.model ?? model,
-    inputTokens: response.usage?.input_tokens ?? 0,
-    outputTokens: response.usage?.output_tokens ?? 0,
+    model: usedModel,
+    inputTokens,
+    outputTokens,
+    // Priced from the provider's own table, so a judge that records this
+    // beside the decision model's cost is comparing list price to list price.
+    costUsd: priceTokens(usedModel, inputTokens, outputTokens),
     latencyMs: Date.now() - startedAt,
   };
 }
