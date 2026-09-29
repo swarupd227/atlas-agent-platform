@@ -93,6 +93,20 @@ export function decisionBranchesFor(edges: BranchLike[] | undefined): DecisionBr
 }
 
 /**
+ * Whether every branch out of a decision is a comparison the engine can settle
+ * itself -- two or more of them, each with a condition that parses into a rule.
+ *
+ * One unparseable branch is enough to fail this: routing half a decision by
+ * rule and half by a model is the outcome nobody wants, and the decision stays
+ * whole.
+ */
+export function branchesAreAllRules(edges: BranchLike[] | undefined): boolean {
+  const branches = decisionBranchesFor(edges);
+  if (branches.length < 2) return false;
+  return branches.every((b) => !!b.condition && !!parseConditionToRule(b.condition));
+}
+
+/**
  * What a classifier needs beyond the step itself. A single step cannot say
  * whether it is a decision: that is a property of its branches and of the
  * platform flag, so callers that have the graph pass them, and callers that
@@ -118,6 +132,13 @@ export function classifyStep(node: Pick<ProcessNode, "type" | "config">, ctx?: C
   // remaining model steps were these markers.
   if (node.type === "trigger" || node.type === "end" || node.type === "parallel") return "structural";
   if (node.type === "expert_approval") return "gate";
+
+  // A decision every one of whose branches is a plain comparison is decided by
+  // the edges themselves. The build walks through such a step and puts each
+  // branch's rule on the edge out of the step before it, so no node runs and
+  // nothing is charged -- and this has to agree, or the Studio quotes an
+  // author a price the build does not charge.
+  if (node.type === "make_decision" && branchesAreAllRules(ctx?.outgoingEdges)) return "structural";
 
   // A decision drawn with branches is one choice, not an agent plus a model
   // call per branch -- when the flag or the step says so, and only with two
@@ -156,9 +177,10 @@ export function explainKind(node: Pick<ProcessNode, "type" | "config">, ctx?: Cl
   const kind = classifyStep(node, ctx);
   switch (kind) {
     case "decision": return "Decided by one decision-model call over its branches; exactly one branch is taken. No agent call.";
-    case "structural": return node.type === "parallel"
-      ? "A fan-out marker: the steps after it run together. Nothing runs here, and no model call."
-      : "A marker, not a step that runs.";
+    case "structural":
+      if (node.type === "parallel") return "A fan-out marker: the steps after it run together. Nothing runs here, and no model call.";
+      if (node.type === "make_decision") return "Decided by its branches' own rules, on the edges. Nothing runs here, and no model call.";
+      return "A marker, not a step that runs.";
     case "gate": return "Waits for a person to decide.";
     case "expression": return "Evaluated in-process as an expression over the run's state. No model call.";
     case "knowledge_base": return "Answered by a search of the bound knowledge base. No model call.";

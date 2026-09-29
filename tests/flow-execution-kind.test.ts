@@ -64,6 +64,37 @@ describe("how a step will execute", () => {
     expect(explainKind(step("parallel"))).toMatch(/run together/i);
   });
 
+  it("charges nothing for a decision whose every branch is a rule", () => {
+    // The build walks through such a step and puts each branch's rule on the
+    // edge before it, so nothing runs here. This has to agree with that, or
+    // the Studio quotes a price the build does not charge.
+    const rules = [
+      { to: "a", label: "Outside tolerance", condition: "reconcile.withinTolerance == false" },
+      { to: "b", label: "Within tolerance", condition: "reconcile.withinTolerance == true" },
+    ];
+    expect(classifyStep(step("make_decision"), { outgoingEdges: rules })).toBe("structural");
+    // Even with the decision kind on: a rule is cheaper than a decision call.
+    expect(classifyStep(step("make_decision"), { outgoingEdges: rules, decisionKind: true })).toBe("structural");
+    expect(costsTokens(classifyStep(step("make_decision"), { outgoingEdges: rules }))).toBe(false);
+    expect(explainKind(step("make_decision"), { outgoingEdges: rules })).toMatch(/on the edges/i);
+  });
+
+  it("keeps a decision whole when one branch is genuine judgement", () => {
+    // Half by rule and half by a model is the outcome nobody wants.
+    const mixed = [
+      { to: "a", label: "Clear", condition: "reconcile.withinTolerance == true" },
+      { to: "b", label: "Looks wrong", condition: "the numbers do not look right to me" },
+    ];
+    expect(classifyStep(step("make_decision"), { outgoingEdges: mixed })).toBe("agent");
+    expect(classifyStep(step("make_decision"), { outgoingEdges: mixed, decisionKind: true })).toBe("decision");
+  });
+
+  it("needs two branches before a decision can be settled by rules", () => {
+    const one = [{ to: "a", label: "Only", condition: "reconcile.withinTolerance == true" }];
+    expect(classifyStep(step("make_decision"), { outgoingEdges: one })).toBe("agent");
+    expect(classifyStep(step("make_decision"), { outgoingEdges: [] })).toBe("agent");
+  });
+
   it("still calls a bound tool on a parallel step, if an author bound one", () => {
     // Structural is what the marker is, not a rule that outranks an explicit
     // binding -- the type check sits above the tool check, so assert the order

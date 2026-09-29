@@ -200,14 +200,17 @@ function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any
     case "skill":
       return { kind: "skill", skillId: config.skillId, stateKey };
     case "structural":
-      // A parallel fan-out is a marker, not work. Without this the classifier
-      // and the build disagreed: the compiler could call the step free while
-      // this switch fell through to `null` and the step was built as an agent,
-      // so the cost the author was shown was not the cost they paid. The node
-      // is kept rather than spliced out so the flow and the built team stay
-      // one-to-one, which the flow-to-automation sync depends on to show a
-      // one-step diff instead of "every agent superseded".
-      return step.type === "parallel"
+      // A fan-out marker, and a decision whose every branch is a rule, are
+      // routing rather than work: what decides the next step is on the edges,
+      // not in the node. Usually such a step is claimed by no agent at all and
+      // deriveEdgesFromFlow walks straight through it; this is the case where
+      // an agent DID claim one, and without it the step would fall through to
+      // `null` and be built as an agent -- the cost the author was shown not
+      // being the cost they paid. Kept as a free node rather than spliced out
+      // so the flow and the built team stay one-to-one, which the
+      // flow-to-automation sync needs to show a one-step diff instead of
+      // "every agent superseded".
+      return step.type === "parallel" || step.type === "make_decision"
         ? { kind: "expression", expression: '{ "branchesStartHere": true }', stateKey }
         : null;
     default:

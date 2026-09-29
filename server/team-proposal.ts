@@ -117,10 +117,29 @@ export function splitConfiguredSteps<T extends { name?: string; description?: st
  * skipped rather than guessed at, and an edge is emitted only when both ends
  * resolve to different agents -- so a partial mapping yields fewer edges, never
  * wrong ones.
+ *
+ * With one exception, and it is the whole reason this function is not a simple
+ * filter. A decision and a parallel fan-out are steps no proposer ever claims:
+ * they are not somebody doing a job, so no agent lists them, so under the rule
+ * above EVERY edge touching one was dropped -- and a branch condition always has
+ * a decision at one end. Live 2026-09-29: a 35-step binder close built as a team
+ * with all four decisions gone, all eight branch conditions gone, and both rework
+ * loops demoted to plain handoffs because with the decision edges missing the
+ * back-edge was no longer a back-edge. The build, the deploy and the compiler all
+ * reported success; every gated path would have run unconditionally.
+ *
+ * So an unclaimed step that only ROUTES is walked through rather than dropped:
+ * the edge is re-pointed at whatever claimed steps lie beyond it, carrying the
+ * branch's condition. A decision's node disappears and its branches become
+ * conditions on the edges out of the step before it, which is where the engine
+ * evaluates them anyway.
  */
+/** Steps that route or mark structure rather than doing work of their own. */
+const ROUTING_STEP_TYPES = new Set(["trigger", "end", "parallel", "make_decision"]);
+
 export function deriveEdgesFromFlow(
   agents: Array<{ name?: string; flowStepLabels?: unknown }>,
-  steps: Array<{ id?: string; label?: string }>,
+  steps: Array<{ id?: string; label?: string; type?: string }>,
   edges: Array<{ from?: string; to?: string; label?: string; condition?: string; maxRounds?: number }>,
 ): Array<{ from: string; to: string; label?: string; condition?: string; type: string; maxRounds?: number }> {
   const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
@@ -135,39 +154,112 @@ export function deriveEdgesFromFlow(
   if (agentByStepLabel.size === 0) return [];
 
   const labelByStepId = new Map<string, string>();
-  for (const step of steps) if (step?.id && step.label) labelByStepId.set(String(step.id), step.label);
+  const typeByStepId = new Map<string, string>();
+  for (const step of steps) {
+    if (!step?.id) continue;
+    if (step.label) labelByStepId.set(String(step.id), step.label);
+    if (step.type) typeByStepId.set(String(step.id), norm(step.type));
+  }
   const agentForStepId = (id: unknown) => agentByStepLabel.get(norm(labelByStepId.get(String(id))));
+
+  const outgoingByStep = new Map<string, typeof edges>();
+  for (const e of edges) {
+    const from = String(e?.from ?? "");
+    if (!from) continue;
+    const list = outgoingByStep.get(from);
+    if (list) list.push(e); else outgoingByStep.set(from, [e]);
+  }
+  /** A step nothing claims, whose only job is to route. Walk through it. */
+  const routesOnly = (id: unknown) =>
+    !agentForStepId(id) && ROUTING_STEP_TYPES.has(typeByStepId.get(String(id)) ?? "");
+
+  /**
+   * The claimed steps an edge really reaches, and the condition governing each.
+   *
+   * The condition carried forward is the LAST one on the path: walking
+   * `classify -> [decision] -[breach found]-> compliance`, the branch's own
+   * condition is the one that decides the hop, not the (usually absent)
+   * condition on the way into the decision.
+   */
+  interface Hop { agent: string; condition?: string; maxRounds?: number; label?: string }
+  function resolveTargets(
+    stepId: unknown,
+    condition: string | undefined,
+    maxRounds: number | undefined,
+    label: string | undefined,
+    visited: Set<string>,
+  ): Hop[] {
+    const key = String(stepId ?? "");
+    const agent = agentForStepId(key);
+    if (agent) return [{ agent, condition, maxRounds, label }];
+    if (!routesOnly(key)) return [];
+    // A malformed graph can point routing steps at each other; never loop.
+    if (visited.has(key)) return [];
+    visited.add(key);
+    const out: Hop[] = [];
+    for (const next of outgoingByStep.get(key) ?? []) {
+      // The branch's own condition and label replace the ones on the way in:
+      // "Notifiable breaches found" names this hop, whereas whatever labelled
+      // the edge into the decision named a hop that no longer exists.
+      out.push(...resolveTargets(
+        next.to,
+        next.condition || condition,
+        next.maxRounds ?? maxRounds,
+        next.condition ? (next.label || next.condition) : (next.label || label),
+        visited,
+      ));
+    }
+    return out;
+  }
 
   const derived: Array<{ from: string; to: string; label?: string; condition?: string; branchCondition?: string; type: string; maxRounds?: number }> = [];
   const seen = new Set<string>();
   for (const edge of edges) {
     const from = agentForStepId(edge?.from);
-    const to = agentForStepId(edge?.to);
-    // Both ends inside one agent means the connection is internal to its work.
-    if (!from || !to || from === to) continue;
-    const key = `${from}\u0000${to}\u0000${edge.condition ?? ""}`;
-    if (seen.has(key)) continue;
+    // An edge OUT of a routing step is not dropped -- it is reached by walking
+    // through that step from whichever claimed step precedes it, which is how
+    // the branch keeps the condition that decides it.
+    if (!from) continue;
+    for (const target of resolveTargets(edge?.to, edge.condition, edge.maxRounds, edge.label, new Set<string>())) {
+      const to = target.agent;
+      // Both ends inside one agent means the connection is internal to its work.
+      if (from === to) continue;
+      emit(from, to, target.condition, target.maxRounds, target.label);
+    }
+  }
+  return derived;
+
+  function emit(
+    from: string,
+    to: string,
+    condition: string | undefined,
+    maxRounds: number | undefined,
+    label: string | undefined,
+  ) {
+    const key = `${from}\u0000${to}\u0000${condition ?? ""}`;
+    if (seen.has(key)) return;
     seen.add(key);
     derived.push({
       from,
       to,
       // The author's label first: it is the name of the branch, and what a
       // decision step chooses between. A branch with only a condition is named
-      // by it, as before.
-      label: edge.label || edge.condition || undefined,
-      condition: edge.condition || undefined,
+      // by it, as before. Where the hop was resolved THROUGH a routing step the
+      // branch's own condition is the name, because the label on the way into a
+      // decision describes the wrong hop.
+      label: label || condition || undefined,
+      condition: condition || undefined,
       // The name the builder reads (resolveEdgeRuleFromSpec in team-build.ts).
       // Sending only "condition" built the edge unconditional, so a decision
       // took BOTH its branches: live 2026-09-24, a submission the confidence
       // gate had explicitly cleared still went to the human correction step.
-      ...(edge.condition ? { branchCondition: edge.condition } : {}),
-      type: edge.condition ? "conditional" : "handoff",
+      ...(condition ? { branchCondition: condition } : {}),
+      type: condition ? "conditional" : "handoff",
       // Carried so a loop the business bounded at two rounds is built as two,
       // rather than defaulting to one and only saying "two" in its label.
-      ...(Number.isFinite(Number(edge.maxRounds)) ? { maxRounds: Number(edge.maxRounds) } : {}),
+      ...(Number.isFinite(Number(maxRounds)) ? { maxRounds: Number(maxRounds) } : {}),
     });
   }
-  return derived;
 }
 
 /**
