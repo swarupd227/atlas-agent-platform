@@ -11,7 +11,7 @@
  * exist yet, which is how the Phase 0 shadow measurement keeps running across
  * this change.
  *
- *   DECISION_PROVIDER        llm | shadow | jev          (default: env, else llm)
+ *   DECISION_PROVIDER        llm | shadow | jev          (default: env, else llm; llm is the kill switch and wins over site overrides)
  *   DECISION_THRESHOLDS      {"review":0.6,"act":0.85}   confidence below which the LLM answers instead
  *   DECISION_SITE_OVERRIDES  {"evaluateCondition":"jev", "handoff":{"mode":"jev","threshold":0.9}}
  *   DECISION_STEP_KIND       on | off                    whether make_decision steps compile to the decision kind
@@ -147,6 +147,14 @@ async function orgForbidsUs(orgId: string): Promise<boolean> {
 /**
  * The route for one question. Deterministic: platform mode, then the site's
  * override, then the organization's residency, which wins over both.
+ *
+ * With one exception in the other direction: the platform mode `llm` is the
+ * kill switch, and a kill switch that a site override can outrank is not one.
+ * The rollout keeps the platform on `shadow` and enables Jev site by site; the
+ * drill's first exercise (2026-09-29) found that setting the platform to `llm`
+ * then left the overridden site on Jev. So `llm` at the platform level sends
+ * every site to the incumbent model, overrides or not; only `shadow` and `jev`
+ * can be narrowed per site.
  */
 export async function resolveDecisionRoute(site: string, orgId?: string | null): Promise<DecisionRoute> {
   const s = await getDecisionSettings();
@@ -154,7 +162,7 @@ export async function resolveDecisionRoute(site: string, orgId?: string | null):
   let threshold = s.thresholds.act;
   let reason: DecisionRoute["reason"] = "platform";
   const override = s.siteOverrides[site];
-  if (override) {
+  if (override && s.mode !== "llm") {
     if (override.mode) { mode = override.mode; reason = "site_override"; }
     if (override.threshold !== undefined) threshold = override.threshold;
   }

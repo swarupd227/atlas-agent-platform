@@ -83,10 +83,19 @@ describe("resolveDecisionRoute", () => {
   });
 
   it("lets a site override change the mode and the threshold", async () => {
-    settings.set("DECISION_PROVIDER", "llm");
+    settings.set("DECISION_PROVIDER", "shadow");
     settings.set("DECISION_SITE_OVERRIDES", JSON.stringify({ handoff: { mode: "jev", threshold: 0.9 } }));
     expect(await resolveDecisionRoute("handoff")).toEqual({ mode: "jev", threshold: 0.9, reason: "site_override" });
-    expect((await resolveDecisionRoute("evaluateCondition")).mode).toBe("llm");
+    expect((await resolveDecisionRoute("evaluateCondition")).mode).toBe("shadow");
+  });
+
+  it("makes the platform's llm a kill switch that no site override outranks", async () => {
+    // The rollout drill (2026-09-29) set the platform to llm with the condition
+    // site overridden to jev, and the override won: the kill switch was not one.
+    settings.set("DECISION_PROVIDER", "llm");
+    settings.set("DECISION_SITE_OVERRIDES", JSON.stringify({ evaluateCondition: "jev", handoff: { mode: "jev", threshold: 0.9 } }));
+    expect(await resolveDecisionRoute("evaluateCondition")).toEqual({ mode: "llm", threshold: 0.85, reason: "platform" });
+    expect(await resolveDecisionRoute("handoff")).toEqual({ mode: "llm", threshold: 0.85, reason: "platform" });
   });
 
   it("forces llm for an organization that forbids US processing, over any override", async () => {

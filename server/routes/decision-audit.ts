@@ -86,6 +86,9 @@ export function createDecisionAuditRouter(): Router {
           COUNT(*) FILTER (WHERE agree AND COALESCE(confidence, margin) >= ${THRESHOLDS[0]})::int AS agreed_at_060,
           COUNT(*) FILTER (WHERE agree IS NOT NULL AND COALESCE(confidence, margin) >= ${THRESHOLDS[1]})::int AS compared_at_085,
           COUNT(*) FILTER (WHERE agree AND COALESCE(confidence, margin) >= ${THRESHOLDS[1]})::int AS agreed_at_085,
+          COUNT(*) FILTER (WHERE mode = 'jev')::int AS routed_jev,
+          COUNT(*) FILTER (WHERE mode = 'jev' AND fallback_reason IS NOT NULL)::int AS fell_back,
+          COUNT(*) FILTER (WHERE mode = 'llm')::int AS routed_llm,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) AS jev_p50_ms,
           percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS jev_p95_ms,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY llm_latency_ms) AS llm_p50_ms,
@@ -111,6 +114,12 @@ export function createDecisionAuditRouter(): Router {
           "0.60": { compared: r.compared_at_060, agreed: r.agreed_at_060, agreement: rate(r.agreed_at_060, r.compared_at_060), resolveShare: rate(r.compared_at_060, r.compared) },
           "0.85": { compared: r.compared_at_085, agreed: r.agreed_at_085, agreement: rate(r.agreed_at_085, r.compared_at_085), resolveShare: rate(r.compared_at_085, r.compared) },
         },
+        // Once a site routes on Jev for real, the shadow comparison stops
+        // covering every call: a decision the model answers with confidence has
+        // no LLM answer to compare against. These say how many calls the model
+        // decided, how many it handed back to the LLM, and how many never went
+        // to it -- the rollout drill's numbers.
+        routing: { jev: r.routed_jev, fellBack: r.fell_back, llm: r.routed_llm },
         latencyMs: {
           jev: { p50: r.jev_p50_ms === null ? null : Math.round(Number(r.jev_p50_ms)), p95: r.jev_p95_ms === null ? null : Math.round(Number(r.jev_p95_ms)) },
           llm: { p50: r.llm_p50_ms === null ? null : Math.round(Number(r.llm_p50_ms)), p95: r.llm_p95_ms === null ? null : Math.round(Number(r.llm_p95_ms)) },

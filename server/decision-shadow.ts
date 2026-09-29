@@ -122,6 +122,14 @@ export interface AuditRow extends Partial<Comparison> {
   stateChars: number;
   stateHash: string;
   error: string | null;
+  /**
+   * Whether the two engines agreed, when the caller can say. A noul compares
+   * its two booleans here; a choice or a score has no boolean reading, so
+   * without this the seam's own comparisons of those kinds landed as "not
+   * compared" and the decision-step site could never show agreement (found in
+   * the rollout drill, 2026-09-29).
+   */
+  agree?: boolean | null;
   /** Which engine's answer the caller used; absent for a pure shadow comparison. */
   engine?: "jev" | "llm" | null;
   /** The route that applied (llm | shadow | jev); absent for a pure shadow comparison. */
@@ -136,7 +144,8 @@ export interface AuditRow extends Partial<Comparison> {
  */
 export async function recordDecisionAudit(row: AuditRow): Promise<void> {
   const agree =
-    row.jevDecision === null || row.jevDecision === undefined || row.llmDecision === null || row.llmDecision === undefined
+    row.agree !== undefined && row.agree !== null ? row.agree
+    : row.jevDecision === null || row.jevDecision === undefined || row.llmDecision === null || row.llmDecision === undefined
       ? null
       : row.jevDecision === row.llmDecision;
   await db.execute(sql`

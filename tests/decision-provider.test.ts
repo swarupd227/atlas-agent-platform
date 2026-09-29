@@ -147,7 +147,31 @@ describe("decide — shadow route", () => {
     await new Promise(res => setTimeout(res, 10));
     expect(callJev).toHaveBeenCalledTimes(1);
     expect(audits).toHaveLength(1);
-    expect(audits[0]).toMatchObject({ mode: "shadow", engine: "llm", jevDecision: true, llmDecision: true });
+    expect(audits[0]).toMatchObject({ mode: "shadow", engine: "llm", jevDecision: true, llmDecision: true, agree: true });
+  });
+
+  it("records whether the two engines agreed on a choice, which has no boolean to compare", async () => {
+    // Found in the rollout drill (2026-09-29): a decision step's shadow row
+    // landed as "not compared", so the decision-step site could never show
+    // agreement. The comparison is on the answer itself.
+    route.mode = "shadow";
+    jevAnswers.push({ type: "choice", choice: "approve", probabilities: { approve: 0.9, reject: 0.1 }, confidence: 0.9 });
+    await decide({ kind: "choice", site: "decision_step", state: "text", instructions: "Which?", criteria: { approve: "A", reject: "R" } });
+    await new Promise(res => setTimeout(res, 10));
+    expect(audits[0]).toMatchObject({ questionKind: "choice", engine: "llm", agree: true, jevDecision: null, llmDecision: null });
+
+    audits.length = 0;
+    jevAnswers.push({ type: "choice", choice: "reject", probabilities: { approve: 0.2, reject: 0.8 }, confidence: 0.8 });
+    await decide({ kind: "choice", site: "decision_step", state: "text", instructions: "Which?", criteria: { approve: "A", reject: "R" } });
+    await new Promise(res => setTimeout(res, 10));
+    expect(audits[0]).toMatchObject({ questionKind: "choice", agree: false });
+  });
+
+  it("leaves agreement open when only one engine answered", async () => {
+    route.mode = "jev";
+    jevAnswers.push({ type: "choice", choice: "approve", probabilities: { approve: 0.9, reject: 0.1 }, confidence: 0.9 });
+    await decide({ kind: "choice", site: "decision_step", state: "text", instructions: "Which?", criteria: { approve: "A", reject: "R" } });
+    expect(audits[0]).toMatchObject({ engine: "jev", agree: null });
   });
 });
 

@@ -193,6 +193,8 @@ async function audit(req: DecisionRequest, route: { mode: DecisionMode; reason: 
     llmAnswer: llm ? { answer: llm.answer } : undefined,
     jevDecision: decisionOf(jev),
     llmDecision: decisionOf(llm),
+    // A choice or a score is compared on its answer; a noul on its boolean.
+    agree: jev && llm ? String(jev.answer) === String(llm.answer) : null,
     confidence: jev && req.kind !== "noul" ? jev.confidence : null,
     margin: jev && req.kind === "noul" ? jev.confidence : null,
     latencyMs: jev?.latencyMs ?? null,
