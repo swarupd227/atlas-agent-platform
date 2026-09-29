@@ -997,6 +997,210 @@ function getServerDefinitions(): MockMcpServerDef[] {
       ],
     },
     {
+      name: "Delegated Authority Binder Register",
+      description: "Simulated binder register for a delegated-authority programme: the binder's terms (commission rate, single-risk limit, minimum windstorm deductible, bordereau template version, reporting deadline), each reporting period and its status, and the treaty-year catastrophe aggregate rolled forward period by period with utilisation, headroom and projected exhaustion. Lodges the close pack with the carrier — refused without a named finance sign-off, and refused a second time for the same period — and locks a period against further posting, which it refuses until the carrier has actually received the pack.",
+      baseUrl: `${BASE_URL}/api/mock/mga-binder-master`,
+      tools: [
+        {
+          name: "get_binder_terms",
+          description: "Read the binder's terms and the list of reporting periods with their open or closed status: commission rate, single-risk limit, minimum windstorm deductible, treaty-year coastal aggregate cap and warning threshold, bordereau template version, reporting deadline, and the close tolerances a premium variance is judged against. Read this once at the start of a close and carry the identifiers forward; these are the terms every later step is measured against, and none of them should be recalled from memory.",
+          endpoint: "/binder",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "get_reporting_period",
+          description: "Read one reporting period: its label, transaction count, period end, the carrier's reporting deadline, the bordereau template version in force, and whether it is still open. Locking the transaction scope here is what makes the rest of the close reproducible — every later step reports on the transactions this period held, not on whatever the policy system holds now.",
+          endpoint: "/period",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { periodId: { type: "string", description: "Reporting period formatted YYYY-MM, e.g. 2026-03" } },
+            required: ["periodId"],
+          },
+        },
+        {
+          name: "get_treaty_aggregates",
+          description: "The treaty-year catastrophe position after this period: opening aggregate, Tier 1 coastal total insured value written in the period, closing aggregate, the treaty-year cap, utilisation percentage, remaining headroom, the monthly run rate from the periods actually written, and the date that run rate exhausts the cap. Every figure is arithmetic over the book. Never estimate a utilisation or a headroom: a capacity decision made on an invented number is the worst outcome this process has.",
+          endpoint: "/treaty-aggregates",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { periodId: { type: "string", description: "Reporting period formatted YYYY-MM" } },
+            required: ["periodId"],
+          },
+        },
+        {
+          name: "submit_close_pack_to_carrier",
+          description: "Lodge the period's close pack with the carrier's delegated-authority portal and return the submission reference that evidences the binder was reported on time. Requires a named finance sign-off, because the net-due-to-carrier figure is what the settlement is made on. A period is lodged once: a repeat submission is refused with the reference and date of the first.",
+          endpoint: "/submit-to-carrier",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
+              documentCount: { type: "number", description: "Number of documents in the pack: bordereaux, cash statement, breach log" },
+              netDueToCarrier: { type: "number", description: "Net premium due to the carrier after binder commission, from the billing ledger" },
+              financeSignOffBy: { type: "string", description: "Person in finance who signed off the net-due figure" },
+            },
+            required: ["periodId", "netDueToCarrier", "financeSignOffBy"],
+          },
+        },
+        {
+          name: "close_reporting_period",
+          description: "Close and lock the reporting period so it stops accepting postings, and open the next one. Refused unless the pack has already been submitted to the carrier, because closing a period the carrier has not received is how a binder goes unreported; refused a second time for the same period. Anything found after a close is a prior-period adjustment in the next close, never a quiet edit to this one.",
+          endpoint: "/close-period",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
+              closedBy: { type: "string", description: "Person closing the period" },
+            },
+            required: ["periodId", "closedBy"],
+          },
+        },
+      ],
+    },
+    {
+      name: "MGA Policy Administration",
+      description: "Simulated policy administration system holding every transaction bound under the binder in a reporting period. Returns period aggregates (transaction counts by type, gross written premium, total insured value, Tier 1 coastal exposure, values by state) separately from the rows, which are paginated. Rows come back exactly as the system holds them, including the defects a real extract carries through — negative building values, absent ISO construction classes — because catching them is the point. Also returns the binding-authority evidence for one risk, including any carrier referral granted before it was bound.",
+      baseUrl: `${BASE_URL}/api/mock/mga-policy-admin`,
+      tools: [
+        {
+          name: "get_period_summary",
+          description: "Period aggregates without the rows: transaction count, counts by transaction type, gross written premium, total insured value, Tier 1 coastal exposure and values by state. Reconcile against this gross written premium rather than re-adding rows — a three-way match is only meaningful if each leg reports its own total.",
+          endpoint: "/period-summary",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { periodId: { type: "string", description: "Reporting period formatted YYYY-MM" } },
+            required: ["periodId"],
+          },
+        },
+        {
+          name: "get_period_transactions",
+          description: "The period's bound transactions, paginated, optionally filtered by transaction type (new_business, endorsement, cancellation). Each row carries policy number, insured, effective and expiry dates, home state, ISO construction class, building and contents values, total insured value, largest location, Tier 1 coastal exposure, windstorm deductible and gross premium. Validate these rows; do not assume they are clean, and never repair one silently — a corrected row needs an owner and a reason.",
+          endpoint: "/transactions",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
+              transactionType: { type: "string", description: "Optional filter: new_business, endorsement or cancellation" },
+              offset: { type: "number", description: "Row offset for paging, default 0" },
+              limit: { type: "number", description: "Rows per page, maximum 50, default 25" },
+            },
+            required: ["periodId"],
+          },
+        },
+        {
+          name: "get_binding_authority_evidence",
+          description: "The binding-authority evidence for one policy: when and by whom it was bound, its largest location, Tier 1 coastal exposure, windstorm deductible and home state, and any carrier referral granted BEFORE it was bound. Check the referral before classifying a breach — a risk the carrier already approved is ratified, not notifiable, and a compliance team that receives false positives stops reading the report.",
+          endpoint: "/authority-evidence",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
+              policyNumber: { type: "string", description: "Policy number, e.g. POL-2026-0112-CP" },
+            },
+            required: ["periodId", "policyNumber"],
+          },
+        },
+      ],
+    },
+    {
+      name: "MGA Premium Billing & General Ledger",
+      description: "Simulated premium billing ledger and general ledger for a delegated-authority binder, and the three-way match between them and policy administration. Each leg reports its own total; the reconciliation returns the variance, whether it is within tolerance, and — only where one exists — a candidate cause naming the binder a misbooked amount was posted against. Posts approved adjusting journals, which are remembered, so re-running the reconciliation after a correction is what proves the correction worked.",
+      baseUrl: `${BASE_URL}/api/mock/mga-billing-gl`,
+      tools: [
+        {
+          name: "get_premium_ledger",
+          description: "The billing leg: premium invoiced for the period, binder commission at the binder's rate, net due to the carrier, cash received and cash outstanding. This is one leg of the three-way match — compare it against policy administration and the general ledger; do not adjust it to make them agree. A difference is a finding, and a finding has a cause.",
+          endpoint: "/premium-ledger",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { periodId: { type: "string", description: "Reporting period formatted YYYY-MM" } },
+            required: ["periodId"],
+          },
+        },
+        {
+          name: "get_general_ledger",
+          description: "The ledger leg: premium receivable, written premium and binder commission accounts for the period, the posted premium total, and every adjusting journal posted against the period. The ledger is the carrier's view of what the MGA owes; where it disagrees with billing, the correcting entry belongs here and needs approval before it is posted.",
+          endpoint: "/general-ledger",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { periodId: { type: "string", description: "Reporting period formatted YYYY-MM" } },
+            required: ["periodId"],
+          },
+        },
+        {
+          name: "reconcile_period",
+          description: "The three-way match itself: each leg's own total (policy administration, billing, general ledger), the variance between billing and policy administration, that variance as a percentage of gross written premium, whether it is within the binder's tolerances, how many adjusting journals have been applied, and — only when a variance exists — a candidate cause naming the amount and the binder it appears to have been posted against. Never compute this variance yourself from the separate ledgers; call this so the arithmetic comes from the systems. Within tolerance the close continues; outside it, investigate before adjusting, then post the correction and call this again.",
+          endpoint: "/reconciliation",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { periodId: { type: "string", description: "Reporting period formatted YYYY-MM" } },
+            required: ["periodId"],
+          },
+        },
+        {
+          name: "post_adjusting_journal",
+          description: "Post an approved adjusting journal against the period and return its journal id. Requires a named approver: premium accounting approves the specific lines — amount, binder, account, period — before anything is posted, because a journal nobody approved is how a reconciliation is made to agree with itself. Re-run the reconciliation afterwards; a correction that was not re-tested is a correction nobody has checked.",
+          endpoint: "/post-adjusting-journal",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
+              amount: { type: "number", description: "Signed amount of the correction, non-zero" },
+              account: { type: "string", description: "GL account the journal hits, e.g. 1200 Premium Receivable" },
+              approvedBy: { type: "string", description: "Person in premium accounting who approved the specific lines" },
+              reason: { type: "string", description: "Why the entry is being posted" },
+            },
+            required: ["periodId", "amount", "account", "approvedBy"],
+          },
+        },
+      ],
+    },
+    {
+      name: "TPA Claims Bordereau Feed",
+      description: "Simulated third-party claims administrator feed: the claim movements that belong in a period's claims bordereau, with paid and reserve movements, recoveries and status. Claims are delegated under a separate authority, so this is the one leg of a binder close the MGA does not control, and the one where referential integrity actually breaks — a movement reported against a policy number this binder has never held. The incurred summary reports matched and unmatched movements separately so the loss ratio is not quietly inflated by somebody else's claim.",
+      baseUrl: `${BASE_URL}/api/mock/mga-tpa-claims`,
+      tools: [
+        {
+          name: "get_claims_movements",
+          description: "The TPA's claim movements for the period, paginated: claim id, policy number, loss and reported dates, cause, paid and reserve movements, recoveries and status, plus period totals. Check every policy number against the period's bound transactions before the claims bordereau is assembled — a movement against a policy this binder never wrote is a referential break, and reporting it to the carrier as if it were ours is worse than holding the file back.",
+          endpoint: "/claims-movements",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
+              offset: { type: "number", description: "Row offset for paging, default 0" },
+              limit: { type: "number", description: "Rows per page, maximum 50, default 25" },
+            },
+            required: ["periodId"],
+          },
+        },
+        {
+          name: "get_incurred_summary",
+          description: "Incurred for the period with the referential check already applied: movement count, how many matched this binder's book, how many did not, incurred across all movements and incurred across matched movements only. Use the matched-only figure for the loss ratio — an unmatched movement is not this binder's loss until somebody establishes that it is, and the difference between the two figures is exactly what the check is for.",
+          endpoint: "/incurred-summary",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { periodId: { type: "string", description: "Reporting period formatted YYYY-MM" } },
+            required: ["periodId"],
+          },
+        },
+      ],
+    },
+    {
       name: "ServiceNow CMDB (Sandbox)",
       description: "Stand-in for the customer's ServiceNow while REST access to the live instance is being arranged. Reads mirror the real connector's shapes -- Table API rows, CMDB relationships, incident and change history -- over a generated semiconductor estate that carries the problems the control tower exists for: configuration items with no owner, records Discovery has not seen for months, two sources describing the same machine, items nothing depends on, and services with no tier. Every write needs the id of an approval a person gave, records what the field held before, and returns an undo id.",
       baseUrl: `${BASE_URL}/api/mock/servicenow-cmdb`,
