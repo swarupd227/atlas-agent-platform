@@ -3,7 +3,8 @@ import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
 import { buildAgentSystemPromptWithGovernance } from "./helpers";
-import { callClaude, createClaudeMessage, stripJsonFences } from "../claude";
+import { callClaude, callClaudeWithUsage, createClaudeMessage, stripJsonFences } from "../claude";
+import { decideMany, type DecisionQuestion } from "../decision-provider";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Skill } from "@shared/schema";
 import { resolveReadableSkills, skillCatalogPrompt, skillToolsFor, executeBuiltinSkillTool, READ_SKILL_TOOL } from "../builtin-skill-tools";
@@ -104,7 +105,7 @@ async function answerCase(p: {
   return { text: "", skillsLoaded };
 }
 
-async function judgeCase(params: {
+export async function judgeCase(params: {
   systemPrompt: string;
   scenario: string;
   expectedBehavior: string;
@@ -124,17 +125,23 @@ async function judgeCase(params: {
     readableSkills: params.readableSkills,
   });
 
-  // Step 2: a separate judging call scores that answer against the case's own
-  // criteria. The judge is deliberately told to fail on omission -- a fluent
-  // answer that silently skips a required disclosure is the exact failure mode
-  // these datasets exist to catch, and a lenient judge would pass it.
-  const judgeRaw = await callClaude({
-    system: `You are a strict insurance compliance examiner scoring an AI agent's response against required behaviour.
+  // Step 2: each criterion is judged through the decision seam on the site
+  // "golden_judge", one "is it met?" question per criterion. The examiner
+  // prompt below is the incumbent, unchanged as text and deliberately told to
+  // fail on omission -- a fluent answer that silently skips a required
+  // disclosure is the exact failure mode these datasets exist to catch. On the
+  // jev route it is called only when the decision model is unsure about a
+  // criterion, which is where the saving is: this is the most expensive judge
+  // on the platform. Its reasoning is kept whenever it was called.
+  let examiner: { met: string[]; missed: string[]; reasoning: string } | null = null;
+  const examine = async (keys: string[]) => {
+    const r = await callClaudeWithUsage({
+      system: `You are a strict insurance compliance examiner scoring an AI agent's response against required behaviour.
 
 Score ONLY against the listed criteria. A response that is fluent, confident or plausible but OMITS a required element FAILS that criterion -- omission is the failure mode that matters here, so do not give credit for what the response merely implies.
 
 Return JSON: {"criteriaMet": ["exact criterion text"], "criteriaMissed": ["exact criterion text"], "reasoning": "one or two sentences citing what was present or absent"}`,
-    user: `EXPECTED BEHAVIOUR:
+      user: `EXPECTED BEHAVIOUR:
 ${params.expectedBehavior}
 
 REQUIRED CRITERIA:
@@ -142,18 +149,42 @@ ${params.criteria.map((c, i) => `${i + 1}. ${c}`).join("\n")}
 
 AGENT RESPONSE:
 ${actualOutput}`,
-    maxTokens: 1200,
-    jsonMode: true,
+      maxTokens: 1200,
+      jsonMode: true,
+    });
+    const parsed = JSON.parse(stripJsonFences(r.text));
+    examiner = {
+      met: Array.isArray(parsed.criteriaMet) ? parsed.criteriaMet.map(String) : [],
+      missed: Array.isArray(parsed.criteriaMissed) ? parsed.criteriaMissed.map(String) : [],
+      reasoning: String(parsed.reasoning || ""),
+    };
+    const answers: Record<string, boolean> = {};
+    for (const k of keys) {
+      const c = params.criteria[Number(k.slice(1))];
+      answers[k] = examiner.met.some((m) => m.trim().toLowerCase() === c.trim().toLowerCase()) && !examiner.missed.some((m) => m.trim().toLowerCase() === c.trim().toLowerCase());
+    }
+    return { answers, model: r.model, latencyMs: r.latencyMs, inputTokens: r.inputTokens };
+  };
+
+  const questions: Record<string, DecisionQuestion> = {};
+  params.criteria.forEach((c, i) => {
+    questions[`c${i}`] = {
+      kind: "noul",
+      instructions: `Does the agent's response meet this required criterion: ${c}? A response that omits the element fails it; do not credit what it merely implies.`,
+      criteria: { true: "The response contains the required element", false: "The response omits or contradicts it" },
+      subject: c.slice(0, 500),
+    };
   });
 
-  let met: string[] = [];
-  let missed: string[] = [];
-  let reasoning = "";
+  let decided: Awaited<ReturnType<typeof decideMany>>;
   try {
-    const parsed = JSON.parse(stripJsonFences(judgeRaw));
-    met = Array.isArray(parsed.criteriaMet) ? parsed.criteriaMet : [];
-    missed = Array.isArray(parsed.criteriaMissed) ? parsed.criteriaMissed : [];
-    reasoning = String(parsed.reasoning || "");
+    decided = await decideMany({
+      site: "golden_judge",
+      state: { expected_behaviour: params.expectedBehavior, agent_response: actualOutput },
+      orgId: params.orgId,
+      questions,
+      incumbent: examine,
+    });
   } catch (err: any) {
     // An unparseable judge response must not silently become a pass. Fail the
     // case and say why, rather than scoring 0 criteria met as a 0% that reads
@@ -168,6 +199,17 @@ ${actualOutput}`,
       skillsLoaded,
     };
   }
+
+  const met: string[] = [];
+  const missed: string[] = [];
+  const byModel: string[] = [];
+  params.criteria.forEach((c, i) => {
+    const d = decided[`c${i}`];
+    (d?.answer === true ? met : missed).push(c);
+    if (d?.engine === "jev") byModel.push(`${c} (${d.answer === true ? "met" : "missed"}, ${Math.round(((d.probabilities?.true ?? 0) as number) * 100)}%)`);
+  });
+  const reasoning = (examiner as { reasoning: string } | null)?.reasoning
+    || `Decided by the decision model without the examiner: ${byModel.join("; ")}.`;
 
   const score = params.criteria.length > 0 ? met.length / params.criteria.length : 0;
   return {

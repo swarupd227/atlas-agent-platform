@@ -1,4 +1,5 @@
 import { completeWithFallback } from "./llm-provider";
+import { decideMany, knownIncumbent, type DecisionQuestion } from "./decision-provider";
 import { measureWithDeepEval } from "./deepeval-bridge";
 import type { DeepEvalJudgeResult } from "./deepeval-bridge";
 
@@ -18,6 +19,8 @@ export interface LlmJudgeResult {
   reason: string;
   latencyMs: number;
   dimensionResults?: DimensionJudgeResult[];
+  /** Criteria the decision model decided with confidence, when the site routes on it. */
+  criteriaDecidedByModel?: number;
 }
 
 export type { DeepEvalJudgeResult };
@@ -152,6 +155,10 @@ export async function runAgentOnInput(
   }
 }
 
+/** Bounds for what the decision model is shown of a case; its state cap is 32k tokens. */
+const JUDGE_STATE_OUTPUT_CHARS = 12_000;
+const JUDGE_STATE_CONTEXT_CHARS = 4_000;
+
 export async function runLlmJudge(
   testName: string,
   inputData: Record<string, unknown>,
@@ -277,7 +284,55 @@ ${agentContext || "(no additional context)"}${criteriaBlock}`;
       });
     }
 
-    return { isPassed, confidence, reason, latencyMs, dimensionResults };
+    // The criteria through the decision seam, on the site "eval_judge". The
+    // incumbent's call above happens regardless -- it gives the overall verdict
+    // and the reason the pages show -- so its per-criterion answers are the
+    // known incumbent: on the jev route the decision model's confident answers
+    // replace them, on the shadow route they are compared, on the llm route
+    // they stand. A seam failure leaves the incumbent's answers as they were.
+    let criteriaDecidedByModel = 0;
+    if (dimensionResults && dimensionResults.length > 0) {
+      try {
+        const questions: Record<string, DecisionQuestion> = {};
+        const known: Record<string, boolean> = {};
+        for (const dim of dimensionResults) {
+          dim.criteriaResults.forEach((cr, i) => {
+            const key = `${dim.dimId}::${i}`;
+            known[key] = cr.met;
+            questions[key] = {
+              kind: "noul",
+              instructions: `Does the agent's actual output meet this evaluation criterion: ${cr.criterion}`,
+              criteria: { true: "The output meets the criterion", false: "The output does not meet it, or omits what it asks for" },
+              subject: cr.criterion.slice(0, 500),
+            };
+          });
+        }
+        const decided = await decideMany({
+          site: "eval_judge",
+          state: {
+            test_name: testName,
+            input: JSON.stringify(inputData).slice(0, JUDGE_STATE_CONTEXT_CHARS),
+            expected: expectedOutput ? JSON.stringify(expectedOutput).slice(0, JUDGE_STATE_CONTEXT_CHARS) : null,
+            actual_output: (actualOutput ?? "").slice(0, JUDGE_STATE_OUTPUT_CHARS),
+            agent_context: (agentContext ?? "").slice(0, JUDGE_STATE_CONTEXT_CHARS),
+          },
+          questions,
+          incumbent: knownIncumbent(known, { model: result.actualModel, latencyMs, inputTokens: result.tokensUsed?.prompt, costUsd: result.costUsd }),
+        });
+        for (const dim of dimensionResults) {
+          dim.criteriaResults = dim.criteriaResults.map((cr, i) => {
+            const d = decided[`${dim.dimId}::${i}`];
+            if (!d) return cr;
+            if (d.engine === "jev") criteriaDecidedByModel++;
+            return { ...cr, met: d.answer === true };
+          });
+        }
+      } catch (err: any) {
+        console.warn("[eval-judge] criteria through the decision seam failed; keeping the incumbent's answers:", err?.message);
+      }
+    }
+
+    return { isPassed, confidence, reason, latencyMs, dimensionResults, ...(criteriaDecidedByModel ? { criteriaDecidedByModel } : {}) };
   } catch (err: any) {
     const latencyMs = Date.now() - start;
     console.error("[eval-judge] LLM judge call failed:", err.message);

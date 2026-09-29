@@ -66,11 +66,28 @@ export async function callClaude(opts: {
   jsonMode?: boolean;
   model?: string;
 }): Promise<string> {
+  return (await callClaudeWithUsage(opts)).text;
+}
+
+/**
+ * The same call, with what it cost: a judge that goes through the decision
+ * seam records the incumbent's tokens beside the decision model's, and a
+ * string return could not say. callClaude stays as the plain form.
+ */
+export async function callClaudeWithUsage(opts: {
+  system: string;
+  user: string;
+  maxTokens?: number;
+  jsonMode?: boolean;
+  model?: string;
+}): Promise<{ text: string; model: string; inputTokens: number; outputTokens: number; latencyMs: number }> {
   const systemPrompt = opts.jsonMode
     ? `${opts.system}\n\nReturn ONLY valid JSON with no markdown fences or prose.`
     : opts.system;
+  const startedAt = Date.now();
+  const model = opts.model ?? "claude-opus-4-5";
   const response = await createClaudeMessage({
-    model: opts.model ?? "claude-opus-4-5",
+    model,
     system: systemPrompt,
     messages: [{ role: "user", content: opts.user }],
     max_tokens: opts.maxTokens ?? 4096,
@@ -78,7 +95,13 @@ export async function callClaude(opts: {
   const textBlock = response.content.find(
     (b): b is Anthropic.TextBlock => b.type === "text"
   );
-  return textBlock?.text ?? "";
+  return {
+    text: textBlock?.text ?? "",
+    model: response.model ?? model,
+    inputTokens: response.usage?.input_tokens ?? 0,
+    outputTokens: response.usage?.output_tokens ?? 0,
+    latencyMs: Date.now() - startedAt,
+  };
 }
 
 // Strips a markdown code fence that WRAPS a JSON response. It must only do that

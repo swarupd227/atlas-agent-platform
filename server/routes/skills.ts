@@ -24,6 +24,7 @@ import {
 } from "@shared/schema";
 
 import { callClaude, stripJsonFences, parseAIJsonResponse, AIResponseParseError, friendlyAIErrorMessage } from "../claude";
+import { decideMany, knownIncumbent } from "../decision-provider";
 import * as yaml from "js-yaml";
 import { filterByIndustry, industryQuery } from "@shared/industry-filter";
 
@@ -1572,10 +1573,26 @@ ${naturalLanguageInput}`,
         judge = JSON.parse(stripJsonFences(judgeRaw));
       } catch { /* grading is best-effort; the real output still returns */ }
 
+      // "Did the response apply the skill?" is a judgment, so it goes through
+      // the decision seam on "sandbox_judge"; the judge call above still gives
+      // the quality score and the issues, which are generation.
+      let activationTriggered = withSkill ? Boolean(judge.activationTriggered) : false;
+      if (withSkill) {
+        try {
+          const decided = await decideMany({
+            site: "sandbox_judge",
+            state: { scenario: testScenario, skill_name: skillName || "n/a", agent_output: String(executionOutput).slice(0, 4000) },
+            questions: { activation: { kind: "noul", instructions: `Does the response visibly apply the skill named "${skillName || "n/a"}"?`, criteria: { true: "The response visibly applies the skill", false: "It does not" }, subject: String(skillName || "skill").slice(0, 500) } },
+            incumbent: knownIncumbent({ activation: Boolean(judge.activationTriggered) }, { latencyMs: 0 }),
+          });
+          activationTriggered = decided.activation?.answer === true;
+        } catch { /* the judge's own answer stands */ }
+      }
+
       const result = {
         realExecution: true,
         limitations: ["Tool dispatch is not exercised in the sandbox — deploy to a staging agent to validate tool usage."],
-        activationTriggered: withSkill ? Boolean(judge.activationTriggered) : false,
+        activationTriggered,
         activationReason: judge.activationReason || (withSkill ? "Judged from the real model output" : "No skill context was injected"),
         contextInjected,
         steps: [],

@@ -415,6 +415,23 @@ export async function decideMany(set: DecisionSetRequest): Promise<Record<string
   return out;
 }
 
+/**
+ * An incumbent for decideMany() whose answers are already known: a judge whose
+ * one prompt gives the overall verdict AND the per-criterion answers has to be
+ * called anyway, so the seam compares against (or falls back to) what it said
+ * rather than asking again. The call's cost is attributed to the batch once.
+ */
+export function knownIncumbent(
+  answers: Record<string, boolean | string | number>,
+  meta: Omit<IncumbentBatch, "answers">,
+): (keys: string[]) => Promise<IncumbentBatch> {
+  return async (keys) => {
+    const picked: IncumbentBatch["answers"] = {};
+    for (const k of keys) if (answers[k] !== undefined) picked[k] = answers[k];
+    return { ...meta, answers: picked };
+  };
+}
+
 /** One decision-model call for every question of the set; a question the model did not answer comes back null. */
 async function askJevMany(set: DecisionSetRequest, keys: string[]): Promise<{ answers: Record<string, DecisionResult | null> }> {
   const questions: Record<string, JevQuestion> = {};
