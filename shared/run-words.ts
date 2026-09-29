@@ -34,12 +34,27 @@ export type SkipCause =
   | "condition_false"
   /** Its condition read a field no upstream step produced. */
   | "missing_field"
+  /**
+   * The step that produces the field ran, and did not include it this time.
+   *
+   * Not a defect: the condition could not be true, so the routing is right. It
+   * is separated from `missing_field` because the two look identical in the
+   * recorded message and mean opposite things. Live case (2026-09-29): an
+   * Expression node computing `concentrationBreached` as
+   * `$heaviest.shareOfCoastalLimitPct > 35` emits nothing for that key when
+   * there is no coastal exposure — JSONata drops a key whose value is
+   * undefined — so the carrier approval gate reported a condition reading a
+   * field "nothing produces", in runs where the gate correctly should not fire.
+   * It fires normally in the runs that do have coastal exposure. Measured over
+   * the 60 most recent runs, 7 of the 15 `missing_field` skips were this.
+   */
+  | "producer_omitted_field"
   /** The edge carries no condition at all. */
   | "no_condition"
   /** Recorded before the causes were distinguished, or not recognisable. */
   | "unknown";
 
-export const SKIP_CAUSES: SkipCause[] = ["predecessor_skipped", "condition_false", "missing_field", "no_condition", "unknown"];
+export const SKIP_CAUSES: SkipCause[] = ["predecessor_skipped", "condition_false", "missing_field", "producer_omitted_field", "no_condition", "unknown"];
 
 /** What the cause means, in the reader's terms. */
 export function skipCauseLabel(cause: SkipCause): string {
@@ -47,6 +62,7 @@ export function skipCauseLabel(cause: SkipCause): string {
     case "predecessor_skipped": return "The step before it never ran";
     case "condition_false": return "Its condition was false";
     case "missing_field": return "Its condition read a field nothing produced";
+    case "producer_omitted_field": return "The step that produces that field ran without reporting it";
     case "no_condition": return "Its edge carries no condition";
     case "unknown": return "Cause not recorded";
   }
@@ -58,6 +74,7 @@ export function skipCauseAdvice(cause: SkipCause): string {
     case "predecessor_skipped": return "Look further upstream: the branch that stopped is above this step, not at it.";
     case "condition_false": return "Working as drawn. The data routed elsewhere; nothing to fix unless the route is wrong.";
     case "missing_field": return "A real defect: the condition names a field the producing step never emits, so that path can never be taken.";
+    case "producer_omitted_field": return "Routing is correct here: the producing step ran and said nothing about that field, so the condition could not be true. Worth knowing because an output whose shape changes between runs reads as a defect elsewhere — an expression yielding nothing when the case does not apply is the usual cause.";
     case "no_condition": return "Nobody wrote a condition on this edge. It will never be satisfied.";
     case "unknown": return "This run predates the platform recording why a step was skipped. A new run will say.";
   }
@@ -80,6 +97,7 @@ export function causeFromMessage(message: string | null | undefined): SkipCause 
   if (!m) return "unknown";
   if (/^The steps? before it did not run/i.test(m)) return "predecessor_skipped";
   if (/^No condition to evaluate/i.test(m)) return "no_condition";
+  if (/ran without reporting /i.test(m)) return "producer_omitted_field";
   if (/no upstream step output the routing field/i.test(m)) return "missing_field";
   if (/^No incoming edge condition was satisfied/i.test(m)) return "condition_false";
   return "unknown";
@@ -144,4 +162,42 @@ export function effortWords(costUsd: number | null, ran: number, total: number):
   const cost = costUsd != null && costUsd > 0 ? `$${costUsd < 0.01 ? costUsd.toFixed(4) : costUsd.toFixed(2)}` : "no recorded cost";
   if (total === 0) return cost;
   return ran === total ? `${cost} for all ${total} steps` : `${cost} for ${ran} of ${total} steps`;
+}
+
+/**
+ * The fields named in a recorded "no upstream step output the routing field(s)
+ * X, Y" message.
+ *
+ * Only for reading runs recorded before the engine separated the two cases: a
+ * new run says which it was in its own words. Returns [] for any other message.
+ */
+export function fieldsInSkipMessage(message: string | null | undefined): string[] {
+  const m = /no upstream step output the routing fields? ([^)]+)\)/i.exec(String(message ?? ""));
+  if (!m) return [];
+  return m[1].split(",").map((f) => f.trim()).filter(Boolean);
+}
+
+/**
+ * Did the step that produces this field run, and simply not report it?
+ *
+ * The evidence is the run's own state: if the field's first segment is there,
+ * something wrote under that key, so the producing step ran — it just said
+ * nothing about this property. If the key itself is absent, nothing produced it
+ * and the condition really does read a field that does not exist.
+ */
+export function producerOmitted(state: unknown, field: string): boolean {
+  if (!state || typeof state !== "object") return false;
+  const segments = field.split(".").filter(Boolean);
+  if (segments.length < 2) return false;
+  const root = (state as Record<string, unknown>)[segments[0]];
+  if (root === undefined) return false;
+
+  let here: unknown = root;
+  for (const segment of segments.slice(1)) {
+    if (!here || typeof here !== "object") return true; // the producer wrote something, but not this shape
+    here = (here as Record<string, unknown>)[segment];
+    if (here === undefined) return true;
+  }
+  // The field resolves, so it was produced; the condition simply came out false.
+  return false;
 }

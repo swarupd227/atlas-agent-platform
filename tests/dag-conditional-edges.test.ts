@@ -454,6 +454,24 @@ describe("the reason a step was skipped", () => {
       .toBe("No incoming edge condition was satisfied (no upstream step output the routing field endorsement_accepted.rejected)");
   });
 
+  it("says a producing step ran without reporting the field, which is not the same finding", () => {
+    // Live 2026-09-29: an Expression node emits `concentrationBreached` only
+    // when there is coastal exposure, because JSONata drops a key whose value
+    // is undefined. Reporting that as a field "no upstream step output" made a
+    // carrier approval gate that fires normally read as a dead one.
+    expect(skipReason({ unresolvedSources: [], emptyConditionSources: [], conditionsEvaluated: 1, missingFields: [], omittedFields: ["cat_accumulation_by_zone.concentrationBreached"] }))
+      .toBe("No incoming edge condition was satisfied (the step producing cat_accumulation_by_zone.concentrationBreached ran without reporting it)");
+    expect(skipReason({ unresolvedSources: [], emptyConditionSources: [], conditionsEvaluated: 1, missingFields: [], omittedFields: ["a.x", "b.y"] }))
+      .toContain("the steps producing a.x, b.y ran without reporting them");
+  });
+
+  it("still leads with a genuinely absent field when a skip has both", () => {
+    // The stronger finding wins: one dead field is worth raising even when
+    // another producer merely stayed quiet.
+    expect(skipReason({ unresolvedSources: [], emptyConditionSources: [], conditionsEvaluated: 1, missingFields: ["ghost.flag"], omittedFields: ["cat.breached"] }))
+      .toContain("no upstream step output the routing field ghost.flag");
+  });
+
   it("pluralises and caps the list, so a wide fan-in stays readable", () => {
     const r = skipReason({ unresolvedSources: ["a", "b", "c", "d", "e"], emptyConditionSources: [], conditionsEvaluated: 0, missingFields: [] });
     expect(r).toContain("The steps before it did not run (a, b, c, +2 more)");

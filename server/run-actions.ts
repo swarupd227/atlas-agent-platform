@@ -15,7 +15,7 @@
  */
 import { storage } from "./storage";
 import { computeWaves } from "./dag-execution-engine";
-import { causeFromMessage, isProblemCause, isStuck, type SkipCause } from "@shared/run-words";
+import { causeFromMessage, fieldsInSkipMessage, isProblemCause, isStuck, producerOmitted, type SkipCause } from "@shared/run-words";
 
 export class RunActionError extends Error {}
 
@@ -56,6 +56,24 @@ const iso = (v: unknown): string | null => {
   return Number.isFinite(d.getTime()) ? d.toISOString() : null;
 };
 
+/**
+ * A `missing_field` verdict, checked against the run's own state.
+ *
+ * Runs recorded before 2026-09-29 used one sentence for two opposite findings:
+ * a condition reading a field nothing produces (a branch that can never be
+ * taken) and one whose producing step ran and simply did not report it (correct
+ * routing). The state settles it after the fact — if something wrote under the
+ * field's own key, the producer ran. Measured over the 60 most recent runs, 7
+ * of 15 such skips were a silent producer, every one of them on a gate that
+ * fires normally in the runs where the field IS reported.
+ */
+function refineMissingField(cause: SkipCause, message: string | null | undefined, state: unknown): SkipCause {
+  if (cause !== "missing_field" || !state) return cause;
+  const fields = fieldsInSkipMessage(message);
+  if (fields.length === 0) return cause;
+  return fields.every((field) => producerOmitted(state, field)) ? "producer_omitted_field" : cause;
+}
+
 function summarise(run: any, teamName: string): RunSummary {
   const nodes = nodesOf(run);
   const skipped = nodes.filter((n) => n.status === "skipped");
@@ -72,9 +90,11 @@ function summarise(run: any, teamName: string): RunSummary {
     steps: { total: nodes.length, ran: nodes.length - skipped.length, skipped: skipped.length, failed: failed.length },
     costUsd: typeof run.totalCostUsd === "number" ? run.totalCostUsd : null,
     stuck: isStuck(String(run.status ?? ""), startedAt, iso(run.heartbeatAt)),
-    // Cheap pass for the list: the message is enough to spot the two defect
-    // causes. The detail view works them out from the graph instead.
-    problemSkips: skipped.filter((n) => isProblemCause(causeFromMessage(n.error))).length,
+    // Cheap pass for the list: the message plus the run's state, which is all
+    // that is needed to spot the defect causes. It cannot tell a cascade from a
+    // false condition — neither is a defect, so the count is unaffected — and
+    // the detail view works every cause out from the graph instead.
+    problemSkips: skipped.filter((n) => isProblemCause(refineMissingField(causeFromMessage(n.error), n.error, run.finalState))).length,
     waitingOnApproval: !!run.pendingApprovalId,
   };
 }
@@ -203,7 +223,7 @@ export async function explainRun(orgId: string | undefined, runId: string): Prom
       label: known?.label ?? n.nodeId.slice(0, 8),
       stateKey: known?.stateKey ?? null,
       status,
-      cause: status === "skipped" ? causeOfSkip(n, incoming, statusById) : null,
+      cause: status === "skipped" ? causeOfSkip(n, incoming, statusById, run.finalState) : null,
       detail: n.error ?? null,
       durationMs: typeof n.durationMs === "number" ? n.durationMs : null,
       costUsd: typeof n.costUsd === "number" ? n.costUsd : null,
@@ -225,13 +245,16 @@ export function causeOfSkip(
   node: { nodeId: string; error?: string | null },
   incoming: ReadonlyMap<string, string[]>,
   statusById: ReadonlyMap<string, string>,
+  /** The run's own final state, which separates a dead gate from a silent producer. */
+  state?: unknown,
 ): SkipCause {
   const sources = incoming.get(node.nodeId);
   if (sources && sources.length > 0) {
     const everySourceSkipped = sources.every((id) => statusById.get(id) === "skipped");
     if (everySourceSkipped) return "predecessor_skipped";
   }
-  return causeFromMessage(node.error);
+
+  return refineMissingField(causeFromMessage(node.error), node.error, state);
 }
 
 /**
@@ -313,7 +336,7 @@ export async function runsNeedingAttention(orgId: string | undefined, limit = 40
     const statusById = new Map<string, string>(nodes.map((n) => [n.nodeId, String(n.status ?? "")]));
     const problemSteps = nodes
       .filter((n) => n.status === "skipped")
-      .map((n) => ({ node: n, cause: causeOfSkip(n, graph.incoming, statusById) }))
+      .map((n) => ({ node: n, cause: causeOfSkip(n, graph.incoming, statusById, (run as any).finalState) }))
       .filter(({ cause }) => isProblemCause(cause))
       .map(({ node, cause }) => ({
         label: graph.labels.get(node.nodeId)?.label ?? node.nodeId.slice(0, 8),
@@ -397,8 +420,8 @@ export async function compareRuns(orgId: string | undefined, runId: string, agai
   const nodeB = byId(nodesB);
 
   const label = (id: string) => graph.labels.get(id)?.label ?? id.slice(0, 8);
-  const cause = (node: any, statuses: Map<string, string>) =>
-    node && node.status === "skipped" ? causeOfSkip(node, graph.incoming, statuses) : null;
+  const cause = (node: any, statuses: Map<string, string>, runState: unknown) =>
+    node && node.status === "skipped" ? causeOfSkip(node, graph.incoming, statuses, runState) : null;
 
   const shared = Array.from(nodeA.keys()).filter((id) => nodeB.has(id));
   const differences = shared
@@ -406,8 +429,8 @@ export async function compareRuns(orgId: string | undefined, runId: string, agai
     .map((id) => ({
       label: label(id),
       nodeId: id,
-      a: { status: statusA.get(id) ?? "", cause: cause(nodeA.get(id), statusA) },
-      b: { status: statusB.get(id) ?? "", cause: cause(nodeB.get(id), statusB) },
+      a: { status: statusA.get(id) ?? "", cause: cause(nodeA.get(id), statusA, a.finalState) },
+      b: { status: statusB.get(id) ?? "", cause: cause(nodeB.get(id), statusB, b.finalState) },
     }));
 
   return {

@@ -15,6 +15,7 @@ import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSte
 import { collectRunFiles } from "@shared/run-files";
 import { stateKeyForLabel } from "@shared/state-key";
 import { gateEdgeSatisfied, gateEdgePolarity } from "@shared/gate-edge-polarity";
+import { producerOmitted } from "@shared/run-words";
 
 // Backstop against a long non-cyclic sub-flow chain (A -> B -> C -> D -> ...)
 // that isn't caught by the cycle check but would still nest indefinitely.
@@ -865,6 +866,17 @@ export function skipReason(d: {
   conditionsEvaluated: number;
   /** Fields a condition referenced that no upstream step ever produced. */
   missingFields: string[];
+  /**
+   * Fields whose producing step DID run and simply did not report them.
+   *
+   * Separated because the two are opposite findings that used to share one
+   * sentence: a field nothing produces is a branch that can never be taken,
+   * while a field the producer omitted this time is that producer answering
+   * "not applicable" in the only way an omitted key can. Live case: an
+   * expression emitting `concentrationBreached` only when there is coastal
+   * exposure made a working carrier-approval gate read as a dead one.
+   */
+  omittedFields?: string[];
 }): string {
   const list = (xs: string[]) => xs.slice(0, 3).join(", ") + (xs.length > 3 ? `, +${xs.length - 3} more` : "");
 
@@ -880,6 +892,10 @@ export function skipReason(d: {
   // about, so stored run history stays searchable by it.
   if (d.missingFields.length > 0) {
     return `No incoming edge condition was satisfied (no upstream step output the routing field${d.missingFields.length > 1 ? "s" : ""} ${d.missingFields.join(", ")})`;
+  }
+  const omitted = d.omittedFields ?? [];
+  if (omitted.length > 0) {
+    return `No incoming edge condition was satisfied (${omitted.length > 1 ? "the steps producing" : "the step producing"} ${omitted.join(", ")} ran without reporting ${omitted.length > 1 ? "them" : "it"})`;
   }
   return "No incoming edge condition was satisfied";
 }
@@ -1889,6 +1905,7 @@ export class DAGExecutionEngine {
       }
 
       const missingFields = new Set<string>();
+      const omittedFields = new Set<string>();
       // WHY each edge failed, so a skipped step can say which of three quite
       // different things happened to it. They are not interchangeable, and one
       // sentence for all three is how this went unnoticed: measured live
@@ -1957,7 +1974,16 @@ export class DAGExecutionEngine {
           conditionsEvaluated++;
           const trace = evaluateRule(edge.rule, withRoutedRecordValues(pipelineState, sourceOutput, edge.sourceNodeId, incomingEdges));
           if (!trace.result) {
-            for (const [field, value] of Object.entries(trace.inputs)) if (value === undefined) missingFields.add(field);
+            // A field that resolved to undefined is one of two opposite things,
+            // and the run state says which: if something wrote under the field's
+            // own state key, the producing step ran and did not report this
+            // property (an expression that yields nothing for the case at hand);
+            // if that key is absent entirely, nothing produces the field.
+            for (const [field, value] of Object.entries(trace.inputs)) {
+              if (value !== undefined) continue;
+              if (producerOmitted(pipelineState, field)) omittedFields.add(field);
+              else missingFields.add(field);
+            }
           }
           return trace.result;
         }
@@ -1996,6 +2022,7 @@ export class DAGExecutionEngine {
             emptyConditionSources: Array.from(emptyConditionSources),
             conditionsEvaluated,
             missingFields: Array.from(missingFields),
+            omittedFields: Array.from(omittedFields),
           }),
           durationMs: 0,
           promptTokens: 0,

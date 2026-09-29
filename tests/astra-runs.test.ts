@@ -29,6 +29,7 @@ import { scriptedComplete, result, call } from "../server/astra/scripted-brain";
 import { finishTurnTool } from "../server/astra/tools/finish-turn";
 import { loadToolsTool } from "../server/astra/tools/load-tools";
 import { RUNS_TOOLS } from "../server/astra/tools/runs";
+import { isProblemCause, skipCauseAdvice, skipCauseLabel } from "../shared/run-words";
 import { PACKS } from "../server/astra/packs";
 import { buildAstraSystemPrompt } from "../server/astra/prompt";
 import { hasPermission, type RoleId } from "../server/permissions";
@@ -47,7 +48,7 @@ vi.mock("../server/storage", () => ({
   },
 }));
 
-const { compareRuns, runsNeedingAttention } = await import("../server/run-actions");
+const { compareRuns, runsNeedingAttention, causeOfSkip } = await import("../server/run-actions");
 
 const ORG = "org-a";
 const TEAM = "E&S Property Placement Orchestrator";
@@ -558,5 +559,96 @@ describe("the rule the whole surface rests on", () => {
 
   it("does not carry the rule when the pack is not loaded", () => {
     expect(buildAstraSystemPrompt(as("admin"), grounding(["list_agents"]))).not.toContain("Never report a run's status");
+  });
+});
+
+/**
+ * A silent producer is not a dead gate.
+ *
+ * The live case that forced this apart (2026-09-29): the E&S carrier approval
+ * gate has two incoming edges, one reading
+ * `cat_accumulation_by_zone.concentrationBreached`. That step is an Expression
+ * node computing the verdict as `$heaviest.shareOfCoastalLimitPct > 35`, and
+ * with no coastal exposure `$heaviest` is undefined — JSONata then drops the
+ * key entirely. So the field is reported as one "nothing produces" in exactly
+ * the runs where the gate correctly should not fire, while the gate COMPLETES
+ * in the runs that do have coastal exposure (verified on runs ed8d0f03 and
+ * 66b81217). Across the 60 most recent runs, 7 of the 15 `missing_field` skips
+ * were this, and the Runs pack was calling all 15 defects.
+ */
+describe("a producing step that ran and said nothing", () => {
+  const MSG = (f: string) => `No incoming edge condition was satisfied (no upstream step output the routing field ${f})`;
+  const FIELD = "cat_accumulation_by_zone.concentrationBreached";
+
+  it("is not a defect, and says the producer ran", () => {
+    expect(isProblemCause("producer_omitted_field")).toBe(false);
+    expect(skipCauseLabel("producer_omitted_field")).toContain("ran without reporting it");
+    expect(skipCauseAdvice("producer_omitted_field")).toContain("Routing is correct");
+  });
+
+  it("separates the silent producer from the field nothing produces, in stored runs", () => {
+    const node = { nodeId: "gate", error: MSG(FIELD) };
+    const none = new Map<string, string[]>();
+    const statuses = new Map<string, string>();
+
+    // The real inland shape: the step wrote its numbers, without the verdict.
+    const inland = { cat_accumulation_by_zone: { zoneCount: 3, coastalZoneCount: 0, concentrationThresholdPct: 35 } };
+    expect(causeOfSkip(node, none, statuses, inland)).toBe("producer_omitted_field");
+
+    // Nothing wrote under that key at all: the branch really is unreachable.
+    expect(causeOfSkip(node, none, statuses, { evaluate_treaty_limits: { breached: false } })).toBe("missing_field");
+
+    // The verdict only ever moves on positive evidence of a silent producer.
+    // If the field resolves in the final state, the recorded message and the
+    // state disagree — which a real run cannot produce, since the engine writes
+    // the message from that same state — so nothing is inferred and the
+    // message's own verdict stands rather than a third reading being invented.
+    const coastal = { cat_accumulation_by_zone: { concentrationBreached: false } };
+    expect(causeOfSkip(node, none, statuses, coastal)).toBe("missing_field");
+  });
+
+  it("keeps a cascade a cascade, whatever the message says about fields", () => {
+    const incoming = new Map([["gate", ["upstream"]]]);
+    const statuses = new Map([["upstream", "skipped"]]);
+    const inland = { cat_accumulation_by_zone: { coastalZoneCount: 0 } };
+    expect(causeOfSkip({ nodeId: "gate", error: MSG(FIELD) }, incoming, statuses, inland)).toBe("predecessor_skipped");
+  });
+
+  it("does not reclassify without the run's state, so an unknown stays honest", () => {
+    expect(causeOfSkip({ nodeId: "gate", error: MSG(FIELD) }, new Map(), new Map())).toBe("missing_field");
+  });
+
+  it("reads a partially-reported producer as silent rather than as a dead field", () => {
+    // Only SOME of the named fields resolving means the others were omitted by
+    // a producer that ran; both halves have to be omitted before the verdict
+    // flips, so a genuinely dead field is never hidden behind a live one.
+    const twoFields = { nodeId: "gate", error: `No incoming edge condition was satisfied (no upstream step output the routing fields ${FIELD}, ghost_step.flag)` };
+    const state = { cat_accumulation_by_zone: { zoneCount: 3 } };
+    expect(causeOfSkip(twoFields, new Map(), new Map(), state)).toBe("missing_field");
+  });
+
+  it("stops counting a silent producer as a run that needs attention", async () => {
+    db.nodes = [{ id: "n1", label: "CAT Accumulation by Zone Agent" }, { id: "n2", label: "Carrier Underwriter Approval Agent" }];
+    db.edges = [{ id: "e1", sourceNodeId: "n1", targetNodeId: "n2" }];
+    db.runs = [rawRun({
+      id: "inland",
+      status: "completed_with_skips",
+      finalState: { cat_accumulation_by_zone: { zoneCount: 3, coastalZoneCount: 0 } },
+      waveResults: [{ nodes: [node("n1", "completed"), node("n2", "skipped", MSG(FIELD))] }],
+    })];
+    const quiet = await runsNeedingAttention(ORG, 10);
+    expect(quiet.examined).toBe(1);
+    expect(quiet.runs).toHaveLength(0);
+
+    // The same message with nothing written under that key is still raised.
+    db.runs = [rawRun({
+      id: "dead",
+      status: "completed_with_skips",
+      finalState: { something_else: { ok: true } },
+      waveResults: [{ nodes: [node("n1", "completed"), node("n2", "skipped", MSG(FIELD))] }],
+    })];
+    const raised = await runsNeedingAttention(ORG, 10);
+    expect(raised.runs).toHaveLength(1);
+    expect(raised.runs[0].problemSteps.map((s) => s.label)).toEqual(["Carrier Underwriter Approval Agent"]);
   });
 });
