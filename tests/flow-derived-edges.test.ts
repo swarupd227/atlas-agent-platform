@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveEdgesFromFlow } from "../server/team-proposal";
+import { deriveEdgesFromFlow, unclaimedWorkSteps } from "../server/team-proposal";
 
 /**
  * A business flow's connections becoming the team's execution order.
@@ -164,6 +164,55 @@ describe("deriveEdgesFromFlow — routing steps nobody claims", () => {
       [{ from: "1", to: "2" }, { from: "2", to: "3" }],
     );
     expect(derived).toEqual([]);
+  });
+});
+
+describe("steps a plan leaves out", () => {
+  /**
+   * Live 2026-09-29: a 40-step binder close proposed 28 agents claiming 28
+   * steps. The twelve nobody claimed were not built -- including four of the
+   * six human approval gates -- and nothing said so. Zero coverage was loud;
+   * partial coverage was silent, and partial is the dangerous one.
+   */
+  const steps = [
+    { id: "s1", label: "Pull Transactions", type: "get_info" },
+    { id: "s2", label: "Check Quality", type: "expression" },
+    { id: "s3", label: "Quality Assessment", type: "make_decision" },
+    { id: "s4", label: "Operations Corrects", type: "expert_approval" },
+    { id: "s5", label: "Finance Signs Off", type: "expert_approval" },
+    { id: "s6", label: "Gather In Parallel", type: "parallel" },
+    { id: "s7", label: "Period Ends", type: "trigger" },
+    { id: "s8", label: "Done", type: "end" },
+  ];
+
+  it("names the working steps nobody claimed", () => {
+    const agents = [
+      { flowStepLabels: ["Pull Transactions"] },
+      { flowStepLabels: ["Check Quality"] },
+      { flowStepLabels: ["Operations Corrects"] },
+    ];
+    expect(unclaimedWorkSteps(agents, steps)).toEqual(["Finance Signs Off"]);
+  });
+
+  it("does not complain about routing steps, which are walked through", () => {
+    const agents = [
+      { flowStepLabels: ["Pull Transactions"] },
+      { flowStepLabels: ["Check Quality"] },
+      { flowStepLabels: ["Operations Corrects"] },
+      { flowStepLabels: ["Finance Signs Off"] },
+    ];
+    // The decision, the fan-out, the trigger and the end are all unclaimed and
+    // all fine: nothing is built for them and nothing needs to be.
+    expect(unclaimedWorkSteps(agents, steps)).toEqual([]);
+  });
+
+  it("is case and whitespace insensitive, because a label is retyped by a model", () => {
+    expect(unclaimedWorkSteps([{ flowStepLabels: ["  pull TRANSACTIONS "] }], [steps[0]])).toEqual([]);
+  });
+
+  it("reports every working step when a plan claims nothing", () => {
+    expect(unclaimedWorkSteps([{}, { flowStepLabels: [] }], steps))
+      .toEqual(["Pull Transactions", "Check Quality", "Operations Corrects", "Finance Signs Off"]);
   });
 });
 
