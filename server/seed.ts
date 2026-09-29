@@ -1758,7 +1758,7 @@ export async function seedDatabase() {
       {
         key: "DECISION_SITE_OVERRIDES",
         value: "{}",
-        description: "Per-site routing overrides as JSON, e.g. {\"evaluateCondition\":\"jev\",\"handoff\":{\"mode\":\"jev\",\"threshold\":0.9}}. Sites: evaluateCondition, handoff, decision_step.",
+        description: "Per-site routing overrides as JSON, e.g. {\"evaluateCondition\":\"jev\",\"handoff\":{\"mode\":\"jev\",\"threshold\":0.9}}. Sites: evaluateCondition, handoff, decision_step, checkSoftPolicyCompliance, claim_vs_facts, eval_judge, golden_judge, sandbox_judge. redteam_judge and approval_risk are second-opinion only and are refused here.",
         category: "decisions",
       },
       {

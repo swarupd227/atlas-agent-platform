@@ -16,7 +16,7 @@ vi.mock("../server/storage", () => ({
   },
 }));
 
-import { getDecisionSettings, resolveDecisionRoute, invalidateDecisionSettingsCache, DEFAULT_THRESHOLDS } from "../server/decision-settings";
+import { getDecisionSettings, resolveDecisionRoute, invalidateDecisionSettingsCache, validateDecisionSetting, DEFAULT_THRESHOLDS } from "../server/decision-settings";
 
 beforeEach(() => {
   settings.clear();
@@ -112,5 +112,36 @@ describe("resolveDecisionRoute", () => {
     settings.set("DECISION_PROVIDER", "jev");
     orgs.set("org-blank", {});
     expect((await resolveDecisionRoute("handoff", "org-blank")).mode).toBe("jev");
+  });
+
+  it("keeps a second-opinion site in shadow under a jev platform, and llm under the kill switch", async () => {
+    settings.set("DECISION_PROVIDER", "jev");
+    expect(await resolveDecisionRoute("redteam_judge")).toEqual({ mode: "shadow", threshold: 0.85, reason: "second_opinion" });
+    expect(await resolveDecisionRoute("approval_risk")).toEqual({ mode: "shadow", threshold: 0.85, reason: "second_opinion" });
+    expect((await resolveDecisionRoute("evaluateCondition")).mode).toBe("jev");
+    settings.set("DECISION_PROVIDER", "llm");
+    invalidateDecisionSettingsCache();
+    expect((await resolveDecisionRoute("redteam_judge")).mode).toBe("llm");
+  });
+
+  it("ignores an override that names a second-opinion site, however it got written", async () => {
+    settings.set("DECISION_PROVIDER", "shadow");
+    settings.set("DECISION_SITE_OVERRIDES", JSON.stringify({ redteam_judge: "jev", approval_risk: { mode: "jev", threshold: 0.5 }, handoff: "jev" }));
+    const s = await getDecisionSettings();
+    expect(s.siteOverrides).toEqual({ handoff: { mode: "jev" } });
+    expect(await resolveDecisionRoute("redteam_judge")).toEqual({ mode: "shadow", threshold: 0.85, reason: "platform" });
+  });
+});
+
+describe("validateDecisionSetting", () => {
+  it("refuses an override naming a second-opinion site and says which", () => {
+    expect(validateDecisionSetting("DECISION_SITE_OVERRIDES", JSON.stringify({ redteam_judge: "jev" }))).toBe("redteam_judge is second-opinion only and cannot be routed; remove it from DECISION_SITE_OVERRIDES");
+    expect(validateDecisionSetting("DECISION_SITE_OVERRIDES", JSON.stringify({ redteam_judge: "jev", approval_risk: "shadow", handoff: "jev" }))).toBe("redteam_judge, approval_risk are second-opinion only and cannot be routed; remove them from DECISION_SITE_OVERRIDES");
+  });
+
+  it("accepts every other value, including ones the parser will ignore", () => {
+    expect(validateDecisionSetting("DECISION_SITE_OVERRIDES", JSON.stringify({ evaluateCondition: "jev" }))).toBeNull();
+    expect(validateDecisionSetting("DECISION_SITE_OVERRIDES", "not json")).toBeNull();
+    expect(validateDecisionSetting("DECISION_PROVIDER", "jev")).toBeNull();
   });
 });

@@ -46,6 +46,13 @@ interface RedteamRun {
   completedAt: string | null;
 }
 
+/** The decision model's second opinion on a probe, present only where it differed from the judge. */
+interface JudgeDisagreementView {
+  model: string;
+  vulnerable?: { incumbent: boolean; model: boolean; confidence: number | null };
+  severity?: { incumbent: string; model: string; confidence: number | null };
+}
+
 interface RedteamResult {
   id: string;
   category: string;
@@ -56,6 +63,7 @@ interface RedteamResult {
   reasoning: string | null;
   latencyMs: number | null;
   traceId: string | null;
+  judgeDisagreement: JudgeDisagreementView | null;
 }
 
 interface Agent { id: string; name: string; }
@@ -70,6 +78,13 @@ const CATEGORY_META: Record<string, { label: string; icon: typeof Shield; color:
   indirect_injection: { label: "Indirect Injection", icon: Siren, color: "text-cyan-600", description: "Injections embedded in external data or documents" },
   misinformation: { label: "Misinformation", icon: ShieldAlert, color: "text-pink-600", description: "Requests to generate false authoritative claims" },
 };
+
+function disagreementTitle(d: JudgeDisagreementView): string {
+  const parts: string[] = [];
+  if (d.vulnerable) parts.push(`${d.model} says ${d.vulnerable.model ? "vulnerable" : "not vulnerable"}, the judge said ${d.vulnerable.incumbent ? "vulnerable" : "not vulnerable"}`);
+  if (d.severity) parts.push(`${d.model} rates it ${d.severity.model}, the judge said ${d.severity.incumbent}`);
+  return `${parts.join("; ")}. The judge's verdict stands.`;
+}
 
 function severityColor(s: string | null) {
   if (s === "critical") return "bg-red-500/15 text-red-600 border-red-500/30";
@@ -155,6 +170,7 @@ export default function EvalRedteam() {
 
   const filteredResults = catFilter === "all" ? results : results.filter(r => r.category === catFilter);
   const vulnResults = results.filter(r => r.vulnerabilityDetected);
+  const disagreements = results.filter(r => r.judgeDisagreement).length;
 
   // Report tab: filtered + sorted vulnerability list, pre-computed to avoid IIFE inside JSX
   const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -398,6 +414,9 @@ export default function EvalRedteam() {
                       </div>
                       <div className="flex items-center gap-3 text-xs text-muted-foreground">
                         <span className="text-red-600 font-semibold">{activeRun.vulnerabilitiesFound ?? 0} vulnerabilities found</span>
+                        {disagreements > 0 && (
+                          <span className="text-amber-600 font-medium" title="The decision model's second opinion differed from the judge on these probes; the judge's verdict stands." data-testid="text-judge-disagreements">{disagreements} second-opinion disagreement{disagreements !== 1 ? "s" : ""}</span>
+                        )}
                         {activeRun.postureScore != null && (
                           <span className={`font-semibold ${postureScoreColor(activeRun.postureScore)}`}>Score: {activeRun.postureScore}/100</span>
                         )}
@@ -466,6 +485,9 @@ export default function EvalRedteam() {
                               {r.vulnerabilityDetected
                                 ? <ShieldOff className="w-4 h-4 text-red-500" />
                                 : <ShieldCheck className="w-4 h-4 text-green-500" />}
+                              {r.judgeDisagreement && (
+                                <span className="ml-1 text-amber-600" title={disagreementTitle(r.judgeDisagreement)} data-testid={`badge-second-opinion-${r.id}`}><AlertTriangle className="w-3.5 h-3.5" /></span>
+                              )}
                             </div>
                             <div className="flex justify-center">
                               {r.severity
@@ -557,6 +579,12 @@ export default function EvalRedteam() {
                               <div className="mt-2 pt-2 border-t text-xs">
                                 <span className="text-muted-foreground font-medium">Reasoning: </span>
                                 <span className="text-muted-foreground/80">{r.reasoning}</span>
+                              </div>
+                            )}
+                            {r.judgeDisagreement && (
+                              <div className="mt-2 pt-2 border-t text-xs text-amber-700 dark:text-amber-500" data-testid={`text-second-opinion-${r.id}`}>
+                                <span className="font-medium">Second opinion: </span>
+                                <span>{disagreementTitle(r.judgeDisagreement)}</span>
                               </div>
                             )}
                           </div>

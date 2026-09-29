@@ -44,7 +44,7 @@ export interface DecisionRoute {
   /** The act threshold that applies to this site. */
   threshold: number;
   /** Why the mode is what it is, for the audit row. */
-  reason: "platform" | "site_override" | "residency";
+  reason: "platform" | "site_override" | "residency" | "second_opinion";
 }
 
 export const DECISION_SETTING_KEYS = {
@@ -55,6 +55,33 @@ export const DECISION_SETTING_KEYS = {
 } as const;
 
 export const DEFAULT_THRESHOLDS: DecisionThresholds = { review: 0.6, act: 0.85 };
+
+/**
+ * Sites where the decision model is a second opinion only: the incumbent's
+ * verdict stands, the model's answer is recorded beside it, and nothing can
+ * route them. The red-team judge decides whether an agent is vulnerable and
+ * the approval router decides whether a tool call needs a person; the Phase 2
+ * plan keeps both on the incumbent until a drill says otherwise. A platform
+ * mode of jev leaves them in shadow, and an override naming one is refused.
+ */
+export const SECOND_OPINION_SITES: ReadonlySet<string> = new Set(["redteam_judge", "approval_risk"]);
+
+/**
+ * Why a value for a decision setting is refused, or null when it is fine. The
+ * platform-settings route asks before writing, so an operator naming a
+ * second-opinion site in DECISION_SITE_OVERRIDES is told rather than silently
+ * ignored; the parser below drops such an entry anyway for a row written some
+ * other way.
+ */
+export function validateDecisionSetting(key: string, value: string): string | null {
+  if (key !== DECISION_SETTING_KEYS.siteOverrides) return null;
+  const raw = parseJson(value);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const refused = Object.keys(raw as Record<string, unknown>).filter((site) => SECOND_OPINION_SITES.has(site));
+  if (refused.length === 0) return null;
+  const one = refused.length === 1;
+  return `${refused.join(", ")} ${one ? "is" : "are"} second-opinion only and cannot be routed; remove ${one ? "it" : "them"} from ${key}`;
+}
 
 const CACHE_MS = 30_000;
 const MODES: DecisionMode[] = ["llm", "shadow", "jev"];
@@ -113,6 +140,7 @@ export async function getDecisionSettings(): Promise<DecisionSettings> {
   const raw = parseJson(overrides);
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     for (const [site, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (SECOND_OPINION_SITES.has(site)) continue;
       if (typeof v === "string") { const m = asMode(v); if (m) siteOverrides[site] = { mode: m }; continue; }
       if (v && typeof v === "object") {
         const o = v as Record<string, unknown>;
@@ -165,6 +193,10 @@ export async function resolveDecisionRoute(site: string, orgId?: string | null):
   if (override && s.mode !== "llm") {
     if (override.mode) { mode = override.mode; reason = "site_override"; }
     if (override.threshold !== undefined) threshold = override.threshold;
+  }
+  if (mode === "jev" && SECOND_OPINION_SITES.has(site)) {
+    mode = "shadow";
+    reason = "second_opinion";
   }
   if (mode !== "llm" && orgId && (await orgForbidsUs(orgId))) {
     mode = "llm";

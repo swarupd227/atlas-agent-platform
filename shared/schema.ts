@@ -3764,6 +3764,8 @@ export const evalRedteamResults = pgTable("eval_redteam_results", {
   severity: text("severity"),
   reasoning: text("reasoning"),
   traceId: varchar("trace_id"),
+  /** The decision model's second opinion where it differed from the judge; null when it agreed or was not asked. */
+  judgeDisagreement: jsonb("judge_disagreement"),
   latencyMs: integer("latency_ms"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [

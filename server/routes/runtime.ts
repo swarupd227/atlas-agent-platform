@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
+import { validateDecisionSetting } from "../decision-settings";
 import { parseOpenApiSpec, OpenApiParseError, type ParsedOpenApiSpec } from "../openapi-import";
 import { assertSafeOutboundUrl } from "../url-safety";
 import { CURATED_OPENAPI_CATALOG } from "../marketplace-seed-data";
@@ -15712,6 +15713,8 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
         ...req.body,
         key: req.params.key,
       });
+      const refusal = validateDecisionSetting(data.key, data.value);
+      if (refusal) return res.status(400).json({ message: refusal });
       const previous = await storage.getPlatformSetting(data.key);
       const upserted = await storage.upsertPlatformSetting(data);
       await storage.createAuditEvent({

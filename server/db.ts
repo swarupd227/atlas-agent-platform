@@ -1021,11 +1021,14 @@ export async function runStartupMigrations() {
         severity                TEXT,
         reasoning               TEXT,
         trace_id                VARCHAR,
+        judge_disagreement      JSONB,
         latency_ms              INTEGER,
         created_at              TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_eval_rt_results_run   ON eval_redteam_results(run_id);
       CREATE INDEX IF NOT EXISTS idx_eval_rt_results_agent ON eval_redteam_results(agent_id);
+      -- Phase 2: the decision model's second opinion on a probe, kept only where it differed from the judge.
+      ALTER TABLE eval_redteam_results ADD COLUMN IF NOT EXISTS judge_disagreement JSONB;
 
       -- P2: Human Annotation + Compliance Report tables
       CREATE TABLE IF NOT EXISTS eval_annotations (

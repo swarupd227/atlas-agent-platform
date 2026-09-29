@@ -69,6 +69,13 @@ export interface DecisionResult {
   costUsd: number;
   /** Why the LLM answered when the route was jev. */
   fallbackReason?: "below_threshold" | "jev_error" | "residency" | "no_key";
+  /**
+   * The decision model's own answer on the shadow route, when the set asked
+   * for it back (DecisionSetRequest.secondOpinion). The audit row has it
+   * regardless; this is for a site that shows the disagreement where it
+   * happened.
+   */
+  shadow?: { answer: boolean | string | number; probabilities?: Record<string, number>; confidence: number | null; model: string; latencyMs: number };
 }
 
 // Vendor list price, USD per 1k input tokens; output is free. Kept here rather
@@ -311,6 +318,14 @@ export interface DecisionSetRequest {
    * with the generic prompt.
    */
   incumbent?: (keys: string[]) => Promise<IncumbentBatch>;
+  /**
+   * On the shadow route, wait for the decision model and return its answer
+   * on each result's `shadow` beside the incumbent's. Off, the model is asked
+   * after the answer is returned and only the audit row sees it. A site that
+   * never routes (decision-settings SECOND_OPINION_SITES) uses this to keep a
+   * disagreement where a person will look for it.
+   */
+  secondOpinion?: boolean;
 }
 
 /**
@@ -370,14 +385,23 @@ export async function decideMany(set: DecisionSetRequest): Promise<Record<string
 
   if (route.mode === "shadow") {
     Object.assign(out, await askIncumbent(keys, "shadow"));
-    void askJevMany(set, keys)
+    const shadowed = askJevMany(set, keys)
       .then(async ({ answers }) => {
-        for (const key of keys) await audit(reqOf(key), route, { ...out[key], mode: "shadow" }, answers[key] ?? null);
+        for (const key of keys) {
+          const jev = answers[key] ?? null;
+          await audit(reqOf(key), route, { ...out[key], mode: "shadow" }, jev);
+          if (jev && set.secondOpinion) {
+            out[key] = { ...out[key], shadow: { answer: jev.answer, probabilities: jev.probabilities, confidence: jev.confidence, model: jev.model, latencyMs: jev.latencyMs } };
+          }
+        }
       })
       .catch(async (err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         for (const key of keys) await audit(reqOf(key), route, out[key], null, message);
       });
+    // A site that wants the second opinion back waits for it; every other
+    // shadow site returns the incumbent's answer at once, as before.
+    if (set.secondOpinion) await shadowed; else void shadowed;
     return out;
   }
 

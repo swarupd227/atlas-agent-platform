@@ -24,6 +24,7 @@
  */
 import { createHash } from "crypto";
 import { hasReadOnlyToolName } from "./tool-read-only";
+import { shadowApprovalRisk } from "./approval-risk-shadow";
 import { storage } from "./storage";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpAuthHeaders } from "./mcp-client";
 import { resolvePolicyBundle } from "./routes/helpers";
@@ -363,6 +364,17 @@ export async function evaluateActionPolicy(
       approvalId = approval.id;
     }
   }
+
+  // A shadow second opinion on the risk of this call (Phase 2): the decision
+  // model scores run / review / block from what a reviewer would see -- the
+  // tool, its side-effect class, the agent's tier and mode -- with the rules'
+  // own decision as the known incumbent. The site "approval_risk" never
+  // routes, this is not awaited, and nothing above changes because of it.
+  void shadowApprovalRisk({
+    agentId, agentName: agent?.name, agentDescription: agent?.description, riskTier: riskLevel, autonomyMode,
+    tool: { toolName, toolDescription: tool.toolDescription, serverName: tool.serverName, sideEffectful: isSideEffectful(tool) },
+    decision, reason, latencyMs: Math.round(performance.now() - evalStartMs), orgId: agent?.organizationId ?? null,
+  });
 
   // Persist the decision (best-effort — do not let persistence failure block policy enforcement)
   try {
