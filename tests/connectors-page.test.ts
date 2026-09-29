@@ -222,12 +222,68 @@ describe("how the checks are chosen and metered", () => {
   it("asks the app what it serves, rather than keeping a list beside sixty mount sites", () => {
     const mounts = read("server", "app-mounts.ts");
     expect(mounts).toContain("export function isPathHandled(");
-    // Only router layers: app-level middleware matches everything and would make
-    // every path look served.
-    expect(mounts).toContain('if (layer?.name !== "router") continue');
     // And not knowing must never read as "not mounted".
-    expect(mounts).toContain("return sawUsableLayer ? false : null");
+    expect(mounts).toContain("return sawUsableLayer ? handled : null");
     expect(read("server", "routes.ts")).toContain('(await import("./app-mounts")).recordApp(app)');
+  });
+});
+
+/**
+ * Asking the app which paths it serves.
+ *
+ * The first version of this filtered Express layers on `layer.name === "router"`,
+ * passed locally, and matched NOTHING once deployed: the production bundle is
+ * minified, so the handler functions Express takes those names from are renamed.
+ * It failed safe — every mount check answered "cannot determine" — so nothing
+ * broke, but the check it was written to perform never ran for 56 connectors.
+ * These tests reproduce the production condition rather than the local one.
+ */
+describe("which paths this build serves", () => {
+  const buildApp = async () => {
+    const express = (await import("express")).default;
+    const app = express();
+    app.use("/api", (_q: any, _s: any, n: any) => n());     // middleware on a prefix
+    const mock = express.Router();
+    mock.get("/watchlists", (_q: any, s: any) => s.json({}));
+    app.use("/api/mock/watchlist-screening", mock);
+    app.use("/demo-api", express.Router());
+    return app;
+  };
+
+  it("tells a mounted path from an unmounted one", async () => {
+    const { recordApp, isPathHandled } = await import("../server/app-mounts");
+    recordApp(await buildApp() as any);
+    expect(isPathHandled("/api/mock/watchlist-screening")).toBe(true);
+    expect(isPathHandled("/demo-api/kinective/envelopes")).toBe(true);
+    expect(isPathHandled("/api/mock/this-was-removed")).toBe(false);
+  });
+
+  it("still works when the bundler has renamed every layer — the live failure", async () => {
+    const { recordApp, isPathHandled } = await import("../server/app-mounts");
+    const app: any = await buildApp();
+    for (const layer of (app.router ?? app._router).stack) {
+      Object.defineProperty(layer, "name", { value: "a", configurable: true });
+    }
+    recordApp(app);
+    expect(isPathHandled("/api/mock/watchlist-screening")).toBe(true);
+    expect(isPathHandled("/api/mock/this-was-removed")).toBe(false);
+  });
+
+  it("is not fooled by middleware that matches everything under /api", async () => {
+    // `app.use("/api", mw)` matches /api/mock/anything. Counting it would make
+    // every path look served, which is the failure in the other direction.
+    const { recordApp, isPathHandled } = await import("../server/app-mounts");
+    const express = (await import("express")).default;
+    const app = express();
+    app.use("/api", (_q: any, _s: any, n: any) => n());
+    recordApp(app as any);
+    expect(isPathHandled("/api/mock/anything")).toBe(null);
+  });
+
+  it("answers 'cannot determine' rather than 'no' when there is no app at all", async () => {
+    const { recordApp, isPathHandled } = await import("../server/app-mounts");
+    recordApp(undefined as any);
+    expect(isPathHandled("/api/mock/watchlist-screening")).toBe(null);
   });
 });
 

@@ -31,6 +31,28 @@ export function recordApp(app: Express): void {
 interface MatcherLayer {
   name?: string;
   matchers?: unknown;
+  handle?: { stack?: unknown };
+}
+
+/**
+ * A path nothing could be mounted at. A layer that matches it matches
+ * everything, so it says nothing about whether a specific path is served.
+ */
+const CONTROL_PATH = "/__astra_mount_probe__/f3a91c";
+
+/**
+ * Is this layer a mounted router, rather than middleware?
+ *
+ * Tested by STRUCTURE (a router carries its own stack), never by `layer.name`.
+ * The production bundle is minified, which renames the handler functions Express
+ * takes those names from — so the first version of this, which filtered on
+ * `layer.name === "router"`, matched nothing once deployed and answered "cannot
+ * determine" for all 56 connectors it was written to check. It failed safe and
+ * said so, which is how it was caught, but it did no work. Property names
+ * survive minification; identifier names do not.
+ */
+function isMountedRouter(layer: MatcherLayer): boolean {
+  return Array.isArray(layer?.handle?.stack);
 }
 
 function layerHandles(layer: MatcherLayer, pathname: string): boolean {
@@ -57,15 +79,19 @@ export function isPathHandled(pathname: string): boolean | null {
   if (!Array.isArray(stack) || stack.length === 0) return null;
 
   let sawUsableLayer = false;
+  let handled = false;
   for (const layer of stack as MatcherLayer[]) {
-    if (layer?.name !== "router") continue;
+    if (!isMountedRouter(layer)) continue;
     const matchers = Array.isArray(layer.matchers) ? layer.matchers : [layer.matchers];
     if (!matchers.some((m) => typeof m === "function")) continue;
+    // A router mounted at the root matches every path, so it can neither confirm
+    // nor deny a specific one.
+    if (layerHandles(layer, CONTROL_PATH)) continue;
     sawUsableLayer = true;
-    if (layerHandles(layer, pathname)) return true;
+    if (layerHandles(layer, pathname)) handled = true;
   }
-  // No router layer was even inspectable: that is "we cannot tell", not "no".
-  return sawUsableLayer ? false : null;
+  // No mounted router was even inspectable: that is "we cannot tell", not "no".
+  return sawUsableLayer ? handled : null;
 }
 
 /** The path part of a URL, or null when it is not a URL at all. */

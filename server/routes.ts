@@ -50,6 +50,10 @@ import accountAdministrationRouter from "./mock-mcp/account-administration";
 import bridgeSpecialtyIntakeRouter from "./mock-mcp/bridge-specialty-intake";
 import insurityRatingRouter from "./mock-mcp/insurity-rating";
 import insurityPolicySorRouter from "./mock-mcp/insurity-policy-sor";
+import mgaBinderMasterRouter from "./mock-mcp/mga-binder-master";
+import mgaPolicyAdminRouter from "./mock-mcp/mga-policy-admin";
+import mgaBillingGlRouter from "./mock-mcp/mga-billing-gl";
+import mgaTpaClaimsRouter from "./mock-mcp/mga-tpa-claims";
 import serviceNowCmdbMockRouter from "./mock-mcp/servicenow-cmdb";
 import surplusLinesComplianceRouter from "./mock-mcp/surplus-lines-compliance";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
@@ -247,6 +251,25 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  // ── Which build is this? ──────────────────────────────────────
+  //
+  // Mounted OUTSIDE /api deliberately, beside /health and /ready, so a deploy
+  // can be confirmed without credentials — which is the moment you need it.
+  // It carries no tenant data: the commit is public (the repository is), and
+  // knowing the build is what lets "is my fix live?" be a one-second question
+  // instead of comparing response wording against the source.
+  //
+  // The values are stamped in at build time (script/build.ts). Running from
+  // source there is no bundle and no stamp, so it says so rather than guessing.
+  app.get("/version", (_req, res) => {
+    res.json({
+      commit: process.env.BUILD_COMMIT || "unknown (running from source)",
+      builtAt: process.env.BUILD_TIME || null,
+      startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString(),
+      node: process.version,
+    });
+  });
+
   // ── Auth & OpenAPI router ─────────────────────────────────────
   app.use(authRouter);
 
@@ -290,6 +313,10 @@ export async function registerRoutes(
   app.use("/api/mock/bridge-specialty-intake", bridgeSpecialtyIntakeRouter);
   app.use("/api/mock/insurity-rating", insurityRatingRouter);
   app.use("/api/mock/insurity-policy-sor", insurityPolicySorRouter);
+  app.use("/api/mock/mga-binder-master", mgaBinderMasterRouter);
+  app.use("/api/mock/mga-policy-admin", mgaPolicyAdminRouter);
+  app.use("/api/mock/mga-billing-gl", mgaBillingGlRouter);
+  app.use("/api/mock/mga-tpa-claims", mgaTpaClaimsRouter);
   app.use("/api/mock/servicenow-cmdb", serviceNowCmdbMockRouter);
   app.use("/api/mock/surplus-lines-compliance", surplusLinesComplianceRouter);
   app.use("/api/mock/adobe", adobeAnalyticsRouter);
