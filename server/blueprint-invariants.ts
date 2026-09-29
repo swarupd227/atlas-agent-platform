@@ -19,6 +19,7 @@
  * inferred from what a build intended to write.
  */
 import { storage } from "./storage";
+import { expressionOutputKeys, nodeOutputSchema } from "./expression-contract";
 import { backEdgeKeys } from "@shared/graph-cycles";
 import { judgeConditionField, ruleFields, statePaths } from "@shared/rule-fields";
 import { effectiveStateKey } from "@shared/state-key";
@@ -31,6 +32,8 @@ export interface BlueprintFinding {
     | "unreachable_rule_field"
     /** A branch condition that cannot be true: see the check at the end of this file. */
     | "unsatisfiable_condition"
+    /** A field an Expression step constructs but only reports in some runs. */
+    | "conditional_output_field"
     | "branch_judged_by_model";
   /** Sentence naming the steps involved and what to do, for a card or a route. */
   message: string;
@@ -206,7 +209,7 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
   // fields recent runs actually produced (evidence, not proof -- hence never
   // blocking, and never raised below a floor of runs).
   const nodeByStateKey = new Map(nodes.map((n) => [effectiveStateKey(n), n] as const).filter(([k]) => !!k));
-  const { observedPaths, runsObserved } = await observedStateFields(blueprintId);
+  const { observedPaths, pathRuns, runsObserved } = await observedStateFields(blueprintId);
 
   for (const e of edges) {
     if (e.evaluationMode !== "deterministic" || !e.rule) continue;
@@ -215,11 +218,35 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
       const verdict = judgeConditionField({
         field,
         stateKeys,
-        producerSchema: producer?.outputSchema,
+        producerSchema: nodeOutputSchema(producer),
         observedPaths,
         runsObserved,
       });
-      if (verdict.satisfiable) continue;
+      if (verdict.satisfiable) {
+        // A key the expression DOES construct, that some runs nonetheless did
+        // not report. JSONata omits a key whose value evaluates to undefined,
+        // so a verdict like `$heaviest.share > 35` vanishes in exactly the runs
+        // where the answer would be "no" -- and the run then records the step
+        // as skipped for a field "nothing produces". Live case 2026-09-29: the
+        // E&S carrier approval gate, which fires normally whenever the field IS
+        // reported. Only raised for Expression steps, whose output shape is
+        // meant to be fixed; an agent's wording varying between runs is not news.
+        const dot = field.indexOf(".");
+        const property = dot > 0 ? field.slice(dot + 1) : "";
+        const constructed = producer?.nodeType === "expression"
+          ? expressionOutputKeys((producer.config as { expression?: string } | null)?.expression)
+          : null;
+        const seenIn = pathRuns.get(field) ?? 0;
+        if (constructed?.includes(property) && runsObserved >= 3 && seenIn > 0 && seenIn < runsObserved) {
+          findings.push({
+            kind: "conditional_output_field",
+            blocksRun: false,
+            steps: [labelOf(e.sourceNodeId), labelOf(e.targetNodeId)],
+            message: `"${producer?.label ?? field.split(".")[0]}" builds "${property}", but only ${seenIn} of the last ${runsObserved} runs reported it — an expression leaves a key out entirely when its value works out to nothing. The path from "${labelOf(e.sourceNodeId)}" to "${labelOf(e.targetNodeId)}" reads it, so in the other runs that path is skipped and recorded as a condition on a field nothing produces. Give the key a value in every case (a guard such as $exists(...) around the comparison) so the step always reports its answer, including when the answer is no.`,
+          });
+        }
+        continue;
+      }
       const from = labelOf(e.sourceNodeId);
       const to = labelOf(e.targetNodeId);
       findings.push({
@@ -247,8 +274,8 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
  * Returns nothing on any failure: a check that cannot see run history must say
  * "no evidence" and let the condition pass, never invent a defect.
  */
-async function observedStateFields(blueprintId: string): Promise<{ observedPaths: Set<string>; runsObserved: number }> {
-  const empty = { observedPaths: new Set<string>(), runsObserved: 0 };
+async function observedStateFields(blueprintId: string): Promise<{ observedPaths: Set<string>; pathRuns: Map<string, number>; runsObserved: number }> {
+  const empty = { observedPaths: new Set<string>(), pathRuns: new Map<string, number>(), runsObserved: 0 };
   try {
     const agents = await storage.listAgentsByBlueprintId(blueprintId);
     const teamAgentId = agents[0]?.id;
@@ -256,14 +283,21 @@ async function observedStateFields(blueprintId: string): Promise<{ observedPaths
     const runs = await storage.listDagExecutionRunsByTeamAgent(teamAgentId, 10);
     if (runs.length === 0) return empty;
     const observedPaths = new Set<string>();
+    // How many of those runs each path appeared in. A path present in some runs
+    // and absent in others is a producer whose output shape changes, which reads
+    // downstream as a condition on a field nothing produces.
+    const pathRuns = new Map<string, number>();
     let runsObserved = 0;
     for (const run of runs) {
       const state = run?.finalState ?? run?.currentState;
       if (!state || typeof state !== "object") continue;
       runsObserved++;
-      for (const path of Array.from(statePaths(state))) observedPaths.add(path);
+      for (const path of Array.from(statePaths(state))) {
+        observedPaths.add(path);
+        pathRuns.set(path, (pathRuns.get(path) ?? 0) + 1);
+      }
     }
-    return { observedPaths, runsObserved };
+    return { observedPaths, pathRuns, runsObserved };
   } catch {
     return empty;
   }

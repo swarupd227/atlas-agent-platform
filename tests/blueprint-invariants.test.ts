@@ -403,3 +403,111 @@ describe("a branch condition that can never be true", () => {
     expect(check.findings.map((f) => f.kind)).toEqual(["unreachable_rule_field"]);
   });
 });
+
+/**
+ * An Expression step's contract, which closes the gap that made the condition
+ * check depend on run history.
+ *
+ * Measured 2026-09-28: no node of any team declares an output schema, so every
+ * verdict rested on "never observed in N runs" — evidence, not proof, and
+ * useless below three runs. An Expression step's keys are in its source, so for
+ * those steps the answer is decisive and available immediately.
+ */
+describe("an expression step declares its own contract", () => {
+  const exprNode = (id: string, label: string, expression: string) => ({
+    id, label, nodeType: "expression",
+    stateKey: label.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+    config: { expression },
+  });
+
+  beforeEach(() => {
+    db.nodes = [
+      exprNode("n1", "Cat accumulation", '( $z := 1; { "coastalZoneCount": $z, "concentrationBreached": $z > 3 } )'),
+      node("n2", "Carrier approval"),
+    ];
+    db.edges = [edge("n1", "n2", { evaluationMode: "deterministic", rule: rule("cat_accumulation.concentrationBreached") })];
+    db.teamAgents = [{ id: "team-1" }];
+    db.runs = [];
+  });
+
+  it("calls a condition on a key the expression never builds dead, with no runs at all", async () => {
+    db.edges = [edge("n1", "n2", { evaluationMode: "deterministic", rule: rule("cat_accumulation.concentrationBreeched") })];
+    const r = await checkBlueprintInvariants("bp-1");
+    const dead = r.findings.filter((f) => f.kind === "unsatisfiable_condition");
+    expect(dead).toHaveLength(1);
+    // Decisive wording, not the "has not appeared in the last N runs" hedge.
+    expect(dead[0].message).toContain("declares it produces");
+    expect(dead[0].message).toContain("concentrationBreached");
+    expect(dead[0].blocksRun).toBe(false);
+  });
+
+  it("leaves a condition on a key the expression does build alone", async () => {
+    const r = await checkBlueprintInvariants("bp-1");
+    expect(r.findings.filter((f) => f.kind === "unsatisfiable_condition")).toHaveLength(0);
+  });
+
+  it("says nothing either way when the expression's shape cannot be read whole", async () => {
+    // A conditional returning different objects: a partial key list here would
+    // report a live branch as dead.
+    db.nodes[0] = exprNode("n1", "Cat accumulation", '$flag ? { "a": 1 } : { "concentrationBreached": true }');
+    db.edges = [edge("n1", "n2", { evaluationMode: "deterministic", rule: rule("cat_accumulation.concentrationBreached") })];
+    const r = await checkBlueprintInvariants("bp-1");
+    expect(r.findings.filter((f) => f.kind === "unsatisfiable_condition")).toHaveLength(0);
+  });
+});
+
+/**
+ * The defect that took a live carrier-approval gate for a dead one.
+ *
+ * JSONata omits a key whose value works out to nothing, so a verdict built as
+ * `$heaviest.share > 35` disappears in exactly the runs where the answer would
+ * be "no" — and the run records the step as skipped for a field "nothing
+ * produces", while the gate fires normally in every run that DOES report it.
+ */
+describe("a key an expression builds but only sometimes reports", () => {
+  const withRuns = (present: number, absent: number) => [
+    ...Array.from({ length: present }, (_, i) => ({ id: `p${i}`, finalState: { cat_accumulation: { coastalZoneCount: 2, concentrationBreached: true } } })),
+    ...Array.from({ length: absent }, (_, i) => ({ id: `a${i}`, finalState: { cat_accumulation: { coastalZoneCount: 0 } } })),
+  ];
+
+  beforeEach(() => {
+    db.nodes = [
+      { id: "n1", label: "Cat accumulation", nodeType: "expression", stateKey: "cat_accumulation",
+        config: { expression: '( $z := 1; { "coastalZoneCount": $z, "concentrationBreached": $missing.share > 35 } )' } },
+      node("n2", "Carrier approval"),
+    ];
+    db.edges = [edge("n1", "n2", { evaluationMode: "deterministic", rule: rule("cat_accumulation.concentrationBreached") })];
+    db.teamAgents = [{ id: "team-1" }];
+  });
+
+  it("is raised as its own finding, not as a dead branch", async () => {
+    db.runs = withRuns(4, 3);
+    const r = await checkBlueprintInvariants("bp-1");
+    const found = r.findings.filter((f) => f.kind === "conditional_output_field");
+    expect(found).toHaveLength(1);
+    expect(found[0].message).toContain("only 4 of the last 7 runs reported it");
+    expect(found[0].message).toContain("$exists");
+    expect(found[0].blocksRun).toBe(false);
+    // It is NOT a dead branch: the gate fires whenever the field is reported.
+    expect(r.findings.filter((f) => f.kind === "unsatisfiable_condition")).toHaveLength(0);
+  });
+
+  it("stays quiet when every run reported it", async () => {
+    db.runs = withRuns(5, 0);
+    const r = await checkBlueprintInvariants("bp-1");
+    expect(r.findings.filter((f) => f.kind === "conditional_output_field")).toHaveLength(0);
+  });
+
+  it("stays quiet below the three-run floor, where a gap means nothing", async () => {
+    db.runs = withRuns(1, 1);
+    const r = await checkBlueprintInvariants("bp-1");
+    expect(r.findings.filter((f) => f.kind === "conditional_output_field")).toHaveLength(0);
+  });
+
+  it("does not second-guess an agent step, whose wording varies by nature", async () => {
+    db.nodes[0] = { id: "n1", label: "Cat accumulation", nodeType: "internal_agent", stateKey: "cat_accumulation", config: {} };
+    db.runs = withRuns(4, 3);
+    const r = await checkBlueprintInvariants("bp-1");
+    expect(r.findings.filter((f) => f.kind === "conditional_output_field")).toHaveLength(0);
+  });
+});
