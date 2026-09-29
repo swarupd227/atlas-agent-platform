@@ -18,7 +18,7 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { Activity, AlertTriangle, CheckCircle2, Clock, PauseCircle, Search, Sparkles, ArrowUpRight, SkipForward } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -97,9 +97,14 @@ function needsAttention(r: RunSummary): boolean {
 }
 
 export default function Runs() {
+  // ?run=<id> deep link, so a run named in a Cowork conversation opens here. The
+  // facet starts at "all" for a linked run: the default "attention" facet would
+  // hide it and the fallback below would quietly show a different run instead.
+  const search = useSearch();
+  const linkedId = useMemo(() => new URLSearchParams(search).get("run"), [search]);
   const [query, setQuery] = useState("");
-  const [facet, setFacet] = useState<Facet>("attention");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [facet, setFacet] = useState<Facet>(linkedId ? "all" : "attention");
+  const [selectedId, setSelectedId] = useState<string | null>(linkedId);
   const [, navigate] = useLocation();
 
   const overviewQ = useQuery<Overview>({ queryKey: ["/api/runs/overview"] });
@@ -123,6 +128,9 @@ export default function Runs() {
   }, [runs, facet, query]);
 
   const selected = runs.find((r) => r.id === selectedId) ?? inFacet[0] ?? null;
+  // A linked run outside the loaded window must say so rather than let the
+  // fallback above present somebody else's run under the link they followed.
+  const linkedMissing = !!linkedId && runs.length > 0 && !runs.some((r) => r.id === linkedId);
   const explainQ = useQuery<Explain>({
     queryKey: [`/api/runs/${selected?.id}/explain`],
     enabled: !!selected?.id,
@@ -165,6 +173,20 @@ export default function Runs() {
           <Stat label="Spent" value={counts ? `$${counts.costUsd.toFixed(2)}` : "—"} hint="on these runs" />
         </div>
       </div>
+
+      {linkedMissing && (
+        <div className="px-6 py-2 border-b text-sm flex items-start gap-2" data-testid="banner-linked-run-missing">
+          <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${TONE_TEXT.warn}`} />
+          <span className="text-muted-foreground">
+            Run <span className="font-mono text-xs">{linkedId}</span> is not among the runs loaded here, so it is not the one
+            shown below.{" "}
+            <Link href={`/dag-runs/${linkedId}`} className="text-primary underline">
+              Open its full record
+            </Link>
+            .
+          </span>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 px-6 py-2 border-b flex-wrap">
         <div className="relative w-64">

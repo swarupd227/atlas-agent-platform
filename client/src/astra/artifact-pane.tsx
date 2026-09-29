@@ -13,6 +13,7 @@ import { AuditChain, ExamPackage, Policies, Readiness } from "./renderers/govern
 import { EvalCompare, EvalFailures, EvalRun } from "./renderers/evaluation";
 import { AgentHealth, Deployments } from "./renderers/deploy";
 import { Concept, Concepts, OntologyAlignment, OntologyCoverage, VocabularyCheck } from "./renderers/ontology";
+import { RunCompare, RunExplain, RunsAttention } from "./renderers/runs";
 
 function AgentList({ props }: { props: Record<string, any> }) {
   const agents: any[] = props.agents ?? [];
@@ -300,6 +301,9 @@ const RENDERERS: Record<string, (p: { props: Record<string, any>; onAsk?: (text:
   ontologyCoverage: OntologyCoverage,
   ontologyAlignment: OntologyAlignment,
   vocabularyCheck: VocabularyCheck,
+  runExplain: RunExplain,
+  runsAttention: RunsAttention,
+  runCompare: RunCompare,
 };
 
 export function ArtifactPane({ artifact, onClose, onAsk, onDecide, activeActionId }: {

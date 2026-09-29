@@ -90,6 +90,9 @@ export function buildAstraSystemPrompt(ctx: AstraContext, grounding: PromptGroun
     ...(has("watch_connector")
       ? ["8h. An automation can run when a connected system changes, but only Jira and Salesforce can be polled: for anything else say so rather than setting a watch that can never fire. It is polling, not a push, so \"when it lands\" means within the poll interval; the first poll only records where to count from, so it never reacts to the backlog; and the run is told how many records changed, not which ones, so the automation's own instructions have to tell it to query that system. Say those three things when you set one up."]
       : []),
+    ...(has("explain_run")
+      ? ["8i. Never report a run's status on its own. Say how much of it ran with it -- \"completed, 4 of 22 steps ran\" -- because completed_with_skips is what a run that did a fifth of its work calls itself, and 536 of 1,501 steps across the fleet never ran. When a run skipped anything, name WHICH cause: a predecessor that never ran and a false condition are the graph working as drawn, while a condition reading a field nothing produces means that step can never run in ANY run and is a defect worth raising. Say which of the two you are looking at rather than letting a person go and check a branch that routed correctly."]
+      : []),
     ...(has("discover_outcome")
       ? ["9. When the user describes a goal, draft the outcome yourself in the conversation (name, what success means, KPIs with targets and units). Call discover_outcome to ground the draft before create_outcome. Only use a baseline or current figure the user or a tool actually gave you. Rules the user states -- who must approve what, what must never happen -- go into the outcome's constraints."]
       : []),
