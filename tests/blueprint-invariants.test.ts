@@ -465,9 +465,13 @@ describe("an expression step declares its own contract", () => {
  * produces", while the gate fires normally in every run that DOES report it.
  */
 describe("a key an expression builds but only sometimes reports", () => {
-  const withRuns = (present: number, absent: number) => [
+  // "absent" here means the step RAN and left the key out -- its state key is
+  // present, the property is not. A step that never ran is a different fixture
+  // (didNotRun) and must not be counted the same way.
+  const withRuns = (present: number, absent: number, didNotRun = 0) => [
     ...Array.from({ length: present }, (_, i) => ({ id: `p${i}`, finalState: { cat_accumulation: { coastalZoneCount: 2, concentrationBreached: true } } })),
     ...Array.from({ length: absent }, (_, i) => ({ id: `a${i}`, finalState: { cat_accumulation: { coastalZoneCount: 0 } } })),
+    ...Array.from({ length: didNotRun }, (_, i) => ({ id: `n${i}`, finalState: { something_else: { ok: true } } })),
   ];
 
   beforeEach(() => {
@@ -485,7 +489,7 @@ describe("a key an expression builds but only sometimes reports", () => {
     const r = await checkBlueprintInvariants("bp-1");
     const found = r.findings.filter((f) => f.kind === "conditional_output_field");
     expect(found).toHaveLength(1);
-    expect(found[0].message).toContain("only 4 of the last 7 runs reported it");
+    expect(found[0].message).toContain("reported it in only 4 of the 7 runs where it ran");
     expect(found[0].message).toContain("$exists");
     expect(found[0].blocksRun).toBe(false);
     // It is NOT a dead branch: the gate fires whenever the field is reported.
@@ -502,6 +506,29 @@ describe("a key an expression builds but only sometimes reports", () => {
     db.runs = withRuns(1, 1);
     const r = await checkBlueprintInvariants("bp-1");
     expect(r.findings.filter((f) => f.kind === "conditional_output_field")).toHaveLength(0);
+  });
+
+  it("counts only the runs the step actually wrote in, not the runs it never ran", async () => {
+    // The live misfire this exists for (E&S Binding Orchestrator, 2026-09-29):
+    // "Pre-Bind Quality Check" and "Endorsement Accepted?" reported their field
+    // in 1 of 9 runs and were told to guard their expression -- when in 8 of
+    // those the step had not run at all, so there was nothing to guard.
+    db.runs = withRuns(1, 0, 8);
+    const r = await checkBlueprintInvariants("bp-1");
+    expect(r.findings.filter((f) => f.kind === "conditional_output_field")).toHaveLength(0);
+  });
+
+  it("still raises it when the step ran often and stayed quiet sometimes", async () => {
+    // The live CAT shape: wrote state in 8 runs, reported the verdict in 5.
+    db.runs = withRuns(5, 3, 1);
+    const r = await checkBlueprintInvariants("bp-1");
+    const found = r.findings.filter((f) => f.kind === "conditional_output_field");
+    expect(found).toHaveLength(1);
+    expect(found[0].message).toContain("reported it in only 5 of the 8 runs where it ran");
+    expect(found[0].message).toContain("the other 3");
+    // A fixed expression keeps warning until its old runs age out; say so,
+    // rather than leaving somebody wondering whether the fix took.
+    expect(found[0].message).toContain("until they age out");
   });
 
   it("does not second-guess an agent step, whose wording varies by nature", async () => {

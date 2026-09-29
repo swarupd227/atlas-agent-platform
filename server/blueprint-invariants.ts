@@ -236,13 +236,23 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
         const constructed = producer?.nodeType === "expression"
           ? expressionOutputKeys((producer.config as { expression?: string } | null)?.expression)
           : null;
+        // Counted only over the runs in which the producing step WROTE
+        // something. A step that never ran writes no state key at all, and
+        // against the run total that reads identically to one that ran and
+        // stayed quiet -- the same conflation the per-run skip cause had to
+        // separate. Measured on the live E&S Binding Orchestrator 2026-09-29,
+        // getting this wrong made 3 of 6 findings tell somebody to guard an
+        // expression that was fine: "Pre-Bind Quality Check" and "Endorsement
+        // Accepted?" had simply not run in 8 of the 9 runs looked at.
         const seenIn = pathRuns.get(field) ?? 0;
-        if (constructed?.includes(property) && runsObserved >= 3 && seenIn > 0 && seenIn < runsObserved) {
+        const producerRuns = pathRuns.get(field.slice(0, dot > 0 ? dot : field.length)) ?? 0;
+        if (constructed?.includes(property) && producerRuns >= 3 && seenIn > 0 && seenIn < producerRuns) {
+          const missedIn = producerRuns - seenIn;
           findings.push({
             kind: "conditional_output_field",
             blocksRun: false,
             steps: [labelOf(e.sourceNodeId), labelOf(e.targetNodeId)],
-            message: `"${producer?.label ?? field.split(".")[0]}" builds "${property}", but only ${seenIn} of the last ${runsObserved} runs reported it — an expression leaves a key out entirely when its value works out to nothing. The path from "${labelOf(e.sourceNodeId)}" to "${labelOf(e.targetNodeId)}" reads it, so in the other runs that path is skipped and recorded as a condition on a field nothing produces. Give the key a value in every case (a guard such as $exists(...) around the comparison) so the step always reports its answer, including when the answer is no.`,
+            message: `"${producer?.label ?? field.split(".")[0]}" builds "${property}", but reported it in only ${seenIn} of the ${producerRuns} runs where it ran — an expression leaves a key out entirely when its value works out to nothing. The path from "${labelOf(e.sourceNodeId)}" to "${labelOf(e.targetNodeId)}" reads it, so in the other ${missedIn} that path was skipped and recorded as a condition on a field nothing produces. Give the key a value in every case (a guard such as $exists(...) around the comparison) so the step always reports its answer, including when the answer is no. Runs recorded before such a fix still count here, so this stays until they age out.`,
           });
         }
         continue;
