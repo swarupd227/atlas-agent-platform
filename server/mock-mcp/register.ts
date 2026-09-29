@@ -1128,16 +1128,17 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
         {
           name: "get_binding_authority_evidence",
-          description: "The binding-authority evidence for one policy: when and by whom it was bound, its largest location, Tier 1 coastal exposure, windstorm deductible and home state, and any carrier referral granted BEFORE it was bound. Check the referral before classifying a breach — a risk the carrier already approved is ratified, not notifiable, and a compliance team that receives false positives stops reading the report.",
+          description: "The binding-authority evidence for the risks an authority sweep flagged: for each one, when and by whom it was bound, its largest location, Tier 1 coastal exposure, windstorm deductible and home state, and any carrier referral granted BEFORE it was bound. Also returns the flagged policies split into those with a prior referral and those without, which is what the breach classification turns on. Pass EVERY policy the sweep flagged, not just the first: a risk that is not checked gets reported as a breach when the carrier may already have approved it, and a compliance team that receives false positives stops reading the report.",
           endpoint: "/authority-evidence",
           method: "GET",
           inputSchema: {
             type: "object",
             properties: {
               periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
-              policyNumber: { type: "string", description: "Policy number, e.g. POL-2026-0112-CP" },
+              policyNumbers: { type: "string", description: "Comma-separated policy numbers — every risk the sweep flagged, e.g. POL-2026-9311-CP,POL-2026-9329-CP" },
+              policyNumber: { type: "string", description: "A single policy number, instead of the list" },
             },
-            required: ["periodId", "policyNumber"],
+            required: ["periodId", "policyNumbers"],
           },
         },
       ],

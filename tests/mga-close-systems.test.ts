@@ -115,11 +115,41 @@ describe("what the policy system hands over", () => {
   });
 
   it("names a prior carrier referral, so a ratified breach is not reported as a breach", async () => {
-    const rows = (await get("/policy/transactions?periodId=2026-03&limit=50")).body.transactions;
+    const rows = (await get("/policy/transactions?periodId=2026-03&limit=100")).body.transactions;
     const under = rows.find((r: any) => r.coastalTier1Tiv > 0 && r.windstormDeductiblePct < BINDER_TERMS.minWindstormDeductiblePct);
     expect(under).toBeTruthy();
     const ev = await get(`/policy/authority-evidence?periodId=2026-03&policyNumber=${under.policyNumber}`);
-    expect(ev.body.priorCarrierReferral?.reference).toBe("REF-2026-0214");
+    expect(ev.body.evidence[0].priorCarrierReferral?.reference).toBe("REF-2026-0214");
+    expect(ev.body.ratifiedPolicyNumbers).toEqual([under.policyNumber]);
+  });
+
+  it("checks every flagged risk, not just the first one the sweep found", async () => {
+    // Live 2026-09-29: March's sweep flags two risks and the SECOND carries the
+    // referral. Reading only the first reported a breach the carrier had
+    // already approved -- the precise false positive this check exists to stop.
+    const rows = (await get("/policy/transactions?periodId=2026-03&limit=100")).body.transactions;
+    const overLimit = rows.find((r: any) => r.largestLocationTiv > BINDER_TERMS.singleRiskLimit);
+    const underWind = rows.find((r: any) => r.coastalTier1Tiv > 0 && r.windstormDeductiblePct < BINDER_TERMS.minWindstormDeductiblePct);
+    expect(overLimit).toBeTruthy();
+    expect(underWind).toBeTruthy();
+    expect(overLimit.policyNumber).not.toBe(underWind.policyNumber);
+
+    const ev = await get(`/policy/authority-evidence?periodId=2026-03&policyNumbers=${overLimit.policyNumber},${underWind.policyNumber}`);
+    expect(ev.status).toBe(200);
+    expect(ev.body.evidence).toHaveLength(2);
+    expect(ev.body.ratifiedPolicyNumbers).toEqual([underWind.policyNumber]);
+    expect(ev.body.withoutReferral).toEqual([overLimit.policyNumber]);
+  });
+
+  it("reports the policies it could not find, and refuses a call that names none", async () => {
+    const rows = (await get("/policy/transactions?periodId=2026-03&limit=100")).body.transactions;
+    const ev = await get(`/policy/authority-evidence?periodId=2026-03&policyNumbers=${rows[0].policyNumber},POL-NOPE`);
+    expect(ev.body.evidence).toHaveLength(1);
+    expect(ev.body.notFound).toEqual(["POL-NOPE"]);
+    expect((await get("/policy/authority-evidence?periodId=2026-03&policyNumbers=POL-NOPE")).status).toBe(404);
+    const none = await get("/policy/authority-evidence?periodId=2026-03");
+    expect(none.status).toBe(422);
+    expect(none.body.guidance).toMatch(/not just the first/i);
   });
 });
 

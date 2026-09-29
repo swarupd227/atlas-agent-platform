@@ -247,39 +247,73 @@ router.get("/corrections", (req: Request, res: Response) => {
 });
 
 /**
- * The binding authority evidence for one risk, which the post-bind sweep needs
- * to tell a breach from a breach somebody already approved.
+ * The binding authority evidence for the risks a sweep flagged, which is what
+ * tells a breach from a breach somebody already approved.
+ *
+ * Takes as many policies as the sweep found, because a sweep finds as many as
+ * it finds. Reading only the first was live on 2026-09-29: March flags two
+ * risks and the SECOND is the one the carrier had already approved, so the
+ * ratified breach was written up as notifiable -- the exact false positive the
+ * referral check exists to prevent.
  */
 router.get("/authority-evidence", (req: Request, res: Response) => {
   const periodId = String(req.query.periodId || "").trim();
-  const policyNumber = String(req.query.policyNumber || "").trim();
   if (!isPeriod(periodId)) return badPeriod(res, periodId);
-  const row = correctedRisksFor(periodId).find((r) => r.policyNumber === policyNumber);
-  if (!row) {
-    return res.status(404).json({ error: `No policy ${policyNumber} in period ${periodId}.` });
+  const asked = [
+    ...String(req.query.policyNumbers || "").split(","),
+    String(req.query.policyNumber || ""),
+  ].map((s) => s.trim()).filter(Boolean);
+  const wanted = [...new Set(asked)];
+  if (!wanted.length) {
+    return res.status(422).json({
+      error: "Name the policies to check.",
+      guidance: "Pass policyNumbers as a comma-separated list -- every risk the authority sweep flagged, not just the first. A risk that is not checked is a risk reported as a breach when the carrier may already have approved it.",
+    });
   }
+
+  const rows = correctedRisksFor(periodId);
+  const seedOrder = risksFor(periodId);
   const seeded = PERIODS[periodId].breaches ?? [];
-  const idx = risksFor(periodId).findIndex((r) => r.policyNumber === policyNumber);
-  const referral = seeded.find((b) => b.policyIndex === idx && b.priorReferral);
+  const evidence: Array<Record<string, unknown>> = [];
+  const notFound: string[] = [];
+  for (const policyNumber of wanted) {
+    const row = rows.find((r) => r.policyNumber === policyNumber);
+    if (!row) { notFound.push(policyNumber); continue; }
+    const idx = seedOrder.findIndex((r) => r.policyNumber === policyNumber);
+    const referral = seeded.find((b) => b.policyIndex === idx && b.priorReferral);
+    evidence.push({
+      policyNumber,
+      boundAt: `${row.effectiveDate}T09:12:00Z`,
+      boundBy: "admin",
+      largestLocationTiv: row.largestLocationTiv,
+      coastalTier1Tiv: row.coastalTier1Tiv,
+      windstormDeductiblePct: row.windstormDeductiblePct,
+      homeState: row.homeState,
+      // A referral the carrier granted BEFORE the risk was bound ratifies what
+      // would otherwise be a breach. A sweep that does not check this reports
+      // false positives, and a compliance team that gets false positives stops
+      // reading the report.
+      priorCarrierReferral: referral
+        ? { reference: referral.priorReferral, grantedAt: "2026-02-14", grantedBy: BINDER_TERMS.carrierName, scope: "Named storm deductible below the treaty minimum for this risk only" }
+        : null,
+    });
+  }
+  if (!evidence.length) {
+    return res.status(404).json({ error: `None of those policies are in period ${periodId}.`, notFound });
+  }
+
   res.json({
-    policyNumber,
     periodId,
-    boundAt: `${row.effectiveDate}T09:12:00Z`,
-    boundBy: "admin",
-    largestLocationTiv: row.largestLocationTiv,
-    coastalTier1Tiv: row.coastalTier1Tiv,
-    windstormDeductiblePct: row.windstormDeductiblePct,
-    homeState: row.homeState,
-    // A referral the carrier granted BEFORE the risk was bound ratifies what
-    // would otherwise be a breach. A sweep that does not check this reports
-    // false positives, and a compliance team that gets false positives stops
-    // reading the report.
-    priorCarrierReferral: referral
-      ? { reference: referral.priorReferral, grantedAt: "2026-02-14", grantedBy: BINDER_TERMS.carrierName, scope: "Named storm deductible below the treaty minimum for this risk only" }
-      : null,
+    requested: wanted,
+    evidence,
+    // The two lists the classification actually turns on, so no step has to
+    // re-derive them from the rows.
+    ratifiedPolicyNumbers: evidence.filter((e) => e.priorCarrierReferral).map((e) => e.policyNumber),
+    withoutReferral: evidence.filter((e) => !e.priorCarrierReferral).map((e) => e.policyNumber),
+    ...(notFound.length ? { notFound } : {}),
     retrievedAt: now(),
     guidance:
-      "Check priorCarrierReferral before classifying a breach. A risk the carrier already approved is ratified, not notifiable, and reporting it as a breach damages the MGA's standing for no reason.",
+      "Check priorCarrierReferral for EVERY flagged risk before classifying any of them. A risk the carrier already approved is ratified, not notifiable, and reporting it as a breach damages the MGA's standing for no reason. Checking only the first flagged risk is how a ratified breach gets reported as one.",
   });
 });
 
