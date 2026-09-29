@@ -17,7 +17,9 @@ vi.mock("../server/decision-shadow", () => ({
   callJev: vi.fn(async () => {
     const next = jevAnswers.shift();
     if (next instanceof Error) throw next;
-    return { response: { model: "jev-1.13.0", answers: { q: next }, usage: { input_tokens: 500, output_tokens: 10 } }, latencyMs: 200 };
+    // A single answer is keyed q (decide); a map without a type is a keyed set (decideMany).
+    const answers = next && typeof next === "object" && !("type" in next) ? next : { q: next };
+    return { response: { model: "jev-1.13.0", answers, usage: { input_tokens: 500, output_tokens: 10 } }, latencyMs: 200 };
   }),
   recordDecisionAudit: vi.fn(async (row: Record<string, unknown>) => { audits.push(row); }),
 }));
@@ -32,7 +34,7 @@ vi.mock("../server/llm-provider", () => ({
   })),
 }));
 
-import { decide, JEV_USD_PER_1K_INPUT } from "../server/decision-provider";
+import { decide, decideMany, JEV_USD_PER_1K_INPUT } from "../server/decision-provider";
 import { callJev } from "../server/decision-shadow";
 import { completeWithFallback } from "../server/llm-provider";
 
@@ -187,5 +189,72 @@ describe("decide — the LLM as a decision engine", () => {
   it("renders a level list for a score and parses the level", async () => {
     const r = await decide({ kind: "score", site: "severity", state: "x", instructions: "How bad?", criteria: ["none", "low", "high"] });
     expect(r.answer).toBe(2);
+  });
+});
+
+describe("decideMany — several questions about one state, one call", () => {
+  const set = (site = "guardrails") => ({
+    site,
+    state: { output: "The quote cites the treaty clause and omits the broker fee." },
+    questions: {
+      pii: { kind: "noul" as const, instructions: "Does the output expose personal data?", criteria: { true: "yes", false: "no" }, subject: "pii" },
+      fee: { kind: "noul" as const, instructions: "Does the output state the broker fee?", criteria: { true: "yes", false: "no" }, subject: "fee" },
+      tone: { kind: "choice" as const, instructions: "Which tone?", criteria: { approve: "formal", reject: "casual" }, subject: "tone" },
+    },
+  });
+
+  it("asks the decision model once for the whole set and takes every confident answer", async () => {
+    route.mode = "jev";
+    jevAnswers.push({ pii: { type: "noul", noul: 0.02 }, fee: { type: "noul", noul: 0.98 }, tone: { type: "choice", choice: "approve", probabilities: { approve: 0.95, reject: 0.05 }, confidence: 0.95 } });
+    const r = await decideMany(set());
+    expect(callJev).toHaveBeenCalledTimes(1);
+    expect(completeWithFallback).not.toHaveBeenCalled();
+    expect(r.pii).toMatchObject({ answer: false, engine: "jev" });
+    expect(r.fee).toMatchObject({ answer: true, engine: "jev" });
+    expect(r.tone).toMatchObject({ answer: "approve", engine: "jev" });
+    // One audit row per question, the call's tokens attributed once.
+    expect(audits).toHaveLength(3);
+    expect(audits.map((a) => a.subject).sort()).toEqual(["fee", "pii", "tone"]);
+    expect(r.pii.inputTokens + r.fee.inputTokens + r.tone.inputTokens).toBe(500);
+  });
+
+  it("hands only the unsure questions to the incumbent, in the same set", async () => {
+    route.mode = "jev";
+    jevAnswers.push({ pii: { type: "noul", noul: 0.02 }, fee: { type: "noul", noul: 0.55 }, tone: { type: "choice", choice: "approve", probabilities: { approve: 0.6, reject: 0.4 }, confidence: 0.6 } });
+    const r = await decideMany(set());
+    expect(callJev).toHaveBeenCalledTimes(1);
+    expect(completeWithFallback).toHaveBeenCalledTimes(2);
+    expect(r.pii).toMatchObject({ answer: false, engine: "jev" });
+    expect(r.fee).toMatchObject({ engine: "llm", fallbackReason: "below_threshold" });
+    expect(r.tone).toMatchObject({ answer: "approve", engine: "llm", fallbackReason: "below_threshold" });
+    expect(audits.filter((a) => a.engine === "llm").map((a) => a.agree)).toEqual(expect.arrayContaining([true]));
+  });
+
+  it("treats a question the model left unanswered as an error for that question only", async () => {
+    route.mode = "jev";
+    jevAnswers.push({ pii: { type: "noul", noul: 0.02 } });
+    const r = await decideMany(set());
+    expect(r.pii.engine).toBe("jev");
+    expect(r.fee).toMatchObject({ engine: "llm", fallbackReason: "jev_error" });
+    expect(audits.find((a) => a.subject === "fee")?.error).toContain("fee");
+  });
+
+  it("in shadow mode the incumbent decides each question and the model is asked once, afterwards", async () => {
+    route.mode = "shadow";
+    jevAnswers.push({ pii: { type: "noul", noul: 0.02 }, fee: { type: "noul", noul: 0.98 }, tone: { type: "choice", choice: "approve", probabilities: { approve: 0.95, reject: 0.05 }, confidence: 0.95 } });
+    const r = await decideMany(set());
+    expect(Object.values(r).every((x) => x.engine === "llm" && x.mode === "shadow")).toBe(true);
+    await new Promise((res) => setTimeout(res, 20));
+    expect(callJev).toHaveBeenCalledTimes(1);
+    expect(audits).toHaveLength(3);
+    expect(audits.find((a) => a.subject === "tone")).toMatchObject({ agree: true, jevAnswer: { answer: "approve" } });
+  });
+
+  it("never calls the model on the llm route, and returns nothing for an empty set", async () => {
+    route.mode = "llm";
+    const r = await decideMany(set());
+    expect(callJev).not.toHaveBeenCalled();
+    expect(Object.keys(r).sort()).toEqual(["fee", "pii", "tone"]);
+    expect(await decideMany({ site: "guardrails", state: {}, questions: {} })).toEqual({});
   });
 });

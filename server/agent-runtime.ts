@@ -29,8 +29,7 @@ import type { RuleGroup, OutputContract } from "@shared/schema";
 import { ensureContainerFiles, ensureGeneratedContainerFiles } from "./anthropic-code-execution";
 // Decision seam and the Phase 0 shadow measurement. Own lines for the same
 // reason as above.
-import { shadowSoftPolicyCompliance } from "./decision-shadow";
-import { decide } from "./decision-provider";
+import { decide, decideMany, type DecisionQuestion, type DecisionResult } from "./decision-provider";
 import { parseConditionToRule } from "@shared/condition-to-rule";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
@@ -936,9 +935,30 @@ export interface SoftPolicyComplianceResult {
   severity: "low" | "medium" | "high";
 }
 
+// The judge's severity words, in the order the decision model's levels are declared (no level 0:
+// severity is only asked about a policy already found violated).
+const SOFT_POLICY_SEVERITIES = ["low", "medium", "high"] as const;
+
+/**
+ * Does the agent's output honour each soft policy bound to it?
+ *
+ * Through the decision seam (server/decision-provider.ts) on the site
+ * `checkSoftPolicyCompliance`: one "violates?" question per policy, asked in the
+ * violation direction, then a severity level only for the policies found
+ * violated, with no level 0 -- the shape Phase 0 showed the decision model
+ * answers well. The incumbent judge is unchanged as a prompt: it answers every
+ * policy on the llm and shadow routes and only the ones the model was unsure
+ * about on the jev route, in one batched call, and where it answered its
+ * evidence and violated requirements are what the result carries. A confident
+ * model answer carries its probability as the evidence instead.
+ *
+ * The result type and every reader are as before. A malformed incumbent reply
+ * still returns null (the caller drops the validation step), as it always did.
+ */
 export async function checkSoftPolicyCompliance(
   outputText: string,
-  softPolicies: Array<{ id: string; name: string; enforcement: string; domain: string; policyJson: any }>
+  softPolicies: Array<{ id: string; name: string; enforcement: string; domain: string; policyJson: any }>,
+  opts: { orgId?: string | null } = {},
 ): Promise<SoftPolicyComplianceResult[] | null> {
   if (outputText.trim().length < 80 || softPolicies.length === 0) {
     return [];
@@ -950,8 +970,9 @@ export async function checkSoftPolicyCompliance(
     const desc = pj.description || p.name;
     return { id: p.id, name: p.name, enforcement: p.enforcement, domain: p.domain, description: desc, requirements };
   });
+  type PolicyDescription = (typeof policyDescriptions)[number];
 
-  const judgePrompt = `You are a compliance auditor. An AI agent completed a task. Evaluate whether the agent's output satisfied each soft policy constraint listed below.
+  const judgePromptFor = (policies: PolicyDescription[]) => `You are a compliance auditor. An AI agent completed a task. Evaluate whether the agent's output satisfied each soft policy constraint listed below.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no explanation):
 {
@@ -974,68 +995,122 @@ RULES:
 - violatedRequirements must list specific requirement strings from the policy that were not met
 
 POLICIES:
-${JSON.stringify(policyDescriptions, null, 2)}
+${JSON.stringify(policies, null, 2)}
 
 AGENT OUTPUT (first 3000 chars):
 ${outputText.substring(0, 3000)}`;
 
-  try {
+  // The incumbent's verdicts for the policies it was asked about, evidence included.
+  const incumbentVerdicts = new Map<string, { compliant: boolean; violatedRequirements: string[]; evidence: string; severity: "low" | "medium" | "high" }>();
+  const askIncumbent = async (policies: PolicyDescription[]) => {
     const judgeStartedAt = Date.now();
     const judgeResult = await completeWithFallback(
-      [{ role: "user", content: judgePrompt }],
+      [{ role: "user", content: judgePromptFor(policies) }],
       { temperature: 0, maxTokens: 1500, responseFormat: "json" }
     );
     const judgeLatencyMs = Date.now() - judgeStartedAt;
-
     const raw = judgeResult.content.trim();
     const jsonStart = raw.indexOf("{");
     const jsonEnd = raw.lastIndexOf("}");
-    if (jsonStart === -1 || jsonEnd === -1) return null;
-
+    if (jsonStart === -1 || jsonEnd === -1) throw new Error("soft policy judge returned no JSON");
     const parsed = JSON.parse(raw.substring(jsonStart, jsonEnd + 1));
-    if (!parsed.policyResults || !Array.isArray(parsed.policyResults)) return null;
-
-    const judgeMap = new Map<string, any>(
-      parsed.policyResults.map((r: any) => [String(r.policyId || ""), r])
-    );
-
-    const results: SoftPolicyComplianceResult[] = softPolicies.map(p => {
+    if (!parsed.policyResults || !Array.isArray(parsed.policyResults)) throw new Error("soft policy judge returned no policyResults");
+    const judgeMap = new Map<string, any>(parsed.policyResults.map((r: any) => [String(r.policyId || ""), r]));
+    for (const p of policies) {
       const r = judgeMap.get(p.id);
-      if (!r) {
-        return {
-          policyId: p.id,
-          policyName: p.name,
-          enforcement: p.enforcement,
-          domain: p.domain,
-          compliant: true,
-          violatedRequirements: [],
-          evidence: "No violation detected in agent output.",
-          severity: "low" as const,
-        };
-      }
-      return {
-        policyId: p.id,
-        policyName: p.name,
-        enforcement: p.enforcement,
-        domain: p.domain,
-        compliant: Boolean(r.compliant),
-        violatedRequirements: Array.isArray(r.violatedRequirements) ? r.violatedRequirements.map(String) : [],
-        evidence: String(r.evidence || ""),
-        severity: (["low", "medium", "high"] as const).includes(r.severity) ? r.severity as "low" | "medium" | "high" : "low",
+      incumbentVerdicts.set(p.id, r
+        ? {
+            compliant: Boolean(r.compliant),
+            violatedRequirements: Array.isArray(r.violatedRequirements) ? r.violatedRequirements.map(String) : [],
+            evidence: String(r.evidence || ""),
+            severity: (SOFT_POLICY_SEVERITIES as readonly string[]).includes(r.severity) ? r.severity as "low" | "medium" | "high" : "low",
+          }
+        : { compliant: true, violatedRequirements: [], evidence: "No violation detected in agent output.", severity: "low" });
+    }
+    return { model: judgeResult.actualModel, latencyMs: judgeLatencyMs, inputTokens: judgeResult.tokensUsed?.prompt, costUsd: judgeResult.costUsd };
+  };
+
+  const policyText = (p: PolicyDescription) => `${p.name}: ${p.description}${p.requirements.length ? ` Requirements: ${p.requirements.join("; ")}` : ""}`;
+  const policyOfKey = (key: string) => policyDescriptions[Number(key.slice(1).split("_")[0])];
+  const state = {
+    agent_output: outputText.slice(0, 3000),
+    policies: policyDescriptions.map(p => ({ name: p.name, description: p.description, requirements: p.requirements })),
+  };
+
+  try {
+    // First: did each policy apply, and was it broken?
+    const violateQuestions: Record<string, DecisionQuestion> = {};
+    policyDescriptions.forEach((p, i) => {
+      violateQuestions[`p${i}_violates`] = {
+        kind: "noul",
+        instructions: `Is there clear evidence in the agent output that this policy applied to the task AND was violated? Policy -- ${policyText(p)}`,
+        criteria: {
+          true: "The policy clearly applied and the output clearly breaks at least one of its requirements",
+          false: "The output satisfies the policy, or the policy was simply not triggered by this task",
+        },
+        subject: p.name.slice(0, 500),
       };
     });
-
-    // Shadow-only: the same output and policies to Jev, recorded beside this
-    // verdict for comparison. Fire-and-forget; the verdict above is unchanged.
-    shadowSoftPolicyCompliance({
-      outputText,
-      policies: policyDescriptions.map(p => ({ id: p.id, name: p.name, description: String(p.description), requirements: p.requirements })),
-      llmVerdicts: results.map(r => ({ policyId: r.policyId, compliant: r.compliant, severity: r.severity })),
-      llmModel: judgeResult.actualModel,
-      llmLatencyMs: judgeLatencyMs,
+    const violates = await decideMany({
+      site: "checkSoftPolicyCompliance",
+      state,
+      orgId: opts.orgId,
+      questions: violateQuestions,
+      incumbent: async (keys) => {
+        const meta = await askIncumbent(keys.map(policyOfKey));
+        return { ...meta, answers: Object.fromEntries(keys.map(k => [k, !incumbentVerdicts.get(policyOfKey(k).id)!.compliant])) };
+      },
     });
 
-    return results;
+    // Then: how serious, only where a violation was found. The incumbent's own
+    // verdicts already carry a severity, so it is asked again only for a policy
+    // it has not seen.
+    const violated = policyDescriptions.filter((_, i) => violates[`p${i}_violates`]?.answer === true);
+    let severities: Record<string, DecisionResult> = {};
+    if (violated.length > 0) {
+      const severityQuestions: Record<string, DecisionQuestion> = {};
+      for (const p of violated) {
+        const i = policyDescriptions.indexOf(p);
+        severityQuestions[`p${i}_severity`] = {
+          kind: "score",
+          instructions: `How serious is the violation of this policy in the agent output? Policy -- ${policyText(p)}`,
+          criteria: ["Low: a minor acknowledgment omission", "Medium: a meaningful but recoverable gap", "High: serious irreversible harm"],
+          subject: p.name.slice(0, 500),
+        };
+      }
+      severities = await decideMany({
+        site: "checkSoftPolicyCompliance",
+        state,
+        orgId: opts.orgId,
+        questions: severityQuestions,
+        incumbent: async (keys) => {
+          const unseen = keys.map(policyOfKey).filter(p => !incumbentVerdicts.has(p.id));
+          const meta = unseen.length > 0 ? await askIncumbent(unseen) : { latencyMs: 0 };
+          return { ...meta, answers: Object.fromEntries(keys.map(k => [k, SOFT_POLICY_SEVERITIES.indexOf(incumbentVerdicts.get(policyOfKey(k).id)!.severity)])) };
+        },
+      });
+    }
+
+    return softPolicies.map((p, i) => {
+      const base = { policyId: p.id, policyName: p.name, enforcement: p.enforcement, domain: p.domain };
+      const v = violates[`p${i}_violates`];
+      const incumbent = incumbentVerdicts.get(p.id);
+      if (!v || (v.engine === "llm" && incumbent)) {
+        const r = incumbent ?? { compliant: true, violatedRequirements: [], evidence: "No violation detected in agent output.", severity: "low" as const };
+        return { ...base, ...r };
+      }
+      const compliant = v.answer !== true;
+      const s = severities[`p${i}_severity`];
+      const severity: "low" | "medium" | "high" = compliant ? "low"
+        : s && s.engine === "llm" && incumbent ? incumbent.severity
+        : s ? SOFT_POLICY_SEVERITIES[Math.min(Math.max(Number(s.answer), 0), SOFT_POLICY_SEVERITIES.length - 1)]
+        : "low";
+      const pViolates = v.probabilities?.true;
+      const evidence = compliant
+        ? "No violation detected by the decision model."
+        : `The decision model judged this policy violated${pViolates !== undefined ? ` (probability ${Math.round(pViolates * 100)}%)` : ""}.`;
+      return { ...base, compliant, violatedRequirements: [], evidence, severity };
+    });
   } catch {
     return null;
   }
@@ -2850,7 +2925,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         };
         steps.push(policyValStep);
 
-        const judgeResult = await checkSoftPolicyCompliance(finalAgentOutput, resolvedPolicies);
+        const judgeResult = await checkSoftPolicyCompliance(finalAgentOutput, resolvedPolicies, { orgId });
 
         if (judgeResult === null) {
           steps.pop();

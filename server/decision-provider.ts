@@ -158,8 +158,31 @@ async function decideWithLlm(req: DecisionRequest, mode: DecisionMode, fallbackR
   };
 }
 
+// ── One cap for every live call to the decision model ────────────────────────
+//
+// The shadow hooks drop a measurement past eight in flight; a live decision
+// cannot be dropped, so the seam queues instead. The red-team runner asks its
+// judge ten at a time and a guardrail set fires on every agent step of a team
+// run, which is how a slow vendor minute would otherwise fan out into a
+// hundred open requests.
+const MAX_LIVE_IN_FLIGHT = 8;
+let liveInFlight = 0;
+const liveQueue: Array<() => void> = [];
+async function withDecisionSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (liveInFlight >= MAX_LIVE_IN_FLIGHT) await new Promise<void>((resolve) => liveQueue.push(resolve));
+  liveInFlight++;
+  try {
+    return await work();
+  } finally {
+    liveInFlight--;
+    liveQueue.shift()?.();
+  }
+}
+/** For tests: how many decision-model calls are open right now. */
+export function decisionCallsInFlight(): number { return liveInFlight; }
+
 async function askJev(req: DecisionRequest): Promise<DecisionResult> {
-  const { response, latencyMs } = await callJev(req.state, { q: toJevQuestion(req) });
+  const { response, latencyMs } = await withDecisionSlot(() => callJev(req.state, { q: toJevQuestion(req) }));
   const parsed = fromJevAnswer(req.kind, response.answers?.q);
   if (!parsed) throw new Error(`Jev returned no ${req.kind} answer`);
   const inputTokens = response.usage?.input_tokens ?? 0;
@@ -207,6 +230,9 @@ async function audit(req: DecisionRequest, route: { mode: DecisionMode; reason: 
     engine: final.engine,
     mode: route.mode,
     fallbackReason: final.fallbackReason ?? (route.reason === "residency" ? "residency" : null),
+    llmInputTokens: llm?.inputTokens ?? null,
+    llmCostUsd: llm?.costUsd ?? null,
+    jevCostUsd: jev?.costUsd ?? null,
   }).catch((err: unknown) => {
     console.warn(`[decision-provider] audit write failed: ${err instanceof Error ? err.message : String(err)}`);
   });
@@ -253,4 +279,166 @@ export async function decide(req: DecisionRequest): Promise<DecisionResult> {
   const r = await decideWithLlm(req, "jev", jev ? "below_threshold" : "jev_error");
   await audit(req, route, r, jev, jevError);
   return r;
+}
+
+// ── Several questions, one call ─────────────────────────────────────────────
+
+/** One question of a decideMany() set: everything a DecisionRequest carries except the shared state, site and organization. */
+export type DecisionQuestion = Omit<DecisionRequest, "state" | "site" | "orgId">;
+
+/** What a caller's own incumbent answered for a batch of keys, in one call. */
+export interface IncumbentBatch {
+  /** noul: boolean; choice: the option key; score: the level index. A key left out is an error for that key. */
+  answers: Record<string, boolean | string | number>;
+  model?: string;
+  latencyMs: number;
+  inputTokens?: number;
+  costUsd?: number;
+}
+
+export interface DecisionSetRequest {
+  site: string;
+  state: unknown;
+  orgId?: string | null;
+  /** Keyed questions; every key comes back in the result. */
+  questions: Record<string, DecisionQuestion>;
+  /**
+   * The caller's own incumbent judge for a batch of keys, when it has one: a
+   * site that predates the seam usually asks the language model about every
+   * item in one prompt and gets evidence back with the verdicts. Given, it
+   * answers every key on the llm and shadow routes and only the unsure keys on
+   * the jev route, in one call each; without it each key is asked separately
+   * with the generic prompt.
+   */
+  incumbent?: (keys: string[]) => Promise<IncumbentBatch>;
+}
+
+/**
+ * Several judgment-shaped questions about ONE state, answered in one decision-model
+ * call. The vendor's API takes a keyed map of questions per state, and a guardrail
+ * set -- four or five policy questions after an agent step -- is one round trip
+ * this way instead of one per question. Mastra's classifier makes the same choice.
+ *
+ * Routing is per site, as for decide(); the fallback is per QUESTION: the ones the
+ * decision model answers above the threshold are taken, the rest go to the
+ * incumbent model in parallel. In shadow mode the incumbent answers every
+ * question and the decision model is asked once, afterwards, for the record.
+ * Every question writes its own decision_audit row, so the per-site report is
+ * unchanged by how many questions travelled together.
+ */
+export async function decideMany(set: DecisionSetRequest): Promise<Record<string, DecisionResult>> {
+  const keys = Object.keys(set.questions);
+  if (keys.length === 0) return {};
+  const route = await resolveDecisionRoute(set.site, set.orgId);
+  const reqOf = (key: string): DecisionRequest => ({ ...set.questions[key], site: set.site, state: set.state, orgId: set.orgId });
+  const out: Record<string, DecisionResult> = {};
+
+  // The incumbent for a batch of keys: the caller's own, in one call, else the
+  // generic prompt per key. Either way one DecisionResult per key, with a
+  // batched call's tokens and price attributed once.
+  const askIncumbent = async (batch: string[], mode: DecisionMode, fallbackReason?: DecisionResult["fallbackReason"]): Promise<Record<string, DecisionResult>> => {
+    const got: Record<string, DecisionResult> = {};
+    if (!set.incumbent) {
+      await Promise.all(batch.map(async (key) => { got[key] = await decideWithLlm(reqOf(key), mode, fallbackReason); }));
+      return got;
+    }
+    const b = await set.incumbent(batch);
+    batch.forEach((key, i) => {
+      const answer = b.answers[key];
+      if (answer === undefined) throw new Error(`incumbent gave no answer for ${key}`);
+      got[key] = {
+        kind: set.questions[key].kind,
+        answer,
+        confidence: null,
+        engine: "llm",
+        mode,
+        model: b.model ?? "unknown",
+        latencyMs: b.latencyMs,
+        inputTokens: i === 0 ? (b.inputTokens ?? 0) : 0,
+        costUsd: i === 0 ? (b.costUsd ?? 0) : 0,
+        fallbackReason,
+      };
+    });
+    return got;
+  };
+
+  if (route.mode === "llm") {
+    const got = await askIncumbent(keys, "llm", route.reason === "residency" ? "residency" : undefined);
+    for (const key of keys) { await audit(reqOf(key), route, got[key]); out[key] = got[key]; }
+    return out;
+  }
+
+  if (route.mode === "shadow") {
+    Object.assign(out, await askIncumbent(keys, "shadow"));
+    void askJevMany(set, keys)
+      .then(async ({ answers }) => {
+        for (const key of keys) await audit(reqOf(key), route, { ...out[key], mode: "shadow" }, answers[key] ?? null);
+      })
+      .catch(async (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        for (const key of keys) await audit(reqOf(key), route, out[key], null, message);
+      });
+    return out;
+  }
+
+  if (!process.env.TYPESAFE_API_KEY) {
+    const got = await askIncumbent(keys, "jev", "no_key");
+    for (const key of keys) { await audit(reqOf(key), route, got[key]); out[key] = got[key]; }
+    return out;
+  }
+
+  let answers: Record<string, DecisionResult | null> = {};
+  let jevError: string | undefined;
+  try {
+    answers = (await askJevMany(set, keys)).answers;
+  } catch (err: unknown) {
+    jevError = err instanceof Error ? err.message : String(err);
+  }
+  const unsure: string[] = [];
+  for (const key of keys) {
+    const jev = answers[key] ?? null;
+    const threshold = reqOf(key).threshold ?? route.threshold;
+    if (jev && (jev.confidence ?? 0) >= threshold) { await audit(reqOf(key), route, jev, jev); out[key] = jev; }
+    else unsure.push(key);
+  }
+  if (unsure.length > 0) {
+    // One batch to the incumbent for everything the model was unsure about;
+    // each key still says why it went there.
+    const got = await askIncumbent(unsure, "jev");
+    for (const key of unsure) {
+      const jev = answers[key] ?? null;
+      const r = { ...got[key], fallbackReason: (jev ? "below_threshold" : "jev_error") as DecisionResult["fallbackReason"] };
+      await audit(reqOf(key), route, r, jev, jevError ?? (jev ? undefined : `no ${reqOf(key).kind} answer for ${key}`));
+      out[key] = r;
+    }
+  }
+  return out;
+}
+
+/** One decision-model call for every question of the set; a question the model did not answer comes back null. */
+async function askJevMany(set: DecisionSetRequest, keys: string[]): Promise<{ answers: Record<string, DecisionResult | null> }> {
+  const questions: Record<string, JevQuestion> = {};
+  for (const key of keys) questions[key] = toJevQuestion({ ...set.questions[key], site: set.site, state: set.state });
+  const { response, latencyMs } = await withDecisionSlot(() => callJev(set.state, questions));
+  const inputTokens = response.usage?.input_tokens ?? 0;
+  // The call's tokens and price are attributed to the set once, on its first
+  // question, so summing the audit rows still gives what was actually spent.
+  const answers: Record<string, DecisionResult | null> = {};
+  keys.forEach((key, i) => {
+    const q = set.questions[key];
+    const parsed = fromJevAnswer(q.kind, response.answers?.[key]);
+    answers[key] = parsed
+      ? {
+          kind: q.kind,
+          ...parsed,
+          engine: "jev",
+          mode: "jev",
+          model: response.model ?? "jev",
+          latencyMs,
+          inputTokens: i === 0 ? inputTokens : 0,
+          costUsd: i === 0 ? (inputTokens / 1000) * JEV_USD_PER_1K_INPUT : 0,
+        }
+      : null;
+  });
+  return { answers };
 }

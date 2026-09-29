@@ -1982,6 +1982,12 @@ export async function runStartupMigrations() {
       ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS engine TEXT;
       ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS mode TEXT;
       ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS fallback_reason TEXT;
+      -- Phase 2: cost where it is spent. The judges discarded the provider's cost
+      -- and the seam dropped its own, so a before-and-after per judge had to be
+      -- estimated; now each row carries what each engine cost.
+      ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS llm_input_tokens INTEGER;
+      ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS llm_cost_usd REAL;
+      ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS jev_cost_usd REAL;
     `);
 
     console.log("[db] Startup migrations complete");

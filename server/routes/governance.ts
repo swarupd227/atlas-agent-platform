@@ -4004,7 +4004,9 @@ Eval Suites: ${evalSuites.length} configured`,
 
         // Pass rate: recent traces for this agent
         const totalTraces = agentTraces.length;
-        const passedTraces = agentTraces.filter(t => t.status === "completed" && !t.softPolicyViolations).length;
+        // soft_policy_violations holds every policy checked, compliant ones included; a
+        // trace fails only when one of them is not compliant.
+        const passedTraces = agentTraces.filter(t => t.status === "completed" && !(Array.isArray(t.softPolicyViolations) && (t.softPolicyViolations as any[]).some((r) => r && r.compliant === false))).length;
         const passRate = totalTraces > 0 ? Math.round((passedTraces / totalTraces) * 100) : null;
 
         return {

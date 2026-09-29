@@ -1207,7 +1207,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const checks = t.policyChecks as Array<Record<string, unknown>> | null;
       const softViolations = t.softPolicyViolations as Array<unknown> | null;
       const hardFail = Array.isArray(checks) && checks.some(c => c.passed === false || c.result === "fail" || c.status === "failed");
-      const hasSoftViolations = Array.isArray(softViolations) && softViolations.length > 0;
+      // The array holds every policy checked, compliant ones included (the judge
+    // returns a verdict per policy), so a clean check is not a violation.
+    const hasSoftViolations = Array.isArray(softViolations) && softViolations.some((r) => !!r && (r as Record<string, unknown>).compliant === false);
       return !hardFail && !hasSoftViolations;
     }).length;
     const policyComplianceRate = total > 0 ? (policyCompliant / total) * 100 : 100;

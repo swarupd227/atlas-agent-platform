@@ -89,6 +89,10 @@ export function createDecisionAuditRouter(): Router {
           COUNT(*) FILTER (WHERE mode = 'jev')::int AS routed_jev,
           COUNT(*) FILTER (WHERE mode = 'jev' AND fallback_reason IS NOT NULL)::int AS fell_back,
           COUNT(*) FILTER (WHERE mode = 'llm')::int AS routed_llm,
+          COALESCE(SUM(llm_cost_usd), 0) AS llm_cost_usd,
+          COALESCE(SUM(jev_cost_usd), 0) AS jev_cost_usd,
+          COALESCE(SUM(llm_input_tokens), 0)::int AS llm_input_tokens,
+          COUNT(*) FILTER (WHERE llm_cost_usd IS NOT NULL)::int AS llm_priced_rows,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) AS jev_p50_ms,
           percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS jev_p95_ms,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY llm_latency_ms) AS llm_p50_ms,
@@ -120,6 +124,10 @@ export function createDecisionAuditRouter(): Router {
         // decided, how many it handed back to the LLM, and how many never went
         // to it -- the rollout drill's numbers.
         routing: { jev: r.routed_jev, fellBack: r.fell_back, llm: r.routed_llm },
+        // What each engine cost on this site, from the rows that carry a price
+        // (the live seam's; a shadow hook's row prices Jev only). Per-call cost
+        // is llmUsd / llmPricedRows against jevUsd / calls.
+        cost: { llmUsd: Number(r.llm_cost_usd), jevUsd: Number(r.jev_cost_usd), llmInputTokens: r.llm_input_tokens, llmPricedRows: r.llm_priced_rows },
         latencyMs: {
           jev: { p50: r.jev_p50_ms === null ? null : Math.round(Number(r.jev_p50_ms)), p95: r.jev_p95_ms === null ? null : Math.round(Number(r.jev_p95_ms)) },
           llm: { p50: r.llm_p50_ms === null ? null : Math.round(Number(r.llm_p50_ms)), p95: r.llm_p95_ms === null ? null : Math.round(Number(r.llm_p95_ms)) },

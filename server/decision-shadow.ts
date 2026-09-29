@@ -135,6 +135,10 @@ export interface AuditRow extends Partial<Comparison> {
   /** The route that applied (llm | shadow | jev); absent for a pure shadow comparison. */
   mode?: string | null;
   fallbackReason?: string | null;
+  /** What each engine cost for this row, when the caller knows (the live seam does; the shadow hooks do not price the LLM). */
+  llmInputTokens?: number | null;
+  llmCostUsd?: number | null;
+  jevCostUsd?: number | null;
 }
 
 /**
@@ -152,7 +156,8 @@ export async function recordDecisionAudit(row: AuditRow): Promise<void> {
     INSERT INTO decision_audit
       (site, question_kind, subject, jev_answer, llm_answer, jev_decision, llm_decision, agree,
        confidence, margin, latency_ms, llm_latency_ms, llm_model, jev_model, input_tokens,
-       state_chars, state_hash, error, engine, mode, fallback_reason)
+       state_chars, state_hash, error, engine, mode, fallback_reason,
+       llm_input_tokens, llm_cost_usd, jev_cost_usd)
     VALUES
       (${row.site}, ${row.questionKind}, ${row.subject ?? null},
        ${row.jevAnswer === undefined ? null : JSON.stringify(row.jevAnswer)}::jsonb,
@@ -160,7 +165,8 @@ export async function recordDecisionAudit(row: AuditRow): Promise<void> {
        ${row.jevDecision ?? null}, ${row.llmDecision ?? null}, ${agree},
        ${row.confidence ?? null}, ${row.margin ?? null}, ${row.latencyMs}, ${row.llmLatencyMs},
        ${row.llmModel}, ${row.jevModel}, ${row.inputTokens}, ${row.stateChars}, ${row.stateHash}, ${row.error},
-       ${row.engine ?? null}, ${row.mode ?? null}, ${row.fallbackReason ?? null})
+       ${row.engine ?? null}, ${row.mode ?? null}, ${row.fallbackReason ?? null},
+       ${row.llmInputTokens ?? null}, ${row.llmCostUsd ?? null}, ${row.jevCostUsd ?? null})
   `);
 }
 
