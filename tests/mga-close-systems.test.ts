@@ -163,8 +163,11 @@ describe("correcting a row, which is what lets the data-quality loop clear", () 
       correctedBy: "ops_analyst", reason: "Sign flipped on import from the broker extract",
     });
     expect(r.status).toBe(200);
-    expect(r.body.before.buildingValue).toBe(row.buildingValue);
-    expect(r.body.after.buildingValue).toBe(Math.abs(row.buildingValue));
+    // The single-row form is the batch with one entry, so it answers in the
+    // batch's shape.
+    expect(r.body.correctionCount).toBe(1);
+    expect(r.body.corrections[0].before.buildingValue).toBe(row.buildingValue);
+    expect(r.body.corrections[0].after.buildingValue).toBe(Math.abs(row.buildingValue));
 
     const after = await defectRow();
     // The whole point: the defect this row carried is gone on the next read.
@@ -197,6 +200,72 @@ describe("correcting a row, which is what lets the data-quality loop clear", () 
     const after = await all();
     expect(after.filter((r) => r.buildingValue < 0 || r.isoConstructionClass === null)).toHaveLength(0);
     expect(after).toHaveLength(51);
+  });
+
+  it("clears a whole period's defects in ONE batch, which is what a bounded loop needs", async () => {
+    // Live 2026-09-29: one row per call, ten defects, a loop bounded at two
+    // rounds -- the close could never come clean and carried its defects to the
+    // carrier. A correction route that fixes one row cannot do its job.
+    await post("/policy/reset", {});
+    const rows = (await get("/policy/transactions?periodId=2026-02&limit=100")).body.transactions;
+    const bad = rows.filter((r: any) => r.buildingValue < 0 || r.isoConstructionClass === null);
+    expect(bad).toHaveLength(10);
+
+    const r = await post("/policy/correct-transaction", {
+      periodId: "2026-02",
+      corrections: bad.map((row: any) => ({
+        policyNumber: row.policyNumber,
+        fields: {
+          ...(row.buildingValue < 0 ? { buildingValue: Math.abs(row.buildingValue) } : {}),
+          ...(row.isoConstructionClass === null ? { isoConstructionClass: 5 } : {}),
+        },
+      })),
+      correctedBy: "mga_operations_analyst",
+      reason: "Corrected against the broker statement of values during the period close",
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.correctionCount).toBe(10);
+    expect(r.body.corrections[0].before).toBeTruthy();
+
+    const after = (await get("/policy/transactions?periodId=2026-02&limit=100")).body;
+    expect(after.transactions.filter((x: any) => x.buildingValue < 0 || x.isoConstructionClass === null)).toHaveLength(0);
+    expect(after.correctionsApplied).toBe(10);
+  });
+
+  it("refuses the whole batch when one entry is bad, and writes none of it", async () => {
+    // A half-applied correction set is worse than a refused one: the re-read
+    // looks partly clean and nobody knows which half is owned.
+    await post("/policy/reset", {});
+    const rows = (await get("/policy/transactions?periodId=2026-02&limit=100")).body.transactions;
+    const bad = rows.filter((r: any) => r.buildingValue < 0);
+    const r = await post("/policy/correct-transaction", {
+      periodId: "2026-02",
+      corrections: [
+        { policyNumber: bad[0].policyNumber, fields: { buildingValue: 1 } },
+        { policyNumber: bad[1].policyNumber, fields: { grossPremium: 1 } },
+        { policyNumber: "POL-DOES-NOT-EXIST", fields: { buildingValue: 1 } },
+      ],
+      correctedBy: "ops", reason: "mixed batch",
+    });
+    expect(r.status).toBe(422);
+    expect(r.body.problems).toHaveLength(2);
+    expect(r.body.error).toMatch(/none were/i);
+    expect((await get("/policy/transactions?periodId=2026-02&limit=100")).body.correctionsApplied).toBe(0);
+  });
+
+  it("refuses a batch that names rows but corrects no fields", async () => {
+    // The exact shape a flow sends when its expression resolves to {}: the call
+    // looks well formed and carries no correction at all.
+    await post("/policy/reset", {});
+    const rows = (await get("/policy/transactions?periodId=2026-02&limit=100")).body.transactions;
+    const r = await post("/policy/correct-transaction", {
+      periodId: "2026-02",
+      corrections: [{ policyNumber: rows[0].policyNumber, fields: {} }],
+      correctedBy: "ops", reason: "empty fields",
+    });
+    expect(r.status).toBe(422);
+    expect(JSON.stringify(r.body.problems)).toMatch(/fields is required/i);
+    expect((await post("/policy/correct-transaction", { periodId: "2026-02", corrections: [], correctedBy: "ops", reason: "x" })).status).toBe(422);
   });
 
   it("does not move premium, so a correction cannot break the three-way match", async () => {

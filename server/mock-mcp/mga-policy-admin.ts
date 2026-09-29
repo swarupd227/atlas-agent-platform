@@ -140,24 +140,34 @@ router.get("/transactions", (req: Request, res: Response) => {
 });
 
 /**
- * Record a correction against one transaction. Ownership is not optional.
+ * Record corrections against a period's transactions. Ownership is not optional.
  *
  * The mirror of the billing side's adjusting journal: a named person, a stated
  * reason, the before and after values kept, and the correction visible to the
  * next read. Without that last part a data-quality loop can never clear, which
  * would make the whole review a formality.
+ *
+ * A BATCH, because that is what operations actually submits. One row per call
+ * looked reasonable until a real close was run against it: a period with ten bad
+ * rows and a loop bounded at two rounds could never come clean, so the close
+ * carried its defects all the way to the carrier. A correction route that can
+ * only ever fix one row is a route that cannot do its job.
+ *
+ * The single-row form ({ policyNumber, fields }) still works; it is the same
+ * call with one entry.
  */
 router.post("/correct-transaction", (req: Request, res: Response) => {
   const b = (req.body || {}) as Record<string, any>;
   const periodId = String(b.periodId || "").trim();
   if (!isPeriod(periodId)) return badPeriod(res, periodId);
-  const policyNumber = String(b.policyNumber || "").trim();
   const correctedBy = String(b.correctedBy || "").trim();
   const reason = String(b.reason || "").trim();
-  const fields = (b.fields && typeof b.fields === "object" && !Array.isArray(b.fields)) ? b.fields as Record<string, any> : null;
 
-  const row = risksFor(periodId).find((r) => r.policyNumber === policyNumber);
-  if (!row) return res.status(404).json({ error: `No policy ${policyNumber} in period ${periodId}.` });
+  const asObject = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v)) ? v as Record<string, any> : null;
+  const batch: Array<{ policyNumber: string; fields: Record<string, any> | null }> = Array.isArray(b.corrections)
+    ? b.corrections.map((c: any) => ({ policyNumber: String(c?.policyNumber || "").trim(), fields: asObject(c?.fields) }))
+    : [{ policyNumber: String(b.policyNumber || "").trim(), fields: asObject(b.fields) }];
+
   if (!correctedBy) {
     return res.status(422).json({
       error: "A correction needs a named person.",
@@ -170,34 +180,54 @@ router.post("/correct-transaction", (req: Request, res: Response) => {
       guidance: "The carrier can ask why a bordereau row differs from the original extract, and the answer has to be on the record rather than in somebody's memory.",
     });
   }
-  if (!fields || !Object.keys(fields).length) {
-    return res.status(422).json({ error: "fields is required: name the values being corrected.", correctableFields: [...CORRECTABLE] });
-  }
-  const unknown = Object.keys(fields).filter((k) => !CORRECTABLE.has(k));
-  if (unknown.length) {
+  if (!batch.length || batch.every((c) => !c.policyNumber)) {
     return res.status(422).json({
-      error: `Not correctable through this route: ${unknown.join(", ")}.`,
+      error: "Name the rows being corrected.",
+      guidance: "Send corrections: [{ policyNumber, fields }, ...] -- one entry per failing row, which is what the data-quality check already listed.",
       correctableFields: [...CORRECTABLE],
-      guidance: "Premium, policy number and dates are not data-entry fields -- changing one is an endorsement or a rerate, with its own authority, not a bordereau correction.",
     });
   }
 
-  const before: Record<string, unknown> = {};
-  for (const k of Object.keys(fields)) before[k] = (row as any)[k];
-  const entry: Correction = { policyNumber, fields, correctedBy, reason, correctedAt: now() };
+  // Validate the whole batch before writing any of it: a half-applied
+  // correction set is worse than a refused one, because the re-read then looks
+  // partly clean and nobody knows which half is owned.
+  const rows = risksFor(periodId);
+  const problems: Array<{ policyNumber: string; error: string }> = [];
+  for (const c of batch) {
+    if (!c.policyNumber) { problems.push({ policyNumber: "(missing)", error: "policyNumber is required" }); continue; }
+    if (!rows.some((r) => r.policyNumber === c.policyNumber)) { problems.push({ policyNumber: c.policyNumber, error: `no such policy in ${periodId}` }); continue; }
+    if (!c.fields || !Object.keys(c.fields).length) { problems.push({ policyNumber: c.policyNumber, error: "fields is required: name the values being corrected" }); continue; }
+    const unknown = Object.keys(c.fields).filter((k) => !CORRECTABLE.has(k));
+    if (unknown.length) problems.push({ policyNumber: c.policyNumber, error: `not correctable through this route: ${unknown.join(", ")}` });
+  }
+  if (problems.length) {
+    return res.status(422).json({
+      error: `${problems.length} of ${batch.length} correction${batch.length === 1 ? "" : "s"} cannot be applied; none were.`,
+      problems,
+      correctableFields: [...CORRECTABLE],
+      guidance: "Premium, policy number and dates are not data-entry fields -- changing one is an endorsement or a rerate, with its own authority, not a bordereau correction. Nothing was written: fix the batch and send it again.",
+    });
+  }
+
   const forPeriod = corrections.get(periodId) ?? new Map<string, Correction>();
-  forPeriod.set(policyNumber, entry);
+  const applied = batch.map((c) => {
+    const row = rows.find((r) => r.policyNumber === c.policyNumber)!;
+    const before: Record<string, unknown> = {};
+    for (const k of Object.keys(c.fields!)) before[k] = (row as any)[k];
+    const entry: Correction = { policyNumber: c.policyNumber, fields: c.fields!, correctedBy, reason, correctedAt: now() };
+    forPeriod.set(c.policyNumber, entry);
+    return { policyNumber: c.policyNumber, before, after: c.fields };
+  });
   corrections.set(periodId, forPeriod);
 
   res.json({
     corrected: true,
     periodId,
-    policyNumber,
-    before,
-    after: fields,
+    correctionCount: applied.length,
+    corrections: applied,
     correctedBy,
     reason,
-    correctedAt: entry.correctedAt,
+    correctedAt: now(),
     correctionsInPeriod: forPeriod.size,
     guidance: "Re-pull the period's transactions now. A correction that was not re-read is a correction nobody has checked.",
   });

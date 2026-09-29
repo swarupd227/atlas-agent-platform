@@ -1096,19 +1096,23 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
         {
           name: "record_transaction_correction",
-          description: "Record a correction against one transaction in the period, with the corrected values, the person making it and the reason. Returns the before and after values. Required: a data-quality defect is never repaired silently, because the carrier can ask why a bordereau row differs from the original extract. Only data-entry fields are correctable this way (buildingValue, contentsValue, isoConstructionClass, windstormDeductiblePct); premium, policy number and dates are an endorsement or a rerate with its own authority, not a bordereau correction. Re-pull the period's transactions afterwards -- a correction that was not re-read is a correction nobody has checked.",
+          description: "Record corrections against a period's transactions as one batch, with the corrected values, the person making them and the reason. Send every failing row the data-quality check listed in a single call: a period can hold many bad rows, and a correction route used one row at a time cannot clear them before the review loop runs out. Returns the before and after values for each row. Required: a data-quality defect is never repaired silently, because the carrier can ask why a bordereau row differs from the original extract. Only data-entry fields are correctable this way (buildingValue, contentsValue, isoConstructionClass, windstormDeductiblePct); premium, policy number and dates are an endorsement or a rerate with its own authority, not a bordereau correction. If any entry in the batch is invalid the whole batch is refused and nothing is written. Re-pull the period's transactions afterwards -- a correction that was not re-read is a correction nobody has checked.",
           endpoint: "/correct-transaction",
           method: "POST",
           inputSchema: {
             type: "object",
             properties: {
               periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
-              policyNumber: { type: "string", description: "Policy number of the row being corrected" },
-              fields: { type: "object", description: "The corrected values, e.g. { \"buildingValue\": 46414, \"isoConstructionClass\": 5 }" },
-              correctedBy: { type: "string", description: "Person in operations making the correction" },
-              reason: { type: "string", description: "Why the original value was wrong" },
+              corrections: {
+                type: "array",
+                description: "One entry per failing row: [{ \"policyNumber\": \"POL-2026-9203-CP\", \"fields\": { \"buildingValue\": 46414, \"isoConstructionClass\": 5 } }]",
+              },
+              correctedBy: { type: "string", description: "Person in operations making the corrections" },
+              reason: { type: "string", description: "Why the original values were wrong" },
+              policyNumber: { type: "string", description: "Single-row form: the policy being corrected, instead of the corrections array" },
+              fields: { type: "object", description: "Single-row form: the corrected values for that policy" },
             },
-            required: ["periodId", "policyNumber", "fields", "correctedBy", "reason"],
+            required: ["periodId", "corrections", "correctedBy", "reason"],
           },
         },
         {
