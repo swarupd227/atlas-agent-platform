@@ -45,7 +45,7 @@ export type ExecutionKind =
   | "tool_call"
   /** A person decides. */
   | "gate"
-  /** Start and end markers: nothing executes. */
+  /** Markers: start, end, and a parallel fan-out. Nothing executes. */
   | "structural";
 
 /** The kinds that reach the model provider. Everything else is free. */
@@ -111,7 +111,12 @@ export function classifyStep(node: Pick<ProcessNode, "type" | "config">, ctx?: C
   const config = (node.config ?? {}) as StepConfigShape & { decisionKind?: unknown };
   const wantsDeterministic = config.deterministic === true;
 
-  if (node.type === "trigger" || node.type === "end") return "structural";
+  // A parallel step is a fan-out marker, not work: it exists to say that its
+  // successors run together. It had no case here, so it fell through to
+  // "agent" and every parallel branch in a flow cost a model call to produce
+  // prose nobody reads. Found on a 35-step close flow where two of its three
+  // remaining model steps were these markers.
+  if (node.type === "trigger" || node.type === "end" || node.type === "parallel") return "structural";
   if (node.type === "expert_approval") return "gate";
 
   // A decision drawn with branches is one choice, not an agent plus a model
@@ -151,7 +156,9 @@ export function explainKind(node: Pick<ProcessNode, "type" | "config">, ctx?: Cl
   const kind = classifyStep(node, ctx);
   switch (kind) {
     case "decision": return "Decided by one decision-model call over its branches; exactly one branch is taken. No agent call.";
-    case "structural": return "A marker, not a step that runs.";
+    case "structural": return node.type === "parallel"
+      ? "A fan-out marker: the steps after it run together. Nothing runs here, and no model call."
+      : "A marker, not a step that runs.";
     case "gate": return "Waits for a person to decide.";
     case "expression": return "Evaluated in-process as an expression over the run's state. No model call.";
     case "knowledge_base": return "Answered by a search of the bound knowledge base. No model call.";

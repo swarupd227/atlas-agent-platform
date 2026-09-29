@@ -75,7 +75,9 @@ router.get("/claims-movements", (req: Request, res: Response) => {
   if (!isPeriod(periodId)) return badPeriod(res, periodId);
   const rows = claimsFor(periodId);
   const offset = Math.max(0, Number(req.query.offset ?? 0) || 0);
-  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 25) || 25));
+  // 100 for the same reason as the transaction pull: a claims bordereau
+  // assembled from a truncated page is a bordereau that is quietly wrong.
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 25) || 25));
   const page = rows.slice(offset, offset + limit);
   res.json({
     binderId: BINDER_TERMS.binderId,

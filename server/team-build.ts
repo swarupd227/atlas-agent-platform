@@ -191,6 +191,17 @@ function executionFromAuthoredStep(proposal: any, stepsByLabel?: Map<string, any
       return { kind: "tool_call", toolServerId: config.toolServerId, toolName: config.toolName, toolArgs: config.toolArgs, stateKey };
     case "skill":
       return { kind: "skill", skillId: config.skillId, stateKey };
+    case "structural":
+      // A parallel fan-out is a marker, not work. Without this the classifier
+      // and the build disagreed: the compiler could call the step free while
+      // this switch fell through to `null` and the step was built as an agent,
+      // so the cost the author was shown was not the cost they paid. The node
+      // is kept rather than spliced out so the flow and the built team stay
+      // one-to-one, which the flow-to-automation sync depends on to show a
+      // one-step diff instead of "every agent superseded".
+      return step.type === "parallel"
+        ? { kind: "expression", expression: '{ "branchesStartHere": true }', stateKey }
+        : null;
     default:
       return null;
   }

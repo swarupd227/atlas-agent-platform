@@ -55,6 +55,22 @@ describe("how a step will execute", () => {
     expect(classifyStep(step("expert_approval"))).toBe("gate");
   });
 
+  it("charges nothing for a parallel fan-out, which has no work of its own", () => {
+    // It used to fall through to "agent", so every parallel branch in a flow
+    // spent a model call producing prose nobody reads.
+    expect(classifyStep(step("parallel"))).toBe("structural");
+    expect(classifyStep(step("parallel", {}))).toBe("structural");
+    expect(costsTokens(classifyStep(step("parallel")))).toBe(false);
+    expect(explainKind(step("parallel"))).toMatch(/run together/i);
+  });
+
+  it("still calls a bound tool on a parallel step, if an author bound one", () => {
+    // Structural is what the marker is, not a rule that outranks an explicit
+    // binding -- the type check sits above the tool check, so assert the order
+    // that actually holds rather than assuming it.
+    expect(classifyStep(step("parallel", { toolName: "t", toolServerId: "s" }))).toBe("structural");
+  });
+
   it("leaves genuine judgement alone", () => {
     expect(classifyStep(step("ai_reasoning", {}))).toBe("agent");
     expect(classifyStep(step("make_decision", {}))).toBe("agent");

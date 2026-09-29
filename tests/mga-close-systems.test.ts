@@ -94,6 +94,16 @@ describe("what the policy system hands over", () => {
     expect(t.body.totalMatching).toBe(51);
   });
 
+  it("hands over a whole period in one call, so nothing validates a truncated page", async () => {
+    // The largest period is 63 rows. A cap below that would let a close report
+    // clean on transactions it never read.
+    for (const [periodId, count] of [["2026-01", 42], ["2026-02", 51], ["2026-03", 47], ["2026-04", 63]] as const) {
+      const t = await get(`/policy/transactions?periodId=${periodId}&limit=100`);
+      expect([periodId, t.body.returned]).toEqual([periodId, count]);
+      expect(t.body.returned).toBe(t.body.totalMatching);
+    }
+  });
+
   it("hands over February's defects unrepaired, because catching them is the point", async () => {
     const all: any[] = [];
     for (let o = 0; o < 51; o += 50) {
@@ -110,6 +120,100 @@ describe("what the policy system hands over", () => {
     expect(under).toBeTruthy();
     const ev = await get(`/policy/authority-evidence?periodId=2026-03&policyNumber=${under.policyNumber}`);
     expect(ev.body.priorCarrierReferral?.reference).toBe("REF-2026-0214");
+  });
+});
+
+describe("correcting a row, which is what lets the data-quality loop clear", () => {
+  const defectRow = async () => {
+    const rows: any[] = [];
+    for (let o = 0; o < 51; o += 50) rows.push(...(await get(`/policy/transactions?periodId=2026-02&offset=${o}&limit=50`)).body.transactions);
+    return rows.find((r) => r.buildingValue < 0);
+  };
+
+  it("refuses a correction with no owner, no reason, or no fields", async () => {
+    await post("/policy/reset", {});
+    const row = await defectRow();
+    const base = { periodId: "2026-02", policyNumber: row.policyNumber, fields: { buildingValue: 46_414 } };
+    const noOwner = await post("/policy/correct-transaction", { ...base, reason: "Sign flipped on import" });
+    expect(noOwner.status).toBe(422);
+    expect(noOwner.body.guidance).toMatch(/nobody's name/i);
+    expect((await post("/policy/correct-transaction", { ...base, correctedBy: "ops" })).status).toBe(422);
+    expect((await post("/policy/correct-transaction", { periodId: "2026-02", policyNumber: row.policyNumber, correctedBy: "ops", reason: "x" })).status).toBe(422);
+  });
+
+  it("refuses to change a field that is not a data-entry field", async () => {
+    await post("/policy/reset", {});
+    const row = await defectRow();
+    const r = await post("/policy/correct-transaction", {
+      periodId: "2026-02", policyNumber: row.policyNumber, fields: { grossPremium: 1 },
+      correctedBy: "ops", reason: "wanted a different number",
+    });
+    expect(r.status).toBe(422);
+    expect(r.body.guidance).toMatch(/endorsement or a rerate/i);
+  });
+
+  it("keeps the before value, and the next read returns the corrected row", async () => {
+    await post("/policy/reset", {});
+    const row = await defectRow();
+    expect(row.buildingValue).toBeLessThan(0);
+
+    const r = await post("/policy/correct-transaction", {
+      periodId: "2026-02", policyNumber: row.policyNumber,
+      fields: { buildingValue: Math.abs(row.buildingValue) },
+      correctedBy: "ops_analyst", reason: "Sign flipped on import from the broker extract",
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.before.buildingValue).toBe(row.buildingValue);
+    expect(r.body.after.buildingValue).toBe(Math.abs(row.buildingValue));
+
+    const after = await defectRow();
+    // The whole point: the defect this row carried is gone on the next read.
+    expect(after?.policyNumber).not.toBe(row.policyNumber);
+    const corrections = await get("/policy/corrections?periodId=2026-02");
+    expect(corrections.body.corrections).toHaveLength(1);
+    expect(corrections.body.corrections[0].correctedBy).toBe("ops_analyst");
+  });
+
+  it("clears every defect after correcting all ten, so the loop can actually exit", async () => {
+    await post("/policy/reset", {});
+    const all = async () => {
+      const rows: any[] = [];
+      for (let o = 0; o < 51; o += 50) rows.push(...(await get(`/policy/transactions?periodId=2026-02&offset=${o}&limit=50`)).body.transactions);
+      return rows;
+    };
+    const before = await all();
+    const bad = before.filter((r) => r.buildingValue < 0 || r.isoConstructionClass === null);
+    expect(bad).toHaveLength(10);
+    for (const r of bad) {
+      const fields: Record<string, unknown> = {};
+      if (r.buildingValue < 0) fields.buildingValue = Math.abs(r.buildingValue);
+      if (r.isoConstructionClass === null) fields.isoConstructionClass = 5;
+      const res = await post("/policy/correct-transaction", {
+        periodId: "2026-02", policyNumber: r.policyNumber, fields,
+        correctedBy: "ops_analyst", reason: "Corrected against the broker's statement of values",
+      });
+      expect(res.status).toBe(200);
+    }
+    const after = await all();
+    expect(after.filter((r) => r.buildingValue < 0 || r.isoConstructionClass === null)).toHaveLength(0);
+    expect(after).toHaveLength(51);
+  });
+
+  it("does not move premium, so a correction cannot break the three-way match", async () => {
+    await post("/policy/reset", {});
+    await post("/billing/reset", {});
+    const gwpBefore = (await get("/policy/period-summary?periodId=2026-02")).body.grossWrittenPremium;
+    const row = await defectRow();
+    await post("/policy/correct-transaction", {
+      periodId: "2026-02", policyNumber: row.policyNumber, fields: { buildingValue: Math.abs(row.buildingValue) },
+      correctedBy: "ops_analyst", reason: "Sign flipped on import",
+    });
+    const summary = (await get("/policy/period-summary?periodId=2026-02")).body;
+    expect(summary.grossWrittenPremium).toBe(gwpBefore);
+    const rec = await get("/billing/reconciliation?periodId=2026-02");
+    expect(rec.body.variance).toBe(0);
+    expect(rec.body.withinTolerance).toBe(true);
+    await post("/policy/reset", {});
   });
 });
 

@@ -1095,6 +1095,34 @@ function getServerDefinitions(): MockMcpServerDef[] {
           },
         },
         {
+          name: "record_transaction_correction",
+          description: "Record a correction against one transaction in the period, with the corrected values, the person making it and the reason. Returns the before and after values. Required: a data-quality defect is never repaired silently, because the carrier can ask why a bordereau row differs from the original extract. Only data-entry fields are correctable this way (buildingValue, contentsValue, isoConstructionClass, windstormDeductiblePct); premium, policy number and dates are an endorsement or a rerate with its own authority, not a bordereau correction. Re-pull the period's transactions afterwards -- a correction that was not re-read is a correction nobody has checked.",
+          endpoint: "/correct-transaction",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              periodId: { type: "string", description: "Reporting period formatted YYYY-MM" },
+              policyNumber: { type: "string", description: "Policy number of the row being corrected" },
+              fields: { type: "object", description: "The corrected values, e.g. { \"buildingValue\": 46414, \"isoConstructionClass\": 5 }" },
+              correctedBy: { type: "string", description: "Person in operations making the correction" },
+              reason: { type: "string", description: "Why the original value was wrong" },
+            },
+            required: ["periodId", "policyNumber", "fields", "correctedBy", "reason"],
+          },
+        },
+        {
+          name: "get_transaction_corrections",
+          description: "Every correction recorded against the period: policy number, the fields changed, who changed them, why and when. This is what the close pack shows the carrier when a bordereau row differs from the original extract.",
+          endpoint: "/corrections",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { periodId: { type: "string", description: "Reporting period formatted YYYY-MM" } },
+            required: ["periodId"],
+          },
+        },
+        {
           name: "get_binding_authority_evidence",
           description: "The binding-authority evidence for one policy: when and by whom it was bound, its largest location, Tier 1 coastal exposure, windstorm deductible and home state, and any carrier referral granted BEFORE it was bound. Check the referral before classifying a breach — a risk the carrier already approved is ratified, not notifiable, and a compliance team that receives false positives stops reading the report.",
           endpoint: "/authority-evidence",
