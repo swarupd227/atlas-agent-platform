@@ -80,6 +80,7 @@ const ImprovementLoop = lazy(() => import("@/pages/improvement-loop"));
 const OutcomeDiscover = lazy(() => import("@/pages/outcome-discover"));
 const Integrations = lazy(() => import("@/pages/integrations"));
 const Connectors = lazy(() => import("@/pages/connectors"));
+const Runs = lazy(() => import("@/pages/runs"));
 const Admin = lazy(() => import("@/pages/admin"));
 const Optimization = lazy(() => import("@/pages/optimization"));
 const ApprovalDetail = lazy(() => import("@/pages/approval-detail"));
@@ -428,6 +429,7 @@ function DashboardRouter() {
       <Route path="/integrations/relay-agents" component={RelayAgents} />
       <Route path="/integrations/mcp-servers" component={McpServers} />
       <Route path="/connectors" component={Connectors} />
+            <Route path="/runs" component={Runs} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/skills/composer/:id" component={SkillComposer} />
       <Route path="/skills/composer" component={SkillComposer} />

@@ -36,6 +36,7 @@ import runtimeRouter from "./routes/runtime";
 import playgroundRouter from "./routes/playground";
 import aarRouter, { backfillAarConfigs } from "./routes/aar";
 import observabilityRouter from "./routes/observability";
+import runsRouter from "./routes/runs";
 import {
   computeConstraintGraph,
   recomputeOutcomeKpis,
@@ -475,6 +476,7 @@ export async function registerRoutes(
   app.use(playgroundRouter);
   app.use(aarRouter);
   app.use(observabilityRouter);
+  app.use(runsRouter);
 
   // ── Remaining router modules ─────────────────────────────────
   app.use(llmProvidersRouter);

@@ -159,6 +159,7 @@ function FullAppSidebar() {
       label: "Review",
       items: [
         { title: "Approvals", url: "/approvals", icon: ShieldCheck, badge: pendingApprovalsCount || undefined },
+        { title: "Runs", url: "/runs", icon: Activity, testId: "runs" },
         { title: "Monitor", url: "/monitor", icon: Activity },
         { title: "Fleet health", url: "/observability", icon: MonitorCheck, badge: unacknowledgedAlerts || undefined, testId: "fleet-health" },
         { title: "Audit trail", url: "/audit-trail", icon: ScrollText, testId: "audit-trail" },
