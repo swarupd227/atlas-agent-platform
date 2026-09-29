@@ -64,6 +64,7 @@ vi.mock("../server/storage", () => ({
       return node;
     }),
     createTeamBlueprintEdge: vi.fn(async (e: any) => { const edge = { id: `edge-${state.edges.length + 1}`, ...e }; state.edges.push(edge); return edge; }),
+    updateTeamBlueprintEdge: vi.fn(async (id: string, patch: any) => { const edge = state.edges.find((e) => e.id === id); if (edge) Object.assign(edge, patch); return edge; }),
     deleteTeamBlueprintEdge: vi.fn(async (id: string) => { state.edges = state.edges.filter((e) => e.id !== id); return true; }),
     createAuditEvent: vi.fn(async (e: any) => { state.audits.push(e); return e; }),
     // Membership is a separate table from the blueprint, and what
@@ -321,6 +322,115 @@ describe("a synced-in agent joins the team", () => {
 });
 
 /**
+ * A step's result lands under the step's own name, whatever the sync builds it as.
+ *
+ * Live 2026-09-29: a step drawn as "Endorsement Accepted?" was built as an
+ * agent named "Endorsement Accepted? Agent" with no state key, so the engine
+ * filed its result under endorsement_accepted_agent while the author's rules
+ * read endorsement_accepted.approved. Both branches unsatisfied, nine steps
+ * skipped, and the build, the sync and the deploy all green.
+ */
+describe("a step's result key is the step's own name", () => {
+  const rowFor = (processNodeId: string) => state.nodes.find((n) => n.config?.sourceProcessNodeId === processNodeId);
+  const ruleOn = (field: string) => ({ combinator: "AND", conditions: [{ field, operator: "==", value: true }] });
+  /** A blueprint whose rows already hold their step's key, as one built today does. */
+  const keyEveryRow = () => {
+    for (const n of state.nodes) if (n.config?.sourceLabel) n.stateKey = n.config.sourceLabel.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  };
+
+  it("gives a drafted agent the step's key, not a slug of the name a model chose for it", async () => {
+    state.nodes = blueprintFromFlow(graph());
+    const after = graph();
+    after.nodes.push({ id: "s5", type: "take_action", label: "File surplus lines", description: "", actor: "System" });
+    await applyFlowSync(ORG, target(after));
+    const added = state.created.find((n) => n.config?.sourceProcessNodeId === "s5");
+    // The node is labelled with the drafted name; its result is not.
+    expect(added.label).toMatch(/^Agent for /);
+    expect(added.stateKey).toBe("file_surplus_lines");
+  });
+
+  it("and the same for a gate, an expression and a sub-flow, which used to get the step's id", async () => {
+    state.nodes = blueprintFromFlow(graph({}, "s3"));
+    const after = graph({ checkExpression: "aggregate <= 50000000" });
+    after.nodes.push({ id: "s6", type: "sub_flow", label: "Call the filing flow", description: "", actor: "System", config: { refTeamAgentId: "team-filing" } });
+    await applyFlowSync(ORG, target(after));
+    expect(state.created.find((n) => n.config?.sourceProcessNodeId === "s3")).toMatchObject({ nodeType: "edge_gate", stateKey: "carrier_referral" });
+    expect(state.created.find((n) => n.config?.sourceProcessNodeId === "s2")).toMatchObject({ nodeType: "expression", stateKey: "treaty_check" });
+    expect(state.created.find((n) => n.config?.sourceProcessNodeId === "s6")).toMatchObject({ nodeType: "sub_flow", stateKey: "call_the_filing_flow" });
+  });
+
+  it("follows a renamed step with the rules that read its old key, and says so on the card and in the summary", async () => {
+    state.nodes = blueprintFromFlow(graph());
+    keyEveryRow();
+    expect(rowFor("s2").stateKey).toBe("treaty_check");
+    state.edges = [{
+      id: "edge-old", sourceNodeId: rowFor("s2").id, targetNodeId: rowFor("s3").id,
+      condition: "treaty_check.breached == true", evaluationMode: "deterministic", rule: ruleOn("treaty_check.breached"),
+    }];
+    // The author renamed the step but left the condition naming the old key.
+    const after = graph({ checkLabel: "Treaty limit check" });
+    after.edges[1].condition = "treaty_check.breached == true";
+
+    const expected = [{ step: "Treaty limit check", from: "treaty_check", to: "treaty_limit_check", connections: ['"Treaty limit check" → "Carrier referral"'] }];
+    const plan = await planFlowSync(ORG, target(after));
+    expect(plan.stateKeyRenames).toEqual(expected);
+
+    const r = await applyFlowSync(ORG, target(after));
+    expect((r as any).summary.stateKeyRenames).toEqual(expected);
+    const rebuilt = rowFor("s2");
+    expect(rebuilt.stateKey).toBe("treaty_limit_check");
+    const edge = state.edges.find((e) => e.sourceNodeId === rebuilt.id);
+    expect(edge).toMatchObject({ condition: "treaty_limit_check.breached == true", evaluationMode: "deterministic" });
+    expect(edge.rule.conditions[0].field).toBe("treaty_limit_check.breached");
+    // And the audit trail carries it.
+    expect(JSON.parse(state.audits.at(-1)!.details).stateKeyRenames).toEqual(expected);
+  });
+
+  it("gives a row left in place the step's key when it had none, and rewrites the rule that read the drafted name", async () => {
+    // Every row from the old build has no key: each ran under a slug of its
+    // agent's name, e.g. treaty_check_agent. A rule an admin hardened against
+    // that name is on the s2 -> s3 connection, whose endpoints do not change.
+    state.nodes = blueprintFromFlow(graph());
+    state.edges = [{
+      id: "edge-kept", sourceNodeId: rowFor("s2").id, targetNodeId: rowFor("s3").id,
+      condition: "treaty_check_agent.breached == true", evaluationMode: "deterministic", rule: ruleOn("treaty_check_agent.breached"),
+    }];
+    const g = graph();
+    g.edges[1].condition = "treaty_check_agent.breached == true";
+
+    const r = await applyFlowSync(ORG, target(g));
+    const renames = (r as any).summary.stateKeyRenames;
+    expect(renames.map((x: any) => [x.from, x.to])).toEqual([
+      ["normalise_cope_agent", "normalise_cope"],
+      ["treaty_check_agent", "treaty_check"],
+      ["carrier_referral_agent", "carrier_referral"],
+      ["bind_agent", "bind"],
+    ]);
+    expect(renames.find((x: any) => x.from === "treaty_check_agent").connections).toEqual(['"Treaty check" → "Carrier referral"']);
+    // The rows now hold the key they write under …
+    for (const id of ["s1", "s2", "s3", "s4"]) expect(rowFor(id).stateKey).toBeTruthy();
+    expect(state.updatedNodes).toContainEqual({ id: rowFor("s2").id, patch: { stateKey: "treaty_check" } });
+    // … the kept connection reads the new name, in place, without being recreated …
+    const kept = state.edges.find((e) => e.id === "edge-kept");
+    expect(kept).toMatchObject({ sourceNodeId: rowFor("s2").id, targetNodeId: rowFor("s3").id, condition: "treaty_check.breached == true" });
+    expect(kept.rule.conditions[0].field).toBe("treaty_check.breached");
+    expect(state.edges.filter((e) => e.sourceNodeId === rowFor("s2").id && e.targetNodeId === rowFor("s3").id)).toHaveLength(1);
+    // … and no step was rebuilt for it.
+    expect(state.deletedNodes).toEqual([]);
+  });
+
+  it("has nothing to say when every row already writes under its step's name", async () => {
+    state.nodes = blueprintFromFlow(graph());
+    keyEveryRow();
+    const plan = await planFlowSync(ORG, target(graph()));
+    expect(plan.stateKeyRenames).toEqual([]);
+    const r = await applyFlowSync(ORG, target(graph()));
+    expect((r as any).summary.stateKeyRenames).toEqual([]);
+    expect(state.updatedNodes).toEqual([]);
+  });
+});
+
+/**
  * A flow's loops, which are the one thing a sync must NOT build as drawn.
  *
  * Found live 2026-09-27 by another session doing governance work: a team rebuilt
@@ -444,7 +554,9 @@ describe("a loop in the flow", () => {
     (nodeFor("s2")!.config as any).revision = { targetNodeId: "node-s1", when: REWORK_REQUESTED_RULE, maxRounds: 2 };
 
     const r = await applyFlowSync(ORG, target(g));
-    expect(state.updatedNodes.map((u) => u.id)).not.toContain("node-s2");
+    // No revision write: the only patch a keyless row from an old build gets is
+    // its step's state key, which is a different repair and is tested as one.
+    expect(state.updatedNodes.filter((u) => "config" in u.patch).map((u) => u.id)).not.toContain("node-s2");
     expect((r as any).summary.revisionLoops).toMatchObject({ set: [], cleared: [], unresolved: [] });
   });
 

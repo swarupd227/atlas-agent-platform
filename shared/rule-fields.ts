@@ -39,6 +39,69 @@ export function ruleFields(rule: unknown, into: string[] = []): string[] {
   return into;
 }
 
+/**
+ * Every `<old>.<property>` a condition or rule reads, rewritten to
+ * `<new>.<property>`, when a step's result key moves.
+ *
+ * A key moves when the step is renamed (its key is its name) or when a row
+ * that never held a key is given the step's own one. The conditions that named
+ * the old key were written by the author against the flow; left alone they
+ * would read nothing and the branch behind them would be dead, with nothing
+ * saying so until a run skipped it. The prefix is matched whole -- `treaty`
+ * does not touch `treaty_check.x` -- and only where a dot follows, so a bare
+ * field of the same spelling is left alone.
+ *
+ * Returns which old keys were actually found, so the caller can say so.
+ */
+export function rewriteStateKeyReferences<R>(args: {
+  condition?: string | null;
+  rule?: R;
+  renames: ReadonlyMap<string, string>;
+}): { condition: string | null | undefined; rule: R | undefined; rewrote: string[] } {
+  const { condition, rule, renames } = args;
+  const rewrote = new Set<string>();
+  if (renames.size === 0) return { condition, rule, rewrote: [] };
+
+  const rewriteField = (field: string): string => {
+    const dot = field.indexOf(".");
+    if (dot <= 0) return field;
+    const prefix = field.slice(0, dot);
+    const to = renames.get(prefix);
+    if (!to || to === prefix) return field;
+    rewrote.add(prefix);
+    return `${to}${field.slice(dot)}`;
+  };
+
+  let text = condition;
+  if (typeof condition === "string" && condition) {
+    text = condition;
+    for (const [from, to] of Array.from(renames.entries())) {
+      if (!from || from === to) continue;
+      const pattern = new RegExp(`(^|[^A-Za-z0-9_])${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\.)`, "g");
+      if (pattern.test(text)) {
+        rewrote.add(from);
+        text = text.replace(pattern, `$1${to}`);
+      }
+    }
+  }
+
+  const walk = (group: unknown): unknown => {
+    const g = group as RuleGroup | null;
+    if (!g || typeof g !== "object" || !Array.isArray(g.conditions)) return group;
+    return {
+      ...g,
+      conditions: g.conditions.map((c) => {
+        const leaf = c as { field?: unknown; conditions?: unknown[] };
+        if (Array.isArray(leaf?.conditions)) return walk(leaf);
+        if (typeof leaf?.field === "string") return { ...leaf, field: rewriteField(leaf.field) };
+        return c;
+      }),
+    };
+  };
+
+  return { condition: text, rule: rule === undefined ? undefined : (walk(rule) as R), rewrote: Array.from(rewrote) };
+}
+
 /** The property names a JSON Schema object declares at its top level. */
 export function schemaProperties(schema: unknown): string[] | null {
   const s = schema as { type?: unknown; properties?: Record<string, unknown> } | null;

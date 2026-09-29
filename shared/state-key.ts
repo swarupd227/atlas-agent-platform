@@ -22,3 +22,20 @@ export function stateKeyForLabel(label: string): string {
     .replace(/^_+|_+$/g, "")
     .slice(0, 60);
 }
+
+/**
+ * The key a blueprint node's result actually lands under at run time.
+ *
+ * A node that holds a key uses it. One that holds none is filed by the engine
+ * under a slug of its LABEL (dag-execution-engine.ts computeWaves), else its
+ * id -- and for an agent drafted from a flow step the label is the name a model
+ * chose, not the step's name the author's conditions use. That gap is how a
+ * team's branches all went unsatisfied while every surface reported success
+ * (live 2026-09-29: "Endorsement Accepted? Agent" wrote
+ * endorsement_accepted_agent; the rules read endorsement_accepted). Anything
+ * that reasons about what a rule can read must reason about THIS key, not the
+ * stored one.
+ */
+export function effectiveStateKey(node: { id?: string | null; label?: string | null; stateKey?: string | null }): string {
+  return String(node.stateKey ?? "").trim() || stateKeyForLabel(node.label ?? "") || String(node.id ?? "").replace(/-/g, "_");
+}

@@ -29,6 +29,8 @@ import { draftSingleAgent, resolveOntologyTags } from "./routes/helpers";
 import { HUMAN_CHECKPOINT_NODE_TYPES, STRUCTURAL_NODE_TYPES, stepCorrelation, stepUnchanged } from "@shared/process-flow-correlation";
 import { backEdgeKeys } from "@shared/graph-cycles";
 import { edgeRuleForCondition } from "@shared/condition-to-rule";
+import { rewriteStateKeyReferences } from "@shared/rule-fields";
+import { effectiveStateKey, stateKeyForLabel } from "@shared/state-key";
 import { isCurrentReworkRule, REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
 import type { ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
@@ -70,6 +72,95 @@ export { HUMAN_CHECKPOINT_NODE_TYPES, STRUCTURAL_NODE_TYPES };
 /** The correlation a blueprint node carries for the step it came from. */
 const processNodeConfig = (n: ProcessNode) => stepCorrelation(n as any);
 
+/**
+ * The key a step's result lands under: the step's own name (shared/state-key.ts),
+ * which is what an author writes in a condition -- "endorsement_accepted.approved".
+ *
+ * Every node the sync writes gets it, whatever kind it is. An agent node used
+ * to get none, so the engine filed its result under a slug of the name a model
+ * drafted for the agent ("Endorsement Accepted? Agent" -> endorsement_accepted_agent)
+ * and the author's rules, reading endorsement_accepted, read nothing: both
+ * branches unsatisfied, every later step skipped, sync and deploy green (live
+ * 2026-09-29). Expression, sub-flow and decision nodes got the step's ID, which
+ * no author could know either.
+ */
+const stepStateKey = (pn: ProcessNode) => stateKeyForLabel(pn.label ?? "") || pn.id.replace(/-/g, "_");
+
+/** A step whose result key changes under a sync, and the connections that read the old one. */
+export interface StateKeyRename {
+  step: string;
+  from: string;
+  to: string;
+  connections: string[];
+}
+
+/**
+ * Steps whose result key moves under this sync: a changed step whose old row
+ * filed under another key (renamed, or keyed by an older convention), and a row
+ * left in place that holds no key at all -- which ran under a slug of its
+ * label -- now given the step's own. Read from the rows, so the plan and the
+ * apply see the same moves.
+ */
+function stateKeyMoves(diff: Diff): Array<{ pn: ProcessNode; row: any; from: string; to: string }> {
+  const moves: Array<{ pn: ProcessNode; row: any; from: string; to: string }> = [];
+  for (const pn of diff.changed) {
+    const row = diff.byProcessNodeId.get(pn.id);
+    if (!row) continue;
+    const from = effectiveStateKey(row);
+    const to = stepStateKey(pn);
+    if (from !== to) moves.push({ pn, row, from, to });
+  }
+  for (const row of diff.unchanged) {
+    if (String(row.stateKey ?? "").trim()) continue;
+    const pn = diff.runNodes.find((n) => n.id === (row.config as any)?.sourceProcessNodeId);
+    if (!pn) continue;
+    const from = effectiveStateKey(row);
+    const to = stepStateKey(pn);
+    if (from !== to) moves.push({ pn, row, from, to });
+  }
+  return moves;
+}
+
+/** `"From step" → "To step"`, by the flow's labels, for a card or a summary. */
+function pairTextFor(diff: Diff): (from: string, to: string) => string {
+  const labelFor = (pnId: string) =>
+    diff.runNodes.find((n) => n.id === pnId)?.label ?? (diff.byProcessNodeId.get(pnId) ? labelOf(diff.byProcessNodeId.get(pnId)) : pnId);
+  return (from, to) => `"${labelFor(from)}" → "${labelFor(to)}"`;
+}
+
+/**
+ * What a sync would do about moved keys, without doing it: the moves, and for
+ * each the connections whose condition or rule names the old key -- the ones
+ * the apply rewrites. The same function feeds the plan's card and the apply's
+ * summary, so the card cannot promise a rewrite the apply does not make.
+ */
+function planStateKeyRenames(graph: ProcessFlowGraph, diff: Diff, existingEdges: any[]): StateKeyRename[] {
+  const moves = stateKeyMoves(diff);
+  if (moves.length === 0) return [];
+  const renames = new Map(moves.map((m) => [m.from, m.to] as const));
+  const out: StateKeyRename[] = moves.map((m) => ({ step: m.pn.label, from: m.from, to: m.to, connections: [] }));
+  const pairText = pairTextFor(diff);
+  const note = (rewrote: string[], text: string) => {
+    for (const from of rewrote) {
+      const r = out.find((o) => o.from === from);
+      if (r && !r.connections.includes(text)) r.connections.push(text);
+    }
+  };
+  // The flow's own conditions, which the apply writes onto new connections …
+  const { forward } = desiredConnections(graph, diff.runNodeIds, diff.runNodes);
+  for (const e of forward) note(rewriteStateKeyReferences({ condition: e.condition, renames }).rewrote, pairText(e.from, e.to));
+  // … and the rules already on the team's connections, which stay and are rewritten in place.
+  const orchestratorId = diff.orchestratorNode?.id;
+  for (const e of existingEdges) {
+    if (e.sourceNodeId === orchestratorId || e.targetNodeId === orchestratorId) continue;
+    const s = (diff.existingProcessNodes.find((n) => n.id === e.sourceNodeId)?.config as any)?.sourceProcessNodeId;
+    const t = (diff.existingProcessNodes.find((n) => n.id === e.targetNodeId)?.config as any)?.sourceProcessNodeId;
+    if (!s || !t) continue;
+    note(rewriteStateKeyReferences({ condition: e.condition, rule: e.rule, renames }).rewrote, pairText(s, t));
+  }
+  return out;
+}
+
 export interface SyncTarget {
   /** The flow as it is drawn now. */
   graph: ProcessFlowGraph;
@@ -102,6 +193,13 @@ export interface SyncPlan {
    * and that has to be syncable -- and visible on the card before it happens.
    */
   connections: { added: string[]; removed: string[]; changed: string[]; loopsAdded: string[]; loopsRemoved: string[] };
+  /**
+   * Steps whose result key moves, and the connections that read the old key
+   * and are rewritten. A renamed step's conditions in the FLOW still say the
+   * old name; the card says so, because the next change to that step would
+   * bring it back.
+   */
+  stateKeyRenames: StateKeyRename[];
   /** How many agents a model will have to write from scratch. */
   drafts: number;
   /** This plan replaces every process node, because none could be correlated. */
@@ -347,6 +445,7 @@ export async function planFlowSync(orgId: string | undefined, target: SyncTarget
     removed: [],
     supersedes: [],
     connections: { added: [], removed: [], changed: [], loopsAdded: [], loopsRemoved: [] },
+    stateKeyRenames: [],
     drafts: 0,
     rebuild: forceFullRebuild,
   };
@@ -370,6 +469,7 @@ export async function planFlowSync(orgId: string | undefined, target: SyncTarget
     removed: diff.removedNodes.map(labelOf),
     supersedes,
     connections: planConnections(target.graph, diff, (loaded as any).existingEdges ?? [], isDecision),
+    stateKeyRenames: planStateKeyRenames(target.graph, diff, (loaded as any).existingEdges ?? []),
     // Gates, expressions, sub-flows and decision steps are built from the step
     // itself; only an agent step costs a model call.
     drafts: toCreate.filter((pn) => !HUMAN_CHECKPOINT_NODE_TYPES.has(pn.type) && pn.type !== "sub_flow" && pn.type !== "expression" && !isDecision(pn)).length,
@@ -391,6 +491,8 @@ export interface SyncSummary {
    * not be built.
    */
   revisionLoops: { set: string[]; cleared: string[]; unresolved: string[] };
+  /** Steps whose result key moved, with the connections rewritten to read the new one. */
+  stateKeyRenames: StateKeyRename[];
   /**
    * What the blueprint looks like AFTER the sync, read back from the rows. A
    * sync that leaves a team unable to run must not report success on its own
@@ -421,6 +523,25 @@ export async function applyFlowSync(
   const nodeIdMap = new Map<string, string>(); // ProcessNode.id -> new/kept teamBlueprintNode.id
   for (const n of diff.unchanged) nodeIdMap.set((n.config as any).sourceProcessNodeId, n.id);
 
+  // Result keys that move under this sync, and what is rewritten to follow
+  // them. Computed from the rows before anything is written, the same way the
+  // plan computed them for the card.
+  const moves = stateKeyMoves(diff);
+  const renames = new Map(moves.map((m) => [m.from, m.to] as const));
+  const stateKeyRenames: StateKeyRename[] = moves.map((m) => ({ step: m.pn.label, from: m.from, to: m.to, connections: [] }));
+  const pairText = pairTextFor(diff);
+  const noteRewrite = (rewrote: string[], text: string) => {
+    for (const from of rewrote) {
+      const r = stateKeyRenames.find((o) => o.from === from);
+      if (r && !r.connections.includes(text)) r.connections.push(text);
+    }
+  };
+  // A row left in place that never held a key gets the step's own, so what it
+  // writes and what the rules read are the same name from here on.
+  for (const m of moves) {
+    if (diff.unchanged.includes(m.row)) await storage.updateTeamBlueprintNode(m.row.id, { stateKey: m.to } as any);
+  }
+
   // Delete removed + changed-old blueprint nodes, superseding (not retiring --
   // that's a real, optionally approval-gated workflow this sync shouldn't
   // short-circuit) their now-orphaned agents.
@@ -449,6 +570,7 @@ export async function applyFlowSync(
           gateType: "approval",
           label: pn.label,
           refAgentId: null,
+          stateKey: stepStateKey(pn),
           config: processNodeConfig(pn),
         } as any);
         return { pn, node, ok: true as const };
@@ -464,7 +586,7 @@ export async function applyFlowSync(
           label: pn.label,
           refAgentId: null,
           refTeamAgentId,
-          stateKey: pn.id.replace(/-/g, "_"),
+          stateKey: stepStateKey(pn),
           config: processNodeConfig(pn),
         } as any);
         return { pn, node, ok: true as const };
@@ -479,7 +601,7 @@ export async function applyFlowSync(
           nodeType: "expression",
           label: pn.label,
           refAgentId: null,
-          stateKey: pn.id.replace(/-/g, "_"),
+          stateKey: stepStateKey(pn),
           config: { ...processNodeConfig(pn), expression },
         } as any);
         return { pn, node, ok: true as const };
@@ -498,7 +620,7 @@ export async function applyFlowSync(
           nodeType: "decision",
           label: pn.label,
           refAgentId: null,
-          stateKey: pn.id.replace(/-/g, "_"),
+          stateKey: stepStateKey(pn),
           config: {
             ...processNodeConfig(pn),
             decision: {
@@ -544,6 +666,8 @@ export async function applyFlowSync(
         nodeType: "internal_agent",
         label: agent.name,
         refAgentId: agent.id,
+        // The step's key, not a slug of the drafted name: see stepStateKey.
+        stateKey: stepStateKey(pn),
         config: processNodeConfig(pn),
       } as any);
       // The build writes this row for every worker it creates; without it here a
@@ -607,20 +731,33 @@ export async function applyFlowSync(
     // admin hardened after creation; recreating the edge would downgrade it.
     // Unless its kind changed: a decision edge and a judged edge are different things.
     if (existingEdge && existingEdge.sourceNodeId === srcNodeId && existingEdge.targetNodeId === tgtNodeId && (existingEdge.evaluationMode === "decision") === decisionEdge) {
+      // Left alone -- except that a rule on it reading a key that moved under
+      // this sync is rewritten to the new key, or it would read nothing.
+      const kept = rewriteStateKeyReferences({ condition: existingEdge.condition, rule: existingEdge.rule, renames });
+      if (kept.rewrote.length > 0) {
+        await storage.updateTeamBlueprintEdge(existingEdge.id, { condition: kept.condition, rule: kept.rule } as any);
+        noteRewrite(kept.rewrote, pairText(e.from, e.to));
+      }
       keptPairKeys.add(key);
       continue;
     }
     if (existingEdge) await storage.deleteTeamBlueprintEdge(existingEdge.id);
+    // The author's condition, with any key that moved under this sync renamed
+    // to what the step writes now. The flow itself still says the old name;
+    // the summary reports that.
+    const written = rewriteStateKeyReferences({ condition: e.condition, renames });
+    noteRewrite(written.rewrote, pairText(e.from, e.to));
+    const condition = written.condition ?? undefined;
     await storage.createTeamBlueprintEdge({
       blueprintId,
       sourceNodeId: srcNodeId,
       targetNodeId: tgtNodeId,
-      label: e.label || (decisionEdge ? e.condition : undefined) || undefined,
+      label: e.label || (decisionEdge ? condition : undefined) || undefined,
       // The same classification the build applies: a condition that states a
       // plain comparison becomes a rule the engine evaluates itself. Copying the
       // text and leaving evaluationMode unset made every conditional edge on a
       // synced team a model call per run.
-      ...(decisionEdge ? { condition: e.condition || undefined, evaluationMode: "decision" } : edgeRuleForCondition(e.condition)),
+      ...(decisionEdge ? { condition: condition || undefined, evaluationMode: "decision" } : edgeRuleForCondition(condition)),
       failureMode: "escalate",
     } as any);
     keptPairKeys.add(key);
@@ -729,6 +866,7 @@ export async function applyFlowSync(
       rebuilt: forceFullRebuild,
       draftFailures,
       revisionLoops,
+      stateKeyRenames,
       runnable: invariants.runnable,
       findings: invariants.findings.map((f) => f.message),
       via: opts.via ?? "Studio",
@@ -744,6 +882,7 @@ export async function applyFlowSync(
       superseded,
       draftFailures,
       revisionLoops,
+      stateKeyRenames,
       invariants,
     },
   };

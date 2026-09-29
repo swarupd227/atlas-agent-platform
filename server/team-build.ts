@@ -149,6 +149,14 @@ function soleAuthoredStep(proposal: any, stepsByLabel?: Map<string, any>): any |
  * the proposer invented, so the decision node after it had no reliable name to
  * read, and the same unsatisfiable-branch dead-end followed. An approval drawn
  * as "Contract Certainty Review" now writes contract_certainty_review.
+ *
+ * The same is true of an agent, and for the same reason: an agent step drawn
+ * as "Endorsement Accepted?" was built as "Endorsement Accepted? Agent" and
+ * filed its result under that name's slug, while the author's rules read
+ * endorsement_accepted. Both branches went unsatisfied and every later step
+ * was skipped, with the build, the sync and the deploy all reporting success
+ * (live 2026-09-29). Every node built from an authored step now writes under
+ * the step's own key, whatever the agent was named.
  */
 export function authoredStateKey(proposal: any, stepsByLabel?: Map<string, any>): string | undefined {
   const step = soleAuthoredStep(proposal, stepsByLabel);
@@ -1148,7 +1156,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
           refAgentId: isGate || det ? null : worker.id,
           refSkillId: det?.refSkillId,
           refKnowledgeBaseId: det?.refKnowledgeBaseId,
-          stateKey: det?.stateKey ?? (isGate ? authoredStateKey(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel) : undefined),
+          stateKey: det?.stateKey ?? authoredStateKey(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel),
           gateType: isGate ? "approval" : undefined,
           config: { role: "worker", workerIndex: workerIdx >= 0 ? workerIdx : j, tier: tierIdx, parallel: agentCount > 1, ...(det?.config ?? {}), ...(correlation ?? {}) },
         } as any);
@@ -1230,7 +1238,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         refAgentId: isGate || det ? null : createdWorkers[i].id,
         refSkillId: det?.refSkillId,
         refKnowledgeBaseId: det?.refKnowledgeBaseId,
-        stateKey: det?.stateKey ?? (isGate ? authoredStateKey(workers[i], authoredStepsByLabel) : undefined),
+        stateKey: det?.stateKey ?? authoredStateKey(workers[i], authoredStepsByLabel),
         gateType: isGate ? "approval" : undefined,
         config: { role: "worker", workerIndex: i, ...(det?.config ?? {}), ...(correlation ?? {}) },
       } as any);

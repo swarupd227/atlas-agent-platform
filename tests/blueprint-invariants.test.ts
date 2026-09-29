@@ -194,6 +194,29 @@ describe("a decision with no way through", () => {
   });
 });
 
+describe("a step holding no state key of its own", () => {
+  // The engine files such a step's result under a slug of its LABEL. Comparing
+  // rules against the stored column let a team whose agent wrote
+  // endorsement_accepted_agent, against rules reading endorsement_accepted,
+  // pass with nothing to compare (live 2026-09-29).
+  it("is read by the slug of its label, the way the engine files it", async () => {
+    db.nodes = [{ ...node("n1", "Draft endorsement"), stateKey: null }, node("n2", "Check contract certainty"), node("n3", "File it")];
+    db.edges = [edge("n1", "n2", { evaluationMode: "deterministic", rule: rule("draft_endorsement.ready") }), edge("n2", "n3")];
+    const check = await checkBlueprintInvariants("bp-1");
+    expect(check.findings.map((f) => f.kind)).not.toContain("unreachable_rule_field");
+  });
+
+  it("so a rule naming the step's authored name, when the drafted name differs, is reported as the dead branch it is", async () => {
+    db.nodes = [{ ...node("n1", "Endorsement Accepted? Agent"), nodeType: "expression", stateKey: null }, node("n2", "Lookup filing requirements"), node("n3", "File it")];
+    db.edges = [edge("n1", "n2", { evaluationMode: "deterministic", rule: rule("endorsement_accepted.approved") }), edge("n2", "n3")];
+    const check = await checkBlueprintInvariants("bp-1");
+    const found = check.findings.find((f) => f.kind === "unreachable_rule_field")!;
+    expect(found).toBeTruthy();
+    expect(found.message).toContain('no step in this team writes "endorsement_accepted"');
+    expect(found.blocksRun).toBe(false);
+  });
+});
+
 describe("a rule reading a step that is not there", () => {
   it("is reported when the prefix matches no step's state key", async () => {
     // The live shape: the step it named was replaced and took its state key with it.

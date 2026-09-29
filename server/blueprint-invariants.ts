@@ -21,6 +21,7 @@
 import { storage } from "./storage";
 import { backEdgeKeys } from "@shared/graph-cycles";
 import { judgeConditionField, ruleFields, statePaths } from "@shared/rule-fields";
+import { effectiveStateKey } from "@shared/state-key";
 
 export interface BlueprintFinding {
   kind:
@@ -149,7 +150,14 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
   // field like "aggregate" is read from the merged run state, where it comes from
   // inside some step's JSON output and cannot be known from the blueprint --
   // flagging those would be guessing.
-  const stateKeys = new Set(nodes.map((n) => String(n.stateKey ?? "")).filter(Boolean));
+  //
+  // The key compared is the one the engine FILES UNDER, not the stored column:
+  // a node holding no key is filed by a slug of its label. Comparing the column
+  // let a team whose agent wrote endorsement_accepted_agent, against rules
+  // reading endorsement_accepted, pass this check with nothing to compare
+  // (live 2026-09-29: every step after that decision skipped, sync and deploy
+  // both green).
+  const stateKeys = new Set(nodes.map((n) => effectiveStateKey(n)).filter(Boolean));
   const RUNTIME_PREFIXES = new Set(["state", "input", "output", "request", "run"]);
   for (const e of edges) {
     if (e.evaluationMode !== "deterministic" || !e.rule) continue;
@@ -197,7 +205,7 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
   // producing step's declared output schema (decisive, before any run), or the
   // fields recent runs actually produced (evidence, not proof -- hence never
   // blocking, and never raised below a floor of runs).
-  const nodeByStateKey = new Map(nodes.filter((n) => n.stateKey).map((n) => [String(n.stateKey), n]));
+  const nodeByStateKey = new Map(nodes.map((n) => [effectiveStateKey(n), n] as const).filter(([k]) => !!k));
   const { observedPaths, runsObserved } = await observedStateFields(blueprintId);
 
   for (const e of edges) {

@@ -383,6 +383,8 @@ interface SyncPlanView {
   supersedes: Array<{ label: string; agentId: string; agentName: string }>;
   /** How the connections differ, which a step-by-step diff cannot see. */
   connections: { added: string[]; removed: string[]; changed: string[]; loopsAdded: string[]; loopsRemoved: string[] };
+  /** Steps whose result key moves, and the connections rewritten to follow it. */
+  stateKeyRenames?: Array<{ step: string; from: string; to: string; connections: string[] }>;
   drafts: number;
   rebuild: boolean;
   block?: { kind: string; message: string; runId?: string };
@@ -419,7 +421,11 @@ export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
     // exact drift this tool exists to close (live 2026-09-27).
     const c = plan.connections;
     const connectionChanges = c.added.length + c.removed.length + c.changed.length + c.loopsAdded.length + c.loopsRemoved.length;
-    const nothing = plan.changed.length === 0 && plan.added.length === 0 && plan.removed.length === 0 && connectionChanges === 0;
+    // A step whose result key moves is a change too: a team built before agents
+    // were keyed by their step files results under drafted names its rules do
+    // not read, and this sync is what puts that right.
+    const renames = plan.stateKeyRenames ?? [];
+    const nothing = plan.changed.length === 0 && plan.added.length === 0 && plan.removed.length === 0 && connectionChanges === 0 && renames.length === 0;
     if (nothing && !plan.rebuild) {
       return { refuse: `"${plan.team.name}" already matches "${plan.flow.name}" -- same steps, same connections. There is nothing to sync.` };
     }
@@ -455,11 +461,16 @@ export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
         // becomes rather than letting the user assume the team has that arrow.
         ...(c.loopsAdded.length ? [`${c.loopsAdded.join("; ")} -- drawn as a loop, built as a rule on that step, because a team whose steps form a loop cannot run.`] : []),
         ...(c.loopsRemoved.length ? [`${c.loopsRemoved.join("; ")}.`] : []),
+        // A moved key is invisible on the canvas and decides whether the rules
+        // after that step read anything, so the card spells it out -- and says
+        // that the flow's own conditions still carry the old name.
+        ...renames.map((r) =>
+          `"${r.step}" writes its result as ${r.to} from now on, not ${r.from}${r.connections.length ? `; ${r.connections.join(", ")} read the old name and ${r.connections.length === 1 ? "is" : "are"} rewritten to the new one` : ""}. If the flow's own conditions say ${r.from}, change them to ${r.to} too, or the next change to that step brings the old name back.`),
         ...(connectionChanges === 0 ? ["The flow's own connections become the team's order again."] : []),
         "Nothing is deployed and nothing runs. The next run uses the new shape.",
       ],
       warnings,
-      frozen: { flow: plan.flow.id, team: plan.team.id, changes: plan.changed.length + plan.added.length + plan.removed.length + connectionChanges },
+      frozen: { flow: plan.flow.id, team: plan.team.id, changes: plan.changed.length + plan.added.length + plan.removed.length + connectionChanges + renames.length },
     };
   },
   run: async (ctx, input) => {
@@ -483,6 +494,7 @@ export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
         ...(s.revisionLoops?.set.length ? { sendsWorkBack: s.revisionLoops.set } : {}),
         ...(s.revisionLoops?.cleared.length ? { stoppedSendingWorkBack: s.revisionLoops.cleared } : {}),
         ...(s.revisionLoops?.unresolved.length ? { loopsLeftOff: s.revisionLoops.unresolved } : {}),
+        ...(s.stateKeyRenames?.length ? { resultKeysMoved: s.stateKeyRenames } : {}),
         // Read back from the blueprint, not asserted: a sync that leaves the team
         // unable to run used to report success either way.
         runnable: s.invariants?.runnable !== false,

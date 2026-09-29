@@ -145,7 +145,9 @@ describe("the node a step becomes", () => {
     // name the proposer invented, so that decision had no reliable name to read
     // and produced the same unsatisfiable-branch dead-end.
     expect(source).toContain("export function authoredStateKey(");
-    expect(source.match(/isGate \? authoredStateKey\(/g) ?? []).toHaveLength(2);
+    // Every worker node, gate or agent, on both build paths: an agent left
+    // without one was filed under a slug of its drafted name (2026-09-29).
+    expect(source.match(/det\?\.stateKey \?\? authoredStateKey\(/g) ?? []).toHaveLength(2);
     // Shared with the deterministic path, so both name a step the same way.
     expect(source).toContain("const key = step ? stateKeyForLabel(step.label ?? \"\") : \"\";");
   });
@@ -197,8 +199,12 @@ describe("the state key a deterministic step writes to", () => {
     for (const kind of ["expression", "knowledge_base", "tool_call", "skill"]) {
       expect(source, kind).toMatch(new RegExp(`kind: "${kind}",[^}]*stateKey`));
     }
-    // And onto both worker-node paths (tiered and flat).
-    expect(source.match(/stateKey: det\?\.stateKey \?\? \(isGate \? authoredStateKey\(/g) ?? []).toHaveLength(2);
+    // And onto both worker-node paths (tiered and flat), for every worker: a
+    // gate, a deterministic step AND an agent. An agent left without one was
+    // filed under a slug of the name a model chose for it, which is not the
+    // name the author's rules read (live 2026-09-29).
+    expect(source.match(/stateKey: det\?\.stateKey \?\? authoredStateKey\(/g) ?? []).toHaveLength(2);
+    expect(source).not.toContain("isGate ? authoredStateKey(");
   });
 
   it("leaves a proposer-supplied descriptor on the engine's default", () => {
@@ -274,6 +280,9 @@ describe("a branch the engine can decide for itself", () => {
   it("is what both builders call, so the two cannot drift again", () => {
     expect(source).toContain("return edgeRuleForCondition(spec.branchCondition);");
     const sync = readFileSync(join(__dirname, "..", "server", "process-flow-sync.ts"), "utf8");
-    expect(sync).toContain("edgeRuleForCondition(e.condition)");
+    // The author's condition, after any result key that moved under the sync
+    // has been renamed in it (flow-sync.test.ts pins the rename itself).
+    expect(sync).toContain("const written = rewriteStateKeyReferences({ condition: e.condition, renames });");
+    expect(sync).toContain("edgeRuleForCondition(condition)");
   });
 });
