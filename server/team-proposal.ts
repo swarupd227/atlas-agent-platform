@@ -151,7 +151,10 @@ export function deriveEdgesFromFlow(
     derived.push({
       from,
       to,
-      label: edge.condition || edge.label || undefined,
+      // The author's label first: it is the name of the branch, and what a
+      // decision step chooses between. A branch with only a condition is named
+      // by it, as before.
+      label: edge.label || edge.condition || undefined,
       condition: edge.condition || undefined,
       // The name the builder reads (resolveEdgeRuleFromSpec in team-build.ts).
       // Sending only "condition" built the edge unconditional, so a decision

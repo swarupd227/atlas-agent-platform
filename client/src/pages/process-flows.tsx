@@ -466,6 +466,7 @@ export default function ProcessFlows() {
   const StepPlanTable = ({ title }: { title: string }) => {
     const KIND_COPY: Record<ExecutionKind, { label: string; note: string; tone: string }> = {
       agent: { label: "Agent", note: "a model call", tone: "text-violet-700 dark:text-violet-300" },
+      decision: { label: "Decision", note: "one decision call, one branch", tone: "text-sky-700 dark:text-sky-300" },
       expression: { label: "Expression", note: "runs in-process, free", tone: "text-emerald-700 dark:text-emerald-300" },
       knowledge_base: { label: "Knowledge lookup", note: "a search, free", tone: "text-emerald-700 dark:text-emerald-300" },
       skill: { label: "Skill text", note: "injected, free", tone: "text-emerald-700 dark:text-emerald-300" },

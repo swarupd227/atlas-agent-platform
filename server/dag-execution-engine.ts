@@ -81,6 +81,31 @@ function isHandoffTarget(sourceOutputText: string, targetLabel: string): boolean
   return slugifyLabel(named) === slugifyLabel(targetLabel);
 }
 
+// What a decision node may send to the decision model: each string value cut
+// to VALUE_CHARS, and the largest keys dropped until the whole is under
+// TOTAL_CHARS (~25k tokens, inside the model's 32k state cap). A step's own
+// upstream is often a 60k-character deliverable; the decision needs its gist.
+const DECISION_STATE_VALUE_CHARS = 12_000;
+const DECISION_STATE_TOTAL_CHARS = 100_000;
+function boundedState(state: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(state)) {
+    if (typeof v === "string") out[k] = v.length > DECISION_STATE_VALUE_CHARS ? `${v.slice(0, DECISION_STATE_VALUE_CHARS)}\n[cut: ${v.length - DECISION_STATE_VALUE_CHARS} more characters]` : v;
+    else {
+      const json = JSON.stringify(v ?? null);
+      out[k] = json.length > DECISION_STATE_VALUE_CHARS ? `${json.slice(0, DECISION_STATE_VALUE_CHARS)}\n[cut: ${json.length - DECISION_STATE_VALUE_CHARS} more characters]` : v;
+    }
+  }
+  let size = JSON.stringify(out).length;
+  const bySize = Object.keys(out).filter((k) => k !== "request").sort((a, b) => JSON.stringify(out[b]).length - JSON.stringify(out[a]).length);
+  for (const k of bySize) {
+    if (size <= DECISION_STATE_TOTAL_CHARS) break;
+    size -= JSON.stringify(out[k]).length;
+    out[k] = "[omitted: too large for the decision]";
+  }
+  return out;
+}
+
 export interface WaveNode {
   wave_number: number;
   nodes: string[];
@@ -99,6 +124,49 @@ export interface IncomingEdgeInfo {
   evaluationMode: string;
   condition: string | null;
   rule: RuleGroup | null;
+  /** The branch's name. A decision edge is satisfied when its source chose this label. */
+  label: string | null;
+}
+
+/** A decision node's question and the branches it chooses between (node.config.decision). */
+export interface DecisionStepConfig {
+  question: string;
+  options: Array<{ label: string; description?: string }>;
+  /** Overrides the site's act threshold for this step. */
+  threshold?: number;
+  /** Below threshold: the LLM makes the same choice (default), or the run goes to a drawn approval branch. */
+  unsure?: "llm" | "gate";
+}
+
+function parseDecisionConfig(raw: any): DecisionStepConfig | null {
+  if (!raw || typeof raw !== "object") return null;
+  const options = Array.isArray(raw.options)
+    ? raw.options
+        .map((o: any) => (typeof o === "string" ? { label: o } : o && typeof o.label === "string" ? { label: o.label, ...(typeof o.description === "string" ? { description: o.description } : {}) } : null))
+        .filter((o: any): o is { label: string; description?: string } => !!o && o.label.trim().length > 0)
+    : [];
+  const question = typeof raw.question === "string" && raw.question.trim() ? raw.question.trim() : "";
+  if (!question || options.length < 2) return null;
+  const threshold = Number(raw.threshold);
+  return {
+    question,
+    options,
+    ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
+    ...(raw.unsure === "gate" ? { unsure: "gate" as const } : {}),
+  };
+}
+
+/**
+ * A decision edge is satisfied when the source's recorded choice names this
+ * branch -- by the edge's label, or by the target's label when the edge has
+ * none. The source wrote exactly one choice, so exactly one edge matches.
+ */
+function decisionEdgeSatisfied(sourceOutputText: string, edgeLabel: string | null, targetLabel: string): boolean {
+  let choice: unknown;
+  try { choice = JSON.parse(sourceOutputText)?.choice; } catch { return false; }
+  if (typeof choice !== "string" || !choice.trim()) return false;
+  const chosen = slugifyLabel(choice);
+  return (!!edgeLabel && slugifyLabel(edgeLabel) === chosen) || (!!targetLabel && slugifyLabel(targetLabel) === chosen);
 }
 
 export interface ComputedWavePlan {
@@ -166,6 +234,8 @@ export interface NodePlanConfig {
   gateType: string | null;
   refToolIds: string[] | null;
   revision: RevisionPolicy | null;
+  /** decision: the question and branches one decision-model call chooses between. */
+  decision: DecisionStepConfig | null;
 }
 
 export interface StateFieldDef {
@@ -449,6 +519,7 @@ export function computeWaves(
       toolArgs: ((node.config as any)?.toolArgs as Record<string, unknown> | undefined) || null,
       label: node.label,
       gateType: node.gateType || null,
+      decision: node.nodeType === "decision" ? parseDecisionConfig((node.config as any)?.decision) : null,
       refToolIds: (node.refToolIds as string[] | null) || null,
       revision: parseRevisionPolicy((node.config as any)?.revision, node.id, nodes),
     };
@@ -474,7 +545,10 @@ export function computeWaves(
     // downstream node it names as the handoff target), evaluated per-
     // candidate in filterGatedNodes. Still gating: it must be judged, not
     // treated as an always-satisfied plain edge.
-    const isGating = !!edge.condition || hasRule || edge.evaluationMode === "handoff";
+    // A "decision" edge is one branch of a decision node: satisfied only when
+    // that node's one choice named it, so it gates whether or not it carries a
+    // condition of its own.
+    const isGating = !!edge.condition || hasRule || edge.evaluationMode === "handoff" || edge.evaluationMode === "decision";
     if (!incomingEdges[edge.targetNodeId]) incomingEdges[edge.targetNodeId] = [];
     incomingEdges[edge.targetNodeId].push({
       sourceNodeId: edge.sourceNodeId,
@@ -482,6 +556,7 @@ export function computeWaves(
       evaluationMode: edge.evaluationMode || "ai",
       condition: edge.condition ?? null,
       rule: (edge.rule as RuleGroup | null) ?? null,
+      label: edge.label ?? null,
     });
   }
 
@@ -1272,6 +1347,22 @@ export class DAGExecutionEngine {
       if (missing) nodeOutcomes.set(nr.nodeId, { status: MISSING_FILE_STATUS, error: missing });
       return next;
     };
+    // The state effect of a node's file bookkeeping, without the bookkeeping:
+    // recordFileOutcome counts a pass every time it runs, so it runs once, when
+    // the node settles (recordSettled, on liveState); the wave barrier applies
+    // only the withdrawal to currentState. Until this, the barrier was the ONLY
+    // place it ran -- and since early admission (83e0c6e0) a downstream reviewer
+    // starts from liveState when its upstream settles, so it was handed a deck
+    // that was never built with no notice, and the pre-revision deck after a
+    // revision pass (tests/missing-deliverable.test.ts).
+    const withdrawStaleFile = (nodeId: string, state: Record<string, any>): Record<string, any> => {
+      const stateKey = config.executionPlan.nodeConfig[nodeId]?.stateKey;
+      if (!fileHistory.get(nodeId)?.withdrewStaleFile || !stateKey) return state;
+      const fileKey = `${stateKey}${GENERATED_FILES_STATE_SUFFIX}`;
+      if (!(fileKey in state)) return state;
+      const { [fileKey]: _stale, ...rest } = state;
+      return rest;
+    };
 
     // Resuming after a restart: replay already-completed waves' bookkeeping
     // (bumping the same totals/maps the main loop below updates) without
@@ -1362,7 +1453,11 @@ export class DAGExecutionEngine {
         const value = nr.output[nc.stateKey];
         if (value != null) nodeOutputText.set(nr.nodeId, typeof value === "string" ? value : JSON.stringify(value));
       }
-      liveState = mergeWaveOutputs(liveState, [nr], config.stateSchema);
+      // File bookkeeping belongs here too: a node admitted early reads liveState
+      // and nodeOutcomes the moment its upstream settles, so a missing
+      // deliverable or a withdrawn stale file must already be recorded. The
+      // outcome delete above must come first -- a missing file is set after it.
+      liveState = recordFileOutcome(nr, mergeWaveOutputs(liveState, [nr], config.stateSchema));
     };
 
     // Starts a node (or records its skip) and, once it settles, admits
@@ -1483,7 +1578,9 @@ export class DAGExecutionEngine {
       for (const id of runNodes) inFlight.delete(id);
 
       currentState = mergeWaveOutputs(currentState, nodeResults, config.stateSchema);
-      for (const nr of nodeResults) currentState = recordFileOutcome(nr, currentState);
+      // Each node's file pass was counted when it settled; only the withdrawal
+      // of a stale file is applied to this state (see withdrawStaleFile).
+      for (const nr of nodeResults) currentState = withdrawStaleFile(nr.nodeId, currentState);
 
       const waveResult: WaveExecutionResult = {
         waveNumber: wave.wave_number,
@@ -1832,6 +1929,14 @@ export class DAGExecutionEngine {
         // approval that actually succeeded. Checking this first means a
         // mismatched rule/condition on a gate-sourced edge can no longer
         // mask the real decision.
+        // A decision node recorded exactly one choice; this branch is taken iff
+        // the choice named it. Checked ahead of everything else because the
+        // edge may also carry the author's condition text for display.
+        if (edge.evaluationMode === "decision") {
+          conditionsEvaluated++;
+          return decisionEdgeSatisfied(sourceOutput, edge.label, nodeLabelById.get(nodeId) || "");
+        }
+
         if (this.isGateNode(nodeConfig[edge.sourceNodeId])) {
           try {
             const parsed = JSON.parse(sourceOutput);
@@ -1946,6 +2051,10 @@ export class DAGExecutionEngine {
 
     if (nc.nodeType === "tool_call" && nc.toolName && nc.toolServerId) {
       return this.executeToolCallNode(nodeId, nc, currentState, config, start);
+    }
+
+    if (nc.nodeType === "decision" && nc.decision) {
+      return this.executeDecisionNode(nodeId, nc, currentState, config, start);
     }
 
     if (this.isGateNode(nc)) {
@@ -2378,6 +2487,84 @@ export class DAGExecutionEngine {
       };
     } catch (e: any) {
       return fail(`Expression evaluation failed: ${e.message || String(e)}`);
+    }
+  }
+
+  /**
+   * One decision-model call over the node's branches. Writes
+   * { choice, probabilities, confidence, engine, model, question, options } under
+   * the node's state key; the outgoing "decision" edges read `choice`. The
+   * state it judges is what the node can see: the keys visible to it plus the
+   * run request, each value bounded so a long upstream output cannot push the
+   * question past the decision model's limit.
+   *
+   * Below the threshold the seam already answered with the LLM; with
+   * `unsure: "gate"` and a drawn approval branch, that branch is chosen instead
+   * so a person decides. A failed call fails the node: opening every branch, as
+   * evaluateCondition's default-open would, is worse than stopping.
+   */
+  private async executeDecisionNode(
+    nodeId: string,
+    nc: NodePlanConfig,
+    currentState: Record<string, any>,
+    config: DAGExecutionConfig,
+    start: number,
+  ): Promise<NodeExecutionResult> {
+    const d = nc.decision!;
+    const fail = (message: string): NodeExecutionResult => ({
+      nodeId, agentId: "", status: "failed", output: {}, error: message,
+      durationMs: Date.now() - start, promptTokens: 0, completionTokens: 0, traceId: "",
+    });
+    const { visible } = visibleStateKeys(nodeId, config.executionPlan, currentState);
+    const state: Record<string, unknown> = {};
+    if (currentState.request !== undefined) state.request = currentState.request;
+    for (const key of Array.from(visible)) if (currentState[key] !== undefined) state[key] = currentState[key];
+    const criteria: Record<string, string> = {};
+    for (const o of d.options) criteria[o.label] = o.description || o.label;
+    try {
+      const r = await decide({
+        kind: "choice",
+        site: "decision_step",
+        orgId: config.organizationId ?? null,
+        state: boundedState(state),
+        instructions: d.question,
+        criteria,
+        threshold: d.threshold,
+        subject: nc.label,
+      });
+      let choice = String(r.answer);
+      let routedToGate = false;
+      if (d.unsure === "gate" && r.engine === "llm" && r.fallbackReason === "below_threshold") {
+        const gate = (config.executionPlan.edgeMap[nodeId] ?? [])
+          .map((id) => config.executionPlan.nodeConfig[id])
+          .find((t) => t && this.isGateNode(t));
+        if (gate) { choice = gate.label; routedToGate = true; }
+      }
+      return {
+        nodeId,
+        agentId: "",
+        status: "completed",
+        output: {
+          [nc.stateKey]: {
+            choice,
+            probabilities: r.probabilities ?? null,
+            confidence: r.confidence,
+            engine: r.engine,
+            model: r.model,
+            question: d.question,
+            options: d.options.map((o) => o.label),
+            ...(r.fallbackReason ? { fallbackReason: r.fallbackReason } : {}),
+            ...(routedToGate ? { routedToGate: true } : {}),
+          },
+        },
+        durationMs: Date.now() - start,
+        promptTokens: r.inputTokens,
+        completionTokens: 0,
+        traceId: "",
+        costUsd: r.costUsd,
+      };
+    } catch (e: any) {
+      return fail(`Decision failed: ${e?.message || String(e)}`);
     }
   }
 

@@ -7,6 +7,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
+import { getDecisionSettings } from "../decision-settings";
 import { agentMcpServers, agentProposals, agents, astraThreads, mcpElicitations, policyExceptions, workspaceRuns, type InsertPolicy } from "@shared/schema";
 import { createHash } from "crypto";
 import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
@@ -394,7 +395,7 @@ async function acknowledgeAlertAs(orgId: string, userId: string | null, actorLab
 async function draftFlow(orgId: string, input: { description?: string; fileIds?: string[] }) {
   const draft = await draftProcessFlow({ description: input.description, fileIds: input.fileIds, orgId });
   const graph = normalizeToGraph({ name: draft.name, nodes: draft.nodes, edges: draft.edges } as any, draft.name);
-  const compiled = graph ? compileProcessFlow(graph) : null;
+  const compiled = graph ? compileProcessFlow(graph, { decisionKind: (await getDecisionSettings()).stepKind }) : null;
   return { ...draft, warnings: compiled?.warnings ?? [] };
 }
 
@@ -436,7 +437,7 @@ async function planFlowRevision(orgId: string, flowId: string, instruction: stri
   if (changed.length === 0) {
     return { flow: { id: flow.id, name: flow.name }, changed, skipped, warnings: [], graph: null };
   }
-  const compiled = compileProcessFlow(graph);
+  const compiled = compileProcessFlow(graph, { decisionKind: (await getDecisionSettings()).stepKind });
   return { flow: { id: flow.id, name: flow.name }, changed, skipped, warnings: compiled.warnings, graph };
 }
 
@@ -1001,7 +1002,7 @@ async function proposeTeamForFlow(
   // What the compiler makes of the flow travels with the plan: a flow with no
   // trigger or a decision with no condition automates into a team with the
   // same hole in it, and the person deciding should see that before it exists.
-  const compiled = compileProcessFlow(graph);
+  const compiled = compileProcessFlow(graph, { decisionKind: (await getDecisionSettings()).stepKind });
 
   const ownerId = flowOwnerId(threadId, flow.id);
   const draft = feedback ? await storage.getAgentProposalByOutcome(ownerId).catch(() => undefined) : undefined;

@@ -32,6 +32,38 @@ import { edgeRuleForCondition } from "@shared/condition-to-rule";
 import { isCurrentReworkRule, REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
 import type { ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
+import { classifyStep } from "@shared/flow-execution-kind";
+import { getDecisionSettings } from "./decision-settings";
+
+/**
+ * Whether a step of this flow becomes a decision node: a make_decision step
+ * with two or more labelled branches, when the platform flag or the step's own
+ * config says so. The same classifier the build and the compiler use.
+ */
+async function decisionStepPredicate(graph: ProcessFlowGraph): Promise<(pn: ProcessNode) => boolean> {
+  const decisionKind = (await getDecisionSettings().catch(() => null))?.stepKind ?? false;
+  return (pn) => classifyStep(pn, { outgoingEdges: graph.edges.filter((e) => e.from === pn.id), decisionKind }) === "decision";
+}
+
+/**
+ * A step whose KIND changed -- an agent that should now be a decision node, or
+ * the reverse -- is a changed step even when its words did not change, or the
+ * flag would never reach an existing team. Moved from `unchanged` to `changed`
+ * so the ordinary supersede-and-rebuild path handles it.
+ */
+function promoteKindChanges(diff: Diff, graph: ProcessFlowGraph, isDecision: (pn: ProcessNode) => boolean): void {
+  const keep: any[] = [];
+  for (const existing of diff.unchanged) {
+    const pn = graph.nodes.find((n) => n.id === (existing.config as any)?.sourceProcessNodeId);
+    if (pn && isDecision(pn) !== (existing.nodeType === "decision")) {
+      diff.changed.push(pn);
+      diff.changedOldNodes.push(existing);
+    } else {
+      keep.push(existing);
+    }
+  }
+  diff.unchanged = keep;
+}
 
 export { HUMAN_CHECKPOINT_NODE_TYPES, STRUCTURAL_NODE_TYPES };
 
@@ -167,7 +199,7 @@ function desiredConnections(graph: ProcessFlowGraph, runNodeIds: Set<string>, ru
  * sync" while the automation still carried all four -- the same drift this module
  * exists to close, with a hole in it (live 2026-09-27).
  */
-function planConnections(graph: ProcessFlowGraph, diff: Diff, existingEdges: any[]): SyncPlan["connections"] {
+function planConnections(graph: ProcessFlowGraph, diff: Diff, existingEdges: any[], isDecision: (pn: ProcessNode) => boolean = () => false): SyncPlan["connections"] {
   const { forward, loops } = desiredConnections(graph, diff.runNodeIds, diff.runNodes);
   const labelFor = (pnId: string) =>
     diff.runNodes.find((n) => n.id === pnId)?.label ?? (diff.byProcessNodeId.get(pnId) ? labelOf(diff.byProcessNodeId.get(pnId)) : pnId);
@@ -194,6 +226,14 @@ function planConnections(graph: ProcessFlowGraph, diff: Diff, existingEdges: any
     const existing = byPair.get(key);
     if (!existing) {
       added.push(pairText(e.from, e.to));
+      continue;
+    }
+    // A branch out of a decision step is chosen by the step, not judged by its
+    // condition; switching either way is a change the card must show.
+    const srcPn = graph.nodes.find((n) => n.id === e.from);
+    const wantDecision = !!srcPn && isDecision(srcPn);
+    if (wantDecision !== (existing.evaluationMode === "decision")) {
+      changed.push(wantDecision ? `${pairText(e.from, e.to)} is chosen by "${labelFor(e.from)}" itself` : `${pairText(e.from, e.to)} waits on its condition again`);
       continue;
     }
     const before = String(existing.condition ?? "").trim();
@@ -269,6 +309,8 @@ async function load(orgId: string | undefined, target: SyncTarget, forceFullRebu
     storage.getTeamBlueprintEdges(blueprintId),
   ]);
   const diff = diffFlowAgainstBlueprint(graph, existingNodes, forceFullRebuild);
+  const isDecision = await decisionStepPredicate(graph);
+  promoteKindChanges(diff, graph, isDecision);
 
   // First sync of a blueprint whose nodes don't record which step they came
   // from: any match would be a guess presented as certainty. Partial
@@ -279,6 +321,7 @@ async function load(orgId: string | undefined, target: SyncTarget, forceFullRebu
       blueprint,
       existingEdges,
       diff,
+      isDecision,
       block: {
         kind: "legacy_blueprint" as const,
         message: diff.uncorrelated.length === diff.existingProcessNodes.length
@@ -288,7 +331,7 @@ async function load(orgId: string | undefined, target: SyncTarget, forceFullRebu
     };
   }
 
-  return { blueprintId, blueprint, existingEdges, diff };
+  return { blueprintId, blueprint, existingEdges, diff, isDecision };
 }
 
 /** What a sync would do, without doing any of it. */
@@ -309,6 +352,7 @@ export async function planFlowSync(orgId: string | undefined, target: SyncTarget
   };
   if (!("diff" in loaded) || !loaded.diff) return { ...base, block: loaded.block };
   const { diff } = loaded;
+  const isDecision = (loaded as any).isDecision ?? (() => false);
 
   const supersedes: SyncPlan["supersedes"] = [];
   for (const node of [...diff.removedNodes, ...diff.changedOldNodes]) {
@@ -325,10 +369,10 @@ export async function planFlowSync(orgId: string | undefined, target: SyncTarget
     added: diff.added.map((n) => n.label),
     removed: diff.removedNodes.map(labelOf),
     supersedes,
-    connections: planConnections(target.graph, diff, (loaded as any).existingEdges ?? []),
-    // Gates, expressions and sub-flows are built from the step itself; only an
-    // agent step costs a model call.
-    drafts: toCreate.filter((pn) => !HUMAN_CHECKPOINT_NODE_TYPES.has(pn.type) && pn.type !== "sub_flow" && pn.type !== "expression").length,
+    connections: planConnections(target.graph, diff, (loaded as any).existingEdges ?? [], isDecision),
+    // Gates, expressions, sub-flows and decision steps are built from the step
+    // itself; only an agent step costs a model call.
+    drafts: toCreate.filter((pn) => !HUMAN_CHECKPOINT_NODE_TYPES.has(pn.type) && pn.type !== "sub_flow" && pn.type !== "expression" && !isDecision(pn)).length,
     ...(loaded.block ? { block: loaded.block } : {}),
   };
 }
@@ -368,6 +412,7 @@ export async function applyFlowSync(
     return { blocked: loaded.block };
   }
   const { blueprintId, blueprint, existingEdges, diff } = loaded as Required<Awaited<ReturnType<typeof load>>> & { blueprintId: string };
+  const isDecision: (pn: ProcessNode) => boolean = (loaded as any).isDecision ?? (() => false);
   const { teamAgent, graph } = target;
   const industryId = (teamAgent as any).industry || "general";
   const outcomeId = target.outcomeId ?? teamAgent.outcomeId ?? null;
@@ -436,6 +481,33 @@ export async function applyFlowSync(
           refAgentId: null,
           stateKey: pn.id.replace(/-/g, "_"),
           config: { ...processNodeConfig(pn), expression },
+        } as any);
+        return { pn, node, ok: true as const };
+      }
+      if (isDecision(pn)) {
+        // One decision-model call over the step's labelled branches; no agent is
+        // drafted. The branches come from the flow's own edges, labels first.
+        const options = graph.edges
+          .filter((e) => e.from === pn.id)
+          .map((e) => ({ label: String(e.label ?? "").trim() || String(e.condition ?? "").trim(), description: String(e.condition ?? "").trim() || String(e.label ?? "").trim() }))
+          .filter((o) => o.label);
+        const cfg = (pn.config ?? {}) as Record<string, any>;
+        const threshold = Number(cfg.confidenceThreshold);
+        const node = await storage.createTeamBlueprintNode({
+          blueprintId,
+          nodeType: "decision",
+          label: pn.label,
+          refAgentId: null,
+          stateKey: pn.id.replace(/-/g, "_"),
+          config: {
+            ...processNodeConfig(pn),
+            decision: {
+              question: String(pn.description || pn.label || "").trim() || `Which branch should "${pn.label}" take?`,
+              options,
+              ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
+              ...(cfg.unsure === "gate" ? { unsure: "gate" } : {}),
+            },
+          },
         } as any);
         return { pn, node, ok: true as const };
       }
@@ -526,10 +598,15 @@ export async function applyFlowSync(
     }
     if (!srcNodeId || !tgtNodeId) continue; // endpoint failed to draft -- already reported
     const existingEdge = oldEndpointsByPnPair.get(key);
+    // A branch out of a decision step is chosen by the step's one call, so the
+    // edge is a "decision" edge whatever its condition says.
+    const srcPn = graph.nodes.find((n) => n.id === e.from);
+    const decisionEdge = !!srcPn && isDecision(srcPn);
     // Endpoints both unchanged AND an edge already connects them: leave it
     // alone. This is what preserves an evaluationMode "deterministic" rule an
     // admin hardened after creation; recreating the edge would downgrade it.
-    if (existingEdge && existingEdge.sourceNodeId === srcNodeId && existingEdge.targetNodeId === tgtNodeId) {
+    // Unless its kind changed: a decision edge and a judged edge are different things.
+    if (existingEdge && existingEdge.sourceNodeId === srcNodeId && existingEdge.targetNodeId === tgtNodeId && (existingEdge.evaluationMode === "decision") === decisionEdge) {
       keptPairKeys.add(key);
       continue;
     }
@@ -538,12 +615,12 @@ export async function applyFlowSync(
       blueprintId,
       sourceNodeId: srcNodeId,
       targetNodeId: tgtNodeId,
-      label: e.label || undefined,
+      label: e.label || (decisionEdge ? e.condition : undefined) || undefined,
       // The same classification the build applies: a condition that states a
       // plain comparison becomes a rule the engine evaluates itself. Copying the
       // text and leaving evaluationMode unset made every conditional edge on a
       // synced team a model call per run.
-      ...edgeRuleForCondition(e.condition),
+      ...(decisionEdge ? { condition: e.condition || undefined, evaluationMode: "decision" } : edgeRuleForCondition(e.condition)),
       failureMode: "escalate",
     } as any);
     keptPairKeys.add(key);

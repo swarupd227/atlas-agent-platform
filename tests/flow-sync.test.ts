@@ -600,3 +600,61 @@ describe("the two callers", () => {
     expect(prompt).toContain("Changing a flow changes the drawing, not what runs");
   });
 });
+/**
+ * A decision step syncs as a decision node -- one decision-model call over its
+ * labelled branches, no agent drafted -- and a step whose KIND changed is a
+ * changed step even when its words did not, so the flag reaches existing teams.
+ */
+describe("a decision step", () => {
+  const decisionGraph = () => ({
+    version: 1,
+    name: "Endorsement",
+    nodes: [
+      { id: "s0", type: "trigger", label: "Endorsement drafted", description: "", actor: "System" },
+      { id: "s1", type: "get_info", label: "Read the endorsement", description: "", actor: "System" },
+      { id: "s6", type: "make_decision", label: "Decide", description: "Was the endorsement accepted by the carrier?", actor: "AI", config: { decisionKind: true } },
+      { id: "s3", type: "expert_approval", label: "Carrier referral", description: "", actor: "Carrier" },
+      { id: "s4", type: "take_action", label: "Bind", description: "", actor: "System" },
+      { id: "s9", type: "end", label: "Bound", description: "", actor: "System" },
+    ],
+    edges: [
+      { id: "e1", from: "s1", to: "s6" },
+      { id: "e2", from: "s6", to: "s3", label: "Refer", condition: "Endorsement rejected" },
+      { id: "e3", from: "s6", to: "s4", label: "Bind it", condition: "Endorsement accepted" },
+    ],
+  }) as any;
+
+  it("is planned as a kind change with no agent to draft, and the branches as chosen by the step", async () => {
+    const g = decisionGraph();
+    state.nodes = blueprintFromFlow(g);
+    // An earlier sync wrote this branch as a judged ("ai") edge; the card must
+    // say it is now chosen by the step itself.
+    state.edges = [{ id: "edge-old", sourceNodeId: "node-s6", targetNodeId: "node-s3", label: "Refer", condition: "Endorsement rejected", evaluationMode: "ai", rule: null }];
+    const plan = await planFlowSync(ORG, target(g));
+    expect(plan.changed).toEqual(["Decide"]);
+    expect(plan.drafts).toBe(0);
+    expect(plan.connections.changed.some((c) => c.includes("chosen by"))).toBe(true);
+    // The other two connections have no edge yet, so they are simply added.
+    expect(plan.connections.added).toHaveLength(2);
+  });
+
+  it("syncs as a decision node whose branches are decision edges", async () => {
+    const g = decisionGraph();
+    state.nodes = blueprintFromFlow(g);
+    const r = await applyFlowSync(ORG, target(g));
+    expect("summary" in r).toBe(true);
+    expect((r as any).summary.changed).toEqual(["Decide"]);
+    const decision = state.created.find((n) => n.nodeType === "decision");
+    expect(decision).toBeTruthy();
+    expect(decision.refAgentId).toBeNull();
+    expect(decision.config.decision).toEqual({
+      question: "Was the endorsement accepted by the carrier?",
+      options: [{ label: "Refer", description: "Endorsement rejected" }, { label: "Bind it", description: "Endorsement accepted" }],
+    });
+    const out = state.edges.filter((e) => e.sourceNodeId === decision.id).map((e) => [e.label, e.evaluationMode, e.condition]);
+    expect(out).toEqual([["Refer", "decision", "Endorsement rejected"], ["Bind it", "decision", "Endorsement accepted"]]);
+    // No agent was drafted for it (the fixture's pre-existing "Decide Agent" is
+    // the superseded one; a drafted agent would be named "Agent for Decide...").
+    expect(Array.from(state.agents.values()).some((a) => String(a.name).startsWith("Agent for Decide"))).toBe(false);
+  });
+});

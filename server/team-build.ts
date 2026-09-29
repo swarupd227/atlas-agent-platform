@@ -15,8 +15,9 @@ import { generateOntologyEvalCases } from "./routes/helpers";
 import { resolveBindingServer } from "./team-bindings";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
 import { edgeRuleForCondition, parseConditionToRule } from "@shared/condition-to-rule";
-import { classifyStep } from "@shared/flow-execution-kind";
+import { classifyStep, type DecisionBranch } from "@shared/flow-execution-kind";
 import { stateKeyForLabel } from "@shared/state-key";
+import { getDecisionSettings } from "./decision-settings";
 import { stepCorrelation } from "@shared/process-flow-correlation";
 import { backEdgeKeys, edgeKey } from "@shared/graph-cycles";
 import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
@@ -245,13 +246,77 @@ function branchConditionsFor(proposal: any, pipeline: any): string[] {
     .filter((c: string) => !!c);
 }
 
+/**
+ * The branches out of the step this worker covers, as the decision kind needs
+ * them: the author's label for each, and the condition if one was written.
+ * Same matching as branchConditionsFor.
+ */
+function branchesFor(proposal: any, pipeline: any): DecisionBranch[] {
+  const edges = Array.isArray(pipeline?.edges) ? pipeline.edges : [];
+  const names = new Set(
+    [proposal?.name, proposal?.role, ...(Array.isArray(proposal?.flowStepLabels) ? proposal.flowStepLabels : [])]
+      .map((v) => String(v ?? "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (names.size === 0) return [];
+  const out: DecisionBranch[] = [];
+  for (const e of edges) {
+    if (!names.has(String(e?.from ?? "").trim().toLowerCase())) continue;
+    const condition = typeof e?.branchCondition === "string" ? e.branchCondition.trim() : "";
+    const label = (typeof e?.label === "string" && e.label.trim()) || condition;
+    if (!label) continue;
+    out.push({ label, ...(condition ? { condition } : {}), ...(typeof e?.to === "string" ? { to: e.to } : {}) });
+  }
+  return out;
+}
+
+/**
+ * A make_decision step drawn with labelled branches becomes ONE decision node
+ * (nodeType "decision") when the flag or the step opts in: one decision-model
+ * call chooses among its branches, and its outgoing edges are "decision" edges
+ * satisfied by that choice. Null when the step is not one, and the ordinary
+ * derivation below applies.
+ */
+function decisionNodeFor(
+  proposal: any,
+  stepsByLabel: Map<string, any> | undefined,
+  branches: DecisionBranch[] | undefined,
+  decisionKind: boolean | undefined,
+): { nodeType: string; stateKey?: string; config: Record<string, unknown> } | null {
+  const step = soleAuthoredStep(proposal, stepsByLabel);
+  if (!step) return null;
+  const config = (step.config ?? {}) as Record<string, any>;
+  if (classifyStep({ type: step.type, config }, { outgoingEdges: branches ?? [], decisionKind }) !== "decision") return null;
+  const options = (branches ?? []).map((b) => ({ label: b.label, description: b.condition || b.label }));
+  if (options.length < 2) return null;
+  const threshold = Number(config.confidenceThreshold);
+  return {
+    nodeType: "decision",
+    stateKey: stateKeyForLabel(step.label ?? ""),
+    config: {
+      decision: {
+        question: String(step.description || step.label || "").trim() || `Which branch should "${step.label}" take?`,
+        options,
+        ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
+        ...(config.unsure === "gate" ? { unsure: "gate" } : {}),
+      },
+    },
+  };
+}
+
 function deterministicNodeFor(
   proposal: any,
   stepsByLabel?: Map<string, any>,
   warn?: (message: string) => void,
   servers?: Array<{ id: string; name: string }>,
   branchConditions?: string[],
+  branches?: DecisionBranch[],
+  decisionKind?: boolean,
 ): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; stateKey?: string; config: Record<string, unknown> } | null {
+  // A decision drawn with branches, when the kind is on: settled before the
+  // ordinary derivation, which has no case for it.
+  const decision = decisionNodeFor(proposal, stepsByLabel, branches, decisionKind);
+  if (decision) return decision;
   // The authored step first, and only then whatever the proposer invented.
   //
   // This order is the point of the comment above, and it used to read the other
@@ -827,6 +892,9 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       .filter((step: any) => step && typeof step.label === "string")
       .map((step: any) => [String(step.label).trim().toLowerCase(), step]),
   );
+  // Whether a make_decision step with labelled branches becomes a decision node
+  // (server/decision-settings.ts); a step's own config.decisionKind overrides it.
+  const decisionKind = (await getDecisionSettings().catch(() => null))?.stepKind ?? false;
 
   const createdWorkers: any[] = [];
   const workerLinkResults: Array<{ linked: string[]; unresolved: string[]; unconnected: string[] }> = [];
@@ -1055,7 +1123,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         if (!worker) continue;
 
         const isGate = humanCheckpointWorkerIds.has(worker.id);
-        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline));
+        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline), branchesFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline), decisionKind);
         const correlation = correlationFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel);
         const node = await storage.createTeamBlueprintNode({
           blueprintId: blueprint.id,
@@ -1139,7 +1207,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
       const posY = isSequential ? 150 + i * 120 : 220;
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
-      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[i], pipeline));
+      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[i], pipeline), branchesFor(workers[i], pipeline), decisionKind);
       const correlation = correlationFor(workers[i], authoredStepsByLabel);
       const node = await storage.createTeamBlueprintNode({
         blueprintId: blueprint.id,
@@ -1278,13 +1346,20 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         } as any);
         continue;
       }
+      // A branch out of a decision node is chosen by that node's one call: the
+      // edge keeps the author's label (what the choice names) and condition (for
+      // the reader), and is evaluated by the choice rather than by a rule or a
+      // model.
+      const decisionEdge = source.nodeType === "decision";
       await storage.createTeamBlueprintEdge({
         blueprintId: blueprint.id,
         sourceNodeId: source.id,
         targetNodeId: target.id,
         label: edgeSpec.label || (edgeSpec.type === "conditional" ? "branch" : "handoff"),
         failureMode: pipeline?.errorHandling?.includes("retry") ? "retry" : "escalate",
-        ...resolveEdgeRuleFromSpec(edgeSpec),
+        ...(decisionEdge
+          ? { condition: (edgeSpec as any).branchCondition || edgeSpec.label || undefined, evaluationMode: "decision" }
+          : resolveEdgeRuleFromSpec(edgeSpec)),
       });
       created.push({ sourceNodeId: source.id, targetNodeId: target.id });
     }

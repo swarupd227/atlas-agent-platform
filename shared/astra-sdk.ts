@@ -57,7 +57,7 @@ export interface AgentNodeOpts {
 export interface GateNodeOpts { label: string; gateType: "approval" | "policy_check" | "manual_review"; policy?: string; }
 export interface EdgeOpts {
   label?: string;
-  evaluationMode?: "ai" | "deterministic" | "handoff";
+  evaluationMode?: "ai" | "deterministic" | "handoff" | "decision";
   condition?: string;
   rule?: unknown;
   failureMode?: "retry" | "skip" | "escalate";

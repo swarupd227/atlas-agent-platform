@@ -26,6 +26,7 @@ export interface StepKindInput {
 export function stepKindLabel(step: StepKindInput): string {
   if (step.kind === "gate") return "Approval step";
   switch (step.nodeType) {
+    case "decision": return "Decision";
     case "expression": return "Calculation";
     case "tool_call": return "System call";
     case "knowledge_base": return "Knowledge lookup";

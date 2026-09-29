@@ -416,3 +416,48 @@ describe("the process flow a team was drawn from", () => {
     expect(state.flows[0].teamAgentId).toBeNull();
   });
 });
+/**
+ * A decision drawn with labelled branches becomes ONE decision node whose
+ * branches are "decision" edges: one decision-model call chooses, exactly one
+ * branch is taken. Opt-in per step here (config.decisionKind); the platform
+ * flag DECISION_STEP_KIND does the same for every flow.
+ */
+describe("a decision drawn with labelled branches", () => {
+  const step = (config: Record<string, unknown> = {}) => ({
+    id: "d1", type: "make_decision", label: "Endorsement Accepted?", description: "Was the endorsement accepted by the carrier?", config,
+  });
+  const body = (config: Record<string, unknown> = {}) => teamBuildBodySchema.parse({
+    orchestrator: worker("E&S Team"),
+    workers: [worker("Endorsement Decision Router", { flowStepLabels: ["Endorsement Accepted?"] }), worker("Filing Lookup"), worker("Escalation")],
+    pipeline: {
+      pattern: "conditional",
+      edges: [
+        { from: "orchestrator", to: "Endorsement Decision Router" },
+        { from: "Endorsement Decision Router", to: "Filing Lookup", type: "conditional", label: "Approved", branchCondition: "Endorsement approved" },
+        { from: "Endorsement Decision Router", to: "Escalation", type: "conditional", label: "Rejected", branchCondition: "Endorsement rejected" },
+      ],
+    },
+    processFlowSteps: [step(config)],
+  });
+
+  it("becomes one decision node whose branches are decision edges", async () => {
+    await buildTeamFromProposal(body({ decisionKind: true }), { orgId: "org-a" });
+    const router = state.nodes.find((n) => n.label === "Endorsement Decision Router");
+    expect(router.nodeType).toBe("decision");
+    expect(router.refAgentId).toBeNull();
+    expect(router.stateKey).toBe("endorsement_accepted");
+    expect(router.config.decision).toEqual({
+      question: "Was the endorsement accepted by the carrier?",
+      options: [{ label: "Approved", description: "Endorsement approved" }, { label: "Rejected", description: "Endorsement rejected" }],
+    });
+    const out = state.edges.filter((e) => e.sourceNodeId === router.id).map((e) => [nodeLabel(e.targetNodeId), e.label, e.evaluationMode, e.condition]);
+    expect(out).toEqual([["Filing Lookup", "Approved", "decision", "Endorsement approved"], ["Escalation", "Rejected", "decision", "Endorsement rejected"]]);
+  });
+
+  it("stays an agent whose branches are judged, without the opt-in", async () => {
+    await buildTeamFromProposal(body(), { orgId: "org-a" });
+    const router = state.nodes.find((n) => n.label === "Endorsement Decision Router");
+    expect(router.nodeType).toBe("internal_agent");
+    expect(state.edges.filter((e) => e.sourceNodeId === router.id).map((e) => e.evaluationMode)).toEqual(["ai", "ai"]);
+  });
+});

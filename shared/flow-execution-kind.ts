@@ -27,6 +27,14 @@ import { parseConditionToRule } from "./condition-to-rule";
 export type ExecutionKind =
   /** A language model call. The only kind that costs tokens. */
   | "agent"
+  /**
+   * One decision-model call over the step's labelled branches; exactly one
+   * branch is taken. A make_decision step used to be an agent call PLUS one
+   * model call per branch, judged independently, so zero or two branches could
+   * fire. Opt-in: the platform flag DECISION_STEP_KIND or the step's own
+   * config.decisionKind, and only with two or more labelled branches.
+   */
+  | "decision"
   /** JSONata over shared state, evaluated in-process under a 5s ceiling. */
   | "expression"
   /** A real pgvector search whose chunks land in state. */
@@ -57,15 +65,62 @@ interface StepConfigShape {
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
+/** One branch out of a decision step: what the author labelled it, and the condition if any. */
+export interface DecisionBranch {
+  label: string;
+  condition?: string;
+  to?: string;
+}
+
+/**
+ * The branches a decision step can choose between: its outgoing edges that
+ * carry a label or a condition. The label is the option's name; a branch with
+ * only a condition is named by it.
+ */
+/** The shape of an edge the classifier reads: a flow's ProcessEdge, or a build's derived branch. */
+export type BranchLike = { to?: string; label?: string; condition?: string };
+
+export function decisionBranchesFor(edges: BranchLike[] | undefined): DecisionBranch[] {
+  const out: DecisionBranch[] = [];
+  const seen = new Set<string>();
+  for (const e of edges ?? []) {
+    const label = str(e.label) || str(e.condition);
+    if (!label || seen.has(label.toLowerCase())) continue;
+    seen.add(label.toLowerCase());
+    out.push({ label, ...(str(e.condition) ? { condition: str(e.condition) } : {}), ...(e.to ? { to: e.to } : {}) });
+  }
+  return out;
+}
+
+/**
+ * What a classifier needs beyond the step itself. A single step cannot say
+ * whether it is a decision: that is a property of its branches and of the
+ * platform flag, so callers that have the graph pass them, and callers that
+ * do not get the answer they always got.
+ */
+export interface ClassifyContext {
+  outgoingEdges?: BranchLike[];
+  /** The platform flag DECISION_STEP_KIND. A step's config.decisionKind (true/false) overrides it either way. */
+  decisionKind?: boolean;
+}
+
 /**
  * How this step will execute. Pure: same step in, same kind out, no lookups.
  */
-export function classifyStep(node: Pick<ProcessNode, "type" | "config">): ExecutionKind {
-  const config = (node.config ?? {}) as StepConfigShape;
+export function classifyStep(node: Pick<ProcessNode, "type" | "config">, ctx?: ClassifyContext): ExecutionKind {
+  const config = (node.config ?? {}) as StepConfigShape & { decisionKind?: unknown };
   const wantsDeterministic = config.deterministic === true;
 
   if (node.type === "trigger" || node.type === "end") return "structural";
   if (node.type === "expert_approval") return "gate";
+
+  // A decision drawn with branches is one choice, not an agent plus a model
+  // call per branch -- when the flag or the step says so, and only with two
+  // or more branches to choose between.
+  if (node.type === "make_decision") {
+    const optIn = config.decisionKind === true || (config.decisionKind !== false && ctx?.decisionKind === true);
+    if (optIn && decisionBranchesFor(ctx?.outgoingEdges).length >= 2) return "decision";
+  }
 
   // An expression step with an expression IS the computation -- there is nothing
   // for a model to add. Without one it is an unconfigured step, and the engine
@@ -92,9 +147,10 @@ export function classifyStep(node: Pick<ProcessNode, "type" | "config">): Execut
 }
 
 /** Why a step is classified the way it is, for the compiler's report and the inspector. */
-export function explainKind(node: Pick<ProcessNode, "type" | "config">): string {
-  const kind = classifyStep(node);
+export function explainKind(node: Pick<ProcessNode, "type" | "config">, ctx?: ClassifyContext): string {
+  const kind = classifyStep(node, ctx);
   switch (kind) {
+    case "decision": return "Decided by one decision-model call over its branches; exactly one branch is taken. No agent call.";
     case "structural": return "A marker, not a step that runs.";
     case "gate": return "Waits for a person to decide.";
     case "expression": return "Evaluated in-process as an expression over the run's state. No model call.";
@@ -114,6 +170,8 @@ export interface FlowCostEstimate {
   aiRoutedEdges: number;
   /** Total model calls per run, at minimum -- a step that uses tools costs more turns. */
   minModelCalls: number;
+  /** Decision steps: one decision-model call each, priced separately and far below a model step. */
+  decisionSteps: number;
   /** Rough dollars per run. Deliberately coarse: it is there to show the shape, not to bill. */
   approxUsdPerRun: number;
   byKind: Record<ExecutionKind, number>;
@@ -128,6 +186,8 @@ export interface FlowCostEstimate {
 const USD_PER_MODEL_STEP = 0.16;
 /** A routing decision is one short call against one step's output, not a whole step's context. */
 const USD_PER_AI_EDGE = 0.01;
+/** A decision step is one decision-model call: ~2k tokens at $0.042 per million (Phase 0 measured $0.02 for 210 such calls). */
+const USD_PER_DECISION_STEP = 0.0001;
 
 /**
  * What this flow will cost every time it runs, from the steps as authored.
@@ -135,19 +195,26 @@ const USD_PER_AI_EDGE = 0.01;
  * An author currently gets no signal at all that a twenty-step flow is twenty
  * model calls; this is the number the compiler puts in front of them.
  */
-export function estimateFlowCost(graph: Pick<ProcessFlowGraph, "nodes" | "edges">): FlowCostEstimate {
+export function estimateFlowCost(graph: Pick<ProcessFlowGraph, "nodes" | "edges">, ctx?: Pick<ClassifyContext, "decisionKind">): FlowCostEstimate {
   const byKind: Record<ExecutionKind, number> = {
-    agent: 0, expression: 0, knowledge_base: 0, skill: 0, tool_call: 0, gate: 0, structural: 0,
+    agent: 0, decision: 0, expression: 0, knowledge_base: 0, skill: 0, tool_call: 0, gate: 0, structural: 0,
   };
-  for (const node of graph.nodes) byKind[classifyStep(node)]++;
+  const decisionNodeIds = new Set<string>();
+  for (const node of graph.nodes) {
+    const kind = classifyStep(node, { outgoingEdges: graph.edges.filter((e) => e.from === node.id), decisionKind: ctx?.decisionKind });
+    byKind[kind]++;
+    if (kind === "decision") decisionNodeIds.add(node.id);
+  }
 
   // An edge that guards a branch needs its condition evaluated. With a rule that
   // happens in-process; without one the engine falls back to asking a model --
   // unless the condition is plainly a comparison, which team-build parses into a
   // rule at build time. Counting those as model calls overstated the cost of
   // exactly the flows an author had got right: "score > 5" was reported as a
-  // model call it will never make.
+  // model call it will never make. A branch out of a decision step is decided by
+  // that step's one call, so it is not an edge call either.
   const aiRoutedEdges = graph.edges.filter((e) => {
+    if (decisionNodeIds.has(e.from)) return false;
     const condition = str(e.condition);
     const hasCondition = !!condition || !!str(e.label);
     if (!hasCondition) return false;
@@ -156,13 +223,15 @@ export function estimateFlowCost(graph: Pick<ProcessFlowGraph, "nodes" | "edges"
   }).length;
 
   const modelSteps = byKind.agent;
+  const decisionSteps = byKind.decision;
   const freeSteps = byKind.expression + byKind.knowledge_base + byKind.skill + byKind.tool_call;
   return {
     modelSteps,
     freeSteps,
     aiRoutedEdges,
     minModelCalls: modelSteps + aiRoutedEdges,
-    approxUsdPerRun: Math.round((modelSteps * USD_PER_MODEL_STEP + aiRoutedEdges * USD_PER_AI_EDGE) * 100) / 100,
+    decisionSteps,
+    approxUsdPerRun: Math.round((modelSteps * USD_PER_MODEL_STEP + aiRoutedEdges * USD_PER_AI_EDGE + decisionSteps * USD_PER_DECISION_STEP) * 100) / 100,
     byKind,
   };
 }

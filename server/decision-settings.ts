@@ -84,8 +84,14 @@ function parseJson(value: string | undefined | null): unknown {
 }
 
 async function readSetting(key: string): Promise<string | undefined> {
-  const row = await storage.getPlatformSetting(key).catch(() => undefined);
-  return row?.value ?? undefined;
+  // Tolerates a storage without platform settings (a test's in-memory mock, or
+  // a boot before the table exists): absence is the default, never an error.
+  try {
+    const row = await storage.getPlatformSetting?.(key);
+    return row?.value ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function getDecisionSettings(): Promise<DecisionSettings> {

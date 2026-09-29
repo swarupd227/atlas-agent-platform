@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { getDecisionSettings } from "../decision-settings";
 import { db } from "../db";
 import { desc, eq, and } from "drizzle-orm";
 import { outcomeContracts, kpiDefinitions, approvals, agents, type OutcomeContract } from "@shared/schema";
@@ -1608,7 +1609,7 @@ async function createOutcomeVersion(
       const parsed = bodySchema.parse(req.body);
       const graph = normalizeToGraph(parsed, parsed.name || "Process Flow");
       if (!graph) return res.status(400).json({ message: "Invalid process flow payload" });
-      res.json(compileProcessFlow(graph));
+      res.json(compileProcessFlow(graph, { decisionKind: (await getDecisionSettings()).stepKind }));
     } catch (e) {
       handleZodError(res, e);
     }

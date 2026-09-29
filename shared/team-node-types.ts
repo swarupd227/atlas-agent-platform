@@ -36,6 +36,8 @@ export const TEAM_NODE_TYPES = [
   "skill",
   /** A pgvector search whose chunks land in state. */
   "knowledge_base",
+  /** One decision-model call over the node's labelled branches; exactly one branch is taken. */
+  "decision",
   /** Another team, run as one step. */
   "sub_flow",
   /** An agent running somewhere else. */
@@ -60,6 +62,7 @@ export function nodeTypeLabel(nodeType: string): string {
     case "sub_flow": return "Sub-Flow";
     case "expression": return "Expression";
     case "skill": return "Skill";
+    case "decision": return "Decision";
     default: return nodeType;
   }
 }
@@ -100,6 +103,10 @@ export function missingRequirement(node: {
       return typeof cfg.toolName === "string" && cfg.toolName.trim() && typeof cfg.toolServerId === "string" && cfg.toolServerId.trim()
         ? null
         : "has no tool bound";
+    case "decision": {
+      const options = Array.isArray(cfg.decision?.options) ? cfg.decision.options : [];
+      return options.length >= 2 ? null : "has fewer than two branches to decide between";
+    }
     default:
       return null;
   }

@@ -58,7 +58,7 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
   const findings: BlueprintFinding[] = [];
   const outgoing = new Map<string, any[]>();
   for (const e of edges) outgoing.set(e.sourceNodeId, [...(outgoing.get(e.sourceNodeId) ?? []), e]);
-  const guarded = (e: any) => !!(String(e.condition ?? "").trim() || (e.evaluationMode === "deterministic" && e.rule));
+  const guarded = (e: any) => !!(String(e.condition ?? "").trim() || (e.evaluationMode === "deterministic" && e.rule) || e.evaluationMode === "decision");
 
   const loops = backEdgeKeys(
     nodes.map((n) => n.id),
@@ -116,6 +116,9 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
     const outs = outgoing.get(node.id) ?? [];
     if (outs.length === 0) continue;
     if (node.nodeType === "edge_gate" || node.gateType) continue;
+    // A decision step always takes exactly one of its branches: that is what the
+    // node is. There is no "none matched" to warn about.
+    if (node.nodeType === "decision") continue;
     // An expression step gets the more specific finding below instead, so a node
     // is never described twice.
     if (node.nodeType === "expression") continue;

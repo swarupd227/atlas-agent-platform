@@ -59,11 +59,20 @@ export interface CompiledFlow {
   issues: CompiledIssue[];
 }
 
-export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
+export interface CompileOptions {
+  /** The platform flag DECISION_STEP_KIND: a make_decision step with labelled branches compiles to the decision kind. */
+  decisionKind?: boolean;
+}
+
+export function compileProcessFlow(graph: ProcessFlowGraph, opts: CompileOptions = {}): CompiledFlow {
   const issues: CompiledIssue[] = [];
   const warn = (code: string, message: string, extra?: { nodeId?: string; edgeId?: string }) =>
     issues.push({ severity: "warning", code, message, ...extra });
   const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
+  // The same classifier the build and the sync use, with the same context: a
+  // step's branches and the platform flag decide whether it is a decision.
+  const kindOf = (n: ProcessFlowGraph["nodes"][number]) =>
+    classifyStep(n, { outgoingEdges: graph.edges.filter(e => e.from === n.id), decisionKind: opts.decisionKind });
 
   // `warnings` (the flat string list some consumers still read) is derived
   // from the structured `issues` at return time via finalize().
@@ -71,8 +80,8 @@ export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
     ...flow,
     issues,
     warnings: issues.map(i => i.message),
-    cost: estimateFlowCost(graph),
-    stepKinds: graph.nodes.map(n => ({ nodeId: n.id, label: n.label, kind: classifyStep(n) })),
+    cost: estimateFlowCost(graph, { decisionKind: opts.decisionKind }),
+    stepKinds: graph.nodes.map(n => ({ nodeId: n.id, label: n.label, kind: kindOf(n) })),
   });
 
   const base = {
@@ -116,7 +125,11 @@ export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
     if (!condition) continue;
     if ((e as { rule?: unknown }).rule) continue;
     if (parseConditionToRule(condition)) continue;
-    const from = nodeById.get(e.from)?.label || e.from;
+    // A branch out of a decision step is chosen by that step's one call, not
+    // judged per edge.
+    const source = nodeById.get(e.from);
+    if (source && kindOf(source) === "decision") continue;
+    const from = source?.label || e.from;
     warn(
       "ai_routed_decision",
       `The branch from "${from}" ("${condition}") has to be judged by a model on every run. If it is really a comparison, write it as one — "amount > 50000", "status is Retired" — and the engine will decide it itself, for nothing and with an audit trail.`,
@@ -124,7 +137,7 @@ export function compileProcessFlow(graph: ProcessFlowGraph): CompiledFlow {
     );
   }
   for (const n of graph.nodes) {
-    if (classifyStep(n) !== "agent") continue;
+    if (kindOf(n) !== "agent") continue;
     const config = (n.config ?? {}) as { expression?: unknown; kbId?: unknown; skillId?: unknown; toolName?: unknown };
     if (n.type === "expression" && !String(config.expression ?? "").trim()) {
       warn("expression_not_configured", `"${n.label}" is an Expression step with no expression, so it will run as an agent. Give it an expression and it runs in-process instead.`, { nodeId: n.id });
