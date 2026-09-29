@@ -36,7 +36,7 @@ function invokeAgentWithTimeoutSource(): string {
 }
 
 describe("the fields a worker returns reach the engine", () => {
-  const CARRIED = ["verifiedFacts", "verifiedFactsNote", "writtenFields"];
+  const CARRIED = ["verifiedFacts", "verifiedFactsNote", "writtenFields", "softPolicyViolations"];
 
   it("returns each one from executeWorkerAgent in the first place", () => {
     // If this fails the feature is broken at the source, not in transit.

@@ -27,6 +27,8 @@ export interface DagRunEvent {
   error?: string;
   approvalId?: string;
   runStatus?: string;
+  /** Policies the step's output broke, when the platform's check flagged any. */
+  flags?: number;
 }
 
 const BUFFER_CAP = 500;

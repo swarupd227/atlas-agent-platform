@@ -330,6 +330,56 @@ export interface NodeExecutionResult {
   truncated?: boolean;
   /** Calls this step made to a file-producing tool that ended without a file, with the reason each gave. */
   failedFileAttempts?: string[];
+  /**
+   * What the platform's own checks said about this step's output: a verdict
+   * per bound soft policy, and a fact check where one applied. Persisted with
+   * the wave result and shown on the step, so a breach is visible where it
+   * happened rather than only in an audit event at the end of the run.
+   */
+  judgments?: NodeJudgment[];
+}
+
+/** One check the platform made on a step's output. */
+export interface NodeJudgment {
+  kind: "policy" | "facts";
+  /** The policy's name, or what was checked. */
+  subject: string;
+  ok: boolean;
+  severity?: string;
+  evidence?: string;
+  /** For a policy: the requirements the step broke. */
+  detail?: string[];
+}
+
+/**
+ * Tells a step which policies the steps directly before it broke, so it does
+ * not build on the breach or repeat it. Only direct predecessors: a breach two
+ * steps back was already answered by the step between. Never the compliant
+ * verdicts -- a list of what went right is noise in a prompt.
+ */
+export function upstreamGuardrailNotice(
+  nodeId: string,
+  plan: Pick<ComputedWavePlan, "edgeMap" | "nodeConfig">,
+  judgments: ReadonlyMap<string, NodeJudgment[]>,
+): string | undefined {
+  if (judgments.size === 0) return undefined;
+  const lines: string[] = [];
+  for (const [source, targets] of Object.entries(plan.edgeMap)) {
+    if (!targets.includes(nodeId)) continue;
+    const flagged = (judgments.get(source) ?? []).filter((j) => !j.ok);
+    if (flagged.length === 0) continue;
+    const name = plan.nodeConfig[source]?.label || source;
+    for (const j of flagged) {
+      const detail = j.detail?.length ? ` It did not: ${j.detail.join("; ")}.` : "";
+      const evidence = (j.evidence || "no evidence recorded").replace(/\.$/, "");
+      lines.push(`- "${name}" broke the policy "${j.subject}"${j.severity ? ` (${j.severity})` : ""}: ${evidence}.${detail}`);
+    }
+  }
+  if (lines.length === 0) return undefined;
+  return [
+    ...lines,
+    "These are the platform's policy checks on those steps' output, not the model's narrative. Do not build on the breach or repeat it. Where your own work depends on that step's output, say what you corrected.",
+  ].join("\n");
 }
 
 export interface WaveExecutionResult {
@@ -1047,6 +1097,7 @@ function buildAgentInput(
   routingFields?: RoutingFieldSpec[],
   laterSteps?: string[],
   stateScope?: { visible: Set<string>; owned: Set<string> },
+  upstreamGuardrails?: string,
 ): string {
   const sections: string[] = [];
   sections.push(`## DAG EXECUTION CONTEXT`);
@@ -1077,6 +1128,10 @@ function buildAgentInput(
     sections.push(``);
   }
 
+  if (upstreamGuardrails) {
+    sections.push(`## GUARDRAIL FLAGS ON THE STEPS BEFORE YOU`);
+    sections.push(upstreamGuardrails);
+  }
   if (upstreamTruncations) {
     sections.push(`## UPSTREAM STEPS WHOSE OUTPUT WAS CUT OFF`);
     sections.push(upstreamTruncations);
@@ -1122,6 +1177,13 @@ export const GENERATED_FILES_STATE_SUFFIX = "_files";
  * earlier step's retyping of it.
  */
 export const VERIFIED_FACTS_STATE_SUFFIX = "_verified";
+
+/**
+ * A review step's verdict, as it writes it: a heading such as "## QA: PASS".
+ * Read by the approval gate for its evidence and by the claim-versus-facts
+ * check below; one pattern, so the two cannot disagree about what a verdict is.
+ */
+export const VERDICT_RE = /^##?\s*[\w :\/&-]{0,40}?(PASS|FAIL|BLOCKED|APPROVED|REJECTED)\b.*$/im;
 
 export function collectUpstreamGeneratedFileIds(state: Record<string, any>): string[] {
   const ids: string[] = [];
@@ -1353,6 +1415,8 @@ export class DAGExecutionEngine {
     // succeeds on a revision re-run clears its earlier failure -- otherwise the
     // run would keep reporting a hole that has since been filled.
     const nodeOutcomes = new Map<string, { status: string; error?: string }>();
+    // Steps whose output broke a policy, for the notice the next step gets.
+    const nodeJudgments = new Map<string, NodeJudgment[]>();
     // What each node has done about producing a file, across all of its passes
     // in this run (see recordNodeFilePass and missingDeliverableError).
     const fileHistory = new Map<string, NodeFileHistory>();
@@ -1463,6 +1527,8 @@ export class DAGExecutionEngine {
       // A completed step that was cut off is recorded too: its output exists but is partial.
       if (nr.status === "completed" && !nr.truncated) nodeOutcomes.delete(nr.nodeId);
       else nodeOutcomes.set(nr.nodeId, { status: nr.status === "completed" ? "truncated" : nr.status, error: nr.error });
+      if (nr.judgments?.some((j) => !j.ok)) nodeJudgments.set(nr.nodeId, nr.judgments.filter((j) => !j.ok));
+      else nodeJudgments.delete(nr.nodeId);
       if (nr.childSkippedCount && nr.childSkippedCount > 0) skippedNodeIds.add(nr.nodeId);
       const nc = config.executionPlan.nodeConfig[nr.nodeId];
       if (nc && nr.status === "completed") {
@@ -1486,7 +1552,7 @@ export class DAGExecutionEngine {
         promise = Promise.resolve(skipped);
       } else {
         config.onNodeStart?.(nodeId, waveNumber);
-        promise = this.executeNode(nodeId, liveState, execConfig, nodeOutcomes).catch((err) => {
+        promise = this.executeNode(nodeId, liveState, execConfig, nodeOutcomes, nodeJudgments).catch((err) => {
           if (err instanceof DagRunSupersededError) throw err;
           return failedResult(nodeId, err);
         });
@@ -2046,6 +2112,7 @@ export class DAGExecutionEngine {
     currentState: Record<string, any>,
     config: DAGExecutionConfig,
     nodeOutcomes: ReadonlyMap<string, { status: string; error?: string }> = new Map(),
+    nodeJudgments: ReadonlyMap<string, NodeJudgment[]> = new Map(),
   ): Promise<NodeExecutionResult> {
     const nc = config.executionPlan.nodeConfig[nodeId];
     if (!nc) {
@@ -2127,6 +2194,7 @@ export class DAGExecutionEngine {
       getRoutingFieldSpecs(nodeId, config.executionPlan),
       getLaterStepLabels(nodeId, config.executionPlan),
       visibleStateKeys(nodeId, config.executionPlan, currentState),
+      upstreamGuardrailNotice(nodeId, config.executionPlan, nodeJudgments),
     );
 
     // A Tool Set node directly upstream of this agent node scopes which MCP
@@ -2192,6 +2260,35 @@ export class DAGExecutionEngine {
     if (workerResult.verifiedFacts) Object.assign(runFacts, workerResult.verifiedFacts);
     const drift = detectTranscriptionDrift(workerResult.writtenFields, runFacts);
     let outputText = workerResult.output;
+    // The judge's verdicts on this step, one per bound policy, as the step's
+    // own judgments; the compliant ones are kept so the monitor can say "3 of
+    // 3 honoured" rather than nothing.
+    const judgments: NodeJudgment[] = (workerResult.softPolicyViolations ?? []).map((v) => ({
+      kind: "policy" as const,
+      subject: v.policyName,
+      ok: v.compliant,
+      severity: v.severity,
+      evidence: v.evidence,
+      ...(v.violatedRequirements?.length ? { detail: v.violatedRequirements } : {}),
+    }));
+
+    // Claim versus facts. A review step that pronounces a verdict, in a run that
+    // holds verified facts or a failed file attempt, is asked one question:
+    // does the verdict agree with them? "QA passed with ten overflows still
+    // present" and "approved, file attached" with no file are the recurring
+    // shapes. A confident "no" is appended to the output the way a drift is,
+    // and recorded as a judgment; it never blocks the step.
+    const verdictLine = outputText.match(VERDICT_RE)?.[0]?.trim();
+    const factCheck = verdictLine && (Object.keys(runFacts).length > 0 || (workerResult.failedFileAttempts?.length ?? 0) > 0)
+      ? await this.checkVerdictAgainstFacts(nc, verdictLine, outputText, runFacts, workerResult.failedFileAttempts ?? [], config.organizationId)
+      : null;
+    if (factCheck) {
+      judgments.push({ kind: "facts", subject: "Verdict against the verified facts", ok: factCheck.ok, evidence: factCheck.evidence });
+      if (!factCheck.ok) {
+        outputText = `${outputText}\n\nVERDICT DISAGREES WITH THE FACTS (platform check against the connectors' own answers and this run's file outcomes, not the model's narrative):\n- ${factCheck.evidence}`;
+        console.warn(`[dag] "${nc.label}" gave the verdict "${verdictLine}" but the run's facts contradict it`);
+      }
+    }
     if (drift.length > 0) {
       const lines = drift.map((d) => `- ${d.field}: this step reported ${d.wrote}, but ${d.sourcePath} returned ${d.source}`);
       outputText = `${outputText}\n\nFIGURES THAT DISAGREE WITH THE SOURCE (platform check against the connectors' own answers, not the model's narrative):\n${lines.join("\n")}`;
@@ -2225,7 +2322,55 @@ export class DAGExecutionEngine {
       traceId: workerResult.traceId || "",
       ...(workerResult.truncated ? { truncated: true } : {}),
       ...(workerResult.failedFileAttempts?.length ? { failedFileAttempts: workerResult.failedFileAttempts } : {}),
+      ...(judgments.length ? { judgments } : {}),
     };
+  }
+
+  /**
+   * One noul on the site "claim_vs_facts": does a review step's verdict agree
+   * with the verified facts and file outcomes of the run? Through the seam, so
+   * the platform's routing and audit apply. Null when the question could not be
+   * asked; the step is never failed for it.
+   */
+  private async checkVerdictAgainstFacts(
+    nc: NodePlanConfig,
+    verdictLine: string,
+    outputText: string,
+    runFacts: Record<string, unknown>,
+    failedFileAttempts: string[],
+    orgId: string | null | undefined,
+  ): Promise<{ ok: boolean; evidence: string } | null> {
+    try {
+      const r = await decide({
+        kind: "noul",
+        site: "claim_vs_facts",
+        orgId,
+        state: boundedState({
+          verdict: verdictLine,
+          review_output: outputText.slice(0, 3000),
+          verified_facts: runFacts,
+          failed_file_attempts: failedFileAttempts,
+        }),
+        instructions: `A review step gave the verdict "${verdictLine}". Does that verdict agree with the verified facts and the file outcomes recorded for this run? Answer true when nothing in the facts contradicts it. Answer false when a fact or a failed file attempt contradicts it: a PASS or APPROVED while a required file was never produced, a figure the verdict rests on that differs from what the source system returned, or a check the facts show was not done.`,
+        criteria: {
+          true: "The verdict is consistent with the verified facts and file outcomes",
+          false: "A verified fact or a file outcome contradicts the verdict",
+        },
+        subject: nc.label,
+      });
+      const ok = r.answer !== false;
+      const pFalse = r.probabilities?.false;
+      const by = `${r.engine === "jev" ? "the decision model" : "the language model"}${pFalse !== undefined ? `, ${Math.round(pFalse * 100)}% that it does not` : ""}`;
+      return {
+        ok,
+        evidence: ok
+          ? `The verdict "${verdictLine}" is consistent with the run's verified facts (${by}).`
+          : `The verdict "${verdictLine}" is contradicted by the run's verified facts or file outcomes (${by}).`,
+      };
+    } catch (err: unknown) {
+      console.warn(`[dag] claim-versus-facts check skipped for "${nc.label}": ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
   }
 
   /** Resolves team_blueprint_nodes.refToolIds (mcp_server_tools.id values) to tool NAME strings, the same key the whole-agent skill gate in agent-runtime.ts filters availableTools by. */
@@ -2791,7 +2936,6 @@ export class DAGExecutionEngine {
     // Structured version of the same "what's up for decision" material, for the Approvals UI to render as a real
     // run summary (steps, verdicts, files) instead of only the flattened text blob above. Best-effort: a step
     // whose output doesn't look like a verdict or doesn't carry files just omits those fields.
-    const VERDICT_RE = /^##?\s*[\w :\/&-]{0,40}?(PASS|FAIL|BLOCKED|APPROVED|REJECTED)\b.*$/im;
     const upstreamSteps = (config.executionPlan.incomingEdges[nodeId] || [])
       .map((e) => config.executionPlan.nodeConfig[e.sourceNodeId])
       .filter((nc): nc is NodePlanConfig => !!nc?.stateKey && currentState[nc.stateKey] !== undefined)
@@ -3089,7 +3233,7 @@ export class DAGExecutionEngine {
   // and it read as a missing declaration rather than a missing value.
   //
   // Adding a field to the worker result means adding it in BOTH places.
-  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; providerFallbacks?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean; failedFileAttempts?: string[]; verifiedFacts?: Record<string, unknown> | null; verifiedFactsNote?: string; writtenFields?: Record<string, unknown> | null }> {
+  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; providerFallbacks?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean; failedFileAttempts?: string[]; verifiedFacts?: Record<string, unknown> | null; verifiedFactsNote?: string; writtenFields?: Record<string, unknown> | null; softPolicyViolations?: Array<{ policyId: string; policyName: string; compliant: boolean; violatedRequirements: string[]; evidence: string; severity: string }> | null }> {
     const mockTeamAgent = {
       deploymentId: undefined,
       agentId: "__dag_orchestrator__",
@@ -3156,6 +3300,7 @@ export class DAGExecutionEngine {
         verifiedFacts: (result as any).verifiedFacts ?? null,
         verifiedFactsNote: (result as any).verifiedFactsNote,
         writtenFields: (result as any).writtenFields ?? null,
+        softPolicyViolations: (result as any).softPolicyViolations ?? null,
       };
     } catch (err: any) {
       return { success: false, output: "", error: err.message };
@@ -3379,6 +3524,7 @@ async function executeTeamAgentDagRun(
           type: "node_complete", nodeId, label, wave, totalWaves: wavePlan.totalWaves,
           status: r.status, durationMs: r.durationMs,
           outputPreview: previewOutput(r.output), error: r.error,
+          ...(r.judgments?.some((j) => !j.ok) ? { flags: r.judgments.filter((j) => !j.ok).length } : {}),
         });
         opts?.onNodeComplete?.(nodeId, wave, label, r, wavePlan.totalWaves);
       },

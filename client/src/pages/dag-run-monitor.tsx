@@ -49,6 +49,8 @@ interface DagWaveNodeResult {
   error?: string;
   durationMs: number;
   output: Record<string, any>;
+  /** The platform's own checks on this step's output: one per bound policy, plus a fact check where one applied. */
+  judgments?: Array<{ kind: "policy" | "facts"; subject: string; ok: boolean; severity?: string; evidence?: string; detail?: string[] }>;
 }
 interface DagWaveResult {
   waveNumber: number;
@@ -1057,6 +1059,30 @@ function StepDetail({
             <p className="mt-1 text-muted-foreground">{step.result.output.managerReasoning}</p>
           </div>
         )}
+        {(step.result?.judgments?.length ?? 0) > 0 && (() => {
+          const all = step.result!.judgments!;
+          const flagged = all.filter((j) => !j.ok);
+          return (
+            <div className={`flex flex-col gap-2 rounded-lg border bg-background p-3.5 text-sm ${flagged.length ? "border-[hsl(var(--astra-warn)/0.5)]" : ""}`} data-testid={`panel-guardrails-${step.id}`}>
+              <div className="flex items-baseline justify-between gap-3">
+                <Eyebrow>Guardrails</Eyebrow>
+                <span className="font-mono text-[11px] text-muted-foreground">{all.length - flagged.length} of {all.length} honoured</span>
+              </div>
+              {flagged.length === 0 ? (
+                <p className="text-muted-foreground">Every policy bound to this step was honoured, as judged on its output.</p>
+              ) : flagged.map((j, i) => (
+                <div key={i} className="flex gap-2.5" data-testid={`text-guardrail-flag-${step.id}-${i}`}>
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[hsl(var(--astra-warn))]" />
+                  <div>
+                    <div className="font-medium">{j.subject}{j.severity ? <span className="ml-2 font-mono text-[11px] font-normal text-muted-foreground">{j.severity}</span> : null}</div>
+                    {j.evidence && <div className="text-muted-foreground">{j.evidence}</div>}
+                    {j.detail?.length ? <ul className="mt-1 list-disc pl-4 text-muted-foreground">{j.detail.map((d, k) => <li key={k}>{d}</li>)}</ul> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {chosen && (
           <div className="flex flex-col gap-3 rounded-lg border bg-background p-3.5 text-sm" data-testid={`panel-decision-${step.id}`}>
             <div>

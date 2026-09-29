@@ -3811,6 +3811,13 @@ export async function executeWorkerAgent(
   truncated?: boolean;
   /** Calls to a file-producing tool that ended without a file, with the reason each gave. */
   failedFileAttempts?: string[];
+  /**
+   * The soft-policy judge's verdict on this step's output, one per bound
+   * policy, compliant ones included. It has always run here (executePromptWithMcp
+   * checks every run); returning it is what lets a team run carry its
+   * guardrails per step instead of losing them at this boundary.
+   */
+  softPolicyViolations?: SoftPolicyComplianceResult[];
 }> {
   const startTime = Date.now();
   const workerAgent = await storage.getAgent(workerId);
@@ -4019,6 +4026,7 @@ export async function executeWorkerAgent(
       // The figures this step asserted, for the engine to check against every
       // connector answer in the run.
       writtenFields,
+      softPolicyViolations: result.softPolicyViolations,
       success: nodeSucceeded,
       startTime,
       endTime,
