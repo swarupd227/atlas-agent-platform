@@ -1,4 +1,4 @@
-import { Brain, Wrench, ShieldCheck, Globe, Sparkles, Database, Network, SquareFunction } from "lucide-react";
+import { Brain, Wrench, ShieldCheck, Globe, Sparkles, Database, Network, SquareFunction, GitBranch } from "lucide-react";
 
 // Shared between team-graph-editor.tsx (palette + config panels) and
 // team-graph-canvas.tsx (node card rendering) -- lives here instead of being
@@ -19,6 +19,10 @@ export const NODE_COLOR_MAP: Record<string, string> = {
   // A JSONata transform, not an agent call -- kept visually distinct (slate,
   // not one of the "does work" colors) since it's deterministic and free.
   expression: "bg-slate-500",
+  // One decision-model call over the step's branches; exactly one is taken.
+  // Sky, like the studio's Decision kind, and unlike amber, which the
+  // studio's make_decision step and the tool set already use.
+  decision: "bg-sky-500",
 };
 
 // Outline of a node card on the team canvas, in the same hue as its color bar (literal classes for Tailwind).
@@ -31,6 +35,7 @@ export const NODE_BORDER_MAP: Record<string, string> = {
   knowledge_base: "border-emerald-500",
   sub_flow: "border-indigo-500",
   expression: "border-slate-500",
+  decision: "border-sky-500",
 };
 
 export const NODE_ICON_MAP: Record<string, typeof Brain> = {
@@ -42,6 +47,7 @@ export const NODE_ICON_MAP: Record<string, typeof Brain> = {
   knowledge_base: Database,
   sub_flow: Network,
   expression: SquareFunction,
+  decision: GitBranch,
 };
 
 export const TRUST_TIER_COLORS: Record<string, string> = {

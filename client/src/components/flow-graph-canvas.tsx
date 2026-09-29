@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { layoutGraph, type ProcessNode, type ProcessEdge, type ProcessNodeType } from "@shared/process-flow";
+import { classifyStep, explainKind, decisionBranchesFor } from "@shared/flow-execution-kind";
 import type { Skill, KnowledgeBase, Agent } from "@shared/schema";
 
 type NodeMeta = { label: string; icon: any; color: string; bg: string; border: string; chip: string };
@@ -118,6 +119,11 @@ function ProcessFlowNode({ data, selected }: NodeProps) {
       {d.ntype === "expression" && (
         <p className="text-[10px] text-muted-foreground mt-0.5 truncate font-mono flex items-center gap-1">
           <SquareFunction className="w-2.5 h-2.5 shrink-0" /> {d.config?.expression ? String(d.config.expression) : "Not configured"}
+        </p>
+      )}
+      {d.ntype === "make_decision" && !!d.config?.question && (
+        <p className="text-[10px] text-muted-foreground mt-0.5 truncate flex items-center gap-1" title={String(d.config.question)}>
+          <GitBranch className="w-2.5 h-2.5 shrink-0" /> {String(d.config.question)}
         </p>
       )}
       <Handle type="source" position={Position.Right} className="!w-2.5 !h-2.5 !bg-foreground !border-background" />
@@ -471,9 +477,11 @@ interface Props {
   issues?: FlowIssue[];
   /** Controls the host page floats over the canvas area (between the step rail and the inspector). */
   overlay?: React.ReactNode;
+  /** The platform flag DECISION_STEP_KIND: whether a decision step with branches runs as one decision call by default. */
+  decisionKind?: boolean;
 }
 
-function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<Props, "flowKey">) {
+function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisionKind }: Omit<Props, "flowKey">) {
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode>(toRFNodes(initialNodes));
   const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdge>(toRFEdges(initialEdges));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -920,6 +928,106 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
                     <span className="text-[10px] text-muted-foreground">Runs the selected flow end to end and waits for it before continuing (Sync to Automation compiles this to a real Sub-Flow step).</span>
                   </div>
                 )}
+                {d.ntype === "make_decision" && (() => {
+                  // The branches are the step's labelled connections out; the
+                  // classifier reads them the same way the server does at build.
+                  const outgoing = edges
+                    .filter(e => e.source === selNode.id)
+                    .map(e => ({ to: e.target, label: (e.label as string) || undefined, condition: ((e.data as any)?.condition as string) || undefined }));
+                  const branches = decisionBranchesFor(outgoing);
+                  const labelFor = (id?: string) => (nodes.find(n => n.id === id)?.data as RFData | undefined)?.label || "?";
+                  const kind = classifyStep({ type: d.ntype, config: d.config }, { outgoingEdges: outgoing, decisionKind });
+                  const mode = d.config?.decisionKind === true ? "on" : d.config?.decisionKind === false ? "off" : "default";
+                  return (
+                    <div className="flex flex-col gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-2" data-testid="decision-settings">
+                      <label className="text-[10px] text-sky-700 dark:text-sky-400 uppercase tracking-wide font-medium">Decision</label>
+                      <div className="flex flex-col gap-1">
+                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Question</label>
+                        <Textarea
+                          value={String((d.config?.question as string) || "")}
+                          onChange={e => patchNode(selNode.id, { config: { ...(d.config || {}), question: e.target.value } }, `node:${selNode.id}:question`)}
+                          placeholder={d.description || "What is being decided here?"}
+                          rows={2}
+                          className="text-xs resize-none"
+                          data-testid="input-node-question"
+                        />
+                        <span className="text-[10px] text-muted-foreground">Answered from the previous steps' output. Left empty, the step's description is the question.</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Branches</label>
+                        {branches.length === 0 ? (
+                          <span className="text-[10px] text-muted-foreground">Draw a connection from this step to each outcome and label it (Approve, Refer, Decline…).</span>
+                        ) : (
+                          <ul className="flex flex-col gap-0.5" data-testid="decision-branches">
+                            {branches.map(b => (
+                              <li key={b.label} className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className="truncate font-medium">{b.label}</span>
+                                <span className="truncate text-muted-foreground">→ {labelFor(b.to)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {branches.length === 1 && <span className="text-[10px] text-amber-600">A decision needs at least two labelled branches.</span>}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Runs as</label>
+                        <select
+                          value={mode}
+                          onChange={e => {
+                            const v = e.target.value;
+                            const { decisionKind: _dk, ...rest } = (d.config || {}) as Record<string, unknown>;
+                            patchNode(selNode.id, { config: v === "default" ? rest : { ...rest, decisionKind: v === "on" } });
+                          }}
+                          className="h-7 text-xs rounded-md border bg-background px-1.5"
+                          data-testid="select-node-decision-kind"
+                        >
+                          <option value="default">Platform default ({decisionKind ? "one decision call" : "agent, then a call per branch"})</option>
+                          <option value="on">One decision call</option>
+                          <option value="off">Agent, then a model call per branch</option>
+                        </select>
+                        <span className="text-[10px] text-muted-foreground" data-testid="decision-kind-preview">
+                          {kind === "decision"
+                            ? "Will run as one decision call over the branches above; exactly one is taken."
+                            : branches.length < 2 && mode !== "off"
+                            ? "Needs two labelled branches to run as one decision call; until then it runs as an agent."
+                            : explainKind({ type: d.ntype, config: d.config }, { outgoingEdges: outgoing, decisionKind })}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Confidence to act</label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={String((d.config?.confidenceThreshold as number) ?? "")}
+                            onChange={e => {
+                              const v = e.target.value === "" ? undefined : Math.min(1, Math.max(0, Number(e.target.value)));
+                              patchNode(selNode.id, { config: { ...(d.config || {}), confidenceThreshold: v } }, `node:${selNode.id}:confidenceThreshold`);
+                            }}
+                            placeholder="default"
+                            className="h-7 text-xs"
+                            data-testid="input-node-confidence-threshold"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">When unsure</label>
+                          <select
+                            value={d.config?.unsure === "gate" ? "gate" : "llm"}
+                            onChange={e => patchNode(selNode.id, { config: { ...(d.config || {}), unsure: e.target.value === "gate" ? "gate" : undefined } })}
+                            className="h-7 text-xs rounded-md border bg-background px-1.5"
+                            data-testid="select-node-unsure"
+                          >
+                            <option value="llm">Let an agent decide</option>
+                            <option value="gate">Go to the approval branch</option>
+                          </select>
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">Below the confidence, an agent makes the same choice instead, or the run goes down a branch that leads to an Approval step.</span>
+                    </div>
+                  );
+                })()}
                 {/* A bound skill or knowledge base usually means "an agent should
                     follow this" -- but sometimes the step IS just the lookup. The
                     author is the only one who knows which, so this asks them
@@ -995,10 +1103,10 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay }: Omit<
   );
 }
 
-export default function FlowGraphCanvas({ flowKey, initialNodes, initialEdges, onChange, issues, overlay }: Props) {
+export default function FlowGraphCanvas({ flowKey, initialNodes, initialEdges, onChange, issues, overlay, decisionKind }: Props) {
   return (
     <ReactFlowProvider>
-      <Canvas key={flowKey} initialNodes={initialNodes} initialEdges={initialEdges} onChange={onChange} issues={issues} overlay={overlay} />
+      <Canvas key={flowKey} initialNodes={initialNodes} initialEdges={initialEdges} onChange={onChange} issues={issues} overlay={overlay} decisionKind={decisionKind} />
     </ReactFlowProvider>
   );
 }

@@ -502,7 +502,7 @@ export async function applyFlowSync(
           config: {
             ...processNodeConfig(pn),
             decision: {
-              question: String(pn.description || pn.label || "").trim() || `Which branch should "${pn.label}" take?`,
+              question: String(cfg.question || pn.description || pn.label || "").trim() || `Which branch should "${pn.label}" take?`,
               options,
               ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
               ...(cfg.unsure === "gate" ? { unsure: "gate" } : {}),

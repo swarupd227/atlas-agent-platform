@@ -479,7 +479,7 @@ export default function ProcessFlows() {
         <div className="flex items-baseline justify-between gap-2">
           <p className="text-xs font-medium">{title}</p>
           <p className="text-[11px] text-muted-foreground tabular-nums">
-            {flowCost.modelSteps} agent{flowCost.modelSteps !== 1 ? "s" : ""} · {flowCost.freeSteps} free · approx. ${flowCost.approxUsdPerRun.toFixed(2)} a run
+            {flowCost.modelSteps} agent{flowCost.modelSteps !== 1 ? "s" : ""}{flowCost.decisionSteps > 0 ? ` · ${flowCost.decisionSteps} decision${flowCost.decisionSteps !== 1 ? "s" : ""}` : ""} · {flowCost.freeSteps} free · approx. ${flowCost.approxUsdPerRun.toFixed(2)} a run
           </p>
         </div>
         <div className="max-h-64 overflow-y-auto rounded-md border divide-y">
@@ -499,10 +499,25 @@ export default function ProcessFlows() {
 
   const nodeCount = graph.nodes.length;
 
+  // Whether a drawn decision with branches becomes one decision call: the
+  // platform flag, read here so the studio promises what Sync to Automation
+  // builds. Missing (404 before the setting is seeded) means off.
+  const { data: decisionKindSetting } = useQuery<{ key: string; value: string | null }>({
+    queryKey: ["/api/platform-settings", "DECISION_STEP_KIND"],
+    retry: false,
+    staleTime: 60_000,
+    meta: { quietError: true },
+  });
+  const decisionKindOn = decisionKindSetting?.value === "on";
+
   // What each step becomes when the flow goes live. The same classifier the
   // server builds from, so what this promises and what gets built cannot drift.
-  const stepPlan = useMemo(() => graph.nodes.map(n => ({ node: n, kind: classifyStep(n) })), [graph.nodes]);
-  const flowCost = useMemo(() => estimateFlowCost(graph), [graph]);
+  // A decision is a property of a step's branches and the flag, so both go in.
+  const stepPlan = useMemo(
+    () => graph.nodes.map(n => ({ node: n, kind: classifyStep(n, { outgoingEdges: graph.edges.filter(e => e.from === n.id), decisionKind: decisionKindOn }) })),
+    [graph.nodes, graph.edges, decisionKindOn],
+  );
+  const flowCost = useMemo(() => estimateFlowCost(graph, { decisionKind: decisionKindOn }), [graph, decisionKindOn]);
 
   const [showTeamProposal, setShowTeamProposal] = useState(false);
   const proposalDescription = useMemo(() => {
@@ -849,6 +864,7 @@ export default function ProcessFlows() {
           initialNodes={graph.nodes}
           initialEdges={graph.edges}
           issues={validationIssues}
+          decisionKind={decisionKindOn}
           onChange={(nodes, edges) => { setGraph({ nodes, edges }); if (validationIssues.length) setValidationIssues([]); }}
           overlay={nodeCount > 0 ? (
             // One place for full screen and clear, in and out of full screen.
@@ -966,6 +982,7 @@ export default function ProcessFlows() {
                   </div>
                   <p className="text-[11px] text-muted-foreground">
                     {compiled.cost.modelSteps} step{compiled.cost.modelSteps !== 1 ? "s" : ""} run as agents
+                    {compiled.cost.decisionSteps > 0 ? `, ${compiled.cost.decisionSteps} ${compiled.cost.decisionSteps !== 1 ? "are" : "is"} one decision call each` : ""}
                     {compiled.cost.freeSteps > 0 ? `, ${compiled.cost.freeSteps} run in-process for nothing` : ""}
                     {compiled.cost.aiRoutedEdges > 0
                       ? `, and ${compiled.cost.aiRoutedEdges} branch${compiled.cost.aiRoutedEdges !== 1 ? "es" : ""} ${compiled.cost.aiRoutedEdges !== 1 ? "are" : "is"} judged by a model`

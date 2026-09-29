@@ -15,11 +15,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/status-badge";
 import TeamGraphCanvas, { type WavePlan, type StepMeta } from "@/components/team-graph-canvas";
 import { NODE_COLOR_MAP, TRUST_TIER_COLORS } from "@/lib/team-graph-node-meta";
+import { buildRunOverlay } from "@shared/run-overlay";
+import { stateKeyForLabel } from "@shared/state-key";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
   Save, Sparkles, Play, Loader2, CheckCircle2, XCircle, History, SquareFunction,
-  LayoutGrid, Maximize2, Minimize2,
+  LayoutGrid, Maximize2, Minimize2, GitBranch, ExternalLink,
 } from "lucide-react";
 
 interface McpServerTool {
@@ -85,6 +87,10 @@ const TEAM_NODE_TYPES = [
   // cost, near-instant. The lightweight alternative to a full internal_agent
   // node for "pull a few fields out and rename/recompute them" mid-flow.
   { type: "expression", label: "Expression", icon: SquareFunction, color: "bg-slate-500" },
+  // One decision-model call over the step's labelled branches; exactly one is
+  // taken (executeDecisionNode). Its links out are set to Decision routing and
+  // named after the options.
+  { type: "decision", label: "Decision", icon: GitBranch, color: "bg-sky-500" },
 ] as const;
 
 const PART_TYPE_OPTIONS = [
@@ -103,6 +109,8 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   // The inspector floats over the canvas and only opens for a step, a link, or Runs / Schema.
   const [panelTab, setPanelTab] = useState<"step" | "runs" | "schema" | null>(null);
   const [fullScreen, setFullScreen] = useState(false);
+  // A run shown on the canvas: each step's state on its card, the path taken in green.
+  const [overlayRunId, setOverlayRunId] = useState<string | null>(null);
 
   const graphQueryKey = ["/api/blueprints", blueprintId, "team-graph"];
 
@@ -155,7 +163,18 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   const { data: runs } = useQuery<DagExecutionRun[]>({
     queryKey: ["/api/team-agents", teamAgentId, "dag-runs"],
     enabled: !!teamAgentId,
+    // A run being watched on the canvas keeps moving until it is over.
+    refetchInterval: (query) => {
+      if (!overlayRunId) return false;
+      const shown = (query.state.data as DagExecutionRun[] | undefined)?.find((r) => r.id === overlayRunId);
+      return shown && (shown.status === "running" || shown.status === "waiting_approval" || shown.status === "pending") ? 3000 : false;
+    },
   });
+  const overlayRun = useMemo(() => (overlayRunId ? runs?.find((r) => r.id === overlayRunId) : undefined), [runs, overlayRunId]);
+  const overlay = useMemo(
+    () => (overlayRun ? buildRunOverlay(overlayRun as any, nodes, edges, wavePlan) : undefined),
+    [overlayRun, nodes, edges, wavePlan],
+  );
 
   const stepMeta = useMemo(() => {
     const byId = new Map(agents.map((a) => [a.id, a] as const));
@@ -352,12 +371,12 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   const PALETTE: Array<[string, string[]]> = [
     ["Work", ["internal_agent", "tool_set", "remote_agent", "expression"]],
     ["Knows", ["skill", "knowledge_base"]],
-    ["Control", ["sub_flow"]],
+    ["Control", ["decision", "sub_flow"]],
     ["People", ["edge_gate"]],
   ];
   const PALETTE_NAME: Record<string, string> = {
     internal_agent: "Agent", tool_set: "Tool set", remote_agent: "Remote agent", expression: "Expression",
-    skill: "Skill", knowledge_base: "Knowledge", sub_flow: "Sub-flow", edge_gate: "Human approves",
+    skill: "Skill", knowledge_base: "Knowledge", sub_flow: "Sub-flow", edge_gate: "Human approves", decision: "Decision",
   };
   const toolBtn = "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40";
 
@@ -422,6 +441,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
             wavePlan={wavePlan}
             businessView={businessView}
             fitKey={`${!!panelTab}-${fullScreen}`}
+            overlay={overlay}
             onNodeSelect={handleNodeSelect}
             onEdgeSelect={handleEdgeSelect}
             onPaneClick={handlePaneClick}
@@ -430,6 +450,13 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
             onNodeDelete={(id) => deleteNodeMutation.mutate(id)}
           />
         </div>
+
+        {overlayRun && (
+          <RunOverlayBanner run={overlayRun} onHide={() => setOverlayRunId(null)} />
+        )}
+        {teamAgentId && (runs?.length ?? 0) > 0 && (
+          <RunRail runs={runs!} activeRunId={overlayRunId} panelOpen={!!panelTab} onPick={(id) => setOverlayRunId((cur) => (cur === id ? null : id))} />
+        )}
 
         <div className={`absolute top-3 z-10 flex items-center gap-1 rounded-lg border bg-card/95 p-1 shadow-sm ${panelTab ? "right-[384px]" : "right-3"}`}>
           {teamAgentId && (
@@ -483,6 +510,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
                     policies={policies || []}
                     skills={skills || []}
                     knowledgeBases={knowledgeBases || []}
+                    outgoingEdges={edges.filter((e) => e.sourceNodeId === selectedNode.id)}
                     onUpdate={(updates) => updateNodeMutation.mutate({ id: selectedNode.id, updates })}
                     isPending={updateNodeMutation.isPending}
                   />
@@ -496,7 +524,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
                     isDeletePending={deleteEdgeMutation.isPending}
                   />
                 ) : panelTab === "runs" && teamAgentId ? (
-                  <RecentExecutions teamAgentId={teamAgentId} />
+                  <RecentExecutions teamAgentId={teamAgentId} activeRunId={overlayRunId} onShowOnCanvas={(id) => setOverlayRunId((cur) => (cur === id ? null : id))} />
                 ) : panelTab === "schema" && teamAgentId ? (
                   <div className="flex flex-col gap-3" id="dag-state-schema-section">
                     <p className="text-xs text-muted-foreground">The fields steps write to and read from as the flow runs.</p>
@@ -514,6 +542,158 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
         )}
       </div>
     </div>
+  );
+}
+
+type DecisionOption = { label: string; description?: string };
+type DecisionNodeConfig = { question?: string; options?: Array<DecisionOption | string>; threshold?: number; unsure?: string };
+
+/**
+ * A decision step's question and options (node.config.decision, the shape
+ * executeDecisionNode reads), and its branches checked against them: a link
+ * set to Decision routing whose name matches no option can never be taken.
+ */
+function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
+  node: TeamBlueprintNode;
+  allNodes: TeamBlueprintNode[];
+  outgoingEdges: TeamBlueprintEdge[];
+  onUpdate: (updates: Partial<TeamBlueprintNode>) => void;
+}) {
+  const cfg = (((node.config as any)?.decision || {}) as DecisionNodeConfig);
+  const stored: DecisionOption[] = Array.isArray(cfg.options) ? cfg.options.map((o) => (typeof o === "string" ? { label: o } : o)) : [];
+  const [question, setQuestion] = useState(cfg.question || "");
+  const [threshold, setThreshold] = useState(cfg.threshold != null ? String(cfg.threshold) : "");
+  const [options, setOptions] = useState<DecisionOption[]>(stored);
+
+  const write = (patch: Partial<DecisionNodeConfig>) => {
+    onUpdate({ config: { ...((node.config as any) || {}), decision: { ...cfg, options, ...patch } } } as any);
+  };
+  const commitOptions = (next: DecisionOption[]) => {
+    setOptions(next);
+    write({ options: next.filter((o) => o.label.trim()) });
+  };
+  const labelOf = (id: string) => allNodes.find((n) => n.id === id)?.label || "?";
+  const branches = outgoingEdges.filter((e) => e.evaluationMode === "decision");
+  const optionSlugs = new Set(options.map((o) => stateKeyForLabel(o.label)).filter(Boolean));
+
+  return (
+    <>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium text-muted-foreground">Question</label>
+        <Textarea
+          value={question}
+          onChange={e => setQuestion(e.target.value)}
+          onBlur={() => { if (question !== (cfg.question || "")) write({ question }); }}
+          placeholder="Does this submission need a senior underwriter?"
+          rows={3}
+          className="text-xs"
+          data-testid="input-decision-question"
+        />
+        <p className="text-[10px] text-muted-foreground">
+          One decision-model call answers this from the steps before it and picks exactly one option below -- no agent, a fraction of a
+          cent, well under a second. The choice, its probabilities and its confidence are recorded on the run.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium text-muted-foreground">Options</label>
+        {options.map((o, i) => (
+          <div key={i} className="flex flex-col gap-1 rounded-md border p-2" data-testid={`decision-option-${i}`}>
+            <div className="flex items-center gap-1">
+              <Input
+                value={o.label}
+                onChange={e => setOptions(options.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                onBlur={() => commitOptions(options)}
+                placeholder="Option name, e.g. Refer"
+                className="h-8 text-xs"
+                data-testid={`input-decision-option-label-${i}`}
+              />
+              <button
+                type="button"
+                onClick={() => commitOptions(options.filter((_, j) => j !== i))}
+                className="rounded p-1 text-muted-foreground hover:text-foreground"
+                aria-label="Remove option"
+                data-testid={`button-remove-decision-option-${i}`}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <Input
+              value={o.description || ""}
+              onChange={e => setOptions(options.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))}
+              onBlur={() => commitOptions(options)}
+              placeholder="When to pick it (optional)"
+              className="h-8 text-xs"
+              data-testid={`input-decision-option-desc-${i}`}
+            />
+          </div>
+        ))}
+        <Button variant="outline" size="sm" className="self-start" onClick={() => setOptions([...options, { label: "" }])} data-testid="button-add-decision-option">
+          <Plus className="w-3.5 h-3.5 mr-1" /> Add option
+        </Button>
+        {options.filter((o) => o.label.trim()).length < 2 && (
+          <p className="text-[10px] text-amber-600" data-testid="text-decision-needs-options">A decision needs at least two named options.</p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium text-muted-foreground">Branches</label>
+        {branches.length === 0 ? (
+          <p className="text-[10px] text-muted-foreground" data-testid="text-decision-no-branches">
+            No link out of this step is set to Decision routing yet. Connect it to each next step, then set each link's routing to
+            Decision and label the link with the option it carries.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-1" data-testid="decision-branches">
+            {branches.map((e) => {
+              const name = e.label || labelOf(e.targetNodeId);
+              const matched = optionSlugs.has(stateKeyForLabel(name));
+              return (
+                <li key={e.id} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="truncate"><span className="font-medium">{name}</span> <span className="text-muted-foreground">&rarr; {labelOf(e.targetNodeId)}</span></span>
+                  {!matched && <span className="shrink-0 text-[10px] text-amber-600">no option with this name</span>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Confidence to act</label>
+          <Input
+            type="number"
+            min={0}
+            max={1}
+            step={0.05}
+            value={threshold}
+            onChange={e => setThreshold(e.target.value)}
+            onBlur={() => {
+              const v = threshold.trim() === "" ? undefined : Number(threshold);
+              if (v === undefined || (Number.isFinite(v) && v >= 0 && v <= 1)) write({ threshold: v });
+            }}
+            placeholder="default"
+            data-testid="input-decision-threshold"
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">When unsure</label>
+          <select
+            className="h-9 w-full rounded-md border bg-background px-2 text-xs"
+            value={cfg.unsure === "gate" ? "gate" : "llm"}
+            onChange={e => write({ unsure: e.target.value === "gate" ? "gate" : undefined })}
+            data-testid="select-decision-unsure"
+          >
+            <option value="llm">Let an agent decide</option>
+            <option value="gate">Go to the approval branch</option>
+          </select>
+        </div>
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        Below the confidence, an agent makes the same choice instead, or the run goes down a branch that leads to a human approval.
+      </p>
+    </>
   );
 }
 
@@ -576,7 +756,74 @@ interface StartDagRunResponse {
   totalNodes: number;
 }
 
-function RecentExecutions({ teamAgentId }: { teamAgentId: string }) {
+const RUN_DOT: Record<string, string> = {
+  completed: "bg-emerald-500",
+  completed_with_skips: "bg-amber-500",
+  failed: "bg-red-500",
+  cancelled: "bg-slate-400",
+  running: "bg-blue-500 animate-pulse",
+  waiting_approval: "bg-amber-500",
+  pending: "bg-blue-500",
+};
+const RUN_WORD: Record<string, string> = {
+  completed: "completed",
+  completed_with_skips: "completed, some steps skipped",
+  failed: "failed",
+  cancelled: "cancelled",
+  running: "running",
+  waiting_approval: "waiting for approval",
+  pending: "starting",
+};
+const runTime = (run: DagExecutionRun) => (run.startedAt ? new Date(run.startedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : run.id.substring(0, 8));
+
+/** The last few runs as chips along the bottom of the canvas; one click paints that run on the graph. */
+function RunRail({ runs, activeRunId, panelOpen, onPick }: { runs: DagExecutionRun[]; activeRunId: string | null; panelOpen: boolean; onPick: (id: string) => void }) {
+  return (
+    <div className={`absolute bottom-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] items-center gap-1 overflow-x-auto rounded-lg border bg-card/95 p-1 shadow-sm ${panelOpen ? "right-[384px]" : ""}`} data-testid="run-rail">
+      <span className="px-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Runs</span>
+      {runs.slice(0, 8).map((run) => {
+        const active = run.id === activeRunId;
+        return (
+          <button
+            key={run.id}
+            type="button"
+            onClick={() => onPick(run.id)}
+            title={`${runTime(run)} · ${RUN_WORD[run.status] || run.status}${active ? " · shown on the canvas" : " · show on the canvas"}`}
+            aria-pressed={active}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors ${active ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}
+            data-testid={`button-run-rail-${run.id}`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${RUN_DOT[run.status] || "bg-muted-foreground"}`} />
+            {runTime(run)}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Says which run the canvas is showing, and lets the reader open it or clear it. */
+function RunOverlayBanner({ run, onHide }: { run: DagExecutionRun; onHide: () => void }) {
+  const [, navigate] = useLocation();
+  const cost = Number((run as any).totalCostUsd || 0);
+  return (
+    <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg border bg-card/95 py-1 pl-2.5 pr-1 text-xs shadow-sm" data-testid="run-overlay-banner">
+      <span className={`h-2 w-2 rounded-full ${RUN_DOT[run.status] || "bg-muted-foreground"}`} />
+      <span>
+        Showing the run from <span className="font-medium">{runTime(run)}</span>
+        <span className="text-muted-foreground"> · {RUN_WORD[run.status] || run.status}{run.totalWaves ? ` · stage ${run.currentWave ?? 0} of ${run.totalWaves}` : ""}{cost > 0 ? ` · $${cost.toFixed(2)}` : ""}</span>
+      </span>
+      <button type="button" onClick={() => navigate(`/dag-runs/${run.id}`)} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" data-testid="button-open-overlay-run">
+        <ExternalLink className="h-3 w-3" /> Open run
+      </button>
+      <button type="button" onClick={onHide} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Stop showing this run" data-testid="button-hide-run-overlay">
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function RecentExecutions({ teamAgentId, activeRunId, onShowOnCanvas }: { teamAgentId: string; activeRunId?: string | null; onShowOnCanvas?: (id: string) => void }) {
   const [, navigate] = useLocation();
   const { data: runs } = useQuery<DagExecutionRun[]>({
     queryKey: ["/api/team-agents", teamAgentId, "dag-runs"],
@@ -597,21 +844,31 @@ function RecentExecutions({ teamAgentId }: { teamAgentId: string }) {
       <ScrollArea>
         <div className="flex flex-col gap-1 pr-2">
           {runs.slice(0, 20).map(run => (
-            <button
+            <div
               key={run.id}
-              type="button"
-              onClick={() => navigate(`/dag-runs/${run.id}`)}
-              className="flex items-center gap-1.5 p-1.5 rounded-md hover-elevate text-left"
+              className={`flex items-center gap-1.5 p-1.5 rounded-md ${run.id === activeRunId ? "bg-accent" : "hover-elevate"}`}
               data-testid={`link-recent-execution-${run.id}`}
             >
-              <div className="flex flex-col flex-1 min-w-0">
+              <button type="button" onClick={() => navigate(`/dag-runs/${run.id}`)} className="flex flex-col flex-1 min-w-0 text-left">
                 <span className="text-xs truncate">
                   {run.startedAt ? new Date(run.startedAt).toLocaleString() : run.id.substring(0, 8)}
                 </span>
                 <span className="text-[11px] text-muted-foreground">stage {run.currentWave ?? 0} of {run.totalWaves ?? 0}</span>
-              </div>
+              </button>
               <StatusBadge status={run.status} className="text-[9px] px-1.5 py-0 shrink-0" />
-            </button>
+              {onShowOnCanvas && (
+                <button
+                  type="button"
+                  onClick={() => onShowOnCanvas(run.id)}
+                  title={run.id === activeRunId ? "Stop showing this run on the canvas" : "Show this run on the canvas"}
+                  aria-pressed={run.id === activeRunId}
+                  className={`shrink-0 rounded p-1 ${run.id === activeRunId ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  data-testid={`button-show-run-on-canvas-${run.id}`}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       </ScrollArea>
@@ -687,6 +944,7 @@ function NodeConfigPanel({
   policies,
   skills,
   knowledgeBases,
+  outgoingEdges = [],
   onUpdate,
   isPending,
 }: {
@@ -699,11 +957,13 @@ function NodeConfigPanel({
   policies: Policy[];
   skills: Skill[];
   knowledgeBases: KnowledgeBase[];
+  /** This step's links out, for a decision step to show its branches against its options. */
+  outgoingEdges?: TeamBlueprintEdge[];
   onUpdate: (updates: Partial<TeamBlueprintNode>) => void;
   isPending: boolean;
 }) {
   const autoStateKey = (label: string) => label.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
-  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill" || t === "knowledge_base" || t === "sub_flow" || t === "expression";
+  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill" || t === "knowledge_base" || t === "sub_flow" || t === "expression" || t === "decision";
 
   const initialStateKey = (node.stateKey && node.stateKey.length > 0)
     ? node.stateKey
@@ -1020,6 +1280,34 @@ function NodeConfigPanel({
               placeholder={autoStateKey(localLabel) || "e.g. expression_output"}
               data-testid="input-state-key-expression"
             />
+          </div>
+        </>
+      )}
+
+      {node.nodeType === "decision" && (
+        <>
+          <DecisionConfigFields key={node.id} node={node} allNodes={allNodes} outgoingEdges={outgoingEdges} onUpdate={onUpdate} />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              State Key
+              {stateKeyConflict && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5" data-testid="badge-state-key-conflict-decision">
+                  <AlertTriangle className="w-2.5 h-2.5" /> conflict
+                </Badge>
+              )}
+            </label>
+            <Input
+              value={localStateKey}
+              onChange={e => setLocalStateKey(e.target.value)}
+              onBlur={() => {
+                const val = localStateKey || autoStateKey(localLabel);
+                if (!localStateKey) setLocalStateKey(val);
+                if (val !== (node.stateKey || "")) onUpdate({ stateKey: val || null });
+              }}
+              placeholder={autoStateKey(localLabel) || "e.g. triage_decision"}
+              data-testid="input-state-key-decision"
+            />
+            <p className="text-[10px] text-muted-foreground">The choice, its probabilities and confidence are saved here for the steps after it and for the run's record.</p>
           </div>
         </>
       )}
@@ -1810,17 +2098,51 @@ function EdgeConfigPanel({
           >
             Handoff
           </button>
+          <button
+            type="button"
+            className={`flex-1 px-2 py-1.5 text-xs ${evaluationMode === "decision" ? "bg-primary text-primary-foreground" : "hover-elevate"}`}
+            onClick={() => onUpdate({ evaluationMode: "decision" })}
+            data-testid="button-mode-decision"
+          >
+            Decision
+          </button>
         </div>
         <p className="text-[10px] text-muted-foreground">
           {evaluationMode === "ai"
             ? "An LLM reads the free-text condition against the upstream output and judges true/false — right for subjective calls, not for anything that must be 100% reliable."
             : evaluationMode === "handoff"
             ? "The upstream agent itself names which node to hand off to — no condition to configure here. Right for open-ended routing where the agent decides who should handle it next, like a triage agent picking a specialist."
+            : evaluationMode === "decision"
+            ? "Taken when the Decision step before it picks this branch — no condition here; the link's label names the option it carries. One decision call chooses among all the step's branches, so exactly one is taken."
             : "Plain comparison logic against the upstream output's data — no model call, always reliable and auditable. Right for thresholds, compliance checks, and other business rules."}
         </p>
       </div>
 
-      {evaluationMode === "ai" ? (
+      {evaluationMode === "decision" ? (() => {
+        const sourceOptions: string[] = Array.isArray((sourceNode?.config as any)?.decision?.options)
+          ? ((sourceNode?.config as any).decision.options as Array<{ label?: string } | string>).map((o) => (typeof o === "string" ? o : o?.label || "")).filter(Boolean)
+          : [];
+        const name = edge.label || targetNode?.label || "";
+        const matches = sourceOptions.some((o) => stateKeyForLabel(o) === stateKeyForLabel(name));
+        return (
+          <div className="flex flex-col gap-1.5 rounded-md border p-2 bg-muted/30" data-testid="decision-branch-info">
+            <span className="text-xs font-medium">This link is one of the decision's branches</span>
+            <p className="text-[11px] text-muted-foreground">
+              It fires when "{sourceNode?.label || "the step before it"}" chooses{" "}
+              {edge.label ? <>the option named <span className="font-medium text-foreground">"{edge.label}"</span></> : <>an option named after this link's target, <span className="font-medium text-foreground">"{targetNode?.label || "?"}"</span></>}.
+            </p>
+            {sourceNode && sourceNode.nodeType !== "decision" && (
+              <p className="text-[11px] text-amber-600" data-testid="text-decision-source-not-decision">"{sourceNode.label}" is not a Decision step, so this link would never fire.</p>
+            )}
+            {sourceOptions.length > 0 && (
+              <p className="text-[11px] text-muted-foreground">
+                Its options: {sourceOptions.join(", ")}.
+                {!matches && <span className="text-amber-600"> None is named "{name}".</span>}
+              </p>
+            )}
+          </div>
+        );
+      })() : evaluationMode === "ai" ? (
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-muted-foreground">Condition</label>
           <Input

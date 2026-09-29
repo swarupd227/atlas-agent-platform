@@ -17,7 +17,7 @@ import { useRoute, Link } from "wouter";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, Network, XCircle, Loader2, ArrowRight, AlertTriangle, Bot, UserCheck,
-  Hand, CheckCircle2, Copy, Check, Download, FileText, Radio, Maximize2, ExternalLink,
+  Hand, CheckCircle2, Copy, Check, Download, FileText, Radio, Maximize2, ExternalLink, GitBranch,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import type { DagExecutionRun, Agent, Approval } from "@shared/schema";
 import { stepKindLabel, runsWithoutAModel } from "@shared/run-step-kind";
+import { decisionOutcomeOf } from "@shared/run-overlay";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
 import { splitWorkingNotes, extractHtmlDocument, openRunStepHtml } from "@/lib/agent-output";
 
@@ -735,6 +736,8 @@ export default function DagRunMonitor() {
                         : s.state === "skipped" ? "run-bar-pending"
                         : s.key === selected?.key ? "bg-[hsl(var(--ring))]" : "bg-foreground/75";
                       const decision = s.kind === "gate" ? gateDecision(s.result) : null;
+                      // A decision step's outcome is the branch it chose, not a duration.
+                      const chosen = s.nodeType === "decision" ? decisionOutcomeOf(s.result?.output) : null;
                       const text =
                         s.state === "pending" ? "not started"
                         : s.state === "running" ? `${durationLabel(s.durationMs)} so far`
@@ -742,6 +745,7 @@ export default function DagRunMonitor() {
                         : s.state === "skipped" ? "skipped"
                         : s.kind === "gate" && decision ? `approved after ${durationLabel(s.durationMs)}`
                         : s.kind === "gate" && s.state === "failed" ? "rejected"
+                        : chosen ? `chose ${chosen.choice} · ${durationLabel(s.durationMs)}`
                         : durationLabel(s.durationMs);
                       const labelOnLeft = left + width > 76;
                       return (
@@ -757,6 +761,8 @@ export default function DagRunMonitor() {
                             <Dot state={s.state} />
                             {s.kind === "gate"
                               ? <UserCheck className="w-4 h-4 shrink-0 text-muted-foreground hidden sm:block" />
+                              : s.nodeType === "decision"
+                              ? <GitBranch className="w-4 h-4 shrink-0 text-muted-foreground hidden sm:block" />
                               : <Bot className="w-4 h-4 shrink-0 text-muted-foreground hidden sm:block" />}
                             <span className={`truncate ${s.state === "skipped" || s.state === "pending" ? "text-muted-foreground" : ""}`}>{s.label}</span>
                           </span>
@@ -956,11 +962,18 @@ function StepDetail({
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { setTab("output"); setCopied(false); setExpanded(false); }, [step.key]);
 
-  const entries = outputEntries(step.result);
+  const allEntries = outputEntries(step.result);
   const files = collectRunFiles(step.result?.output);
-  const plain = entries.map((e) => (entries.length > 1 ? `## ${humanizeKey(e.key)}\n\n${e.text}` : e.text)).join("\n\n");
   const others = stage.steps.length - 1;
   const decision = step.kind === "gate" ? gateDecision(step.result) : null;
+  // A decision step's record ({ choice, probabilities, confidence, ... }) is
+  // shown as the decision it is, not as a JSON dump under its state key.
+  const chosen = step.nodeType === "decision" ? decisionOutcomeOf(step.result?.output) : null;
+  const chosenKey = chosen
+    ? Object.entries(step.result?.output ?? {}).find(([, v]) => v && typeof v === "object" && typeof (v as any).choice === "string")?.[0]
+    : undefined;
+  const entries = chosenKey ? allEntries.filter((e) => e.key !== chosenKey) : allEntries;
+  const plain = entries.map((e) => (entries.length > 1 ? `## ${humanizeKey(e.key)}\n\n${e.text}` : e.text)).join("\n\n");
   const showTabs = step.kind === "agent" && step.state === "completed" && files.length > 0;
   const canExpand = step.kind === "agent" && entries.length > 0 && tab === "output";
   // An approval step's outcome is the decision itself, not "completed".
@@ -1044,9 +1057,45 @@ function StepDetail({
             <p className="mt-1 text-muted-foreground">{step.result.output.managerReasoning}</p>
           </div>
         )}
+        {chosen && (
+          <div className="flex flex-col gap-3 rounded-lg border bg-background p-3.5 text-sm" data-testid={`panel-decision-${step.id}`}>
+            <div>
+              <Eyebrow>Decided</Eyebrow>
+              <div className="mt-1 flex items-center gap-2">
+                <GitBranch className="w-4 h-4 shrink-0 text-muted-foreground" />
+                <span className="font-medium" data-testid={`text-decision-choice-${step.id}`}>{chosen.choice}</span>
+              </div>
+              {chosen.question && <p className="mt-1 text-muted-foreground">{chosen.question}</p>}
+            </div>
+            {chosen.probabilities && Object.keys(chosen.probabilities).length > 0 && (
+              <div className="flex flex-col gap-1.5" data-testid={`list-decision-probabilities-${step.id}`}>
+                {Object.entries(chosen.probabilities).sort((a, b) => b[1] - a[1]).map(([option, p]) => {
+                  const picked = option === chosen.choice;
+                  return (
+                    <div key={option} className="flex flex-col gap-0.5">
+                      <div className="flex items-baseline justify-between gap-3 text-xs">
+                        <span className={`truncate ${picked ? "font-medium" : "text-muted-foreground"}`}>{option}</span>
+                        <span className="font-mono tabular-nums text-muted-foreground">{Math.round(p * 100)}%</span>
+                      </div>
+                      <span className="block h-1.5 overflow-hidden rounded bg-muted">
+                        <span className={`block h-full rounded ${picked ? "bg-[hsl(var(--astra-ok))]" : "bg-muted-foreground/35"}`} style={{ width: `${Math.max(2, Math.round(p * 100))}%` }} />
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
+              {chosen.confidence != null && <span>{Math.round(chosen.confidence * 100)}% confident</span>}
+              {chosen.engine && <span>{chosen.engine === "jev" ? "decision model" : "language model"}{chosen.model ? ` · ${chosen.model}` : ""}</span>}
+              {chosen.fallbackReason && <span>an agent decided: {chosen.fallbackReason.replace(/_/g, " ")}</span>}
+              {chosen.routedToGate && <span>sent to the approval branch</span>}
+            </div>
+          </div>
+        )}
         {entries.length > 0 ? (
           <OutputEntries entries={entries} testId={`panel-node-output-${step.id}`} />
-        ) : step.state === "completed" ? (
+        ) : step.state === "completed" && !chosen ? (
           <p className="text-sm text-muted-foreground">This step produced no text output.</p>
         ) : null}
       </div>

@@ -6,8 +6,9 @@ import {
   type Node as RFNode, type Edge as RFEdge, type Connection, type NodeProps, type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Brain, Network, Sparkles, Database, AlertTriangle, X, SquareFunction } from "lucide-react";
+import { Brain, Network, Sparkles, Database, AlertTriangle, X, SquareFunction, GitBranch } from "lucide-react";
 import type { TeamBlueprintNode, TeamBlueprintEdge, RemoteAgent, Skill, KnowledgeBase } from "@shared/schema";
+import type { RunOverlay, OverlayNode, OverlayState } from "@shared/run-overlay";
 import { NODE_COLOR_MAP, NODE_ICON_MAP } from "@/lib/team-graph-node-meta";
 
 export const COL_WIDTH = 300;
@@ -45,8 +46,22 @@ export function stageLayout(plan: WavePlan | undefined, nodes: TeamBlueprintNode
 const KIND_LABEL: Record<string, string> = {
   internal_agent: "Agent", tool_set: "Tool set", edge_gate: "Human approves", remote_agent: "Remote agent",
   skill: "Skill", knowledge_base: "Knowledge", sub_flow: "Sub-flow", expression: "Expression",
-  tool_call: "Tool call",
+  tool_call: "Tool call", decision: "Decision",
 };
+
+// A run painted on the cards. Literal colours, not the Astra tokens: this
+// canvas also renders outside .astra-scope (the blueprint page), where those
+// tokens are undefined. The same three the "last run" line already used.
+const RUN_STATE_COPY: Record<OverlayState, { dot: string; text: string; border: string }> = {
+  completed: { dot: "bg-emerald-500", text: "done", border: "border-emerald-500/70" },
+  failed: { dot: "bg-red-500", text: "failed", border: "border-red-500" },
+  skipped: { dot: "border border-muted-foreground bg-transparent", text: "skipped", border: "" },
+  running: { dot: "bg-blue-500 animate-pulse", text: "working…", border: "border-blue-500 shadow-[0_0_0_3px_rgb(59_130_246/0.25)]" },
+  waiting: { dot: "bg-amber-500", text: "waiting for a person", border: "border-amber-500" },
+  pending: { dot: "border border-muted-foreground bg-transparent", text: "not run", border: "" },
+};
+/** The green a taken link is drawn in; matches the completed dot. */
+const TAKEN_STROKE = "#10b981";
 
 export interface StepMeta {
   agentName?: string;
@@ -66,6 +81,8 @@ interface TeamNodeRFData {
   toolCount: number;
   /** The flow reads top to bottom, so links leave a card's bottom and enter the next one's top. */
   vertical: boolean;
+  /** This step in the run being shown on the canvas, when one is. */
+  run?: OverlayNode;
   onDelete: (nodeId: string) => void;
   [key: string]: unknown;
 }
@@ -84,6 +101,7 @@ function TeamFlowNode({ data, selected }: NodeProps) {
     : node.nodeType === "internal_agent" ? [d.toolCount ? `${d.toolCount} tool${d.toolCount !== 1 ? "s" : ""}` : "", meta.model?.replace(/^claude-/, "")].filter(Boolean).join(" · ") || meta.agentName || "no agent chosen"
     : node.nodeType === "sub_flow" ? d.refTeamAgentName || "not configured"
     : node.nodeType === "expression" ? (node.config as any)?.expression || "not configured"
+    : node.nodeType === "decision" ? (node.config as any)?.decision?.question || "no question yet"
     : node.nodeType === "tool_call" ? (node.config as any)?.toolName || "no tool chosen"
     : node.nodeType === "tool_set" ? `${d.toolCount} tool${d.toolCount !== 1 ? "s" : ""}`
     : node.nodeType === "edge_gate" ? (node.gateType === "approval" || !node.gateType ? "any approver" : node.gateType.replace(/_/g, " "))
@@ -92,15 +110,21 @@ function TeamFlowNode({ data, selected }: NodeProps) {
     : node.nodeType === "remote_agent" ? `${d.refRemoteAgent?.trustTier || "basic"} · ${d.refRemoteAgent?.connectivityStatus || "unknown"}`
     : "";
 
+  const run = d.run;
+  const runCopy = run ? RUN_STATE_COPY[run.state] : null;
+  const runDim = run && (run.state === "skipped" || run.state === "pending");
+
   return (
     <div
       className={`group relative rounded-[10px] border bg-card px-3 py-2.5 text-card-foreground ${
         selected ? "border-foreground shadow-[0_0_0_3px_hsl(var(--ring)/0.45)]"
+        : runCopy?.border ? `${runCopy.border} shadow-sm`
         : isGate ? "border-[hsl(350_60%_48%/0.45)] shadow-sm hover:border-foreground/50"
         : "shadow-sm hover:border-foreground/50"
-      }`}
+      } ${runDim ? "opacity-60" : ""}`}
       style={{ width: NODE_W }}
       data-testid={`card-team-node-${node.id}`}
+      data-run-state={run?.state}
     >
       <Handle type="target" position={d.vertical ? Position.Top : Position.Left} className="!w-2.5 !h-2.5 !bg-foreground/60 !border-background" />
       <div className="flex items-center gap-1.5">
@@ -128,10 +152,26 @@ function TeamFlowNode({ data, selected }: NodeProps) {
         {node.nodeType === "sub_flow" || node.refTeamAgentId ? <Network className="h-3 w-3 shrink-0" />
           : node.nodeType === "skill" ? <Sparkles className="h-3 w-3 shrink-0" />
           : node.nodeType === "knowledge_base" ? <Database className="h-3 w-3 shrink-0" />
-          : node.nodeType === "expression" ? <SquareFunction className="h-3 w-3 shrink-0" /> : null}
+          : node.nodeType === "expression" ? <SquareFunction className="h-3 w-3 shrink-0" />
+          : node.nodeType === "decision" ? <GitBranch className="h-3 w-3 shrink-0" /> : null}
         <span className="truncate">{detail}</span>
       </p>
-      {meta.lastRun && (
+      {run && runCopy ? (
+        <div className="mt-1 flex flex-col gap-0.5 text-[11px]" data-testid={`text-run-state-${node.id}`}>
+          <p className="flex items-center gap-1.5 text-muted-foreground">
+            <span className={`h-1.5 w-1.5 rounded-full ${runCopy.dot}`} />
+            {run.state === "completed" && run.durationMs ? fmtDuration(run.durationMs) : runCopy.text}
+            {run.state === "failed" && run.error ? <span className="truncate" title={run.error}>· {run.error}</span> : null}
+          </p>
+          {run.decision && (
+            <p className="truncate" title={run.decision.choice}>
+              chose <span className="font-medium">{run.decision.choice}</span>
+              {run.decision.confidence != null ? <span className="text-muted-foreground"> · {Math.round(run.decision.confidence * 100)}% sure</span> : null}
+              {run.decision.fallbackReason ? <span className="text-muted-foreground"> · via agent</span> : null}
+            </p>
+          )}
+        </div>
+      ) : meta.lastRun && (
         <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <span className={`h-1.5 w-1.5 rounded-full ${meta.lastRun.status === "completed" ? "bg-emerald-500" : meta.lastRun.status === "failed" ? "bg-red-500" : "bg-amber-500"}`} />
           last run {fmtDuration(meta.lastRun.durationMs) || meta.lastRun.status}
@@ -174,6 +214,8 @@ interface TeamGraphCanvasProps {
   businessView?: boolean;
   /** Changes whenever the canvas area resizes (panel, full screen), so the view re-fits. */
   fitKey?: string;
+  /** A run to show on the graph: each step's state on its card, the path taken drawn in green, the rest dimmed. */
+  overlay?: RunOverlay;
   onNodeSelect: (nodeId: string) => void;
   onEdgeSelect: (edgeId: string) => void;
   onPaneClick: () => void;
@@ -184,7 +226,7 @@ interface TeamGraphCanvasProps {
 
 function Canvas({
   nodes, edges, selectedNodeId, selectedEdgeId, stateKeyConflictIds, getNodeDisplayLabel,
-  stepMeta, teamNames, remoteAgents, skills, knowledgeBases, wavePlan, businessView, fitKey,
+  stepMeta, teamNames, remoteAgents, skills, knowledgeBases, wavePlan, businessView, fitKey, overlay,
   onNodeSelect, onEdgeSelect, onPaneClick, onConnect, onNodeDragStop, onNodeDelete,
 }: TeamGraphCanvasProps) {
   const { fitView } = useReactFlow();
@@ -238,6 +280,7 @@ function Canvas({
         refKbName: refKb?.name,
         toolCount: (node.refToolIds || []).length,
         vertical,
+        run: overlay?.nodes[node.id],
         onDelete: onNodeDelete,
       };
       return {
@@ -272,7 +315,7 @@ function Canvas({
       }
     }
     return steps;
-  }, [nodes, remoteAgents, skills, knowledgeBases, getNodeDisplayLabel, stateKeyConflictIds, stepMeta, teamNames, selectedNodeId, resolvePosition, onNodeDelete, neverArranged, wavePlan, vertical]);
+  }, [nodes, remoteAgents, skills, knowledgeBases, getNodeDisplayLabel, stateKeyConflictIds, stepMeta, teamNames, selectedNodeId, resolvePosition, onNodeDelete, neverArranged, wavePlan, vertical, overlay]);
 
   const rfEdges: RFEdge[] = useMemo(() => edges.flatMap((edge) => {
     const a = waveOf[edge.sourceNodeId], b = waveOf[edge.targetNodeId];
@@ -281,13 +324,21 @@ function Canvas({
     const skips = a !== undefined && b !== undefined && b > a + 1;
     if (skips && businessView && edge.id !== selectedEdgeId) return [];
     const hot = edge.id === selectedEdgeId || edge.sourceNodeId === selectedNodeId || edge.targetNodeId === selectedNodeId;
+    // With a run on the canvas, the path it took is drawn in green and every
+    // other link recedes; a branch out of a decision step carries the
+    // probability the step gave it.
+    const ran = overlay?.edges[edge.id];
+    const taken = !!ran?.taken;
+    const notTaken = !!overlay && !taken;
+    const pct = ran?.probability !== undefined ? `${Math.round(ran.probability * 100)}%` : undefined;
+    const runLabel = pct ? [edge.label, pct].filter(Boolean).join(" · ") : undefined;
     return [{
       id: edge.id,
       source: edge.sourceNodeId,
       target: edge.targetNodeId,
       // Link names only on the links of the selected step: at full density they pile up where links cross.
-      label: hot ? edge.label || undefined : undefined,
-      animated: !!edge.condition,
+      label: runLabel ?? (hot ? edge.label || undefined : undefined),
+      animated: !!edge.condition || (taken && overlay?.nodes[edge.targetNodeId]?.state === "running"),
       selected: edge.id === selectedEdgeId,
       // The head takes the line's own colour, so a highlighted link is
       // highlighted end to end. React Flow keys markers by their options, so
@@ -297,19 +348,20 @@ function Canvas({
         width: 16,
         height: 16,
         color: hot ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
+        ...(taken ? { color: TAKEN_STROKE } : {}),
       },
       style: {
-        stroke: hot ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
-        strokeWidth: edge.id === selectedEdgeId ? 2.5 : hot ? 1.8 : 1.4,
-        opacity: skips && !hot ? 0.18 : hot ? 1 : 0.65,
+        stroke: taken ? TAKEN_STROKE : hot ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))",
+        strokeWidth: edge.id === selectedEdgeId ? 2.5 : taken ? 2.4 : hot ? 1.8 : 1.4,
+        opacity: notTaken && !hot ? 0.22 : skips && !hot ? 0.18 : hot || taken ? 1 : 0.65,
         strokeDasharray: skips ? "4 4" : undefined,
       },
-      labelStyle: { fontSize: 11, fontWeight: 600, fill: "hsl(var(--foreground))" },
+      labelStyle: { fontSize: 11, fontWeight: 600, fill: taken ? TAKEN_STROKE : "hsl(var(--foreground))" },
       labelBgStyle: { fill: "hsl(var(--card))", stroke: "hsl(var(--border))", strokeWidth: 1 },
       labelBgPadding: [6, 3] as [number, number],
       labelBgBorderRadius: 4,
     }];
-  }), [edges, selectedEdgeId, selectedNodeId, waveOf, businessView]);
+  }), [edges, selectedEdgeId, selectedNodeId, waveOf, businessView, overlay]);
 
   // Position changes only: steps and links are created and removed through the server.
   const onNodesChange = useCallback((changes: NodeChange[]) => {

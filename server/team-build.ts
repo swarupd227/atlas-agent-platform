@@ -306,7 +306,8 @@ function decisionNodeFor(
     stateKey: stateKeyForLabel(step.label ?? ""),
     config: {
       decision: {
-        question: String(step.description || step.label || "").trim() || `Which branch should "${step.label}" take?`,
+        // The author's own question when the inspector holds one; else the step's description.
+        question: String(config.question || step.description || step.label || "").trim() || `Which branch should "${step.label}" take?`,
         options,
         ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
         ...(config.unsure === "gate" ? { unsure: "gate" } : {}),

@@ -31,21 +31,23 @@ describe("the automation dialog says what each step becomes", () => {
 
   it("names every kind a step can be, so none renders blank", () => {
     // A kind added to the classifier without copy here would show an empty label.
-    for (const kind of ["agent", "expression", "knowledge_base", "skill", "tool_call", "gate", "structural"]) {
+    for (const kind of ["agent", "decision", "expression", "knowledge_base", "skill", "tool_call", "gate", "structural"]) {
       expect(page).toContain(`${kind}: { label:`);
     }
   });
 
   it("reads the same classifier the server builds from, so the two cannot drift", () => {
     expect(page).toContain('from "@shared/flow-execution-kind"');
-    expect(page).toContain("classifyStep(n)");
+    // With the step's branches and the platform flag: a decision is a property
+    // of those, and without them the studio always said "agent".
+    expect(page).toContain("classifyStep(n, { outgoingEdges: graph.edges.filter(e => e.from === n.id), decisionKind: decisionKindOn })");
     // And the promise it makes is the classifier's own answer.
     expect(classifyStep({ type: "take_action", config: { toolName: "t", toolServerId: "s" } } as any)).toBe("tool_call");
     expect(classifyStep({ type: "ai_reasoning", config: {} } as any)).toBe("agent");
   });
 
   it("puts the cost beside it, not only the counts", () => {
-    expect(page).toContain("estimateFlowCost(graph)");
+    expect(page).toContain("estimateFlowCost(graph, { decisionKind: decisionKindOn })");
     expect(page).toMatch(/approxUsdPerRun\.toFixed\(2\)/);
   });
 });
