@@ -148,6 +148,7 @@ export interface DecisionStepConfig {
   unsure?: "llm" | "gate";
   /** The named classifier the step was bound to, when one was. */
   classifierId?: string;
+  classifierName?: string;
 }
 
 import { DECISION_RECORD_SUFFIX } from "@shared/run-overlay";
@@ -174,6 +175,7 @@ function parseDecisionConfig(raw: any): DecisionStepConfig | null {
     ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
     ...(answerType === "branch" && raw.unsure === "gate" ? { unsure: "gate" as const } : {}),
     ...(typeof raw.classifierId === "string" && raw.classifierId ? { classifierId: raw.classifierId } : {}),
+    ...(typeof raw.classifierName === "string" && raw.classifierName ? { classifierName: raw.classifierName } : {}),
   };
 }
 
@@ -2723,7 +2725,11 @@ export class DAGExecutionEngine {
       question: d.question,
       ...(r.fallbackReason ? { fallbackReason: r.fallbackReason } : {}),
       ...(d.classifierId ? { classifierId: d.classifierId } : {}),
+      ...(d.classifierName ? { classifierName: d.classifierName } : {}),
     });
+    // The audit subject names the classifier when the step is bound to one, so
+    // the classifier's agreement reads as one line across every flow using it.
+    const subject = d.classifierName ? `${nc.label} [${d.classifierName}]` : d.classifierId ? `${nc.label} [${d.classifierId}]` : nc.label;
     // A value-writing decision: the plain value goes under the state key, where
     // a rule downstream reads it as a field, and the decision's own record goes
     // under <key>_decision, where the monitor reads it. The record carries
@@ -2739,7 +2745,7 @@ export class DAGExecutionEngine {
           instructions: d.question,
           criteria: levels,
           threshold: d.threshold,
-          subject: d.classifierId ? `${nc.label} [${d.classifierId}]` : nc.label,
+          subject,
         });
         const level = Math.max(0, Math.min(levels.length - 1, Math.round(Number(r.answer))));
         return done({
@@ -2762,7 +2768,7 @@ export class DAGExecutionEngine {
           instructions: d.question,
           criteria,
           threshold: d.threshold,
-          subject: d.classifierId ? `${nc.label} [${d.classifierId}]` : nc.label,
+          subject,
         });
         const choice = String(r.answer);
         return done({

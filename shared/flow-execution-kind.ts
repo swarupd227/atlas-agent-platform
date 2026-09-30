@@ -116,6 +116,40 @@ export function decisionLevelsFor(config: unknown): string[] {
   return levels.length >= 2 && levels.length <= 10 ? levels : [];
 }
 
+/** A named classifier as a step binds it: what the row holds that the step takes. */
+export interface ClassifierBinding {
+  id: string;
+  name: string;
+  kind: string;
+  question: string;
+  options?: unknown;
+  levels?: unknown;
+  threshold?: number | null;
+}
+
+/**
+ * A step's config with a bound classifier's question, options or levels and
+ * threshold laid over its own. Build and sync apply it, so an edit to the
+ * classifier reaches every step bound to it on their next build or sync; the
+ * studio applies it once, at binding, so the step carries a copy that
+ * classifyStep reads without a lookup. A yes/no classifier has no step form
+ * and leaves the config as it was; so does a missing row.
+ */
+export function withClassifier<T extends Record<string, unknown>>(config: T, row: ClassifierBinding | null | undefined): T {
+  if (!row) return config;
+  const answerType = row.kind === "score" ? "score" : row.kind === "choice" ? "classify" : null;
+  if (!answerType) return config;
+  return {
+    ...config,
+    classifierId: row.id,
+    classifierName: row.name,
+    answerType,
+    question: str(row.question) || (config as { question?: unknown }).question,
+    ...(answerType === "classify" ? { options: decisionOptionsFor(row) } : { levels: decisionLevelsFor(row) }),
+    ...(typeof row.threshold === "number" ? { confidenceThreshold: row.threshold } : {}),
+  };
+}
+
 /** The shape of an edge the classifier reads: a flow's ProcessEdge, or a build's derived branch. */
 export type BranchLike = { to?: string; label?: string; condition?: string };
 

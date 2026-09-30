@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { layoutGraph, type ProcessNode, type ProcessEdge, type ProcessNodeType } from "@shared/process-flow";
-import { classifyStep, explainKind, decisionBranchesFor, decisionAnswerType, decisionOptionsFor, decisionLevelsFor } from "@shared/flow-execution-kind";
+import { classifyStep, explainKind, decisionBranchesFor, decisionAnswerType, decisionOptionsFor, decisionLevelsFor, withClassifier, type ClassifierBinding } from "@shared/flow-execution-kind";
 import { stateKeyForLabel } from "@shared/state-key";
 import type { Skill, KnowledgeBase, Agent } from "@shared/schema";
 
@@ -480,9 +480,11 @@ interface Props {
   overlay?: React.ReactNode;
   /** The platform flag DECISION_STEP_KIND: whether a decision step with branches runs as one decision call by default. */
   decisionKind?: boolean;
+  /** Named classifiers a decision step can be bound to; binding copies the classifier's question and options or levels onto the step. */
+  classifiers?: ClassifierBinding[];
 }
 
-function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisionKind }: Omit<Props, "flowKey">) {
+function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisionKind, classifiers }: Omit<Props, "flowKey">) {
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode>(toRFNodes(initialNodes));
   const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdge>(toRFEdges(initialEdges));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -953,6 +955,9 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                   const setOptions = (next: Array<{ label: string; description?: string }>) => patchNode(selNode.id, { config: { ...(d.config || {}), options: next } }, `node:${selNode.id}:options`);
                   const setLevels = (next: string[]) => patchNode(selNode.id, { config: { ...(d.config || {}), levels: next } }, `node:${selNode.id}:levels`);
                   const valueKey = stateKeyForLabel(d.label || "");
+                  const boundId = typeof d.config?.classifierId === "string" ? d.config.classifierId : "";
+                  const bindable = (classifiers ?? []).filter(c => c.kind === "choice" || c.kind === "score");
+                  const bound = bindable.find(c => c.id === boundId);
                   return (
                     <div className="flex flex-col gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-2" data-testid="decision-settings">
                       <label className="text-[10px] text-sky-700 dark:text-sky-400 uppercase tracking-wide font-medium">Decision</label>
@@ -976,9 +981,33 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                           {answerType === "branch" ? "Exactly one labelled connection out is taken." : `Later steps and the rules on the connections out read it as "${valueKey}".`}
                         </span>
                       </div>
+                      {bindable.length > 0 && answerType !== "branch" && (
+                        <div className="flex flex-col gap-1">
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Classifier</label>
+                          <select
+                            value={bound ? bound.id : ""}
+                            onChange={e => {
+                              const row = bindable.find(c => c.id === e.target.value);
+                              const { classifierId: _id, classifierName: _name, ...rest } = (d.config || {}) as Record<string, unknown>;
+                              // Binding copies the classifier's question and options or levels
+                              // onto the step; unbinding keeps the copy as the step's own.
+                              patchNode(selNode.id, { config: row ? withClassifier(rest, row) : rest });
+                            }}
+                            className="h-7 text-xs rounded-md border bg-background px-1.5"
+                            data-testid="select-node-classifier"
+                          >
+                            <option value="">None: this step's own question</option>
+                            {bindable.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                          <span className="text-[10px] text-muted-foreground">
+                            {bound ? "Bound: the question and answers below come from the classifier and are refreshed from it at build and sync." : "A classifier is one question asked the same way in more than one flow (Governance > Classifiers)."}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex flex-col gap-1">
                         <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Question</label>
                         <Textarea
+                          disabled={!!bound}
                           value={String((d.config?.question as string) || "")}
                           onChange={e => patchNode(selNode.id, { config: { ...(d.config || {}), question: e.target.value } }, `node:${selNode.id}:question`)}
                           placeholder={d.description || (answerType === "classify" ? "What kind of thing is this?" : answerType === "score" ? "How much of it is there?" : "What is being decided here?")}
@@ -1203,10 +1232,10 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
   );
 }
 
-export default function FlowGraphCanvas({ flowKey, initialNodes, initialEdges, onChange, issues, overlay, decisionKind }: Props) {
+export default function FlowGraphCanvas({ flowKey, initialNodes, initialEdges, onChange, issues, overlay, decisionKind, classifiers }: Props) {
   return (
     <ReactFlowProvider>
-      <Canvas key={flowKey} initialNodes={initialNodes} initialEdges={initialEdges} onChange={onChange} issues={issues} overlay={overlay} decisionKind={decisionKind} />
+      <Canvas key={flowKey} initialNodes={initialNodes} initialEdges={initialEdges} onChange={onChange} issues={issues} overlay={overlay} decisionKind={decisionKind} classifiers={classifiers} />
     </ReactFlowProvider>
   );
 }

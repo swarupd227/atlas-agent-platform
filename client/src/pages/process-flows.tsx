@@ -509,6 +509,13 @@ export default function ProcessFlows() {
     meta: { quietError: true },
   });
   const decisionKindOn = decisionKindSetting?.value === "on";
+  // Named classifiers a decision step can be bound to (Governance > Classifiers).
+  const { data: classifiers } = useQuery<Array<{ id: string; name: string; kind: string; question: string; options?: unknown; levels?: unknown; threshold?: number | null }>>({
+    queryKey: ["/api/classifiers"],
+    retry: false,
+    staleTime: 60_000,
+    meta: { quietError: true },
+  });
 
   // What each step becomes when the flow goes live. The same classifier the
   // server builds from, so what this promises and what gets built cannot drift.
@@ -865,6 +872,7 @@ export default function ProcessFlows() {
           initialEdges={graph.edges}
           issues={validationIssues}
           decisionKind={decisionKindOn}
+          classifiers={classifiers ?? []}
           onChange={(nodes, edges) => { setGraph({ nodes, edges }); if (validationIssues.length) setValidationIssues([]); }}
           overlay={nodeCount > 0 ? (
             // One place for full screen and clear, in and out of full screen.

@@ -15,7 +15,7 @@ import { generateOntologyEvalCases } from "./routes/helpers";
 import { resolveBindingServer } from "./team-bindings";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
 import { edgeRuleForCondition, parseConditionToRule } from "@shared/condition-to-rule";
-import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, type DecisionBranch } from "@shared/flow-execution-kind";
+import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, withClassifier, type ClassifierBinding, type DecisionBranch } from "@shared/flow-execution-kind";
 import { stateKeyForLabel } from "@shared/state-key";
 import { getDecisionSettings } from "./decision-settings";
 import { stepCorrelation } from "@shared/process-flow-correlation";
@@ -305,10 +305,19 @@ function decisionNodeFor(
   stepsByLabel: Map<string, any> | undefined,
   branches: DecisionBranch[] | undefined,
   decisionKind: boolean | undefined,
+  classifiers?: Map<string, ClassifierBinding>,
+  warn?: (message: string) => void,
 ): { nodeType: string; stateKey?: string; config: Record<string, unknown> } | null {
   const step = soleAuthoredStep(proposal, stepsByLabel);
   if (!step) return null;
-  const config = (step.config ?? {}) as Record<string, any>;
+  const raw = (step.config ?? {}) as Record<string, any>;
+  // A step bound to a named classifier takes the classifier's question, options
+  // or levels and threshold now, over the copy it carries, so an edit to the
+  // classifier reaches the team on its next build. A row that is gone leaves
+  // the copy standing, with a warning.
+  const bound = typeof raw.classifierId === "string" && raw.classifierId ? classifiers?.get(raw.classifierId) : undefined;
+  if (typeof raw.classifierId === "string" && raw.classifierId && classifiers && !bound) warn?.(`"${step.label}" is bound to a classifier that no longer exists; built from the copy the step carries.`);
+  const config = withClassifier(raw, bound) as Record<string, any>;
   if (classifyStep({ type: step.type, config }, { outgoingEdges: branches ?? [], decisionKind }) !== "decision") return null;
   const threshold = Number(config.confidenceThreshold);
   const answerType = decisionAnswerType(config);
@@ -326,6 +335,7 @@ function decisionNodeFor(
           ...authored,
           ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
           ...(typeof config.classifierId === "string" && config.classifierId ? { classifierId: config.classifierId } : {}),
+          ...(typeof config.classifierName === "string" && config.classifierName ? { classifierName: config.classifierName } : {}),
         },
       },
     };
@@ -355,10 +365,11 @@ function deterministicNodeFor(
   branchConditions?: string[],
   branches?: DecisionBranch[],
   decisionKind?: boolean,
+  classifiers?: Map<string, ClassifierBinding>,
 ): { nodeType: string; refSkillId?: string; refKnowledgeBaseId?: string; stateKey?: string; config: Record<string, unknown> } | null {
   // A decision drawn with branches, when the kind is on: settled before the
   // ordinary derivation, which has no case for it.
-  const decision = decisionNodeFor(proposal, stepsByLabel, branches, decisionKind);
+  const decision = decisionNodeFor(proposal, stepsByLabel, branches, decisionKind, classifiers, warn);
   if (decision) return decision;
   // The authored step first, and only then whatever the proposer invented.
   //
@@ -973,6 +984,10 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // Whether a make_decision step with labelled branches becomes a decision node
   // (server/decision-settings.ts); a step's own config.decisionKind overrides it.
   const decisionKind = (await getDecisionSettings().catch(() => null))?.stepKind ?? false;
+  // Named classifiers the flow's steps may be bound to (Phase 3): a bound step
+  // takes the classifier's question, options or levels and threshold at build.
+  const classifiers = new Map<string, ClassifierBinding>();
+  try { for (const c of await storage.getDecisionClassifiers(orgId)) classifiers.set(c.id, c as ClassifierBinding); } catch { /* an older storage: steps keep the copy they carry */ }
 
   const createdWorkers: any[] = [];
   const workerLinkResults: Array<{ linked: string[]; unresolved: string[]; unconnected: string[] }> = [];
@@ -1201,7 +1216,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
         if (!worker) continue;
 
         const isGate = humanCheckpointWorkerIds.has(worker.id);
-        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline), branchesFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline), decisionKind);
+        const det = isGate ? null : deterministicNodeFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline), branchesFor(workers[workerIdx >= 0 ? workerIdx : j], pipeline), decisionKind, classifiers);
         const correlation = correlationFor(workers[workerIdx >= 0 ? workerIdx : j], authoredStepsByLabel);
         const node = await storage.createTeamBlueprintNode({
           blueprintId: blueprint.id,
@@ -1286,7 +1301,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       // form gave six workers 100px each for a 244px card, so they overlapped.
       const { x: posX, y: posY } = workerNodePosition(i, isSequential);
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
-      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[i], pipeline), branchesFor(workers[i], pipeline), decisionKind);
+      const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[i], pipeline), branchesFor(workers[i], pipeline), decisionKind, classifiers);
       const correlation = correlationFor(workers[i], authoredStepsByLabel);
       const node = await storage.createTeamBlueprintNode({
         blueprintId: blueprint.id,

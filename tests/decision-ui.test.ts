@@ -132,7 +132,7 @@ describe("the answer types on every surface (Phase 3, item 2)", () => {
     expect(studioCanvas).toContain('data-testid="button-add-node-level"');
     expect(studioCanvas).toContain("data-testid={`input-node-level-${i}`}");
     expect(studioCanvas).toContain('data-testid="decision-answer-preview"');
-    expect(studioCanvas).toContain("decisionAnswerType, decisionOptionsFor, decisionLevelsFor } from \"@shared/flow-execution-kind\"");
+    expect(studioCanvas).toContain("import { classifyStep, explainKind, decisionBranchesFor, decisionAnswerType, decisionOptionsFor, decisionLevelsFor");
     // The branch-only controls stay, shown only for a branch decision.
     expect(studioCanvas).toContain('{answerType === "branch" && (\n                      <div className="flex flex-col gap-1">\n                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Runs as</label>');
   });

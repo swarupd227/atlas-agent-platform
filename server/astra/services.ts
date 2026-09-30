@@ -214,6 +214,16 @@ async function createPolicy(orgId: string, policy: Omit<InsertPolicy, "organizat
   return storage.createPolicy({ ...policy, organizationId: orgId });
 }
 
+// Named classifiers (Phase 3): one question asked the same way wherever a
+// decision step is bound to it. See server/routes/classifiers.ts.
+async function listClassifiers(orgId: string) {
+  return storage.getDecisionClassifiers(orgId);
+}
+
+async function createClassifier(orgId: string, row: { name: string; kind: string; question: string; options?: unknown; levels?: unknown; criteria?: unknown; threshold?: number | null; description?: string | null }) {
+  return storage.createDecisionClassifier({ ...(row as any), organizationId: orgId });
+}
+
 async function deletePolicy(orgId: string, policyId: string) {
   return storage.deletePolicy(policyId, orgId);
 }
@@ -1617,6 +1627,8 @@ export function createAstraServices(): AstraServices {
     listPolicies,
     createPolicy,
     deletePolicy,
+    listClassifiers,
+    createClassifier,
     linkConnector,
     recordAudit,
     listRunnableAgents,

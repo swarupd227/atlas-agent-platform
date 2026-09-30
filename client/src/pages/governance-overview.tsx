@@ -222,6 +222,7 @@ export default function GovernanceOverview() {
           <div className="flex items-center gap-1.5 flex-wrap">
             <Button variant="outline" size="sm" asChild data-testid="link-audit-trail"><Link href="/audit-trail"><ScrollText className="w-3.5 h-3.5 mr-1.5" />Audit trail</Link></Button>
             {canEditCatalogue && <Button variant="ghost" size="sm" asChild data-testid="link-policy-engine"><Link href="/governance/policy-engine">Edit regulation catalogue</Link></Button>}
+            <Button variant="ghost" size="sm" asChild data-testid="link-classifiers"><Link href="/governance/classifiers">Classifiers</Link></Button>
             <Button variant="ghost" size="sm" asChild data-testid="link-classic"><Link href="/governance/classic">Classic view</Link></Button>
           </div>
         </div>

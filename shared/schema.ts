@@ -537,6 +537,37 @@ export const insertPolicySchema = createInsertSchema(policies).omit({ id: true, 
 export type InsertPolicy = z.infer<typeof insertPolicySchema>;
 export type Policy = typeof policies.$inferSelect;
 
+/**
+ * A named, reusable classifier: one question an organization asks the decision
+ * seam in more than one flow -- what kind of thing this is (choice), how much
+ * of it there is (score), or whether it is so (noul). A decision step bound to
+ * one takes its question, options or levels and threshold at build and sync
+ * time, so the audit's per-classifier agreement is one line across every flow.
+ */
+export const decisionClassifiers = pgTable("decision_classifiers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").references(() => organizations.id),
+  name: text("name").notNull(),
+  kind: text("kind").notNull().default("choice"),
+  question: text("question").notNull(),
+  /** choice: [{label, description?}] */
+  options: jsonb("options").default(sql`'[]'::jsonb`),
+  /** score: the ladder, low to high, two to ten */
+  levels: jsonb("levels").default(sql`'[]'::jsonb`),
+  /** noul: {true, false} */
+  criteria: jsonb("criteria"),
+  threshold: real("threshold"),
+  description: text("description"),
+  status: text("status").notNull().default("active"),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDecisionClassifierSchema = createInsertSchema(decisionClassifiers).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertDecisionClassifier = z.infer<typeof insertDecisionClassifierSchema>;
+export type DecisionClassifier = typeof decisionClassifiers.$inferSelect;
+
 export const approvals = pgTable("approvals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   organizationId: varchar("organization_id").references(() => organizations.id),

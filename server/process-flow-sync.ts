@@ -34,7 +34,7 @@ import { effectiveStateKey, stateKeyForLabel } from "@shared/state-key";
 import { isCurrentReworkRule, REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
 import type { ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
-import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor } from "@shared/flow-execution-kind";
+import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, withClassifier } from "@shared/flow-execution-kind";
 import { getDecisionSettings } from "./decision-settings";
 
 /**
@@ -613,7 +613,15 @@ export async function applyFlowSync(
           .filter((e) => e.from === pn.id)
           .map((e) => ({ label: String(e.label ?? "").trim() || String(e.condition ?? "").trim(), description: String(e.condition ?? "").trim() || String(e.label ?? "").trim() }))
           .filter((o) => o.label);
-        const cfg = (pn.config ?? {}) as Record<string, any>;
+        // A step bound to a named classifier takes the classifier's question,
+        // options or levels and threshold now, over the copy it carries; a row
+        // that is gone leaves the copy standing.
+        const rawCfg = (pn.config ?? {}) as Record<string, any>;
+        let bound: any = undefined;
+        if (typeof rawCfg.classifierId === "string" && rawCfg.classifierId) {
+          try { bound = await storage.getDecisionClassifier(rawCfg.classifierId, orgId); } catch { bound = undefined; }
+        }
+        const cfg = withClassifier(rawCfg, bound) as Record<string, any>;
         const threshold = Number(cfg.confidenceThreshold);
         const answerType = decisionAnswerType(cfg);
         // A value-writing decision takes its options or levels from the step,
@@ -625,6 +633,7 @@ export async function applyFlowSync(
               ...(answerType === "classify" ? { options: decisionOptionsFor(cfg) } : { levels: decisionLevelsFor(cfg) }),
               ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
               ...(typeof cfg.classifierId === "string" && cfg.classifierId ? { classifierId: cfg.classifierId } : {}),
+              ...(typeof cfg.classifierName === "string" && cfg.classifierName ? { classifierName: cfg.classifierName } : {}),
             }
           : {
               question: String(cfg.question || pn.description || pn.label || "").trim() || `Which branch should "${pn.label}" take?`,

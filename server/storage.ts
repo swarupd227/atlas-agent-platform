@@ -33,6 +33,7 @@ import {
   type RunTrace, type InsertRunTrace,
   type EvalSuite, type InsertEvalSuite,
   type Policy, type InsertPolicy,
+  decisionClassifiers, type DecisionClassifier, type InsertDecisionClassifier,
   type Approval, type InsertApproval,
   type AuditEvent, type InsertAuditEvent,
   type Invoice, type InsertInvoice,
@@ -294,6 +295,13 @@ export interface IStorage {
   createPolicy(policy: InsertPolicy): Promise<Policy>;
   updatePolicy(id: string, data: Partial<Policy>, orgId?: string): Promise<Policy | undefined>;
   deletePolicy(id: string, orgId?: string): Promise<boolean>;
+
+  // Named classifiers (Phase 3), org-scoped like policies
+  getDecisionClassifiers(orgId?: string): Promise<DecisionClassifier[]>;
+  getDecisionClassifier(id: string, orgId?: string): Promise<DecisionClassifier | undefined>;
+  createDecisionClassifier(row: InsertDecisionClassifier): Promise<DecisionClassifier>;
+  updateDecisionClassifier(id: string, data: Partial<DecisionClassifier>, orgId?: string): Promise<DecisionClassifier | undefined>;
+  deleteDecisionClassifier(id: string, orgId?: string): Promise<boolean>;
 
   getApprovals(orgId?: string): Promise<Approval[]>;
   /** Every approval, with evidence only on the ones still open. */
@@ -1513,6 +1521,39 @@ export class DatabaseStorage implements IStorage {
     if (!owned) return false;
     await this.detachPolicyFromAgents(id, owned.name, orgId);
     const [deleted] = await db.delete(policies).where(eq(policies.id, id)).returning();
+    return !!deleted;
+  }
+
+  async getDecisionClassifiers(orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(decisionClassifiers).where(eq(decisionClassifiers.organizationId, scopedOrgId)).orderBy(asc(decisionClassifiers.name));
+    }
+    return db.select().from(decisionClassifiers).orderBy(asc(decisionClassifiers.name));
+  }
+
+  async getDecisionClassifier(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(decisionClassifiers.id, id), eq(decisionClassifiers.organizationId, orgId)) : eq(decisionClassifiers.id, id);
+    const [row] = await db.select().from(decisionClassifiers).where(clause);
+    return row;
+  }
+
+  async createDecisionClassifier(row: InsertDecisionClassifier) {
+    const orgId = resolveOrgId(row.organizationId);
+    const [created] = await db.insert(decisionClassifiers).values({ ...row, organizationId: orgId } as any).returning();
+    return created;
+  }
+
+  async updateDecisionClassifier(id: string, data: Partial<DecisionClassifier>, orgId?: string) {
+    const clause = orgId ? and(eq(decisionClassifiers.id, id), eq(decisionClassifiers.organizationId, orgId)) : eq(decisionClassifiers.id, id);
+    const [updated] = await db.update(decisionClassifiers).set(data).where(clause).returning();
+    return updated;
+  }
+
+  async deleteDecisionClassifier(id: string, orgId?: string) {
+    const owned = await this.getDecisionClassifier(id, orgId);
+    if (!owned) return false;
+    const [deleted] = await db.delete(decisionClassifiers).where(eq(decisionClassifiers.id, id)).returning();
     return !!deleted;
   }
 

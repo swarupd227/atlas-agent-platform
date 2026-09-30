@@ -1993,6 +1993,28 @@ export async function runStartupMigrations() {
       ALTER TABLE decision_audit ADD COLUMN IF NOT EXISTS jev_cost_usd REAL;
     `);
 
+    // Phase 3: named classifiers, one question asked the same way wherever a
+    // decision step is bound to it. See server/routes/classifiers.ts.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS decision_classifiers (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'choice',
+        question TEXT NOT NULL,
+        options JSONB DEFAULT '[]'::jsonb,
+        levels JSONB DEFAULT '[]'::jsonb,
+        criteria JSONB,
+        threshold REAL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_decision_classifiers_org ON decision_classifiers (organization_id, name);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

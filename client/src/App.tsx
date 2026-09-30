@@ -110,6 +110,7 @@ const MarketplacePublishers = lazy(() => import("@/pages/marketplace-publishers"
 const McpApps = lazy(() => import("@/pages/mcp-apps"));
 const OntologyExplorer = lazy(() => import("@/pages/ontology"));
 const PolicyEngine = lazy(() => import("@/pages/policy-engine"));
+const Classifiers = lazy(() => import("@/pages/classifiers"));
 const SkillCatalog = lazy(() => import("@/pages/skills"));
 const SkillStudio = lazy(() => import("@/pages/skill-studio"));
 const SkillComposer = lazy(() => import("@/pages/skill-composer"));
@@ -403,6 +404,7 @@ function DashboardRouter() {
       <Route path="/files" component={Files} />
       <Route path="/observability" component={ObservabilityPage} />
       <Route path="/governance/policy-engine" component={PolicyEngine} />
+      <Route path="/governance/classifiers" component={Classifiers} />
       <Route path="/governance/classic" component={GovernanceClassic} />
       <Route path="/governance" component={Governance} />
       <Route path="/audit-trail" component={AuditTrail} />

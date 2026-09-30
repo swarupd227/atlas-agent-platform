@@ -18,6 +18,7 @@ import { COL_WIDTH, ROW_HEIGHT } from "@shared/graph-layout";
 import { NODE_COLOR_MAP, TRUST_TIER_COLORS } from "@/lib/team-graph-node-meta";
 import { buildRunOverlay } from "@shared/run-overlay";
 import { stateKeyForLabel } from "@shared/state-key";
+import { withClassifier } from "@shared/flow-execution-kind";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
@@ -145,6 +146,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
   const { data: remoteAgents } = useQuery<RemoteAgent[]>({ queryKey: ["/api/remote-agents"] });
   const { data: mcpTools } = useQuery<McpServerTool[]>({ queryKey: ["/api/mcp-tools"], enabled: !!selectedNodeId });
   const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"], enabled: !!selectedNodeId });
+  const { data: classifiers } = useQuery<ClassifierRow[]>({ queryKey: ["/api/classifiers"], enabled: !!selectedNodeId, retry: false, meta: { quietError: true } });
   const { data: skills } = useQuery<Skill[]>({ queryKey: ["/api/skills"] });
   const { data: knowledgeBases } = useQuery<KnowledgeBase[]>({ queryKey: ["/api/knowledge-bases"] });
 
@@ -509,6 +511,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
                     remoteAgents={remoteAgents || []}
                     mcpTools={mcpTools || []}
                     policies={policies || []}
+                    classifiers={classifiers || []}
                     skills={skills || []}
                     knowledgeBases={knowledgeBases || []}
                     outgoingEdges={edges.filter((e) => e.sourceNodeId === selectedNode.id)}
@@ -548,6 +551,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
 
 type DecisionOption = { label: string; description?: string };
 type DecisionAnswerTypeUi = "branch" | "classify" | "score";
+type ClassifierRow = { id: string; name: string; kind: string; question: string; options?: unknown; levels?: unknown; threshold?: number | null };
 type DecisionNodeConfig = { answerType?: DecisionAnswerTypeUi; question?: string; options?: Array<DecisionOption | string>; levels?: string[]; threshold?: number; unsure?: string; classifierId?: string };
 const decisionAnswerTypeOf = (cfg: unknown): DecisionAnswerTypeUi => {
   const v = (cfg as DecisionNodeConfig | null | undefined)?.answerType;
@@ -559,11 +563,12 @@ const decisionAnswerTypeOf = (cfg: unknown): DecisionAnswerTypeUi => {
  * executeDecisionNode reads), and its branches checked against them: a link
  * set to Decision routing whose name matches no option can never be taken.
  */
-function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
+function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate, classifiers = [] }: {
   node: TeamBlueprintNode;
   allNodes: TeamBlueprintNode[];
   outgoingEdges: TeamBlueprintEdge[];
   onUpdate: (updates: Partial<TeamBlueprintNode>) => void;
+  classifiers?: ClassifierRow[];
 }) {
   const cfg = (((node.config as any)?.decision || {}) as DecisionNodeConfig);
   const stored: DecisionOption[] = Array.isArray(cfg.options) ? cfg.options.map((o) => (typeof o === "string" ? { label: o } : o)) : [];
@@ -588,6 +593,23 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
     write({ levels: next.map((l) => l.trim()).filter(Boolean) });
   };
   const validLevels = levels.map((l) => l.trim()).filter(Boolean).length;
+  const bindable = classifiers.filter((c) => c.kind === "choice" || c.kind === "score");
+  const bound = cfg.classifierId ? bindable.find((c) => c.id === cfg.classifierId) : undefined;
+  // Binding copies the classifier's question and options or levels into the
+  // node's decision config; build and sync refresh them from the classifier.
+  const bind = (row: ClassifierRow | undefined) => {
+    const { classifierId: _id, classifierName: _name, ...rest } = cfg as DecisionNodeConfig & { classifierName?: string };
+    if (!row) { onUpdate({ config: { ...((node.config as any) || {}), decision: { ...rest, options } } } as any); return; }
+    const fromRow = withClassifier({ ...rest, options } as Record<string, unknown>, row) as Record<string, any>;
+    const nextOptions: DecisionOption[] = Array.isArray(fromRow.options) ? fromRow.options : [];
+    const nextLevels: string[] = Array.isArray(fromRow.levels) ? fromRow.levels : [];
+    setQuestion(String(fromRow.question ?? "")); setOptions(nextOptions); setLevels(nextLevels);
+    if (typeof fromRow.confidenceThreshold === "number") setThreshold(String(fromRow.confidenceThreshold));
+    onUpdate({ config: { ...((node.config as any) || {}), decision: {
+      ...rest, classifierId: row.id, classifierName: row.name, answerType: fromRow.answerType, question: fromRow.question,
+      options: nextOptions, levels: nextLevels, ...(typeof fromRow.confidenceThreshold === "number" ? { threshold: fromRow.confidenceThreshold } : {}),
+    } } } as any);
+  };
   const labelOf = (id: string) => allNodes.find((n) => n.id === id)?.label || "?";
   const branches = outgoingEdges.filter((e) => e.evaluationMode === "decision");
   const optionSlugs = new Set(options.map((o) => stateKeyForLabel(o.label)).filter(Boolean));
@@ -608,9 +630,28 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
         </select>
       </div>
 
+      {bindable.length > 0 && answerType !== "branch" && (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Classifier</label>
+          <select
+            className="h-9 w-full rounded-md border bg-background px-2 text-xs"
+            value={bound ? bound.id : ""}
+            onChange={e => bind(bindable.find((c) => c.id === e.target.value))}
+            data-testid="select-decision-classifier"
+          >
+            <option value="">None: this step's own question</option>
+            {bindable.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <p className="text-[10px] text-muted-foreground">
+            {bound ? "Bound: the question and answers come from the classifier and are refreshed from it at build and sync." : "A classifier is one question asked the same way in more than one flow (Governance > Classifiers)."}
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium text-muted-foreground">Question</label>
         <Textarea
+          disabled={!!bound}
           value={question}
           onChange={e => setQuestion(e.target.value)}
           onBlur={() => { if (question !== (cfg.question || "")) write({ question }); }}
@@ -1017,6 +1058,7 @@ function NodeConfigPanel({
   remoteAgents,
   mcpTools,
   policies,
+  classifiers,
   skills,
   knowledgeBases,
   outgoingEdges = [],
@@ -1030,6 +1072,7 @@ function NodeConfigPanel({
   remoteAgents: RemoteAgent[];
   mcpTools: McpServerTool[];
   policies: Policy[];
+  classifiers: ClassifierRow[];
   skills: Skill[];
   knowledgeBases: KnowledgeBase[];
   /** This step's links out, for a decision step to show its branches against its options. */
@@ -1361,7 +1404,7 @@ function NodeConfigPanel({
 
       {node.nodeType === "decision" && (
         <>
-          <DecisionConfigFields key={node.id} node={node} allNodes={allNodes} outgoingEdges={outgoingEdges} onUpdate={onUpdate} />
+          <DecisionConfigFields key={node.id} node={node} allNodes={allNodes} outgoingEdges={outgoingEdges} onUpdate={onUpdate} classifiers={classifiers} />
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
               State Key

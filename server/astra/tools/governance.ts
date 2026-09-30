@@ -239,4 +239,80 @@ export const bindPolicyTool: AstraTool<BindInput> = {
   },
 };
 
-export const GOVERNANCE_TOOLS = [listPoliciesTool, explainPoliciesTool, checkGovernanceReadinessTool, verifyAuditChainTool, regulatoryExamPackageTool, installPolicyPackTool, bindPolicyTool];
+// ── Named classifiers (Phase 3) ──────────────────────────────────────────────
+// One question an organization asks the decision seam in more than one flow,
+// defined once and bound to decision steps in the studio or the editor.
+
+const compactClassifier = (c: any) => ({
+  id: c.id, name: c.name, kind: c.kind, question: c.question, version: c.version ?? 1, status: c.status,
+  answers: c.kind === "choice" ? (Array.isArray(c.options) ? c.options.map((o: any) => (typeof o === "string" ? o : o?.label)).filter(Boolean) : [])
+    : c.kind === "score" ? (Array.isArray(c.levels) ? c.levels : [])
+    : ["yes", "no"],
+  ...(typeof c.threshold === "number" ? { threshold: c.threshold } : {}),
+  ...(c.description ? { description: c.description } : {}),
+});
+
+export const listClassifiersTool: AstraTool<{ query?: string }> = {
+  name: "list_classifiers",
+  description: "List the organization's named classifiers: reusable questions for the decision model (a label from a list, a level on a ladder, or yes/no) that decision steps in flows can be bound to. Optionally filter by a word in the name or question.",
+  input: z.object({ query: z.string().max(100).optional() }),
+  permission: "view_agents",
+  pack: PACK,
+  confirm: false,
+  run: async (ctx, input) => {
+    const all: any[] = await ctx.services.listClassifiers(ctx.orgId);
+    const q = input.query?.toLowerCase();
+    const rows = all.filter((c) => !q || `${c.name} ${c.question} ${c.description ?? ""}`.toLowerCase().includes(q)).map(compactClassifier);
+    return {
+      payload: { total: rows.length, classifiers: rows.slice(0, 40) },
+      proof: { compliance: { status: "measured", summary: `${rows.length} ${rows.length === 1 ? "classifier" : "classifiers"}` } },
+    };
+  },
+};
+
+export const createClassifierTool: AstraTool<{ name: string; kind: "choice" | "score" | "noul"; question: string; options?: string[]; levels?: string[]; yesMeans?: string; noMeans?: string; threshold?: number; description?: string }> = {
+  name: "create_classifier",
+  description: "Define a named classifier the organization can bind to decision steps in any flow: a choice (give options, 'label: description' each), a score (give levels, low to high, two to ten), or yes/no (give what yes and no mean). Bound steps take its question and answers at their next build or sync.",
+  input: z.object({
+    name: z.string().min(1).max(120),
+    kind: z.enum(["choice", "score", "noul"]),
+    question: z.string().min(1).max(2000),
+    options: z.array(z.string().min(1).max(200)).max(255).optional().describe("choice: each 'label' or 'label: when it applies'"),
+    levels: z.array(z.string().min(1).max(200)).min(2).max(10).optional().describe("score: the ladder, low to high"),
+    yesMeans: z.string().max(500).optional(),
+    noMeans: z.string().max(500).optional(),
+    threshold: z.number().min(0).max(1).optional(),
+    description: z.string().max(2000).optional(),
+  }),
+  permission: "create_modify_blueprints",
+  pack: PACK,
+  confirm: true,
+  preview: async (ctx, input): Promise<ConfirmPreview> => {
+    const options = (input.options ?? []).map((o) => { const i = o.indexOf(":"); return i > 0 ? { label: o.slice(0, i).trim(), description: o.slice(i + 1).trim() } : { label: o.trim() }; }).filter((o) => o.label);
+    if (input.kind === "choice" && options.length < 2) return { refuse: "A choice classifier needs at least two options." };
+    if (input.kind === "score" && !(input.levels && input.levels.length >= 2)) return { refuse: "A score classifier needs a ladder of two to ten levels." };
+    if (input.kind === "noul" && !(input.yesMeans && input.noMeans)) return { refuse: "A yes/no classifier needs what yes and no mean." };
+    const existing: any[] = await ctx.services.listClassifiers(ctx.orgId);
+    if (existing.some((c) => String(c.name).toLowerCase() === input.name.toLowerCase())) return { refuse: `A classifier named "${input.name}" already exists.` };
+    const answers = input.kind === "choice" ? options.map((o) => o.label) : input.kind === "score" ? input.levels! : ["yes", "no"];
+    return {
+      summary: `Create classifier: ${input.name}`,
+      details: [
+        `Question: ${input.question}`,
+        `Answers with ${input.kind === "choice" ? "one of" : input.kind === "score" ? "a level, low to high:" : ""} ${answers.join(", ")}.`,
+        "Decision steps can be bound to it in the studio or the editor; bound steps take its question and answers at their next build or sync.",
+      ],
+      frozen: { name: input.name, kind: input.kind, question: input.question, options, levels: input.levels ?? [], criteria: input.kind === "noul" ? { true: input.yesMeans, false: input.noMeans } : undefined, threshold: input.threshold ?? null, description: input.description ?? null },
+    };
+  },
+  run: async (ctx, input) => {
+    const frozen = (ctx.confirmation?.frozen as Record<string, unknown> | undefined) ?? { name: input.name, kind: input.kind, question: input.question, options: [], levels: input.levels ?? [], threshold: input.threshold ?? null, description: input.description ?? null };
+    const created = await ctx.services.createClassifier(ctx.orgId, frozen);
+    return {
+      payload: { created: true, classifier: compactClassifier(created) },
+      proof: { compliance: { status: "measured", summary: `Classifier "${created.name}" created (${created.kind}); audit recorded` } },
+    };
+  },
+};
+
+export const GOVERNANCE_TOOLS = [listPoliciesTool, explainPoliciesTool, checkGovernanceReadinessTool, verifyAuditChainTool, regulatoryExamPackageTool, installPolicyPackTool, bindPolicyTool, listClassifiersTool, createClassifierTool];
