@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AstraToolContext, AstraTool, ProofEnvelope, ToolRunResult } from "../types";
+import type { KnowledgeSearchFailure } from "@shared/knowledge-search-failure";
 
 /**
  * Ask one of the user's agents to do something, as a Workspace run.
@@ -37,6 +38,8 @@ interface RunContext {
   totalTokens: number;
   knowledgeSearched: number;
   knowledge: Array<{ knowledgeBaseId: string; name: string | null; passages: number; tokens: number; topSimilarity: number | null }>;
+  /** Searches that threw (workspace-run.ts buildKbContext); absent when every search ran. */
+  knowledgeFailed?: KnowledgeSearchFailure[];
 }
 
 const tokens = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "token" : "tokens"}`;
@@ -45,11 +48,17 @@ const tokens = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "token" 
 export function contextProof(context: RunContext | null | undefined): ProofEnvelope["context"] {
   if (!context) return { status: "not_measured", reason: "This run didn't record what the agent saw. Team runs and runs started before 18 Sep 2026 don't." };
   const passages = context.knowledge.reduce((sum, k) => sum + k.passages, 0);
-  const knowledge = context.knowledgeSearched === 0
-    ? "no knowledge base linked"
-    : passages === 0
-      ? `${context.knowledgeSearched} knowledge ${context.knowledgeSearched === 1 ? "base" : "bases"} searched, nothing relevant found`
-      : `${passages} ${passages === 1 ? "passage" : "passages"} from ${context.knowledge.length} knowledge ${context.knowledge.length === 1 ? "base" : "bases"}`;
+  const bases = (n: number) => `${n} knowledge ${n === 1 ? "base" : "bases"}`;
+  const used = `${passages} ${passages === 1 ? "passage" : "passages"} from ${bases(context.knowledge.length)}`;
+  const failed = context.knowledgeFailed ?? [];
+  // A search that threw is neither "nothing linked" nor "nothing relevant": say so, and why.
+  const knowledge = failed.length > 0
+    ? `${passages > 0 ? `${used}, ` : ""}knowledge search failed${failed.some((f) => f.knowledgeBaseId) ? ` for ${bases(failed.length)}` : ""} (${failed[0].reason.replace(/[.]$/, "")})`
+    : context.knowledgeSearched === 0
+      ? "no knowledge base linked"
+      : passages === 0
+        ? `${bases(context.knowledgeSearched)} searched, nothing relevant found`
+        : used;
   return { status: "measured", summary: `${tokens(context.totalTokens)} of context · ${knowledge}` };
 }
 

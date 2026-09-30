@@ -32,6 +32,7 @@ import { summarizeRunToolCalls } from "./run-tool-summary";
 import { runTeamAgentDag, extractFinalOutputText, onDagRunFinished, summarizeFinishedDagRun, type DagRunFinished } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { rerankChunks } from "./retrieval-rerank";
+import { searchFailureReason, type KnowledgeSearchFailure } from "@shared/knowledge-search-failure";
 import { canDecideApproval, type RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
@@ -144,9 +145,13 @@ export interface ContextUsage {
    *  estimate agent-runtime.ts records), zero-token layers left out. */
   layers: Array<{ layer: string; tokens: number }>;
   totalTokens: number;
-  /** Linked knowledge bases that were searched (at most 3 per run). */
+  /** Linked knowledge bases whose search ran (at most 3 per run). */
   knowledgeSearched: number;
   knowledge: KnowledgeRetrieval[];
+  /** Linked knowledge bases whose search threw, and why; absent when every
+   *  search ran. Without it a failed search reads as "no knowledge base
+   *  linked" (shared/knowledge-search-failure.ts). */
+  knowledgeFailed?: KnowledgeSearchFailure[];
 }
 
 const estimateTokens = (text: string) => Math.ceil(text.length / 4);
@@ -161,6 +166,7 @@ export function measureContextUsage(parts: {
   brandAssets: string;
   knowledgeSearched: number;
   retrievals: KnowledgeRetrieval[];
+  failures?: KnowledgeSearchFailure[];
 }): ContextUsage {
   const layers = [
     { layer: "system_prompt", tokens: estimateTokens(parts.instructions) },
@@ -175,6 +181,7 @@ export function measureContextUsage(parts: {
     totalTokens: layers.reduce((sum, l) => sum + l.tokens, 0),
     knowledgeSearched: parts.knowledgeSearched,
     knowledge: parts.retrievals,
+    ...(parts.failures?.length ? { knowledgeFailed: parts.failures } : {}),
   };
 }
 
@@ -231,21 +238,32 @@ async function buildContext(agentId: string, orgId: string | undefined, mcpServe
  *  see, and splices matching chunks into the system prompt — the same
  *  context-stuffing pattern agent-runtime.ts's executePromptWithMcp uses.
  *  Never throws: a KB error degrades to "no KB context" rather than failing
- *  the whole run, matching this file's existing non-fatal-trace-write style. */
-async function buildKbContext(agentId: string, input: string, callerRole: RoleId | undefined, orgId: string | undefined): Promise<{ section: string; searched: number; retrievals: KnowledgeRetrieval[] }> {
-  const none = { section: "", searched: 0, retrievals: [] as KnowledgeRetrieval[] };
+ *  the whole run. It does not degrade silently: a search that threw comes
+ *  back in `failures`, one knowledge base at a time, so the run can tell "the
+ *  search failed" from "nothing is linked" and "nothing matched", and one
+ *  failing knowledge base does not take the others' passages with it. */
+export async function buildKbContext(agentId: string, input: string, callerRole: RoleId | undefined, orgId: string | undefined): Promise<{ section: string; searched: number; retrievals: KnowledgeRetrieval[]; failures: KnowledgeSearchFailure[] }> {
+  const none = { section: "", searched: 0, retrievals: [] as KnowledgeRetrieval[], failures: [] as KnowledgeSearchFailure[] };
+  let linkedKbs: Awaited<ReturnType<typeof storage.getAgentKnowledgeBases>>;
   try {
-    const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
-    if (linkedKbs.length === 0) return none;
+    linkedKbs = await storage.getAgentKnowledgeBases(agentId);
+  } catch (e: unknown) {
+    console.error("[workspace-run] KB retrieval failed (non-fatal):", e instanceof Error ? e.message : e);
+    return { ...none, failures: [{ knowledgeBaseId: null, name: null, reason: searchFailureReason(e), fallback: "none" }] };
+  }
+  if (linkedKbs.length === 0) return none;
 
-    const searchedLinks = linkedKbs.slice(0, 3);
-    const kbChunks: string[] = [];
-    const retrievals: KnowledgeRetrieval[] = [];
-    for (const link of searchedLinks) {
+  const kbChunks: string[] = [];
+  const retrievals: KnowledgeRetrieval[] = [];
+  const failures: KnowledgeSearchFailure[] = [];
+  let searched = 0;
+  for (const link of linkedKbs.slice(0, 3)) {
+    try {
       const linkConfig = (link.retrievalConfig as any) || {};
       const topK = typeof linkConfig.topK === "number" ? linkConfig.topK : 5;
       const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
       const found = await searchKnowledgeBaseChunks(link.knowledgeBaseId, input, topK, scoreThreshold, callerRole);
+      searched += 1;
       // Cosine's order, unless the rerank site is routed (server/retrieval-rerank.ts).
       const chunks = await rerankChunks(input, found, { orgId });
       if (chunks.length > 0) {
@@ -261,17 +279,19 @@ async function buildKbContext(agentId: string, input: string, callerRole: RoleId
           topSimilarity: scores.length ? Math.max(...scores) : null,
         });
       }
+    } catch (e: unknown) {
+      console.error(`[workspace-run] knowledge search failed for ${link.knowledgeBaseId} (non-fatal):`, e instanceof Error ? e.message : e);
+      const kb = await storage.getKnowledgeBase(link.knowledgeBaseId, orgId).catch(() => undefined);
+      failures.push({ knowledgeBaseId: link.knowledgeBaseId, name: kb?.name ?? null, reason: searchFailureReason(e), fallback: "none" });
     }
-    if (kbChunks.length === 0) return { ...none, searched: searchedLinks.length };
-    return {
-      section: `\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}`,
-      searched: searchedLinks.length,
-      retrievals,
-    };
-  } catch (e: any) {
-    console.error("[workspace-run] KB retrieval failed (non-fatal):", e.message);
-    return none;
   }
+  if (kbChunks.length === 0) return { ...none, searched, failures };
+  return {
+    section: `\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}`,
+    searched,
+    retrievals,
+    failures,
+  };
 }
 
 /** Resolve the skill allowlist for an agent (union of active skills' allowedTools). */
@@ -467,6 +487,7 @@ export async function startWorkspaceRun(params: {
       brandAssets: brandContext || "",
       knowledgeSearched: kbContext.searched,
       retrievals: kbContext.retrievals,
+      failures: kbContext.failures,
     }),
   };
 

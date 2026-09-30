@@ -7,6 +7,7 @@ import { compileRedactPatterns, redactStringLeaves, redactText } from "./output-
 import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
+import { searchFailureReason, knowledgeFailureNote, type KnowledgeSearchFailure } from "@shared/knowledge-search-failure";
 import { rerankChunks } from "./retrieval-rerank";
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, providerFallbackAllowed, unwrapJsonFence, type LLMMessage, type LLMProvider, type LLMCompletionResult, type CanonicalToolCall, type CodeExecutionTraceEntry } from "./llm-provider";
@@ -1633,7 +1634,10 @@ export async function executePromptWithMcp(
   }
 
   let kbContext = "";
-  const kbRetrievals: Array<{ kbId: string; kbName: string; embeddingModel: string; chunks: Array<{ chunkId: string; sourceDocId: string; similarityScore: number | null; contentHash: string }> }> = [];
+  const kbRetrievals: Array<{ kbId: string; kbName: string; embeddingModel: string; chunks: Array<{ chunkId: string; sourceDocId: string; similarityScore: number | null; contentHash: string }>; fallback?: "recent_passages"; searchError?: string }> = [];
+  // Searches that threw (shared/knowledge-search-failure.ts). The run goes on
+  // either way; this is what keeps a failed search from reading as an empty one.
+  const kbSearchFailures: KnowledgeSearchFailure[] = [];
   try {
     if (linkedKbs.length > 0) {
       const ontologyLabels = options?.ontologyLabels || [];
@@ -1672,7 +1676,10 @@ export async function executePromptWithMcp(
               })),
             });
           }
-        } catch {
+        } catch (searchErr: unknown) {
+          const failure: KnowledgeSearchFailure = { knowledgeBaseId: link.knowledgeBaseId, name: kbMeta?.name ?? null, reason: searchFailureReason(searchErr), fallback: "none" };
+          kbSearchFailures.push(failure);
+          console.warn(`[agent-runtime] Agent ${agentId}: knowledge search failed for ${link.knowledgeBaseId}: ${searchErr instanceof Error ? searchErr.message : String(searchErr)}`);
           // This is a second-level fallback (searchKnowledgeBaseChunks already
           // has its own internal !pgvector fallback and only throws on a
           // genuine error, e.g. the embeddings API being down) — it calls
@@ -1686,6 +1693,7 @@ export async function executePromptWithMcp(
           const sourceSensitivity = new Map(kbSources.map(s => [s.id, s.sensitivityLevel]));
           const fallbackChunks = rawFallbackChunks.filter(c => canAccessKbSensitivity(callerRole, sourceSensitivity.get(c.sourceId)));
           if (fallbackChunks.length > 0) {
+            failure.fallback = "recent_passages";
             const fallbackTopK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
             const selectedFallback = fallbackChunks.slice(0, fallbackTopK);
             kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${selectedFallback.map((c: any) => c.content).join("\n\n")}`);
@@ -1693,6 +1701,8 @@ export async function executePromptWithMcp(
               kbId: link.knowledgeBaseId,
               kbName: kbMeta?.name || link.knowledgeBaseId,
               embeddingModel: kbMeta?.embeddingModel || "fallback",
+              fallback: "recent_passages",
+              searchError: failure.reason,
               chunks: selectedFallback.map((c: any) => ({
                 chunkId: c.id,
                 sourceDocId: c.sourceId || "",
@@ -1729,7 +1739,25 @@ export async function executePromptWithMcp(
         } catch {}
       }
     }
-  } catch {}
+  } catch (kbErr: unknown) {
+    // Anything else in retrieval that threw (the layer budgets, the fallback's
+    // own read): recorded once, unless a search has already said why.
+    if (kbSearchFailures.length === 0) kbSearchFailures.push({ knowledgeBaseId: null, name: null, reason: searchFailureReason(kbErr), fallback: "none" });
+  }
+  if (kbSearchFailures.length > 0) {
+    // Completed, not failed: a failed step fails the run, and this run goes on
+    // without the search. The note is what the trace shows for it.
+    const at = new Date().toISOString();
+    steps.push({
+      id: `step_${steps.length + 1}`,
+      name: kbSearchFailures.some((f) => f.fallback === "recent_passages") ? "Knowledge search failed, recent passages used" : "Knowledge search failed, continuing without it",
+      type: "knowledge_retrieval",
+      status: "completed",
+      startedAt: at,
+      completedAt: at,
+      output: { note: knowledgeFailureNote(kbSearchFailures), failures: kbSearchFailures },
+    } as any);
+  }
 
   const toolSchemaText = availableTools.length > 0
     ? JSON.stringify(availableTools.map(t => ({ server: t.serverName, tool: t.toolName, description: t.toolDescription, inputSchema: t.toolInputSchema })))
@@ -3093,6 +3121,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     blueprintId: blueprintId || null,
     blueprintVersionHash,
     kbRetrievals,
+    ...(kbSearchFailures.length > 0 ? { kbSearchFailures } : {}),
     mcpToolFingerprints,
     mcpServerVersions,
     policySnapshot,

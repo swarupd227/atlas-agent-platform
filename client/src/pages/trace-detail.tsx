@@ -49,6 +49,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/status-badge";
 import { formatDate, formatMs } from "@/components/shared-utils";
 import type { RunTrace } from "@shared/schema";
+import { knowledgeFailureNote } from "@shared/knowledge-search-failure";
 
 interface ToolCall {
   name?: string;
@@ -1292,6 +1293,7 @@ function ProvenanceExplorer({ traceId }: { traceId: string }) {
   const snapshot = provenance.provenanceSnapshot || {};
   const integrity = provenance.integrity || { valid: false, checks: {} };
   const kbRetrievals = snapshot.kbRetrievals || [];
+  const kbSearchFailures = snapshot.kbSearchFailures || [];
   const policySnap = snapshot.policySnapshot || [];
   const mcpFingerprints = snapshot.mcpToolFingerprints || {};
   const mcpServers = snapshot.mcpServerVersions || {};
@@ -1425,7 +1427,7 @@ function ProvenanceExplorer({ traceId }: { traceId: string }) {
           </div>
         </div>
 
-        {kbRetrievals.length > 0 && (
+        {(kbRetrievals.length > 0 || kbSearchFailures.length > 0) && (
           <div className="rounded-lg border p-3" data-testid="provenance-kb-section">
             <button
               className="w-full flex items-center justify-between text-xs font-medium"
@@ -1435,20 +1437,23 @@ function ProvenanceExplorer({ traceId }: { traceId: string }) {
               <span className="flex items-center gap-1.5"><BookOpen className="w-3.5 h-3.5" /> Knowledge Base Retrievals ({kbRetrievals.length})</span>
               {expandedSections.has("kb") ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             </button>
+            {kbSearchFailures.length > 0 && (
+              <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400" data-testid="kb-search-failures">{knowledgeFailureNote(kbSearchFailures)}</p>
+            )}
             {expandedSections.has("kb") && (
               <div className="mt-3 flex flex-col gap-2">
                 {kbRetrievals.map((kbr: any, idx: number) => (
                   <div key={idx} className="rounded border p-2 bg-muted/20" data-testid={`kb-retrieval-${idx}`}>
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-[11px] font-medium">{kbr.kbName || kbr.kbId}</span>
-                      <Badge variant="outline" className="text-[9px]">{kbr.embeddingModel}</Badge>
+                      <Badge variant="outline" className="text-[9px]">{kbr.fallback ? "recent passages, search failed" : kbr.embeddingModel}</Badge>
                     </div>
                     <div className="flex flex-col gap-1">
                       {(kbr.chunks || []).map((chunk: any, ci: number) => (
                         <div key={ci} className="flex items-center gap-2 text-[10px]" data-testid={`kb-chunk-${idx}-${ci}`}>
                           <span className="font-mono text-muted-foreground w-16 shrink-0">{chunk.chunkId?.substring(0, 8)}...</span>
                           <Progress value={chunk.similarityScore * 100} className="h-1.5 flex-1" />
-                          <span className="text-muted-foreground w-10 text-right">{(chunk.similarityScore * 100).toFixed(0)}%</span>
+                          <span className="text-muted-foreground w-10 text-right">{chunk.similarityScore == null ? "n/a" : (chunk.similarityScore * 100).toFixed(0) + "%"}</span>
                         </div>
                       ))}
                     </div>

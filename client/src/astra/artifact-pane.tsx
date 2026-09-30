@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Markdown } from "@/components/markdown";
 import type { ArtifactRef } from "./types";
 import { Label, StatusDot } from "./renderers/parts";
+import { knowledgeFailureNote } from "@shared/knowledge-search-failure";
 import { OutcomeDraft, OutcomeCard, OutcomeList } from "./renderers/outcome";
 import { NeedsMe } from "./renderers/needs-me";
 import { TeamCard, TeamProposal } from "./renderers/team";
@@ -158,6 +159,8 @@ const CONTEXT_LAYER_LABEL: Record<string, string> = {
 function WhatItKnew({ context }: { context: Record<string, any> }) {
   const layers: Array<{ layer: string; tokens: number }> = context.layers ?? [];
   const knowledge: any[] = context.knowledge ?? [];
+  // Searches that threw: not "nothing linked", and not "nothing matched".
+  const failed: any[] = context.knowledgeFailed ?? [];
   const total = Math.max(context.totalTokens ?? 0, 1);
   return (
     <div>
@@ -173,7 +176,10 @@ function WhatItKnew({ context }: { context: Record<string, any> }) {
           </li>
         ))}
       </ul>
-      {knowledge.length === 0 && (
+      {failed.length > 0 && (
+        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400" data-testid="knowledge-search-failed">{knowledgeFailureNote(failed)}</p>
+      )}
+      {knowledge.length === 0 && (failed.length === 0 || context.knowledgeSearched > 0) && (
         <p className="mt-2 text-xs text-muted-foreground">
           {context.knowledgeSearched === 0
             ? "No knowledge base is linked to this agent."
