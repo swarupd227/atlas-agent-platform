@@ -158,6 +158,22 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     capabilities: ["read_issues", "create_issues", "update_issues", "read_projects", "read_sprints"],
   },
   {
+    id: "zendesk",
+    name: "Zendesk",
+    description: "ITSM — support tickets, internal notes, and customer requests",
+    category: "itsm",
+    logoColor: "#03363D",
+    authMethod: "basic",
+    credentialFields: [
+      { key: "subdomain", label: "Zendesk Subdomain", type: "text", required: true, placeholder: "acme" },
+      { key: "email", label: "Account Email", type: "text", required: true, placeholder: "you@company.com" },
+      { key: "api_token", label: "API Token", type: "password", required: true },
+    ],
+    docsUrl: "https://developer.zendesk.com/api-reference",
+    wave: 2,
+    capabilities: ["read_tickets", "write_tickets"],
+  },
+  {
     id: "github",
     name: "GitHub",
     description: "DevOps — repos, issues, PRs, actions, and code reviews",
@@ -364,6 +380,25 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     wave: 4,
     setupComplexity: "advanced",
     capabilities: ["read_materials", "read_purchase_orders", "read_financials", "create_service_orders"],
+  },
+  {
+    id: "netsuite",
+    name: "NetSuite",
+    description: "ERP — invoices, payments, sales orders, and customers via SuiteTalk REST and SuiteQL",
+    category: "erp",
+    logoColor: "#000000",
+    authMethod: "apikey",
+    credentialFields: [
+      { key: "account_id", label: "Account ID", type: "text", required: true, placeholder: "1234567 or 1234567_SB1 (sandbox)" },
+      { key: "consumer_key", label: "Consumer Key", type: "text", required: true },
+      { key: "consumer_secret", label: "Consumer Secret", type: "password", required: true },
+      { key: "token_id", label: "Token ID", type: "text", required: true },
+      { key: "token_secret", label: "Token Secret", type: "password", required: true },
+    ],
+    docsUrl: "https://docs.oracle.com/en/cloud/saas/netsuite/",
+    wave: 4,
+    setupComplexity: "advanced",
+    capabilities: ["read_invoices", "read_payments", "read_orders", "read_customers"],
   },
 
   // ── Wave 5: General-purpose SQL connectors ────────────────────────────────

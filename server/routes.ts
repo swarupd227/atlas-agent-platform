@@ -57,6 +57,7 @@ import mgaPolicyAdminRouter from "./mock-mcp/mga-policy-admin";
 import mgaBillingGlRouter from "./mock-mcp/mga-billing-gl";
 import mgaTpaClaimsRouter from "./mock-mcp/mga-tpa-claims";
 import serviceNowCmdbMockRouter from "./mock-mcp/servicenow-cmdb";
+import retail365DataLakeRouter from "./mock-mcp/365-data-lake";
 import surplusLinesComplianceRouter from "./mock-mcp/surplus-lines-compliance";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
@@ -140,6 +141,7 @@ import { createSalesforceRouter } from "./integrations/salesforce/mcp-server";
 import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
 import { createServiceNowRouter } from "./integrations/servicenow/mcp-server";
 import { createJiraRouter } from "./integrations/jira/mcp-server";
+import { createZendeskRouter } from "./integrations/zendesk/mcp-server";
 import { createGitHubRouter } from "./integrations/github/mcp-server";
 import { createFigmaRouter } from "./integrations/figma/mcp-server";
 import { createSlackRouter } from "./integrations/slack/mcp-server";
@@ -149,6 +151,7 @@ import { createDatabricksRouter } from "./integrations/databricks/mcp-server";
 import { createDecisionAuditRouter } from "./routes/decision-audit";
 import { createWorkdayRouter } from "./integrations/workday/mcp-server";
 import { createSapRouter } from "./integrations/sap/mcp-server";
+import { createNetSuiteRouter } from "./integrations/netsuite/mcp-server";
 import { createPostgresRouter } from "./integrations/sql/postgres/mcp-server";
 import { createDealerOperationsRouter } from "./integrations/dealer-operations/mcp-server";
 import { createMySqlRouter } from "./integrations/sql/mysql/mcp-server";
@@ -320,6 +323,7 @@ export async function registerRoutes(
   app.use("/api/mock/mga-billing-gl", mgaBillingGlRouter);
   app.use("/api/mock/mga-tpa-claims", mgaTpaClaimsRouter);
   app.use("/api/mock/servicenow-cmdb", serviceNowCmdbMockRouter);
+  app.use("/api/mock/365-data-lake", retail365DataLakeRouter);
   app.use("/api/mock/surplus-lines-compliance", surplusLinesComplianceRouter);
   app.use("/api/mock/adobe", adobeAnalyticsRouter);
   app.use("/api/mock/marketo", marketoRouter);
@@ -502,6 +506,7 @@ export async function registerRoutes(
   app.use("/api/integrations/hubspot", createHubSpotRouter());
   app.use("/api/integrations/servicenow", createServiceNowRouter());
   app.use("/api/integrations/jira", createJiraRouter());
+  app.use("/api/integrations/zendesk", createZendeskRouter());
   app.use("/api/integrations/github", createGitHubRouter());
   app.use("/api/integrations/figma", createFigmaRouter());
   app.use("/api/integrations/slack", createSlackRouter());
@@ -513,6 +518,7 @@ export async function registerRoutes(
   app.use("/api/decision-audit", createDecisionAuditRouter());
   app.use("/api/integrations/workday", createWorkdayRouter());
   app.use("/api/integrations/sap", createSapRouter());
+  app.use("/api/integrations/netsuite", createNetSuiteRouter());
   // ── Enterprise Integration routers (Wave 5: General-purpose SQL) ─────────
   app.use("/api/integrations/postgres", createPostgresRouter());
   app.use("/api/integrations/dealer-operations", createDealerOperationsRouter());

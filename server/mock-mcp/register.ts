@@ -1417,6 +1417,68 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
       ],
     },
+    {
+      name: "365 Retail Data Lake",
+      description: "Simulated AWS data lake for the 365 Retail Markets agentic workflows program. Serves the Gold views the design calls out as needing a new connector: ADM/Cantaloupe/telemetry/legacy-ERP data joined and cleaned, exposed only through named, parameterised views -- never raw SQL. The only write surface is the UC02 Master Customer Key crosswalk.",
+      baseUrl: `${BASE_URL}/api/mock/365-data-lake`,
+      tools: [
+        {
+          name: "datalake_list_views",
+          description: "List every Gold view this data lake serves, with what each one contains and its parameters. Start here.",
+          endpoint: "/views",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "datalake_query_view",
+          description: "Read a named Gold view by name, with its own parameters (see datalake_list_views for what each view accepts). Views: silver_customer_records, candidate_pairs, crosswalk, reconciliation_breaks, gap_to_target, forecast_snapshot, published_view, pipeline_hygiene, masked_match_view.",
+          endpoint: "/view",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              view: { type: "string", description: "View name, e.g. candidate_pairs" },
+              limit: { type: "number", description: "Rows to return, up to 500 (default 100)" },
+              source: { type: "string", description: "silver_customer_records only: 365_salesforce or cantaloupe_salesforce" },
+              band: { type: "string", description: "candidate_pairs only: high, middle or low" },
+              master_key: { type: "string", description: "crosswalk only: filter to one Master Customer Key" },
+              period: { type: "string", description: "gap_to_target only: e.g. 2026-Q4 (default)" },
+              region: { type: "string", description: "gap_to_target / forecast_snapshot only: West, East, Central or South" },
+              record_id: { type: "string", description: "masked_match_view only: filter to pairs involving one record" },
+            },
+            required: ["view"],
+          },
+        },
+        {
+          name: "datalake_get_customer",
+          description: "One Silver customer record by its record id, with its Master Customer Key if UC02 has published one for it.",
+          endpoint: "/customer",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { record_id: { type: "string", description: "Silver record id, e.g. SFA-1000 or CNT-2000" } },
+            required: ["record_id"],
+          },
+        },
+        {
+          name: "datalake_write_crosswalk",
+          description: "Assign or update a Silver record's Master Customer Key in the crosswalk. This is the ONLY write this connector allows -- it is UC02's publish-key step. Requires the rule that decided it (e.g. exact_tax_id, steward_decision, new_key) and who/what decided (a steward's name, or \"system\" for an automatic rule).",
+          endpoint: "/crosswalk/write",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              recordId: { type: "string", description: "Silver record id being keyed" },
+              masterKey: { type: "string", description: "The Master Customer Key to assign" },
+              rule: { type: "string", description: "What decided this, e.g. exact_tax_id, steward_decision, new_key" },
+              decider: { type: "string", description: "Who/what decided -- a steward's name, or \"system\"" },
+              reason: { type: "string", description: "Optional note, e.g. the steward's decision note" },
+            },
+            required: ["recordId", "masterKey", "rule", "decider"],
+          },
+        },
+      ],
+    },
   ];
 }
 
