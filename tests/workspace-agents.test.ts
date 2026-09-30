@@ -16,6 +16,7 @@ const agents = [
 
 const storage = vi.hoisted(() => ({
   getAgents: vi.fn(),
+  getAgentsForWorkspace: vi.fn(),
   getTeamBlueprintNodeRefs: vi.fn(),
   getTeamBlueprintNodes: vi.fn(),
   getSkillsByIds: vi.fn(async () => []),
@@ -26,6 +27,7 @@ vi.mock("../server/storage", () => ({ storage }));
 beforeEach(() => {
   vi.clearAllMocks();
   storage.getAgents.mockResolvedValue(agents);
+  storage.getAgentsForWorkspace.mockResolvedValue(agents);
   storage.getTeamBlueprintNodeRefs.mockResolvedValue([
     { blueprintId: "bp-1", refAgentId: "team-1" }, // the orchestrator node points at the team itself
     { blueprintId: "bp-1", refAgentId: "w-1" },
@@ -42,6 +44,10 @@ describe("getWorkspaceAgents", () => {
     expect(storage.getTeamBlueprintNodeRefs).toHaveBeenCalledTimes(1);
     expect(storage.getTeamBlueprintNodeRefs).toHaveBeenCalledWith(["bp-1", "bp-2"]);
     expect(storage.getTeamBlueprintNodes).not.toHaveBeenCalled();
+    // The narrow listing columns, not every column of every agent: getAgents is
+    // 4.2MB on the live organization and this list shows a name and a chip.
+    expect(storage.getAgentsForWorkspace).toHaveBeenCalledTimes(1);
+    expect(storage.getAgents).not.toHaveBeenCalled();
   });
 
   it("uses agents the caller already loaded, and still applies the audience", async () => {
@@ -49,5 +55,6 @@ describe("getWorkspaceAgents", () => {
     const names = (await getWorkspaceAgents("org-a", "outcome_owner", agents as any)).map((a) => a.name);
     expect(names).toEqual(["Rental Team", "Billing Team"]);
     expect(storage.getAgents).not.toHaveBeenCalled();
+    expect(storage.getAgentsForWorkspace).not.toHaveBeenCalled();
   });
 });

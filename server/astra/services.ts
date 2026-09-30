@@ -8,7 +8,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { getDecisionSettings } from "../decision-settings";
-import { agentMcpServers, agentProposals, agents, astraThreads, mcpElicitations, policyExceptions, workspaceRuns, type InsertPolicy } from "@shared/schema";
+import { agentMcpServers, agentProposals, agents, approvals, astraThreads, mcpElicitations, policyExceptions, workspaceRuns, type InsertPolicy } from "@shared/schema";
 import { createHash } from "crypto";
 import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
 import { computeWaves, extractFinalOutputText, startTeamAgentDagRun } from "../dag-execution-engine";
@@ -265,7 +265,9 @@ const RUNNABLE_STATUSES = new Set(["active", "deployed"]);
  * and teams themselves are not included.
  */
 async function listRunnableAgents(orgId: string, role: RoleId) {
-  const all = await storage.getAgents(orgId);
+  // The narrow listing columns, not every column of every agent: the briefing
+  // shows one number from this and getAgents is 4.2MB on this organization.
+  const all = await storage.getAgentsForWorkspace(orgId);
   const offered = await getWorkspaceAgents(orgId, role, all);
   if (!hasPermission(role, "view_agents")) return offered;
   const ids = new Set(offered.map((a) => a.id));
@@ -795,12 +797,20 @@ async function listOutcomes(orgId: string) {
 
 /** Outcome counts for the home briefing, without loading each outcome's KPIs. */
 async function outcomeCounts(orgId: string) {
-  const [outcomes, approvalsList] = await Promise.all([storage.getOutcomes(orgId), storage.getApprovals(orgId)]);
+  // Only the pending outcome reviews, not every approval in the organization:
+  // getApprovals is ~1MB here and the briefing wants one number from it. The
+  // needs row loads the full set for its own reasons; this row no longer makes
+  // the same read a second time in the same request.
+  const [outcomes, pendingOutcomeReviews] = await Promise.all([
+    storage.getOutcomes(orgId),
+    db
+      .select({ objectId: approvals.objectId })
+      .from(approvals)
+      .where(and(eq(approvals.organizationId, orgId), eq(approvals.type, "outcome_review"), eq(approvals.status, "pending"))),
+  ]);
   const ids = new Set(outcomes.map((o) => o.id));
   const pendingReview = new Set(
-    approvalsList
-      .filter((a) => a.type === "outcome_review" && a.status === "pending" && a.objectId && ids.has(a.objectId))
-      .map((a) => a.objectId as string),
+    pendingOutcomeReviews.map((a) => a.objectId).filter((id): id is string => !!id && ids.has(id)),
   ).size;
   return { total: outcomes.length, pendingReview };
 }

@@ -231,12 +231,25 @@ export interface DagRunSummary {
   latest: { id: string; status: string; startedAt: Date | null; completedAt: Date | null } | null;
 }
 
+/**
+ * The agent columns the workspace listing and the Astra briefing actually read.
+ * Named so the requirement is in the type rather than in a comment: anything
+ * this listing starts needing has to be added here first.
+ */
+export type WorkspaceAgentRow = Pick<
+  Agent,
+  "id" | "name" | "description" | "status" | "agentType" | "riskTier" | "blueprintId"
+  | "workspaceAudience" | "preloadedSkills" | "documentGenerationMode" | "ontologyTags" | "toolsConfig"
+>;
+
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
 
   getAgents(orgId?: string): Promise<Agent[]>;
+  /** The columns the workspace/briefing listing reads — see getAgentsForWorkspace. */
+  getAgentsForWorkspace(orgId?: string): Promise<WorkspaceAgentRow[]>;
   /** Agents with only what a list shows: the row itself carries ~80 columns and 12 JSON blobs. */
   getAgentSummaries(orgId?: string): Promise<Agent[]>;
   getAgent(id: string, orgId?: string): Promise<Agent | undefined>;
@@ -1183,6 +1196,37 @@ export class DatabaseStorage implements IStorage {
       return db.select().from(agents).where(eq(agents.organizationId, scopedOrgId)).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
     }
     return db.select().from(agents).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
+  }
+
+  /**
+   * The same agents, with only the columns the workspace listing reads.
+   *
+   * `getAgents` selects every column, and on this organization that is 4.2MB of
+   * JSON for ~900 agents — which the Astra briefing was loading in full to show
+   * one number ("agents you can run"), at 1.5s warm. The listing needs twelve
+   * fields; this returns those. Kept beside getAgents rather than narrowing it,
+   * because the pages that show an agent do need the whole row.
+   */
+  async getAgentsForWorkspace(orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const columns = {
+      id: agents.id,
+      name: agents.name,
+      description: agents.description,
+      status: agents.status,
+      agentType: agents.agentType,
+      riskTier: agents.riskTier,
+      blueprintId: agents.blueprintId,
+      workspaceAudience: agents.workspaceAudience,
+      preloadedSkills: agents.preloadedSkills,
+      documentGenerationMode: agents.documentGenerationMode,
+      ontologyTags: agents.ontologyTags,
+      toolsConfig: agents.toolsConfig,
+    };
+    const rows = scopedOrgId
+      ? await db.select(columns).from(agents).where(eq(agents.organizationId, scopedOrgId)).orderBy(desc(agents.updatedAt), desc(agents.createdAt))
+      : await db.select(columns).from(agents).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
+    return rows as WorkspaceAgentRow[];
   }
 
   async getAgentSummaries(orgId?: string) {

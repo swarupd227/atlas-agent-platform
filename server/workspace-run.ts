@@ -21,7 +21,7 @@ import { randomUUID, createHash } from "crypto";
 import { eq, desc, and } from "drizzle-orm";
 import { db } from "./db";
 import { workspaceRuns, uploadedFiles, type WorkspaceRun } from "@shared/schema";
-import { storage } from "./storage";
+import { storage, type WorkspaceAgentRow } from "./storage";
 import { resolveAgentIndustry } from "./agent-industry";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
 import { resolvePolicyBundle, buildAgentSystemPromptWithGovernance, recomputeOutcomeKpis } from "./routes/helpers";
@@ -831,8 +831,8 @@ const WORKSPACE_RUNNABLE_STATUSES = new Set(["active", "deployed"]);
  *    should address the team's orchestrator, not its implementation-detail
  *    sub-agents (UX audit F-4).
  */
-export async function getWorkspaceAgents(orgId: string | undefined, role: string, preloadedAgents?: Agent[]): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string; canGenerateDocuments: boolean; documentGenerationMode: "auto" | "platform" | "sandbox"; ontologyTags: Array<{ conceptId: string; conceptLabel: string }>; toolsConfig: any[] }>> {
-  const all = preloadedAgents ?? (await storage.getAgents(orgId));
+export async function getWorkspaceAgents(orgId: string | undefined, role: string, preloadedAgents?: WorkspaceAgentRow[]): Promise<Array<{ id: string; name: string; description: string | null; riskTier: string; canGenerateDocuments: boolean; documentGenerationMode: "auto" | "platform" | "sandbox"; ontologyTags: Array<{ conceptId: string; conceptLabel: string }>; toolsConfig: any[] }>> {
+  const all = preloadedAgents ?? (await storage.getAgentsForWorkspace(orgId));
   const isFullAccess = role === "admin";
 
   // A team's internal workers aren't offered on their own. One query for every
