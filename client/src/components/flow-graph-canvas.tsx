@@ -25,7 +25,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { layoutGraph, type ProcessNode, type ProcessEdge, type ProcessNodeType } from "@shared/process-flow";
-import { classifyStep, explainKind, decisionBranchesFor } from "@shared/flow-execution-kind";
+import { classifyStep, explainKind, decisionBranchesFor, decisionAnswerType, decisionOptionsFor, decisionLevelsFor } from "@shared/flow-execution-kind";
+import { stateKeyForLabel } from "@shared/state-key";
 import type { Skill, KnowledgeBase, Agent } from "@shared/schema";
 
 type NodeMeta = { label: string; icon: any; color: string; bg: string; border: string; chip: string };
@@ -938,21 +939,102 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                   const labelFor = (id?: string) => (nodes.find(n => n.id === id)?.data as RFData | undefined)?.label || "?";
                   const kind = classifyStep({ type: d.ntype, config: d.config }, { outgoingEdges: outgoing, decisionKind });
                   const mode = d.config?.decisionKind === true ? "on" : d.config?.decisionKind === false ? "off" : "default";
+                  // What the step answers with: a branch (the original kind), a label
+                  // written to state, or a level on a ladder written to state. The
+                  // last two need no branches and no flag: their options or levels are
+                  // the whole question, and later steps' rules read the value.
+                  const answerType = decisionAnswerType(d.config);
+                  const rawOptions: Array<{ label: string; description?: string }> = Array.isArray(d.config?.options)
+                    ? (d.config!.options as unknown[]).map(o => (typeof o === "string" ? { label: o } : { label: String((o as any)?.label ?? ""), ...((o as any)?.description ? { description: String((o as any).description) } : {}) }))
+                    : [];
+                  const rawLevels: string[] = Array.isArray(d.config?.levels) ? (d.config!.levels as unknown[]).map(l => String(l ?? "")) : [];
+                  const validOptions = decisionOptionsFor(d.config).length;
+                  const validLevels = decisionLevelsFor(d.config).length;
+                  const setOptions = (next: Array<{ label: string; description?: string }>) => patchNode(selNode.id, { config: { ...(d.config || {}), options: next } }, `node:${selNode.id}:options`);
+                  const setLevels = (next: string[]) => patchNode(selNode.id, { config: { ...(d.config || {}), levels: next } }, `node:${selNode.id}:levels`);
+                  const valueKey = stateKeyForLabel(d.label || "");
                   return (
                     <div className="flex flex-col gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-2" data-testid="decision-settings">
                       <label className="text-[10px] text-sky-700 dark:text-sky-400 uppercase tracking-wide font-medium">Decision</label>
+                      <div className="flex flex-col gap-1">
+                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Answers with</label>
+                        <select
+                          value={answerType}
+                          onChange={e => {
+                            const v = e.target.value;
+                            const { answerType: _at, ...rest } = (d.config || {}) as Record<string, unknown>;
+                            patchNode(selNode.id, { config: v === "branch" ? rest : { ...rest, answerType: v } });
+                          }}
+                          className="h-7 text-xs rounded-md border bg-background px-1.5"
+                          data-testid="select-node-answer-type"
+                        >
+                          <option value="branch">A branch: one of the connections out</option>
+                          <option value="classify">A label, written to state</option>
+                          <option value="score">A level on a ladder, written to state</option>
+                        </select>
+                        <span className="text-[10px] text-muted-foreground">
+                          {answerType === "branch" ? "Exactly one labelled connection out is taken." : `Later steps and the rules on the connections out read it as "${valueKey}".`}
+                        </span>
+                      </div>
                       <div className="flex flex-col gap-1">
                         <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Question</label>
                         <Textarea
                           value={String((d.config?.question as string) || "")}
                           onChange={e => patchNode(selNode.id, { config: { ...(d.config || {}), question: e.target.value } }, `node:${selNode.id}:question`)}
-                          placeholder={d.description || "What is being decided here?"}
+                          placeholder={d.description || (answerType === "classify" ? "What kind of thing is this?" : answerType === "score" ? "How much of it is there?" : "What is being decided here?")}
                           rows={2}
                           className="text-xs resize-none"
                           data-testid="input-node-question"
                         />
                         <span className="text-[10px] text-muted-foreground">Answered from the previous steps' output. Left empty, the step's description is the question.</span>
                       </div>
+                      {answerType === "classify" && (
+                        <div className="flex flex-col gap-1">
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Labels</label>
+                          {rawOptions.map((o, i) => (
+                            <div key={i} className="flex items-center gap-1">
+                              <Input
+                                value={o.label}
+                                onChange={e => setOptions(rawOptions.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                                placeholder="Label, e.g. high"
+                                className="h-7 text-xs"
+                                data-testid={`input-node-option-label-${i}`}
+                              />
+                              <Input
+                                value={o.description || ""}
+                                onChange={e => setOptions(rawOptions.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))}
+                                placeholder="When it applies"
+                                className="h-7 text-xs"
+                                data-testid={`input-node-option-desc-${i}`}
+                              />
+                              <button type="button" onClick={() => setOptions(rawOptions.filter((_, j) => j !== i))} className="rounded px-1 text-muted-foreground hover:text-foreground" aria-label="Remove label" data-testid={`button-remove-node-option-${i}`}>×</button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => setOptions([...rawOptions, { label: "" }])} className="self-start text-[11px] text-sky-700 dark:text-sky-400 hover:underline" data-testid="button-add-node-option">+ Add label</button>
+                          {validOptions < 2 && <span className="text-[10px] text-amber-600">A classification needs at least two labels.</span>}
+                        </div>
+                      )}
+                      {answerType === "score" && (
+                        <div className="flex flex-col gap-1">
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Ladder, low to high</label>
+                          {rawLevels.map((l, i) => (
+                            <div key={i} className="flex items-center gap-1">
+                              <span className="w-4 shrink-0 font-mono text-[10px] text-muted-foreground">{i}</span>
+                              <Input
+                                value={l}
+                                onChange={e => setLevels(rawLevels.map((x, j) => (j === i ? e.target.value : x)))}
+                                placeholder={i === 0 ? "e.g. clean: nothing to fix" : "next level up"}
+                                className="h-7 text-xs"
+                                data-testid={`input-node-level-${i}`}
+                              />
+                              <button type="button" onClick={() => setLevels(rawLevels.filter((_, j) => j !== i))} className="rounded px-1 text-muted-foreground hover:text-foreground" aria-label="Remove level" data-testid={`button-remove-node-level-${i}`}>×</button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => setLevels([...rawLevels, ""])} className="self-start text-[11px] text-sky-700 dark:text-sky-400 hover:underline" data-testid="button-add-node-level">+ Add level</button>
+                          {validLevels < 2 && <span className="text-[10px] text-amber-600">{rawLevels.length > 10 ? "A ladder has at most ten levels." : "A ladder needs at least two levels."}</span>}
+                        </div>
+                      )}
+                      {answerType === "branch" && (
                       <div className="flex flex-col gap-1">
                         <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Branches</label>
                         {branches.length === 0 ? (
@@ -969,6 +1051,17 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                         )}
                         {branches.length === 1 && <span className="text-[10px] text-amber-600">A decision needs at least two labelled branches.</span>}
                       </div>
+                      )}
+                      {answerType !== "branch" && (
+                        <span className="text-[10px] text-muted-foreground" data-testid="decision-answer-preview">
+                          {kind === "decision"
+                            ? explainKind({ type: d.ntype, config: d.config }, { outgoingEdges: outgoing, decisionKind })
+                            : answerType === "classify"
+                            ? "Needs two or more labels to run as one decision call; until then it runs as an agent."
+                            : "Needs a ladder of two to ten levels to run as one decision call; until then it runs as an agent."}
+                        </span>
+                      )}
+                      {answerType === "branch" && (
                       <div className="flex flex-col gap-1">
                         <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Runs as</label>
                         <select
@@ -993,6 +1086,7 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                             : explainKind({ type: d.ntype, config: d.config }, { outgoingEdges: outgoing, decisionKind })}
                         </span>
                       </div>
+                      )}
                       <div className="grid grid-cols-2 gap-2">
                         <div className="flex flex-col gap-1">
                           <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Confidence to act</label>
@@ -1011,6 +1105,7 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                             data-testid="input-node-confidence-threshold"
                           />
                         </div>
+                        {answerType === "branch" && (
                         <div className="flex flex-col gap-1">
                           <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">When unsure</label>
                           <select
@@ -1023,8 +1118,13 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                             <option value="gate">Go to the approval branch</option>
                           </select>
                         </div>
+                        )}
                       </div>
-                      <span className="text-[10px] text-muted-foreground">Below the confidence, an agent makes the same choice instead, or the run goes down a branch that leads to an Approval step.</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {answerType === "branch"
+                          ? "Below the confidence, an agent makes the same choice instead, or the run goes down a branch that leads to an Approval step."
+                          : "Below the confidence, an agent answers the same question instead, and the run records that it did."}
+                      </span>
                     </div>
                   );
                 })()}

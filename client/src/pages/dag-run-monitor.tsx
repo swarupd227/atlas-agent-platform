@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { DagExecutionRun, Agent, Approval } from "@shared/schema";
 import { stepKindLabel, runsWithoutAModel } from "@shared/run-step-kind";
 import { decisionOutcomeOf } from "@shared/run-overlay";
+import { DECISION_RECORD_SUFFIX } from "@shared/run-overlay";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
 import { splitWorkingNotes, extractHtmlDocument, openRunStepHtml } from "@/lib/agent-output";
 
@@ -747,6 +748,8 @@ export default function DagRunMonitor() {
                         : s.state === "skipped" ? "skipped"
                         : s.kind === "gate" && decision ? `approved after ${durationLabel(s.durationMs)}`
                         : s.kind === "gate" && s.state === "failed" ? "rejected"
+                        : chosen && chosen.answerType === "classify" ? `classified ${chosen.choice} · ${durationLabel(s.durationMs)}`
+                        : chosen && chosen.answerType === "score" ? `scored ${chosen.choice} · ${durationLabel(s.durationMs)}`
                         : chosen ? `chose ${chosen.choice} · ${durationLabel(s.durationMs)}`
                         : durationLabel(s.durationMs);
                       const labelOnLeft = left + width > 76;
@@ -964,7 +967,11 @@ function StepDetail({
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { setTab("output"); setCopied(false); setExpanded(false); }, [step.key]);
 
-  const allEntries = outputEntries(step.result);
+  // A classify or score decision writes its plain value under its key and its
+  // record under <key>_decision; the record is shown as the decision it is, so
+  // the value is not listed again as an output.
+  const decisionValueKeys = new Set(Object.keys(step.result?.output ?? {}).filter((k) => k.endsWith(DECISION_RECORD_SUFFIX)).map((k) => k.slice(0, -DECISION_RECORD_SUFFIX.length)));
+  const allEntries = outputEntries(step.result).filter((e) => !decisionValueKeys.has(e.key));
   const files = collectRunFiles(step.result?.output);
   const others = stage.steps.length - 1;
   const decision = step.kind === "gate" ? gateDecision(step.result) : null;
@@ -1086,7 +1093,7 @@ function StepDetail({
         {chosen && (
           <div className="flex flex-col gap-3 rounded-lg border bg-background p-3.5 text-sm" data-testid={`panel-decision-${step.id}`}>
             <div>
-              <Eyebrow>Decided</Eyebrow>
+              <Eyebrow>{chosen.answerType === "classify" ? "Classified" : chosen.answerType === "score" ? "Scored" : "Decided"}</Eyebrow>
               <div className="mt-1 flex items-center gap-2">
                 <GitBranch className="w-4 h-4 shrink-0 text-muted-foreground" />
                 <span className="font-medium" data-testid={`text-decision-choice-${step.id}`}>{chosen.choice}</span>
@@ -1096,11 +1103,13 @@ function StepDetail({
             {chosen.probabilities && Object.keys(chosen.probabilities).length > 0 && (
               <div className="flex flex-col gap-1.5" data-testid={`list-decision-probabilities-${step.id}`}>
                 {Object.entries(chosen.probabilities).sort((a, b) => b[1] - a[1]).map(([option, p]) => {
-                  const picked = option === chosen.choice;
+                  // A score's probabilities are keyed by level index; show the level's name.
+                  const name = chosen.answerType === "score" && chosen.levels ? (chosen.levels[Number(option)] ?? option) : option;
+                  const picked = chosen.answerType === "score" ? Number(option) === Number(chosen.answer) : option === chosen.choice;
                   return (
                     <div key={option} className="flex flex-col gap-0.5">
                       <div className="flex items-baseline justify-between gap-3 text-xs">
-                        <span className={`truncate ${picked ? "font-medium" : "text-muted-foreground"}`}>{option}</span>
+                        <span className={`truncate ${picked ? "font-medium" : "text-muted-foreground"}`}>{name}</span>
                         <span className="font-mono tabular-nums text-muted-foreground">{Math.round(p * 100)}%</span>
                       </div>
                       <span className="block h-1.5 overflow-hidden rounded bg-muted">

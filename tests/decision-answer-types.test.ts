@@ -201,6 +201,12 @@ describe("the branch answer type is unchanged", () => {
 });
 
 describe("the overlay and the monitor's reader", () => {
+  it("carries the answer type, the answer and the ladder so the monitor can name a level", () => {
+    const record = { answerType: "score", answer: 2, level: "serious issues", choice: "serious issues", levels: ["clean", "minor issues", "serious issues"], probabilities: { "0": 0.05, "1": 0.15, "2": 0.8 }, confidence: 0.8, engine: "jev" };
+    expect(decisionOutcomeOf({ severity: 2, severity_decision: record })).toMatchObject({ choice: "serious issues", answerType: "score", answer: 2, levels: ["clean", "minor issues", "serious issues"] });
+    expect(decisionOutcomeOf({ endorsement_accepted: { choice: "Approve", probabilities: null, confidence: 0.9 } })).not.toHaveProperty("answerType");
+  });
+
   it("reads a classify record as an outcome, but does not treat its edges as chosen branches", () => {
     const output = { risk_tier: "high", risk_tier_decision: { answerType: "classify", answer: "high", choice: "high", options: ["low", "high"], probabilities: { low: 0.1, high: 0.9 }, confidence: 0.8 } };
     expect(decisionOutcomeOf(output)).toMatchObject({ choice: "high", options: ["low", "high"] });

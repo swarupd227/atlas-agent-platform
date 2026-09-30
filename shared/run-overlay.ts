@@ -17,6 +17,9 @@
 import { stateKeyForLabel } from "./state-key";
 import { decisionAnswerType } from "./flow-execution-kind";
 
+/** The suffix under which a classify or score decision keeps its record beside the value it wrote. */
+export const DECISION_RECORD_SUFFIX = "_decision";
+
 export type OverlayState = "completed" | "failed" | "skipped" | "running" | "waiting" | "pending";
 
 export interface OverlayNodeResult {
@@ -48,6 +51,11 @@ export interface DecisionOutcome {
   confidence: number | null;
   question?: string;
   options?: string[];
+  /** Classify or score: the record under <key>_decision says which; a branch decision carries none. */
+  answerType?: "classify" | "score";
+  /** Score: the ladder, low to high; `answer` is the index and `choice` the level's name. */
+  levels?: string[];
+  answer?: string | number;
   engine?: string;
   model?: string;
   fallbackReason?: string;
@@ -93,6 +101,9 @@ export function decisionOutcomeOf(output: unknown): DecisionOutcome | null {
       confidence: typeof o.confidence === "number" ? o.confidence : null,
       ...(typeof o.question === "string" ? { question: o.question } : {}),
       ...(Array.isArray(o.options) ? { options: o.options.filter((x): x is string => typeof x === "string") } : {}),
+      ...(o.answerType === "classify" || o.answerType === "score" ? { answerType: o.answerType } : {}),
+      ...(Array.isArray(o.levels) ? { levels: o.levels.filter((x): x is string => typeof x === "string") } : {}),
+      ...(typeof o.answer === "string" || typeof o.answer === "number" ? { answer: o.answer } : {}),
       ...(typeof o.engine === "string" ? { engine: o.engine } : {}),
       ...(typeof o.model === "string" ? { model: o.model } : {}),
       ...(typeof o.fallbackReason === "string" ? { fallbackReason: o.fallbackReason } : {}),

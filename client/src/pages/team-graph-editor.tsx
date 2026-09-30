@@ -546,7 +546,12 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
 }
 
 type DecisionOption = { label: string; description?: string };
-type DecisionNodeConfig = { question?: string; options?: Array<DecisionOption | string>; threshold?: number; unsure?: string };
+type DecisionAnswerTypeUi = "branch" | "classify" | "score";
+type DecisionNodeConfig = { answerType?: DecisionAnswerTypeUi; question?: string; options?: Array<DecisionOption | string>; levels?: string[]; threshold?: number; unsure?: string; classifierId?: string };
+const decisionAnswerTypeOf = (cfg: unknown): DecisionAnswerTypeUi => {
+  const v = (cfg as DecisionNodeConfig | null | undefined)?.answerType;
+  return v === "classify" || v === "score" ? v : "branch";
+};
 
 /**
  * A decision step's question and options (node.config.decision, the shape
@@ -564,6 +569,11 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
   const [question, setQuestion] = useState(cfg.question || "");
   const [threshold, setThreshold] = useState(cfg.threshold != null ? String(cfg.threshold) : "");
   const [options, setOptions] = useState<DecisionOption[]>(stored);
+  // What the step answers with. A branch decision chooses among its Decision-routed
+  // links; a classify or score decision writes a label or a level to its state key
+  // and its links are ordinary rules over that value.
+  const answerType = decisionAnswerTypeOf(cfg);
+  const [levels, setLevels] = useState<string[]>(Array.isArray(cfg.levels) ? cfg.levels.map(String) : []);
 
   const write = (patch: Partial<DecisionNodeConfig>) => {
     onUpdate({ config: { ...((node.config as any) || {}), decision: { ...cfg, options, ...patch } } } as any);
@@ -572,6 +582,11 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
     setOptions(next);
     write({ options: next.filter((o) => o.label.trim()) });
   };
+  const commitLevels = (next: string[]) => {
+    setLevels(next);
+    write({ levels: next.map((l) => l.trim()).filter(Boolean) });
+  };
+  const validLevels = levels.map((l) => l.trim()).filter(Boolean).length;
   const labelOf = (id: string) => allNodes.find((n) => n.id === id)?.label || "?";
   const branches = outgoingEdges.filter((e) => e.evaluationMode === "decision");
   const optionSlugs = new Set(options.map((o) => stateKeyForLabel(o.label)).filter(Boolean));
@@ -579,24 +594,42 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
   return (
     <>
       <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium text-muted-foreground">Answers with</label>
+        <select
+          className="h-9 w-full rounded-md border bg-background px-2 text-xs"
+          value={answerType}
+          onChange={e => { const v = e.target.value as DecisionAnswerTypeUi; write({ answerType: v === "branch" ? undefined : v }); }}
+          data-testid="select-decision-answer-type"
+        >
+          <option value="branch">A branch: one of the Decision-routed links out</option>
+          <option value="classify">A label, written to the state key</option>
+          <option value="score">A level on a ladder, written to the state key</option>
+        </select>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium text-muted-foreground">Question</label>
         <Textarea
           value={question}
           onChange={e => setQuestion(e.target.value)}
           onBlur={() => { if (question !== (cfg.question || "")) write({ question }); }}
-          placeholder="Does this submission need a senior underwriter?"
+          placeholder={answerType === "classify" ? "What kind of submission is this?" : answerType === "score" ? "How serious are the findings?" : "Does this submission need a senior underwriter?"}
           rows={3}
           className="text-xs"
           data-testid="input-decision-question"
         />
         <p className="text-[10px] text-muted-foreground">
-          One decision-model call answers this from the steps before it and picks exactly one option below -- no agent, a fraction of a
-          cent, well under a second. The choice, its probabilities and its confidence are recorded on the run.
+          {answerType === "branch"
+            ? "One decision-model call answers this from the steps before it and picks exactly one option below -- no agent, a fraction of a cent, well under a second. The choice, its probabilities and its confidence are recorded on the run."
+            : answerType === "classify"
+            ? "One decision-model call answers this from the steps before it and writes one of the labels below to the state key, where later steps and the rules on this step's links read it. The label, its probabilities and its confidence are recorded on the run."
+            : "One decision-model call answers this from the steps before it and writes the level's number (0 for the first) to the state key, where later steps and the rules on this step's links read it. The level, its probabilities and its confidence are recorded on the run."}
         </p>
       </div>
 
+      {answerType !== "score" && (
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Options</label>
+        <label className="text-xs font-medium text-muted-foreground">{answerType === "classify" ? "Labels to choose from" : "Options"}</label>
         {options.map((o, i) => (
           <div key={i} className="flex flex-col gap-1 rounded-md border p-2" data-testid={`decision-option-${i}`}>
             <div className="flex items-center gap-1">
@@ -635,7 +668,43 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
           <p className="text-[10px] text-amber-600" data-testid="text-decision-needs-options">A decision needs at least two named options.</p>
         )}
       </div>
+      )}
 
+      {answerType === "score" && (
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium text-muted-foreground">Ladder, low to high</label>
+        {levels.map((l, i) => (
+          <div key={i} className="flex items-center gap-1" data-testid={`decision-level-${i}`}>
+            <span className="w-4 shrink-0 font-mono text-[10px] text-muted-foreground">{i}</span>
+            <Input
+              value={l}
+              onChange={e => setLevels(levels.map((x, j) => (j === i ? e.target.value : x)))}
+              onBlur={() => commitLevels(levels)}
+              placeholder={i === 0 ? "e.g. clean: nothing to fix" : "the next level up"}
+              className="h-8 text-xs"
+              data-testid={`input-decision-level-${i}`}
+            />
+            <button
+              type="button"
+              onClick={() => commitLevels(levels.filter((_, j) => j !== i))}
+              className="rounded p-1 text-muted-foreground hover:text-foreground"
+              aria-label="Remove level"
+              data-testid={`button-remove-decision-level-${i}`}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+        <Button variant="outline" size="sm" className="self-start" disabled={levels.length >= 10} onClick={() => setLevels([...levels, ""])} data-testid="button-add-decision-level">
+          <Plus className="w-3.5 h-3.5 mr-1" /> Add level
+        </Button>
+        {validLevels < 2 && (
+          <p className="text-[10px] text-amber-600" data-testid="text-decision-needs-levels">A ladder needs at least two levels, and at most ten.</p>
+        )}
+      </div>
+      )}
+
+      {answerType === "branch" && (
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium text-muted-foreground">Branches</label>
         {branches.length === 0 ? (
@@ -658,6 +727,7 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
           </ul>
         )}
       </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         <div className="flex flex-col gap-1.5">
@@ -677,6 +747,7 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
             data-testid="input-decision-threshold"
           />
         </div>
+        {answerType === "branch" && (
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-muted-foreground">When unsure</label>
           <select
@@ -689,9 +760,12 @@ function DecisionConfigFields({ node, allNodes, outgoingEdges, onUpdate }: {
             <option value="gate">Go to the approval branch</option>
           </select>
         </div>
+        )}
       </div>
       <p className="text-[10px] text-muted-foreground">
-        Below the confidence, an agent makes the same choice instead, or the run goes down a branch that leads to a human approval.
+        {answerType === "branch"
+          ? "Below the confidence, an agent makes the same choice instead, or the run goes down a branch that leads to a human approval."
+          : "Below the confidence, an agent answers the same question instead, and the run records that it did."}
       </p>
     </>
   );
@@ -1307,7 +1381,11 @@ function NodeConfigPanel({
               placeholder={autoStateKey(localLabel) || "e.g. triage_decision"}
               data-testid="input-state-key-decision"
             />
-            <p className="text-[10px] text-muted-foreground">The choice, its probabilities and confidence are saved here for the steps after it and for the run's record.</p>
+            <p className="text-[10px] text-muted-foreground">
+              {decisionAnswerTypeOf((node.config as any)?.decision) === "branch"
+                ? "The choice, its probabilities and confidence are saved here for the steps after it and for the run's record."
+                : "The label or level is saved here as a plain value for the steps after it and their rules; the probabilities and confidence go under this key with _decision added."}
+            </p>
           </div>
         </>
       )}
@@ -2131,8 +2209,12 @@ function EdgeConfigPanel({
               It fires when "{sourceNode?.label || "the step before it"}" chooses{" "}
               {edge.label ? <>the option named <span className="font-medium text-foreground">"{edge.label}"</span></> : <>an option named after this link's target, <span className="font-medium text-foreground">"{targetNode?.label || "?"}"</span></>}.
             </p>
-            {sourceNode && sourceNode.nodeType !== "decision" && (
-              <p className="text-[11px] text-amber-600" data-testid="text-decision-source-not-decision">"{sourceNode.label}" is not a Decision step, so this link would never fire.</p>
+            {sourceNode && (sourceNode.nodeType !== "decision" || decisionAnswerTypeOf((sourceNode.config as any)?.decision) !== "branch") && (
+              <p className="text-[11px] text-amber-600" data-testid="text-decision-source-not-decision">
+                {sourceNode.nodeType !== "decision"
+                  ? `"${sourceNode.label}" is not a Decision step, so this link would never fire.`
+                  : `"${sourceNode.label}" writes a value rather than choosing a branch, so this link would never fire; give it a rule over "${sourceNode.stateKey || "its state key"}" instead.`}
+              </p>
             )}
             {sourceOptions.length > 0 && (
               <p className="text-[11px] text-muted-foreground">

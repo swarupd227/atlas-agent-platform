@@ -150,8 +150,8 @@ export interface DecisionStepConfig {
   classifierId?: string;
 }
 
-/** The suffix under which a value-writing decision keeps its record beside the value it wrote. */
-export const DECISION_RECORD_SUFFIX = "_decision";
+import { DECISION_RECORD_SUFFIX } from "@shared/run-overlay";
+export { DECISION_RECORD_SUFFIX };
 
 function parseDecisionConfig(raw: any): DecisionStepConfig | null {
   if (!raw || typeof raw !== "object") return null;

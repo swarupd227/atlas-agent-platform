@@ -123,6 +123,41 @@ describe("a run can be shown on the team-graph canvas", () => {
   });
 });
 
+describe("the answer types on every surface (Phase 3, item 2)", () => {
+  it("the studio inspector offers the answer type, a labels editor and a ladder editor, and hides branch-only controls otherwise", () => {
+    expect(studioCanvas).toContain('data-testid="select-node-answer-type"');
+    expect(studioCanvas).toContain("patchNode(selNode.id, { config: v === \"branch\" ? rest : { ...rest, answerType: v } });");
+    expect(studioCanvas).toContain('data-testid="button-add-node-option"');
+    expect(studioCanvas).toContain("data-testid={`input-node-option-label-${i}`}");
+    expect(studioCanvas).toContain('data-testid="button-add-node-level"');
+    expect(studioCanvas).toContain("data-testid={`input-node-level-${i}`}");
+    expect(studioCanvas).toContain('data-testid="decision-answer-preview"');
+    expect(studioCanvas).toContain("decisionAnswerType, decisionOptionsFor, decisionLevelsFor } from \"@shared/flow-execution-kind\"");
+    // The branch-only controls stay, shown only for a branch decision.
+    expect(studioCanvas).toContain('{answerType === "branch" && (\n                      <div className="flex flex-col gap-1">\n                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Runs as</label>');
+  });
+
+  it("the team-graph editor offers the answer type and a ladder, keeps branches and 'when unsure' for a branch decision, and warns a Decision-routed link out of a value decision", () => {
+    expect(editor).toContain('data-testid="select-decision-answer-type"');
+    expect(editor).toContain("write({ answerType: v === \"branch\" ? undefined : v });");
+    expect(editor).toContain('data-testid="button-add-decision-level"');
+    expect(editor).toContain("data-testid={`input-decision-level-${i}`}");
+    expect(editor).toContain('data-testid="text-decision-needs-levels"');
+    expect(editor).toContain("write({ levels: next.map((l) => l.trim()).filter(Boolean) });");
+    expect(editor).toContain("decisionAnswerTypeOf((sourceNode.config as any)?.decision) !== \"branch\"");
+    expect(editor).toContain("writes a value rather than choosing a branch");
+  });
+
+  it("the monitor names the answer type, shows a ladder by level name, and does not list the plain value twice", () => {
+    expect(monitor).toContain('import { DECISION_RECORD_SUFFIX } from "@shared/run-overlay";');
+    expect(monitor).toContain("const allEntries = outputEntries(step.result).filter((e) => !decisionValueKeys.has(e.key));");
+    expect(monitor).toContain("classified ${chosen.choice}");
+    expect(monitor).toContain("scored ${chosen.choice}");
+    expect(monitor).toContain('chosen.answerType === "classify" ? "Classified" : chosen.answerType === "score" ? "Scored" : "Decided"');
+    expect(monitor).toContain("const name = chosen.answerType === \"score\" && chosen.levels ? (chosen.levels[Number(option)] ?? option) : option;");
+  });
+});
+
 describe("the run monitor shows what a decision step decided", () => {
   it("reads the decision through the shared reader, keyed off the node type", () => {
     expect(monitor).toContain('import { decisionOutcomeOf } from "@shared/run-overlay";');
