@@ -15,7 +15,7 @@ import { generateOntologyEvalCases } from "./routes/helpers";
 import { resolveBindingServer } from "./team-bindings";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
 import { edgeRuleForCondition, parseConditionToRule } from "@shared/condition-to-rule";
-import { classifyStep, type DecisionBranch } from "@shared/flow-execution-kind";
+import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, type DecisionBranch } from "@shared/flow-execution-kind";
 import { stateKeyForLabel } from "@shared/state-key";
 import { getDecisionSettings } from "./decision-settings";
 import { stepCorrelation } from "@shared/process-flow-correlation";
@@ -309,9 +309,28 @@ function decisionNodeFor(
   if (!step) return null;
   const config = (step.config ?? {}) as Record<string, any>;
   if (classifyStep({ type: step.type, config }, { outgoingEdges: branches ?? [], decisionKind }) !== "decision") return null;
+  const threshold = Number(config.confidenceThreshold);
+  const answerType = decisionAnswerType(config);
+  if (answerType !== "branch") {
+    // A value-writing decision: its options or levels come from the step itself,
+    // its edges are ordinary, and "unsure: gate" has no branch to go to.
+    const authored = answerType === "classify" ? { options: decisionOptionsFor(config) } : { levels: decisionLevelsFor(config) };
+    return {
+      nodeType: "decision",
+      stateKey: stateKeyForLabel(step.label ?? ""),
+      config: {
+        decision: {
+          answerType,
+          question: String(config.question || step.description || step.label || "").trim() || `What is "${step.label}"?`,
+          ...authored,
+          ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
+          ...(typeof config.classifierId === "string" && config.classifierId ? { classifierId: config.classifierId } : {}),
+        },
+      },
+    };
+  }
   const options = (branches ?? []).map((b) => ({ label: b.label, description: b.condition || b.label }));
   if (options.length < 2) return null;
-  const threshold = Number(config.confidenceThreshold);
   return {
     nodeType: "decision",
     stateKey: stateKeyForLabel(step.label ?? ""),
@@ -1408,7 +1427,9 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       // edge keeps the author's label (what the choice names) and condition (for
       // the reader), and is evaluated by the choice rather than by a rule or a
       // model.
-      const decisionEdge = source.nodeType === "decision";
+      // Only a branch decision chooses its edges; a classify or score node writes
+      // a value and its edges are rules or conditions over it, like any producer's.
+      const decisionEdge = source.nodeType === "decision" && decisionAnswerType((source.config as any)?.decision) === "branch";
       await storage.createTeamBlueprintEdge({
         blueprintId: blueprint.id,
         sourceNodeId: source.id,

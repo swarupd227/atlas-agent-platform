@@ -15,6 +15,7 @@
  * server/dag-execution-engine.ts), through the same slug.
  */
 import { stateKeyForLabel } from "./state-key";
+import { decisionAnswerType } from "./flow-execution-kind";
 
 export type OverlayState = "completed" | "failed" | "skipped" | "running" | "waiting" | "pending";
 
@@ -125,6 +126,7 @@ export function buildRunOverlay(
 ): RunOverlay {
   const labelOf = new Map(nodes.map((n) => [n.id, n.label] as const));
   const typeOf = new Map(nodes.map((n) => [n.id, n.nodeType ?? undefined] as const));
+  const answerTypeOf = new Map(nodes.map((n) => [n.id, decisionAnswerType((n as { config?: { decision?: unknown } }).config?.decision)] as const));
   const out: Record<string, OverlayNode> = {};
 
   let lastWave = 0;
@@ -132,9 +134,11 @@ export function buildRunOverlay(
     lastWave = Math.max(lastWave, w.waveNumber);
     for (const n of w.nodes) {
       const state: OverlayState = n.status === "failed" ? "failed" : n.status === "skipped" ? "skipped" : "completed";
-      // Only a decision step's output is read as a decision: an agent may well
-      // write a `choice` field of its own, and that is prose, not a branch.
-      const isDecision = typeOf.get(n.nodeId) === "decision";
+      // Only a branch decision's output is read as a decision that chose an
+      // edge: an agent may well write a `choice` field of its own, and that is
+      // prose, not a branch; a classify or score decision wrote a value, and its
+      // edges are taken the ordinary way.
+      const isDecision = typeOf.get(n.nodeId) === "decision" && answerTypeOf.get(n.nodeId) === "branch";
       out[n.nodeId] = { state, durationMs: n.durationMs ?? null, error: n.error ?? null, decision: isDecision ? decisionOutcomeOf(n.output) : null };
     }
   }

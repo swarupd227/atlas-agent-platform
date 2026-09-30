@@ -34,7 +34,7 @@ import { effectiveStateKey, stateKeyForLabel } from "@shared/state-key";
 import { isCurrentReworkRule, REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
 import type { ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
-import { classifyStep } from "@shared/flow-execution-kind";
+import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor } from "@shared/flow-execution-kind";
 import { getDecisionSettings } from "./decision-settings";
 
 /**
@@ -329,7 +329,7 @@ function planConnections(graph: ProcessFlowGraph, diff: Diff, existingEdges: any
     // A branch out of a decision step is chosen by the step, not judged by its
     // condition; switching either way is a change the card must show.
     const srcPn = graph.nodes.find((n) => n.id === e.from);
-    const wantDecision = !!srcPn && isDecision(srcPn);
+    const wantDecision = !!srcPn && isDecision(srcPn) && decisionAnswerType(srcPn.config) === "branch";
     if (wantDecision !== (existing.evaluationMode === "decision")) {
       changed.push(wantDecision ? `${pairText(e.from, e.to)} is chosen by "${labelFor(e.from)}" itself` : `${pairText(e.from, e.to)} waits on its condition again`);
       continue;
@@ -615,21 +615,30 @@ export async function applyFlowSync(
           .filter((o) => o.label);
         const cfg = (pn.config ?? {}) as Record<string, any>;
         const threshold = Number(cfg.confidenceThreshold);
+        const answerType = decisionAnswerType(cfg);
+        // A value-writing decision takes its options or levels from the step,
+        // not from its edges, and has no approval branch to route to when unsure.
+        const decision = answerType !== "branch"
+          ? {
+              answerType,
+              question: String(cfg.question || pn.description || pn.label || "").trim() || `What is "${pn.label}"?`,
+              ...(answerType === "classify" ? { options: decisionOptionsFor(cfg) } : { levels: decisionLevelsFor(cfg) }),
+              ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
+              ...(typeof cfg.classifierId === "string" && cfg.classifierId ? { classifierId: cfg.classifierId } : {}),
+            }
+          : {
+              question: String(cfg.question || pn.description || pn.label || "").trim() || `Which branch should "${pn.label}" take?`,
+              options,
+              ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
+              ...(cfg.unsure === "gate" ? { unsure: "gate" } : {}),
+            };
         const node = await storage.createTeamBlueprintNode({
           blueprintId,
           nodeType: "decision",
           label: pn.label,
           refAgentId: null,
           stateKey: stepStateKey(pn),
-          config: {
-            ...processNodeConfig(pn),
-            decision: {
-              question: String(cfg.question || pn.description || pn.label || "").trim() || `Which branch should "${pn.label}" take?`,
-              options,
-              ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
-              ...(cfg.unsure === "gate" ? { unsure: "gate" } : {}),
-            },
-          },
+          config: { ...processNodeConfig(pn), decision },
         } as any);
         return { pn, node, ok: true as const };
       }
@@ -725,7 +734,7 @@ export async function applyFlowSync(
     // A branch out of a decision step is chosen by the step's one call, so the
     // edge is a "decision" edge whatever its condition says.
     const srcPn = graph.nodes.find((n) => n.id === e.from);
-    const decisionEdge = !!srcPn && isDecision(srcPn);
+    const decisionEdge = !!srcPn && isDecision(srcPn) && decisionAnswerType(srcPn.config) === "branch";
     // Endpoints both unchanged AND an edge already connects them: leave it
     // alone. This is what preserves an evaluationMode "deterministic" rule an
     // admin hardened after creation; recreating the edge would downgrade it.

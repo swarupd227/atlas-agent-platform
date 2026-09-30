@@ -37,6 +37,22 @@ export interface StepCorrelation {
   sourceActor: string;
   sourceRefTeamAgentId: string | null;
   sourceExpression: string | null;
+  /**
+   * What a decision step asks and answers with, when the author set any of it:
+   * answer type, question, options or levels, threshold, unsure, classifier.
+   * Without it an edit confined to those keys was not a change the sync could
+   * see, so a re-worded question or a new level never reached the team.
+   */
+  sourceDecision: string | null;
+}
+
+const DECISION_KEYS = ["answerType", "question", "options", "levels", "confidenceThreshold", "unsure", "classifierId"] as const;
+
+function decisionFingerprint(step: CorrelatableStep, config: Record<string, any>): string | null {
+  if (step.type !== "make_decision") return null;
+  const picked: Record<string, unknown> = {};
+  for (const k of DECISION_KEYS) if (config[k] !== undefined && config[k] !== null && config[k] !== "") picked[k] = config[k];
+  return Object.keys(picked).length > 0 ? JSON.stringify(picked) : null;
 }
 
 /** The correlation a blueprint node carries for the step it came from. */
@@ -53,6 +69,7 @@ export function stepCorrelation(step: CorrelatableStep): StepCorrelation {
     // can't see a change confined to config.refTeamAgentId.
     sourceRefTeamAgentId: config.refTeamAgentId || null,
     sourceExpression: config.expression || null,
+    sourceDecision: decisionFingerprint(step, config),
   };
 }
 
@@ -65,5 +82,6 @@ export function stepUnchanged(storedConfig: unknown, step: CorrelatableStep): bo
     && cfg.sourceType === now.sourceType
     && (cfg.sourceActor || "") === now.sourceActor
     && (cfg.sourceRefTeamAgentId || null) === now.sourceRefTeamAgentId
-    && (cfg.sourceExpression || null) === now.sourceExpression;
+    && (cfg.sourceExpression || null) === now.sourceExpression
+    && (cfg.sourceDecision || null) === now.sourceDecision;
 }

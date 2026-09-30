@@ -14,6 +14,7 @@ import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNo
 import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, collectRuleLeaves, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
 import { collectRunFiles } from "@shared/run-files";
 import { stateKeyForLabel } from "@shared/state-key";
+import { decisionAnswerType, decisionLevelsFor, type DecisionAnswerType } from "@shared/flow-execution-kind";
 import { gateEdgeSatisfied, gateEdgePolarity } from "@shared/gate-edge-polarity";
 import { producerOmitted } from "@shared/run-words";
 
@@ -129,31 +130,50 @@ export interface IncomingEdgeInfo {
   label: string | null;
 }
 
-/** A decision node's question and the branches it chooses between (node.config.decision). */
+/**
+ * A decision node's question and what it answers with (node.config.decision).
+ * "branch" chooses among the node's branches; "classify" writes one of its
+ * options to state; "score" writes a level index on its ladder.
+ */
 export interface DecisionStepConfig {
+  answerType: DecisionAnswerType;
   question: string;
+  /** Branch: the branches. Classify: the labels to choose from. Score: empty. */
   options: Array<{ label: string; description?: string }>;
+  /** Score only: the ladder, low to high. */
+  levels?: string[];
   /** Overrides the site's act threshold for this step. */
   threshold?: number;
-  /** Below threshold: the LLM makes the same choice (default), or the run goes to a drawn approval branch. */
+  /** Branch only. Below threshold: the LLM makes the same choice (default), or the run goes to a drawn approval branch. */
   unsure?: "llm" | "gate";
+  /** The named classifier the step was bound to, when one was. */
+  classifierId?: string;
 }
+
+/** The suffix under which a value-writing decision keeps its record beside the value it wrote. */
+export const DECISION_RECORD_SUFFIX = "_decision";
 
 function parseDecisionConfig(raw: any): DecisionStepConfig | null {
   if (!raw || typeof raw !== "object") return null;
+  const answerType = decisionAnswerType(raw);
   const options = Array.isArray(raw.options)
     ? raw.options
         .map((o: any) => (typeof o === "string" ? { label: o } : o && typeof o.label === "string" ? { label: o.label, ...(typeof o.description === "string" ? { description: o.description } : {}) } : null))
         .filter((o: any): o is { label: string; description?: string } => !!o && o.label.trim().length > 0)
     : [];
+  const levels = decisionLevelsFor(raw);
   const question = typeof raw.question === "string" && raw.question.trim() ? raw.question.trim() : "";
-  if (!question || options.length < 2) return null;
+  if (!question) return null;
+  if (answerType === "score" ? levels.length < 2 : options.length < 2) return null;
   const threshold = Number(raw.threshold);
   return {
+    answerType,
     question,
-    options,
+    options: answerType === "score" ? [] : options,
+    ...(answerType === "score" ? { levels } : {}),
     ...(Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? { threshold } : {}),
-    ...(raw.unsure === "gate" ? { unsure: "gate" as const } : {}),
+    ...(answerType === "branch" && raw.unsure === "gate" ? { unsure: "gate" as const } : {}),
+    ...(typeof raw.classifierId === "string" && raw.classifierId ? { classifierId: raw.classifierId } : {}),
   };
 }
 
@@ -2691,8 +2711,68 @@ export class DAGExecutionEngine {
     const state: Record<string, unknown> = {};
     if (currentState.request !== undefined) state.request = currentState.request;
     for (const key of Array.from(visible)) if (currentState[key] !== undefined) state[key] = currentState[key];
+    const done = (output: Record<string, unknown>, r: { inputTokens: number; costUsd: number }): NodeExecutionResult => ({
+      nodeId, agentId: "", status: "completed", output,
+      durationMs: Date.now() - start, promptTokens: r.inputTokens, completionTokens: 0, traceId: "", costUsd: r.costUsd,
+    });
+    const base = (r: { probabilities?: Record<string, number>; confidence: number | null; engine: string; model: string; fallbackReason?: string }) => ({
+      probabilities: r.probabilities ?? null,
+      confidence: r.confidence,
+      engine: r.engine,
+      model: r.model,
+      question: d.question,
+      ...(r.fallbackReason ? { fallbackReason: r.fallbackReason } : {}),
+      ...(d.classifierId ? { classifierId: d.classifierId } : {}),
+    });
+    // A value-writing decision: the plain value goes under the state key, where
+    // a rule downstream reads it as a field, and the decision's own record goes
+    // under <key>_decision, where the monitor reads it. The record carries
+    // `choice` too, so what shows a branch decision shows this one.
+    if (d.answerType === "score") {
+      const levels = d.levels ?? [];
+      try {
+        const r = await decide({
+          kind: "score",
+          site: "score_step",
+          orgId: config.organizationId ?? null,
+          state: boundedState(state),
+          instructions: d.question,
+          criteria: levels,
+          threshold: d.threshold,
+          subject: d.classifierId ? `${nc.label} [${d.classifierId}]` : nc.label,
+        });
+        const level = Math.max(0, Math.min(levels.length - 1, Math.round(Number(r.answer))));
+        return done({
+          [nc.stateKey]: level,
+          [`${nc.stateKey}${DECISION_RECORD_SUFFIX}`]: { answerType: "score", answer: level, level: levels[level], choice: levels[level], levels, ...base(r) },
+        }, r);
+      } catch (e: any) {
+        return fail(`Score failed: ${e?.message || String(e)}`);
+      }
+    }
     const criteria: Record<string, string> = {};
     for (const o of d.options) criteria[o.label] = o.description || o.label;
+    if (d.answerType === "classify") {
+      try {
+        const r = await decide({
+          kind: "choice",
+          site: "classify_step",
+          orgId: config.organizationId ?? null,
+          state: boundedState(state),
+          instructions: d.question,
+          criteria,
+          threshold: d.threshold,
+          subject: d.classifierId ? `${nc.label} [${d.classifierId}]` : nc.label,
+        });
+        const choice = String(r.answer);
+        return done({
+          [nc.stateKey]: choice,
+          [`${nc.stateKey}${DECISION_RECORD_SUFFIX}`]: { answerType: "classify", answer: choice, choice, options: d.options.map((o) => o.label), ...base(r) },
+        }, r);
+      } catch (e: any) {
+        return fail(`Classification failed: ${e?.message || String(e)}`);
+      }
+    }
     try {
       const r = await decide({
         kind: "choice",

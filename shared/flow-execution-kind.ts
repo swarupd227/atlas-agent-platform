@@ -77,6 +77,45 @@ export interface DecisionBranch {
  * carry a label or a condition. The label is the option's name; a branch with
  * only a condition is named by it.
  */
+/**
+ * What a decision step answers with. "branch" is the original kind: one choice
+ * over the step's labelled branches, and exactly one edge is taken. "classify"
+ * and "score" are the same node writing a VALUE to state instead -- a label
+ * from the step's own options, or a level index on its ladder -- for the rules
+ * downstream to read. They are authored choices: no flag and no branches are
+ * needed, only the options or the levels.
+ */
+export type DecisionAnswerType = "branch" | "classify" | "score";
+
+export function decisionAnswerType(config: unknown): DecisionAnswerType {
+  const v = (config as { answerType?: unknown } | null | undefined)?.answerType;
+  return v === "classify" || v === "score" ? v : "branch";
+}
+
+/** A classify step's options, as the author wrote them: strings, or {label, description}. */
+export function decisionOptionsFor(config: unknown): Array<{ label: string; description?: string }> {
+  const raw = (config as { options?: unknown } | null | undefined)?.options;
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ label: string; description?: string }> = [];
+  const seen = new Set<string>();
+  for (const o of raw) {
+    const label = typeof o === "string" ? o.trim() : str((o as { label?: unknown })?.label);
+    if (!label || seen.has(label.toLowerCase())) continue;
+    seen.add(label.toLowerCase());
+    const description = typeof o === "object" && o ? str((o as { description?: unknown }).description) : "";
+    out.push({ label, ...(description ? { description } : {}) });
+  }
+  return out;
+}
+
+/** A score step's levels, low to high; the model's answer is an index into this. The seam allows 2 to 10. */
+export function decisionLevelsFor(config: unknown): string[] {
+  const raw = (config as { levels?: unknown } | null | undefined)?.levels;
+  if (!Array.isArray(raw)) return [];
+  const levels = raw.map((l) => (typeof l === "string" ? l.trim() : "")).filter(Boolean);
+  return levels.length >= 2 && levels.length <= 10 ? levels : [];
+}
+
 /** The shape of an edge the classifier reads: a flow's ProcessEdge, or a build's derived branch. */
 export type BranchLike = { to?: string; label?: string; condition?: string };
 
@@ -133,6 +172,16 @@ export function classifyStep(node: Pick<ProcessNode, "type" | "config">, ctx?: C
   if (node.type === "trigger" || node.type === "end" || node.type === "parallel") return "structural";
   if (node.type === "expert_approval") return "gate";
 
+  // A decision that writes a value needs no branches and no flag: its options
+  // or its levels are the whole question. Settled before the rule check below,
+  // because the edges out of such a step are ordinarily rules over the value
+  // it writes, and those must not read as "decided by the edges".
+  if (node.type === "make_decision") {
+    const answerType = decisionAnswerType(config);
+    if (answerType === "classify") return decisionOptionsFor(config).length >= 2 ? "decision" : "agent";
+    if (answerType === "score") return decisionLevelsFor(config).length >= 2 ? "decision" : "agent";
+  }
+
   // A decision every one of whose branches is a plain comparison is decided by
   // the edges themselves. The build walks through such a step and puts each
   // branch's rule on the edge out of the step before it, so no node runs and
@@ -176,7 +225,12 @@ export function classifyStep(node: Pick<ProcessNode, "type" | "config">, ctx?: C
 export function explainKind(node: Pick<ProcessNode, "type" | "config">, ctx?: ClassifyContext): string {
   const kind = classifyStep(node, ctx);
   switch (kind) {
-    case "decision": return "Decided by one decision-model call over its branches; exactly one branch is taken. No agent call.";
+    case "decision": {
+      const answerType = node.type === "make_decision" ? decisionAnswerType(node.config) : "branch";
+      if (answerType === "classify") return "Classified by one decision-model call over its options; the chosen label is written to state for later steps and rules. No agent call.";
+      if (answerType === "score") return "Scored by one decision-model call on its ladder; the level is written to state for later steps and rules. No agent call.";
+      return "Decided by one decision-model call over its branches; exactly one branch is taken. No agent call.";
+    }
     case "structural":
       if (node.type === "parallel") return "A fan-out marker: the steps after it run together. Nothing runs here, and no model call.";
       if (node.type === "make_decision") return "Decided by its branches' own rules, on the edges. Nothing runs here, and no model call.";

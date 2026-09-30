@@ -23,6 +23,7 @@ import { expressionOutputKeys, nodeOutputSchema } from "./expression-contract";
 import { backEdgeKeys } from "@shared/graph-cycles";
 import { judgeConditionField, ruleFields, statePaths } from "@shared/rule-fields";
 import { effectiveStateKey } from "@shared/state-key";
+import { decisionAnswerType } from "@shared/flow-execution-kind";
 
 export interface BlueprintFinding {
   kind:
@@ -120,9 +121,10 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
     const outs = outgoing.get(node.id) ?? [];
     if (outs.length === 0) continue;
     if (node.nodeType === "edge_gate" || node.gateType) continue;
-    // A decision step always takes exactly one of its branches: that is what the
-    // node is. There is no "none matched" to warn about.
-    if (node.nodeType === "decision") continue;
+    // A branch decision always takes exactly one of its branches: that is what
+    // the node is. There is no "none matched" to warn about. A classify or score
+    // decision writes a value and its ways out are rules like any producer's.
+    if (node.nodeType === "decision" && decisionAnswerType((node.config as any)?.decision) === "branch") continue;
     // An expression step gets the more specific finding below instead, so a node
     // is never described twice.
     if (node.nodeType === "expression") continue;
