@@ -31,6 +31,7 @@ import { canonicalJsonStringify } from "./agent-runtime";
 import { summarizeRunToolCalls } from "./run-tool-summary";
 import { runTeamAgentDag, extractFinalOutputText, onDagRunFinished, summarizeFinishedDagRun, type DagRunFinished } from "./dag-execution-engine";
 import { searchKnowledgeBaseChunks } from "./embeddings";
+import { rerankChunks } from "./retrieval-rerank";
 import { canDecideApproval, type RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
@@ -244,7 +245,9 @@ async function buildKbContext(agentId: string, input: string, callerRole: RoleId
       const linkConfig = (link.retrievalConfig as any) || {};
       const topK = typeof linkConfig.topK === "number" ? linkConfig.topK : 5;
       const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
-      const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, input, topK, scoreThreshold, callerRole);
+      const found = await searchKnowledgeBaseChunks(link.knowledgeBaseId, input, topK, scoreThreshold, callerRole);
+      // Cosine's order, unless the rerank site is routed (server/retrieval-rerank.ts).
+      const chunks = await rerankChunks(input, found, { orgId });
       if (chunks.length > 0) {
         const block = `--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map(c => c.content).join("\n\n")}`;
         kbChunks.push(block);

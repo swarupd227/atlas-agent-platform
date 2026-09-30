@@ -7,6 +7,7 @@ import { compileRedactPatterns, redactStringLeaves, redactText } from "./output-
 import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
+import { rerankChunks } from "./retrieval-rerank";
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, providerFallbackAllowed, unwrapJsonFence, type LLMMessage, type LLMProvider, type LLMCompletionResult, type CanonicalToolCall, type CodeExecutionTraceEntry } from "./llm-provider";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch } from "./anthropic-code-execution";
@@ -1652,7 +1653,11 @@ export async function executePromptWithMcp(
           const linkConfig = (link.retrievalConfig as any) || {};
           const topK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
           const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
-          const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, topK, scoreThreshold, callerRole);
+          const found = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, topK, scoreThreshold, callerRole);
+          // The order the passages enter the prompt in (server/retrieval-rerank.ts):
+          // cosine's, unless the site is routed and the decision model is
+          // confident a different passage answers the task best.
+          const chunks = await rerankChunks(prompt, found, { orgId });
           if (chunks.length > 0) {
             kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map((c: any) => c.content).join("\n\n")}`);
             kbRetrievals.push({

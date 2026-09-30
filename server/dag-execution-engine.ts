@@ -4,6 +4,7 @@ import { executeWorkerAgent, waitForApproval, evaluateCondition, buildPipelineSt
 import { publishDagRunEvent, previewOutput } from "./dag-run-events";
 import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
+import { rerankChunks } from "./retrieval-rerank";
 import { recomputeOutcomeKpis, resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
@@ -2513,7 +2514,9 @@ export class DAGExecutionEngine {
     }
 
     const query = nc.kbQuery?.trim() || nc.label;
-    const chunks = await searchKnowledgeBaseChunks(kb.id, query, 5, 0.3);
+    const found = await searchKnowledgeBaseChunks(kb.id, query, 5, 0.3);
+    // Cosine's order, unless the rerank site is routed (server/retrieval-rerank.ts).
+    const chunks = await rerankChunks(query, found, { orgId: (kb as { organizationId?: string | null }).organizationId ?? null });
     const content = chunks.length > 0
       ? `# ${kb.name} (retrieved for: "${query}")\n\n${chunks.map(c => c.content).join("\n\n---\n\n")}`
       : `# ${kb.name}\nNo results above the relevance threshold for: "${query}"`;
