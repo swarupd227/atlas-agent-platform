@@ -108,6 +108,65 @@ const edgePairs = () => state.edges.map((e) => `${nodeLabel(e.sourceNodeId)} -> 
 beforeEach(reset);
 
 /**
+ * An orchestrator drawn from a flow coordinates; it does not touch the systems.
+ *
+ * Live 2026-09-29, a binder period close: the orchestrator was linked to all
+ * four connectors its steps use, made 15 tool calls of its own (every drawn step
+ * made exactly one), and among them lodged the pack with the carrier and closed
+ * the reporting period, naming an approver it invented. The finance sign-off
+ * gate never ran, and the governed submit and close steps then failed 409 on
+ * work already done.
+ */
+describe("what an orchestrator is allowed to touch", () => {
+  const bindings = [{ server: "Binder Register", tool: "close_reporting_period" }];
+  const base = {
+    orchestrator: { name: "Close Orchestrator", description: "coordinates", mcpToolBindings: bindings },
+    workers: [worker("Period Closer", { mcpToolBindings: bindings })],
+  };
+  const linksFor = (name: string) => {
+    const agent = state.agents.find((a) => a.name === name);
+    return state.links.filter((l) => l.agentId === agent?.id);
+  };
+
+  beforeEach(() => {
+    state.servers.push({ id: "srv-binder", name: "Binder Register", integrationId: null });
+  });
+
+  it("gives a flow-built orchestrator no connectors, and says what it withheld", async () => {
+    const body = teamBuildBodySchema.parse({ ...base, processFlowSteps: [{ id: "n1", label: "Close the period" }] });
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(linksFor("Close Orchestrator")).toHaveLength(0);
+    expect(result.withheldFromOrchestrator).toEqual(["Binder Register"]);
+  });
+
+  it("recognises a flow build from the flow id or from the derived edges", async () => {
+    for (const marker of [{ processFlowId: "flow-1" }, { pipeline: { edgesDerivedFromFlow: true } }]) {
+      reset();
+      state.servers.push({ id: "srv-binder", name: "Binder Register", integrationId: null });
+      const body = teamBuildBodySchema.parse({ ...base, ...marker });
+      const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+      expect(linksFor("Close Orchestrator")).toHaveLength(0);
+      expect(result.withheldFromOrchestrator).toEqual(["Binder Register"]);
+    }
+  });
+
+  it("leaves the workers' own bindings alone -- a step still calls its tool", async () => {
+    const body = teamBuildBodySchema.parse({ ...base, processFlowId: "flow-1" });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(linksFor("Period Closer")).toHaveLength(1);
+  });
+
+  it("still links an orchestrator that was NOT drawn from a flow", async () => {
+    // A team proposed in conversation has no drawn steps to carry the tools,
+    // so taking the orchestrator's connectors away would leave it unable to work.
+    const body = teamBuildBodySchema.parse(base);
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(linksFor("Close Orchestrator")).toHaveLength(1);
+    expect(result.withheldFromOrchestrator).toEqual([]);
+  });
+});
+
+/**
  * A proposer-invented expression must not replace a decision whose branches the
  * author wrote as sentences.
  *

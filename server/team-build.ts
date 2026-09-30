@@ -565,6 +565,8 @@ export const teamBuildBodySchema = z.object({
     })).optional(),
     errorHandling: z.string().optional(),
     handoffRules: z.string().optional(),
+    /** Set by propose-agents when the sequencing came from a drawn flow. */
+    edgesDerivedFromFlow: z.boolean().optional(),
   }).nullable().optional(),
   processFlowSteps: z.array(z.any()).optional(),
 });
@@ -850,7 +852,40 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     },
   });
 
-  const orchestratorLinkResult = await linkMcpBindings(teamAgent.id, orchestrator.mcpToolBindings);
+  // An orchestrator drawn from a flow coordinates; it does not touch the
+  // systems. Every call the process makes is a step somebody drew, and those
+  // steps carry the tool binding, the arguments and the approval that has to
+  // come first.
+  //
+  // Handing the orchestrator the same connectors gave it the whole journey's
+  // reach with none of the journey's controls. Live 2026-09-29, a binder close:
+  // the orchestrator made 15 tool calls of its own -- while every drawn step
+  // made exactly one -- and among them it lodged the pack with the carrier and
+  // closed the reporting period, naming an approver it invented ("Operations
+  // Manager David Chen"). The finance sign-off gate never ran; the governed
+  // submit and close steps then failed with 409 because the work was already
+  // done. Whether a run passed depended on whether the orchestrator got there
+  // first, which is why the same team closed one period cleanly and corrupted
+  // the next.
+  //
+  // So a flow-built orchestrator is linked to nothing, and what was withheld is
+  // reported rather than dropped quietly -- an author who bound a connector
+  // should be told it did not take effect, the same way an unresolved or
+  // unconnected binding is surfaced instead of swallowed.
+  const builtFromFlow = !!(
+    body.processFlowId ||
+    (body.processFlowSteps?.length ?? 0) > 0 ||
+    pipeline?.edgesDerivedFromFlow
+  );
+  const withheldFromOrchestrator = builtFromFlow
+    ? Array.from(new Set((orchestrator.mcpToolBindings ?? []).map((b) => b.server)))
+    : [];
+  const orchestratorLinkResult = builtFromFlow
+    ? { linked: [], unresolved: [], unconnected: [] }
+    : await linkMcpBindings(teamAgent.id, orchestrator.mcpToolBindings);
+  if (withheldFromOrchestrator.length) {
+    console.info(`[team-build] orchestrator drawn from a flow: withheld ${withheldFromOrchestrator.length} connector binding(s) so every system call stays a drawn step — ${withheldFromOrchestrator.join(", ")}`);
+  }
 
   // Seed a draft mandate from what the proposal already has. No real human
   // owner exists yet at this point (owner: "system" above is an internal
@@ -1563,6 +1598,9 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     unconnectedBindings,
     unresolvedBindings,
     structureWarnings,
+    // Named, not dropped: an author who bound a connector to the orchestrator
+    // should be told it did not take effect and why.
+    withheldFromOrchestrator,
     runnable: invariants.runnable,
   };
 }
