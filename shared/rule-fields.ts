@@ -138,12 +138,32 @@ export function judgeConditionField(args: {
   runsObserved?: number;
   /** Runs needed before "never observed" is worth reporting. */
   minRuns?: number;
+  /**
+   * The output schema of the step the EDGE comes from, for a bare field.
+   *
+   * A bare field names no step, so nothing in the blueprint says who produces
+   * it — but the engine resolves one against the source step's own output
+   * before falling back to merged state (withRoutedRecordValues in
+   * dag-execution-engine.ts). So the source step is the producer, and when it
+   * declares what it produces the answer is decisive. Measured 2026-09-30: 10
+   * of 16 bare-field edges on the fleet come from an agent step, which is
+   * where the missing contract actually bites.
+   */
+  sourceSchema?: unknown;
 }): ConditionVerdict {
-  const { field, stateKeys, producerSchema, observedPaths, runsObserved = 0, minRuns = 3 } = args;
+  const { field, stateKeys, producerSchema, observedPaths, runsObserved = 0, minRuns = 3, sourceSchema } = args;
   const dot = field.indexOf(".");
-  // A bare field is read from the merged run state and cannot be traced to one
-  // step from the blueprint alone; the prefix check owns the unknown-step case.
-  if (dot <= 0) return { basis: "unknown", satisfiable: true };
+  if (dot <= 0) {
+    // Decisive or silent, never evidential: a bare field can also be satisfied
+    // from a record nested inside the source's output, which the run-state
+    // paths do not index — so "not seen in recent runs" would be wrong here in
+    // a way it is not for a dotted field.
+    const declaredBySource = schemaProperties(sourceSchema);
+    if (!declaredBySource) return { basis: "unknown", satisfiable: true };
+    return declaredBySource.includes(field)
+      ? { basis: "schema", satisfiable: true }
+      : { basis: "schema", satisfiable: false, declared: declaredBySource };
+  }
   const prefix = field.slice(0, dot);
   const property = field.slice(dot + 1);
   if (!stateKeys.has(prefix)) return { basis: "unknown", satisfiable: true };

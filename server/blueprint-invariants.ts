@@ -19,7 +19,8 @@
  * inferred from what a build intended to write.
  */
 import { storage } from "./storage";
-import { expressionOutputKeys, nodeOutputSchema } from "./expression-contract";
+import { expressionOutputKeys } from "./expression-contract";
+import { stepOutputSchema } from "./step-contract";
 import { backEdgeKeys } from "@shared/graph-cycles";
 import { judgeConditionField, ruleFields, statePaths } from "@shared/rule-fields";
 import { effectiveStateKey } from "@shared/state-key";
@@ -211,16 +212,29 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
   // fields recent runs actually produced (evidence, not proof -- hence never
   // blocking, and never raised below a floor of runs).
   const nodeByStateKey = new Map(nodes.map((n) => [effectiveStateKey(n), n] as const).filter(([k]) => !!k));
+  const nodeById = new Map(nodes.map((n) => [n.id, n] as const));
   const { observedPaths, pathRuns, runsObserved } = await observedStateFields(blueprintId);
+
+  // Resolved once per step: an agent contract is a database read, and a wide
+  // fan-in asks about the same source on every edge.
+  const schemaCache = new Map<string, unknown>();
+  const schemaOf = async (node: any): Promise<unknown> => {
+    if (!node?.id) return undefined;
+    if (!schemaCache.has(node.id)) schemaCache.set(node.id, await stepOutputSchema(node).catch(() => undefined));
+    return schemaCache.get(node.id);
+  };
 
   for (const e of edges) {
     if (e.evaluationMode !== "deterministic" || !e.rule) continue;
     for (const field of ruleFields(e.rule)) {
       const producer = nodeByStateKey.get(field.split(".")[0]);
+      // A dotted field names its producer; a bare one is resolved against the
+      // step the edge comes from, which is what the engine does at run time.
       const verdict = judgeConditionField({
         field,
         stateKeys,
-        producerSchema: nodeOutputSchema(producer),
+        producerSchema: await schemaOf(producer),
+        sourceSchema: field.includes(".") ? undefined : await schemaOf(nodeById.get(e.sourceNodeId)),
         observedPaths,
         runsObserved,
       });
@@ -267,7 +281,9 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
         steps: [from, to],
         message:
           verdict.basis === "schema"
-            ? `The path from "${from}" to "${to}" is decided by "${field}", but "${producer?.label ?? field.split(".")[0]}" declares it produces ${verdict.declared.length > 0 ? verdict.declared.map((d) => `"${d}"`).join(", ") : "nothing"} — not "${field.split(".").slice(1).join(".")}". The condition can never be true, so that path is never taken and every step behind it is skipped.`
+            ? // A bare field names no step, so the one that would produce it is
+              // the step the edge comes from; a dotted one names its own.
+              `The path from "${from}" to "${to}" is decided by "${field}", but "${field.includes(".") ? (producer?.label ?? field.split(".")[0]) : from}" declares it produces ${verdict.declared.length > 0 ? verdict.declared.map((d) => `"${d}"`).join(", ") : "nothing"} — not "${field.includes(".") ? field.split(".").slice(1).join(".") : field}". The condition can never be true, so that path is never taken and every step behind it is skipped.`
             : `The path from "${from}" to "${to}" is decided by "${field}", and "${field}" has not appeared in any of the last ${verdict.runsObserved} runs of this team. That is evidence rather than proof — a rare case might still produce it — but if it is a typo for a field the step does emit, every step behind this path is being skipped on every run.`,
       });
     }

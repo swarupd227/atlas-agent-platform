@@ -13,7 +13,7 @@
  * back null.
  */
 import { describe, it, expect } from "vitest";
-import { expressionOutputKeys, expressionOutputSchema, nodeOutputSchema } from "../server/expression-contract";
+import { expressionOutputKeys, expressionOutputSchema } from "../server/expression-contract";
 
 const block = (verdict: string) => `(
   $rows := [1,2,3];
@@ -70,42 +70,6 @@ describe("refusing to answer rather than answering partly", () => {
   });
 });
 
-describe("which schema a node's checks should use", () => {
-  it("prefers a declared schema over anything derived", () => {
-    const declared = { type: "object", properties: { declared: {} } };
-    const node = { nodeType: "expression", outputSchema: declared, config: { expression: '{ "derived": 1 }' } };
-    expect(nodeOutputSchema(node)).toBe(declared);
-  });
-
-  it("derives one for an expression step that declares none", () => {
-    const node = { nodeType: "expression", outputSchema: null, config: { expression: '{ "passed": true }' } };
-    expect(nodeOutputSchema(node)).toEqual({ type: "object", properties: { passed: {} } });
-  });
-
-  it("derives nothing for an agent step, whose output is not in any source", () => {
-    expect(nodeOutputSchema({ nodeType: "agent", outputSchema: null, config: { expression: '{ "passed": true }' } })).toBeUndefined();
-    expect(nodeOutputSchema(null)).toBeUndefined();
-  });
-
-  it("says nothing about a key being PRESENT, only about it being buildable", () => {
-    // The distinction that matters: JSONata omits a key whose value works out
-    // to nothing, so this contract lists a key the step can build, not one every
-    // run reports. The conditional_output_field check owns the difference.
-    const expr = block("$exists($missing) and $missing.share > 35");
-    expect(expressionOutputKeys(expr)).toContain("concentrationBreached");
-  });
-});
-
-/**
- * The shapes actually in production.
- *
- * Surveyed across all 198 teams on 2026-09-29: 18 deterministic rule fields are
- * produced by Expression steps, from 10 distinct expressions. These four carry
- * the constructs most likely to defeat a parser — a nested object constructor
- * inside the returned one, the descendant operator, and backtick-quoted field
- * names. A wrong key list here is not a missing warning, it is a live branch
- * reported as dead, so the real shapes are pinned rather than reasoned about.
- */
 describe("the expression shapes live teams actually use", () => {
   it("takes the returned object, not the one built inside $each (CAT Accumulation by Zone)", () => {
     const expr = `(

@@ -86,12 +86,3 @@ export function expressionOutputSchema(expression: string | null | undefined): {
   for (const key of keys) properties[key] = {};
   return { type: "object", properties };
 }
-
-/** A blueprint node's declared schema, falling back to one derived from its expression. */
-export function nodeOutputSchema(node: { nodeType?: unknown; outputSchema?: unknown; config?: unknown } | null | undefined): unknown {
-  if (!node) return undefined;
-  if (node.outputSchema) return node.outputSchema;
-  if (node.nodeType !== "expression") return undefined;
-  const expression = (node.config as { expression?: unknown } | null)?.expression;
-  return expressionOutputSchema(typeof expression === "string" ? expression : null) ?? undefined;
-}
