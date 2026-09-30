@@ -1767,6 +1767,12 @@ export async function seedDatabase() {
         description: "on = a make_decision step with labelled branches compiles to the decision execution kind (one decision call, exactly one branch) on its next build or sync; off = it stays an agent step. A flow can opt in on its own with config.decisionKind.",
         category: "decisions",
       },
+      {
+        key: "GUARDRAIL_REVIEW",
+        value: "off",
+        description: "on = a team run that finishes with a high-severity policy flag, or a review verdict that disagrees with the run's facts, raises one Guardrail Review in the Approval Queue with the flags as evidence. off = flags stay on the run and in the guardrail_flags KPI statistic.",
+        category: "decisions",
+      },
     ];
     const missingSettings = seedRowsMissing(existingSettings, defaultSettings, "key");
     if (missingSettings.length > 0) {

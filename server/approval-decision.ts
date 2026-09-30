@@ -111,6 +111,11 @@ export function describeApprovalEffect(
       ? "The new screenshot becomes the baseline that later runs are compared with."
       : "The current baseline stays; the new screenshot is not adopted.";
   }
+  if (a.type === "guardrail_review") {
+    return approve
+      ? "The flags are acknowledged. The run has already finished; nothing about it changes."
+      : "The flags are dismissed as not needing action. The run has already finished; nothing about it changes.";
+  }
   return `Only the approval is ${approve ? "approved" : "rejected"}; this kind of approval doesn't change anything else.`;
 }
 

@@ -5,6 +5,7 @@ import { publishDagRunEvent, previewOutput } from "./dag-run-events";
 import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { rerankChunks } from "./retrieval-rerank";
+import { raiseGuardrailReview } from "./guardrail-review";
 import { recomputeOutcomeKpis, resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
@@ -3671,6 +3672,10 @@ async function executeTeamAgentDagRun(
     });
     publishDagRunEvent(dagRun.id, { type: "run_complete", runStatus: deriveRunStatus(result), totalWaves: wavePlan.totalWaves });
     recordDagRunOutcomeEvent(teamAgentId, dagRun.id, deriveRunStatus(result), result.totalCostUsd).catch(() => {});
+    // Guardrail flags worth a person's attention become one review in the
+    // Approval Queue when GUARDRAIL_REVIEW is on (server/guardrail-review.ts).
+    // Not awaited: the run has finished, and raising it can never fail it.
+    void raiseGuardrailReview({ teamAgentId, dagRunId: dagRun.id, waveResults: result.waveResults, labelOf: (id) => wavePlan.nodeConfig[id]?.label || id });
 
     return result;
   } catch (execErr: any) {

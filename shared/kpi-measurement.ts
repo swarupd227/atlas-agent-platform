@@ -24,7 +24,7 @@
  */
 
 /** A run statistic a KPI can be measured by. */
-export type RunStatistic = "success_rate" | "failure_rate" | "avg_latency" | "run_count" | "event_count" | "cost_usd";
+export type RunStatistic = "success_rate" | "failure_rate" | "avg_latency" | "run_count" | "event_count" | "cost_usd" | "guardrail_flags";
 
 export interface ManualSource {
   kind: "manual";
@@ -39,7 +39,7 @@ export interface AgentRunsSource {
 
 export type MeasurementSource = ManualSource | AgentRunsSource;
 
-export const RUN_STATISTICS: RunStatistic[] = ["success_rate", "failure_rate", "avg_latency", "run_count", "event_count", "cost_usd"];
+export const RUN_STATISTICS: RunStatistic[] = ["success_rate", "failure_rate", "avg_latency", "run_count", "event_count", "cost_usd", "guardrail_flags"];
 
 export const DEFAULT_WINDOW_DAYS = 30;
 const LONGEST_WINDOW_DAYS = 365;
@@ -52,6 +52,7 @@ export const STATISTIC_LABEL: Record<RunStatistic, string> = {
   run_count: "How many agent runs there were",
   event_count: "How many outcome events were recorded",
   cost_usd: "What the agent runs cost",
+  guardrail_flags: "Guardrail flags raised per team run: policies a step's output broke, and verdicts that disagreed with the run's facts",
 };
 
 /** The unit a statistic produces, so a KPI measured in days isn't filled with a percentage. */
@@ -62,6 +63,7 @@ export const STATISTIC_UNIT: Record<RunStatistic, "percent" | "duration" | "coun
   run_count: "count",
   event_count: "count",
   cost_usd: "currency",
+  guardrail_flags: "count",
 };
 
 /**
@@ -111,6 +113,27 @@ export interface RunWindow {
   totalLatencyMs: number;
   totalCostUsd: number;
   events: number;
+  /** Finished team runs in the window, and the guardrail flags they raised; counted only when a KPI asks. */
+  teamRuns?: number;
+  guardrailFlags?: number;
+}
+
+/**
+ * The guardrail flags one team run raised: every judgment on its steps that
+ * was not honoured (NodeExecutionResult.judgments, persisted in waveResults).
+ * A wave that was revised is counted as it finally stood.
+ */
+export function countGuardrailFlags(waveResults: unknown): number {
+  const latest = new Map<string, number>();
+  for (const wave of Array.isArray(waveResults) ? waveResults : []) {
+    for (const node of ((wave as { nodes?: unknown })?.nodes as Array<{ nodeId?: unknown; judgments?: unknown }> | undefined) ?? []) {
+      const judgments = Array.isArray(node?.judgments) ? (node.judgments as Array<{ ok?: unknown }>) : [];
+      latest.set(String(node?.nodeId ?? ""), judgments.filter((j) => j && j.ok === false).length);
+    }
+  }
+  let total = 0;
+  for (const n of latest.values()) total += n;
+  return total;
 }
 
 /**
@@ -141,6 +164,12 @@ export function statisticValue(source: AgentRunsSource, window: RunWindow, unit:
       return events;
     case "cost_usd":
       return runs > 0 ? round(totalCostUsd, 4) : null;
+    case "guardrail_flags": {
+      // Per team run, so a busier week does not read as a worse one. No team
+      // runs in the window is "not measured", never a zero.
+      const teamRuns = window.teamRuns ?? 0;
+      return teamRuns > 0 ? round((window.guardrailFlags ?? 0) / teamRuns, 2) : null;
+    }
   }
 }
 
@@ -195,6 +224,9 @@ export function suggestMeasurement(kpi: { name?: string | null; unit?: string | 
     because: `${because} This is a guess from the KPI's name; check it before accepting.`,
   });
 
+  if (name.includes("guardrail") || (name.includes("policy") && ["violation", "breach", "flag"].some((w) => name.includes(w)))) {
+    return suggest("guardrail_flags", "The name reads as policy breaches, which the guardrail judgments on team runs count.");
+  }
   if (INVERSE_WORDS.some((w) => name.includes(w)) && name.includes("rate")) {
     return suggest("failure_rate", "The name reads as a rate of things going wrong, which agent runs can count as failures.");
   }

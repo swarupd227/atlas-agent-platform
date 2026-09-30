@@ -4,7 +4,7 @@ import { storage } from "../storage";
 import { getDefaultOrgId } from "../auth";
 import { callClaude, stripJsonFences } from "../claude";
 import { insertEvalTestCaseSchema } from "@shared/schema";
-import { breachesThreshold, parseMeasurementSource, statisticValue, trendBetween, type AgentRunsSource, type RunWindow } from "@shared/kpi-measurement";
+import { breachesThreshold, countGuardrailFlags, parseMeasurementSource, statisticValue, trendBetween, type AgentRunsSource, type RunWindow } from "@shared/kpi-measurement";
 
 async function routeAIComplete(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
@@ -1033,12 +1033,28 @@ export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): P
   const outcomeTraces = traces.filter((t) => boundAgentIds.has(t.agentId) && t.startedAt);
   const outcomeEventsHere = outcomeEvents.filter((e) => e.outcomeId === outcomeId && e.createdAt);
 
+  // Guardrail flags come from the team runs' own wave results, read only when
+  // a KPI asks for them: one query per bound agent, the last 200 runs each.
+  const teamRuns: Array<{ startedAt: Date; flags: number }> = [];
+  if (declared.some((d) => d.source.statistic === "guardrail_flags")) {
+    for (const agentId of Array.from(boundAgentIds)) {
+      const runs = await storage.listDagExecutionRunsByTeamAgent(agentId, 200).catch(() => []);
+      for (const r of runs as any[]) {
+        if (!r?.startedAt || !["completed", "completed_with_skips", "failed"].includes(r.status)) continue;
+        teamRuns.push({ startedAt: new Date(r.startedAt), flags: countGuardrailFlags(r.waveResults) });
+      }
+    }
+  }
+
   // Each KPI states its own window, so the figures are counted per window
   // rather than once over a fixed 30 days.
   const windowFor = (days: number): RunWindow => {
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const runs = outcomeTraces.filter((t) => new Date(t.startedAt as any) >= from);
+    const teamRunsHere = teamRuns.filter((r) => r.startedAt >= from);
     return {
+      teamRuns: teamRunsHere.length,
+      guardrailFlags: teamRunsHere.reduce((sum, r) => sum + r.flags, 0),
       runs: runs.length,
       failed: runs.filter((t) => t.status === "failed" || t.status === "error").length,
       totalLatencyMs: runs.reduce((sum, t) => sum + (t.latencyMs || 0), 0),

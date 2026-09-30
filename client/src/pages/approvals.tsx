@@ -59,6 +59,7 @@ const TYPE_META: Record<string, { label: string; icon: any; color: string }> = {
   launch_readiness:      { label: "Launch Readiness",      icon: Rocket, color: "text-emerald-500" },
   blueprint_review:      { label: "Blueprint Review",      icon: FileText, color: "text-violet-500" },
   anomaly_review:        { label: "Anomaly Review",        icon: AlertTriangle, color: "text-amber-500" },
+  guardrail_review:      { label: "Guardrail Review",      icon: AlertTriangle, color: "text-amber-500" },
   config_change:         { label: "Config Change",         icon: Shield, color: "text-amber-500" },
   hitl_gate:             { label: "Workflow Gate",         icon: ArrowRight, color: "text-indigo-500" },
   "tool-invocation":     { label: "Tool Call",              icon: Zap, color: "text-cyan-500" },

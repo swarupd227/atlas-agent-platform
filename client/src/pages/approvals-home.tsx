@@ -80,6 +80,7 @@ export function approveLabel(type: string): string {
     case "outcome_review": return "Validate";
     case "blueprint_review": return "Validate blueprint";
     case "launch_readiness": return "Clear for launch";
+    case "guardrail_review": return "Acknowledge";
     default: return "Approve";
   }
 }
