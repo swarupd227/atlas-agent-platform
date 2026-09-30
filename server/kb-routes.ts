@@ -9,6 +9,7 @@ import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
 import { getOrgId, getDefaultOrgId } from "./auth";
 import { checkPermission, getRequestRole } from "./permissions";
 import { assertSafeOutboundUrl, UnsafeUrlError } from "./url-safety";
+import { sensitivitySecondOpinion } from "./kb-sensitivity";
 
 interface OntologyAlignmentResult {
   score: number;
@@ -158,11 +159,32 @@ async function performSensitivityScan(
 ): Promise<SensitivityWarning[]> {
   const detectedClasses = detectSensitivityClasses(text);
 
+  // The keyword level, then a second opinion from the decision seam that can
+  // raise it and never lower it (server/kb-sensitivity.ts). In shadow the
+  // keyword level stands and the model's answer is only recorded.
+  const keywordLevel = classifySensitivityLevel(detectedClasses);
+  const opinion = await sensitivitySecondOpinion({ text, keywordLevel, orgId, subject: sourceId ? `${kbId}:${sourceId}` : kbId });
+
   if (sourceId) {
     try {
-      await storage.updateKnowledgeSource(sourceId, { sensitivityLevel: classifySensitivityLevel(detectedClasses) });
+      await storage.updateKnowledgeSource(sourceId, { sensitivityLevel: opinion.level });
     } catch (err: any) {
       console.log("[kb] Failed to persist sensitivity classification (non-blocking):", err.message);
+    }
+    if (opinion.raisedFrom) {
+      try {
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "kb-sensitivity-scanner",
+          action: "knowledge.sensitivity_raised",
+          objectType: "knowledge_base",
+          objectId: kbId,
+          details: JSON.stringify({ sourceId, from: opinion.raisedFrom, to: opinion.level, by: opinion.model, confidence: opinion.confidence, reason: "The decision model judged the content more sensitive than the keyword scan did; a second opinion can raise a level and never lower it." }),
+          industryId,
+        });
+      } catch (err: any) {
+        console.log("[kb] Failed to log sensitivity raise audit event:", err.message);
+      }
     }
   }
 
@@ -652,7 +674,7 @@ async function crawlAndIngest(parentSourceId: string, kbId: string, rootUrl: str
   console.log(`[kb-crawl] Crawl complete for ${rootUrl}: ${pagesCreated} pages ingested from ${visited.size} discovered`);
 }
 
-async function processSourceInBackground(sourceId: string, kbId: string) {
+async function processSourceInBackground(sourceId: string, kbId: string, rescan = false) {
   try {
     const source = await storage.getKnowledgeSource(sourceId);
     const kb = await storage.getKnowledgeBase(kbId);
@@ -673,6 +695,17 @@ async function processSourceInBackground(sourceId: string, kbId: string) {
     if (!text || text.trim().length === 0) {
       await storage.updateKnowledgeSource(sourceId, { status: "error", errorMessage: "No text content extracted" });
       return;
+    }
+
+    // A URL source's text exists only now, and a reprocess may have fetched
+    // different text: both are scanned here, where the add-time scan cannot
+    // reach. Text, upload and structured sources were scanned when added.
+    if (rescan) {
+      try {
+        await performSensitivityScan(text, kbId, (kb as any).industry, (kb as any).organizationId ?? undefined, sourceId);
+      } catch (err: any) {
+        console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
+      }
     }
 
     const chunks = chunkText(text, kb.chunkSize, kb.chunkOverlap);
@@ -801,7 +834,7 @@ export async function addUrlSource(input: { kb: { id: string }; url: string; nam
   const allSources = await storage.getKnowledgeSources(input.kb.id);
   await storage.updateKnowledgeBase(input.kb.id, { totalSources: allSources.length });
 
-  processSourceInBackground(source.id, input.kb.id);
+  processSourceInBackground(source.id, input.kb.id, true);
   if (enableCrawl) {
     crawlAndIngest(source.id, input.kb.id, input.url, crawlDepth, maxPages).catch((err) => {
       console.error(`[kb-crawl] Crawl failed for ${input.url}:`, err.message);
@@ -1059,7 +1092,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       await storage.deleteKnowledgeChunksBySource(req.params.sourceId as string);
       await storage.updateKnowledgeSource(req.params.sourceId as string, { status: "pending", chunkCount: 0, errorMessage: null });
 
-      processSourceInBackground(req.params.sourceId as string, req.params.id as string);
+      processSourceInBackground(req.params.sourceId as string, req.params.id as string, true);
       res.json({ message: "Reprocessing started" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
