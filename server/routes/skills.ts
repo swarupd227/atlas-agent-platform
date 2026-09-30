@@ -2937,7 +2937,7 @@ Return a JSON object with:
         return res.status(400).json({ error: "entityA and entityB are required" });
       }
 
-      const resolveRaw = await callClaude({
+      const resolved = await callClaudeWithUsage({
         system: `You are a data quality expert specializing in entity resolution for ${industry || "enterprise"} knowledge graphs. Analyze two entity references and determine if they refer to the same real-world entity.
 
 Return a JSON object with:
@@ -2959,7 +2959,33 @@ Return ONLY valid JSON.`,
         jsonMode: true,
         maxTokens: 8192,
       });
-      res.json(parseAIJsonResponse(resolveRaw, { wasTruncatedByTokenLimit: true }));
+      const result = parseAIJsonResponse(resolved.text, { wasTruncatedByTokenLimit: true }) as Record<string, any>;
+      // Two judgments through the decision seam on "entity_resolution", with the
+      // incumbent's own answers as known: the same entity or not, and which
+      // kind of match. Reasoning, the attributes and the canonical name stay
+      // the incumbent's; on the jev route the decision model's confident
+      // answers replace the two verdicts. A seam error changes nothing.
+      const categories = ["exact_match", "alias", "abbreviation", "subsidiary", "related_but_different", "no_match"];
+      try {
+        const known: Record<string, boolean | string> = { is_match: Boolean(result.isMatch) };
+        if (categories.includes(result.category)) known.category = String(result.category);
+        const subject = `${entityA} vs ${entityB}`.slice(0, 500);
+        const decided = await decideMany({
+          site: "entity_resolution",
+          state: { entity_a: { name: entityA, source: sourceA ?? null, type: entityType ?? null }, entity_b: { name: entityB, source: sourceB ?? null, type: entityType ?? null }, industry: industry ?? "general" },
+          orgId: getOrgId(req) ?? null,
+          questions: {
+            is_match: { kind: "noul", instructions: "Do these two entity references refer to the same real-world entity?", criteria: { true: "The same entity, under two names, spellings or forms", false: "Different entities, however related" }, subject },
+            ...(known.category !== undefined ? { category: { kind: "choice", instructions: "What kind of match is this?", criteria: { exact_match: "the same name", alias: "another name for the same entity", abbreviation: "one is an abbreviation of the other", subsidiary: "one is a subsidiary of the other", related_but_different: "related, but not the same entity", no_match: "unrelated" }, subject } } : {}),
+          },
+          incumbent: knownIncumbent(known, { model: resolved.model, latencyMs: resolved.latencyMs, inputTokens: resolved.inputTokens, costUsd: resolved.costUsd }),
+        });
+        if (decided.is_match?.engine === "jev" && typeof decided.is_match.answer === "boolean") result.isMatch = decided.is_match.answer;
+        if (decided.category?.engine === "jev" && typeof decided.category.answer === "string") result.category = decided.category.answer;
+      } catch (seamErr: any) {
+        console.warn(`[resolve-entities] seam unavailable: ${seamErr?.message}`);
+      }
+      res.json(result);
     } catch (e: any) {
       // A truncated response used to throw a raw SyntaxError out of JSON.parse,
       // which the UI showed only as a generic "AI analysis failed" toast.

@@ -2,6 +2,7 @@ import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
 import { validateDecisionSetting } from "../decision-settings";
+import { decideMany, knownIncumbent } from "../decision-provider";
 import { parseOpenApiSpec, OpenApiParseError, type ParsedOpenApiSpec } from "../openapi-import";
 import { assertSafeOutboundUrl } from "../url-safety";
 import { CURATED_OPENAPI_CATALOG } from "../marketplace-seed-data";
@@ -101,7 +102,7 @@ import {
   type RuntimeAgent,
   type RuntimeProgressEvent,
 } from "../agent-runtime";
-import { getProvider, getDefaultProvider, getAvailableProviders, type LLMProvider } from "../llm-provider";
+import { getProvider, getDefaultProvider, getAvailableProviders, priceTokens, type LLMProvider } from "../llm-provider";
 import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES, type MaskingReport } from "../services/pii/pii-masking-engine";
 import { PIIRehydrationEngine } from "../services/pii/pii-rehydration-engine";
 import { piiMaskingConfigs, piiMaskingRuns } from "@shared/schema";
@@ -17711,6 +17712,7 @@ Respond with JSON:
   "subsystemLinks": [{ "subsystem": string, "reason": string }]
 }`;
 
+      const classifyStart = Date.now();
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
@@ -17722,6 +17724,38 @@ Respond with JSON:
       });
 
       const classification = JSON.parse(response.choices[0].message.content || "{}");
+
+      // The category through the decision seam on "healing_root_cause", with
+      // the model's own answer as the known incumbent: one audit row per
+      // classification and, once the site is overridden, the decision model's
+      // confident category in place of the incumbent's. Reasoning, evidence
+      // and the links stay the incumbent's; a seam error changes nothing.
+      try {
+        const describe: Record<string, string> = {
+          knowledge_base_staleness: "KB content exists but is outdated or stale",
+          knowledge_gap: "the KB is missing coverage the agent needs",
+          ontology_mismatch: "the ontology no longer matches what the agent sees",
+          tool_schema_change: "a tool's schema changed under the agent",
+          prompt_degradation: "the prompt or the model's output degraded",
+          context_window_overflow: "context overflow or excessive token use",
+          model_regression: "the model itself regressed",
+          data_quality: "bad or inconsistent input data",
+          memory_eviction: "episodic memories were evicted by a retention policy",
+          unknown: "none of the above can be established from the evidence",
+        };
+        const usage = (response as any).usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+        const incumbentCategory = rootCauseCategories.includes(classification.category) ? String(classification.category) : "unknown";
+        const decided = await decideMany({
+          site: "healing_root_cause",
+          state: evidenceBundle,
+          orgId: getOrgId(req) ?? null,
+          questions: { category: { kind: "choice", instructions: "Which category best explains this agent's degradation, given the evidence bundle?", criteria: Object.fromEntries(rootCauseCategories.map((c) => [c, describe[c] ?? c])), subject: `${pipeline.agentName}: root cause`.slice(0, 500) } },
+          incumbent: knownIncumbent({ category: incumbentCategory }, { model: "gpt-4o-mini", latencyMs: Date.now() - classifyStart, inputTokens: usage?.prompt_tokens, costUsd: priceTokens("gpt-4o-mini", usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0) }),
+        });
+        if (decided.category?.engine === "jev" && typeof decided.category.answer === "string") classification.category = decided.category.answer;
+      } catch (seamErr: any) {
+        console.warn(`[healing] root-cause seam unavailable: ${seamErr?.message}`);
+      }
 
       const rawLinks = classification.subsystemLinks || [];
       const normalizedLinks = rawLinks.map((link: any) =>

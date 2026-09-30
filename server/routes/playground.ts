@@ -11,7 +11,8 @@ import { buildAgentSystemPrompt, buildAgentSystemPromptWithGovernance, recompute
 import { buildConversationHistoryText, FOLLOW_UP_CONTEXT_INSTRUCTIONS, type ChatToolCallSummary } from "../conversation-history";
 import { buildAttachmentContext } from "../attachment-context";
 import { executePromptWithMcp, executeTeamPipeline, type RuntimeProgressEvent, type RuntimeAgent } from "../agent-runtime";
-import { callClaude, stripJsonFences, getAnthropicClient } from "../claude";
+import { callClaude, callClaudeWithUsage, stripJsonFences, getAnthropicClient } from "../claude";
+import { decideMany, knownIncumbent } from "../decision-provider";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -601,12 +602,13 @@ Return ONLY a JSON array where each element has:
 
 Return ONLY valid JSON array, no explanation.`;
 
-      const annotateRaw = await callClaude({
+      const annotatedCall = await callClaudeWithUsage({
         system: "",
         user: prompt,
         model: "claude-haiku-4-5",
         maxTokens: 1024,
       });
+      const annotateRaw = annotatedCall.text;
 
       let parsed: any[] = [];
       try {
@@ -623,6 +625,42 @@ Return ONLY valid JSON array, no explanation.`;
         const match = parsed.find((p: any) => p.index === i);
         return { ...c, tags: match?.tags || [] };
       });
+
+      // Each citation-to-framework tag through the decision seam on
+      // "citation_tags": one yes/no per pair, with the incumbent's tags as the
+      // known answers, capped so a long result list stays one call. The
+      // incumbent tags by abbreviation, so a framework counts as tagged when a
+      // tag equals its name. On the jev route the decision model's confident
+      // answers become the tags; a seam error changes nothing.
+      const norm = (s: string) => String(s ?? "").trim().toLowerCase();
+      const pairs: Array<{ key: string; i: number; f: string }> = [];
+      citations.slice(0, 20).forEach((_c: any, i: number) => frameworks.slice(0, 8).forEach((f, k) => pairs.push({ key: `c${i}_f${k}`, i, f })));
+      if (pairs.length > 0) {
+        try {
+          const known: Record<string, boolean> = {};
+          const questions: Record<string, { kind: "noul"; instructions: string; criteria: { true: string; false: string }; subject: string }> = {};
+          for (const p of pairs) {
+            known[p.key] = (annotated[p.i].tags as string[]).some((t) => norm(t) === norm(p.f));
+            questions[p.key] = { kind: "noul", instructions: `Is this citation relevant to the regulatory framework or compliance tag "${p.f}"?`, criteria: { true: "The cited page bears on that framework's rules or scope", false: "It does not" }, subject: `${p.f}: ${String(citations[p.i].title ?? citations[p.i].url ?? "")}`.slice(0, 500) };
+          }
+          const decided = await decideMany({
+            site: "citation_tags",
+            state: { frameworks, citations: citations.slice(0, 20).map((c: any) => ({ title: c.title, url: c.url })) },
+            orgId: getOrgId(req) ?? null,
+            questions,
+            incumbent: knownIncumbent(known, { model: annotatedCall.model, latencyMs: annotatedCall.latencyMs, inputTokens: annotatedCall.inputTokens, costUsd: annotatedCall.costUsd }),
+          });
+          for (const p of pairs) {
+            const d = decided[p.key];
+            if (d?.engine !== "jev" || typeof d.answer !== "boolean") continue;
+            const tags = new Set((annotated[p.i].tags as string[]).map(norm));
+            if (d.answer) tags.add(norm(p.f)); else tags.delete(norm(p.f));
+            annotated[p.i].tags = Array.from(tags);
+          }
+        } catch (seamErr: any) {
+          console.warn(`[annotate-citations] seam unavailable: ${seamErr?.message}`);
+        }
+      }
 
       res.json({ annotations: annotated });
     } catch (e: any) {

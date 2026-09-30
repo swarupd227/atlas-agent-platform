@@ -14,7 +14,8 @@ import {
   insertEvalCaseResultSchema,
   insertBlueprintSchema,
 } from "@shared/schema";
-import { callClaude, stripJsonFences, getAnthropicClient } from "../claude";
+import { callClaude, callClaudeWithUsage, stripJsonFences, getAnthropicClient } from "../claude";
+import { decideMany, knownIncumbent } from "../decision-provider";
 import { filterByIndustry, industryQuery } from "@shared/industry-filter";
 
 export default function createEvaluationsRouter(industryEvalFrameworks: Record<string, any>) {
@@ -1448,12 +1449,13 @@ Return a JSON array of the TOP 5 most relevant template recommendations, ranked 
 Only include templates with matchScore >= 30. Respond ONLY with a valid JSON array, no markdown, no explanation outside the JSON. Example format:
 [{"id": "abc", "matchScore": 92, "reasoning": "This template's ticket classification and KB search align with your support-focused agent description."}]`;
 
-      const rawContent = await callClaude({
+      const matched = await callClaudeWithUsage({
         system: "",
         user: prompt,
         model: "claude-opus-4-5",
         maxTokens: 2048,
       });
+      const rawContent = matched.text;
 
       let parsed: any[] = [];
       try {
@@ -1465,7 +1467,32 @@ Only include templates with matchScore >= 30. Respond ONLY with a valid JSON arr
           try { parsed = JSON.parse(arrayMatch[0]); } catch { /* fallback empty */ }
         }
       }
-      res.json({ matches: Array.isArray(parsed) ? parsed : [] });
+      let matches: any[] = Array.isArray(parsed) ? parsed : [];
+      // The top pick through the decision seam on "template_match": one choice
+      // over the candidates, with the incumbent's own first match as the known
+      // answer. The ranked list and its reasoning stay the incumbent's; on the
+      // jev route the decision model's confident pick moves to the top.
+      const top = matches[0]?.id;
+      if (top != null && templatesContext.length >= 2 && templatesContext.length <= 255) {
+        try {
+          const criteria = Object.fromEntries(templatesContext.map((t: any) => [String(t.id), `${t.name ?? t.id}: ${t.description ?? ""}`.slice(0, 500)]));
+          const decided = await decideMany({
+            site: "template_match",
+            state: { requirements: basicInfo, templates: templatesContext },
+            orgId: getOrgId(req) ?? null,
+            questions: { best: { kind: "choice", instructions: "Which template best fits the user's agent requirements?", criteria, subject: String(basicInfo.name || "agent").slice(0, 500) } },
+            incumbent: knownIncumbent({ best: String(top) }, { model: matched.model, latencyMs: matched.latencyMs, inputTokens: matched.inputTokens, costUsd: matched.costUsd }),
+          });
+          const pick = decided.best;
+          if (pick?.engine === "jev" && typeof pick.answer === "string" && pick.answer !== String(top)) {
+            const i = matches.findIndex((m: any) => String(m.id) === pick.answer);
+            if (i > 0) matches = [matches[i], ...matches.filter((_: any, j: number) => j !== i)];
+          }
+        } catch (seamErr: any) {
+          console.warn(`[match-templates] seam unavailable: ${seamErr?.message}`);
+        }
+      }
+      res.json({ matches });
     } catch (error) {
       console.error("AI match error:", error);
       res.status(500).json({ error: "Template matching failed" });
