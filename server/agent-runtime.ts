@@ -30,6 +30,7 @@ import { ensureContainerFiles, ensureGeneratedContainerFiles } from "./anthropic
 // Decision seam and the Phase 0 shadow measurement. Own lines for the same
 // reason as above.
 import { decide, decideMany, type DecisionQuestion, type DecisionResult } from "./decision-provider";
+import { relevanceHint, recordRelevance, loadedSkillNames, type RelevanceItem } from "./relevance-hints";
 import { parseConditionToRule } from "@shared/condition-to-rule";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
@@ -1545,6 +1546,12 @@ export async function executePromptWithMcp(
   // as tool-less there.
   let skillCatalog = "";
   let skillProcedures = "";
+  // What the relevance sites ask about (server/relevance-hints.ts): the skills
+  // left on demand, and the connectors whose tools this run may call.
+  let onDemandSkillItems: RelevanceItem[] = [];
+  const connectorItems: RelevanceItem[] = Array.from(
+    availableTools.reduce((m, t) => m.set(t.serverName, [...(m.get(t.serverName) ?? []), t.toolName]), new Map<string, string[]>()),
+  ).map(([name, tools]) => ({ name, description: `Tools: ${tools.slice(0, 12).join(", ")}` }));
   try {
     const { own, team } = await resolveReadableSkillSets(agentId, orgId);
     const inlineBudget = options?.runtimeConfig?.skillInlineBudgetTokens;
@@ -1555,6 +1562,13 @@ export async function executePromptWithMcp(
     if (skillTools.length > 0) {
       availableTools.push(...skillTools);
       skillCatalog = skillCatalogPrompt(onDemand);
+      onDemandSkillItems = onDemand.map((s) => ({ name: s.name, description: s.description }));
+      // With "skill_relevance" routed on the decision model, the skills it is
+      // confident this task needs are named under the catalog; the model still
+      // decides what to load. In shadow nothing is added here, and the same
+      // question is recorded after the run against what the run loaded.
+      const likely = await relevanceHint({ site: "skill_relevance", task: prompt, items: onDemandSkillItems, orgId, noun: "skill" });
+      if (likely.length > 0) skillCatalog += `\n\n<skill_relevance>Likely needed for this task: ${likely.join(", ")}. Load them with read_skill before you act, if that work is yours.</skill_relevance>`;
     }
   } catch (skErr: any) {
     console.warn(`[skills] skill loading unavailable (non-fatal): ${skErr.message}`);
@@ -3089,6 +3103,12 @@ After receiving tool results, provide a structured analysis with key findings, s
     .digest("hex");
 
   if (runSpans.rootId) runSpans.end(runSpans.rootId, failedSteps.length === 0 ? "ok" : "error", { "run.failed_steps": failedSteps.length });
+
+  // Shadow measurements for the relevance sites: what this run actually loaded
+  // and called is the incumbent the decision model's guess is compared with.
+  // Not awaited, and only a connector choice between two or more is a question.
+  recordRelevance({ site: "skill_relevance", task: prompt, items: onDemandSkillItems, used: loadedSkillNames(toolCallResults), orgId, noun: "skill" });
+  if (connectorItems.length >= 2) recordRelevance({ site: "connector_preselect", task: prompt, items: connectorItems, used: toolCallResults.filter((r) => !r.error).map((r) => r.serverName), orgId, noun: "connector" });
 
   return {
     steps,
