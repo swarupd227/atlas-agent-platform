@@ -11,9 +11,11 @@ import type { TeamBlueprintNode, TeamBlueprintEdge, RemoteAgent, Skill, Knowledg
 import type { RunOverlay, OverlayNode, OverlayState } from "@shared/run-overlay";
 import { NODE_COLOR_MAP, NODE_ICON_MAP } from "@/lib/team-graph-node-meta";
 
-export const COL_WIDTH = 300;
-export const ROW_HEIGHT = 124;
-const NODE_W = 244;
+// One source of truth with the builder that writes these positions: it used to
+// carry its own, tighter numbers and drew cards on top of each other.
+export { COL_WIDTH, ROW_HEIGHT } from "@shared/graph-layout";
+import { COL_WIDTH, ROW_HEIGHT, NODE_WIDTH } from "@shared/graph-layout";
+const NODE_W = NODE_WIDTH;
 const HEAD_H = 56;
 
 /** The run order the engine computes: stage (wave) number -> the steps that run in it. */

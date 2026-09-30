@@ -14,6 +14,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/status-badge";
 import TeamGraphCanvas, { type WavePlan, type StepMeta } from "@/components/team-graph-canvas";
+import { COL_WIDTH, ROW_HEIGHT } from "@shared/graph-layout";
 import { NODE_COLOR_MAP, TRUST_TIER_COLORS } from "@/lib/team-graph-node-meta";
 import { buildRunOverlay } from "@shared/run-overlay";
 import { stateKeyForLabel } from "@shared/state-key";
@@ -231,8 +232,8 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId, businessView
         blueprintId,
         nodeType,
         label: def?.label || nodeType,
-        positionX: arranged ? (nodes.length % 5) * 280 : 0,
-        positionY: arranged ? Math.floor(nodes.length / 5) * 120 + 40 : 0,
+        positionX: arranged ? (nodes.length % 5) * COL_WIDTH : 0,
+        positionY: arranged ? Math.floor(nodes.length / 5) * ROW_HEIGHT + 40 : 0,
       });
       return res.json() as Promise<TeamBlueprintNode>;
     },

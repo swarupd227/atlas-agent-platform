@@ -23,6 +23,7 @@ import { backEdgeKeys, edgeKey } from "@shared/graph-cycles";
 import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants } from "./blueprint-invariants";
 import jsonata from "jsonata";
+import { COL_WIDTH, LAYOUT_ORIGIN_X, LAYOUT_ROW_Y, workerNodePosition } from "@shared/graph-layout";
 
 export class TeamBuildNotFoundError extends Error {
   constructor(message: string) {
@@ -1206,7 +1207,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
           blueprintId: blueprint.id,
           nodeType: isGate ? "edge_gate" : det ? det.nodeType : "internal_agent",
           label: worker.name,
-          positionX: startX + j * 260,
+          positionX: startX + j * COL_WIDTH,
           positionY: yOffset,
           // A deterministic node runs no agent, so it holds no agent reference --
           // the same shape a gate node has.
@@ -1281,8 +1282,9 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   } else {
     const isSequential = pipeline?.pattern === "sequential";
     for (let i = 0; i < createdWorkers.length; i++) {
-      const posX = isSequential ? 400 : 150 + i * Math.floor(600 / Math.max(createdWorkers.length, 1));
-      const posY = isSequential ? 150 + i * 120 : 220;
+      // Spaced by the card's own width, not by dividing a fixed band: the old
+      // form gave six workers 100px each for a 244px card, so they overlapped.
+      const { x: posX, y: posY } = workerNodePosition(i, isSequential);
       const isGate = humanCheckpointWorkerIds.has(createdWorkers[i].id);
       const det = isGate ? null : deterministicNodeFor(workers[i], authoredStepsByLabel, (m) => structureWarnings.push(m), allMcpServers, branchConditionsFor(workers[i], pipeline), branchesFor(workers[i], pipeline), decisionKind);
       const correlation = correlationFor(workers[i], authoredStepsByLabel);
