@@ -175,6 +175,12 @@ export interface TurnAccumulator {
   proof: ProofEnvelope | null;
   /** Assistant text produced so far this turn (used when the turn ends on finish_turn). */
   lastAssistantText: string;
+  /**
+   * What the pack pre-router is told when the turn ends (EngineDeps.route):
+   * what was asked, which packs were on offer when the turn began, and which
+   * of them the router loaded itself. Absent when no router is wired.
+   */
+  routing?: { text: string; offered: Array<{ id: string; description: string }>; preloaded: string[] };
 }
 
 export interface Checkpoint {

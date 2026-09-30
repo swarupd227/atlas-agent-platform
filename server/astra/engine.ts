@@ -58,6 +58,19 @@ export interface EngineDeps {
   now?: () => number;
   /** How often a running tool call refreshes the turn lock (default 60s; the lock goes stale after 10 minutes). */
   keepAliveMs?: number;
+  /**
+   * The pack pre-router. `predict` names studio packs to load before the
+   * model's first call of a turn, so it starts with their tools instead of
+   * spending a step on load_tools; `record` is told, when the turn ends, which
+   * of the packs on offer the model loaded itself. The production wiring backs
+   * both with the decision seam (site "cowork_router"): measured in shadow,
+   * used once routed. Optional: without it a turn runs exactly as before, and
+   * the engine itself reaches nothing new.
+   */
+  route?: {
+    predict(ctx: AstraContext, text: string, offered: Array<{ id: string; description: string }>): Promise<string[]>;
+    record(ctx: AstraContext, text: string, offered: Array<{ id: string; description: string }>, loaded: string[]): void;
+  };
 }
 
 export class AstraBusyError extends Error {
@@ -202,6 +215,23 @@ export async function runTurn(
     pendingAction: null,
   });
   onEvent({ type: "turn_started", threadId });
+
+  // The pack pre-router: which studio packs this message will need, asked
+  // before the model's first call. It can only add a pack this role could load
+  // itself, and never removes one; load_tools stays on offer for the rest.
+  if (deps.route) {
+    const offered = deps.registry.packsFor(ctx.role, cp.loadedPacks).filter((p) => !p.loaded).map((p) => ({ id: p.id, description: `${p.label}: ${p.description}` }));
+    const preloaded: string[] = [];
+    if (offered.length > 0) {
+      const predicted = await deps.route.predict(ctx, userText, offered).catch(() => [] as string[]);
+      for (const id of predicted) {
+        if (!offered.some((p) => p.id === id) || preloaded.includes(id)) continue;
+        cp.loadedPacks = [...(cp.loadedPacks ?? []), id];
+        preloaded.push(id);
+      }
+    }
+    cp.turn.routing = { text: userText, offered, preloaded };
+  }
 
   // The totals as this turn begins, recorded on the checkpoint so the figure
   // survives a pause for confirmation: the turn's own spend is the difference.
@@ -514,6 +544,13 @@ async function finishTurn(s: Session, markdown: string): Promise<ThreadState["st
   const { deps, ctx, threadId, cp, emit } = s;
   // However the turn ended, nothing is left waiting to stop it.
   clearStop(threadId);
+  // Tell the pre-router which of the packs on offer the model loaded itself
+  // this turn. A measurement never fails a turn.
+  if (deps.route && cp.turn.routing && cp.turn.routing.offered.length > 0) {
+    const r = cp.turn.routing;
+    const loaded = (cp.loadedPacks ?? []).filter((id) => r.offered.some((p) => p.id === id) && !r.preloaded.includes(id));
+    try { deps.route.record(ctx, r.text, r.offered, loaded); } catch { /* recorded or not, the turn ends */ }
+  }
   const text = markdown.trim() || (cp.turn.sources.length > 0 ? "Done." : "I don't have anything to add.");
   // Save before emitting, so a reload shows exactly what the stream showed.
   const message = await deps.store.appendMessage(ctx.orgId, {

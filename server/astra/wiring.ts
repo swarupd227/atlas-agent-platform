@@ -6,6 +6,7 @@
 import { completeWithFallback, getProvider } from "../llm-provider";
 import { hasPermission } from "../permissions";
 import { storage } from "../storage";
+import { relevanceHint, recordRelevance } from "../relevance-hints";
 import type { EngineDeps } from "./engine";
 import { RateLimiter } from "./dispatch";
 import { ToolRegistry } from "./registry";
@@ -88,6 +89,14 @@ export function getAstraRuntime(): { deps: EngineDeps; store: DbThreadStore } {
     services,
     model: ASTRA_MODEL,
     rateLimit: new RateLimiter(30),
+    // The pack pre-router on the decision seam (site "cowork_router"), one
+    // yes/no per pack on offer: in shadow it is measured after the turn against
+    // the packs the model loaded itself; once routed, the packs it is confident
+    // about are loaded before the model's first call.
+    route: {
+      predict: (ctx, text, offered) => relevanceHint({ site: "cowork_router", task: text, items: offered.map((p) => ({ name: p.id, description: p.description })), orgId: ctx.orgId, noun: "pack" }),
+      record: (ctx, text, offered, loaded) => recordRelevance({ site: "cowork_router", task: text, items: offered.map((p) => ({ name: p.id, description: p.description })), used: loaded, orgId: ctx.orgId, noun: "pack" }),
+    },
     grounding: async (ctx: AstraContext) => {
       const personalView = ctx.industrySource === "request" && !!ctx.organizationIndustryId;
       const [organizationName, industry, orgIndustry] = await Promise.all([
