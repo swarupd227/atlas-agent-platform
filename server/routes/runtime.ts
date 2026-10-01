@@ -238,6 +238,12 @@ function hashCode(str: string): number {
           slaThreshold: k.slaThreshold,
           breachLevel: k.breachLevel,
           trend: k.trend,
+          // Whether anyone ever recorded a value, as opposed to the 0 that
+          // `current` falls back to. Without this a never-measured KPI is
+          // indistinguishable from one measured at zero, and the overview's
+          // health figure counted all 128 unmeasured KPIs here as real zeroes.
+          measuredAt: k.valueUpdatedAt ? new Date(k.valueUpdatedAt).toISOString() : null,
+          valueSource: k.valueSource ?? null,
         }));
         const slaConfig = o.slaConfig as any;
         const slaBreach = kpiSummaries.some((k) => k.slaThreshold && k.current < k.slaThreshold);

@@ -47,6 +47,9 @@ interface KpiSummary {
   slaThreshold: number | null;
   breachLevel: string | null;
   trend: string | null;
+  /** When someone recorded a value. Null means never measured — not measured at zero. */
+  measuredAt: string | null;
+  valueSource: string | null;
 }
 
 interface OutcomeHealth {
@@ -363,31 +366,70 @@ function PulseCard({ label, value, sub, icon: Icon, iconClass, iconBg, href, too
   );
 }
 
+/**
+ * Attainment over the KPIs somebody actually measured, and nothing else.
+ *
+ * What this replaced read 47.7% on the live platform while meaning nothing: an
+ * outcome with NO KPIs scored 100, and 28 of 69 outcomes had none, so 85% of
+ * the figure came from outcomes with nothing to measure. Meanwhile 145 of 166
+ * KPIs had never been measured and were counted as real zeroes. The number
+ * moved on how much data entry had happened, and adding a KPI to an outcome
+ * LOWERED it — the opposite of what a health figure should say.
+ *
+ * So: unmeasured KPIs are left out rather than counted as zero, an outcome with
+ * nothing measured is not counted as healthy, and when nothing at all has been
+ * measured the answer is null — which the caller must render as "not measured"
+ * rather than as a number.
+ */
+export function kpiHealth(outcomes: Array<{ kpis: KpiSummary[] }>): {
+  value: number | null;
+  measured: number;
+  total: number;
+  /** True when every measured value came from run statistics rather than a person. */
+  proxyOnly: boolean;
+} {
+  const all = outcomes.flatMap((o) => o.kpis);
+  const measured = all.filter((k) => !!k.measuredAt);
+  const sources = new Set(measured.map((k) => k.valueSource ?? "unknown"));
+  return {
+    value: measured.length > 0 ? measured.reduce((s, k) => s + k.progress, 0) / measured.length : null,
+    measured: measured.length,
+    total: all.length,
+    proxyOnly: measured.length > 0 && sources.size === 1 && sources.has("agent_runs"),
+  };
+}
+
 function PlatformPulseStrip({ data }: { data: OverviewData }) {
   const activeOutcomes = data.outcomeHealth.filter((o) => o.status === "active" || o.status === "agents_assigned").length;
 
-  const overallHealth = data.outcomeHealth.length > 0
-    ? data.outcomeHealth.reduce((sum, o) => {
-        if (o.kpis.length === 0) return sum + 100;
-        const avg = o.kpis.reduce((s, k) => s + k.progress, 0) / o.kpis.length;
-        return sum + avg;
-      }, 0) / data.outcomeHealth.length
-    : 0;
+  const { value: overallHealth, measured: measuredCount, total: totalKpis, proxyOnly } = kpiHealth(data.outcomeHealth);
 
   const outcomesAtRisk = data.outcomeHealth.filter((o) => o.kpis.some((k) => k.progress < 80)).length;
   const overdueApprovals = data.approvalQueue.items.filter((a) => a.dueDate && new Date(a.dueDate).getTime() < Date.now()).length;
   const agentsWithIncidents = data.agentsAtRisk.filter((a) => a.openIncidents > 0 || (a.lastDrift && Math.abs(a.lastDrift.driftPercent) > 10)).length;
   const attentionCount = outcomesAtRisk + overdueApprovals + agentsWithIncidents;
 
-  const healthColor = overallHealth >= 80 ? "text-emerald-600 dark:text-emerald-400" : overallHealth >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
-  const healthBg = overallHealth >= 80 ? "bg-emerald-500/10" : overallHealth >= 60 ? "bg-amber-500/10" : "bg-red-500/10";
+  const healthColor = overallHealth === null ? "text-muted-foreground" : overallHealth >= 80 ? "text-emerald-600 dark:text-emerald-400" : overallHealth >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+  const healthBg = overallHealth === null ? "bg-muted" : overallHealth >= 80 ? "bg-emerald-500/10" : overallHealth >= 60 ? "bg-amber-500/10" : "bg-red-500/10";
   const attColor = attentionCount > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400";
   const attBg = attentionCount > 0 ? "bg-amber-500/10" : "bg-emerald-500/10";
 
   return (
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-2" data-testid="section-platform-pulse">
       <PulseCard label="Active Outcomes" value={activeOutcomes} sub={`/ ${data.outcomeHealth.length}`} icon={Target} iconClass="text-primary" iconBg="bg-primary/10" href="/outcomes" tooltip="Number of outcomes currently being tracked. Click to view all outcomes and their KPI progress." testId="pulse-active-outcomes" />
-      <PulseCard label="Overall Health" value={`${overallHealth.toFixed(0)}%`} icon={HeartPulse} iconClass={healthColor} iconBg={healthBg} href="/outcomes" tooltip="Average KPI attainment across all outcomes. Green >80%, amber 60-80%, red <60%. Click to review underperforming outcomes." testId="pulse-overall-health" />
+      <PulseCard
+        label="Overall Health"
+        value={overallHealth === null ? "Not measured" : `${overallHealth.toFixed(0)}%`}
+        sub={totalKpis === 0 ? "no KPIs defined" : `across ${measuredCount} of ${totalKpis} KPIs measured`}
+        icon={HeartPulse}
+        iconClass={healthColor}
+        iconBg={healthBg}
+        href="/outcomes"
+        tooltip={overallHealth === null
+          ? `No KPI has a recorded value yet${totalKpis > 0 ? ` (${totalKpis} defined)` : ""}, so there is no attainment to average. Click to record one.`
+          : `Attainment averaged over the ${measuredCount} KPIs that have a recorded value, of ${totalKpis} defined. KPIs nobody has measured are left out rather than counted as zero, and an outcome with no KPIs is not counted as healthy.${proxyOnly ? " Every recorded value came from run statistics, which is a proxy rather than a measured business result." : ""} Click to review.`}
+        testId="pulse-overall-health"
+      />
       <PulseCard label="Agents Running" value={data.systemStatus.activeAgents} sub={`/ ${data.systemStatus.totalAgents}`} icon={Bot} iconClass="text-primary" iconBg="bg-primary/10" href="/agents" tooltip="Agents actively executing. Click to view agent registry, health scores, and runtime status." testId="pulse-agents-running" />
       <PulseCard label="Attention" value={attentionCount} sub={attentionCount === 0 ? "all clear" : "items"} icon={AlertTriangle} iconClass={attColor} iconBg={attBg} href="/approvals" tooltip={`${outcomesAtRisk} outcomes at risk, ${overdueApprovals} overdue approvals, ${agentsWithIncidents} agents with issues. Click to review pending approvals.`} testId="pulse-attention-items" />
     </div>
