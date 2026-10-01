@@ -931,6 +931,26 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                     <span className="text-[10px] text-muted-foreground">Runs the selected flow end to end and waits for it before continuing (Sync to Automation compiles this to a real Sub-Flow step).</span>
                   </div>
                 )}
+                {(d.ntype === "ai_reasoning" || d.ntype === "get_info" || d.ntype === "take_action") && !d.config?.toolName && !d.config?.deterministic && (
+                  <div className="flex flex-col gap-1 rounded-md border p-2">
+                    <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">If its verdict disagrees with the facts</label>
+                    <select
+                      value={d.config?.factsCheck === "fail" ? "fail" : "flag"}
+                      onChange={e => {
+                        const { factsCheck: _fc, ...rest } = (d.config || {}) as Record<string, unknown>;
+                        patchNode(selNode.id, { config: e.target.value === "fail" ? { ...rest, factsCheck: "fail" } : rest });
+                      }}
+                      className="h-7 text-xs rounded-md border bg-background px-1.5"
+                      data-testid="select-node-facts-check"
+                    >
+                      <option value="flag">Flag it on the run and continue</option>
+                      <option value="fail">Fail the step</option>
+                    </select>
+                    <span className="text-[10px] text-muted-foreground">
+                      A step that pronounces PASS, FAIL, APPROVED, REJECTED or BLOCKED is checked against what the run's connectors returned and whether its files were produced. Failing the step hands it to the run's error strategy, and only when the check is sure enough to act on.
+                    </span>
+                  </div>
+                )}
                 {d.ntype === "make_decision" && (() => {
                   // The branches are the step's labelled connections out; the
                   // classifier reads them the same way the server does at build.

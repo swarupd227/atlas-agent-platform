@@ -10,6 +10,7 @@ import { recomputeOutcomeKpis, resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
 import { decide } from "./decision-provider";
+import { resolveDecisionRoute, DEFAULT_THRESHOLDS } from "./decision-settings";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
@@ -261,6 +262,10 @@ export interface NodePlanConfig {
   revision: RevisionPolicy | null;
   /** decision: the question and branches one decision-model call chooses between. */
   decision: DecisionStepConfig | null;
+  /** What a step does when its verdict disagrees with the run's verified facts:
+   *  flag it on the output and go on (the default), or fail the step so the
+   *  run's error strategy applies. */
+  factsCheck?: "flag" | "fail";
 }
 
 export interface StateFieldDef {
@@ -595,6 +600,7 @@ export function computeWaves(
       label: node.label,
       gateType: node.gateType || null,
       decision: node.nodeType === "decision" ? parseDecisionConfig((node.config as any)?.decision) : null,
+      factsCheck: (node.config as any)?.factsCheck === "fail" ? "fail" : "flag",
       refToolIds: (node.refToolIds as string[] | null) || null,
       revision: parseRevisionPolicy((node.config as any)?.revision, node.id, nodes),
     };
@@ -2301,7 +2307,8 @@ export class DAGExecutionEngine {
     // does the verdict agree with them? "QA passed with ten overflows still
     // present" and "approved, file attached" with no file are the recurring
     // shapes. A confident "no" is appended to the output the way a drift is,
-    // and recorded as a judgment; it never blocks the step.
+    // and recorded as a judgment. It fails the step only when the step is set
+    // to fail on it (config.factsCheck) and the check is sure enough to act on.
     const verdictLine = outputText.match(VERDICT_RE)?.[0]?.trim();
     const factCheck = verdictLine && (Object.keys(runFacts).length > 0 || (workerResult.failedFileAttempts?.length ?? 0) > 0)
       ? await this.checkVerdictAgainstFacts(nc, verdictLine, outputText, runFacts, workerResult.failedFileAttempts ?? [], config.organizationId)
@@ -2311,6 +2318,34 @@ export class DAGExecutionEngine {
       if (!factCheck.ok) {
         outputText = `${outputText}\n\nVERDICT DISAGREES WITH THE FACTS (platform check against the connectors' own answers and this run's file outcomes, not the model's narrative):\n- ${factCheck.evidence}`;
         console.warn(`[dag] "${nc.label}" gave the verdict "${verdictLine}" but the run's facts contradict it`);
+        // A step set to fail on it fails only on a check sure enough to act on:
+        // the site's act threshold, the bar a routed decision has to clear. Below
+        // it, or when no probability came back, the disagreement is flagged as
+        // on any other step, and the judgment says so either way.
+        if (nc.factsCheck === "fail") {
+          const act = await this.factsActThreshold(config.organizationId);
+          const facts = judgments[judgments.length - 1];
+          const pFalse = factCheck.pFalse;
+          if (typeof pFalse === "number" && pFalse >= act) {
+            facts.evidence = `${facts.evidence} This step is set to fail on it, and did.`;
+            return {
+              nodeId,
+              agentId: nc.agentId,
+              status: "failed",
+              output: {},
+              error: `The verdict "${verdictLine}" disagrees with the run's verified facts: ${factCheck.evidence}`,
+              durationMs,
+              promptTokens: workerResult.promptTokens || 0,
+              completionTokens: workerResult.completionTokens || 0,
+              costUsd: workerResult.costUsd || 0,
+              toolCallCount: workerResult.toolCallCount || 0,
+              traceId: workerResult.traceId || "",
+              ...(workerResult.failedFileAttempts?.length ? { failedFileAttempts: workerResult.failedFileAttempts } : {}),
+              judgments,
+            };
+          }
+          facts.evidence = `${facts.evidence} This step is set to fail on it, but the check is not sure enough to act on (${typeof pFalse === "number" ? `${Math.round(pFalse * 100)}% against the ${Math.round(act * 100)}% needed` : "no probability came back"}), so it is flagged.`;
+        }
       }
     }
     if (drift.length > 0) {
@@ -2350,11 +2385,20 @@ export class DAGExecutionEngine {
     };
   }
 
+  /** The act threshold for the claim-versus-facts site; the platform default when the settings cannot be read. */
+  private async factsActThreshold(orgId: string | null | undefined): Promise<number> {
+    try {
+      return (await resolveDecisionRoute("claim_vs_facts", orgId)).threshold;
+    } catch {
+      return DEFAULT_THRESHOLDS.act;
+    }
+  }
+
   /**
    * One noul on the site "claim_vs_facts": does a review step's verdict agree
    * with the verified facts and file outcomes of the run? Through the seam, so
    * the platform's routing and audit apply. Null when the question could not be
-   * asked; the step is never failed for it.
+   * asked; a step is failed for it only when set to (factsCheck, above).
    */
   private async checkVerdictAgainstFacts(
     nc: NodePlanConfig,
@@ -2363,7 +2407,7 @@ export class DAGExecutionEngine {
     runFacts: Record<string, unknown>,
     failedFileAttempts: string[],
     orgId: string | null | undefined,
-  ): Promise<{ ok: boolean; evidence: string } | null> {
+  ): Promise<{ ok: boolean; evidence: string; pFalse?: number } | null> {
     try {
       const r = await decide({
         kind: "noul",
@@ -2387,6 +2431,7 @@ export class DAGExecutionEngine {
       const by = `${r.engine === "jev" ? "the decision model" : "the language model"}${pFalse !== undefined ? `, ${Math.round(pFalse * 100)}% that it does not` : ""}`;
       return {
         ok,
+        ...(typeof pFalse === "number" ? { pFalse } : {}),
         evidence: ok
           ? `The verdict "${verdictLine}" is consistent with the run's verified facts (${by}).`
           : `The verdict "${verdictLine}" is contradicted by the run's verified facts or file outcomes (${by}).`,

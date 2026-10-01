@@ -44,6 +44,13 @@ export interface StepCorrelation {
    * see, so a re-worded question or a new level never reached the team.
    */
   sourceDecision: string | null;
+  /**
+   * What the step does when its verdict disagrees with the run's verified
+   * facts: flag it and go on, or fail the step (config.factsCheck). The engine
+   * reads it from the node's config, so it is carried here by both writers and
+   * a change to it is a change the sync can see.
+   */
+  factsCheck: "flag" | "fail";
 }
 
 const DECISION_KEYS = ["answerType", "question", "options", "levels", "confidenceThreshold", "unsure", "classifierId"] as const;
@@ -70,6 +77,7 @@ export function stepCorrelation(step: CorrelatableStep): StepCorrelation {
     sourceRefTeamAgentId: config.refTeamAgentId || null,
     sourceExpression: config.expression || null,
     sourceDecision: decisionFingerprint(step, config),
+    factsCheck: config.factsCheck === "fail" ? "fail" : "flag",
   };
 }
 
@@ -83,5 +91,7 @@ export function stepUnchanged(storedConfig: unknown, step: CorrelatableStep): bo
     && (cfg.sourceActor || "") === now.sourceActor
     && (cfg.sourceRefTeamAgentId || null) === now.sourceRefTeamAgentId
     && (cfg.sourceExpression || null) === now.sourceExpression
-    && (cfg.sourceDecision || null) === now.sourceDecision;
+    && (cfg.sourceDecision || null) === now.sourceDecision
+    // A node written before the setting existed reads as the default.
+    && (cfg.factsCheck === "fail" ? "fail" : "flag") === now.factsCheck;
 }

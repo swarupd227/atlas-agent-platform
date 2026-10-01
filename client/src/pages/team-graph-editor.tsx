@@ -1704,6 +1704,26 @@ function NodeConfigPanel({
       {node.nodeType === "internal_agent" && (
         <RevisionPolicyEditor node={node} allNodes={allNodes} onUpdate={onUpdate} />
       )}
+      {node.nodeType === "internal_agent" && (
+        <div className="flex flex-col gap-1.5 rounded-md border p-2" data-testid="section-facts-check">
+          <label className="text-xs font-medium text-muted-foreground">If its verdict disagrees with the facts</label>
+          <p className="text-[10px] text-muted-foreground">
+            A step that pronounces PASS, FAIL, APPROVED, REJECTED or BLOCKED is checked against what the run's connectors returned and whether its files were produced. Failing the step hands it to the run's error strategy, and only when the check is sure enough to act on.
+          </p>
+          <select
+            className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+            value={(node.config as any)?.factsCheck === "fail" ? "fail" : "flag"}
+            onChange={e => {
+              const { factsCheck: _fc, ...rest } = ((node.config as any) || {}) as Record<string, unknown>;
+              onUpdate({ config: e.target.value === "fail" ? { ...rest, factsCheck: "fail" } : rest } as any);
+            }}
+            data-testid="select-facts-check"
+          >
+            <option value="flag">Flag it on the run and continue</option>
+            <option value="fail">Fail the step</option>
+          </select>
+        </div>
+      )}
 
       {(node.nodeType === "internal_agent" || node.nodeType === "remote_agent" || node.nodeType === "edge_gate") && (
         <div className="flex flex-col gap-1.5">
