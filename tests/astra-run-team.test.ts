@@ -61,8 +61,11 @@ function world(opts: { gates?: string[]; blockers?: string[] } = {}) {
       return { dagRunId: run.id, totalWaves: 3, request };
     }),
     followTeamRun: vi.fn(async (_org: string, _id: string, o: any) => {
-      o.onEvent({ type: "node_start", ts: "t", label: "Step 1" });
-      o.onEvent({ type: "node_complete", ts: "t", label: "Step 1", status: "completed" });
+      // A real team pairs each agent with a tool_set node, which runs nothing.
+      o.onEvent({ type: "node_start", ts: "t", label: "Step 1 tools", nodeType: "tool_set" });
+      o.onEvent({ type: "node_complete", ts: "t", label: "Step 1 tools", nodeType: "tool_set", status: "completed" });
+      o.onEvent({ type: "node_start", ts: "t", label: "Step 1", nodeType: "internal_agent" });
+      o.onEvent({ type: "node_complete", ts: "t", label: "Step 1", nodeType: "internal_agent", status: "completed" });
       if (run.status === "waiting_approval" && run.pendingApprovalId !== o.ignoreApprovalId) return { state: "paused", approvalId: run.pendingApprovalId, label: `Gate ${gateNo}` };
       return run.status === "completed" || run.status === "failed" ? { state: "finished", status: run.status } : { state: "still_running" };
     }),
@@ -132,7 +135,11 @@ describe("run_team", () => {
     const gate = await pending(t);
     expect(gate).toMatchObject({ kind: "agent_approval", summary: "Fleet Team is waiting for approval: Gate 1" });
     expect(gate.details!.join(" ")).toContain("Not now rejects it, and the run stops here.");
-    expect(t.events.some((e) => e.type === "tool_start" && (e as any).tool === "Fleet Team › Step 1")).toBe(true);
+    // The step is named by itself. The team's name is already the heading of the
+    // run beside the conversation, and repeating it on every line pushed the only
+    // words that differ off to the right.
+    expect(t.events.some((e) => e.type === "tool_start" && (e as any).tool === "Step 1")).toBe(true);
+    expect(t.events.some((e) => typeof (e as any).tool === "string" && (e as any).tool.includes("›"))).toBe(false);
     // The card links to the approval's own page, and the run is shown beside the conversation while it goes.
     expect(gate.link).toEqual({ label: "Open approval", href: "/approvals/apr-1" });
     const live = t.events.filter((e) => e.type === "artifact") as Array<Extract<AstraEvent, { type: "artifact" }>>;
@@ -193,5 +200,30 @@ describe("get_team_run", () => {
       (m) => { expect(lastTool(m).result).toMatchObject({ found: false }); return done("Done."); },
     ], w);
     await runTurn(t.deps, as("admin"), t.threadId, "How is run-1 doing?", t.onEvent);
+  });
+});
+
+/**
+ * Scaffolding is not narrated.
+ *
+ * A `tool_set` node runs nothing — the engine's own comment calls it "a scoping
+ * declaration" that must still complete so it does not cascade-skip what
+ * follows. Measured on the live CMDB Hygiene Sweep run: 5 of the 11 steps a
+ * person read were these, each showing only tool UUIDs, while the scope they
+ * declare is already on the confirmation card before the run starts ("Can
+ * change things through: ServiceNow CMDB (Sandbox), 5 write tools").
+ *
+ * The harness emits one of each kind, so this exercises the tool's own
+ * narration rather than a copy of it.
+ */
+describe("scaffolding steps", () => {
+  it("are left out of the narration while the real step is kept", async () => {
+    const t = setup([runIt, (m) => done("Ran it.")]);
+    await runTurn(t.deps, as("admin"), t.threadId, "Run it", t.onEvent);
+    await resolveAction(t.deps, as("admin"), t.threadId, (await pending(t)).id, "confirm", t.onEvent);
+
+    const narrated = t.events.filter((e) => e.type === "tool_start" || e.type === "tool_result").map((e) => (e as any).tool);
+    expect(narrated).toContain("Step 1");
+    expect(narrated.some((n) => typeof n === "string" && n.includes("tools"))).toBe(false);
   });
 });

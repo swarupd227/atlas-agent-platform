@@ -1537,11 +1537,19 @@ async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
     ? await Promise.all([storage.getTeamBlueprintNodes(blueprintId), storage.getTeamBlueprintEdges(blueprintId)])
     : [[], []];
   const labelOf = new Map(nodes.map((n) => [n.id, n.label]));
+  // Scaffolding, not work. A `tool_set` node runs nothing — the engine calls it
+  // "a scoping declaration" that must still complete so it doesn't cascade-skip
+  // what follows — and on the live CMDB Hygiene Sweep run 5 of the 11 steps a
+  // person read were these, each showing only a list of tool UUIDs. The scope
+  // they declare is already on the confirmation card before the run starts
+  // ("Can change things through: ServiceNow CMDB (Sandbox), 5 write tools"), so
+  // nothing is hidden by leaving them out of the step list.
+  const scaffolding = new Set(nodes.filter((n: any) => n.nodeType === "tool_set").map((n: any) => n.id));
   const waveResults = (Array.isArray(row.waveResults) ? row.waveResults : []) as any[];
   const plan = nodes.length > 0 ? (() => { try { return computeWaves(nodes as any, edges as any); } catch { return null; } })() : null;
   const steps: Array<{ nodeId: string; wave: number; revision: number; label: string; status: string; error: string | null; durationMs: number | null; html: boolean; summary: string | null }> =
     waveResults.flatMap((w) =>
-      (w.nodes ?? []).map((n: any) => ({
+      (w.nodes ?? []).filter((n: any) => !scaffolding.has(n.nodeId)).map((n: any) => ({
         nodeId: n.nodeId,
         wave: w.waveNumber,
         revision: w.revisionRound ?? 0,
@@ -1564,7 +1572,7 @@ async function getTeamRun(orgId: string, role: RoleId, dagRunId: string) {
     const nextWave = (waveResults.length ? waveResults[waveResults.length - 1].waveNumber : 0) + 1;
     for (const w of plan.waves) {
       for (const nodeId of w.nodes) {
-        if (reached.has(nodeId)) continue;
+        if (reached.has(nodeId) || scaffolding.has(nodeId)) continue;
         const status = w.wave_number !== nextWave ? "waiting" : row.status === "waiting_approval" ? "waiting_approval" : row.status === "running" ? "running" : "waiting";
         steps.push({ nodeId, wave: w.wave_number, revision: 0, label: labelOf.get(nodeId) ?? nodeId, status, error: null, durationMs: null, html: false, summary: null });
       }

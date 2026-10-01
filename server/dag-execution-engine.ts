@@ -3605,13 +3605,13 @@ async function executeTeamAgentDagRun(
       resumePendingApprovalId,
       onNodeStart: (nodeId, wave) => {
         const label = wavePlan.nodeConfig[nodeId]?.label || nodeId;
-        publishDagRunEvent(dagRun.id, { type: "node_start", nodeId, label, wave, totalWaves: wavePlan.totalWaves });
+        publishDagRunEvent(dagRun.id, { type: "node_start", nodeId, label, wave, totalWaves: wavePlan.totalWaves, nodeType: wavePlan.nodeConfig[nodeId]?.nodeType });
         opts?.onNodeStart?.(nodeId, wave, label, wavePlan.totalWaves);
       },
       onNodeComplete: (nodeId, wave, r) => {
         const label = wavePlan.nodeConfig[nodeId]?.label || nodeId;
         publishDagRunEvent(dagRun.id, {
-          type: "node_complete", nodeId, label, wave, totalWaves: wavePlan.totalWaves,
+          type: "node_complete", nodeId, label, wave, totalWaves: wavePlan.totalWaves, nodeType: wavePlan.nodeConfig[nodeId]?.nodeType,
           status: r.status, durationMs: r.durationMs,
           outputPreview: previewOutput(r.output), error: r.error,
           ...(r.judgments?.some((j) => !j.ok) ? { flags: r.judgments.filter((j) => !j.ok).length } : {}),

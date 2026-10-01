@@ -139,3 +139,56 @@ describe("the approvals the loader fetches cover everything the builder can show
     expect(built.completedToday).toHaveLength(0);
   });
 });
+
+/**
+ * What a "needs you" item is called.
+ *
+ * Measured on the live platform: 52 items needing a decision, 43 distinct
+ * titles, and most of them read `"<agent name>" flagged something for you`.
+ * In the rail that truncates to the agent's name, so seven consecutive entries
+ * showed the identical "Binder Period Close Orchestr…" — while the thing that
+ * told them apart (`Connector "NICE Actimize SAM (BSA/AML)" is failing its
+ * health check`) sat in a field the list does not render.
+ */
+describe("an item is named after what happened, not who reported it", () => {
+  const alert = (over: Record<string, unknown> = {}) => ({
+    id: "al-1", agentId: "a1", agentName: "Binder Period Close Orchestrator",
+    alertType: "anomaly", severity: "high", message: "", acknowledgedAt: null,
+    triggeredAt: new Date(), currentValue: null, baselineValue: null, ...over,
+  });
+  const titleOf = (a: any) => {
+    const built = buildMyActions({ approvals: [], alerts: [a] as any, recommendations: [], policyExceptions: [], elicitations: [] });
+    return built.needsDecision[0]?.title ?? built.fyi[0]?.title ?? null;
+  };
+
+  it("uses the finding as the title when the alert carries one", () => {
+    const t = titleOf(alert({ message: 'Connector "NICE Actimize SAM (BSA/AML)" is failing its health check. Nothing has reached it in 9 days.' }));
+    expect(t).toBe('Connector "NICE Actimize SAM (BSA/AML)" is failing its health check.');
+    expect(t).not.toContain("flagged something for you");
+  });
+
+  it("tells two items from the same agent apart", () => {
+    const a = titleOf(alert({ message: "Connector A is failing its health check." }));
+    const b = titleOf(alert({ message: "Connector B has not been reached in 9 days." }));
+    expect(a).not.toBe(b);
+  });
+
+  it("keeps the agent's name as the fallback when there is no message", () => {
+    expect(titleOf(alert({ message: "" }))).toBe('"Binder Period Close Orchestrator" flagged something for you');
+  });
+
+  it("does not take a uselessly short fragment as a title", () => {
+    expect(titleOf(alert({ message: "Failed." }))).toContain("flagged something for you");
+  });
+
+  it("keeps a long finding readable", () => {
+    const long = "x".repeat(400);
+    const t = titleOf(alert({ message: long }))!;
+    expect(t.length).toBeLessThanOrEqual(120);
+    expect(t.endsWith("…")).toBe(true);
+  });
+
+  it("leaves the typed alerts alone — they already say what happened", () => {
+    expect(titleOf(alert({ alertType: "success_rate_drop", message: "anything" }))).toContain("completing fewer tasks than usual");
+  });
+});

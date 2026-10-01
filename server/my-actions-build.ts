@@ -165,8 +165,19 @@ function translateAlertType(
         "Something changed in how this Digital Worker responds. Worth a quick review.",
     };
   }
+  // Lead with WHAT, not WHO. Measured on the live platform: 52 items needing a
+  // decision, and most reached this branch — so the list read as a column of
+  // `"<agent name>" flagged something for you`, which truncates to the agent's
+  // name and nothing else. Seven consecutive entries showed the identical
+  // "Binder Period Close Orchestr…" while the thing that distinguished them
+  // (`Connector "NICE Actimize SAM" is failing its health check`) sat in a
+  // field the list does not render. The agent is kept as attribution, which
+  // every item already carries separately.
+  const firstSentence = message.trim().split(/(?<=[.!?])\s/)[0]?.trim();
   return {
-    title: `"${agentName}" flagged something for you`,
+    title: firstSentence && firstSentence.length > 8
+      ? (firstSentence.length > 120 ? `${firstSentence.slice(0, 117)}…` : firstSentence)
+      : `"${agentName}" flagged something for you`,
     context: message || "Your Digital Worker flagged an unusual condition.",
   };
 }

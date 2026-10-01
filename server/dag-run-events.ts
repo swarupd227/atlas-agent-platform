@@ -21,6 +21,13 @@ export interface DagRunEvent {
   totalWaves?: number;
   nodeId?: string;
   label?: string;
+  /**
+   * The node's kind, so a consumer can tell work from scaffolding. A `tool_set`
+   * node runs nothing — the engine calls it "a scoping declaration" that must
+   * still complete so it doesn't cascade-skip what follows — and on the live
+   * CMDB team 5 of the 11 steps a user read were these.
+   */
+  nodeType?: string;
   status?: string;
   durationMs?: number;
   outputPreview?: string;

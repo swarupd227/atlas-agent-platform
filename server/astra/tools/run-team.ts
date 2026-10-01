@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { effortWords, runHeadline } from "@shared/run-words";
 import type { AstraEvent, AstraTool, AstraToolContext, ConfirmPreview, ProofEnvelope, ToolRunResult } from "../types";
 import type { DagRunEvent } from "../../dag-run-events";
 import type { WiringReport } from "../wiring-assess";
@@ -38,7 +39,12 @@ function narrate(ctx: AstraToolContext, teamName: string) {
   return (e: DagRunEvent) => {
     const emit = ctx.onProgress;
     if (!emit) return;
-    const step = `${teamName} › ${e.label ?? "step"}`;
+    // Scaffolding is not narrated: a `tool_set` node runs nothing, and on the
+    // live CMDB team 5 of the 11 lines a person read were these.
+    if ((e.type === "node_start" || e.type === "node_complete") && e.nodeType === "tool_set") return;
+    // The team's name is already the heading of this run; repeating it on every
+    // line pushed the only words that differ off to the right.
+    const step = e.label ?? "step";
     const events: Record<string, () => AstraEvent | null> = {
       node_start: () => ({ type: "tool_start", tool: step, input: {} }),
       node_complete: () => ({
@@ -47,7 +53,7 @@ function narrate(ctx: AstraToolContext, teamName: string) {
         ok: e.status !== "failed" && e.status !== "timeout",
         preview: `${(e.status ?? "done").replace(/_/g, " ")}${e.error ? `: ${e.error.slice(0, 120)}` : ""}`,
       }),
-      wave_complete: () => (e.wave && e.totalWaves ? { type: "working", label: `Stage ${e.wave} of ${e.totalWaves} done` } : null),
+      wave_complete: () => (e.wave && e.totalWaves ? { type: "working", label: `${e.wave} of ${e.totalWaves} stages done` } : null),
       approval_pending: () => ({ type: "working", label: `${e.label ?? "A step"} is waiting for approval` }),
       run_complete: () => ({ type: "working", label: `Run ${(e.runStatus ?? "finished").replace(/_/g, " ")}` }),
     };
@@ -124,7 +130,12 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
       ...(decided.length ? { decisionsMadeHere: decided } : {}),
       ...(notes.length ? { notes } : {}),
       ...(watch.state === "still_running" ? { message: "Still running, and no longer followed in this conversation: nothing will appear here by itself when it finishes or reaches an approval. The run pane beside the conversation keeps updating; the user can ask for its status (get_team_run), and an approval step shows up in Needs you." } : {}),
+      // The same rule the Runs surface follows: a status never travels without
+      // how much of the run happened, and what it cost to get there.
+      headline: runHeadline(run.status, run.steps.filter((s) => s.status === "completed").length, run.steps.length),
+      effort: effortWords(run.costUsd, run.steps.filter((s) => s.status === "completed").length, run.steps.length),
       stepsDone: run.steps.filter((s) => s.status === "completed").length,
+      stepsTotal: run.steps.length,
       failedSteps: run.steps.filter((s) => s.status === "failed" || s.status === "timeout").map((s) => `${s.label}${s.error ? `: ${s.error}` : ""}`),
       skippedSteps: run.steps.filter((s) => s.status === "skipped").map((s) => s.label),
       ...(run.error ? { error: run.error } : {}),
