@@ -274,28 +274,212 @@ export function layoutGraph(
     }
   }
 
-  // Group into columns by depth, order each column by the average row of its
-  // parents (barycenter), falling back to original order for parentless nodes.
+  // --- columns, with a dummy node per column an edge merely passes through ---
+  //
+  // An edge spanning several columns used to have no representation in the
+  // columns between its ends, so nothing reserved space for it and it was drawn
+  // as a straight chord across whatever sat in the way. Measured on the real
+  // flows: 9 of 49 edges on the binder close span more than one column, the
+  // longest crossing seven of them; the E&S flow has one spanning nine.
+  //
+  // Inserting a dummy per intervening column fixes that twice over: the dummy
+  // takes a row slot, so real nodes are pushed out of the edge's path, and
+  // every edge in the working graph now joins ADJACENT columns, which is what
+  // makes crossing counting exact rather than approximate.
   const cols = new Map<number, string[]>();
   nodes.forEach(n => { const d = depth.get(n.id) || 0; (cols.get(d) || cols.set(d, []).get(d)!).push(n.id); });
-  const rowOf = new Map<string, number>();
-  for (const d of Array.from(cols.keys()).sort((a, b) => a - b)) {
-    const col = cols.get(d)!;
-    const key = (id: string): number => {
-      const rows = (parents.get(id) || []).map(p => rowOf.get(p)).filter((r): r is number => r !== undefined);
-      return rows.length ? rows.reduce((s, r) => s + r, 0) / rows.length : (origIndex.get(id) ?? 0);
-    };
-    col.sort((a, b) => (key(a) - key(b)) || ((origIndex.get(a) ?? 0) - (origIndex.get(b) ?? 0)));
-    col.forEach((id, i) => rowOf.set(id, i));
+  for (const col of cols.values()) col.sort((a, b) => (origIndex.get(a) ?? 0) - (origIndex.get(b) ?? 0));
+
+  const isDummy = (id: string) => id.startsWith("\u0000dummy");
+  const segs: Array<[string, string]> = [];
+  let dummySeq = 0;
+  for (const e of simpleEdges) {
+    let a = e.from, b = e.to;
+    let da = depth.get(a) ?? 0, db = depth.get(b) ?? 0;
+    // A back edge is laid out as if it ran forwards. Excluding it entirely (as
+    // before) left a loop's target unpulled towards its source, so the return
+    // arrow swept the diagram; the E&S flow has three of these.
+    if (db < da) { [a, b] = [b, a]; [da, db] = [db, da]; }
+    if (db === da) continue;
+    let prev = a;
+    for (let d = da + 1; d < db; d++) {
+      const dummy = `\u0000dummy${dummySeq++}`;
+      (cols.get(d) || cols.set(d, []).get(d)!).push(dummy);
+      segs.push([prev, dummy]);
+      prev = dummy;
+    }
+    segs.push([prev, b]);
   }
-  const maxRows = Math.max(...Array.from(cols.values()).map(c => c.length));
+
+  const depthOf = new Map<string, number>(depth);
+  for (const [d, col] of cols) for (const id of col) if (isDummy(id)) depthOf.set(id, d);
+
+  const predOf = new Map<string, string[]>();
+  const succOf = new Map<string, string[]>();
+  for (const [u, v] of segs) {
+    (succOf.get(u) ?? succOf.set(u, []).get(u)!).push(v);
+    (predOf.get(v) ?? predOf.set(v, []).get(v)!).push(u);
+  }
+
+  const order = new Map<number, string[]>();
+  for (const [d, col] of cols) order.set(d, [...col]);
+  const depths = Array.from(order.keys()).sort((a, b) => a - b);
+  const posIn = (d: number) => {
+    const m = new Map<string, number>();
+    (order.get(d) ?? []).forEach((id, i) => m.set(id, i));
+    return m;
+  };
+
+  // Crossings between adjacent columns. Every segment joins adjacent columns,
+  // so this is the true count for the drawing, not an estimate.
+  const crossings = (): number => {
+    let total = 0;
+    for (let i = 0; i < depths.length - 1; i++) {
+      const a = posIn(depths[i]), b = posIn(depths[i + 1]);
+      const pairs = segs
+        .filter(([u, v]) => a.has(u) && b.has(v))
+        .map(([u, v]) => [a.get(u)!, b.get(v)!] as const);
+      for (let p = 0; p < pairs.length; p++) {
+        for (let q = p + 1; q < pairs.length; q++) {
+          const [u1, v1] = pairs[p], [u2, v2] = pairs[q];
+          if ((u1 - u2) * (v1 - v2) < 0) total++;
+        }
+      }
+    }
+    return total;
+  };
+
+  // Alternating barycentre sweeps. The previous pass only ever read parents, so
+  // a child could never pull its parent's row; sweeping both ways and keeping
+  // the arrangement that actually measures fewest crossings does.
+  const snapshot = () => new Map(Array.from(order, ([d, ids]) => [d, [...ids]] as const));
+  let best = snapshot();
+  let bestCrossings = crossings();
+  const sweep = (down: boolean) => {
+    const seq = down ? depths.slice(1) : depths.slice(0, -1).reverse();
+    for (const d of seq) {
+      const neighbour = posIn(d + (down ? -1 : 1));
+      const rel = down ? predOf : succOf;
+      const cur = posIn(d);
+      const key = (id: string): number => {
+        const rs = (rel.get(id) ?? []).map(x => neighbour.get(x)).filter((r): r is number => r !== undefined);
+        return rs.length ? rs.reduce((s, r) => s + r, 0) / rs.length : (cur.get(id) ?? 0);
+      };
+      order.set(d, [...(order.get(d) ?? [])].sort((x, y) =>
+        (key(x) - key(y)) || ((cur.get(x) ?? 0) - (cur.get(y) ?? 0))));
+    }
+  };
+  for (let i = 0; i < 8; i++) {
+    sweep(i % 2 === 0);
+    const c = crossings();
+    if (c < bestCrossings) { bestCrossings = c; best = snapshot(); }
+  }
+  for (const [d, ids] of best) order.set(d, ids);
+
+  const rowOf = new Map<string, number>();
+  for (const [, ids] of order) ids.forEach((id, i) => rowOf.set(id, i));
+  const maxRows = Math.max(...Array.from(order.values()).map(c => c.length));
 
   return nodes.map(n => {
     const d = depth.get(n.id) || 0;
-    const col = cols.get(d)!;
+    const col = order.get(d) ?? [];
     const row = rowOf.get(n.id) ?? 0;
     // Center each column vertically against the tallest one.
     const yOffset = ((maxRows - col.length) / 2) * ROW;
     return { ...n, position: { x: d * COL, y: yOffset + row * ROW } };
   });
+}
+
+/**
+ * Edges drawn straight through a node box.
+ *
+ * This is the one people actually see: a conditional edge that skips columns is
+ * drawn as a chord, and anything sitting on that line gets a dashed arrow
+ * through it. Crossing counts miss it entirely -- a flow can have zero edge
+ * crossings and still look wrong for exactly this reason.
+ */
+export function countEdgeNodeOverlaps(
+  nodes: ProcessNode[],
+  edges: ProcessEdge[],
+  opts: { colWidth?: number; rowHeight?: number } = {},
+): number {
+  const COL = opts.colWidth ?? 380;
+  const ROW = opts.rowHeight ?? 150;
+  const placed = nodes.filter(n => n.position);
+  const colOf = new Map(placed.map(n => [n.id, Math.round(n.position!.x / COL)] as const));
+  const yOf = new Map(placed.map(n => [n.id, n.position!.y] as const));
+  const inCol = new Map<number, string[]>();
+  for (const n of placed) {
+    const c = colOf.get(n.id)!;
+    (inCol.get(c) ?? inCol.set(c, []).get(c)!).push(n.id);
+  }
+
+  let hits = 0;
+  for (const e of edges) {
+    if (!colOf.has(e.from) || !colOf.has(e.to) || e.from === e.to) continue;
+    let c0 = colOf.get(e.from)!, c1 = colOf.get(e.to)!;
+    let y0 = yOf.get(e.from)!, y1 = yOf.get(e.to)!;
+    if (c1 < c0) { [c0, c1] = [c1, c0]; [y0, y1] = [y1, y0]; }
+    if (c1 - c0 < 2) continue;            // adjacent columns pass nothing
+    for (let c = c0 + 1; c < c1; c++) {
+      const y = y0 + (y1 - y0) * ((c - c0) / (c1 - c0));
+      // A node box is ~half a row tall, so anything nearer than that is struck.
+      if ((inCol.get(c) ?? []).some(id => Math.abs(yOf.get(id)! - y) < ROW * 0.5)) hits++;
+    }
+  }
+  return hits;
+}
+
+/**
+ * Edge crossings in a laid-out graph, counted between adjacent columns after
+ * splitting every long edge at the columns it passes through. Exported so the
+ * layout can be judged by a number in a test rather than by eye.
+ */
+export function countLayoutCrossings(
+  nodes: ProcessNode[],
+  edges: ProcessEdge[],
+  opts: { colWidth?: number } = {},
+): number {
+  const COL = opts.colWidth ?? 380;
+  const placed = nodes.filter(n => n.position);
+  if (placed.length < 2) return 0;
+  const colOf = new Map(placed.map(n => [n.id, Math.round(n.position!.x / COL)] as const));
+  const yOf = new Map(placed.map(n => [n.id, n.position!.y] as const));
+
+  // Rank within a column, so crossings are counted on order rather than pixels.
+  const byCol = new Map<number, string[]>();
+  for (const n of placed) {
+    const c = colOf.get(n.id)!;
+    (byCol.get(c) ?? byCol.set(c, []).get(c)!).push(n.id);
+  }
+  for (const ids of byCol.values()) ids.sort((a, b) => (yOf.get(a)! - yOf.get(b)!));
+  const rank = new Map<string, number>();
+  for (const ids of byCol.values()) ids.forEach((id, i) => rank.set(id, i));
+
+  // Split each edge at every column between its ends, interpolating its rank,
+  // so an edge that merely passes through a column still counts against the
+  // nodes and edges that are there.
+  const segs: Array<{ c: number; a: number; b: number }> = [];
+  for (const e of edges) {
+    if (!colOf.has(e.from) || !colOf.has(e.to) || e.from === e.to) continue;
+    let c0 = colOf.get(e.from)!, c1 = colOf.get(e.to)!;
+    let r0 = rank.get(e.from)!, r1 = rank.get(e.to)!;
+    if (c1 < c0) { [c0, c1] = [c1, c0]; [r0, r1] = [r1, r0]; }
+    if (c1 === c0) continue;
+    const span = c1 - c0;
+    for (let c = c0; c < c1; c++) {
+      const t0 = (c - c0) / span, t1 = (c + 1 - c0) / span;
+      segs.push({ c, a: r0 + (r1 - r0) * t0, b: r0 + (r1 - r0) * t1 });
+    }
+  }
+
+  let total = 0;
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      if (segs[i].c !== segs[j].c) continue;
+      const da = segs[i].a - segs[j].a, db = segs[i].b - segs[j].b;
+      if (da * db < 0) total++;
+    }
+  }
+  return total;
 }
