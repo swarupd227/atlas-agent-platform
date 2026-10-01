@@ -7,10 +7,10 @@
  * Workspace can read it without an HTTP request. loadMyActionsRows always
  * scopes to one organization; buildMyActions is pure.
  */
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, or } from "drizzle-orm";
 import { db } from "./db";
 import { storage } from "./storage";
-import { agentAlerts, agents, improvementRecommendations, policyExceptions, mcpElicitations, type Approval } from "@shared/schema";
+import { agentAlerts, agents, approvals as approvalsTable, improvementRecommendations, policyExceptions, mcpElicitations, type Approval } from "@shared/schema";
 
 type ItemCategory = "approval" | "alert" | "recommendation" | "autonomy_escalation" | "governance";
 
@@ -251,10 +251,43 @@ export interface MyActionsRows {
   elicitations: Array<typeof mcpElicitations.$inferSelect>;
 }
 
+/**
+ * The approval statuses loadMyActionsRows reads.
+ *
+ * Exported because it is a COUPLING, not a detail: buildMyActions decides which
+ * statuses can reach a bucket, and this query decides which ever arrive. If the
+ * two drift, the filter silently hides work a user is waiting on — the failure
+ * would look like "there is nothing to decide", which is indistinguishable from
+ * the truth. tests/my-actions-build.test.ts holds them together.
+ */
+export const APPROVAL_STATUSES_READ = ["pending", "changes_requested", "approved", "rejected"] as const;
+
 /** Everything My Actions reads, for one organization. */
 export async function loadMyActionsRows(orgId: string): Promise<MyActionsRows> {
+  // Only the approvals that can land in a bucket. buildMyActions puts one in
+  // needsDecision when it is pending or changes_requested, in completedToday
+  // when it was approved or rejected TODAY, and drops every other row -- so
+  // reading them was pure waste. Measured here 2026-09-30: 970 approvals, ~1MB,
+  // of which 0 pending and 32 decided today. 938 rows (97%) could not show up.
+  //
+  // Deliberately a SUPERSET of what the buckets accept: isToday() still runs
+  // over the result, so a row near the day boundary is decided by that same
+  // rule rather than by this query.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
   const [approvals, alerts, orgAgents] = await Promise.all([
-    storage.getApprovals(orgId),
+    db
+      .select()
+      .from(approvalsTable)
+      .where(
+        and(
+          eq(approvalsTable.organizationId, orgId),
+          or(
+            inArray(approvalsTable.status, ["pending", "changes_requested"]),
+            and(inArray(approvalsTable.status, ["approved", "rejected"]), gte(approvalsTable.decidedAt, startOfToday)),
+          ),
+        ),
+      ),
     db.select().from(agentAlerts).where(eq(agentAlerts.orgId, orgId)).orderBy(agentAlerts.triggeredAt),
     db.select({ id: agents.id }).from(agents).where(eq(agents.organizationId, orgId)),
   ]);

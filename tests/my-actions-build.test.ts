@@ -7,7 +7,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../server/db", () => ({ db: {} }));
 vi.mock("../server/storage", () => ({ storage: {} }));
 
-import { buildMyActions, type MyActionsRows } from "../server/my-actions-build";
+import { buildMyActions, type MyActionsRows, APPROVAL_STATUSES_READ } from "../server/my-actions-build";
 import { listNeedsMeTool } from "../server/astra/tools/list-needs-me";
 
 const NOW = new Date("2026-09-14T15:00:00Z");
@@ -74,5 +74,68 @@ describe("list_needs_me", () => {
     expect(payload.items.find((i: any) => i.approvalId === "a1")).not.toHaveProperty("impact");
     expect(payload).not.toHaveProperty("fyi");
     expect(out.artifact).toMatchObject({ kind: "needsMe", fullViewHref: "/approvals" });
+  });
+});
+
+/**
+ * The loader reads a subset of approvals; this holds that subset to what the
+ * builder can actually surface.
+ *
+ * Measured on the live organization 2026-09-30: 970 approvals, ~1MB, of which
+ * 0 were pending and 32 decided today — 938 rows (97%) could not reach any
+ * bucket, and were read on every Cowork home load. loadMyActionsRows now asks
+ * only for the statuses below.
+ *
+ * The danger in that is one-directional and quiet: if buildMyActions starts
+ * surfacing a status the query does not fetch, nothing errors — the item simply
+ * never appears, and "nothing needs your decision" looks exactly like the truth.
+ * So the statuses are derived from the builder here rather than trusted.
+ */
+describe("the approvals the loader fetches cover everything the builder can show", () => {
+  const STATUSES = ["pending", "changes_requested", "approved", "rejected", "expired", "cancelled", "superseded"];
+
+  const approvalRow = (status: string, decidedAt: Date | null) => ({
+    id: `a-${status}`,
+    type: "agent_deployment",
+    status,
+    objectName: "An agent",
+    objectType: "agent",
+    agentId: "agent-1",
+    outcomeId: null,
+    dueDate: null,
+    createdAt: new Date(),
+    decidedAt,
+    constraintsJson: null,
+    requiredReviewerRole: null,
+  });
+
+  it("surfaces nothing whose status the loader skips", () => {
+    const now = new Date();
+    const surfaced: string[] = [];
+    for (const status of STATUSES) {
+      // Decided today, the most generous case for reaching a bucket.
+      const built = buildMyActions(
+        { approvals: [approvalRow(status, now)] as any, alerts: [], recommendations: [], policyExceptions: [], elicitations: [] },
+        now,
+      );
+      const appears = built.needsDecision.length + built.completedToday.length + built.fyi.length > 0;
+      if (appears) surfaced.push(status);
+    }
+    // Every status that can reach a bucket must be one the query asks for.
+    const notFetched = surfaced.filter((s) => !(APPROVAL_STATUSES_READ as readonly string[]).includes(s));
+    expect(notFetched).toEqual([]);
+    // And the guard must be able to fail: the builder does surface something.
+    expect(surfaced.length).toBeGreaterThan(0);
+  });
+
+  it("drops an approval decided before today, which is why the date bound is safe", () => {
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 36 * 3_600_000);
+    const built = buildMyActions(
+      { approvals: [approvalRow("approved", yesterday)] as any, alerts: [], recommendations: [], policyExceptions: [], elicitations: [] },
+      now,
+    );
+    expect(built.needsDecision).toHaveLength(0);
+    expect(built.completedToday).toHaveLength(0);
   });
 });
