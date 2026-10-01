@@ -104,6 +104,8 @@ export interface NeedsYouItem {
   title: string;
   context: string;
   urgency: "urgent" | "today" | "this_week";
+  /** Which agent raised it. The title says what happened; this says whose. */
+  agentAttribution: string | null;
   canDecideHere: boolean;
   requiredReviewerRole: string | null;
   elsewhere: { href: string; page: string; reason: string } | null;

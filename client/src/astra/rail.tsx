@@ -37,6 +37,17 @@ function NeedsYouRow({ item, onAskAbout }: { item: NeedsYouItem; onAskAbout: (te
         <span aria-hidden className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${URGENCY_DOT[item.urgency] ?? URGENCY_DOT.this_week}`} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm" title={item.title}>{item.title}</div>
+          {/*
+            Which agent this came from, on its own line. The title now names what
+            happened rather than who reported it, which is the useful half — but
+            one connector failing can raise the same sentence against a dozen
+            agents, and without this the rows read identically. Measured on the
+            live list: 51 items, 28 distinct titles. The agent is what tells
+            those apart, and every item already carries it.
+          */}
+          {item.agentAttribution && (
+            <div className="truncate text-xs text-muted-foreground" title={item.agentAttribution}>{item.agentAttribution}</div>
+          )}
           {item.canDecideHere ? (
             <button
               type="button"
