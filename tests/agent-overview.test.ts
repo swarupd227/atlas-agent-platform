@@ -132,3 +132,25 @@ describe("the routes", () => {
     expect(app).toContain('<Route path="/agents/:id/export" component={AgentExport} />');
   });
 });
+
+/**
+ * A team's flow, reachable from the page you land on.
+ *
+ * Reported by a user who opened a Team agent and could not find its blueprint.
+ * The link existed only as "Edit Flow" on the classic page and as a jump target
+ * further down this one, so the practical way to reach a team's own flow was to
+ * know its blueprint id. `/blueprints` is in no sidebar either.
+ */
+describe("the link to a team's flow", () => {
+  it("is on the overview header, not only the classic page", () => {
+    expect(page).toContain("/blueprints/${agent.blueprintId}");
+    expect(page).toContain('data-testid="link-blueprint"');
+  });
+
+  it("is shown only for a team that actually has one", () => {
+    // A magentic team has no blueprint; the create flow guards on the same
+    // field, and a link to /blueprints/undefined would open a broken editor.
+    const guard = page.match(/\{agent\.agentType === "team" && agent\.blueprintId && \(/);
+    expect(guard).not.toBeNull();
+  });
+});

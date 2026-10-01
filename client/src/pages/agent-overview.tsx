@@ -19,7 +19,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useRoute } from "wouter";
-import { ArrowLeft, ArrowUpRight, Bot, PlayCircle, Save } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Bot, PlayCircle, Save, Workflow } from "lucide-react";
 import { RemoveDialog } from "@/components/remove-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -167,6 +167,20 @@ export default function AgentOverview() {
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Button size="sm" variant="outline" asChild data-testid="link-playground"><Link href={`/agents/${agent.id}/playground`}><PlayCircle className="mr-1 h-3.5 w-3.5" />Try it</Link></Button>
+                  {/*
+                    A team's flow, from the page you actually land on. The link
+                    existed only as "Edit Flow" on the classic page and as a jump
+                    target further down this one, so the usual way to find a
+                    team's own blueprint was to know its id — reported by a user
+                    who went looking for it and could not find it. Conditional:
+                    a team built in magentic mode has no blueprint, and the
+                    create flow already guards on the same field.
+                  */}
+                  {agent.agentType === "team" && agent.blueprintId && (
+                    <Button size="sm" variant="outline" asChild data-testid="link-blueprint">
+                      <Link href={`/blueprints/${agent.blueprintId}`}><Workflow className="mr-1 h-3.5 w-3.5" />Open flow</Link>
+                    </Button>
+                  )}
                   <Button size="sm" variant="ghost" asChild data-testid="link-classic"><Link href={`/agents/${agent.id}/classic`}>Everything else</Link></Button>
                   {/* Deleting an agent lived only on the classic page; it says what goes, including a team's workers. */}
                   <RemoveDialog
