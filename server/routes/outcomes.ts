@@ -29,9 +29,31 @@ import { KpiActionError, declareKpiMeasurement, recordKpiReading, removeKpiReadi
 import { RemovalPlanError, planOutcomeRemoval } from "../removal-plans";
 import { listFlowVersions, recordFlowVersion, versionLine } from "../process-flow-versions";
 import { applyFlowSync } from "../process-flow-sync";
+import { resolveFlowSyncTarget } from "../flow-sync-target";
 import { assessOutcomeIntelligence } from "../outcome-intelligence";
 
 const router = Router();
+
+/**
+ * One response shape for both sync routes -- the outcome-scoped one and the
+ * flow-scoped one -- so the Studio handles a block, a needed choice and a
+ * summary the same way whichever lane it synced through.
+ */
+function respondToFlowSync(res: any, result: Awaited<ReturnType<typeof applyFlowSync>>, team?: { id: string; name: string }) {
+  if ("needsChoice" in result) return res.json(result);
+  if ("blocked" in result) {
+    const blocked = result.blocked;
+    if (blocked.kind === "run_in_flight") {
+      return res.status(409).json({ message: blocked.message, runId: blocked.runId, runStatus: blocked.runStatus });
+    }
+    return res.status(400).json({
+      message: blocked.kind === "no_blueprint"
+        ? "This automation has no blueprint yet -- use \"Turn into a live automation\" first."
+        : blocked.message,
+    });
+  }
+  return res.json({ summary: result.summary, ...(team ? { team } : {}) });
+}
 
 /** Who is doing this, for the audit trail: the real signed-in user, or the demo role. */
 const actorFor = (req: any) => ({
@@ -1765,15 +1787,42 @@ async function createOutcomeVersion(
         outcomeId,
       }, { forceFullRebuild, via: "Studio" });
 
-      if ("needsChoice" in result) return res.json(result);
-      if ("blocked" in result) {
-        const blocked = result.blocked;
-        if (blocked.kind === "run_in_flight") {
-          return res.status(409).json({ message: blocked.message, runId: blocked.runId, runStatus: blocked.runStatus });
+      return respondToFlowSync(res, result);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // The same sync, for a flow that lives in the library rather than on an
+  // outcome. The Studio could not reach it at all: the route above reads the
+  // graph off outcome.processFlow, so a flow saved to the library had no sync
+  // path even though the reconciliation itself never needed an outcome. Which
+  // automation the flow became is read from the flow (resolveFlowSyncTarget),
+  // the same way Astra's sync tool reads it.
+  router.post("/api/process-flows/:id/sync-to-automation", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const { forceFullRebuild } = z.object({ forceFullRebuild: z.boolean().optional() }).parse(req.body ?? {});
+      const target = await resolveFlowSyncTarget(orgId, String(req.params.id));
+      if (!target.ok) {
+        const p = target.problem;
+        if (p.code === "no_flow") return res.status(404).json({ message: "Process flow not found" });
+        if (p.code === "team_missing") {
+          return res.status(404).json({ message: `"${p.flowName}" points at an automation that no longer exists. Build a new one with "Turn into a live automation".` });
         }
-        return res.status(400).json({ message: blocked.kind === "no_blueprint" ? "This automation has no blueprint yet -- use \"Turn into a live automation\" first." : blocked.message });
+        if (p.code === "not_automated") {
+          return res.status(400).json({ message: `"${p.flowName}" hasn't been turned into an automation yet, so there is nothing to sync it into.` });
+        }
+        return res.status(400).json({ message: `"${p.flowName}" has no steps to sync.` });
       }
-      res.json({ summary: result.summary });
+      const result = await applyFlowSync(orgId, {
+        graph: target.graph,
+        flowName: target.flow.name,
+        teamAgent: target.teamAgent as any,
+        outcomeId: target.teamAgent.outcomeId ?? null,
+      }, { forceFullRebuild, via: "Studio" });
+
+      return respondToFlowSync(res, result, { id: target.teamAgent.id, name: target.teamAgent.name });
     } catch (e) {
       handleZodError(res, e);
     }

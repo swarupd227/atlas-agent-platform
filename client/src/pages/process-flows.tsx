@@ -5,7 +5,7 @@ import {
   Workflow, Zap, Users, Brain, Bell, Square,
   Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
   Play, Database, GitBranch, Save, Mic, MicOff, FolderOpen, AlertTriangle, CheckCircle2,
-  Maximize2, Minimize2, X, MessageSquare,
+  Maximize2, Minimize2, X, MessageSquare, RefreshCw,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -298,23 +298,48 @@ export default function ProcessFlows() {
     },
   });
 
-  // Same query key outcome-detail.tsx already uses for its agent list -- react-query
-  // dedupes/caches this, so visiting from the outcome page costs no extra request.
-  const { data: allAgents } = useQuery<any[]>({ queryKey: ["/api/agents"], enabled: !!urlParams.outcomeId });
+  // Which automation this flow already became. The flow itself records it
+  // (process_flows.team_agent_id, written by the build), so that is what we ask
+  // -- and it is the only answer that holds for a flow opened from the library,
+  // which has no outcome in the URL at all.
+  const [recordedTeamAgentId, setRecordedTeamAgentId] = useState<string | null>(null);
+  const knownTeamAgentId = recordedTeamAgentId || urlParams.teamAgentId || "";
+  const { data: recordedTeamAgent } = useQuery<any>({
+    queryKey: ["/api/agents", knownTeamAgentId],
+    enabled: !!knownTeamAgentId,
+  });
+
+  // Fallback for flows built before the build recorded the link (2026-09-24):
+  // their team_agent_id is null, so an outcome-attached flow has nothing left to
+  // go on but the outcome. Only fetched when there is no recorded link, because
+  // the full agent list is a far heavier read than one agent.
+  const { data: allAgents } = useQuery<any[]>({
+    queryKey: ["/api/agents"],
+    enabled: !!urlParams.outcomeId && !knownTeamAgentId,
+  });
   const linkedTeamAgent = useMemo(
-    () => (allAgents || []).find(a => a.agentType === "team" && a.outcomeId === urlParams.outcomeId && a.blueprintId),
-    [allAgents, urlParams.outcomeId],
+    () => (recordedTeamAgent?.agentType === "team" ? recordedTeamAgent : undefined)
+      ?? (urlParams.outcomeId ? (allAgents || []).find(a => a.agentType === "team" && a.outcomeId === urlParams.outcomeId && a.blueprintId) : undefined),
+    [recordedTeamAgent, allAgents, urlParams.outcomeId],
   );
 
   const [syncResult, setSyncResult] = useState<any | null>(null);
   const [syncResultOpen, setSyncResultOpen] = useState(false);
   const [syncLegacyChoiceOpen, setSyncLegacyChoiceOpen] = useState(false);
+  const [rebuildConfirmOpen, setRebuildConfirmOpen] = useState(false);
   const syncMutation = useMutation({
     mutationFn: async (forceFullRebuild?: boolean) => {
-      const res = await apiRequest("POST", `/api/outcomes/${urlParams.outcomeId}/process-flow/sync-to-automation`, {
-        teamAgentId: linkedTeamAgent?.id,
-        ...(forceFullRebuild ? { forceFullRebuild: true } : {}),
-      });
+      // Both lanes sync the SAVED flow, not the canvas: the outcome route reads
+      // the outcome's saved flow, the flow route reads the library record. Save
+      // first and the sync sees the edit; don't, and it syncs what is stored.
+      const res = urlParams.outcomeId
+        ? await apiRequest("POST", `/api/outcomes/${urlParams.outcomeId}/process-flow/sync-to-automation`, {
+            teamAgentId: linkedTeamAgent?.id,
+            ...(forceFullRebuild ? { forceFullRebuild: true } : {}),
+          })
+        : await apiRequest("POST", `/api/process-flows/${savedFlowId}/sync-to-automation`, {
+            ...(forceFullRebuild ? { forceFullRebuild: true } : {}),
+          });
       return res.json();
     },
     onSuccess: (data) => {
@@ -375,6 +400,9 @@ export default function ProcessFlows() {
     },
     onSuccess: (data) => {
       setSavedFlowId(data.id);
+      // Saving over an existing record keeps whatever automation it already
+      // became; a brand-new record has none, and says so.
+      setRecordedTeamAgentId(data.teamAgentId ?? null);
       if (!flowName.trim() && data.name) setFlowName(data.name);
       queryClient.invalidateQueries({ queryKey: ["/api/process-flows"] });
       toast({ title: "Flow saved to library", description: "You can reload it any time from Open." });
@@ -396,6 +424,9 @@ export default function ProcessFlows() {
         replaceLaidOut({ nodes: g.nodes, edges: g.edges });
         setFlowName(rec.name || g.name || "Process Flow");
         setSavedFlowId(rec.id);
+        // The record knows which automation it became; dropping it here is what
+        // made the page offer to build a second one.
+        setRecordedTeamAgentId(rec.teamAgentId ?? null);
         setValidationIssues([]);
         setDrawnFrom([]);
         setLibraryOpen(false);
@@ -683,6 +714,31 @@ export default function ProcessFlows() {
             <Button size="sm" onClick={() => setShowTeamProposal(true)} data-testid="button-turn-into-automation">
               <Zap className="w-3.5 h-3.5 mr-1.5" />
               Turn into a live automation
+            </Button>
+          )}
+          {nodeCount > 0 && linkedTeamAgent?.blueprintId && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(`/blueprints/${linkedTeamAgent.blueprintId}`)}
+              title="Open the live blueprint this flow was built into"
+              data-testid="button-open-blueprint"
+            >
+              <Workflow className="w-3.5 h-3.5 mr-1.5" />
+              Open blueprint
+            </Button>
+          )}
+          {nodeCount > 0 && linkedTeamAgent && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRebuildConfirmOpen(true)}
+              disabled={syncMutation.isPending}
+              title="Rebuild every step from the flow as it is saved now"
+              data-testid="button-rebuild-automation"
+            >
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+              Rebuild
             </Button>
           )}
           {nodeCount > 0 && linkedTeamAgent && (
@@ -1057,7 +1113,7 @@ export default function ProcessFlows() {
             <Button variant="outline" onClick={() => setClearConfirmOpen(false)} data-testid="button-clear-cancel">Cancel</Button>
             <Button
               variant="destructive"
-              onClick={() => { replaceGraph({ nodes: [], edges: [] }); setFlowName(""); setSavedFlowId(null); setValidationIssues([]); setDrawnFrom([]); setClearConfirmOpen(false); }}
+              onClick={() => { replaceGraph({ nodes: [], edges: [] }); setFlowName(""); setSavedFlowId(null); setRecordedTeamAgentId(null); setValidationIssues([]); setDrawnFrom([]); setClearConfirmOpen(false); }}
               data-testid="button-clear-confirm"
             >
               Clear flow
@@ -1088,6 +1144,34 @@ export default function ProcessFlows() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rebuildConfirmOpen} onOpenChange={setRebuildConfirmOpen}>
+        <DialogContent className="astra-scope font-sans max-w-xl" data-testid="dialog-rebuild-confirm">
+          <DialogHeader>
+            <DialogTitle>Rebuild {linkedTeamAgent?.name || "this automation"} from scratch?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Every step gets a fresh agent, and the agents running today are superseded — they are left in place for you
+            to retire, not deleted. Sync instead if you only changed some steps: it leaves the rest untouched.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            This rebuilds from the flow <strong className="text-foreground">as it is saved</strong>, not as it is drawn
+            here. Save first if you have unsaved edits.
+          </p>
+          <StepPlanTable title="What each step becomes" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRebuildConfirmOpen(false)} data-testid="button-rebuild-cancel">Cancel</Button>
+            <Button
+              onClick={() => { setRebuildConfirmOpen(false); syncMutation.mutate(true); }}
+              disabled={syncMutation.isPending}
+              data-testid="button-rebuild-confirm"
+            >
+              {syncMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
+              Rebuild
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
