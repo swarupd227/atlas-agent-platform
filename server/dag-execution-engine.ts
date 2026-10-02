@@ -11,6 +11,7 @@ import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
 import { decide } from "./decision-provider";
 import { resolveDecisionRoute, DEFAULT_THRESHOLDS } from "./decision-settings";
+import { validateRunInput, RunInputError } from "@shared/run-input";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
@@ -1340,9 +1341,10 @@ export function applyReducer(
 }
 
 /**
- * Merge all node outputs from a wave into the current shared state.
+ * Merge all node outputs from a wave into the current shared state. Exported
+ * for the re-run of a finished run, which replays the kept waves through it.
  */
-function mergeWaveOutputs(
+export function mergeWaveOutputs(
   currentState: Record<string, any>,
   nodeResults: NodeExecutionResult[],
   stateSchema: Record<string, StateFieldDef>,
@@ -3448,6 +3450,8 @@ export class DAGExecutionEngine {
 
 export interface RunTeamAgentDagOptions {
   errorStrategy?: "fail_fast" | "best_effort";
+  /** What the run is given besides its request: values for the team's input fields (shared/run-input.ts), checked before the run row is written. */
+  input?: Record<string, unknown>;
   /** The run row exists; execution is about to start. A caller that keeps its own record of the run stores the id here, so a process restart can still tie the two together. */
   onRunCreated?: (dagRunId: string) => void | Promise<void>;
   onNodeStart?: (nodeId: string, wave: number, label: string, totalWaves: number) => void;
@@ -3554,7 +3558,7 @@ interface DagRunSetup {
 // caller can hand the dagRunId to a client to watch BEFORE the (potentially
 // 30-minute, if a gate is hit) execution finishes. Throws "Blueprint has no
 // nodes to run" before anything is persisted if the blueprint is empty.
-async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, request: string): Promise<DagRunSetup> {
+async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, request: string, input?: Record<string, unknown>): Promise<DagRunSetup> {
   const [nodes, edges, teamAgent] = await Promise.all([
     storage.getTeamBlueprintNodes(blueprintId),
     storage.getTeamBlueprintEdges(blueprintId),
@@ -3574,7 +3578,11 @@ async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, re
     ? (existingSchema.fields as Record<string, StateFieldDef>)
     : {};
 
-  const initialState: Record<string, any> = { request };
+  // The team's input fields, checked before anything is persisted: a value that
+  // does not fit is a 400 to the caller, not a run that starts and reads nothing.
+  const given = validateRunInput(stateSchema, input);
+  if (given.errors.length) throw new RunInputError(given.errors);
+  const initialState: Record<string, any> = { ...given.value, request };
 
   const dagRun = await storage.createDagExecutionRun({
     teamAgentId,
@@ -3773,7 +3781,7 @@ export async function runTeamAgentDag(
   request: string,
   opts?: RunTeamAgentDagOptions,
 ): Promise<{ dagRunId: string; result: DAGExecutionResult; wavePlan: ComputedWavePlan }> {
-  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request);
+  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request, opts?.input);
   await opts?.onRunCreated?.(setup.dagRun.id);
   const result = await executeTeamAgentDagRun(setup, teamAgentId, opts);
   return { dagRunId: setup.dagRun.id, result, wavePlan: setup.wavePlan };
@@ -3793,7 +3801,7 @@ export async function startTeamAgentDagRun(
   request: string,
   opts?: RunTeamAgentDagOptions,
 ): Promise<{ dagRunId: string; wavePlan: ComputedWavePlan }> {
-  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request);
+  const setup = await setupTeamAgentDagRun(teamAgentId, blueprintId, request, opts?.input);
   const startMs = Date.now();
   executeTeamAgentDagRun(setup, teamAgentId, opts)
     .then((result) => {
@@ -3809,6 +3817,124 @@ export async function startTeamAgentDagRun(
       writeDagRunTrace(teamAgentId, setup.dagRun.id, request, `Team pipeline failed: ${err.message}`, false, 0, waveResults, startMs, setup.wavePlan);
     });
   return { dagRunId: setup.dagRun.id, wavePlan: setup.wavePlan };
+}
+
+/** Why a run cannot be started again from a step; a route answers 409 with the message. */
+export class RerunRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RerunRefusedError";
+  }
+}
+
+/** A finished run: the only kind that can be started again from a step. */
+const FINISHED_RUN_STATUSES = new Set(["completed", "completed_with_skips", "failed", "cancelled"]);
+
+/**
+ * A new run of the same team that starts at one step of a finished run and
+ * keeps everything before it.
+ *
+ * The engine could already resume a run paused at a gate or cut off by a
+ * restart, from the wave after the last one that completed; it could not
+ * start a finished run again from a step of the author's choosing, so a team
+ * whose twelfth step failed on a bad verdict re-ran all twelve. This is that
+ * capability, on the same resume path: the steps before the chosen one are
+ * taken from the parent run as they were, the state they left is replayed
+ * through the merge the engine itself uses, and execution starts at the
+ * chosen step's wave. It is a new run, linked to its parent by rerunOfRunId,
+ * so the parent's record stays what it was.
+ *
+ * The plan comes from the blueprint as it is NOW, so a fix to the team is
+ * what gets re-run. If that fix changed the steps before the chosen one, the
+ * parent has no result for some of them and the re-run is refused: a run
+ * built on results of steps that no longer exist would be a re-run of nothing.
+ */
+export async function rerunTeamAgentDagRunFrom(
+  parentRunId: string,
+  nodeId: string,
+  opts?: RunTeamAgentDagOptions,
+): Promise<{ dagRunId: string; wavePlan: ComputedWavePlan; fromWave: number; fromLabel: string }> {
+  const parent = await storage.getDagExecutionRun(parentRunId);
+  if (!parent) throw new RerunRefusedError("That run was not found.");
+  if (!parent.teamAgentId) throw new RerunRefusedError("Only a team run can be re-run from a step.");
+  if (!FINISHED_RUN_STATUSES.has(String(parent.status))) {
+    throw new RerunRefusedError(`Only a finished run can be re-run from a step; this one is ${String(parent.status).replace(/_/g, " ")}.`);
+  }
+  const teamAgentId = parent.teamAgentId;
+  const teamAgent = await storage.getAgent(teamAgentId);
+  const blueprintId = (teamAgent as any)?.blueprintId as string | undefined;
+  if (!teamAgent || !blueprintId) throw new RerunRefusedError("The run's team no longer has a blueprint to run.");
+
+  const [nodes, edges] = await Promise.all([storage.getTeamBlueprintNodes(blueprintId), storage.getTeamBlueprintEdges(blueprintId)]);
+  if (nodes.length === 0) throw new RerunRefusedError("Blueprint has no nodes to run");
+  const wavePlan = computeWaves(nodes, edges);
+  const nodeWave: Record<string, number> = {};
+  for (const wave of wavePlan.waves) for (const id of wave.nodes) nodeWave[id] = wave.wave_number;
+  const fromWave = nodeWave[nodeId];
+  if (!fromWave) throw new RerunRefusedError("That step is not in the team's blueprint any more.");
+  const fromLabel = wavePlan.nodeConfig[nodeId]?.label || nodeId;
+
+  // The parent's results for every wave before the chosen one, as they were.
+  const prior = ((parent.waveResults as unknown as WaveExecutionResult[]) || []).filter((wr) => wr.waveNumber < fromWave);
+  const settled = new Set(prior.flatMap((wr) => wr.nodes.map((nr) => nr.nodeId)));
+  const missing = wavePlan.waves.filter((w) => w.wave_number < fromWave).flatMap((w) => w.nodes).filter((id) => !settled.has(id));
+  if (missing.length) {
+    const names = missing.map((id) => `"${wavePlan.nodeConfig[id]?.label || id}"`).join(", ");
+    throw new RerunRefusedError(`The team changed since that run: ${names} now ${missing.length === 1 ? "comes" : "come"} before "${fromLabel}" and ${missing.length === 1 ? "has" : "have"} no result in it. Re-run from an earlier step, or start a fresh run.`);
+  }
+
+  const existingSchema = await storage.getDagStateSchemaByTeamAgent(teamAgentId);
+  const stateSchema: Record<string, StateFieldDef> = existingSchema ? (existingSchema.fields as Record<string, StateFieldDef>) : {};
+  // The state as the kept steps left it: the parent's starting state with each
+  // kept wave merged in the engine's own way, so a field that appended or
+  // summed in the parent has appended or summed here.
+  let initialState: Record<string, any> = { ...((parent.initialState as Record<string, any>) || {}) };
+  for (const wr of prior) initialState = mergeWaveOutputs(initialState, wr.nodes, stateSchema);
+
+  const dagRun = await storage.createDagExecutionRun({
+    teamAgentId,
+    pipelineRunId: null,
+    pipelineStageId: null,
+    executionPlanId: null,
+    stateSchemaId: existingSchema?.id || null,
+    initialState,
+    currentState: initialState,
+    finalState: null,
+    status: "running",
+    currentWave: fromWave - 1,
+    totalWaves: wavePlan.totalWaves,
+    startedAt: new Date(),
+    waveResults: prior as any,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    heartbeatAt: new Date(),
+    rerunOfRunId: parent.id,
+    rerunFromNodeId: nodeId,
+  });
+
+  const setup: DagRunSetup = {
+    dagRun,
+    wavePlan,
+    stateSchema,
+    initialState,
+    nodeWave,
+    teamAgentRuntimeConfig: (teamAgent.runtimeConfig as Record<string, any>) || {},
+    resumeFromWave: fromWave,
+    resumePriorWaveResults: prior,
+  };
+  const request = String(initialState.request ?? "");
+  const startMs = Date.now();
+  executeTeamAgentDagRun(setup, teamAgentId, opts)
+    .then((result) => {
+      writeDagRunTrace(teamAgentId, dagRun.id, request, extractFinalOutputText(result, wavePlan), result.success, result.totalCostUsd, result.waveResults, startMs, wavePlan);
+    })
+    .catch((err) => {
+      if (err instanceof DagRunSupersededError) return;
+      console.error(`[dag-run] re-run ${dagRun.id} of ${parent.id} failed:`, err.message);
+      const waveResults = err instanceof DAGExecutionError ? err.context.waveResults : [];
+      writeDagRunTrace(teamAgentId, dagRun.id, request, `Team pipeline failed: ${err.message}`, false, 0, waveResults, startMs, wavePlan);
+    });
+  return { dagRunId: dagRun.id, wavePlan, fromWave, fromLabel };
 }
 
 // "Run Team Graph" (the Blueprint editor's own test-run button) drove its

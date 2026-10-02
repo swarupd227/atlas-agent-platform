@@ -11,8 +11,9 @@ import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
 import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
 import { llmInvokeRateLimiter } from "../rate-limits";
-import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun, runTeamAgentDag, extractFinalOutputText, deriveRunStatus, inferOrchestrationPattern, cancelTeamAgentDagRun } from "../dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun, runTeamAgentDag, extractFinalOutputText, deriveRunStatus, inferOrchestrationPattern, cancelTeamAgentDagRun, rerunTeamAgentDagRunFrom, RerunRefusedError } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
+import { RunInputError } from "@shared/run-input";
 import { getDagRunEventBuffer, subscribeDagRunEvents } from "../dag-run-events";
 import { startMagenticTeamAgent } from "../magentic-engine";
 import { mergeIntoWorkflowState, sanitizeForCheckpoint, writeStageCompleteCheckpoint } from "../workflow-state-helpers";
@@ -21311,6 +21312,37 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     }
   });
 
+  // Start a finished team run again from one of its steps, keeping the steps
+  // before it (rerunTeamAgentDagRunFrom). Answers as soon as the new run's row
+  // exists, like run-dag above, with the id to watch.
+  router.post("/api/dag-execution-runs/:id/rerun-from", checkPermission("manage_agents"), async (req, res) => {
+    try {
+      const nodeId = typeof req.body?.nodeId === "string" ? req.body.nodeId.trim() : "";
+      if (!nodeId) return res.status(400).json({ message: "Say which step to re-run from (nodeId)." });
+      const run = await storage.getDagExecutionRun(String(req.params.id));
+      const team = run?.teamAgentId ? await storage.getAgent(run.teamAgentId, getOrgId(req)) : undefined;
+      if (!run || !team) return res.status(404).json({ message: "Run not found" });
+      try {
+        const started = await rerunTeamAgentDagRunFrom(run.id, nodeId, { errorStrategy: (req.body?.errorStrategy as "fail_fast" | "best_effort") || "best_effort" });
+        res.status(202).json({
+          dagRunId: started.dagRunId,
+          status: "running",
+          rerunOfRunId: run.id,
+          fromNodeId: nodeId,
+          fromLabel: started.fromLabel,
+          fromWave: started.fromWave,
+          totalWaves: started.wavePlan.totalWaves,
+          totalNodes: started.wavePlan.totalNodes,
+        });
+      } catch (err: any) {
+        if (err instanceof RerunRefusedError) return res.status(409).json({ message: err.message });
+        throw err;
+      }
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   router.get("/api/dag-execution-runs/:id/state", async (req, res) => {
     try {
       const run = await storage.getDagExecutionRun(req.params.id);
@@ -21424,7 +21456,8 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           teamAgentId,
           blueprintId,
           req.body?.request || "",
-          { errorStrategy: (req.body?.errorStrategy as "fail_fast" | "best_effort") || "best_effort" },
+          // The team's input fields (shared/run-input.ts); the setup refuses what does not fit.
+          { errorStrategy: (req.body?.errorStrategy as "fail_fast" | "best_effort") || "best_effort", ...(req.body?.input !== undefined ? { input: req.body.input } : {}) },
         );
 
         res.status(202).json({
@@ -21434,6 +21467,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           totalNodes: wavePlan.totalNodes,
         });
       } catch (execErr: any) {
+        if (execErr instanceof RunInputError) return res.status(400).json({ error: execErr.message, errors: execErr.errors });
         if (execErr.message === "Blueprint has no nodes to run") {
           return res.status(400).json({ error: execErr.message });
         }

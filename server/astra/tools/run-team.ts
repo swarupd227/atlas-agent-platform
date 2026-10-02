@@ -147,6 +147,32 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
   };
 }
 
+type GateFrozen = { dagRunId: string; approvalId: string; teamName: string; label: string };
+
+/**
+ * Deciding an approval gate the run paused at, from its card. Shared by
+ * run_team and rerun_team_from: either can leave a run waiting at a gate, and
+ * the card's Confirm or Not now comes back to the tool that opened it.
+ */
+async function continueAfterGate(ctx: AstraToolContext, f: GateFrozen): Promise<ToolRunResult> {
+  const found = await ctx.services.getTeamRunRow(ctx.orgId, f.dagRunId);
+  if (!found) throw new Error("That team run is no longer available in this organization.");
+  const notes: string[] = [];
+  const decided: string[] = [];
+  if (found.row.status !== "waiting_approval" || found.row.pendingApprovalId !== f.approvalId) {
+    notes.push(`"${f.label}" was already decided elsewhere; nothing was sent from here.`);
+  } else {
+    const decidedBy = (await ctx.services.getUserDisplayName(ctx.userId)) ?? ctx.role;
+    const decision = ctx.decision === "declined" ? "rejected" : "approved";
+    await ctx.services.decideApprovalAs(ctx.orgId, ctx.role, ctx.userId, decidedBy, f.approvalId, decision);
+    decided.push(`"${f.label}" ${decision} by you on its approval card · audit recorded`);
+  }
+  const resumed: RunView | null = await ctx.services.getTeamRun(ctx.orgId, ctx.role, f.dagRunId).catch(() => null);
+  if (resumed) ctx.onProgress?.({ type: "artifact", artifact: runArtifact(resumed) });
+  const watch: WatchResult = await ctx.services.followTeamRun(ctx.orgId, f.dagRunId, { onEvent: narrate(ctx, f.teamName), maxWaitMs: WAIT_MS, ignoreApprovalId: f.approvalId });
+  return report(ctx, f.dagRunId, watch, notes, decided);
+}
+
 export const runTeamTool: AstraTool<Input> = {
   name: "run_team",
   description:
@@ -188,25 +214,7 @@ export const runTeamTool: AstraTool<Input> = {
     const confirmation = ctx.confirmation;
 
     // Deciding an approval gate the run paused at.
-    if (confirmation?.kind === "agent_approval") {
-      const f = confirmation.frozen as { dagRunId: string; approvalId: string; teamName: string; label: string };
-      const found = await ctx.services.getTeamRunRow(ctx.orgId, f.dagRunId);
-      if (!found) throw new Error("That team run is no longer available in this organization.");
-      const notes: string[] = [];
-      const decided: string[] = [];
-      if (found.row.status !== "waiting_approval" || found.row.pendingApprovalId !== f.approvalId) {
-        notes.push(`"${f.label}" was already decided elsewhere; nothing was sent from here.`);
-      } else {
-        const decidedBy = (await ctx.services.getUserDisplayName(ctx.userId)) ?? ctx.role;
-        const decision = ctx.decision === "declined" ? "rejected" : "approved";
-        await ctx.services.decideApprovalAs(ctx.orgId, ctx.role, ctx.userId, decidedBy, f.approvalId, decision);
-        decided.push(`"${f.label}" ${decision} by you on its approval card · audit recorded`);
-      }
-      const resumed: RunView | null = await ctx.services.getTeamRun(ctx.orgId, ctx.role, f.dagRunId).catch(() => null);
-      if (resumed) ctx.onProgress?.({ type: "artifact", artifact: runArtifact(resumed) });
-      const watch: WatchResult = await ctx.services.followTeamRun(ctx.orgId, f.dagRunId, { onEvent: narrate(ctx, f.teamName), maxWaitMs: WAIT_MS, ignoreApprovalId: f.approvalId });
-      return report(ctx, f.dagRunId, watch, notes, decided);
-    }
+    if (confirmation?.kind === "agent_approval") return continueAfterGate(ctx, confirmation.frozen as GateFrozen);
 
     // The start card.
     if (ctx.decision === "declined") {
@@ -254,5 +262,61 @@ export const getTeamRunTool: AstraTool<{ runId: string }> = {
       artifact: runArtifact(run),
       proof: runProof(run),
     };
+  },
+};
+
+
+const FINISHED = new Set(["completed", "completed_with_skips", "failed", "cancelled"]);
+
+/**
+ * Start a finished run again from one of its steps, keeping the ones before
+ * it. An action with the same confirmation as run_team: from that step on, the
+ * team can change things through its connectors again. The new run is narrated
+ * and, like run_team's, can pause at a gate the user decides from its card.
+ */
+export const rerunTeamFromTool: AstraTool<{ runId: string; step: string }> = {
+  name: "rerun_team_from",
+  description:
+    "Start a finished team run again from one of its steps, keeping the results of every step before it. For a run whose later step failed or was skipped, after a fix to the team or its inputs. The user confirms first; the new run is narrated like run_team and is linked to the run it came from.",
+  input: z.object({
+    runId: z.string().min(1).describe("The finished team run's id."),
+    step: z.string().min(1).describe("The step to start from again: its label or node id."),
+  }),
+  permission: "manage_agents",
+  confirm: true,
+  resumesOnDecline: true,
+  preview: async (ctx, input): Promise<ConfirmPreview> => {
+    const run: RunView | null = await ctx.services.getTeamRun(ctx.orgId, ctx.role, input.runId);
+    if (!run) return { refuse: "No team run with that id in this organization." };
+    if (!FINISHED.has(run.status)) return { refuse: `Only a finished run can be re-run from a step; this one is ${run.status.replace(/_/g, " ")}.` };
+    const needle = input.step.trim().toLowerCase();
+    const target = run.steps.find((s) => s.nodeId === input.step) ?? run.steps.find((s) => s.label.trim().toLowerCase() === needle);
+    if (!target) return { refuse: `${run.team.name} has no step called "${input.step}" in that run.` };
+    const kept = run.steps.filter((s) => s.wave < target.wave).map((s) => s.label);
+    const again = run.steps.filter((s) => s.wave >= target.wave).map((s) => s.label);
+    return {
+      summary: `Re-run ${run.team.name} from "${target.label}"`,
+      details: [
+        kept.length ? `Kept as they were: ${kept.join(", ")}.` : "Nothing comes before it, so every step runs again.",
+        `Run again: ${again.join(", ")}.`,
+        "A new run, linked to this one; this run's record stays as it is. Steps that change things through connectors do so again from here.",
+      ],
+      frozen: { dagRunId: run.id, nodeId: target.nodeId, label: target.label, teamName: run.team.name },
+    };
+  },
+  run: async (ctx, input) => {
+    const confirmation = ctx.confirmation;
+    if (confirmation?.kind === "agent_approval") return continueAfterGate(ctx, confirmation.frozen as GateFrozen);
+    if (ctx.decision === "declined") return { payload: { started: false, message: "Not started." } };
+    const f = confirmation?.frozen as { dagRunId?: string; nodeId?: string; label?: string; teamName?: string } | undefined;
+    if (!f?.dagRunId || !f.nodeId) throw new Error("Nothing to re-run: the confirmation is missing.");
+    const started: { dagRunId: string; fromLabel: string; fromWave: number; totalWaves: number; team: { id: string; name: string } } =
+      await ctx.services.rerunTeamRunFrom(ctx.orgId, f.dagRunId, f.nodeId);
+    ctx.onProgress?.({ type: "working", label: `${started.team.name} started again from "${started.fromLabel}"` });
+    const view: RunView | null = await ctx.services.getTeamRun(ctx.orgId, ctx.role, started.dagRunId).catch(() => null);
+    if (view) ctx.onProgress?.({ type: "artifact", artifact: runArtifact(view) });
+    const watch: WatchResult = await ctx.services.followTeamRun(ctx.orgId, started.dagRunId, { onEvent: narrate(ctx, started.team.name), maxWaitMs: WAIT_MS });
+    const kept = started.fromWave - 1;
+    return report(ctx, started.dagRunId, watch, [`Started again from "${started.fromLabel}" of run ${f.dagRunId}; ${kept} ${kept === 1 ? "stage" : "stages"} before it kept from that run.`], []);
   },
 };

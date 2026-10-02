@@ -1591,6 +1591,11 @@ export const dagExecutionRuns = pgTable("dag_execution_runs", {
   // is resumed by dag-resume-poller.ts; null means a runner that never
   // heartbeats, and such runs are left alone.
   heartbeatAt: timestamp("heartbeat_at"),
+  // Set on a run started again from a step of a finished run: the run it was
+  // started from and the step (blueprint node) it started at. The steps before
+  // that one are the parent's results, kept as they were.
+  rerunOfRunId: varchar("rerun_of_run_id"),
+  rerunFromNodeId: varchar("rerun_from_node_id"),
 });
 
 export const insertDagExecutionRunSchema = createInsertSchema(dagExecutionRuns).omit({ id: true, createdAt: true });

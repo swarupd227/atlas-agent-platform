@@ -201,12 +201,13 @@ describe("the pack", () => {
     expect(RUNS_TOOLS.every((t) => t.permission === "view_agents")).toBe(true);
   });
 
-  it("offers no tool that claims to re-run from a step, because the engine cannot", () => {
-    // resumeFromWave resumes a run paused at a gate or interrupted; it cannot
-    // start an existing run again from an arbitrary step. A tool named for that
-    // would describe a capability the platform does not have.
-    expect(RUNS_TOOLS.map((t) => t.name)).not.toContain("rerun_from");
-    expect(read("server", "astra", "tools", "runs.ts")).toContain("run_team starts a\n * fresh run");
+  it("keeps re-running from a step beside run_team, as the action it is, and says so", () => {
+    // The engine can now start a finished run again from a step
+    // (rerunTeamAgentDagRunFrom, tests/rerun-from-node.test.ts). That changes
+    // things, so it is a core action with a confirmation, not a pack tool.
+    expect(RUNS_TOOLS.map((t) => t.name)).not.toContain("rerun_team_from");
+    expect(read("server", "astra", "tools", "run-team.ts")).toContain('name: "rerun_team_from"');
+    expect(read("server", "astra", "tools", "runs.ts")).toContain("lives beside run_team as rerun_team_from");
   });
 });
 

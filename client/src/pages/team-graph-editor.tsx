@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { inputFields, validateRunInput, type RunInputField } from "@shared/run-input";
 import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema, Skill, KnowledgeBase, RuleLeaf, RuleGroup, RuleOperator, DagExecutionRun } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -996,16 +997,40 @@ function RunDagDialog({ teamAgentId, open, onClose }: { teamAgentId: string; ope
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [request, setRequest] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [inputErrors, setInputErrors] = useState<string[]>([]);
+
+  // The team's input fields (shared/run-input.ts): the form is drawn from the
+  // state schema, and the check the server makes on the values runs here first.
+  const { data: schema } = useQuery<DagStateSchema | null>({
+    queryKey: ["/api/dag-state-schemas/by-team", teamAgentId],
+    queryFn: async () => {
+      const res = await fetch(`/api/dag-state-schemas/by-team/${teamAgentId}`, { credentials: "include" });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+    enabled: !!teamAgentId && open,
+  });
+  const schemaFields = (schema?.fields as Record<string, any> | undefined) ?? null;
+  const fields = useMemo(() => inputFields(schemaFields), [schemaFields]);
 
   const runMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/team-agents/${teamAgentId}/run-dag`, { request });
+      const checked = validateRunInput(schemaFields, values);
+      if (checked.errors.length) {
+        setInputErrors(checked.errors);
+        throw new Error(checked.errors.join(" "));
+      }
+      setInputErrors([]);
+      const res = await apiRequest("POST", `/api/team-agents/${teamAgentId}/run-dag`, { request, ...(fields.length ? { input: checked.value } : {}) });
       return res.json() as Promise<StartDagRunResponse>;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/team-agents", teamAgentId, "dag-runs"] });
       toast({ title: "Run started", description: `${data.totalWaves} wave${data.totalWaves !== 1 ? "s" : ""} to execute.` });
       setRequest("");
+      setValues({});
       onClose();
       navigate(`/dag-runs/${data.dagRunId}`);
     },
@@ -1021,6 +1046,26 @@ function RunDagDialog({ teamAgentId, open, onClose }: { teamAgentId: string; ope
           </DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-3">
+          {fields.length > 0 && (
+            <div className="flex flex-col gap-2.5 rounded-md border p-3" data-testid="form-run-input">
+              <span className="text-xs font-medium text-muted-foreground">What the team is given</span>
+              {fields.map((f) => (
+                <div key={f.name} className="flex flex-col gap-1">
+                  <label className="text-xs font-medium" htmlFor={`run-input-${f.name}`}>
+                    {f.name.replace(/_/g, " ")}
+                    <span className="ml-1.5 font-mono text-[10px] font-normal text-muted-foreground">{f.type}</span>
+                  </label>
+                  {f.description && <span className="text-[11px] text-muted-foreground">{f.description}</span>}
+                  <RunInputControl field={f} value={values[f.name] ?? ""} onChange={(v) => setValues((prev) => ({ ...prev, [f.name]: v }))} disabled={runMutation.isPending} />
+                </div>
+              ))}
+              {inputErrors.length > 0 && (
+                <ul className="list-disc pl-4 text-[11px] text-destructive" data-testid="text-run-input-errors">
+                  {inputErrors.map((e) => <li key={e}>{e}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-muted-foreground">Request (optional)</label>
             <Textarea
@@ -1048,6 +1093,35 @@ function RunDagDialog({ teamAgentId, open, onClose }: { teamAgentId: string; ope
       </DialogContent>
     </Dialog>
   );
+}
+
+/** One input field's control, by its type: a choice, yes/no, a number, JSON for an object or a list, or text. */
+function RunInputControl({ field, value, onChange, disabled }: { field: RunInputField; value: string; onChange: (v: string) => void; disabled: boolean }) {
+  const id = `run-input-${field.name}`;
+  if (field.enum) {
+    return (
+      <select id={id} className="h-8 w-full rounded-md border bg-background px-2 text-xs" value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} data-testid={`select-run-input-${field.name}`}>
+        <option value="">—</option>
+        {field.enum.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
+  }
+  if (field.type === "boolean") {
+    return (
+      <select id={id} className="h-8 w-full rounded-md border bg-background px-2 text-xs" value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} data-testid={`select-run-input-${field.name}`}>
+        <option value="">—</option>
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    );
+  }
+  if (field.type === "number") {
+    return <Input id={id} type="number" value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className="h-8 text-xs" data-testid={`input-run-input-${field.name}`} />;
+  }
+  if (field.type === "object" || field.type === "array") {
+    return <Textarea id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.type === "array" ? "[ ... ] as JSON" : "{ ... } as JSON"} disabled={disabled} className="min-h-[60px] font-mono text-xs" data-testid={`textarea-run-input-${field.name}`} />;
+  }
+  return <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className="h-8 text-xs" data-testid={`input-run-input-${field.name}`} />;
 }
 
 function NodeConfigPanel({
@@ -2424,9 +2498,12 @@ function EdgeConfigPanel({
 type SchemaField = {
   rowKey: string;
   fieldName: string;
-  type: "string" | "object" | "array" | "number";
+  type: "string" | "object" | "array" | "number" | "boolean";
   writableBy: string;
   reducer: "last_wins" | "append" | "merge_object" | "sum";
+  /** Given to the run at the start (shared/run-input.ts), with the words the Run form shows for it. */
+  input: boolean;
+  description: string;
 };
 
 type SortCol = "fieldName" | "type" | "reducer" | null;
@@ -2453,7 +2530,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
   useEffect(() => {
     if (schema) {
       setSchemaId(schema.id);
-      type StoredFieldDef = { type?: string; writable_by?: string | string[]; writableBy?: string; reducer?: string };
+      type StoredFieldDef = { type?: string; writable_by?: string | string[]; writableBy?: string; reducer?: string; input?: boolean; description?: string };
       const fieldsObj = (schema.fields || {}) as Record<string, StoredFieldDef>;
       const reducersObj = (schema.reducers || {}) as Record<string, string>;
       const parsed: SchemaField[] = Object.entries(fieldsObj).map(([fieldName, def]) => {
@@ -2467,6 +2544,8 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
           type: (def?.type || "string") as SchemaField["type"],
           writableBy: writableByStr || "*",
           reducer: (def?.reducer || reducersObj[fieldName] || "last_wins") as SchemaField["reducer"],
+          input: def?.input === true,
+          description: typeof def?.description === "string" ? def.description : "",
         };
       });
       setLocalFields(parsed);
@@ -2480,7 +2559,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const fields: Record<string, { type: string; writable_by: string[]; reducer: string }> = {};
+      const fields: Record<string, { type: string; writable_by: string[]; reducer: string; input?: boolean; description?: string }> = {};
       const reducers: Record<string, string> = {};
       for (const f of localFields) {
         if (!f.fieldName.trim()) continue;
@@ -2491,6 +2570,8 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
           type: f.type,
           writable_by: writableByArr,
           reducer: f.reducer,
+          ...(f.input ? { input: true } : {}),
+          ...(f.description.trim() ? { description: f.description.trim() } : {}),
         };
         reducers[f.fieldName] = f.reducer;
       }
@@ -2520,6 +2601,8 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
       type: "object",
       writableBy: "*",
       reducer: "last_wins",
+      input: false,
+      description: "",
     }]);
     setIsDirty(true);
   };
@@ -2584,7 +2667,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
       ) : (
         <div className="rounded-md border overflow-hidden">
           {/* Table header */}
-          <div className="grid bg-muted/50 border-b" style={{ gridTemplateColumns: "1fr 52px 44px 76px 24px" }}>
+          <div className="grid bg-muted/50 border-b" style={{ gridTemplateColumns: "1fr 52px 44px 76px 26px 24px" }}>
             <button
               className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground text-left flex items-center hover:text-foreground transition-colors"
               onClick={() => handleSort("fieldName")}
@@ -2607,6 +2690,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
             >
               Reducer<SortIcon col="reducer" />
             </button>
+            <div className="px-1 py-1.5 text-[10px] font-medium text-muted-foreground text-center" title="Given to the run at the start, on the Run form">In</div>
             <div />
           </div>
           {/* Table rows */}
@@ -2614,7 +2698,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
             <div
               key={field.rowKey}
               className="grid border-b last:border-b-0 hover:bg-muted/20 transition-colors"
-              style={{ gridTemplateColumns: "1fr 52px 44px 76px 24px" }}
+              style={{ gridTemplateColumns: "1fr 52px 44px 76px 26px 24px" }}
               data-testid={`schema-field-row-${idx}`}
             >
               <div className="px-1.5 py-1 flex flex-col justify-center gap-0.5">
@@ -2625,6 +2709,15 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
                   onChange={e => updateField(field.rowKey, { fieldName: e.target.value })}
                   data-testid={`input-schema-field-name-${idx}`}
                 />
+                {field.input && (
+                  <input
+                    className="w-full h-6 rounded border bg-background px-1.5 text-[10px]"
+                    placeholder="Shown on the Run form"
+                    value={field.description}
+                    onChange={e => updateField(field.rowKey, { description: e.target.value })}
+                    data-testid={`input-schema-field-description-${idx}`}
+                  />
+                )}
                 {field.reducer === "append" && (
                   <span className="text-[8px] text-blue-600 dark:text-blue-400" data-testid={`badge-append-indicator-${idx}`}>⊕ append array</span>
                 )}
@@ -2640,6 +2733,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
                   <option value="object">obj</option>
                   <option value="array">arr</option>
                   <option value="number">num</option>
+                  <option value="boolean">bool</option>
                 </select>
               </div>
               <div className="px-1 py-1 flex items-center">
@@ -2664,6 +2758,14 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
                   <option value="merge_object">merge_obj</option>
                   <option value="sum">sum</option>
                 </select>
+              </div>
+              <div className="flex items-center justify-center" title="Given to the run at the start, on the Run form">
+                <input
+                  type="checkbox"
+                  checked={field.input}
+                  onChange={e => updateField(field.rowKey, { input: e.target.checked })}
+                  data-testid={`checkbox-schema-field-input-${idx}`}
+                />
               </div>
               <div className="flex items-center justify-center">
                 <button

@@ -11,7 +11,7 @@ import { getDecisionSettings } from "../decision-settings";
 import { agentMcpServers, agentProposals, agents, approvals, astraThreads, mcpElicitations, policyExceptions, workspaceRuns, type InsertPolicy } from "@shared/schema";
 import { createHash } from "crypto";
 import { buildTeamFromProposal, teamBuildBodySchema } from "../team-build";
-import { computeWaves, extractFinalOutputText, startTeamAgentDagRun } from "../dag-execution-engine";
+import { computeWaves, extractFinalOutputText, startTeamAgentDagRun, rerunTeamAgentDagRunFrom } from "../dag-execution-engine";
 import { summarizeRunToolCalls } from "../run-tool-summary";
 import { getDagRunEventBuffer, subscribeDagRunEvents, type DagRunEvent } from "../dag-run-events";
 import { TERMINAL_RUN_STATUSES, watchTeamRun } from "./team-run-watch";
@@ -1369,6 +1369,27 @@ async function getTeamRunRow(orgId: string, dagRunId: string) {
   return { row, team };
 }
 
+/** Start a finished team run again from one of its steps, named by node id or label; the steps before it are kept (dag-execution-engine.ts rerunTeamAgentDagRunFrom). */
+async function rerunTeamRunFrom(orgId: string, dagRunId: string, step: string) {
+  const found = await getTeamRunRow(orgId, dagRunId);
+  if (!found) throw new Error("No team run with that id in this organization.");
+  if (!found.team.blueprintId) throw new Error(`${found.team.name} has no team blueprint to run.`);
+  const [nodes, edges] = await Promise.all([storage.getTeamBlueprintNodes(found.team.blueprintId), storage.getTeamBlueprintEdges(found.team.blueprintId)]);
+  const plan = computeWaves(nodes, edges);
+  const needle = step.trim().toLowerCase();
+  const nodeId = step in plan.nodeConfig ? step : Object.keys(plan.nodeConfig).find((id) => (plan.nodeConfig[id].label || "").trim().toLowerCase() === needle);
+  if (!nodeId) throw new Error(`${found.team.name} has no step called "${step}".`);
+  const started = await rerunTeamAgentDagRunFrom(found.row.id, nodeId, { errorStrategy: "best_effort" });
+  return {
+    dagRunId: started.dagRunId,
+    fromNodeId: nodeId,
+    fromLabel: started.fromLabel,
+    fromWave: started.fromWave,
+    totalWaves: started.wavePlan.totalWaves,
+    team: { id: found.team.id, name: found.team.name },
+  };
+}
+
 async function followTeamRun(
   orgId: string,
   dagRunId: string,
@@ -1703,6 +1724,7 @@ export function createAstraServices(): AstraServices {
     listTeams,
     verifyTeamWiring,
     startTeamRun,
+    rerunTeamRunFrom,
     getTeamRunRow,
     followTeamRun,
     getTeamRun,

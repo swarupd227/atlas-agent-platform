@@ -37,11 +37,10 @@ const PACK = "runs";
  * any recent run were cascades whose message talked about their own condition.
  * Reading those messages would have sent somebody to the wrong step 14 times.
  *
- * There is no tool here for re-running from a step. The engine can resume a run
- * that paused at an approval gate or was interrupted, but it cannot start an
- * existing run again from an arbitrary step, and a tool that implied otherwise
- * would be describing a capability the platform does not have. run_team starts a
- * fresh run, and these tools say what to change before it is worth doing.
+ * There is no tool here that changes anything. Re-running a finished run from a
+ * step is an action, so it lives beside run_team as rerun_team_from (core, with
+ * the same confirmation); these tools say what went wrong and where, so the
+ * person knows which step to start from again, or what to change first.
  */
 
 const causeWords = (cause: SkipCause) => `${skipCauseLabel(cause)}. ${skipCauseAdvice(cause)}`;

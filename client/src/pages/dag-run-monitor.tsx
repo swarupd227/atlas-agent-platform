@@ -11,13 +11,13 @@
  * - the run's deliverables, a banner linking straight to a pending approval,
  *   and the activity feed and raw state tucked behind disclosures.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { useRoute, Link } from "wouter";
+import { useRoute, Link, useLocation } from "wouter";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, Network, XCircle, Loader2, ArrowRight, AlertTriangle, Bot, UserCheck,
-  Hand, CheckCircle2, Copy, Check, Download, FileText, Radio, Maximize2, ExternalLink, GitBranch,
+  Hand, CheckCircle2, Copy, Check, Download, FileText, Radio, Maximize2, ExternalLink, GitBranch, RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +30,7 @@ import { stepKindLabel, runsWithoutAModel } from "@shared/run-step-kind";
 import { decisionOutcomeOf } from "@shared/run-overlay";
 import { DECISION_RECORD_SUFFIX } from "@shared/run-overlay";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
+import { inputFields } from "@shared/run-input";
 import { splitWorkingNotes, extractHtmlDocument, openRunStepHtml } from "@/lib/agent-output";
 
 // Mirrors computeWaves()'s real output shape (server/dag-execution-engine.ts)
@@ -309,6 +310,19 @@ export default function DagRunMonitor() {
     refetchInterval: run?.status === "waiting_approval" ? 3000 : false,
   });
 
+  // The team's input fields (shared/run-input.ts), to show what this run was
+  // given by name; a team with no state schema has none.
+  const { data: inputSchema } = useQuery<{ fields?: Record<string, unknown> } | null>({
+    queryKey: ["/api/dag-state-schemas/by-team", teamAgentId],
+    queryFn: async () => {
+      const res = await fetch(`/api/dag-state-schemas/by-team/${teamAgentId}`, { credentials: "include" });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+    enabled: !!teamAgentId,
+  });
+
   // Live step-by-step activity via SSE -- the poll above keeps the stored run
   // fresh, but only this stream says "Copywriting agent started" the moment it happens.
   const [liveEvents, setLiveEvents] = useState<DagRunLiveEvent[]>([]);
@@ -354,6 +368,21 @@ export default function DagRunMonitor() {
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
   }, [liveEvents.length]);
+
+  // Start this run again from one of its steps (POST .../rerun-from): a new,
+  // linked run that keeps the stages before that step. The page moves to it.
+  const [, navigate] = useLocation();
+  const rerunMutation = useMutation({
+    mutationFn: async (nodeId: string) => {
+      const res = await apiRequest("POST", `/api/dag-execution-runs/${runId}/rerun-from`, { nodeId });
+      return res.json() as Promise<{ dagRunId: string; fromLabel: string; fromWave: number; totalWaves: number }>;
+    },
+    onSuccess: (data) => {
+      toast({ title: `Started again from "${data.fromLabel}"`, description: `Stage ${data.fromWave} of ${data.totalWaves}; the stages before it are kept from this run.` });
+      navigate(`/dag-runs/${data.dagRunId}`);
+    },
+    onError: (err: Error) => toast({ title: "Could not start the re-run", description: err.message, variant: "destructive" }),
+  });
 
   async function submitCancel() {
     if (!runId) return;
@@ -502,6 +531,13 @@ export default function DagRunMonitor() {
   const stepWord = isMagentic ? "Step" : "Stage";
   const status = RUN_STATUS[run.status] ?? { label: run.status.replace(/_/g, " "), dot: "pending" as StepState };
   const request = (run.initialState as any)?.request;
+  // What the run was given by name (shared/run-input.ts), and the run it was started again from.
+  const given = inputFields((inputSchema?.fields as Record<string, any>) ?? null)
+    .map((f) => ({ ...f, value: (run.initialState as any)?.[f.name] }))
+    .filter((f) => f.value !== undefined);
+  const rerunOf = (run as any).rerunOfRunId as string | null | undefined;
+  const rerunFromNodeId = (run as any).rerunFromNodeId as string | null | undefined;
+  const rerunFromLabel = rerunFromNodeId ? wavePlan?.nodeConfig?.[rerunFromNodeId]?.label ?? null : null;
   const pendingApproval = (approvals || [])
     .filter(a => a.status === "pending" && a.agentId === teamAgentId)
     .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0];
@@ -698,6 +734,28 @@ export default function DagRunMonitor() {
           </div>
         )}
 
+        {(given.length > 0 || rerunOf) && (
+          <div className="rounded-lg border bg-card px-4 py-3 flex flex-col gap-2" data-testid="section-run-input">
+            <Eyebrow>What the team was given</Eyebrow>
+            {rerunOf && (
+              <p className="text-sm" data-testid="text-rerun-of">
+                Started again from {rerunFromLabel ? `"${rerunFromLabel}"` : "a step"} of{" "}
+                <Link href={`/dag-runs/${rerunOf}`} className="underline underline-offset-2">run {rerunOf.slice(0, 8)}</Link>; the stages before it are kept from that run.
+              </p>
+            )}
+            {given.length > 0 && (
+              <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+                {given.map((g) => (
+                  <div key={g.name} className="contents" data-testid={`text-run-input-${g.name}`}>
+                    <dt className="font-mono text-xs text-muted-foreground pt-0.5" title={g.description}>{g.name}</dt>
+                    <dd className="whitespace-pre-wrap break-words">{typeof g.value === "string" ? g.value : JSON.stringify(g.value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
+        )}
+
         <div className="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-5 items-start">
           <div className="flex flex-col gap-5 min-w-0">
             {/* Timeline */}
@@ -865,6 +923,7 @@ export default function DagRunMonitor() {
               stepWord={stepWord}
               isMagentic={isMagentic}
               approvalId={approvalId}
+              onRerunFrom={runIsTerminal && !isMagentic ? (nodeId) => rerunMutation.mutate(nodeId) : undefined}
             />
           )}
         </div>
@@ -955,12 +1014,15 @@ function StepDetail({
   stepWord,
   isMagentic,
   approvalId,
+  onRerunFrom,
 }: {
   step: Step;
   stage: Stage;
   stepWord: string;
   isMagentic: boolean;
   approvalId: string | null;
+  /** Start the run again from this step; absent while the run is live, and for a Magentic run. */
+  onRerunFrom?: (nodeId: string) => void;
 }) {
   const [tab, setTab] = useState<"output" | "files">("output");
   const [copied, setCopied] = useState(false);
@@ -1156,6 +1218,11 @@ function StepDetail({
           {canExpand && (
             <Button variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs font-sans" onClick={() => setExpanded(true)} data-testid="button-expand-output">
               <Maximize2 className="w-3.5 h-3.5 mr-1.5" /> Expand
+            </Button>
+          )}
+          {onRerunFrom && (step.state === "completed" || step.state === "failed" || step.state === "skipped") && (
+            <Button variant="outline" size="sm" className={`h-7 px-2 text-xs font-sans ${canExpand ? "" : "ml-auto"}`} onClick={() => onRerunFrom(step.id)} data-testid={`button-rerun-from-${step.id}`}>
+              <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Re-run from here
             </Button>
           )}
         </div>
