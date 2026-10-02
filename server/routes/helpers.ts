@@ -1419,15 +1419,44 @@ export function renderGovernanceBlock(entries: GovernancePromptEntry[], budget =
   let used = estimateGovernanceTokens(lines[0]) + instructionTokens;
   let renderedConfidential = false;
   for (const e of entries) {
-    const body = e.directives.length > 0
-      ? e.directives.slice(0, 4).map(d => `\n  - ${d}`).join("")
-      : `: ${e.description}`;
     const confidential = isConfidential(e);
-    const line = `- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}${confidential ? ", CONFIDENTIAL" : ""}] ${e.name} (${e.domain})${body}`;
-    const lineTokens = estimateGovernanceTokens(line);
-    if (used + lineTokens > budget) continue;
+    const header = `- [${e.hard ? "HARD" : e.enforcement.toUpperCase()}${confidential ? ", CONFIDENTIAL" : ""}] ${e.name} (${e.domain})`;
+    let line: string;
+
+    if (e.directives.length === 0) {
+      line = `${header}: ${e.description}`;
+      if (used + estimateGovernanceTokens(line) > budget) continue;
+    } else {
+      // Fit as many directives as the budget allows rather than a fixed four.
+      // A policy's directives ARE its behaviour, and the fixed cap dropped the
+      // rest without saying so: a six-rule binder-close policy reached the
+      // agent as four, losing "close a period only against a named binder
+      // operations officer" -- a control the journey is sold on. The author saw
+      // six rules in the policy and had no way to tell the agent saw four.
+      const fit = (count: number, note?: string): string =>
+        header + e.directives.slice(0, count).map(d => `\n  - ${d}`).join("") + (note ?? "");
+      let shown = 0;
+      while (shown < e.directives.length
+        && used + estimateGovernanceTokens(fit(shown + 1)) <= budget) shown++;
+      // Not even one directive fits: skip the whole policy, as before, so a
+      // name with no rules never stands in for the rules themselves.
+      if (shown === 0) continue;
+
+      // Silence is the actual defect, so the admission is not optional. When it
+      // does not fit, give up a directive to make room rather than dropping the
+      // note -- otherwise the truncation goes unannounced at exactly the tight
+      // budgets where most gets cut. Kept terse for the same reason.
+      let dropped = e.directives.length - shown;
+      while (dropped > 0 && shown > 1
+        && used + estimateGovernanceTokens(fit(shown, `\n  - (+${dropped} more not shown)`)) > budget) {
+        shown--;
+        dropped++;
+      }
+      line = dropped > 0 ? fit(shown, `\n  - (+${dropped} more not shown)`) : fit(shown);
+    }
+
     lines.push(line);
-    used += lineTokens;
+    used += estimateGovernanceTokens(line);
     if (confidential) renderedConfidential = true;
   }
   if (lines.length === 1) return "";
