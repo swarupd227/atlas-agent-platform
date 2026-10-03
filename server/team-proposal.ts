@@ -309,6 +309,92 @@ export const agentPlanShape = z.object({
   }).nullish(),
 });
 
+/**
+ * Which skills the drafting model is offered, shortlisted per STEP rather than
+ * once per outcome.
+ *
+ * Ranking once for the whole team made every agent compete on the outcome's
+ * overall vocabulary, so the right skill for one worker was often simply not
+ * offered: a Coverage Verification agent was handed
+ * straight-through-underwriting because coverage-verification ranked 7th
+ * overall. Widening the window from 6 to 14 only moved the boundary.
+ *
+ * Measured on the E&S journey AFTER its outcome contract was attached -- 145
+ * keyword terms, so the outcome scorer had plenty to work with --
+ * treaty-cession-classification, the one skill in the library written for a
+ * treaty check, still did not reach the top 14. The outcome describes that
+ * check in prose the skill's own text does not share; a step labelled "compare
+ * the coastal Tier 1 aggregate against the treaty limit" does share it.
+ *
+ * Steps are what become agents, so per-step is per-agent in the only form
+ * available before the agents exist.
+ *
+ * Exported for tests: the behaviour that matters is which names come out, and
+ * reaching it through proposeTeam would need a model call and a database.
+ */
+export function shortlistSkillsForFlow<T extends { id: string; name: string; description?: string | null }>(
+  bindable: T[],
+  stepTexts: string[],
+  boundSkillNames: string[] = [],
+  outcomeRank: (a: T, b: T) => number = () => 0,
+  opts: { perStep?: number; cap?: number; floor?: number; fallbackCap?: number } = {},
+): T[] {
+  const perStep = opts.perStep ?? 3;
+  const cap = opts.cap ?? 18;
+  const floor = opts.floor ?? 8;
+  const fallbackCap = opts.fallbackCap ?? 14;
+
+  const texts = stepTexts.map(t => String(t ?? "").trim()).filter(t => t.length > 0);
+  // No authored steps (an outcome-only proposal): the outcome ranking is the
+  // only signal there is, so that path keeps its previous behaviour exactly.
+  if (texts.length === 0) return bindable.slice().sort(outcomeRank).slice(0, fallbackCap);
+
+  const score = (text: string, s: T): number => {
+    const words = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+    const hay = `${s.name} ${s.description ?? ""}`.toLowerCase();
+    let n = 0;
+    for (const w of words) if (hay.includes(w)) n++;
+    return n;
+  };
+
+  const best = new Map<string, { skill: T; score: number }>();
+  const keep = (s: T, value: number) => {
+    const prev = best.get(s.id);
+    if (!prev || value > prev.score) best.set(s.id, { skill: s, score: value });
+  };
+  for (const text of texts) {
+    bindable
+      .map(s => ({ s, n: score(text, s) }))
+      .filter(x => x.n > 0)
+      .sort((a, b) => b.n - a.n)
+      .slice(0, perStep)
+      .forEach(x => keep(x.s, x.n));
+  }
+
+  // A skill the author bound to a step is not a candidate to be ranked: the
+  // prompt already tells the model it MUST name it, so it has to be in the list
+  // the model is choosing from.
+  for (const name of boundSkillNames) {
+    const s = bindable.find(c => c.name.toLowerCase().trim() === String(name).toLowerCase().trim());
+    if (s) keep(s, Number.MAX_SAFE_INTEGER);
+  }
+
+  const picked = Array.from(best.values()).sort((a, b) => b.score - a.score).slice(0, cap).map(r => r.skill);
+
+  // Top up from the outcome ranking when the steps matched little -- a terse
+  // flow should not leave the model with almost nothing to pick from.
+  if (picked.length < floor) {
+    const have = new Set(picked.map(s => s.id));
+    for (const s of bindable.slice().sort(outcomeRank)) {
+      if (have.has(s.id)) continue;
+      picked.push(s);
+      have.add(s.id);
+      if (picked.length >= fallbackCap) break;
+    }
+  }
+  return picked;
+}
+
 export async function proposeTeam(
   input: ProposeTeamInput,
   opts: { orgId: string | undefined; onEvent: (event: ProposeTeamEvent) => void },
@@ -400,19 +486,41 @@ export async function proposeTeam(
       // LLM would then dutifully name in matchedSkills, and every one of them
       // was silently dropped at bind time -- the agent shipped with an empty
       // Skills tab and nothing anywhere saying why. Offer only what can bind.
-      const industrySkills = allSkills
+      const bindableSkills = allSkills
         .filter(s => s.status === "active")
-        .filter(s => s.industry === industryId || s.industry === "cross_industry")
-        .sort((a, b) => relevanceScore(b) - relevanceScore(a))
-        // Ranked once per OUTCOME, not per agent, so every agent on the team
-        // sees the same candidates. 6 was fine when an industry had a handful
-        // of skills; with a real library (Insurance now has 19) it means the
-        // right skill for a given worker is often simply not offered -- a
-        // Coverage Verification agent was handed straight-through-underwriting
-        // because coverage-verification ranked 7th on overall outcome keywords.
-        // Widening the window is the cheap mitigation; per-agent ranking is the
-        // real fix and is a larger change.
-        .slice(0, 14);
+        .filter(s => s.industry === industryId || s.industry === "cross_industry");
+
+      /**
+       * Skills are shortlisted per STEP, not once per outcome.
+       *
+       * Ranking once for the whole team made every agent compete on the
+       * outcome's overall vocabulary, so the right skill for one worker was
+       * often simply not offered: a Coverage Verification agent was handed
+       * straight-through-underwriting because coverage-verification ranked 7th
+       * overall. Widening the window to 14 only moved the boundary.
+       *
+       * Measured on the E&S journey after its outcome contract was attached
+       * (145 keyword terms, so the scorer had plenty to work with):
+       * treaty-cession-classification -- the one skill in the library written
+       * for a treaty check -- still did not reach the top 14, because the
+       * outcome describes that check in prose the skill's own text does not
+       * share. A step labelled "compare the coastal Tier 1 aggregate against
+       * the treaty limit" does share it.
+       *
+       * Each step therefore contributes its own best candidates, and the union
+       * is offered. Steps are what become agents, so this is per-agent ranking
+       * in the only form available before the agents exist.
+       */
+      const industrySkills = shortlistSkillsForFlow(
+        bindableSkills,
+        Array.isArray(processFlowSteps)
+          ? processFlowSteps.map((s: any) => [s?.label, s?.description, s?.actor].filter(Boolean).join(" "))
+          : [],
+        Array.isArray(processFlowSteps)
+          ? (processFlowSteps as any[]).map(s => s?.config?.skillName).filter((n): n is string => typeof n === "string")
+          : [],
+        (a, b) => relevanceScore(b) - relevanceScore(a),
+      );
       const activePolicies = allPolicies.filter(p => p.status === "active")
         .sort((a, b) => relevanceScore(b) - relevanceScore(a))
         .slice(0, 8);
