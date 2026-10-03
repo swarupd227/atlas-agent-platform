@@ -312,10 +312,14 @@ export function Thread({
               <HomeBriefing onSend={onSend} />
               <HomeActivityPanel />
               <section aria-label="Start something">
-                <h2 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Start something</h2>
-                <p className="mb-2 max-w-prose text-xs text-muted-foreground">
-                  Anything that changes the platform waits for your confirmation, and every answer shows what it's based on.
-                </p>
+                {/* No standing promise about confirmation or provenance here. The
+                    confirm card shows what will change before it changes, and the
+                    proof strip shows what an answer read -- both at the moment they
+                    apply, which is better evidence than a sentence claiming them
+                    on a page someone opens daily. It was also only half true:
+                    measured 2026-10-04, 29 of 66 live replies carried no proof,
+                    sources or card, and run_agent starts work with confirm: false. */}
+                <h2 className="mb-3 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Start something</h2>
               <div className="grid gap-2 sm:grid-cols-2">
                 {STARTERS.map((s) => (
                   <button
