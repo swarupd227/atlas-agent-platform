@@ -651,6 +651,37 @@ export async function applyFlowSync(
         } as any);
         return { pn, node, ok: true as const };
       }
+      // A step the author bound to a connector is a tool call, not an agent.
+      //
+      // Without this the sync drafted an agent for EVERY added step, however it
+      // was drawn. Live 2026-10-03: a step configured to call
+      // get_treaty_aggregates on the binder register was built as an agent with
+      // no tools, and it answered by writing 8,784 tokens of confident,
+      // well-formatted, entirely invented treaty position -- in the step whose
+      // whole purpose was to prove the platform does not do that. Nothing
+      // errored; the drawing was right and only the built team was wrong, so
+      // the sync card reported it added as asked.
+      //
+      // The build path has made this distinction since the beginning
+      // (deterministicNodeFor in team-build.ts); only the sync did not.
+      const stepCfg = (pn.config ?? {}) as Record<string, any>;
+      if (classifyStep({ type: pn.type, config: stepCfg }) === "tool_call" && stepCfg.toolName && stepCfg.toolServerId) {
+        const node = await storage.createTeamBlueprintNode({
+          blueprintId,
+          nodeType: "tool_call",
+          label: pn.label,
+          refAgentId: null,
+          stateKey: stepStateKey(pn),
+          config: {
+            ...processNodeConfig(pn),
+            toolName: String(stepCfg.toolName),
+            toolServerId: String(stepCfg.toolServerId),
+            toolArgs: (stepCfg.toolArgs && typeof stepCfg.toolArgs === "object") ? stepCfg.toolArgs : {},
+          },
+        } as any);
+        return { pn, node, ok: true as const };
+      }
+
       const description = `${pn.label}${pn.description ? ": " + pn.description : ""}${pn.actor ? ` (performed by ${pn.actor})` : ""}`;
       const { draft } = await draftSingleAgent(description, industryId, orgId);
       const agent = await storage.createAgent({

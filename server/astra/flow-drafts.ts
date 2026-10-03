@@ -19,6 +19,14 @@ export interface HeldDraft {
   name: string;
   graph: { name: string; nodes: unknown[]; edges: unknown[] };
   warnings: string[];
+  /**
+   * What the revision could NOT do. The preview shows this on the card, but it
+   * used to stop there: the draft kept only the graph and the warnings, so the
+   * tool's result said `changed: true` and nothing else. The model then
+   * reported the whole instruction as carried out — including the parts that
+   * were skipped — and the person had no way to tell from the reply.
+   */
+  skipped?: string[];
 }
 
 /** Long enough to read a card and decide; short enough not to hold memory. */

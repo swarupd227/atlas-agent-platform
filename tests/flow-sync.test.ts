@@ -87,7 +87,7 @@ vi.mock("../server/routes/helpers", () => ({
 const { planFlowSync, applyFlowSync } = await import("../server/process-flow-sync");
 
 /** Three steps, drawn: gather, check the treaty, pay out. */
-const graph = (over: Partial<Record<"checkLabel" | "checkExpression", string>> = {}, drop?: string) => ({
+const graph = (over: Partial<Record<"checkLabel" | "checkExpression", string>> & { boundTool?: boolean } = {}, drop?: string) => ({
   version: 1,
   name: "E&S binding",
   nodes: [
@@ -95,7 +95,12 @@ const graph = (over: Partial<Record<"checkLabel" | "checkExpression", string>> =
     { id: "s1", type: "get_info", label: "Normalise COPE", description: "", actor: "System" },
     { id: "s2", type: "expression", label: over.checkLabel ?? "Treaty check", description: "", actor: "System", config: { expression: over.checkExpression ?? "aggregate <= 40000000" } },
     { id: "s3", type: "expert_approval", label: "Carrier referral", description: "", actor: "Carrier" },
-    { id: "s4", type: "take_action", label: "Bind", description: "", actor: "System" },
+    // With `boundTool`, the step is drawn against a connector -- the shape the
+    // sync used to ignore, drafting an agent for it instead.
+    {
+      id: "s4", type: "take_action", label: "Bind", description: "", actor: "System",
+      ...(over.boundTool ? { config: { toolName: "bind_policy", toolServerId: "srv-policy", toolArgs: {} } } : {}),
+    },
     { id: "s9", type: "end", label: "Bound", description: "", actor: "System" },
   ].filter((n) => n.id !== drop),
   edges: [
@@ -252,6 +257,36 @@ describe("applying it", () => {
     await applyFlowSync(ORG, target(graph()));
     const gate = state.created.find((n) => n.config?.sourceProcessNodeId === "s3");
     expect(gate).toMatchObject({ nodeType: "edge_gate", gateType: "approval", refAgentId: null });
+  });
+
+  // Live 2026-10-03: a step drawn to call get_treaty_aggregates on a connector
+  // was synced in as an agent with no tools, and it answered by writing an
+  // invented treaty position -- in the step whose purpose was to prove the
+  // platform reads rather than guesses. The drawing was right; only the sync
+  // was wrong, so nothing errored and the card reported it added as asked.
+  it("builds a step bound to a connector as a tool call, not an agent", async () => {
+    const before = graph({ boundTool: true }, "s4");
+    state.nodes = blueprintFromFlow(before);
+    const agentsDraftedBefore = state.created.filter((n) => n.refAgentId).length;
+
+    await applyFlowSync(ORG, target(graph({ boundTool: true })));
+
+    const added = state.created.find((n) => n.config?.sourceProcessNodeId === "s4");
+    expect(added).toMatchObject({ nodeType: "tool_call", refAgentId: null });
+    expect(added.config).toMatchObject({ toolName: "bind_policy", toolServerId: "srv-policy" });
+    // And no agent was drafted to stand in for it.
+    expect(state.created.filter((n) => n.refAgentId).length).toBe(agentsDraftedBefore);
+  });
+
+  // The other half: a step with no connector still becomes an agent, so the
+  // branch above cannot quietly swallow ordinary steps.
+  it("still drafts an agent for a step that is not bound to a connector", async () => {
+    const before = graph({}, "s4");
+    state.nodes = blueprintFromFlow(before);
+    await applyFlowSync(ORG, target(graph()));
+    const added = state.created.find((n) => n.config?.sourceProcessNodeId === "s4");
+    expect(added).toMatchObject({ nodeType: "internal_agent" });
+    expect(added.refAgentId).toBeTruthy();
   });
 
   it("records what it did, and who asked", async () => {

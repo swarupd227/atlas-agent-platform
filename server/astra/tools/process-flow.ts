@@ -182,7 +182,7 @@ export const reviseProcessFlowTool: AstraTool<ReviseInput> = {
       };
     }
 
-    holdDraft(reviseKey(ctx.orgId, input), { name: plan.flow.name, graph: plan.graph as HeldGraph, warnings: plan.warnings });
+    holdDraft(reviseKey(ctx.orgId, input), { name: plan.flow.name, graph: plan.graph as HeldGraph, warnings: plan.warnings, skipped: plan.skipped });
     // A flow that already runs as a team is the case where changing the drawing
     // alone is misleading: the automation keeps the old steps until it is
     // synced, and nothing about the saved flow would tell the user that.
@@ -219,6 +219,11 @@ export const reviseProcessFlowTool: AstraTool<ReviseInput> = {
         flow: saved.name,
         openIn: `/process-flows?flowId=${saved.id}`,
         toCheck: held.warnings,
+        // What the revision could not do, so the reply can say so. Without
+        // this the result was `changed: true` alone, and a request to bind a
+        // connector or rewrite an expression -- neither of which a revision
+        // can do -- came back reported as done.
+        ...(held.skipped?.length ? { couldNotDo: held.skipped } : {}),
         undo: "Ask me to undo it and I will put the previous version back.",
         // Said every time, because the drawing and the running team are now
         // different and only the drawing changed.
