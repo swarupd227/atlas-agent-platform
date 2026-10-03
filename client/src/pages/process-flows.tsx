@@ -618,7 +618,16 @@ export default function ProcessFlows() {
                 {decisionCount > 0 && <span>{decisionCount} decision{decisionCount !== 1 ? "s" : ""}</span>}
                 {approvalCount > 0 && <span>{approvalCount} approval{approvalCount !== 1 ? "s" : ""}</span>}
                 {totalMins > 0 && <span>{totalMins >= 60 ? `~${Math.round(totalMins / 60)}h` : `~${totalMins}m`} total</span>}
-                {linkedTeamAgent && <span>runs as <a href={`/agents/teams/${linkedTeamAgent.id}`} className="text-foreground underline underline-offset-2">{linkedTeamAgent.name}</a></span>}
+                {linkedTeamAgent && (
+                  <span>
+                    runs as <a href={`/agents/teams/${linkedTeamAgent.id}`} className="text-foreground underline underline-offset-2">{linkedTeamAgent.name}</a>
+                    {/* Said here rather than left to a button that fails: without a
+                        blueprint there is nothing for a sync to reconcile against. */}
+                    {!linkedTeamAgent.blueprintId && (
+                      <span data-testid="note-no-blueprint"> — no blueprint, so it can't be synced from here</span>
+                    )}
+                  </span>
+                )}
                 <span>{savedFlowId ? "saved in library" : "not saved yet"}</span>
                 {drawnFrom.length > 0 && (
                   <details className="group relative font-sans" data-testid="details-drawn-from">
@@ -728,7 +737,13 @@ export default function ProcessFlows() {
               Open blueprint
             </Button>
           )}
-          {nodeCount > 0 && linkedTeamAgent && (
+          {/* Sync and Rebuild both reconcile a flow against a BLUEPRINT, and the
+              server blocks either one when there isn't a blueprint to reconcile
+              into -- forceFullRebuild included. Offering them would be offering
+              a button that cannot succeed, so the metadata line says the state
+              instead. "Turn into a live automation" stays hidden either way:
+              this flow already has a team, and building a second is not the fix. */}
+          {nodeCount > 0 && linkedTeamAgent?.blueprintId && (
             <Button
               size="sm"
               variant="outline"
@@ -741,7 +756,7 @@ export default function ProcessFlows() {
               Rebuild
             </Button>
           )}
-          {nodeCount > 0 && linkedTeamAgent && (
+          {nodeCount > 0 && linkedTeamAgent?.blueprintId && (
             <Button
               size="sm"
               onClick={() => syncMutation.mutate(undefined)}

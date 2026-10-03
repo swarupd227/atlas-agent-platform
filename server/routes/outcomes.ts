@@ -46,11 +46,12 @@ function respondToFlowSync(res: any, result: Awaited<ReturnType<typeof applyFlow
     if (blocked.kind === "run_in_flight") {
       return res.status(409).json({ message: blocked.message, runId: blocked.runId, runStatus: blocked.runStatus });
     }
-    return res.status(400).json({
-      message: blocked.kind === "no_blueprint"
-        ? "This automation has no blueprint yet -- use \"Turn into a live automation\" first."
-        : blocked.message,
-    });
+    // The service's own wording, including for no_blueprint. The advice this
+    // used to substitute -- "use Turn into a live automation first" -- names a
+    // control the Studio deliberately hides for a flow that already has a team,
+    // because pressing it builds a SECOND one. Measured 2026-10-03: 5 of the 36
+    // linked flows point at a team with no blueprint and got exactly that.
+    return res.status(400).json({ message: blocked.message });
   }
   return res.json({ summary: result.summary, ...(team ? { team } : {}) });
 }

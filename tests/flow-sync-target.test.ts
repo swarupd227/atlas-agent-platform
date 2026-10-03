@@ -182,6 +182,41 @@ describe("the Studio asks the flow instead of guessing from the outcome", () => 
   });
 });
 
+describe("a flow whose automation has no blueprint", () => {
+  // Measured on Azure 2026-10-03: 5 of the 36 linked flows point at an active
+  // team with no blueprint. process-flow-sync's load() blocks on that before
+  // anything else -- forceFullRebuild included -- so BOTH buttons were offers
+  // that could not succeed, and the refusal told the user to press "Turn into a
+  // live automation", which the page hides for a flow that already has a team.
+  const page = read("client", "src", "pages", "process-flows.tsx");
+  const routes = read("server", "routes", "outcomes.ts");
+
+  it("offers neither sync nor rebuild", () => {
+    for (const testid of ["button-sync-to-automation", "button-rebuild-automation"]) {
+      const idx = page.indexOf(`data-testid="${testid}"`);
+      expect(idx).toBeGreaterThan(-1);
+      // The guard sits on the enclosing condition, a few lines above the testid.
+      expect(page.slice(Math.max(0, idx - 600), idx)).toContain("linkedTeamAgent?.blueprintId");
+    }
+  });
+
+  it("says why, where the team is already named", () => {
+    expect(page).toContain('data-testid="note-no-blueprint"');
+    expect(page).toContain("!linkedTeamAgent.blueprintId");
+  });
+
+  it("still does not offer to build a second team", () => {
+    // The flow HAS an automation; a duplicate is not the recovery.
+    expect(page).toContain("nodeCount > 0 && !linkedTeamAgent");
+  });
+
+  it("lets the server's own wording through instead of naming a hidden control", () => {
+    expect(routes).toContain("return res.status(400).json({ message: blocked.message });");
+    expect(routes).not.toContain('use \\"Turn into a live automation\\" first');
+    expect(routes).not.toContain("use \"Turn into a live automation\" first");
+  });
+});
+
 describe("the flow-scoped sync route", () => {
   const routes = read("server", "routes", "outcomes.ts");
 
