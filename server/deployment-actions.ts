@@ -234,6 +234,7 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
 
     let evalWarning: string | undefined;
     const failingSuites: Array<{ name: string; passRate: number }> = [];
+    const unevaluatedSuites: Array<{ name: string }> = [];
 
     if (configuredEvalThreshold === 0) {
       evalWarning = undefined;
@@ -241,13 +242,29 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
       evalWarning = "No eval suites configured";
     } else {
       for (const suite of agentSuites) {
+        // A suite that has never run also reports passRate 0, so it used to be
+        // reported as a failing suite "(0.0%)" -- which reads as "this agent
+        // failed every case" when the truth is that nobody ever measured it.
+        // They are different problems with different fixes: one needs the agent
+        // improved, the other needs the suite run. Measured on this platform:
+        // of the nine suites covering the two MGA journeys, four had no test
+        // cases at all and none had ever been run, so every one of them would
+        // have been reported as a 0% failure.
+        if (!suite.lastRunAt) {
+          unevaluatedSuites.push({ name: suite.name });
+          continue;
+        }
         const passRate = suite.passRate ?? 0;
         if (passRate < configuredEvalThreshold) {
           failingSuites.push({ name: suite.name, passRate });
         }
       }
 
-      if (failingSuites.length > 0 && nextEnv === "prod" && !bypassEvalGate) {
+      // Unevaluated still blocks production -- promoting an agent nobody has
+      // measured is the thing the gate exists to prevent -- but it now says so.
+      const evalGateBlocking = failingSuites.length > 0 || unevaluatedSuites.length > 0;
+
+      if (evalGateBlocking && nextEnv === "prod" && !bypassEvalGate) {
         const auditEventsAll = await storage.getAuditEvents(ctx.orgId);
         const maxSeqNum = auditEventsAll.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
         const lastHashVal = auditEventsAll.length > 0 ? auditEventsAll[auditEventsAll.length - 1].eventHash || "" : "";
@@ -263,7 +280,10 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
           details: JSON.stringify({
             targetEnv: nextEnv,
             failingSuites,
-            threshold: 80,
+            unevaluatedSuites,
+            // Was hardcoded to 80 while the check used configuredEvalThreshold,
+            // so an agent blocked at a 60 threshold filed an audit event saying 80.
+            threshold: configuredEvalThreshold,
             agentName: source.agentName,
             version: source.version,
           }),
@@ -273,19 +293,34 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
         });
 
         return { status: 400, body: {
-          message: "Eval pass rate too low for production promotion",
+          message: failingSuites.length > 0 && unevaluatedSuites.length > 0
+            ? "Eval pass rate too low, and some suites have never been evaluated"
+            : failingSuites.length > 0
+              ? "Eval pass rate too low for production promotion"
+              : "Some eval suites have never been evaluated",
           evalGateBlocked: true,
           threshold: configuredEvalThreshold,
           failingSuites,
+          unevaluatedSuites,
         } };
       }
 
-      if (failingSuites.length > 0 && nextEnv === "pilot") {
-        evalWarning = `Eval pass rate below ${configuredEvalThreshold}% on: ${failingSuites.map(s => `${s.name} (${s.passRate.toFixed(1)}%)`).join(", ")}`;
+      if (evalGateBlocking && nextEnv === "pilot") {
+        const parts: string[] = [];
+        if (failingSuites.length > 0) {
+          parts.push(`pass rate below ${configuredEvalThreshold}% on: ${failingSuites.map(s => `${s.name} (${s.passRate.toFixed(1)}%)`).join(", ")}`);
+        }
+        if (unevaluatedSuites.length > 0) {
+          parts.push(`never evaluated: ${unevaluatedSuites.map(s => s.name).join(", ")}`);
+        }
+        evalWarning = `Eval ${parts.join("; ")}`;
       }
     }
 
-    if (bypassEvalGate && failingSuites.length > 0) {
+    // Unevaluated counts here too: splitting it out of failingSuites would
+    // otherwise let a promotion blocked ONLY by never-run suites be bypassed
+    // with no audit event at all -- a silent bypass of the gate.
+    if (bypassEvalGate && (failingSuites.length > 0 || unevaluatedSuites.length > 0)) {
       const auditEventsAll = await storage.getAuditEvents(ctx.orgId);
       const maxSeqNum = auditEventsAll.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
       const lastHashVal = auditEventsAll.length > 0 ? auditEventsAll[auditEventsAll.length - 1].eventHash || "" : "";
@@ -301,6 +336,7 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
         details: JSON.stringify({
           targetEnv: nextEnv,
           failingSuites,
+          unevaluatedSuites,
           threshold: configuredEvalThreshold,
           agentName: source.agentName,
           version: source.version,
