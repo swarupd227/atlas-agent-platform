@@ -21,6 +21,7 @@ function getAnnotatorId(req: Request): string {
   return `demo-annotator${orgId ? `-${orgId.slice(0, 8)}` : ""}`;
 }
 import { evaluateGateTag } from "../worker";
+import { deriveServerGateStatus } from "../eval-run-scope";
 import { getDefaultProvider, getProvider, LLMProvider } from "../llm-provider";
 import { runAgentOnce } from "../agent-runtime";
 import { redteamSecondOpinion, type JudgeDisagreement } from "../redteam-second-opinion";
@@ -1460,29 +1461,16 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
     // ── Gate status computed server-side — never trust client ────────────────
     const gate = await storage.getEvalGate(agentId);
     const recentRuns = await storage.getEvalTestRuns({ agentId });
-    const completedRuns = recentRuns
-      .filter(r => r.status === "completed")
-      .sort((a, b) =>
-        new Date(b.completedAt ?? b.startedAt ?? 0).getTime() -
-        new Date(a.completedAt ?? a.startedAt ?? 0).getTime()
-      );
-    const latestRun = completedRuns[0] ?? null;
-
-    let serverGateStatus: "pass" | "warn" | "fail" | "unknown" = "unknown";
-    if (latestRun) {
-      const tags = (latestRun.tags as string[] | null) ?? [];
-      if (tags.includes("gate:pass")) serverGateStatus = "pass";
-      else if (tags.includes("gate:warn")) serverGateStatus = "warn";
-      else if (tags.includes("gate:fail")) serverGateStatus = "fail";
-      else if (latestRun.passRate != null) {
-        // Fallback: persisted tags unavailable — use evaluateGateTag with passRate only.
-        // Per-metric data not available here; worker persists tags for the normal path.
-        const tag = evaluateGateTag(latestRun.passRate, gate, {});
-        if (tag === "gate:pass") serverGateStatus = "pass";
-        else if (tag === "gate:warn") serverGateStatus = "warn";
-        else serverGateStatus = "fail";
-      }
-    }
+    // The latest completed ordinary run decides the gate. A repeated run carries no gate tag and a
+    // strict pass rate, so it must not stand in for one: judged on its rate alone it could block a
+    // promotion on a consistency check, or pass one without the per-metric checks.
+    // Fallback for a run with no persisted tag: evaluateGateTag on the pass rate only (per-metric
+    // data is not available here; the worker persists tags for the normal path).
+    const { status: serverGateStatus, latestRun } = deriveServerGateStatus(
+      recentRuns,
+      gate,
+      (passRate, g) => evaluateGateTag(passRate, g, {}),
+    );
 
     const isGateRed = serverGateStatus === "fail";
 
