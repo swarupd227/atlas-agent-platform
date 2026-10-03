@@ -26,6 +26,8 @@ import { pollDueScheduleTriggers } from "./schedule-trigger-poller";
 import { runTeamAgentDag, extractFinalOutputText, startTeamAgentDagRun } from "./dag-execution-engine";
 import { pollWaitingApprovalDagRuns, pollInterruptedDagRuns } from "./dag-resume-poller";
 import { processEvalRepeatRun, recoverOrphanedEvalRepeatJobs } from "./eval-repeat-job";
+import { runGoldenAttempts, type AttemptOutcome } from "./eval-studio-repeat";
+import { summarizeRun, MAX_STUDIO_ATTEMPTS, type CaseStability } from "@shared/eval-stability";
 
 // ── Meeting transcription (async long-meeting path) ─────────────────────────────
 async function processMeetingTranscription(job: Job): Promise<Record<string, unknown>> {
@@ -1406,6 +1408,11 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   const run = await storage.getEvalTestRun(runId);
   if (!run) throw new Error(`Eval test run ${runId} not found`);
 
+  // The run row is what was asked for; the payload only carries it. Anything
+  // that is not a whole number from 1 to 10 is a run as it has always been.
+  const asked = Number((run as { repeats?: number | null }).repeats ?? payload.repeats ?? 1);
+  const repeats = Number.isInteger(asked) && asked >= 1 && asked <= 10 ? asked : 1;
+
   // Defense-in-depth org check — worker validates agent org before executing
   const orgIdFromPayload = (payload.organizationId as string | undefined) || undefined;
   if (orgIdFromPayload) {
@@ -1444,6 +1451,14 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     return { runId, total: 0, passed: 0, failed: 0, message: "No goldens in dataset" };
   }
 
+  // The route checked the dataset's size when the run was started, but that
+  // count can be stale by the time the job runs. A run that would pass the limit
+  // is failed here rather than spending the attempts.
+  if (repeats > 1 && goldens.length * repeats > MAX_STUDIO_ATTEMPTS) {
+    await storage.updateEvalTestRun(runId, { status: "failed", completedAt: new Date() });
+    throw new Error(`${goldens.length} goldens x ${repeats} repeats is ${goldens.length * repeats} attempts; a run is limited to ${MAX_STUDIO_ATTEMPTS}`);
+  }
+
   const agent = await storage.getAgent(agentId);
   if (!agent) throw new Error(`Agent ${agentId} not found`);
   const agentCtx = buildAgentContext(agent);
@@ -1472,9 +1487,13 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   const perMetricAgg = new Map<string, { total: number; passed: number }>();
 
   const CONCURRENCY = Math.min(parallelism, 10);
-  let cursor = 0;
+  // Goldens whose attempts are in, for the run's flaky count. Kept only for a repeated run.
+  const settledStability: Array<{ caseId: string; stability: CaseStability }> = [];
 
-  const processGolden = async (golden: typeof goldens[0]) => {
+  // One answer to one golden: the agent runs, the judge scores it, a trace is
+  // written. What it came to is returned; whether the golden passed is decided
+  // once all its attempts are in (eval-studio-repeat.ts).
+  const runAttempt = async (golden: typeof goldens[0], attempt: number): Promise<AttemptOutcome> => {
     const t0 = Date.now();
     const orgId = (payload.organizationId as string | undefined) || undefined;
 
@@ -1599,15 +1618,6 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       }
     }
 
-    // Accumulate per-metric scores for gate enforcement
-    for (const [metric, score] of Object.entries(scores)) {
-      if (typeof score !== "number") continue;
-      const bucket = perMetricAgg.get(metric) ?? { total: 0, passed: 0 };
-      bucket.total++;
-      if (score >= (metricThresholdByName.get(metric) ?? 0.5)) bucket.passed++;
-      perMetricAgg.set(metric, bucket);
-    }
-
     const latencyMs = Date.now() - t0;
     totalLatencyMs += latencyMs;
     const activeMetricCount = Math.max(1, metrics.filter(Boolean).length);
@@ -1619,6 +1629,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     const trace = await storage.createEvalTrace({
       runId,
       goldenId: golden.id,
+      attempt,
       organizationId: orgId,
       scores,
       passFail: agentFailed ? false : overallPass,
@@ -1704,42 +1715,57 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       });
     }
 
-    await storage.updateEvalGolden(golden.id, {
-      lastScore: scores["overall"] ?? 0,
-      lastRunAt: new Date(),
-    });
-
-    if (!agentFailed && overallPass) passedCount++; else failedCount++;
+    const thresholds: Record<string, number> = {};
+    metricThresholdByName.forEach((threshold, name) => { thresholds[name] = threshold; });
+    return { passed: !agentFailed && overallPass, scores, thresholds };
   };
 
-  while (cursor < goldens.length) {
-    const batch = goldens.slice(cursor, cursor + CONCURRENCY);
-    const results = await Promise.allSettled(batch.map(processGolden));
-
-    // Explicitly account for any goroutine-level failures (e.g. storage errors)
-    // that weren't caught inside processGolden
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.error(`[eval-test-run] Unhandled golden processing error: ${result.reason}`);
-        failedCount++;
+  // Every golden-and-attempt pair goes through the same batches, so the
+  // concurrency limit does not multiply with the repeat count.
+  await runGoldenAttempts({
+    goldens,
+    repeats,
+    concurrency: CONCURRENCY,
+    runAttempt,
+    // Explicitly account for any failure that wasn't caught inside runAttempt
+    // (e.g. a storage error): the attempt counts as failed.
+    onError: (golden, attempt, reason) => {
+      console.error(`[eval-test-run] Unhandled golden processing error (golden ${golden.id.slice(0, 8)}, attempt ${attempt}): ${reason}`);
+    },
+    onGolden: async (golden, settled) => {
+      // A golden passes only if every attempt did; with one attempt, that attempt.
+      if (settled.passed) passedCount++; else failedCount++;
+      if (repeats > 1) settledStability.push({ caseId: golden.id, stability: settled.stability });
+      // Per-metric rates for gate enforcement: a metric holds for a golden only
+      // if it held on every attempt that scored it.
+      Object.keys(settled.metricPasses).forEach((metric) => {
+        const bucket = perMetricAgg.get(metric) ?? { total: 0, passed: 0 };
+        bucket.total++;
+        if (settled.metricPasses[metric]) bucket.passed++;
+        perMetricAgg.set(metric, bucket);
+      });
+      // Nothing was scored only when every attempt failed before scoring; the golden is left as it was.
+      if (Object.keys(settled.metricPasses).length > 0) {
+        await storage.updateEvalGolden(golden.id, { lastScore: settled.meanOverall, lastRunAt: new Date() });
       }
-    }
-
-    cursor += CONCURRENCY;
-
-    const pct = Math.min(95, 5 + Math.floor((cursor / goldens.length) * 90));
-    await storage.updateJob(job.id, { progress: pct });
-    await storage.updateEvalTestRun(runId, {
-      passedCount,
-      failedCount,
-      runningCount: Math.max(0, goldens.length - cursor),
-      pendingCount: Math.max(0, goldens.length - cursor),
-    });
-    jobEvents.emit("progress", { jobId: job.id, agentId, progress: pct, step: `processed_${cursor}_of_${goldens.length}` });
-  }
+    },
+    onBatch: async ({ tasksStarted, tasksTotal, goldensSettled }) => {
+      const pct = Math.min(95, 5 + Math.floor((tasksStarted / tasksTotal) * 90));
+      await storage.updateJob(job.id, { progress: pct });
+      await storage.updateEvalTestRun(runId, {
+        passedCount,
+        failedCount,
+        runningCount: Math.max(0, goldens.length - goldensSettled),
+        pendingCount: Math.max(0, goldens.length - goldensSettled),
+      });
+      jobEvents.emit("progress", { jobId: job.id, agentId, progress: pct, step: `processed_${tasksStarted}_of_${tasksTotal}` });
+    },
+  });
 
   const passRate = goldens.length > 0 ? passedCount / goldens.length : null;
-  const avgLatencyMs = goldens.length > 0 ? Math.round(totalLatencyMs / goldens.length) : null;
+  // The mean time of one answer, so a repeated run stays comparable with one that was not repeated.
+  const avgLatencyMs = goldens.length > 0 ? Math.round(totalLatencyMs / (goldens.length * repeats)) : null;
+  const repeated = repeats > 1 ? summarizeRun(settledStability) : null;
 
   // ── Gate status — worked out before the run is marked completed, and written
   // in the same update, so nothing reading a completed run sees it without its
@@ -1749,7 +1775,10 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   try {
     const gate = await storage.getEvalGate(agentId);
 
-    if (passRate !== null) {
+    // A repeated run is a consistency check, not a gate input: it is stricter
+    // than the single runs the gate and the regression window compare against,
+    // so judging it by them would read as a regression that did not happen.
+    if (repeats === 1 && passRate !== null) {
       // Build per-metric pass rates from accumulator
       const perMetricPassRates: Record<string, number> = {};
       for (const [metric, bucket] of perMetricAgg.entries()) {
@@ -1763,7 +1792,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     // If pass rate dropped more than regressionWindowPct from baseline, force gate:fail
     // regardless of whether absolute threshold is met or per-metric checks passed.
     const regressionWindowPct = gate?.regressionWindowPct ?? 5;
-    if (passRate !== null && regressionWindowPct > 0) {
+    if (repeats === 1 && passRate !== null && regressionWindowPct > 0) {
       // The run's own organization: without it, getEvalTestRuns returns only
       // organization-less runs, so an organization's runs never found a baseline
       // and this gate silently never fired.
@@ -1797,6 +1826,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     totalTokens,
     avgLatencyMs,
     completedAt: new Date(),
+    ...(repeated ? { flakyCount: repeated.flakyCases, consistency: repeated.consistency } : {}),
     ...(gateTags ? { tags: gateTags } : {}),
   });
 
@@ -1815,6 +1845,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     avgLatencyMs,
     costUsd: totalCostUsd,
     gateStatus: gateTag,
+    ...(repeated ? { repeats, flaky: repeated.flakyCases, consistency: repeated.consistency } : {}),
   };
 }
 
