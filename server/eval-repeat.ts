@@ -14,12 +14,11 @@ import { summarizeAttempts, type CaseStability, type FieldDisagreement } from "@
 export const ATTEMPT_CONCURRENCY = 3;
 
 /**
- * Most attempts a run may ask for while it is still answered inside the request
- * that started it. Azure cuts a request that is silent for about 230 seconds,
- * and an attempt takes tens of seconds, so a larger repeated run needs to run in
- * the background, which is not built yet.
+ * The job type of a repeated run. A repeated run takes many times longer than a
+ * request can wait (Azure cuts one that is silent for about 230 seconds), so the
+ * route queues it for the job worker and the caller reads the run.
  */
-export const SYNC_ATTEMPT_LIMIT = 15;
+export const EVAL_REPEAT_JOB = "eval_repeat_run";
 
 /**
  * Runs `run` once per attempt, `concurrency` at a time, and returns the results
@@ -38,14 +37,6 @@ export async function runAttempts<T>(repeats: number, run: (attempt: number) => 
   };
   await Promise.all(Array.from({ length: Math.min(Math.max(concurrency, 1), repeats) }, worker));
   return results;
-}
-
-/** Why a repeated run of this size cannot be answered in one request, or null when it can. */
-export function syncLimitError(caseCount: number, repeats: number): string | null {
-  if (repeats <= 1) return null;
-  const attempts = caseCount * repeats;
-  if (attempts <= SYNC_ATTEMPT_LIMIT) return null;
-  return `${attempts} attempts is more than one request can wait for (${SYNC_ATTEMPT_LIMIT}); a repeated run that large needs the background mode, which is not available yet`;
 }
 
 /** The labels that changed between attempts, in words: "severity (high x2, medium x1)". Empty when none did. */

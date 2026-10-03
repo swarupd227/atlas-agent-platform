@@ -25,6 +25,7 @@ import { pollDueResourceChangeTriggers } from "./connector-poller";
 import { pollDueScheduleTriggers } from "./schedule-trigger-poller";
 import { runTeamAgentDag, extractFinalOutputText, startTeamAgentDagRun } from "./dag-execution-engine";
 import { pollWaitingApprovalDagRuns, pollInterruptedDagRuns } from "./dag-resume-poller";
+import { processEvalRepeatRun, recoverOrphanedEvalRepeatJobs } from "./eval-repeat-job";
 
 // ── Meeting transcription (async long-meeting path) ─────────────────────────────
 async function processMeetingTranscription(job: Job): Promise<Record<string, unknown>> {
@@ -1847,6 +1848,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processEvalBaseline(job);
           } else if (job.type === "eval_test_run") {
             result = await processEvalTestRun(job);
+          } else if (job.type === "eval_repeat_run") {
+            result = await processEvalRepeatRun(job);
           } else if (job.type === "shadow_replay") {
             result = await processShadowReplay(job);
           } else if (job.type === "agent_scheduled_run") {
@@ -1937,6 +1940,20 @@ export function startWorker(intervalMs = 2000) {
   };
   setTimeout(autonomyAutoTimeout, autonomyAutoTimeoutInterval);
   console.log("[worker] Autonomy auto-timeout validator started (5min interval)");
+
+  // A repeated eval whose process died is never finished by anyone; fail it and its run.
+  const evalRepeatRecoveryInterval = 120000;
+  const evalRepeatRecovery = async () => {
+    if (!workerRunning) return;
+    try {
+      const failed = await recoverOrphanedEvalRepeatJobs();
+      if (failed > 0) console.log(`[worker] Failed ${failed} orphaned repeated eval run(s)`);
+    } catch (err) {
+      if (!isDbConnectionError(err)) console.error("[worker] Repeated-eval recovery error:", err);
+    }
+    setTimeout(evalRepeatRecovery, evalRepeatRecoveryInterval);
+  };
+  setTimeout(evalRepeatRecovery, 20000);
 
   const alertCheckInterval = 300000;
   const alertCheckRunner = async () => {

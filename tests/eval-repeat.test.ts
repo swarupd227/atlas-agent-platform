@@ -6,10 +6,10 @@
  *   - one attempt reduces to the case's own result (so a run that asks for no
  *     repeats is unchanged);
  *   - the case a reader sees is the attempt that failed, not a lucky pass;
- *   - a repeated run too large for one request is refused with the numbers.
+ *   - the job type a repeated run is queued under is the one the worker dispatches on.
  */
 import { describe, it, expect } from "vitest";
-import { runAttempts, foldAttempts, syncLimitError, describeUnstableFields, ATTEMPT_CONCURRENCY, SYNC_ATTEMPT_LIMIT } from "../server/eval-repeat";
+import { runAttempts, foldAttempts, describeUnstableFields, ATTEMPT_CONCURRENCY, EVAL_REPEAT_JOB } from "../server/eval-repeat";
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -46,21 +46,6 @@ describe("runAttempts", () => {
     let inFlight = 0, peak = 0;
     await runAttempts(4, async () => { inFlight++; peak = Math.max(peak, inFlight); await delay(2); inFlight--; }, 1);
     expect(peak).toBe(1);
-  });
-});
-
-describe("syncLimitError", () => {
-  it("never refuses a run of one attempt per case, however large", () => {
-    expect(syncLimitError(25, 1)).toBeNull();
-  });
-
-  it("allows a repeated run up to the limit and refuses past it, naming the numbers", () => {
-    expect(syncLimitError(5, 3)).toBeNull();
-    expect(syncLimitError(SYNC_ATTEMPT_LIMIT, 1)).toBeNull();
-    const msg = syncLimitError(5, 4);
-    expect(msg).toContain("20 attempts");
-    expect(msg).toContain(String(SYNC_ATTEMPT_LIMIT));
-    expect(msg).toContain("background");
   });
 });
 
@@ -113,5 +98,13 @@ describe("foldAttempts", () => {
     const { stability } = foldAttempts([withVerdict("High"), withVerdict("Medium")], { keys: ["severity"], verdict: a => a.verdict });
     expect(stability.passed).toBe(true);
     expect(stability.unstableFields.map(f => f.key)).toEqual(["severity"]);
+  });
+});
+
+describe("EVAL_REPEAT_JOB", () => {
+  it("is the job type the worker dispatches on", async () => {
+    expect(EVAL_REPEAT_JOB).toBe("eval_repeat_run");
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("server/worker.ts", "utf8")).toContain(`job.type === "${EVAL_REPEAT_JOB}"`);
   });
 });

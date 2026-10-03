@@ -27,6 +27,8 @@ const state: any = {
   answers: [] as string[],
   answerCalls: 0,
   answerDelayMs: 0,
+  jobs: [] as any[],
+  failCreateJob: false,
 };
 
 // The agent's answer decides the verdict: "GOOD" meets the criterion, anything else misses it.
@@ -47,6 +49,12 @@ vi.mock("../server/storage", () => ({
     updateEvalRun: vi.fn(async (id: string, patch: any) => { Object.assign(state.runs.find((r: any) => r.id === id) ?? {}, patch); return patch; }),
     createEvalCaseResult: vi.fn(async (r: any) => { state.caseResults.push(r); return r; }),
     updateEvalSuite: vi.fn(async (_id: string, patch: any) => { state.suiteUpdates.push(patch); return patch; }),
+    createJob: vi.fn(async (j: any) => {
+      if (state.failCreateJob) throw new Error("queue unavailable");
+      const job = { ...j, id: `job${state.jobs.length + 1}` };
+      state.jobs.push(job);
+      return job;
+    }),
   },
 }));
 vi.mock("../server/auth", () => ({ getOrgId: () => "org1" }));
@@ -84,6 +92,13 @@ const post = async (path: string, body: any = {}) => {
   return { status: r.status, body: await r.json().catch(() => ({})) };
 };
 
+/** A repeated run answers 202 and runs in the job; finish it as the worker would and return what the run produced. */
+const postAndFinish = async (path: string, body: any = {}) => {
+  const r = await post(path, body);
+  if (r.status !== 202) return r;
+  return { status: 200, body: await (mod as any).runEvalRepeatJob(state.jobs[state.jobs.length - 1].payload) };
+};
+
 const goldenCase = (over: any = {}) => ({
   id: `c${Math.random().toString(36).slice(2, 7)}`,
   name: "Refuses a direct request to delete a file",
@@ -106,6 +121,8 @@ beforeEach(async () => {
   state.answers = [];
   state.answerCalls = 0;
   state.answerDelayMs = 0;
+  state.jobs = [];
+  state.failCreateJob = false;
   decideMany.mockClear();
   if (!server) {
     const app = express();
@@ -145,7 +162,7 @@ describe("run-golden without a repeat count", () => {
 
 describe("run-golden with repeats", () => {
   it("answers each case that many times and passes a case whose attempts all passed", async () => {
-    const r = await post("/api/evals/s1/run-golden", { repeats: 3 });
+    const r = await postAndFinish("/api/evals/s1/run-golden", { repeats: 3 });
     expect(r.status).toBe(200);
     expect(state.answerCalls).toBe(3);
     expect(r.body.repeats).toBe(3);
@@ -159,7 +176,7 @@ describe("run-golden with repeats", () => {
 
   it("fails a case that passed 3 of 4 times, calls it inconsistent, and keeps every attempt", async () => {
     state.answers = ["GOOD", "BAD", "GOOD", "GOOD"];
-    const r = await post("/api/evals/s1/run-golden", { repeats: 4 });
+    const r = await postAndFinish("/api/evals/s1/run-golden", { repeats: 4 });
     expect(r.body.passed).toBe(0);
     expect(r.body.passRate).toBe(0);
     expect(r.body.stability).toMatchObject({ flakyCases: 1, flipRate: 1 });
@@ -176,7 +193,7 @@ describe("run-golden with repeats", () => {
 
   it("reports a case that fails every time as a failure, not as inconsistent", async () => {
     state.answers = ["no", "no", "no"];
-    const r = await post("/api/evals/s1/run-golden", { repeats: 3 });
+    const r = await postAndFinish("/api/evals/s1/run-golden", { repeats: 3 });
     expect(r.body.results[0].outcome).toBe("stable_fail");
     expect(r.body.stability).toMatchObject({ stableFail: 1, flakyCases: 0 });
     expect(state.caseResults[0].failingReason).not.toContain("Inconsistent");
@@ -186,7 +203,7 @@ describe("run-golden with repeats", () => {
     // 4 attempts, 3 at a time: two rounds of ~25 ms, so the case took ~50 ms
     // while any one attempt took ~25.
     state.answerDelayMs = 25;
-    await post("/api/evals/s1/run-golden", { repeats: 4 });
+    await postAndFinish("/api/evals/s1/run-golden", { repeats: 4 });
     expect(state.caseResults[0].latencyMs).toBeGreaterThanOrEqual(40);
     // The run's average is built from the same per-case figure.
     expect(state.runs[0].avgLatencyMs).toBeGreaterThanOrEqual(40);
@@ -194,7 +211,7 @@ describe("run-golden with repeats", () => {
 
   it("treats an attempt that throws as a failed attempt, not a failed run", async () => {
     state.answers = ["GOOD", "THROW", "GOOD"];
-    const r = await post("/api/evals/s1/run-golden", { repeats: 3 });
+    const r = await postAndFinish("/api/evals/s1/run-golden", { repeats: 3 });
     expect(r.status).toBe(200);
     expect(r.body.results[0]).toMatchObject({ outcome: "flaky", passedAttempts: 2 });
     expect(state.runs[0].status).toBe("completed");
@@ -210,12 +227,79 @@ describe("run-golden refuses a bad repeat request before any run exists", () => 
     expect(state.answerCalls).toBe(0);
   });
 
-  it("rejects a repeated run too large to answer in one request, with the numbers", async () => {
-    state.cases = Array.from({ length: 5 }, () => goldenCase());
-    const r = await post("/api/evals/s1/run-golden", { repeats: 4 });
+  it("rejects a run over the attempt limit, with the numbers", async () => {
+    state.cases = Array.from({ length: 11 }, () => goldenCase());
+    const r = await post("/api/evals/s1/run-golden", { repeats: 10 });
     expect(r.status).toBe(400);
-    expect(r.body.error).toContain("20 attempts");
+    expect(r.body.error).toContain("110 attempts");
     expect(state.runs).toHaveLength(0);
+    expect(state.jobs).toHaveLength(0);
     expect(state.answerCalls).toBe(0);
+  });
+});
+
+describe("a repeated run is queued, not answered in the request", () => {
+  it("answers 202 with where to read the run, having done none of the work", async () => {
+    state.cases = [goldenCase(), goldenCase()];
+    const r = await post("/api/evals/s1/run-golden", { repeats: 5 });
+    expect(r.status).toBe(202);
+    expect(r.body).toEqual({ runId: "run1", jobId: "job1", status: "running", repeats: 5, totalCases: 2, attempts: 10 });
+    expect(state.answerCalls).toBe(0);
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0].status).toBe("running");
+    expect(state.caseResults).toHaveLength(0);
+    expect(state.suiteUpdates).toHaveLength(0);
+  });
+
+  it("queues enough to rebuild the run without the request, cases in order", async () => {
+    state.cases = [goldenCase({ id: "ca" }), goldenCase({ id: "cb" }), goldenCase({ id: "cc" })];
+    await post("/api/evals/s1/run-golden", { repeats: 2, limit: 2 });
+    expect(state.jobs).toHaveLength(1);
+    expect(state.jobs[0]).toMatchObject({
+      type: "eval_repeat_run",
+      status: "queued",
+      agentId: "agent1",
+      payload: { mode: "golden", suiteId: "s1", runId: "run1", agentId: "agent1", caseIds: ["ca", "cb"], repeats: 2, orgId: "org1" },
+    });
+  });
+
+  it("runs the cases the job was queued with, and none that were added since", async () => {
+    state.cases = [goldenCase({ id: "ca" }), goldenCase({ id: "cb" })];
+    await post("/api/evals/s1/run-golden", { repeats: 2 });
+    state.cases = [...state.cases, goldenCase({ id: "cnew" })];
+    const body = await mod.runEvalRepeatJob(state.jobs[0].payload);
+    expect(body.totalCases).toBe(2);
+    expect(state.caseResults.map((c: any) => c.caseId)).toEqual(["ca", "cb"]);
+  });
+
+  it("skips a case that was deleted before the job ran, rather than shifting the others", async () => {
+    state.cases = [goldenCase({ id: "ca" }), goldenCase({ id: "cb" })];
+    await post("/api/evals/s1/run-golden", { repeats: 2 });
+    state.cases = state.cases.filter((c: any) => c.id !== "ca");
+    const body = await mod.runEvalRepeatJob(state.jobs[0].payload);
+    expect(body.totalCases).toBe(1);
+    expect(state.caseResults.map((c: any) => c.caseId)).toEqual(["cb"]);
+  });
+
+  it("fails the run row, not leaves it running, when the job cannot be queued", async () => {
+    state.failCreateJob = true;
+    const r = await postAndFinish("/api/evals/s1/run-golden", { repeats: 3 });
+    expect(r.status).toBe(500);
+    expect(state.runs[0].status).toBe("failed");
+    expect(state.answerCalls).toBe(0);
+  });
+
+  it("reports progress as each case starts", async () => {
+    state.cases = [goldenCase(), goldenCase(), goldenCase()];
+    await post("/api/evals/s1/run-golden", { repeats: 2 });
+    const seen: Array<[number, number]> = [];
+    await mod.runEvalRepeatJob(state.jobs[0].payload, (done: number, total: number) => { seen.push([done, total]); });
+    expect(seen).toEqual([[0, 3], [1, 3], [2, 3]]);
+  });
+
+  it("answers a run with no repeats in the request, as before", async () => {
+    const r = await post("/api/evals/s1/run-golden");
+    expect(r.status).toBe(200);
+    expect(state.jobs).toHaveLength(0);
   });
 });

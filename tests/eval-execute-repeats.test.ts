@@ -26,6 +26,8 @@ const state: any = {
   suiteUpdates: [] as any[],
   answers: [] as string[],
   answerCalls: 0,
+  jobs: [] as any[],
+  failCreateJob: false,
 };
 
 // A prose criterion is met when the agent's answer says GOOD.
@@ -45,6 +47,12 @@ vi.mock("../server/storage", () => ({
     updateEvalRun: vi.fn(async (id: string, patch: any) => { Object.assign(state.runs.find((r: any) => r.id === id) ?? {}, patch); return patch; }),
     createEvalCaseResult: vi.fn(async (r: any) => { state.caseResults.push(r); return r; }),
     updateEvalSuite: vi.fn(async (_id: string, patch: any) => { state.suiteUpdates.push(patch); return patch; }),
+    createJob: vi.fn(async (j: any) => {
+      if (state.failCreateJob) throw new Error("queue unavailable");
+      const job = { ...j, id: `job${state.jobs.length + 1}` };
+      state.jobs.push(job);
+      return job;
+    }),
   },
 }));
 vi.mock("../server/auth", () => ({ getOrgId: () => "org1" }));
@@ -80,6 +88,13 @@ const post = async (path: string, body: any = {}) => {
   return { status: r.status, body: await r.json().catch(() => ({})) };
 };
 
+/** A repeated run answers 202 and runs in the job; finish it as the worker would and return what the run produced. */
+const postAndFinish = async (path: string, body: any = {}) => {
+  const r = await post(path, body);
+  if (r.status !== 202) return r;
+  return { status: 200, body: await (mod as any).runEvalRepeatJob(state.jobs[state.jobs.length - 1].payload) };
+};
+
 const sev = (v: string) => `{"severity":"${v}"}`;
 const severityCase = (over: any = {}) => ({
   id: `c${Math.random().toString(36).slice(2, 7)}`,
@@ -99,6 +114,8 @@ beforeEach(async () => {
   state.suiteUpdates = [];
   state.answers = [];
   state.answerCalls = 0;
+  state.jobs = [];
+  state.failCreateJob = false;
   decideMany.mockClear();
   if (!server) {
     const app = express();
@@ -133,7 +150,7 @@ describe("execute without a repeat count", () => {
 describe("execute with repeats: field-comparison cases", () => {
   it("passes a case whose every attempt matched", async () => {
     state.answers = [sev("High"), sev("high"), sev("HIGH")];
-    const r = await post("/api/evals/s1/execute", { repeats: 3 });
+    const r = await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
     expect(r.status).toBe(200);
     expect(state.answerCalls).toBe(3);
     expect(r.body.passedCases).toBe(1);
@@ -146,7 +163,7 @@ describe("execute with repeats: field-comparison cases", () => {
 
   it("fails a case whose label changed, and names the label that moved", async () => {
     state.answers = [sev("High"), sev("Medium"), sev("High")];
-    const r = await post("/api/evals/s1/execute", { repeats: 3 });
+    const r = await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
     expect(r.body.passedCases).toBe(0);
     expect(r.body.stability).toMatchObject({ flakyCases: 1, flipRate: 1 });
     expect(r.body.cases[0].outcome).toBe("flaky");
@@ -164,7 +181,7 @@ describe("execute with repeats: field-comparison cases", () => {
 
   it("calls a case that is wrong the same way every time a failure, not inconsistent", async () => {
     state.answers = [sev("Low"), sev("low"), sev("LOW")];
-    const r = await post("/api/evals/s1/execute", { repeats: 3 });
+    const r = await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
     expect(r.body.cases[0].outcome).toBe("stable_fail");
     expect(r.body.stability).toMatchObject({ stableFail: 1, flakyCases: 0 });
     const reason = state.caseResults[0].failingReason;
@@ -174,7 +191,7 @@ describe("execute with repeats: field-comparison cases", () => {
 
   it("names every wrong value when the agent keeps changing its mind but is never right", async () => {
     state.answers = [sev("Low"), sev("Medium"), sev("Low")];
-    await post("/api/evals/s1/execute", { repeats: 3 });
+    await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
     const reason = state.caseResults[0].failingReason;
     expect(reason).not.toContain("Inconsistent");
     expect(reason).toContain("values changed: severity (low x2, medium x1)");
@@ -182,7 +199,7 @@ describe("execute with repeats: field-comparison cases", () => {
 
   it("treats an attempt with no parseable verdict as a failed attempt, not a crash", async () => {
     state.answers = [sev("High"), "I think it is high.", sev("High")];
-    const r = await post("/api/evals/s1/execute", { repeats: 3 });
+    const r = await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
     expect(r.status).toBe(200);
     expect(r.body.cases[0]).toMatchObject({ outcome: "flaky", passedAttempts: 2 });
     const attempts = state.caseResults[0].scorerOutputs.attempts;
@@ -194,7 +211,7 @@ describe("execute with repeats: other case kinds", () => {
   it("repeats a prose case through the judge and fails it when one attempt misses", async () => {
     state.cases = [proseCase()];
     state.answers = ["GOOD answer", "off topic", "GOOD again"];
-    const r = await post("/api/evals/s1/execute", { repeats: 3 });
+    const r = await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
     expect(r.body.instruments.prose_judge).toBe(1);
     expect(r.body.cases[0]).toMatchObject({ outcome: "flaky", passedAttempts: 2 });
     expect(state.caseResults[0].failingReason).toMatch(/^Inconsistent: passed 2 of 3 attempts; /);
@@ -204,7 +221,7 @@ describe("execute with repeats: other case kinds", () => {
   it("does not repeat a case with nothing to judge against, and leaves it out of the figures", async () => {
     state.cases = [severityCase({ expectedOutput: "" }), severityCase()];
     state.answers = [sev("High"), sev("High")];
-    const r = await post("/api/evals/s1/execute", { repeats: 2 });
+    const r = await postAndFinish("/api/evals/s1/execute", { repeats: 2 });
     expect(state.answerCalls).toBe(2);
     expect(r.body.unjudgeableCases).toBe(1);
     expect(r.body.stability.measuredCases).toBe(1);
@@ -215,7 +232,7 @@ describe("execute with repeats: other case kinds", () => {
   it("scores the run by cases that passed every attempt", async () => {
     state.cases = [severityCase(), severityCase()];
     state.answers = [sev("High"), sev("High"), sev("High"), sev("Medium")];
-    const r = await post("/api/evals/s1/execute", { repeats: 2 });
+    const r = await postAndFinish("/api/evals/s1/execute", { repeats: 2 });
     expect(r.body.passedCases).toBe(1);
     expect(r.body.passRate).toBe(0.5);
     expect(r.body.stability).toMatchObject({ flakyCases: 1, flipRate: 0.5 });
@@ -232,12 +249,43 @@ describe("execute refuses a bad repeat request before any run exists", () => {
     expect(state.answerCalls).toBe(0);
   });
 
-  it("rejects a repeated run too large to answer in one request, with the numbers", async () => {
-    state.cases = Array.from({ length: 5 }, () => severityCase());
-    const r = await post("/api/evals/s1/execute", { repeats: 4 });
+  it("rejects a run over the attempt limit, with the numbers", async () => {
+    state.cases = Array.from({ length: 11 }, () => severityCase());
+    const r = await post("/api/evals/s1/execute", { repeats: 10 });
     expect(r.status).toBe(400);
-    expect(r.body.error).toContain("20 attempts");
+    expect(r.body.error).toContain("110 attempts");
     expect(state.runs).toHaveLength(0);
+    expect(state.jobs).toHaveLength(0);
+    expect(state.answerCalls).toBe(0);
+  });
+});
+
+describe("a repeated run is queued, not answered in the request", () => {
+  it("answers 202 with where to read the run, having done none of the work", async () => {
+    state.cases = [severityCase(), severityCase()];
+    const r = await post("/api/evals/s1/execute", { repeats: 5 });
+    expect(r.status).toBe(202);
+    expect(r.body).toEqual({ runId: "run1", jobId: "job1", status: "running", repeats: 5, totalCases: 2, attempts: 10 });
+    expect(state.answerCalls).toBe(0);
+    expect(state.runs[0].status).toBe("running");
+    expect(state.caseResults).toHaveLength(0);
+    expect(state.jobs[0]).toMatchObject({ type: "eval_repeat_run", status: "queued", payload: { mode: "execute", suiteId: "s1", runId: "run1", repeats: 5 } });
+  });
+
+  it("runs only the cases it was queued with", async () => {
+    state.cases = [severityCase({ id: "ca" }), severityCase({ id: "cb" })];
+    await post("/api/evals/s1/execute", { repeats: 2 });
+    state.cases = [...state.cases, severityCase({ id: "cnew" })];
+    const body = await (mod as any).runEvalRepeatJob(state.jobs[0].payload);
+    expect(body.totalCases).toBe(2);
+    expect(state.caseResults.map((c: any) => c.caseId)).toEqual(["ca", "cb"]);
+  });
+
+  it("fails the run row, not leaves it running, when the job cannot be queued", async () => {
+    state.failCreateJob = true;
+    const r = await post("/api/evals/s1/execute", { repeats: 3 });
+    expect(r.status).toBe(500);
+    expect(state.runs[0].status).toBe("failed");
     expect(state.answerCalls).toBe(0);
   });
 });
