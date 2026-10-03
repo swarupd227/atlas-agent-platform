@@ -110,7 +110,18 @@ export async function searchKnowledgeBaseChunks(
   topK: number = 5,
   scoreThreshold: number = 0.3,
   callerRole?: RoleId | null,
-): Promise<Array<{ id: string; content: string; similarity: number | null; metadata: any }>> {
+): Promise<Array<{
+  id: string;
+  content: string;
+  similarity: number | null;
+  metadata: any;
+  /** Which document this passage came from, so a claim made from it can cite it. */
+  source_id: string | null;
+  chunk_index: number | null;
+  /** The source row's own name and link, for a citation a person can follow. */
+  source_name: string | null;
+  source_url: string | null;
+}>> {
   const available = await ensurePgVector();
   const allowedLevels = getAllowedKbSensitivityLevels(callerRole);
 
@@ -120,7 +131,8 @@ export async function searchKnowledgeBaseChunks(
     // (not a fake constant like 0.5) so callers/UIs don't mistake a filler
     // value for a real relevance score.
     const fallback = await db.execute(sql`
-      SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id, NULL::real as similarity
+      SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id,
+             s.name as source_name, s.url as source_url, NULL::real as similarity
       FROM knowledge_chunks c
       LEFT JOIN knowledge_sources s ON s.id = c.source_id
       WHERE c.knowledge_base_id = ${knowledgeBaseId}
@@ -136,6 +148,7 @@ export async function searchKnowledgeBaseChunks(
 
   const results = await db.execute(sql`
     SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id,
+           s.name as source_name, s.url as source_url,
            1 - (c.embedding <=> ${embeddingStr}::vector) as similarity
     FROM knowledge_chunks c
     LEFT JOIN knowledge_sources s ON s.id = c.source_id

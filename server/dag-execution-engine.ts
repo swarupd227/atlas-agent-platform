@@ -14,6 +14,7 @@ import { resolveDecisionRoute, DEFAULT_THRESHOLDS } from "./decision-settings";
 import { validateRunInput, RunInputError } from "@shared/run-input";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
+import { citePassages, CITATION_RULE, type CitedSource } from "@shared/retrieval-citations";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, collectRuleLeaves, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
 import { collectRunFiles } from "@shared/run-files";
@@ -1059,6 +1060,7 @@ export function visibleStateKeys(
     owned.add(nc.stateKey);
     owned.add(`${nc.stateKey}${GENERATED_FILES_STATE_SUFFIX}`);
     owned.add(`${nc.stateKey}${VERIFIED_FACTS_STATE_SUFFIX}`);
+    owned.add(`${nc.stateKey}${KB_SOURCES_STATE_SUFFIX}`);
   }
   const visible = new Set<string>();
   const show = (id: string) => {
@@ -1066,6 +1068,11 @@ export function visibleStateKeys(
     if (!key) return;
     visible.add(key);
     visible.add(`${key}${GENERATED_FILES_STATE_SUFFIX}`);
+    // The sources behind an ancestor's passages travel with its narrative: the
+    // step that writes the report needs the index, not the passages. Without
+    // this the key is owned but not visible, so buildAgentInput would filter it
+    // out and the index would reach nobody.
+    visible.add(`${key}${KB_SOURCES_STATE_SUFFIX}`);
     // An ancestor's source values are visible wherever its narrative is, so a
     // later step can check a figure instead of inheriting a retyping of it.
     // The "nothing captured, and here is why" marker is deliberately NOT
@@ -1208,6 +1215,17 @@ export const GENERATED_FILES_STATE_SUFFIX = "_files";
  * earlier step's retyping of it.
  */
 export const VERIFIED_FACTS_STATE_SUFFIX = "_verified";
+
+/**
+ * Suffix for the sources behind a step's retrieved passages: which document each
+ * came from, its link, and enough of the passage to recognise it.
+ *
+ * Beside the content rather than inside it, so the step that writes the report can
+ * carry the index forward without carrying the corpus -- a draft plus a hundred
+ * tokens of index, not the hundred and twenty thousand tokens of passages read to
+ * produce it.
+ */
+export const KB_SOURCES_STATE_SUFFIX = "_sources";
 
 /**
  * A review step's verdict, as it writes it: a heading such as "## QA: PASS".
@@ -2373,6 +2391,10 @@ export class DAGExecutionEngine {
         // all -- which cost three runs and a lot of guessing to tell apart.
         [`${nc.stateKey}${VERIFIED_FACTS_STATE_SUFFIX}`]: workerResult.verifiedFacts
           ?? { captured: false, why: workerResult.verifiedFactsNote ?? "the runtime reported nothing about connector calls" },
+        // Written whenever the step had a knowledge base to search, empty array
+        // included: "searched and found nothing" is a fact a later step can act on,
+        // and an absent key would make it indistinguishable from never searching.
+        ...(workerResult.retrievedSources ? { [`${nc.stateKey}${KB_SOURCES_STATE_SUFFIX}`]: workerResult.retrievedSources } : {}),
       },
       durationMs,
       promptTokens: workerResult.promptTokens || 0,
@@ -2565,15 +2587,21 @@ export class DAGExecutionEngine {
     const found = await searchKnowledgeBaseChunks(kb.id, query, 5, 0.3);
     // Cosine's order, unless the rerank site is routed (server/retrieval-rerank.ts).
     const chunks = await rerankChunks(query, found, { orgId: (kb as { organizationId?: string | null }).organizationId ?? null });
+    // Labelled, so a later step can cite the passage it used. The index rides
+    // beside the content under its own key rather than buried inside the prose.
+    const cited = citePassages(chunks, { kbName: kb.name });
     const content = chunks.length > 0
-      ? `# ${kb.name} (retrieved for: "${query}")\n\n${chunks.map(c => c.content).join("\n\n---\n\n")}`
+      ? `# ${kb.name} (retrieved for: "${query}")\n\n${cited.text}\n\n${CITATION_RULE}`
       : `# ${kb.name}\nNo results above the relevance threshold for: "${query}"`;
 
     return {
       nodeId,
       agentId: "",
       status: "completed",
-      output: { [nc.stateKey]: content },
+      output: {
+        [nc.stateKey]: content,
+        ...(cited.sources.length > 0 ? { [`${nc.stateKey}${KB_SOURCES_STATE_SUFFIX}`]: cited.sources } : {}),
+      },
       durationMs: Date.now() - start,
       promptTokens: 0,
       completionTokens: 0,
@@ -3370,7 +3398,7 @@ export class DAGExecutionEngine {
   // and it read as a missing declaration rather than a missing value.
   //
   // Adding a field to the worker result means adding it in BOTH places.
-  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; providerFallbacks?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; truncated?: boolean; failedFileAttempts?: string[]; verifiedFacts?: Record<string, unknown> | null; verifiedFactsNote?: string; writtenFields?: Record<string, unknown> | null; softPolicyViolations?: Array<{ policyId: string; policyName: string; compliant: boolean; violatedRequirements: string[]; evidence: string; severity: string }> | null }> {
+  ): Promise<{ success: boolean; output: string; error?: string; promptTokens?: number; completionTokens?: number; traceId?: string; costUsd?: number; toolCallCount?: number; providerFallbacks?: number; generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; retrievedSources?: CitedSource[]; truncated?: boolean; failedFileAttempts?: string[]; verifiedFacts?: Record<string, unknown> | null; verifiedFactsNote?: string; writtenFields?: Record<string, unknown> | null; softPolicyViolations?: Array<{ policyId: string; policyName: string; compliant: boolean; violatedRequirements: string[]; evidence: string; severity: string }> | null }> {
     const mockTeamAgent = {
       deploymentId: undefined,
       agentId: "__dag_orchestrator__",

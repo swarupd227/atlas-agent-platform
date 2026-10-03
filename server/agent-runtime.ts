@@ -7,6 +7,7 @@ import { compileRedactPatterns, redactStringLeaves, redactText } from "./output-
 import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
+import { citePassages, CITATION_RULE, type CitedSource } from "@shared/retrieval-citations";
 import { searchFailureReason, knowledgeFailureNote, type KnowledgeSearchFailure } from "@shared/knowledge-search-failure";
 import { rerankChunks } from "./retrieval-rerank";
 import { canAccessKbSensitivity, type RoleId } from "./permissions";
@@ -1132,7 +1133,7 @@ export async function executePromptWithMcp(
   onProgress?: (event: RuntimeProgressEvent) => void,
   orgId?: string | null,
   callerRole?: RoleId | null,
-): Promise<{ steps: any[]; success: boolean; summary: any; spans?: { traceId: string; spans: any[] }; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[]; hardViolations?: Array<{ toolName: string; reason: string; policyIds: string[]; enforcementMode: string; iteration: number; blockedAt: string }>; /** Files this run produced (sandbox or platform renderer), so a DAG engine can hand them to downstream nodes. */ generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }> }> {
+): Promise<{ steps: any[]; success: boolean; summary: any; spans?: { traceId: string; spans: any[] }; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[]; hardViolations?: Array<{ toolName: string; reason: string; policyIds: string[]; enforcementMode: string; iteration: number; blockedAt: string }>; /** Files this run produced (sandbox or platform renderer), so a DAG engine can hand them to downstream nodes. */ generatedFiles?: Array<{ id: string; filename: string | null; mimeType: string | null }>; /** Which document each retrieved passage came from. Present and empty when the step searched and found nothing; absent when it had nothing to search -- those are two different things. */ retrievedSources?: CitedSource[] }> {
   const startTime = Date.now();
   const steps: any[] = [];
   const promptSectionMetrics: ContextSectionMetric[] = [];
@@ -1639,6 +1640,11 @@ export async function executePromptWithMcp(
   // Searches that threw (shared/knowledge-search-failure.ts). The run goes on
   // either way; this is what keeps a failed search from reading as an empty one.
   const kbSearchFailures: KnowledgeSearchFailure[] = [];
+  // Every passage this step retrieved, labelled once across all bases: two bases
+  // both starting at S1 would make a citation ambiguous. Declared out here with
+  // kbRetrievals, because the provenance snapshot at the end of this function reads
+  // it -- declared inside the retrieval block it was invisible there.
+  const citedSources: CitedSource[] = [];
   try {
     if (linkedKbs.length > 0) {
       const ontologyLabels = options?.ontologyLabels || [];
@@ -1664,7 +1670,9 @@ export async function executePromptWithMcp(
           // confident a different passage answers the task best.
           const chunks = await rerankChunks(prompt, found, { orgId });
           if (chunks.length > 0) {
-            kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map((c: any) => c.content).join("\n\n")}`);
+            const cited = citePassages(chunks as any[], { kbName: kbMeta?.name || link.knowledgeBaseId, startAt: citedSources.length + 1 });
+            citedSources.push(...cited.sources);
+            kbChunks.push(`--- ${kbMeta?.name || link.knowledgeBaseId} ---\n${cited.text}`);
             kbRetrievals.push({
               kbId: link.knowledgeBaseId,
               kbName: kbMeta?.name || link.knowledgeBaseId,
@@ -1697,7 +1705,9 @@ export async function executePromptWithMcp(
             failure.fallback = "recent_passages";
             const fallbackTopK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
             const selectedFallback = fallbackChunks.slice(0, fallbackTopK);
-            kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${selectedFallback.map((c: any) => c.content).join("\n\n")}`);
+            const citedFallback = citePassages(selectedFallback as any[], { kbName: kbMeta?.name || link.knowledgeBaseId, startAt: citedSources.length + 1 });
+            citedSources.push(...citedFallback.sources);
+            kbChunks.push(`--- ${kbMeta?.name || link.knowledgeBaseId} (most recent passages) ---\n${citedFallback.text}`);
             kbRetrievals.push({
               kbId: link.knowledgeBaseId,
               kbName: kbMeta?.name || link.knowledgeBaseId,
@@ -1715,7 +1725,7 @@ export async function executePromptWithMcp(
         }
       }
       if (kbChunks.length > 0) {
-        kbContext = `\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}`;
+        kbContext = `\n\n## KNOWLEDGE BASE CONTEXT (retrieved via RAG)\nUse the following domain knowledge to inform your analysis and decisions:\n\n${kbChunks.join("\n\n")}\n\n${CITATION_RULE}`;
         promptSectionMetrics.push({ category: "kb_retrieval", tokenCount: estimateTokenCount(kbContext) });
       }
 
@@ -3251,6 +3261,9 @@ After receiving tool results, provide a structured analysis with key findings, s
       },
     },
     provenanceSnapshot,
+    // Present and empty when this step searched and retrieved nothing; absent
+    // when it had no knowledge base to search.
+    ...(hasKnowledgeBases ? { retrievedSources: citedSources } : {}),
     provenanceHash,
     retrievedDocs: kbRetrievals,
     contextSectionMetrics: promptSectionMetrics,
@@ -4141,6 +4154,9 @@ export async function executeWorkerAgent(
       // The connectors' own answers, unedited, for anything downstream that
       // should check a figure rather than trust it was copied correctly.
       verifiedFacts: stepFacts,
+      // The index behind this step's passages, so the step that writes the report
+      // can cite them without being handed the passages again.
+      ...(result.retrievedSources ? { retrievedSources: result.retrievedSources } : {}),
       // Always present, so "no source values" is a statement rather than a
       // silence someone has to diagnose from outside the server.
       verifiedFactsNote: describeFactCapture(result.steps),
