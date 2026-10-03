@@ -1,9 +1,16 @@
+// MUST be the first import: resolves any `<VAR>_FILE`-backed secret onto
+// process.env before any other module is evaluated. Several modules below
+// (./db, ./embeddings via ./routes, ./agent-runtime) read their env vars at
+// module-load time to build long-lived clients — see server/secrets.ts.
+import "./secrets";
+
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import { compressResponses } from "./compression";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { apiNotFound } from "./api-not-found";
 import { createServer } from "http";
 import { seedDatabase } from "./seed";
 import { autoResumeRuntimes } from "./agent-runtime";
@@ -193,6 +200,13 @@ app.use((req, res, next) => {
 
   log(`Security mode: ${getSecurityMode()}`);
   await registerRoutes(httpServer, app);
+
+  // Anything left under /api or /demo-api is a 404, not the app shell. This
+  // has to sit here: every API route is registered above, and below there is
+  // nothing but the error handler and the SPA catch-all that was answering
+  // these with index.html and a 200. See server/api-not-found.ts.
+  app.use("/api", apiNotFound);
+  app.use("/demo-api", apiNotFound);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
