@@ -4,6 +4,7 @@
  */
 
 import { storage } from "./storage";
+import { gradedRuns } from "./eval-run-scope";
 
 const REPORT_TEMPLATES: Record<string, { name: string; description: string }> = {
   aiuc1: { name: "AIUC-1 Posture Report", description: "Five-pillar compliance assessment: Transparency, Accountability, Privacy, Safety, and Fairness." },
@@ -67,7 +68,10 @@ export async function generateComplianceReport(opts: {
       ? ids.map(aid => storage.getEvalTestRuns({ agentId: aid, organizationId: orgId }))
       : [storage.getEvalTestRuns({ organizationId: orgId })]
   );
-  const runs = allRuns.flat().filter(r => {
+  // Ordinary runs only. A compliance score averages pass rates, and a repeated run's rate is strict
+  // (a golden passes only if every answer does), so including it would lower a control's score for a
+  // consistency check that sets no gate. The run count and cost shown describe these same runs.
+  const runs = gradedRuns(allRuns.flat()).filter(r => {
     if (!r.startedAt || r.status !== "completed") return false;
     const t = new Date(r.startedAt);
     return t >= since && t <= until;

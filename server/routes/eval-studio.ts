@@ -21,7 +21,8 @@ function getAnnotatorId(req: Request): string {
   return `demo-annotator${orgId ? `-${orgId.slice(0, 8)}` : ""}`;
 }
 import { evaluateGateTag } from "../worker";
-import { deriveServerGateStatus } from "../eval-run-scope";
+import { deriveServerGateStatus, gradedRuns } from "../eval-run-scope";
+import { alertWindowRates, evalSummaryFigures } from "../eval-run-figures";
 import { getDefaultProvider, getProvider, LLMProvider } from "../llm-provider";
 import { runAgentOnce } from "../agent-runtime";
 import { redteamSecondOpinion, type JudgeDisagreement } from "../redteam-second-opinion";
@@ -1201,27 +1202,20 @@ router.get("/api/eval/summary", async (req, res) => {
       storage.getEvalMetrics({ organizationId: orgId, limit: 1000 }),
     ]);
 
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const completedRuns = runs.filter(r => r.status === "completed");
-    const recentCompletedRuns = completedRuns.filter(r => r.startedAt && new Date(r.startedAt) >= sevenDaysAgo);
-    const avgPassRate = recentCompletedRuns.length > 0
-      ? recentCompletedRuns.reduce((s, r) => s + (r.passRate || 0), 0) / recentCompletedRuns.length
-      : completedRuns.length > 0
-        ? completedRuns.reduce((s, r) => s + (r.passRate || 0), 0) / completedRuns.length
-        : 0;
-    const totalCostUsd = completedRuns.reduce((s, r) => s + (r.costUsd || 0), 0);
+    // Pass rates and regressions are judged on ordinary runs only; cost and the run count still count
+    // every run (see evalSummaryFigures).
+    const { sevenDayPassRate, openRegressions, evalCostUsd } = evalSummaryFigures(runs);
     const agentsUnderEval = new Set(runs.map(r => r.agentId)).size;
-    const openRegressions = runs.filter(r => r.status === "completed" && (r.passRate || 0) < 0.7).length;
 
     res.json({
       agentsUnderEval,
-      sevenDayPassRate: Math.round(avgPassRate * 100),
+      sevenDayPassRate,
       openRegressions,
       productionAlerts: 0,
       totalRuns: runs.length,
       totalDatasets: datasets.length,
       totalMetrics: metricsResult.total,
-      evalCostUsd: Math.round(totalCostUsd * 100) / 100,
+      evalCostUsd,
     });
   } catch (err: any) {
     res.status(500).json({ message: err.message });
@@ -1530,9 +1524,6 @@ setTimeout(() => {
     try {
       const configs = await storage.getEvalMonitoringConfigs();
       const enabledConfigs = configs.filter(c => c.enabled);
-      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
       for (const cfg of enabledConfigs) {
         // Honor per-agent configurable thresholds
         interface AlertThresholds { passRate?: number; latency?: number; }
@@ -1540,15 +1531,10 @@ setTimeout(() => {
           ? cfg.alertThresholds as AlertThresholds : {};
         const passRateThreshold: number = thresholds.passRate ?? 0.85;
 
-        const recentRuns = await storage.getEvalTestRuns({ agentId: cfg.agentId, organizationId: cfg.organizationId ?? undefined });
-        const windowRuns = recentRuns.filter(r => r.startedAt && new Date(r.startedAt) >= since24h && r.status === "completed" && r.passRate != null);
-        const baselineRuns = recentRuns.filter(r => r.startedAt && new Date(r.startedAt) >= since7d && new Date(r.startedAt) < since24h && r.status === "completed" && r.passRate != null);
-        if (windowRuns.length === 0) continue;
-
-        const windowRate = windowRuns.reduce((s, r) => s + (r.passRate ?? 0), 0) / windowRuns.length;
-        const baselineRate = baselineRuns.length > 0
-          ? baselineRuns.reduce((s, r) => s + (r.passRate ?? 0), 0) / baselineRuns.length
-          : windowRate;
+        // Ordinary runs only: a repeated run's strict rate would raise a pass-rate alert it has not earned.
+        const rates = alertWindowRates(await storage.getEvalTestRuns({ agentId: cfg.agentId, organizationId: cfg.organizationId ?? undefined }));
+        if (!rates) continue;
+        const { windowRate, baselineRate } = rates;
         const dropPct = baselineRate > 0 ? ((baselineRate - windowRate) / baselineRate) * 100 : 0;
 
         // Fire if below absolute threshold OR if 24h drop > 5% vs 7d baseline
@@ -1593,7 +1579,8 @@ router.get("/api/eval/monitoring/summary", async (req, res) => {
     const recentRuns = (await storage.getEvalTestRuns({ organizationId: orgId ?? undefined }))
       .filter(r => r.startedAt && new Date(r.startedAt) >= since24h);
     const costToday = recentRuns.reduce((s, r) => s + (r.costUsd ?? 0), 0);
-    const sampledTraces = recentRuns.reduce((s, r) => s + (r.totalGoldens ?? 0), 0);
+    // A repeated run stores one trace per answer, so it samples goldens x repeats traces.
+    const sampledTraces = recentRuns.reduce((s, r) => s + (r.totalGoldens ?? 0) * (r.repeats ?? 1), 0);
     const p0 = alerts.filter(a => a.severity === "P0").length;
     const p1 = alerts.filter(a => a.severity === "P1").length;
     const p2 = alerts.filter(a => a.severity === "P2").length;
@@ -1615,7 +1602,8 @@ router.get("/api/eval/monitoring/:agentId", async (req, res) => {
     }
     // Build 14-day sparkline from test runs
     const since14d = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-    const runs = (await storage.getEvalTestRuns({ agentId, organizationId: orgId ?? undefined }))
+    // Ordinary runs only: the sparkline is a pass-rate trend, and a repeated run's strict rate is not on that scale.
+    const runs = gradedRuns(await storage.getEvalTestRuns({ agentId, organizationId: orgId ?? undefined }))
       .filter(r => r.startedAt && new Date(r.startedAt) >= since14d && r.status === "completed");
     const alerts = await storage.getEvalAlerts({ agentId, resolved: false });
     // Aggregate by day
@@ -1670,7 +1658,7 @@ router.get("/api/eval/monitor/agents", async (req, res) => {
     const allAgents = await storage.getAgents(orgId ?? undefined);
     const since14d = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     const result = await Promise.all(allAgents.map(async (agent) => {
-      const runs = (await storage.getEvalTestRuns({ agentId: agent.id, organizationId: orgId ?? undefined }))
+      const runs = gradedRuns(await storage.getEvalTestRuns({ agentId: agent.id, organizationId: orgId ?? undefined }))
         .filter(r => r.startedAt && new Date(r.startedAt) >= since14d && r.status === "completed");
       const alerts = await storage.getEvalAlerts({ agentId: agent.id, resolved: false });
       let cfg = await storage.getEvalMonitoringConfig(agent.id);

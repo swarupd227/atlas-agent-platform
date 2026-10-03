@@ -144,6 +144,10 @@ export const compareEvalRunsTool: AstraTool<{ run: string; against?: string }> =
     if (!r.baseline) {
       return { payload: { run: r.run, baseline: null, message: "There's no earlier completed run for this agent to compare with." }, proof: { compliance: { status: "not_measured", reason: "No baseline run." } } };
     }
+    if ("comparable" in r && r.comparable === false) {
+      // Runs that answered each case a different number of times are not on the same scale: no chart and no regression verdict.
+      return { payload: { run: r.run, baseline: r.baseline, message: r.note }, proof: { compliance: { status: "not_measured", reason: "The runs answered each case a different number of times." } } };
+    }
     return {
       payload: r,
       artifact: { kind: "evalCompare", title: "Eval comparison", props: r, fullViewHref: `/evals/runs/${r.run.id}` },

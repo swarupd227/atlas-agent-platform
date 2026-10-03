@@ -26,6 +26,11 @@ const runView = (r: any) => ({
   avgLatencyMs: r.avgLatencyMs ?? null,
   startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : null,
   completedAt: r.completedAt ? new Date(r.completedAt).toISOString() : null,
+  // A repeated run says so: its pass rate is strict (a golden passes only if every answer does), so it
+  // must not be read as an ordinary run's. An ordinary run's view is unchanged.
+  ...((r.repeats ?? 1) > 1
+    ? { repeats: r.repeats as number, flakyGoldens: r.flakyCount ?? 0, consistency: r.consistency ?? null, passRateBasis: "strict: a golden passes only if every one of its answers passes" }
+    : {}),
 });
 
 async function datasetInOrg(orgId: string, datasetId: string) {
@@ -113,6 +118,17 @@ async function compareEvalRuns(orgId: string, runId: string, againstId?: string,
     baseline = pickRegressionBaseline(history, run.id);
   }
   if (!baseline) return { run: runView(run), baseline: null };
+  // A regression verdict compares like with like. A repeated run's strict pass rate is not on an
+  // ordinary run's scale, so setting one beside the other would call a consistency check a regression
+  // (or an improvement). Say so instead of giving a number.
+  if ((run.repeats ?? 1) !== (baseline.repeats ?? 1)) {
+    return {
+      run: runView(run),
+      baseline: runView(baseline),
+      comparable: false,
+      note: "These runs answered each case a different number of times, so their pass rates are not on the same scale and no regression verdict is given.",
+    };
+  }
   const [a, b] = await Promise.all([storage.getEvalTraces({ runId: run.id, limit: 500 }), storage.getEvalTraces({ runId: baseline.id, limit: 500 })]);
   const now = summarizeMetrics(a);
   const before = new Map(summarizeMetrics(b).map((m) => [m.metric, m]));
