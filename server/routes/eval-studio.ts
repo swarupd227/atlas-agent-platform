@@ -6,7 +6,7 @@ import * as path from "path";
 import * as os from "os";
 import { randomUUID } from "crypto";
 import { storage } from "../storage";
-import { startEvalRun, summarizeMetrics } from "../eval-runs";
+import { startEvalRun, summarizeMetrics, resolveStudioRepeats } from "../eval-runs";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import type { Request } from "express";
 import { generateComplianceReport, REPORT_TEMPLATES } from "../eval-report-generator";
@@ -130,6 +130,8 @@ const createRunSchema = z.object({
   cacheEnabled: z.boolean().default(true),
   tags: z.array(z.string()).default([]),
   triggeredBy: z.string().optional(),
+  // Checked against the dataset's size in the route, so the message can name the numbers.
+  repeats: z.unknown().optional(),
 });
 
 const createCollectionSchema = z.object({
@@ -743,6 +745,10 @@ router.post("/api/eval/runs", async (req, res) => {
     const targetAgent = await storage.getAgent(body.agentId);
     if (targetAgent) assertOrgOwnership(targetAgent.organizationId, orgId);
 
+    // Refused before any run exists, so a bad request leaves nothing "pending".
+    const repeats = resolveStudioRepeats(body.repeats, dataset.goldenCount || 0);
+    if (!repeats.ok) return res.status(400).json({ message: repeats.error });
+
     // Shared with the Astra Workspace (server/eval-runs.ts).
     const run = await startEvalRun({
       orgId,
@@ -757,6 +763,7 @@ router.post("/api/eval/runs", async (req, res) => {
       cacheEnabled: body.cacheEnabled,
       tags: body.tags,
       triggeredBy: body.triggeredBy,
+      repeats: repeats.repeats,
     });
 
     res.status(201).json(run);

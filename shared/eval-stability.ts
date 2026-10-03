@@ -59,6 +59,8 @@ export interface RunStability {
 
 export const MAX_REPEATS = 10;
 export const MAX_ATTEMPTS = 100;
+/** Eval Studio runs whole datasets, so it allows more attempts than a suite run. */
+export const MAX_STUDIO_ATTEMPTS = 300;
 
 const MISSING = "(missing)";
 
@@ -139,14 +141,14 @@ export function summarizeRun(cases: Array<{ caseId: string; stability: CaseStabi
 }
 
 /** Checks a requested repeat count against the per-case and per-run limits. */
-export function resolveRepeats(raw: unknown, caseCount: number): { ok: true; repeats: number } | { ok: false; error: string } {
+export function resolveRepeats(raw: unknown, caseCount: number, maxAttempts: number = MAX_ATTEMPTS): { ok: true; repeats: number } | { ok: false; error: string } {
   if (raw === undefined || raw === null || raw === "") return { ok: true, repeats: 1 };
   const repeats = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
   if (!Number.isInteger(repeats) || repeats < 1 || repeats > MAX_REPEATS) {
     return { ok: false, error: `repeats must be a whole number from 1 to ${MAX_REPEATS}` };
   }
-  if (caseCount * repeats > MAX_ATTEMPTS) {
-    return { ok: false, error: `${caseCount} cases x ${repeats} repeats is ${caseCount * repeats} attempts; a run is limited to ${MAX_ATTEMPTS}` };
+  if (caseCount * repeats > maxAttempts) {
+    return { ok: false, error: `${caseCount} cases x ${repeats} repeats is ${caseCount * repeats} attempts; a run is limited to ${maxAttempts}` };
   }
   return { ok: true, repeats };
 }

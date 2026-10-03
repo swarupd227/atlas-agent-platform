@@ -3596,6 +3596,12 @@ export const evalTestRuns = pgTable("eval_test_runs", {
   triggeredBy: text("triggered_by"),
   startedAt: timestamp("started_at").defaultNow(),
   completedAt: timestamp("completed_at"),
+  /** Times each golden is answered. 1 is a run as it always was; above 1 is a consistency check. */
+  repeats: integer("repeats").default(1),
+  /** Goldens whose attempts did not all agree. Set only on a repeated run. */
+  flakyCount: integer("flaky_count").default(0),
+  /** Mean share of a golden's attempts that agree with its most common outcome. Set only on a repeated run. */
+  consistency: real("consistency"),
 }, (table) => [
   index("idx_eval_test_runs_org").on(table.organizationId),
   index("idx_eval_test_runs_agent").on(table.agentId),
@@ -3625,6 +3631,8 @@ export const evalTraces = pgTable("eval_traces", {
   pinnedBy: text("pinned_by"),
   pinnedAt: timestamp("pinned_at"),
   createdAt: timestamp("created_at").defaultNow(),
+  /** Which answer to this golden this trace is, from 1. A run with no repeats has only 1. */
+  attempt: integer("attempt").default(1),
 }, (table) => [
   index("idx_eval_traces_run").on(table.runId),
   index("idx_eval_traces_golden").on(table.goldenId),

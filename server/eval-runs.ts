@@ -5,6 +5,7 @@
  */
 import { storage } from "./storage";
 import type { EvalDataset } from "@shared/schema";
+import { resolveRepeats, MAX_STUDIO_ATTEMPTS } from "@shared/eval-stability";
 
 export interface StartEvalRunInput {
   orgId: string | undefined;
@@ -19,6 +20,21 @@ export interface StartEvalRunInput {
   cacheEnabled?: boolean;
   tags?: string[];
   triggeredBy?: string;
+  /** Times each golden is answered, 1 to 10. Above 1 the run is a consistency check, not a gate input. */
+  repeats?: number;
+}
+
+/**
+ * Checks a requested repeat count against the dataset's size before any run
+ * exists. Eval Studio runs whole datasets, so its attempt limit is larger than a
+ * suite run's; a count that would pass it is refused with the numbers.
+ */
+export function resolveStudioRepeats(raw: unknown, goldenCount: number) {
+  // The count is checked on its own first: one answer per golden is how every
+  // run has always worked, however large the dataset, and must never be refused.
+  const checked = resolveRepeats(raw, 0, MAX_STUDIO_ATTEMPTS);
+  if (!checked.ok || checked.repeats === 1) return checked;
+  return resolveRepeats(raw, goldenCount, MAX_STUDIO_ATTEMPTS);
 }
 
 /** Create the run (pending) and queue the eval_test_run job the worker executes. */
@@ -36,6 +52,7 @@ export async function startEvalRun(input: StartEvalRunInput) {
     parallelism: input.parallelism,
     cacheEnabled: input.cacheEnabled,
     tags: input.tags,
+    repeats: input.repeats ?? 1,
     status: "pending",
     totalGoldens: dataset.goldenCount || 0,
     pendingCount: dataset.goldenCount || 0,
@@ -56,6 +73,7 @@ export async function startEvalRun(input: StartEvalRunInput) {
       metricIds: input.metricIds,
       judgeModelOverride: input.judgeModelOverride || null,
       parallelism: input.parallelism,
+      repeats: input.repeats ?? 1,
       organizationId: input.orgId,
     },
   } as any);

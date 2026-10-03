@@ -882,6 +882,11 @@ export async function runStartupMigrations() {
       ALTER TABLE eval_traces     ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
       ALTER TABLE eval_traces     ADD COLUMN IF NOT EXISTS agent_failed BOOLEAN DEFAULT FALSE;
       ALTER TABLE eval_traces     ADD COLUMN IF NOT EXISTS agent_failure_reason TEXT;
+      -- Repeated runs: each golden answered N times, one trace per answer.
+      ALTER TABLE eval_traces     ADD COLUMN IF NOT EXISTS attempt INTEGER DEFAULT 1;
+      ALTER TABLE eval_test_runs  ADD COLUMN IF NOT EXISTS repeats INTEGER DEFAULT 1;
+      ALTER TABLE eval_test_runs  ADD COLUMN IF NOT EXISTS flaky_count INTEGER DEFAULT 0;
+      ALTER TABLE eval_test_runs  ADD COLUMN IF NOT EXISTS consistency REAL;
       ALTER TABLE eval_spans      ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
       ALTER TABLE eval_annotations ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
 

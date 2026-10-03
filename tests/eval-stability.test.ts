@@ -177,3 +177,23 @@ describe("resolveRepeats", () => {
     if (!r.ok) expect(r.error).toContain(`21 cases x 5 repeats is 105 attempts; a run is limited to ${MAX_ATTEMPTS}`);
   });
 });
+
+describe("resolveRepeats with a larger attempt limit", () => {
+  it("defaults to the suite limit of 100 attempts", () => {
+    expect(resolveRepeats(5, 21).ok).toBe(false);
+    expect(resolveRepeats(5, 20).ok).toBe(true);
+  });
+
+  it("uses the limit it is given, and names it", () => {
+    expect(resolveRepeats(5, 60, 300)).toEqual({ ok: true, repeats: 5 });
+    const r = resolveRepeats(5, 61, 300);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe("61 cases x 5 repeats is 305 attempts; a run is limited to 300");
+  });
+
+  it("keeps the per-case limit whatever the attempt limit", () => {
+    const r = resolveRepeats(11, 1, 300);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("1 to 10");
+  });
+});
