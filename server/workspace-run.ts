@@ -33,6 +33,7 @@ import { runTeamAgentDag, extractFinalOutputText, onDagRunFinished, summarizeFin
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { rerankChunks } from "./retrieval-rerank";
 import { searchFailureReason, type KnowledgeSearchFailure } from "@shared/knowledge-search-failure";
+import { CONTINUE_CUT_OFF_REPLY } from "@shared/cut-off-reply";
 import { canDecideApproval, type RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
@@ -97,6 +98,8 @@ const NOOP: OnWorkspaceEvent = () => {};
 interface Checkpoint {
   messages: LLMMessage[];
   iterationsUsed: number;
+  /** A reply cut off at the output limit, kept while the model is asked once to finish it; set means it has been asked. */
+  cutOffText?: string;
   steps: any[];
   totalCostUsd: number;
   totalTokens: { prompt: number; completion: number; total: number };
@@ -1192,6 +1195,15 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
         // would have written the file. Surface it instead of finalizing on a
         // truncated narration that reads like a finished answer.
         if (llm.stopReason === "max_tokens") {
+          // Once per run, the model is asked to finish the reply; the cut-off
+          // text stays in the history so the next reply continues it.
+          if (cp.cutOffText === undefined) {
+            cp.cutOffText = llm.content || "";
+            cp.messages.push({ role: "assistant", content: llm.content || "" } as any);
+            cp.messages.push({ role: "user", content: CONTINUE_CUT_OFF_REPLY } as any);
+            cp.steps.push({ id: `step_${cp.steps.length + 1}`, name: "Reply cut off at the output limit; asked to finish", type: "planning", status: "completed", outcome: "max_tokens_continued", completedAt: new Date().toISOString() });
+            continue;
+          }
           console.warn(`[workspace-run] Run ${runId}: turn truncated at the ${4096}-token ceiling (stop_reason=max_tokens).`);
           cp.steps.push({
             id: `step_${cp.steps.length + 1}`,
@@ -1203,7 +1215,7 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
             completedAt: new Date().toISOString(),
           });
         }
-        return finalize(llm.content || "Done.", "completed");
+        return finalize((cp.cutOffText ?? "") + (llm.content || "") || "Done.", "completed");
       }
       cp.iterationsUsed++;
       cp.messages.push({ role: "assistant", content: llm.content || "", tool_calls: llm.toolCalls } as any);

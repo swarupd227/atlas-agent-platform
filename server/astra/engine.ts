@@ -88,6 +88,7 @@ export class AstraNotFoundError extends Error {
 }
 
 const DEFAULT_MAX_ITERATIONS = 8;
+import { CONTINUE_CUT_OFF_REPLY } from "@shared/cut-off-reply";
 const DEFAULT_KEEP_ALIVE_MS = 60_000;
 const DEFAULT_HISTORY_TURNS = 12;
 const DEFAULT_MAX_TOKENS = 8192;
@@ -350,10 +351,21 @@ async function loop(s: Session, approvedIndex: number | null): Promise<ThreadSta
     const toolCalls = completion.toolCalls ?? [];
     if (toolCalls.length === 0) {
       cp.messages.push({ role: "assistant", content: completion.content ?? "" });
+      // The turn ends on the model's stop reason, not on the absence of tool
+      // calls alone. A reply cut off at the output limit is not an answer: once
+      // per turn the model is asked to finish it, with the cut-off text kept so
+      // the next reply continues it; a second cut-off stands, and is said.
+      const text = `${cp.turn.cutOffText ?? ""}${completion.content ?? ""}`;
       if (completion.stopReason === "max_tokens") {
-        return finishTurn(s, `${completion.content ?? ""}\n\n(My reply was cut off at the length limit.)`.trim());
+        if (cp.turn.cutOffText === undefined) {
+          cp.turn.cutOffText = completion.content ?? "";
+          cp.messages.push({ role: "user", content: CONTINUE_CUT_OFF_REPLY });
+          emit({ type: "working", label: "Finishing a reply that was cut off" });
+          continue;
+        }
+        return finishTurn(s, `${text}\n\n(My reply was cut off at the length limit.)`.trim());
       }
-      return finishTurn(s, completion.content ?? "");
+      return finishTurn(s, text);
     }
 
     cp.messages.push({ role: "assistant", content: completion.content ?? "", tool_calls: toolCalls });

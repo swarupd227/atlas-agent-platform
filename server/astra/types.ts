@@ -175,6 +175,8 @@ export interface TurnAccumulator {
   proof: ProofEnvelope | null;
   /** Assistant text produced so far this turn (used when the turn ends on finish_turn). */
   lastAssistantText: string;
+  /** A reply cut off at the output limit, kept while the model is asked once to finish it; set means it has been asked. */
+  cutOffText?: string;
   /**
    * What the pack pre-router is told when the turn ends (EngineDeps.route):
    * what was asked, which packs were on offer when the turn began, and which

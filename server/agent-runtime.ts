@@ -38,6 +38,7 @@ import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-
 import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
 import { resolveOutputMode, ownFinalAnswer, continuationMaxTokens, ANALYSIS_MAX_TOKENS } from "./output-mode";
 import { finalAnswerInstructions, analysisCallPrompt, finalAnswerFromTurn, hasRecordListSchema, RECONCILIATION_NOTE } from "./final-answer";
+import { CONTINUE_CUT_OFF_REPLY } from "@shared/cut-off-reply";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -2086,6 +2087,59 @@ After receiving tool results, provide a structured analysis with key findings, s
       ...(planResult.providerFallback ? { providerFallback: true, fallbackReason: planResult.fallbackReason } : {}),
     });
 
+    const MAX_TOOL_ITERATIONS = options?.maxToolIterations ?? 10;
+    let iterationsUsed = 0;
+    let iterationCapReached = false;
+    let conversationMessages: LLMMessage[] = [
+      { role: "system", content: systemMessage },
+      makeUserTurn(),
+    ];
+    // A reply cut off at the output limit is not a finished answer. Once per
+    // run the model is asked to finish it, with the cut-off text kept so the
+    // next reply continues it; a second cut-off stands, and is said on the run.
+    let truncationNudged = false;
+    const finishCutOffReply = async (stage: "planning" | "tool_continuation") => {
+      if (truncationNudged || currentToolCalls.length > 0 || finalStopReason !== "max_tokens") return;
+      truncationNudged = true;
+      const startedAt = new Date().toISOString();
+      const cutOff = currentContent || "";
+      const nudgeMessages: LLMMessage[] = [
+        ...conversationMessages,
+        { role: "assistant", content: cutOff },
+        { role: "user", content: CONTINUE_CUT_OFF_REPLY },
+      ];
+      try {
+        const nudged = await completeWithFallback(
+          nudgeMessages,
+          { model: modelName, tools: canonicalTools.length > 0 ? canonicalTools : undefined, maxTokens: continuationMaxTokens(resolveOutputMode(runtimeConfig)), ...(getServerToolConfig() ?? {}) },
+          providerChain,
+        );
+        recordLlmCallProvider(nudged, "truncation_continuation");
+        totalPromptTokens += nudged.tokensUsed.prompt;
+        totalCompletionTokens += nudged.tokensUsed.completion;
+        totalTokens += nudged.tokensUsed.total;
+        totalCostUsd += nudged.costUsd;
+        const again = nudged.stopReason === "max_tokens" && nudged.toolCalls.length === 0;
+        steps.push({
+          id: `step_${steps.length + 1}`,
+          name: "Reply cut off at the output limit; asked to finish",
+          type: "orchestration",
+          status: "completed",
+          startedAt,
+          completedAt: new Date().toISOString(),
+          output: { note: `The ${stage === "planning" ? "first" : "continuation"} reply stopped at the model's output limit. The model was asked once to finish it${again ? ", and was cut off again, so the answer is incomplete" : ""}.`, stage },
+        } as any);
+        conversationMessages = nudgeMessages;
+        currentContent = `${cutOff}${nudged.content || ""}`;
+        currentToolCalls = nudged.toolCalls;
+        currentRawMessage = nudged.rawAssistantMessage;
+        finalStopReason = nudged.stopReason;
+      } catch (err: unknown) {
+        console.warn(`[agent-runtime] Agent ${agentId}: could not ask the model to finish its cut-off reply: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    await finishCutOffReply("planning");
+
     if (currentToolCalls.length === 0 && currentContent) {
       // No tools needed — the planning response IS the final answer.
       // Apply contract enforcement here so all final-answer call sites are covered.
@@ -2183,13 +2237,6 @@ After receiving tool results, provide a structured analysis with key findings, s
         ...servedBy(planResult),
       }, "planning").catch(() => { /* non-fatal */ });
     }
-
-    const MAX_TOOL_ITERATIONS = options?.maxToolIterations ?? 10;
-    let iterationsUsed = 0;
-    let conversationMessages: LLMMessage[] = [
-      { role: "system", content: systemMessage },
-      makeUserTurn(),
-    ];
 
     while (currentToolCalls.length > 0 && iterationsUsed < MAX_TOOL_ITERATIONS && !costCapReached) {
       iterationsUsed++;
@@ -2472,6 +2519,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           currentToolCalls = continueResult.toolCalls;
           currentRawMessage = continueResult.rawAssistantMessage;
           finalStopReason = continueResult.stopReason;
+          await finishCutOffReply("tool_continuation");
 
           if (currentToolCalls.length > 0) {
             steps.push({
@@ -2523,6 +2571,24 @@ After receiving tool results, provide a structured analysis with key findings, s
           break;
         }
       }
+    }
+
+    // The loop ended because the tool-step budget ran out, not because the
+    // model chose to stop: it was not asked again after its last batch. Say so
+    // on the run, as the Cowork turn does, rather than moving on to the summary
+    // as if it had finished.
+    if (iterationsUsed >= MAX_TOOL_ITERATIONS && !costCapReached) {
+      iterationCapReached = true;
+      const at = new Date().toISOString();
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        name: `Stopped at the tool-step limit (${MAX_TOOL_ITERATIONS})`,
+        type: "orchestration",
+        status: "completed",
+        startedAt: at,
+        completedAt: at,
+        output: { note: `The agent used its budget of ${MAX_TOOL_ITERATIONS} tool steps and was not asked whether it wanted more. The summary below is built from what it had found by then.` },
+      } as any);
     }
 
     if (toolCallResults.length > 0 && !costCapReached) {
@@ -3171,7 +3237,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       truncated: finalStopReason === "max_tokens",
       ...(providerFallbacks > 0 ? { providerFallbacks } : {}),
       ...(requiredToolCallsMissing.length > 0 ? { requiredToolCallsMissing } : {}),
-      ...(costCapReached ? { terminationReason: "cost_cap_reached" } : {}),
+      ...(costCapReached ? { terminationReason: "cost_cap_reached" } : iterationCapReached ? { terminationReason: "iteration_cap_reached" } : {}),
       ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
     },
     promptInputs: {
