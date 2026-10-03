@@ -1842,6 +1842,8 @@ After receiving tool results, provide a structured analysis with key findings, s
   let totalTokens = 0;
   let totalCostUsd = 0;
   let costCapReached = false;
+  // Set when the tool loop ends because its step budget ran out (read by the summary below, so function-level, like costCapReached).
+  let iterationCapReached = false;
   const runtimeConfig = options?.runtimeConfig || {};
   const maxCostPerRunUsd: number = typeof runtimeConfig.maxCostPerRunUsd === "number" ? runtimeConfig.maxCostPerRunUsd : 1.0;
 
@@ -2089,7 +2091,6 @@ After receiving tool results, provide a structured analysis with key findings, s
 
     const MAX_TOOL_ITERATIONS = options?.maxToolIterations ?? 10;
     let iterationsUsed = 0;
-    let iterationCapReached = false;
     let conversationMessages: LLMMessage[] = [
       { role: "system", content: systemMessage },
       makeUserTurn(),
