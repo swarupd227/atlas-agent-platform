@@ -117,6 +117,41 @@ describe("paths and conditions", () => {
   });
 });
 
+// Live 2026-10-03: asked to call get_treaty_aggregates on a connector, the
+// proposer had no operation for it and reached for the nearest one it did
+// have. The step came back renamed to "Look Something Up (Delegated Authority
+// Binder Register - get_treaty_aggregates)", counted as a successful change,
+// and the reply said the binding was done. No tool was bound and the label was
+// corrupted. A vocabulary that cannot say "I can't" will say something else.
+describe("what the change set cannot express", () => {
+  it("carries what it could not do into the skipped list", () => {
+    const r = applyChangeSet(flow(), { cannotDo: ["Binding the get_treaty_aggregates tool to \"Pay out\" isn't something a revision can do."] });
+    expect(r.skipped).toEqual(["Binding the get_treaty_aggregates tool to \"Pay out\" isn't something a revision can do."]);
+    expect(r.changed).toEqual([]);
+  });
+
+  it("reports it alongside the changes it did make", () => {
+    const r = applyChangeSet(flow(), {
+      renameNodes: [{ node: "n3", label: "Settle" }],
+      cannotDo: ["Setting that step's expression isn't something a revision can do."],
+    });
+    expect(r.changed).toHaveLength(1);
+    expect(r.skipped).toEqual(["Setting that step's expression isn't something a revision can do."]);
+  });
+
+  it("ignores empty or non-string entries rather than showing a blank line", () => {
+    const r = applyChangeSet(flow(), { cannotDo: ["  ", "", null as any, 7 as any, " real one "] });
+    expect(r.skipped).toEqual(["real one"]);
+  });
+
+  it("tells the model the operations cannot bind a tool or write an expression", () => {
+    const src = read("server", "process-flow-revise.ts");
+    expect(src).toContain("cannotDo");
+    expect(src).toMatch(/cannot:[\s\S]{0,400}bind a tool, connector/);
+    expect(src).toMatch(/do not rename a step to mention a tool/i);
+  });
+});
+
 describe("never the same path twice", () => {
   it("ignores a connection the splice already made", () => {
     // Live, the model asked to add a step before another AND asked for the two

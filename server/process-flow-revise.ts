@@ -25,6 +25,23 @@ export interface ChangeSet {
   addEdges?: Array<{ from: string; to: string; label?: string; condition?: string }>;
   removeEdges?: Array<{ from: string; to: string }>;
   setConditions?: Array<{ from: string; to: string; condition: string }>;
+  /**
+   * What was asked for that this vocabulary cannot express.
+   *
+   * The six operations above are steps and paths. They cannot bind a connector
+   * to a step, write a step's expression, or set any other part of its
+   * configuration. Asked to do one of those anyway, a model reaches for the
+   * nearest operation it has -- and on 2026-10-03 that was renameNodes: a
+   * request to call get_treaty_aggregates on a connector produced a step
+   * renamed to "Look Something Up (Delegated Authority Binder Register -
+   * get_treaty_aggregates)", reported as a successful change. The label was
+   * corrupted, no tool was bound, and the reply said it was done.
+   *
+   * So the model is given somewhere to put what it cannot do, and what lands
+   * here joins `skipped` -- which the confirm card shows and the tool's result
+   * now carries back, so the reply can say it plainly.
+   */
+  cannotDo?: string[];
 }
 
 export class ReviseError extends Error {}
@@ -55,7 +72,9 @@ export function applyChangeSet(graph: ProcessFlowGraph, changes: ChangeSet): { g
   const working: ProcessFlowGraph = { ...graph, nodes, edges };
   const taken = new Set(nodes.map((n) => n.id));
   const changed: string[] = [];
-  const skipped: string[] = [];
+  // What the model said it could not express goes in first, so it is on the
+  // card even when every operation it DID return applied cleanly.
+  const skipped: string[] = (changes.cannotDo ?? []).filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim());
   let edgeSeq = edges.length;
   const newEdgeId = () => `e${(edgeSeq += 1)}`;
 
@@ -209,12 +228,20 @@ Return a JSON object with any of these keys (omit the ones you don't need):
 - "addEdges": [{ "from": "<step>", "to": "<step>", "condition": "plain-English guard, only for a branch" }]
 - "removeEdges": [{ "from": "<step>", "to": "<step>" }]
 - "setConditions": [{ "from": "<step>", "to": "<step>", "condition": "…" }]
+- "cannotDo": ["<what was asked that none of the above can express>"]
+
+These operations change STEPS AND PATHS only. They cannot:
+- bind a tool, connector, MCP server or API to a step;
+- write or edit a step's expression, JSONata, formula or rule body;
+- set a step's arguments, inputs, outputs, schema, timeout or any other configuration;
+- change which agent, skill or knowledge base a step uses.
 
 Rules:
 - Change only what was asked. Leave every other step and path exactly as it is.
 - Refer to existing steps by their id from the list above.
 - A condition must be answerable YES or NO from the output of the step the path leaves.
 - If the request is ambiguous about which step it means, choose the one the words fit best; the user will see your choice before it is applied.
+- If part of the request is one of the things listed above that these operations cannot do, put that part in "cannotDo", in plain words, and leave it out of every other key. NEVER approximate it — in particular, do not rename a step to mention a tool, connector or expression. A renamed step is not a bound tool, and reporting it as one is worse than saying it could not be done.
 - If nothing in the request corresponds to a change, return {}.
 
 Respond ONLY with valid JSON, no markdown fences.`;
