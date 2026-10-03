@@ -80,7 +80,7 @@ function fieldDisagreement(key: string, attempts: EvalAttempt[]): FieldDisagreem
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   if (counts.size <= 1) return null;
-  const values = [...counts.entries()]
+  const values = Array.from(counts.entries())
     .map(([value, count]) => ({ value, count }))
     .sort((x, y) => y.count - x.count || x.value.localeCompare(y.value));
   return { key, values, agreement: values[0].count / attempts.length };

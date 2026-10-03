@@ -1,0 +1,103 @@
+/**
+ * Running one eval case more than once: the attempt runner and the fold.
+ *
+ *   - attempts come back in attempt order even when a later one finishes first;
+ *   - no more than the concurrency limit are in flight at once;
+ *   - one attempt reduces to the case's own result (so a run that asks for no
+ *     repeats is unchanged);
+ *   - the case a reader sees is the attempt that failed, not a lucky pass;
+ *   - a repeated run too large for one request is refused with the numbers.
+ */
+import { describe, it, expect } from "vitest";
+import { runAttempts, foldAttempts, syncLimitError, ATTEMPT_CONCURRENCY, SYNC_ATTEMPT_LIMIT } from "../server/eval-repeat";
+
+const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+describe("runAttempts", () => {
+  it("returns results in attempt order even when a later attempt finishes first", async () => {
+    const out = await runAttempts(3, async i => { await delay(i === 0 ? 30 : 1); return `a${i}`; });
+    expect(out).toEqual(["a0", "a1", "a2"]);
+  });
+
+  it("never has more than the concurrency limit in flight", async () => {
+    let inFlight = 0, peak = 0;
+    await runAttempts(8, async () => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await delay(5);
+      inFlight--;
+    }, 3);
+    expect(peak).toBe(3);
+  });
+
+  it("uses the platform default when no limit is given", async () => {
+    let inFlight = 0, peak = 0;
+    await runAttempts(10, async () => { inFlight++; peak = Math.max(peak, inFlight); await delay(5); inFlight--; });
+    expect(peak).toBe(ATTEMPT_CONCURRENCY);
+  });
+
+  it("runs a single attempt once, and passes the attempt index", async () => {
+    const seen: number[] = [];
+    const out = await runAttempts(1, async i => { seen.push(i); return "x"; });
+    expect(out).toEqual(["x"]);
+    expect(seen).toEqual([0]);
+  });
+
+  it("runs one at a time when the limit is 1", async () => {
+    let inFlight = 0, peak = 0;
+    await runAttempts(4, async () => { inFlight++; peak = Math.max(peak, inFlight); await delay(2); inFlight--; }, 1);
+    expect(peak).toBe(1);
+  });
+});
+
+describe("syncLimitError", () => {
+  it("never refuses a run of one attempt per case, however large", () => {
+    expect(syncLimitError(25, 1)).toBeNull();
+  });
+
+  it("allows a repeated run up to the limit and refuses past it, naming the numbers", () => {
+    expect(syncLimitError(5, 3)).toBeNull();
+    expect(syncLimitError(SYNC_ATTEMPT_LIMIT, 1)).toBeNull();
+    const msg = syncLimitError(5, 4);
+    expect(msg).toContain("20 attempts");
+    expect(msg).toContain(String(SYNC_ATTEMPT_LIMIT));
+    expect(msg).toContain("background");
+  });
+});
+
+describe("foldAttempts", () => {
+  const ok = (score = 1) => ({ passed: true, score, tag: "ok" });
+  const bad = (score = 0, tag = "bad") => ({ passed: false, score, tag });
+
+  it("reduces one attempt to that attempt's own result", () => {
+    const { representative, score, stability } = foldAttempts([ok()]);
+    expect(representative.tag).toBe("ok");
+    expect(score).toBe(1);
+    expect(stability).toMatchObject({ outcome: "stable_pass", passed: true });
+    const failed = foldAttempts([bad(0.5)]);
+    expect(failed.score).toBe(0.5);
+    expect(failed.stability).toMatchObject({ outcome: "stable_fail", passed: false });
+  });
+
+  it("shows the first failing attempt rather than a lucky pass", () => {
+    const { representative, stability } = foldAttempts([ok(), bad(0, "first-bad"), ok(), bad(0, "second-bad")]);
+    expect(representative.tag).toBe("first-bad");
+    expect(stability.outcome).toBe("flaky");
+    expect(stability.passed).toBe(false);
+  });
+
+  it("scores the case as the mean across attempts", () => {
+    expect(foldAttempts([ok(1), bad(0.5), ok(1), ok(1)]).score).toBeCloseTo(0.875);
+  });
+
+  it("passes the case only when every attempt passed", () => {
+    expect(foldAttempts([ok(), ok(), ok()]).stability.passed).toBe(true);
+    expect(foldAttempts([ok(), ok(), bad()]).stability.passed).toBe(false);
+  });
+
+  it("checks the named verdict keys across attempts when given a way to read them", () => {
+    const withVerdict = (severity: string) => ({ passed: true, score: 1, verdict: { severity } });
+    const { stability } = foldAttempts([withVerdict("High"), withVerdict("Medium")], { keys: ["severity"], verdict: a => a.verdict });
+    expect(stability.passed).toBe(true);
+    expect(stability.unstableFields.map(f => f.key)).toEqual(["severity"]);
+  });
+});

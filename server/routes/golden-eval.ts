@@ -8,6 +8,8 @@ import { decideMany, type DecisionQuestion } from "../decision-provider";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Skill } from "@shared/schema";
 import { resolveReadableSkills, skillCatalogPrompt, skillToolsFor, executeBuiltinSkillTool, READ_SKILL_TOOL } from "../builtin-skill-tools";
+import { resolveRepeats, summarizeRun, type CaseStability } from "@shared/eval-stability";
+import { runAttempts, foldAttempts, syncLimitError } from "../eval-repeat";
 
 const router = Router();
 
@@ -45,6 +47,8 @@ interface JudgedCase {
   /** Skills the agent loaded with read_skill while answering. */
   skillsLoaded: string[];
   latencyMs: number;
+  /** Set when the case ran more than once (repeats > 1). */
+  stability?: CaseStability;
 }
 
 /** Tool turns allowed before the agent must answer. */
@@ -395,6 +399,13 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
     const limit = Math.min(Number(req.body?.limit) || allCases.length, 25);
     const cases = allCases.slice(0, limit);
 
+    // Refused before the run row exists, so a bad request leaves nothing "running".
+    const resolved = resolveRepeats(req.body?.repeats, cases.length);
+    if (!resolved.ok) return res.status(400).json({ error: resolved.error });
+    const repeats = resolved.repeats;
+    const tooLarge = syncLimitError(cases.length, repeats);
+    if (tooLarge) return res.status(400).json({ error: tooLarge });
+
     // Judge against the policy text the runtime actually shows the agent, not
     // policy names alone -- see buildAgentSystemPromptWithGovernance.
     const systemPrompt = await buildAgentSystemPromptWithGovernance(agent, orgId);
@@ -420,40 +431,57 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
       const rubric = (tc.rubricScoring as any) || {};
       const passingScore = typeof rubric.passingScore === "number" ? rubric.passingScore : 0.8;
 
-      let result: Awaited<ReturnType<typeof judgeCase>>;
-      try {
-        result = await judgeCase({
-          systemPrompt: evalSystemPrompt,
-          agentId: agent.id,
-          orgId,
-          readableSkills,
-          scenario: tc.inputScenario,
-          expectedBehavior: tc.expectedBehavior,
-          criteria,
-          passingScore,
-        });
-      } catch (err: any) {
-        result = {
-          passed: false, score: 0, criteriaMet: [], criteriaMissed: criteria,
-          reasoning: `Execution failed: ${err?.message}`, actualOutput: "", skillsLoaded: [],
-        };
-      }
+      // One attempt per repeat, a few at a time. A thrown attempt is a failed
+      // attempt, so one bad call does not discard the others.
+      const attempts = await runAttempts(repeats, async () => {
+        const attemptStarted = Date.now();
+        try {
+          const r = await judgeCase({
+            systemPrompt: evalSystemPrompt,
+            agentId: agent.id,
+            orgId,
+            readableSkills,
+            scenario: tc.inputScenario,
+            expectedBehavior: tc.expectedBehavior,
+            criteria,
+            passingScore,
+          });
+          return { ...r, latencyMs: Date.now() - attemptStarted };
+        } catch (err: any) {
+          return {
+            passed: false, score: 0, criteriaMet: [], criteriaMissed: criteria,
+            reasoning: `Execution failed: ${err?.message}`, actualOutput: "", skillsLoaded: [] as string[],
+            latencyMs: Date.now() - attemptStarted,
+          };
+        }
+      });
+      // The case passes only if every attempt did. With one attempt this is
+      // the attempt's own result, as before.
+      const { representative: result, score, stability } = foldAttempts(attempts);
       const latencyMs = Date.now() - started;
-      judged.push({ caseId: tc.id, name: tc.name, latencyMs, ...result });
+      judged.push({ caseId: tc.id, name: tc.name, ...result, latencyMs, passed: stability.passed, score, ...(repeats > 1 ? { stability } : {}) });
 
+      const missedText = result.criteriaMissed.join("; ") || result.reasoning;
       await storage.createEvalCaseResult({
         runId: run.id,
         caseId: tc.id,
-        passed: result.passed,
+        passed: stability.passed,
         actualOutput: { response: result.actualOutput, skillsLoaded: result.skillsLoaded, scenarioCategory: tc.scenarioCategory, difficultyTier: tc.difficultyTier } as any,
         scorerOutputs: {
-          score: result.score,
+          score,
           passingScore,
           criteriaMet: result.criteriaMet,
           criteriaMissed: result.criteriaMissed,
           judgeReasoning: result.reasoning,
+          ...(repeats > 1 ? {
+            stability,
+            attempts: attempts.map(a => ({
+              passed: a.passed, score: a.score, criteriaMissed: a.criteriaMissed, reasoning: a.reasoning,
+              response: a.actualOutput, skillsLoaded: a.skillsLoaded, latencyMs: a.latencyMs,
+            })),
+          } : {}),
         } as any,
-        failingReason: result.passed ? null : (result.criteriaMissed.join("; ") || result.reasoning),
+        failingReason: stability.passed ? null : (stability.failingReason ? `${stability.failingReason}; ${missedText}` : missedText),
         latencyMs,
       });
     }
@@ -464,6 +492,7 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
     // updateEvalRun, which bypasses that validation -- do not copy it.
     const passRate = cases.length > 0 ? passed / cases.length : 0;
     const avgLatencyMs = cases.length > 0 ? Math.round(judged.reduce((a, c) => a + c.latencyMs, 0) / cases.length) : 0;
+    const stabilitySummary = repeats > 1 ? { repeats, stability: summarizeRun(judged.map(c => ({ caseId: c.caseId, stability: c.stability! }))) } : {};
 
     await storage.updateEvalRun(run.id, {
       status: "completed",
@@ -481,6 +510,7 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
         },
         goldenDatasetId: dataset.id,
         goldenDatasetName: dataset.name,
+        ...stabilitySummary,
         byCategory: judged.reduce((acc: Record<string, { passed: number; total: number }>, c) => {
           const tc = cases.find(x => x.id === c.caseId);
           const cat = tc?.scenarioCategory || "unknown";
@@ -503,9 +533,14 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
       passed,
       failed: cases.length - passed,
       passRate,
+      ...stabilitySummary,
       results: judged.map(c => ({
         name: c.name, passed: c.passed, score: c.score,
         criteriaMissed: c.criteriaMissed, reasoning: c.reasoning, skillsLoaded: c.skillsLoaded,
+        ...(c.stability ? {
+          attempts: c.stability.attempts, passedAttempts: c.stability.passedAttempts,
+          outcome: c.stability.outcome, consistency: c.stability.consistency,
+        } : {}),
       })),
     });
   } catch (e: any) {
