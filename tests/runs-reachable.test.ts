@@ -56,6 +56,35 @@ describe("the Runs page is reachable by exactly the roles that may read runs", (
   });
 });
 
+describe("the two run views reach each other", () => {
+  // They are not duplicates and neither replaces the other: /dag-runs/:id is the
+  // engine view (waves, approvals, cancel, re-run) and /runs explains what the
+  // work amounted to, including which skips are defects rather than the graph
+  // working as drawn. Measured 2026-10-03: /runs linked out to /dag-runs, and
+  // the engine view's only back-link went to the blueprint or the teams list --
+  // so a user arriving from a Cowork teamRun card, an approval, or gate evidence
+  // could not reach the explanation of the run they were looking at.
+  const runs = read("client", "src", "pages", "runs.tsx");
+  const monitor = read("client", "src", "pages", "dag-run-monitor.tsx");
+
+  it("the explain view offers the full run record", () => {
+    expect(runs).toContain("`/dag-runs/${selected.id}`");
+  });
+
+  it("the run record offers the explanation", () => {
+    expect(monitor).toContain("`/runs?run=${runId}`");
+    expect(monitor).toContain('data-testid="link-explain-run"');
+  });
+
+  it("links to the run it is showing, not to the list", () => {
+    // /runs with no ?run= selects a run by facet, so a bare link would silently
+    // present somebody else's run under the one the user clicked.
+    const idx = monitor.indexOf('data-testid="link-explain-run"');
+    expect(idx).toBeGreaterThan(-1);
+    expect(monitor.slice(Math.max(0, idx - 400), idx)).toContain("`/runs?run=${runId}`");
+  });
+});
+
 describe("the nav entry and the API agree", () => {
   it("still lists Runs in the sidebar", () => {
     expect(read("client", "src", "components", "app-sidebar.tsx")).toContain('url: "/runs"');

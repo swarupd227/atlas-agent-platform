@@ -612,6 +612,13 @@ export default function DagRunMonitor() {
             {teamAgent?.description && <p className="text-sm text-muted-foreground max-w-[70ch]">{teamAgent.description}</p>}
           </div>
           <div className="flex gap-2 flex-wrap">
+            {/* The other half of a link /runs has had all along. This page says
+                what the engine did; /runs says what the work amounted to and
+                which skips are defects rather than the graph working as drawn.
+                Without this you can get from there to here and not back. */}
+            <Link href={`/runs?run=${runId}`}>
+              <Button variant="outline" size="sm" data-testid="link-explain-run">What happened</Button>
+            </Link>
             <Link href={teamHref}><Button variant="outline" size="sm" data-testid="button-open-team">Open team</Button></Link>
             {CANCELLABLE_STATUSES.has(run.status) && (
               <Button variant="outline" size="sm" onClick={() => setCancelOpen(true)} data-testid="button-cancel-run">
