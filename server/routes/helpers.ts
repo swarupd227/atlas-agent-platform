@@ -190,11 +190,45 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
     }
   }
 
+  // The vocabulary an expectedAction is scored against. It is put into
+  // inputData so the agent is told the allowed values: asserting an enum the
+  // agent was never shown fails a correct decision on its wording. Measured
+  // live before this was added -- an agent answered "Escalate immediately to
+  // carrier underwriter and reinsurance manager" and was marked wrong against
+  // "alert_and_escalate".
+  const KPI_ACTIONS = ["alert_and_escalate", "alert_latency_breach", "monitor_only", "no_action"];
+
+  // Boundary cases that could not be expressed, with the reason. Recorded on
+  // the suite rather than dropped silently: a missing case and a passing case
+  // must not look the same to whoever reads the coverage.
+  const skippedBoundaries: Array<{ kpi: string; scenario: string; reason: string }> = [];
+
   for (const kpi of kpis) {
     const kpiNameLower = (kpi.name || "").toLowerCase();
     const threshold = kpi.slaThreshold ?? kpi.target;
     const target = kpi.target;
     const unit = kpi.unit || "count";
+
+    // A boundary needs a number to be a boundary of. Note Number(null) is 0,
+    // which is finite -- so an unset threshold would otherwise read as a real
+    // threshold of zero and generate boundaries around it.
+    const num = (v: unknown) => (v === null || v === undefined || v === "" ? NaN : Number(v));
+    if (!Number.isFinite(num(threshold)) && !Number.isFinite(num(target))) {
+      skippedBoundaries.push({ kpi: kpi.name, scenario: "all", reason: "KPI has neither a numeric slaThreshold nor a numeric target" });
+      continue;
+    }
+
+    // Every branch below used to nudge the threshold by +-1 (or +-10%) and
+    // clamp at 0. With a threshold or target of 0 -- which several real KPIs
+    // have -- the nudge collapsed onto the threshold itself, so "Below SLA
+    // Boundary" and "At SLA Threshold" were generated with the SAME
+    // simulatedValue while asserting opposite slaBreached verdicts. No agent
+    // could satisfy both, and the suite scored it as the agent's failure.
+    // The step is now taken from the threshold-to-target span so it cannot be
+    // zero, and a case whose value would be out of range is skipped rather
+    // than clamped onto its neighbour.
+    const span = Math.abs((Number.isFinite(num(target)) ? num(target) : num(threshold)) - num(threshold));
+    const step = Math.max(1, Math.round(span * 0.1));
 
     const isPercentageKpi = kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate") || kpiNameLower.includes("success") ||
       unit.toLowerCase() === "percent" || unit === "%" || unit.toLowerCase() === "percentage";
@@ -205,19 +239,25 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
     const isCostKpi = kpiNameLower.includes("cost") || unit.toLowerCase() === "usd" || unit === "$";
 
     if (isPercentageKpi) {
-      const belowThreshold = Math.max(0, threshold - 1);
-      const atThreshold = threshold;
-      const aboveThreshold = Math.min(100, threshold + 1);
+      const belowThreshold = Number(threshold) - step;
+      const atThreshold = Number(threshold);
+      // Taken from the TARGET, not from threshold + 1: this case asserts
+      // withinTarget, and threshold + 1 does not reach a target of 100.
+      const aboveTarget = Math.min(100, Math.max(Number(target), atThreshold) + step);
 
-      testCases.push({
-        name: `${kpi.name} - Below SLA Boundary (${belowThreshold}${unit})`,
-        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_threshold", simulatedValue: belowThreshold, threshold, target, unit },
-        expectedOutput: { slaBreached: true, expectedAction: "alert_and_escalate", kpiName: kpi.name, threshold },
-        tags: ["kpi_aligned", "sla_boundary", "below_threshold", kpi.name, `threshold_${threshold}`],
-        weight: 1.5,
-        origin: "kpi_aligned",
-        severity: "critical",
-      });
+      if (belowThreshold >= 0) {
+        testCases.push({
+          name: `${kpi.name} - Below SLA Boundary (${belowThreshold}${unit})`,
+          inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_threshold", simulatedValue: belowThreshold, threshold, target, unit, allowedActions: KPI_ACTIONS },
+          expectedOutput: { slaBreached: true, expectedAction: "alert_and_escalate", kpiName: kpi.name, threshold },
+          tags: ["kpi_aligned", "sla_boundary", "below_threshold", kpi.name, `threshold_${threshold}`],
+          weight: 1.5,
+          origin: "kpi_aligned",
+          severity: "critical",
+        });
+      } else {
+        skippedBoundaries.push({ kpi: kpi.name, scenario: "below_threshold", reason: `nothing is below a threshold of ${threshold}${unit}` });
+      }
       testCases.push({
         name: `${kpi.name} - At SLA Threshold (${atThreshold}${unit})`,
         inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "at_threshold", simulatedValue: atThreshold, threshold, target, unit },
@@ -227,23 +267,29 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
         origin: "kpi_aligned",
         severity: "high",
       });
-      testCases.push({
-        name: `${kpi.name} - Above Target (${aboveThreshold}${unit})`,
-        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "above_target", simulatedValue: aboveThreshold, threshold, target, unit },
-        expectedOutput: { slaBreached: false, withinTarget: true, kpiName: kpi.name, threshold },
-        tags: ["kpi_aligned", "sla_boundary", "above_target", kpi.name, `threshold_${threshold}`],
-        weight: 1.0,
-        origin: "kpi_aligned",
-        severity: "medium",
-      });
+      if (Number(target) > 0 && aboveTarget >= Number(target) && aboveTarget > atThreshold) {
+        testCases.push({
+          name: `${kpi.name} - Above Target (${aboveTarget}${unit})`,
+          inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "above_target", simulatedValue: aboveTarget, threshold, target, unit },
+          expectedOutput: { slaBreached: false, withinTarget: true, kpiName: kpi.name, threshold },
+          tags: ["kpi_aligned", "sla_boundary", "above_target", kpi.name, `threshold_${threshold}`],
+          weight: 1.0,
+          origin: "kpi_aligned",
+          severity: "medium",
+        });
+      } else {
+        skippedBoundaries.push({ kpi: kpi.name, scenario: "above_target", reason: `a target of ${target}${unit} gives no value that is both above target and above the threshold` });
+      }
     } else if (isLatencyKpi) {
-      const aboveThreshold = threshold + Math.ceil(threshold * 0.1);
-      const atThreshold = threshold;
-      const belowThreshold = Math.max(0, threshold - Math.ceil(threshold * 0.1));
+      // step is >= 1, so "exceeds" is always strictly past the limit even at
+      // a threshold of 0, where threshold + ceil(threshold * 0.1) was 0.
+      const exceedsThreshold = Number(threshold) + step;
+      const atThreshold = Number(threshold);
+      const withinTarget = atThreshold - step;
 
       testCases.push({
-        name: `${kpi.name} - Exceeds SLA (${aboveThreshold}${unit})`,
-        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "exceeds_threshold", simulatedValue: aboveThreshold, threshold, target, unit },
+        name: `${kpi.name} - Exceeds SLA (${exceedsThreshold}${unit})`,
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "exceeds_threshold", simulatedValue: exceedsThreshold, threshold, target, unit, allowedActions: KPI_ACTIONS },
         expectedOutput: { slaBreached: true, expectedAction: "alert_latency_breach", kpiName: kpi.name, threshold },
         tags: ["kpi_aligned", "sla_boundary", "exceeds_threshold", kpi.name, `threshold_${threshold}ms`],
         weight: 1.5,
@@ -259,28 +305,38 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
         origin: "kpi_aligned",
         severity: "high",
       });
-      testCases.push({
-        name: `${kpi.name} - Within Target (${belowThreshold}${unit})`,
-        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "within_target", simulatedValue: belowThreshold, threshold, target, unit },
-        expectedOutput: { slaBreached: false, withinTarget: true, kpiName: kpi.name, threshold },
-        tags: ["kpi_aligned", "sla_boundary", "within_target", kpi.name, `threshold_${threshold}ms`],
-        weight: 1.0,
-        origin: "kpi_aligned",
-        severity: "medium",
-      });
+      if (withinTarget >= 0) {
+        testCases.push({
+          name: `${kpi.name} - Within Target (${withinTarget}${unit})`,
+          inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "within_target", simulatedValue: withinTarget, threshold, target, unit },
+          expectedOutput: { slaBreached: false, withinTarget: true, kpiName: kpi.name, threshold },
+          tags: ["kpi_aligned", "sla_boundary", "within_target", kpi.name, `threshold_${threshold}ms`],
+          weight: 1.0,
+          origin: "kpi_aligned",
+          severity: "medium",
+        });
+      } else {
+        skippedBoundaries.push({ kpi: kpi.name, scenario: "within_target", reason: `a latency threshold of ${threshold}${unit} leaves no non-negative value inside it` });
+      }
     } else if (isVolumeKpi || isCostKpi) {
-      const belowTarget = Math.max(0, Math.floor(target * 0.9));
-      const atTarget = target;
+      const atTarget = Number(target);
+      // gap is step, never 0: floor(target * 0.9) was target itself at a
+      // target of 0, which generated "below target" with a gap of nothing.
+      const belowTarget = atTarget - step;
 
-      testCases.push({
-        name: `${kpi.name} - Below Target (${belowTarget} ${unit})`,
-        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_target", simulatedValue: belowTarget, threshold, target, unit },
-        expectedOutput: { targetMet: false, gap: target - belowTarget, kpiName: kpi.name, target },
-        tags: ["kpi_aligned", "target_boundary", "below_target", kpi.name, `target_${target}`],
-        weight: 1.2,
-        origin: "kpi_aligned",
-        severity: "high",
-      });
+      if (belowTarget >= 0) {
+        testCases.push({
+          name: `${kpi.name} - Below Target (${belowTarget} ${unit})`,
+          inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_target", simulatedValue: belowTarget, threshold, target, unit },
+          expectedOutput: { targetMet: false, gap: atTarget - belowTarget, kpiName: kpi.name, target },
+          tags: ["kpi_aligned", "target_boundary", "below_target", kpi.name, `target_${target}`],
+          weight: 1.2,
+          origin: "kpi_aligned",
+          severity: "high",
+        });
+      } else {
+        skippedBoundaries.push({ kpi: kpi.name, scenario: "below_target", reason: `nothing is below a target of ${atTarget} ${unit}` });
+      }
       testCases.push({
         name: `${kpi.name} - At Target (${atTarget} ${unit})`,
         inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "at_target", simulatedValue: atTarget, threshold, target, unit },
@@ -291,25 +347,68 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
         severity: "medium",
       });
     } else {
+      const atThreshold = Number(threshold);
+      const belowThreshold = atThreshold - step;
+
       testCases.push({
         name: `${kpi.name} - SLA Boundary Test`,
-        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "boundary", simulatedValue: threshold, threshold, target, unit },
+        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "boundary", simulatedValue: atThreshold, threshold, target, unit },
         expectedOutput: { slaBreached: false, kpiName: kpi.name, threshold, target },
         tags: ["kpi_aligned", "sla_boundary", kpi.name, `threshold_${threshold}`],
         weight: 1.0,
         origin: "kpi_aligned",
         severity: "medium",
       });
-      testCases.push({
-        name: `${kpi.name} - Below Threshold`,
-        inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_threshold", simulatedValue: threshold * 0.9, threshold, target, unit },
-        expectedOutput: { slaBreached: true, kpiName: kpi.name, threshold },
-        tags: ["kpi_aligned", "sla_boundary", "below_threshold", kpi.name],
-        weight: 1.5,
-        origin: "kpi_aligned",
-        severity: "critical",
-      });
+      // threshold * 0.9 was the threshold itself at 0, so this asserted a
+      // breach on the same value the case above asserts is not a breach.
+      if (belowThreshold >= 0) {
+        testCases.push({
+          name: `${kpi.name} - Below Threshold (${belowThreshold}${unit})`,
+          inputData: { type: "kpi_boundary_test", kpiName: kpi.name, kpiId: kpi.id, scenario: "below_threshold", simulatedValue: belowThreshold, threshold, target, unit },
+          expectedOutput: { slaBreached: true, kpiName: kpi.name, threshold },
+          tags: ["kpi_aligned", "sla_boundary", "below_threshold", kpi.name],
+          weight: 1.5,
+          origin: "kpi_aligned",
+          severity: "critical",
+        });
+      } else {
+        skippedBoundaries.push({ kpi: kpi.name, scenario: "below_threshold", reason: `nothing is below a threshold of ${atThreshold}${unit}` });
+      }
     }
+  }
+
+  // Net, not a substitute for the arithmetic above: if any two cases for one
+  // KPI still share a simulatedValue while asserting different verdicts, the
+  // pair is unsatisfiable and would be scored as the agent's failure. Drop the
+  // lower-weight ones and record it, so a future branch cannot reintroduce the
+  // contradiction silently.
+  const contradictions: Array<{ kpi: string; simulatedValue: unknown; kept: string; dropped: string[] }> = [];
+  const groups = new Map<string, typeof testCases>();
+  for (const tc of testCases) {
+    const i = tc.inputData as any;
+    if (i?.type !== "kpi_boundary_test") continue;
+    const key = `${i.kpiId}|${i.simulatedValue}`;
+    if (!groups.has(key)) groups.set(key, [] as any);
+    (groups.get(key) as any).push(tc);
+  }
+  const assertionOf = (tc: any) => JSON.stringify(
+    Object.fromEntries(Object.entries(tc.expectedOutput ?? {}).filter(([k]) => k !== "kpiName" && k !== "threshold" && k !== "target")),
+  );
+  const dropped = new Set<unknown>();
+  for (const [, group] of groups) {
+    if (group.length < 2) continue;
+    if (new Set(group.map(assertionOf)).size < 2) continue;
+    const ranked = [...group].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+    for (const loser of ranked.slice(1)) dropped.add(loser);
+    contradictions.push({
+      kpi: (ranked[0].inputData as any).kpiName,
+      simulatedValue: (ranked[0].inputData as any).simulatedValue,
+      kept: ranked[0].name,
+      dropped: ranked.slice(1).map(t => t.name),
+    });
+  }
+  if (dropped.size > 0) {
+    for (let i = testCases.length - 1; i >= 0; i--) if (dropped.has(testCases[i])) testCases.splice(i, 1);
   }
 
   const suite = await storage.createEvalSuite({
@@ -318,7 +417,15 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
     type: "kpi_aligned",
     totalCases: testCases.length,
     coverageTags: ["kpi_aligned", "sla_boundary", "outcome_driven"],
-    ontologyTags: { kpiAligned: true, outcomeId, outcomeName: outcome.name, kpiCount: kpis.length, generatedAt: new Date().toISOString() },
+    ontologyTags: {
+      kpiAligned: true, outcomeId, outcomeName: outcome.name, kpiCount: kpis.length, generatedAt: new Date().toISOString(),
+      // Coverage a reader would otherwise have to infer from a count: these
+      // boundaries do not exist for these KPIs' numbers, and these pairs were
+      // dropped as unsatisfiable. A KPI appearing here usually means its
+      // slaThreshold or target needs setting, not that the suite is wrong.
+      ...(skippedBoundaries.length > 0 ? { skippedBoundaries } : {}),
+      ...(contradictions.length > 0 ? { droppedContradictions: contradictions } : {}),
+    },
   });
 
   const createdCases = [];
