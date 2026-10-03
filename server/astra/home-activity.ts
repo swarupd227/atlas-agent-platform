@@ -107,7 +107,10 @@ function teamItem(r: TeamRunRow, now: number): ActivityItem {
     return { id: r.id, kind: "team_run", title, detail, status: "running", at: iso(r.startedAt ?? r.createdAt), href };
   }
   const ended = ms(r.completedAt);
-  const failed = r.status !== "completed";
+  // completed_with_skips is a run that finished: a branch it did not take is the graph working as
+  // drawn, not a failure. Every journey that routes (a decision with an unused path) ends this way,
+  // and reading it as "Failed" put a red dot on each of its good runs.
+  const failed = r.status !== "completed" && r.status !== "completed_with_skips";
   const took = Number.isFinite(ended) && Number.isFinite(started) ? ` in ${duration(started, ended)}` : "";
   const detail = failed ? `Failed${took}${r.error ? `: ${oneLine(r.error, 70)}` : ""}` : `Finished${took}`;
   return { id: r.id, kind: "team_run", title, detail, status: failed ? "failed" : "completed", at: iso(r.completedAt ?? r.createdAt), href };

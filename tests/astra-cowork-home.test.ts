@@ -102,6 +102,21 @@ describe("finished this week", () => {
     expect(a.recent[1].detail).toBe("Answered “What does our travel policy say about taxis?”");
   });
 
+  it("reads a run that completed with skipped steps as finished, not failed", () => {
+    const a = buildActivity({
+      teamRuns: [
+        team({ id: "skips", status: "completed_with_skips", startedAt: minsAgo(30), completedAt: minsAgo(26) }),
+        team({ id: "boom", status: "failed", startedAt: minsAgo(50), completedAt: minsAgo(45), error: "Connector timed out" }),
+      ],
+      agentRuns: [],
+      spend: null,
+      now: NOW,
+    });
+    expect(a.recent.find((i) => i.id === "skips")).toMatchObject({ status: "completed", detail: "Finished in 4 min" });
+    // A real failure still reads as one.
+    expect(a.recent.find((i) => i.id === "boom")).toMatchObject({ status: "failed" });
+  });
+
   it("says a denied run was stopped by the approval, not that it failed", () => {
     const a = buildActivity({ teamRuns: [], agentRuns: [agent({ status: "denied" })], spend: null, now: NOW });
     expect(a.recent[0].detail).toBe("Stopped: the approval was denied");
