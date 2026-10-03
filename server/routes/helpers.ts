@@ -139,7 +139,24 @@ function resolveOntologyTags(
   return tags;
 }
 
-async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, orgId?: string): Promise<{ suite: any; testCases: any[] } | null> {
+/**
+ * Builds a KPI-aligned suite for an agent's outcome.
+ *
+ * With `opts.replaceSuiteId` it REGENERATES that existing suite in place
+ * instead of creating another one. That path exists because fixing the
+ * generator could not previously refresh what it had already generated: every
+ * call site is guarded by "no suite yet" or "outcome newly bound", so a
+ * corrected KPI definition left the old suite standing. It deliberately shares
+ * the case-building above rather than reimplementing it -- two paths that build
+ * cases independently drift, and the drift shows up as a suite that passes in
+ * one place and fails in another.
+ */
+async function generateKpiAlignedEvalSuite(
+  agentId: string,
+  outcomeId: string,
+  orgId?: string,
+  opts?: { replaceSuiteId?: string },
+): Promise<{ suite: any; testCases: any[]; replaced?: { removedCases: number } } | null> {
   const outcome = await storage.getOutcome(outcomeId);
   if (!outcome) return null;
 
@@ -411,10 +428,9 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
     for (let i = testCases.length - 1; i >= 0; i--) if (dropped.has(testCases[i])) testCases.splice(i, 1);
   }
 
-  const suite = await storage.createEvalSuite({
-    agentId,
+  const suiteFields = {
     name: `${agent.name} - KPI-Aligned Suite (${outcome.name})`,
-    type: "kpi_aligned",
+    type: "kpi_aligned" as const,
     totalCases: testCases.length,
     coverageTags: ["kpi_aligned", "sla_boundary", "outcome_driven"],
     ontologyTags: {
@@ -426,7 +442,26 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
       ...(skippedBoundaries.length > 0 ? { skippedBoundaries } : {}),
       ...(contradictions.length > 0 ? { droppedContradictions: contradictions } : {}),
     },
-  });
+  };
+
+  let suite: any;
+  let removedCases = 0;
+  if (opts?.replaceSuiteId) {
+    const existing = await storage.getEvalSuite(opts.replaceSuiteId);
+    if (!existing) return null;
+    // The old cases go before the new ones are written, or the suite would
+    // hold both generations at once and score the contradictions it was
+    // regenerated to remove.
+    for (const old of await storage.getEvalTestCases(existing.id)) {
+      if (await storage.deleteEvalTestCase(old.id)) removedCases++;
+    }
+    // The stored pass rate measured the OLD cases. Left in place it would read
+    // as a result for cases that no longer exist, and the promotion gate reads
+    // it -- so the suite goes back to "never evaluated", which is true.
+    suite = (await storage.updateEvalSuite(existing.id, { ...suiteFields, passRate: null, lastRunAt: null } as any)) ?? existing;
+  } else {
+    suite = await storage.createEvalSuite({ agentId, ...suiteFields });
+  }
 
   const createdCases = [];
   for (const tc of testCases) {
@@ -450,22 +485,28 @@ async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, o
   await storage.createAuditEvent({
     actorType: "system",
     actorId: "kpi_eval_generator",
-    action: "eval.kpi_suite_generated",
+    // A regeneration replaced cases that may already have been scored, so it
+    // is a distinct action rather than a second "generated" event -- an
+    // auditor reading a pass rate needs to see that the cases under it changed.
+    action: opts?.replaceSuiteId ? "eval.kpi_suite_regenerated" : "eval.kpi_suite_generated",
     objectType: "eval",
     objectId: suite.id,
     details: JSON.stringify({
-      summary: `KPI-aligned eval suite generated for agent "${agent.name}" from outcome "${outcome.name}" with ${testCases.length} test cases covering ${kpis.length} KPIs and ${ontologyMandatedCount} ontology-mandated regulatory test cases`,
+      summary: opts?.replaceSuiteId
+        ? `KPI-aligned eval suite regenerated for agent "${agent.name}" from outcome "${outcome.name}": ${removedCases} previous test case(s) removed, ${testCases.length} written covering ${kpis.length} KPIs and ${ontologyMandatedCount} ontology-mandated regulatory test cases. Stored passRate and lastRunAt cleared, because they measured the removed cases.`
+        : `KPI-aligned eval suite generated for agent "${agent.name}" from outcome "${outcome.name}" with ${testCases.length} test cases covering ${kpis.length} KPIs and ${ontologyMandatedCount} ontology-mandated regulatory test cases`,
       agentId,
       outcomeId,
       outcomeName: outcome.name,
       kpiCount: kpis.length,
       testCaseCount: testCases.length,
       ontologyMandatedCount,
+      ...(opts?.replaceSuiteId ? { regenerated: true, removedCases, skippedBoundaries, droppedContradictions: contradictions } : {}),
     }),
-    ontologyTags: resolveOntologyTags("eval", "eval.kpi_suite_generated"),
+    ontologyTags: resolveOntologyTags("eval", opts?.replaceSuiteId ? "eval.kpi_suite_regenerated" : "eval.kpi_suite_generated"),
   });
 
-  return { suite, testCases: createdCases };
+  return { suite, testCases: createdCases, ...(opts?.replaceSuiteId ? { replaced: { removedCases } } : {}) };
 }
 
 export interface ParameterMatchResult {

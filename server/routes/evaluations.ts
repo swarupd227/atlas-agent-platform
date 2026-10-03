@@ -260,6 +260,67 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     }
   });
 
+  /**
+   * POST /api/evals/:id/regenerate
+   *
+   * Rebuilds a generated suite's cases from the CURRENT generator.
+   *
+   * Until this existed, fixing the generator could not refresh what it had
+   * already produced: every call site is guarded by "no suite yet" or
+   * "outcome newly bound", so a corrected KPI definition — or a corrected
+   * generator — left the old cases in place and the gate kept scoring them.
+   * Found when the KPI generator was emitting pairs of cases with the same
+   * simulatedValue asserting opposite verdicts, which no agent could satisfy.
+   */
+  router.post("/api/evals/:id/regenerate", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const suite = await storage.getEvalSuite(req.params.id as string);
+      if (!suite) return res.status(404).json({ error: "Eval suite not found" });
+      // Only a generated suite can be regenerated. A hand-authored suite has
+      // no generator to rebuild it from, and silently replacing its cases
+      // would destroy work this route cannot recreate.
+      if (suite.type !== "kpi_aligned") {
+        return res.status(400).json({ error: `Only kpi_aligned suites are generated, so only they can be regenerated; this suite is "${suite.type}". Its cases were not written by a generator and would be lost.` });
+      }
+      if (!suite.agentId) return res.status(400).json({ error: "Suite is not bound to an agent, so there is no outcome to regenerate it from" });
+
+      const agent = await storage.getAgent(suite.agentId, orgId ?? undefined);
+      if (!agent) return res.status(404).json({ error: "Agent for this suite not found" });
+
+      // Prefer the outcome the suite was built from; fall back to the agent's
+      // current one. They differ when an agent has been re-bound since.
+      const taggedOutcomeId = (suite.ontologyTags as any)?.outcomeId;
+      const outcomeId = taggedOutcomeId || agent.outcomeId;
+      if (!outcomeId) {
+        return res.status(400).json({ error: "Neither the suite nor its agent names an outcome, and the cases are derived from the outcome's KPIs" });
+      }
+
+      const before = (await storage.getEvalTestCases(suite.id)).length;
+      const result = await generateKpiAlignedEvalSuite(suite.agentId, outcomeId, orgId ?? undefined, { replaceSuiteId: suite.id });
+      if (!result) {
+        return res.status(400).json({ error: "Regeneration produced nothing — the outcome may have no KPIs, or the agent or outcome could not be read. The existing cases were left untouched." });
+      }
+
+      const tags = (result.suite?.ontologyTags as any) ?? {};
+      res.json({
+        suiteId: result.suite.id,
+        suiteName: result.suite.name,
+        outcomeId,
+        casesBefore: before,
+        casesRemoved: result.replaced?.removedCases ?? 0,
+        casesAfter: result.testCases.length,
+        // Said plainly rather than left to a count: a boundary that cannot
+        // exist for a KPI's numbers is absent by design, not missing by error.
+        skippedBoundaries: tags.skippedBoundaries ?? [],
+        droppedContradictions: tags.droppedContradictions ?? [],
+        note: "Stored passRate and lastRunAt were cleared, because they measured the cases this replaced. The suite reads as never evaluated until it is run again.",
+      });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   router.get("/api/evals/:id/runs", async (req, res) => {
     const runs = await storage.getEvalRuns(req.params.id);
     res.json(runs);
