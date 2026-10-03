@@ -964,11 +964,16 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // connector's own schedule summary ran, live 2026-09-25, as the model's
   // arithmetic over three field names that exist in no system.
   let authoredSteps: any[] = Array.isArray(processFlowSteps) ? processFlowSteps : [];
+  // The flow's own connections, when the flow was read: a second source for the
+  // step a worker covers (server/flow-step-claims.ts).
+  let authoredEdges: any[] = [];
   if (authoredSteps.length === 0 && body.processFlowId) {
     try {
       const flow = await storage.getProcessFlow(body.processFlowId, orgId);
       const nodes = (flow?.graph as any)?.nodes;
       if (Array.isArray(nodes)) authoredSteps = nodes;
+      const edges = (flow?.graph as any)?.edges;
+      if (Array.isArray(edges)) authoredEdges = edges;
     } catch (err: any) {
       // Not fatal: without the steps every worker is built as an agent, which
       // is the behaviour this had before. Say so, because the difference is
@@ -988,7 +993,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // between, otherwise reaches this point with nothing to correlate on, and
   // every authored step is built as an agent that re-describes it.
   if (authoredSteps.length > 0) {
-    const claimed = inferStepClaims(workers, authoredSteps);
+    const claimed = inferStepClaims(workers, authoredSteps, { flowEdges: authoredEdges, proposalEdges: pipeline?.edges ?? undefined });
     if (claimed.inferred.length) {
       console.info(`[create-team] inferred the step ${claimed.inferred.length} worker(s) cover from their names: ${claimed.inferred.map((x) => `"${x.agent}" -> "${x.step}"`).join(", ")}`);
       claimed.agents.forEach((w, i) => { workers[i] = w; });

@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { inferStepClaims, nameCoverage, CLAIM_COVERAGE } from "../server/flow-step-claims";
+import { inferStepClaims, nameCoverage, conditionKey, CLAIM_COVERAGE } from "../server/flow-step-claims";
 import { deriveEdgesFromFlow, unclaimedWorkSteps } from "../server/team-proposal";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
@@ -102,7 +102,7 @@ describe("inferring the claims the model left out", () => {
       { name: "Score Severity Agent", flowStepLabels: ["Severity Scoring (renamed)"] },
     ], steps);
     expect(claims(r)).toEqual({ Anything: ["Summarise the Loss"], "Score Severity Agent": ["Score Severity"] });
-    expect(r.inferred).toEqual([{ agent: "Score Severity Agent", step: "Score Severity" }]);
+    expect(r.inferred).toEqual([{ agent: "Score Severity Agent", step: "Score Severity", by: "name" }]);
   });
 
   it("never claims a step twice, and claims nothing on a tie", () => {
@@ -125,17 +125,71 @@ describe("inferring the claims the model left out", () => {
   });
 });
 
+describe("inferring the claims from the edges the model drew", () => {
+  const flowEdges = [
+    { from: "t", to: "intake" }, { from: "intake", to: "classify" }, { from: "classify", to: "score" },
+    { from: "classify", to: "siu", label: "Fraud suspected", condition: 'classify_claim_type == "Fraud suspicion"' },
+    { from: "score", to: "senior", label: "Major or worse", condition: "score_severity >= 2" },
+    { from: "score", to: "fast", label: "Minor or moderate", condition: "score_severity < 2" },
+    { from: "siu", to: "end" }, { from: "senior", to: "end" }, { from: "fast", to: "end" },
+  ];
+  /** The proposal's own edges from 2026-10-03, between its agent names, repeating the flow's conditions as the model rewrote them. */
+  const proposalEdges = [
+    { from: "Loss Summarization Agent", to: "Claim Type Classifier Agent" },
+    { from: "Claim Type Classifier Agent", to: "SIU Referral Agent", branchCondition: "If classify_claim_type == 'Fraud suspicion'", label: "fraud suspicion branch" },
+    { from: "Loss Severity Scoring Agent", to: "Senior Adjuster Assignment Agent", branchCondition: "If score_severity >= 2" },
+    { from: "Loss Severity Scoring Agent", to: "Fast-Track Settlement Agent", branchCondition: "If score_severity < 2" },
+  ];
+
+  it("reads a condition the same way however it was quoted or prefixed", () => {
+    expect(conditionKey("If classify_claim_type == 'Fraud suspicion'")).toBe(conditionKey('classify_claim_type == "Fraud suspicion"'));
+    expect(conditionKey("score_severity>=2")).toBe(conditionKey("If score_severity >= 2"));
+    expect(conditionKey("")).toBe("");
+  });
+
+  it("claims the agent at the end of a branch whose condition is the flow's, when its name said too little", () => {
+    const r = inferStepClaims(renamed, steps, { flowEdges, proposalEdges });
+    expect(claims(r)["SIU Referral Agent"]).toEqual(["Refer to Special Investigations"]);
+    expect(r.inferred.find((x) => x.agent === "SIU Referral Agent")).toEqual({ agent: "SIU Referral Agent", step: "Refer to Special Investigations", by: "edge" });
+    // Everything the names already settled stands, and only the trigger is left.
+    expect(unclaimedWorkSteps(r.agents, steps)).toEqual([]);
+    expect(claims(r)["FNOL Intake Agent"]).toBeNull();
+  });
+
+  it("claims both ends of a matched edge, by its label when it carries no condition", () => {
+    const terse = [{ name: "Agent A" }, { name: "Agent B" }];
+    const r = inferStepClaims(terse, steps, { flowEdges, proposalEdges: [{ from: "Agent A", to: "Agent B", label: "Major or worse" }] });
+    expect(claims(r)).toEqual({ "Agent A": ["Score Severity"], "Agent B": ["Assign Senior Adjuster"] });
+  });
+
+  it("claims nothing from a condition two flow edges share, and never moves a claim the names settled", () => {
+    const twice = [...flowEdges, { from: "score", to: "fast", condition: "score_severity >= 2" }];
+    const r = inferStepClaims([{ name: "Agent A" }, { name: "Agent B" }], steps, { flowEdges: twice, proposalEdges: [{ from: "Agent A", to: "Agent B", branchCondition: "score_severity >= 2" }] });
+    expect(claims(r)).toEqual({ "Agent A": null, "Agent B": null });
+    // "Loss Severity Scoring Agent" is settled by name on Score Severity; an edge naming it as the source of the fraud branch (a model mistake) changes nothing.
+    const wrong = inferStepClaims(renamed, steps, { flowEdges, proposalEdges: [{ from: "Loss Severity Scoring Agent", to: "SIU Referral Agent", branchCondition: 'classify_claim_type == "Fraud suspicion"' }] });
+    expect(claims(wrong)["Loss Severity Scoring Agent"]).toEqual(["Score Severity"]);
+    expect(claims(wrong)["SIU Referral Agent"]).toEqual(["Refer to Special Investigations"]);
+  });
+
+  it("does nothing without both sets of edges", () => {
+    expect(claims(inferStepClaims(renamed, steps, { flowEdges }))["SIU Referral Agent"]).toBeNull();
+    expect(claims(inferStepClaims(renamed, steps, { proposalEdges }))["SIU Referral Agent"]).toBeNull();
+  });
+});
+
 describe("where it is applied", () => {
   it("the drafting call infers the claims before it splits configured steps and derives the edges", () => {
     const src = read("server", "team-proposal.ts");
-    const at = src.indexOf("const inferred = inferStepClaims(result.agents || [], processFlowSteps);");
+    const at = src.indexOf("const inferred = inferStepClaims(result.agents || [], processFlowSteps, { flowEdges: processFlowEdges, proposalEdges: result.pipeline?.edges });");
     expect(at).toBeGreaterThan(0);
     expect(at).toBeLessThan(src.indexOf("const splitAgents = splitConfiguredSteps(result.agents || [], processFlowSteps);"));
   });
 
   it("the build infers them too, so a proposal saved without them still reaches its steps", () => {
     const src = read("server", "team-build.ts");
-    const at = src.indexOf("const claimed = inferStepClaims(workers, authoredSteps);");
+    const at = src.indexOf("const claimed = inferStepClaims(workers, authoredSteps, { flowEdges: authoredEdges, proposalEdges: pipeline?.edges ?? undefined });");
+    expect(src).toContain("if (Array.isArray(edges)) authoredEdges = edges;");
     expect(at).toBeGreaterThan(0);
     expect(at).toBeGreaterThan(src.indexOf("const authoredStepsByLabel = new Map<string, any>("));
     expect(at).toBeLessThan(src.indexOf("for (const worker of workers) {"));

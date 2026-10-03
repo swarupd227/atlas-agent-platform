@@ -1383,9 +1383,11 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         // always: live 2026-10-03 it named every agent after its step and declared
         // no flowStepLabels at all, so nothing below had anything to read, and the
         // team was built flat with its two decisions as agents. The names carry
-        // the answer, so a missing or unmatched claim is inferred from them first
-        // (server/flow-step-claims.ts); what stays unclaimed is still reported.
-        const inferred = inferStepClaims(result.agents || [], processFlowSteps);
+        // most of the answer and the edges it drew, repeating the flow's branch
+        // conditions, carry the rest, so a missing or unmatched claim is inferred
+        // from both first (server/flow-step-claims.ts); what stays unclaimed is
+        // still reported.
+        const inferred = inferStepClaims(result.agents || [], processFlowSteps, { flowEdges: processFlowEdges, proposalEdges: result.pipeline?.edges });
         if (inferred.inferred.length) {
           console.info(`[propose-agents] inferred the step ${inferred.inferred.length} agent(s) cover from their names: ${inferred.inferred.map((x) => `"${x.agent}" -> "${x.step}"`).join(", ")}`);
           result.agents = inferred.agents;
