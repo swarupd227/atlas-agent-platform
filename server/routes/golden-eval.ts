@@ -9,7 +9,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Skill, Agent, EvalSuite, EvalTestCase, GoldenDataset, GoldenTestCase } from "@shared/schema";
 import { resolveReadableSkills, skillCatalogPrompt, skillToolsFor, executeBuiltinSkillTool, READ_SKILL_TOOL } from "../builtin-skill-tools";
 import { resolveRepeats, summarizeRun, type CaseStability } from "@shared/eval-stability";
-import { runAttempts, foldAttempts, describeUnstableFields, EVAL_REPEAT_JOB } from "../eval-repeat";
+import { runAttempts, foldAttempts, meanLatencyMs, repeatedRowNotes, describeUnstableFields, EVAL_REPEAT_JOB } from "../eval-repeat";
 
 const router = Router();
 
@@ -431,7 +431,6 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
   const judged: JudgedCase[] = [];
   for (const tc of cases) {
     await onProgress?.(judged.length, cases.length);
-    const started = Date.now();
     const criteria = Array.isArray(tc.evaluationCriteria) ? (tc.evaluationCriteria as string[]) : [];
     const rubric = (tc.rubricScoring as any) || {};
     const passingScore = typeof rubric.passingScore === "number" ? rubric.passingScore : 0.8;
@@ -462,8 +461,8 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
     });
     // The case passes only if every attempt did. With one attempt this is
     // the attempt's own result, as before.
-    const { representative: result, score, stability } = foldAttempts(attempts);
-    const latencyMs = Date.now() - started;
+    const { representative: result, representativeIndex, score, stability } = foldAttempts(attempts);
+    const latencyMs = meanLatencyMs(attempts);
     judged.push({ caseId: tc.id, name: tc.name, ...result, latencyMs, passed: stability.passed, score, ...(repeats > 1 ? { stability } : {}) });
 
     const missedText = result.criteriaMissed.join("; ") || result.reasoning;
@@ -478,6 +477,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
         criteriaMet: result.criteriaMet,
         criteriaMissed: result.criteriaMissed,
         judgeReasoning: result.reasoning,
+        ...repeatedRowNotes(repeats, representativeIndex),
         ...(repeats > 1 ? {
           stability,
           attempts: attempts.map(a => ({
@@ -560,7 +560,6 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
   const byInstrument = { structured_comparison: 0, prose_judge: 0, no_instrument: 0 };
   for (const tc of cases) {
     await onProgress?.(judged.length, cases.length);
-    const started = Date.now();
     const instrument = classifyEvalCase(tc);
     const input: any = tc.inputData ?? {};
     const scenario = [input.prompt, input.context ? `Context: ${input.context}` : ""].filter(Boolean).join("\n\n")
@@ -629,9 +628,9 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
       // The case passes only if every attempt did, and the asserted fields
       // are checked for a value that changed between attempts. With one
       // attempt this is the attempt's own result, as before.
-      const { representative, score, stability } = foldAttempts(attempts, { keys: instrument.keys, verdict: a => a.verdict });
+      const { representative, representativeIndex, score, stability } = foldAttempts(attempts, { keys: instrument.keys, verdict: a => a.verdict });
       const { scored, answerText, skillsLoaded } = representative;
-      const latencyMs = Date.now() - started;
+      const latencyMs = meanLatencyMs(attempts);
       judged.push({
         caseId: tc.id, name: tc.name, latencyMs,
         passed: stability.passed, score,
@@ -656,6 +655,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
           // "said the wrong thing".
           instrument: "structured_comparison",
           noVerdict: scored.noVerdict,
+          ...repeatedRowNotes(repeats, representativeIndex),
           ...(repeats > 1 ? {
             stability,
             attempts: attempts.map(a => ({
@@ -694,8 +694,8 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
         };
       }
     });
-    const { representative: result, score, stability } = foldAttempts(attempts);
-    const latencyMs = Date.now() - started;
+    const { representative: result, representativeIndex, score, stability } = foldAttempts(attempts);
+    const latencyMs = meanLatencyMs(attempts);
     judged.push({ caseId: tc.id, name: tc.name, ...result, latencyMs, passed: stability.passed, score, ...(repeats > 1 ? { stability } : {}) });
 
     const missedText = result.criteriaMissed.join("; ") || result.reasoning;
@@ -710,6 +710,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
         criteriaMet: result.criteriaMet,
         criteriaMissed: result.criteriaMissed,
         judgeReasoning: result.reasoning,
+        ...repeatedRowNotes(repeats, representativeIndex),
         ...(repeats > 1 ? {
           stability,
           attempts: attempts.map(a => ({

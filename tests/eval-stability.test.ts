@@ -102,6 +102,13 @@ describe("summarizeAttempts", () => {
       expect(s.unstableFields.map(f => f.key)).toEqual(["severity"]);
     });
 
+    it("treats an object label as the same answer whatever order its keys come in", () => {
+      const same = summarizeAttempts([pass({ tier: { a: 1, b: { c: 2, d: 3 } } }), pass({ tier: { b: { d: 3, c: 2 }, a: 1 } })], { keys: ["tier"] });
+      expect(same.unstableFields).toEqual([]);
+      const moved = summarizeAttempts([pass({ tier: { a: 1, b: 2 } }), pass({ tier: { a: 1, b: 3 } })], { keys: ["tier"] });
+      expect(moved.unstableFields).toHaveLength(1);
+    });
+
     it("compares numbers and booleans by value", () => {
       const same = summarizeAttempts([pass({ n: 2, ok: true }), pass({ n: 2, ok: true })], { keys: ["n", "ok"] });
       expect(same.unstableFields).toEqual([]);

@@ -136,6 +136,8 @@ describe("execute without a repeat count", () => {
     expect(r.body.cases[0]).not.toHaveProperty("attempts");
     expect(state.caseResults[0].scorerOutputs).not.toHaveProperty("stability");
     expect(state.caseResults[0].scorerOutputs).not.toHaveProperty("attempts");
+    expect(state.caseResults[0].scorerOutputs).not.toHaveProperty("scoreBasis");
+    expect(state.caseResults[0].scorerOutputs).not.toHaveProperty("representativeAttempt");
     expect(state.runs[0].resultsJson).not.toHaveProperty("repeats");
   });
 
@@ -287,5 +289,36 @@ describe("a repeated run is queued, not answered in the request", () => {
     expect(r.status).toBe(500);
     expect(state.runs[0].status).toBe("failed");
     expect(state.answerCalls).toBe(0);
+  });
+});
+
+describe("a repeated case's row says what it describes", () => {
+  it("names the attempt its criteria come from, and that the score is a mean", async () => {
+    state.answers = [sev("High"), sev("Medium"), sev("High")];
+    await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
+    const out = state.caseResults[0].scorerOutputs;
+    expect(out.scoreBasis).toBe("mean across 3 attempts");
+    expect(out.representativeAttempt).toBe(2);
+    expect(out.attempts[1].verdict.severity).toBe("Medium");
+  });
+
+  it("does the same for a prose case", async () => {
+    state.cases = [proseCase()];
+    state.answers = ["GOOD", "GOOD", "off topic"];
+    await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
+    const out = state.caseResults[0].scorerOutputs;
+    expect(out.scoreBasis).toBe("mean across 3 attempts");
+    expect(out.representativeAttempt).toBe(3);
+  });
+
+  it("records how long one answer took, for a field-comparison case and for a prose case", async () => {
+    for (const cases of [[severityCase()], [proseCase()]]) {
+      state.cases = cases;
+      state.caseResults = [];
+      state.answers = [];
+      await postAndFinish("/api/evals/s1/execute", { repeats: 3 });
+      const times: number[] = state.caseResults[0].scorerOutputs.attempts.map((a: any) => a.latencyMs);
+      expect(state.caseResults[0].latencyMs).toBe(Math.round(times.reduce((s, t) => s + t, 0) / times.length));
+    }
   });
 });

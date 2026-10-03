@@ -51,22 +51,49 @@ export interface ScoredAttempt {
 }
 
 /**
+ * How long one answer took, on average across a case's attempts. Not the time
+ * the case took on the wall clock: attempts run side by side, so that figure
+ * grows with the repeat count and would read as a slowdown beside a run with
+ * no repeats. With one attempt this is that attempt's own time.
+ */
+export function meanLatencyMs(attempts: Array<{ latencyMs: number }>): number {
+  if (attempts.length === 0) return 0;
+  return Math.round(attempts.reduce((s, a) => s + a.latencyMs, 0) / attempts.length);
+}
+
+/**
  * The attempts at one case as the case's single result. `representative` is
  * the first failing attempt, else the first, so a reader sees what went wrong
- * rather than a lucky pass; `score` is the mean across attempts.
+ * rather than a lucky pass; `representativeIndex` says which attempt that is,
+ * because `score` is the mean across attempts and so describes a different
+ * thing from the criteria and reasoning the representative carries.
  */
 export function foldAttempts<T extends ScoredAttempt>(attempts: T[], opts: { keys?: string[]; verdict?: (a: T) => Record<string, unknown> | null } = {}): {
   representative: T;
+  representativeIndex: number;
   score: number;
   stability: CaseStability;
 } {
+  if (attempts.length === 0) throw new Error("foldAttempts needs at least one attempt");
   const stability = summarizeAttempts(
     attempts.map(a => ({ passed: a.passed, score: a.score, verdict: opts.verdict ? opts.verdict(a) : undefined })),
     { keys: opts.keys },
   );
+  const failing = attempts.findIndex(a => !a.passed);
+  const representativeIndex = failing >= 0 ? failing : 0;
   return {
-    representative: attempts.find(a => !a.passed) ?? attempts[0],
+    representative: attempts[representativeIndex],
+    representativeIndex,
     score: attempts.reduce((s, a) => s + a.score, 0) / attempts.length,
     stability,
   };
+}
+
+/**
+ * What a reader needs to interpret a repeated case's row: the stored score is
+ * the mean across attempts, and the criteria and reasoning beside it are those
+ * of one named attempt (1-based). Empty for a case answered once.
+ */
+export function repeatedRowNotes(repeats: number, representativeIndex: number) {
+  return repeats > 1 ? { scoreBasis: `mean across ${repeats} attempts`, representativeAttempt: representativeIndex + 1 } : {};
 }

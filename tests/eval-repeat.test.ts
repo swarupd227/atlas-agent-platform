@@ -9,7 +9,7 @@
  *   - the job type a repeated run is queued under is the one the worker dispatches on.
  */
 import { describe, it, expect } from "vitest";
-import { runAttempts, foldAttempts, describeUnstableFields, ATTEMPT_CONCURRENCY, EVAL_REPEAT_JOB } from "../server/eval-repeat";
+import { runAttempts, foldAttempts, describeUnstableFields, meanLatencyMs, repeatedRowNotes, ATTEMPT_CONCURRENCY, EVAL_REPEAT_JOB } from "../server/eval-repeat";
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -106,5 +106,44 @@ describe("EVAL_REPEAT_JOB", () => {
     expect(EVAL_REPEAT_JOB).toBe("eval_repeat_run");
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("server/worker.ts", "utf8")).toContain(`job.type === "${EVAL_REPEAT_JOB}"`);
+  });
+});
+
+describe("meanLatencyMs", () => {
+  it("is the mean time of one answer, not their sum", () => {
+    expect(meanLatencyMs([{ latencyMs: 20 }, { latencyMs: 30 }, { latencyMs: 40 }])).toBe(30);
+  });
+
+  it("is that attempt's own time when there is one attempt", () => {
+    expect(meanLatencyMs([{ latencyMs: 123 }])).toBe(123);
+  });
+
+  it("is zero when nothing ran", () => {
+    expect(meanLatencyMs([])).toBe(0);
+  });
+});
+
+describe("foldAttempts: which attempt it shows", () => {
+  const ok = { passed: true, score: 1 };
+  const bad = { passed: false, score: 0 };
+
+  it("names the first failing attempt, or the first when none failed", () => {
+    expect(foldAttempts([ok, ok, bad, bad]).representativeIndex).toBe(2);
+    expect(foldAttempts([ok, ok]).representativeIndex).toBe(0);
+    expect(foldAttempts([bad]).representativeIndex).toBe(0);
+  });
+
+  it("refuses to fold nothing rather than return a NaN score and no attempt", () => {
+    expect(() => foldAttempts([])).toThrow(/at least one attempt/);
+  });
+});
+
+describe("repeatedRowNotes", () => {
+  it("adds nothing for a case answered once", () => {
+    expect(repeatedRowNotes(1, 0)).toEqual({});
+  });
+
+  it("says the score is a mean and counts the attempt from 1", () => {
+    expect(repeatedRowNotes(5, 2)).toEqual({ scoreBasis: "mean across 5 attempts", representativeAttempt: 3 });
   });
 });

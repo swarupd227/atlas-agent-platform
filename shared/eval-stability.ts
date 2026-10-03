@@ -70,7 +70,17 @@ function normalizeLabel(value: unknown): string {
     return slug || MISSING;
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
+  return stableStringify(value);
+}
+
+/** JSON with object keys in a fixed order, so {a:1,b:2} and {b:2,a:1} are one answer. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map(k => `${JSON.stringify(k)}:${stableStringify(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 function fieldDisagreement(key: string, attempts: EvalAttempt[]): FieldDisagreement | null {

@@ -146,6 +146,8 @@ describe("run-golden without a repeat count", () => {
     const out = state.caseResults[0].scorerOutputs;
     expect(out).not.toHaveProperty("stability");
     expect(out).not.toHaveProperty("attempts");
+    expect(out).not.toHaveProperty("scoreBasis");
+    expect(out).not.toHaveProperty("representativeAttempt");
     expect(out.score).toBe(1);
     expect(state.caseResults[0].passed).toBe(true);
     expect(state.runs[0].resultsJson).not.toHaveProperty("repeats");
@@ -199,14 +201,34 @@ describe("run-golden with repeats", () => {
     expect(state.caseResults[0].failingReason).not.toContain("Inconsistent");
   });
 
-  it("records the case's own elapsed time, not one attempt's", async () => {
-    // 4 attempts, 3 at a time: two rounds of ~25 ms, so the case took ~50 ms
-    // while any one attempt took ~25.
+  it("records how long one answer took, not the wall clock across attempts", async () => {
+    // 4 attempts, 3 at a time: two rounds of ~25 ms, so the case takes ~50 ms on
+    // the wall clock while an answer takes ~25. A run asked to repeat must not
+    // read as slower than one that was not.
     state.answerDelayMs = 25;
     await postAndFinish("/api/evals/s1/run-golden", { repeats: 4 });
-    expect(state.caseResults[0].latencyMs).toBeGreaterThanOrEqual(40);
-    // The run's average is built from the same per-case figure.
-    expect(state.runs[0].avgLatencyMs).toBeGreaterThanOrEqual(40);
+    const row = state.caseResults[0];
+    const times: number[] = row.scorerOutputs.attempts.map((a: any) => a.latencyMs);
+    const mean = Math.round(times.reduce((s, t) => s + t, 0) / times.length);
+    expect(times.every(t => t >= 20)).toBe(true);
+    expect(row.latencyMs).toBe(mean);
+    expect(state.runs[0].avgLatencyMs).toBe(mean);
+  });
+
+  it("says which attempt the criteria describe and that the score is a mean", async () => {
+    state.answers = ["GOOD", "BAD", "GOOD", "GOOD"];
+    await postAndFinish("/api/evals/s1/run-golden", { repeats: 4 });
+    const out = state.caseResults[0].scorerOutputs;
+    expect(out.score).toBeCloseTo(0.75);
+    expect(out.scoreBasis).toBe("mean across 4 attempts");
+    // The criteria and reasoning beside the score are the first failing attempt's: the second.
+    expect(out.representativeAttempt).toBe(2);
+    expect(out.attempts[out.representativeAttempt - 1].passed).toBe(false);
+  });
+
+  it("names the first attempt when every attempt passed", async () => {
+    await postAndFinish("/api/evals/s1/run-golden", { repeats: 3 });
+    expect(state.caseResults[0].scorerOutputs.representativeAttempt).toBe(1);
   });
 
   it("treats an attempt that throws as a failed attempt, not a failed run", async () => {
