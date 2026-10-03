@@ -10,13 +10,17 @@
  *   - the page asks for every trace of a repeated run, and an ordinary run is fetched and shown as before;
  *   - the Studio home sets a run's pass rate only beside a run measured the same way, since a repeated
  *     run's strict rate is not an ordinary run's, and says why a repeated run set no gate verdict;
- *   - the run list marks a repeated run and its flaky goldens.
+ *   - the run list marks a repeated run and its flaky goldens;
+ *   - a finished repeated run is badged Inconsistent or Consistent, never Passed/Warning/Failed, and its
+ *     strict pass rate is not coloured green, amber or red on the list, the run page or the home page.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  groupTracesByGolden, collapseByGolden, filterGoldenRows, isRepeatedRun, meanScore, previousComparableRun, type TraceLike,
+  groupTracesByGolden, collapseByGolden, filterGoldenRows, isRepeatedRun, meanScore, previousComparableRun,
+  repeatedRunVerdict, hasRepeatedVerdict, type TraceLike,
 } from "../shared/eval-run-view";
+import { runRateTone } from "../client/src/pages/eval-studio-home";
 
 let n = 0;
 const tr = (goldenId: string, attempt: number | null, passFail: boolean | null, scores?: unknown): TraceLike =>
@@ -134,6 +138,50 @@ describe("helpers", () => {
   });
 });
 
+describe("repeatedRunVerdict: a repeated run is judged on consistency, not banded as pass or fail", () => {
+  it("is inconsistent, amber, when any golden's answers disagreed", () => {
+    expect(repeatedRunVerdict({ flakyCount: 1 })).toEqual({ label: "Inconsistent", tone: "warn" });
+    expect(repeatedRunVerdict({ flakyCount: 12 }).tone).toBe("warn");
+  });
+
+  it("is consistent, and neutral rather than green, when none did", () => {
+    expect(repeatedRunVerdict({ flakyCount: 0 })).toEqual({ label: "Consistent", tone: "neutral" });
+    expect(repeatedRunVerdict({ flakyCount: null })).toEqual({ label: "Consistent", tone: "neutral" });
+    expect(repeatedRunVerdict({})).toEqual({ label: "Consistent", tone: "neutral" });
+  });
+
+  it("never says passed, warning or failed, and its tones are never red or green", () => {
+    for (const flaky of [0, 1, 50]) {
+      const v = repeatedRunVerdict({ flakyCount: flaky });
+      expect(["Passed", "Warning", "Failed"]).not.toContain(v.label);
+      expect(["warn", "neutral"]).toContain(v.tone);
+    }
+  });
+
+  it("describes only a repeated run that finished", () => {
+    expect(hasRepeatedVerdict({ status: "completed", repeats: 3 })).toBe(true);
+    expect(hasRepeatedVerdict({ status: "running", repeats: 3 })).toBe(false); // nothing to judge yet
+    expect(hasRepeatedVerdict({ status: "failed", repeats: 3 })).toBe(false); // an error stays an error
+    expect(hasRepeatedVerdict({ status: "completed", repeats: 1 })).toBe(false); // an ordinary run keeps its bands
+    expect(hasRepeatedVerdict({ status: "completed", repeats: null })).toBe(false);
+    expect(hasRepeatedVerdict(null)).toBe(false);
+  });
+});
+
+describe("runRateTone: the Studio home does not band a repeated run's strict rate", () => {
+  it("colours an ordinary run by its rate, as before", () => {
+    expect(runRateTone({ passRate: 0.95, repeats: 1 })).toContain("emerald");
+    expect(runRateTone({ passRate: 0.8 })).toContain("amber");
+    expect(runRateTone({ passRate: 0.4, repeats: 1 })).toContain("red");
+    expect(runRateTone(undefined)).toBe("");
+  });
+
+  it("leaves a repeated run's rate neutral, however low", () => {
+    expect(runRateTone({ passRate: 0.4, repeats: 3 })).toBe("text-muted-foreground");
+    expect(runRateTone({ passRate: 0.95, repeats: 5 })).toBe("text-muted-foreground");
+  });
+});
+
 describe("previousComparableRun: what 'points since the run before' may be set against", () => {
   const r = (id: string, passRate: number | null, repeats = 1) => ({ id, passRate, repeats });
 
@@ -162,6 +210,26 @@ describe("the run list and the Studio home", () => {
   it("the list marks a repeated run and its flaky goldens", () => {
     expect(list).toContain("badge-run-repeats-");
     expect(list).toContain("text-run-flaky-");
+  });
+
+  it("the list badge and icon use the repeated-run verdict, not the pass-rate bands", () => {
+    expect(list).toContain("statusBadge(run.status, passRate ?? null, run)");
+    expect(list).toContain("statusIcon(run.status, passRate ?? null, run)");
+    expect(list).toContain("repeatedRunVerdict(run)");
+    expect(list).toContain("strict pass");
+  });
+
+  it("the run page badges, colours and icons a finished repeated run by the same verdict", () => {
+    const detail = readFileSync(new URL("../client/src/pages/eval-run-detail.tsx", import.meta.url), "utf8");
+    expect(detail).toContain("badge-run-verdict");
+    expect(detail).toContain("passRateBadge(run?.passRate, repeatedVerdict !== null)");
+    expect(detail).toContain("statusIcon(run.status, run.passRate, run)");
+    expect(detail).toMatch(/repeatedVerdict \? "" : passRatePct/);
+  });
+
+  it("the home page colours every pass rate through runRateTone", () => {
+    expect(home).toContain("runRateTone(last)");
+    expect(home).toContain("runRateTone(r)");
   });
 
   it("the home page compares only like with like and explains why a repeated run set no gate verdict", () => {

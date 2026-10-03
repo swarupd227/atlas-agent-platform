@@ -46,9 +46,15 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { MAX_REPEATS } from "@shared/eval-stability";
 import { estimateRepeatedRun } from "@shared/eval-repeat-estimate";
-import { isRepeatedRun } from "@shared/eval-run-view";
+import { hasRepeatedVerdict, isRepeatedRun, repeatedRunVerdict } from "@shared/eval-run-view";
 
-function statusBadge(status: string, passRate: number | null) {
+type RunLike = { status: string; repeats?: number | null; flakyCount?: number | null };
+
+function statusBadge(status: string, passRate: number | null, run?: RunLike) {
+  if (run && hasRepeatedVerdict(run)) {
+    const v = repeatedRunVerdict(run);
+    return { label: v.label, cls: v.tone === "warn" ? "bg-amber-500/10 text-amber-600 border-amber-500/20" : "bg-muted/50 text-muted-foreground" };
+  }
   if (status === "completed") {
     const pct = passRate != null ? Math.round(passRate * 100) : 0;
     if (pct >= 85) return { label: "Passed", cls: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
@@ -61,7 +67,10 @@ function statusBadge(status: string, passRate: number | null) {
   return { label: status, cls: "bg-muted/50 text-muted-foreground" };
 }
 
-function statusIcon(status: string, passRate: number | null) {
+function statusIcon(status: string, passRate: number | null, run?: RunLike) {
+  if (run && hasRepeatedVerdict(run)) {
+    return <Repeat className={`w-4 h-4 ${repeatedRunVerdict(run).tone === "warn" ? "text-amber-500" : "text-muted-foreground"}`} />;
+  }
   if (status === "running") return <Activity className="w-4 h-4 text-blue-500" />;
   if (status === "pending") return <Clock className="w-4 h-4 text-yellow-500" />;
   if (status === "failed") return <AlertTriangle className="w-4 h-4 text-red-500" />;
@@ -479,25 +488,26 @@ export default function EvalRuns() {
                 const agentName = agent?.name ?? `Agent ${run.agentId.slice(0, 8)}`;
                 const passRate = run.passRate;
                 const pct = passRate != null ? Math.round(passRate * 100) : null;
-                const badge = statusBadge(run.status, passRate ?? null);
+                const badge = statusBadge(run.status, passRate ?? null, run);
+                const repeatedVerdict = hasRepeatedVerdict(run);
                 return (
                   <div
                     key={run.id}
                     className="flex items-center gap-4 px-5 py-3.5 hover:bg-muted/30 transition-colors"
                     data-testid={`row-run-${run.id}`}
                   >
-                    <div className="shrink-0">{statusIcon(run.status, passRate ?? null)}</div>
+                    <div className="shrink-0">{statusIcon(run.status, passRate ?? null, run)}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium font-mono text-muted-foreground">
                           {run.id.slice(0, 8)}
                         </span>
-                        <Badge variant="outline" className={`text-[10px] ${badge.cls}`}>
+                        <Badge variant="outline" className={`text-[10px] ${badge.cls}`} data-testid={`badge-run-status-${run.id}`}>
                           {badge.label}
                         </Badge>
                         {pct != null && (
-                          <span className={`text-xs font-semibold ${pct >= 85 ? "text-emerald-600" : pct >= 70 ? "text-amber-600" : "text-red-600"}`}>
-                            {pct}% pass
+                          <span className={`text-xs font-semibold ${repeatedVerdict ? "text-muted-foreground" : pct >= 85 ? "text-emerald-600" : pct >= 70 ? "text-amber-600" : "text-red-600"}`}>
+                            {pct}% {repeatedVerdict ? "strict pass" : "pass"}
                           </span>
                         )}
                         {isRepeatedRun(run) && (

@@ -40,6 +40,31 @@ export interface GoldenAttempts<T extends TraceLike> {
 
 export const isRepeatedRun = (run: { repeats?: number | null } | null | undefined): boolean => (run?.repeats ?? 1) > 1;
 
+export interface RepeatedRunVerdict {
+  label: "Inconsistent" | "Consistent";
+  /** "warn" is amber. Never red or green: see repeatedRunVerdict. */
+  tone: "warn" | "neutral";
+}
+
+/**
+ * What a finished repeated run's badge says. An ordinary run is banded by its pass rate (85% and
+ * up passes, 70% a warning, below that failed), but a repeated run's rate is strict (a golden
+ * that misses one answer in three is a miss), so it is naturally lower, and the run sets no gate.
+ * Calling it "Failed" would say something nobody decided. It measures consistency, so it says
+ * that: inconsistent when any golden's answers disagreed, consistent when none did. Consistent is
+ * neutral, not green, because a golden that fails every time is perfectly consistent and still
+ * wrong, which the strict pass rate beside it says. A run that errored is not described here.
+ */
+export function repeatedRunVerdict(run: { flakyCount?: number | null }): RepeatedRunVerdict {
+  return (run.flakyCount ?? 0) > 0
+    ? { label: "Inconsistent", tone: "warn" }
+    : { label: "Consistent", tone: "neutral" };
+}
+
+/** True when the run is a repeated run that finished, the only kind repeatedRunVerdict describes. */
+export const hasRepeatedVerdict = (run: { status: string; repeats?: number | null } | null | undefined): boolean =>
+  !!run && run.status === "completed" && isRepeatedRun(run);
+
 /**
  * The run whose pass rate can be set beside `runs[0]`'s, for "points since the run before".
  * A repeated run's rate is strict (a golden must pass every answer), so it is not the same

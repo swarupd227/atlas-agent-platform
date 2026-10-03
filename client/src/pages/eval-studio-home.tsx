@@ -100,6 +100,9 @@ const TOOLS: Array<{ href: string; label: string; hint: string }> = [
 export const pct = (rate: number | null | undefined) => (rate == null ? "—" : `${Math.round(rate * 1000) / 10}%`);
 export const rateTone = (rate: number | null | undefined) =>
   rate == null ? "" : rate >= 0.9 ? "text-emerald-600 dark:text-emerald-400" : rate >= 0.75 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+/** A repeated run's strict rate is not banded good or bad: it measures consistency and sets no gate. */
+export const runRateTone = (run: { passRate: number | null; status?: string; repeats?: number | null } | undefined) =>
+  run && isRepeatedRun(run) ? "text-muted-foreground" : rateTone(run?.passRate);
 
 function Stat({ label, value, hint, tone, to }: { label: string; value: string; hint?: string; tone?: string; to?: string }) {
   const body = (
@@ -235,7 +238,7 @@ export default function EvalStudioHome() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-xs font-medium truncate leading-tight">{a.name}</span>
-                        <span className={`shrink-0 text-xs tabular-nums ${rateTone(last?.passRate)}`}>{last ? pct(last.passRate) : "no run"}</span>
+                        <span className={`shrink-0 text-xs tabular-nums ${runRateTone(last)}`}>{last ? pct(last.passRate) : "no run"}</span>
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap font-mono text-[10px] text-muted-foreground">
                         <span>{agentRuns.length} run{agentRuns.length === 1 ? "" : "s"}</span>
@@ -294,7 +297,7 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
           ) : (
             <div className="rounded border p-3 flex flex-col gap-2">
               <div className="flex items-baseline gap-3 flex-wrap">
-                <span className={`text-2xl font-semibold tabular-nums ${rateTone(last.passRate)}`}>{pct(last.passRate)}</span>
+                <span className={`text-2xl font-semibold tabular-nums ${runRateTone(last)}`}>{pct(last.passRate)}</span>
                 <span className="text-sm text-muted-foreground">
                   {last.passedCount ?? 0} of {last.totalGoldens ?? 0} cases passed
                   {isRepeatedRun(last) && <> every time, over {last.repeats} answers each</>}
@@ -364,7 +367,7 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
             <ul className="flex flex-col divide-y rounded border">
               {runs.slice(0, 12).map((r) => (
                 <li key={r.id} className="flex items-center gap-3 p-2.5 text-sm" data-testid={`run-${r.id}`}>
-                  <span className={`w-14 shrink-0 tabular-nums ${rateTone(r.passRate)}`}>{pct(r.passRate)}</span>
+                  <span className={`w-14 shrink-0 tabular-nums ${runRateTone(r)}`}>{pct(r.passRate)}</span>
                   <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
                     {[r.status, r.completedAt ? formatDateTime(r.completedAt) : r.startedAt ? formatDateTime(r.startedAt) : "not started"].filter(Boolean).join(" · ")}
                   </span>

@@ -6,7 +6,9 @@ import {
   collapseByGolden,
   filterGoldenRows,
   groupTracesByGolden,
+  hasRepeatedVerdict,
   isRepeatedRun,
+  repeatedRunVerdict,
   type GoldenAttempts,
   type GoldenStatus,
   type RowFilter,
@@ -60,15 +62,20 @@ import { formatDate } from "@/components/shared-utils";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function passRateBadge(passRate: number | null | undefined) {
+// `neutral` is for a finished repeated run: its strict rate is not banded as pass, warning or fail.
+function passRateBadge(passRate: number | null | undefined, neutral = false) {
   if (passRate == null) return { label: "—", cls: "bg-muted/50 text-muted-foreground" };
   const pct = Math.round(passRate * 100);
+  if (neutral) return { label: `${pct}%`, cls: "bg-muted/50 text-muted-foreground" };
   if (pct >= 85) return { label: `${pct}%`, cls: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" };
   if (pct >= 70) return { label: `${pct}%`, cls: "bg-amber-500/10 text-amber-600 border-amber-500/20" };
   return { label: `${pct}%`, cls: "bg-red-500/10 text-red-600 border-red-500/20" };
 }
 
-function statusIcon(status: string, passRate: number | null | undefined) {
+function statusIcon(status: string, passRate: number | null | undefined, run?: EvalTestRun) {
+  if (run && hasRepeatedVerdict(run)) {
+    return <Repeat className={`w-5 h-5 ${repeatedRunVerdict(run).tone === "warn" ? "text-amber-500" : "text-muted-foreground"}`} />;
+  }
   if (status === "running") return <Activity className="w-5 h-5 text-blue-500" />;
   if (status === "pending") return <Clock className="w-5 h-5 text-yellow-500" />;
   if (status === "failed") return <AlertTriangle className="w-5 h-5 text-red-500" />;
@@ -601,7 +608,8 @@ export default function EvalRunDetail() {
   const agent = run ? agents?.find(a => a.id === run.agentId) : undefined;
   const agentName = agent?.name ?? (run ? `Agent ${run.agentId.slice(0, 8)}` : "");
   const passRatePct = run?.passRate != null ? Math.round(run.passRate * 100) : null;
-  const badge = passRateBadge(run?.passRate);
+  const repeatedVerdict = hasRepeatedVerdict(run) && run ? repeatedRunVerdict(run) : null;
+  const badge = passRateBadge(run?.passRate, repeatedVerdict !== null);
   const startedAtDate: Date | null = run?.startedAt instanceof Date ? run.startedAt : (run?.startedAt ? new Date(run.startedAt as unknown as string) : null);
   const completedAtDate: Date | null = run?.completedAt instanceof Date ? run.completedAt : (run?.completedAt ? new Date(run.completedAt as unknown as string) : null);
 
@@ -721,7 +729,7 @@ export default function EvalRunDetail() {
           <Card data-testid="card-run-summary">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
-                {statusIcon(run.status, run.passRate)}
+                {statusIcon(run.status, run.passRate, run)}
                 Run Summary
                 <Badge variant="outline" className={`ml-1 text-[10px] ${badge.cls}`}>
                   {badge.label} pass rate
@@ -729,6 +737,15 @@ export default function EvalRunDetail() {
                 {repeated && (
                   <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20" data-testid="badge-repeated-run">
                     <Repeat className="w-2.5 h-2.5 mr-1" /> Repeated ×{run.repeats}
+                  </Badge>
+                )}
+                {repeatedVerdict && (
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] ${repeatedVerdict.tone === "warn" ? "bg-amber-500/10 text-amber-600 border-amber-500/20" : "bg-muted/50 text-muted-foreground"}`}
+                    data-testid="badge-run-verdict"
+                  >
+                    {repeatedVerdict.label}
                   </Badge>
                 )}
               </CardTitle>
@@ -746,7 +763,10 @@ export default function EvalRunDetail() {
                   <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
                     <BarChart3 className="w-2.5 h-2.5" /> Pass Rate
                   </div>
-                  <div className={`text-2xl font-bold ${passRatePct != null && passRatePct >= 85 ? "text-emerald-600" : passRatePct != null && passRatePct >= 70 ? "text-amber-600" : "text-red-600"}`}>
+                  <div
+                    className={`text-2xl font-bold ${repeatedVerdict ? "" : passRatePct != null && passRatePct >= 85 ? "text-emerald-600" : passRatePct != null && passRatePct >= 70 ? "text-amber-600" : "text-red-600"}`}
+                    data-testid="text-run-pass-rate"
+                  >
                     {passRatePct != null ? `${passRatePct}%` : "—"}
                   </div>
                   <div className="text-[10px] text-muted-foreground mt-0.5">
