@@ -18,6 +18,7 @@ import { parseProposalContent } from "./team-proposal-parse";
 import { completeWithFallback, isCallerAbort, type LLMCompletionResult } from "./llm-provider";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import { classifyStep } from "@shared/flow-execution-kind";
+import { inferStepClaims } from "./flow-step-claims";
 
 
 export interface ProposeTeamInput {
@@ -1378,6 +1379,17 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       // at all when the model returned none, which is what turned a 22-step
       // flow into 17 agents running in a single wave.
       if (Array.isArray(processFlowSteps) && processFlowSteps.length > 0 && Array.isArray(processFlowEdges) && processFlowEdges.length > 0) {
+        // The model is asked to say which step each agent covers, and it does not
+        // always: live 2026-10-03 it named every agent after its step and declared
+        // no flowStepLabels at all, so nothing below had anything to read, and the
+        // team was built flat with its two decisions as agents. The names carry
+        // the answer, so a missing or unmatched claim is inferred from them first
+        // (server/flow-step-claims.ts); what stays unclaimed is still reported.
+        const inferred = inferStepClaims(result.agents || [], processFlowSteps);
+        if (inferred.inferred.length) {
+          console.info(`[propose-agents] inferred the step ${inferred.inferred.length} agent(s) cover from their names: ${inferred.inferred.map((x) => `"${x.agent}" -> "${x.step}"`).join(", ")}`);
+          result.agents = inferred.agents;
+        }
         // Before the edges, so a step the author already made deterministic is
         // its own agent and the flow's connections wire the pieces back up.
         const splitAgents = splitConfiguredSteps(result.agents || [], processFlowSteps);

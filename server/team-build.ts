@@ -19,6 +19,7 @@ import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor
 import { stateKeyForLabel } from "@shared/state-key";
 import { getDecisionSettings } from "./decision-settings";
 import { stepCorrelation } from "@shared/process-flow-correlation";
+import { inferStepClaims } from "./flow-step-claims";
 import { backEdgeKeys, edgeKey } from "@shared/graph-cycles";
 import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants } from "./blueprint-invariants";
@@ -981,6 +982,18 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       .filter((step: any) => step && typeof step.label === "string")
       .map((step: any) => [String(step.label).trim().toLowerCase(), step]),
   );
+  // A proposal whose workers did not say which step they cover, or said so in
+  // words naming no step, is read from their names here as well as at drafting
+  // (server/flow-step-claims.ts): a proposal drafted before that, or edited in
+  // between, otherwise reaches this point with nothing to correlate on, and
+  // every authored step is built as an agent that re-describes it.
+  if (authoredSteps.length > 0) {
+    const claimed = inferStepClaims(workers, authoredSteps);
+    if (claimed.inferred.length) {
+      console.info(`[create-team] inferred the step ${claimed.inferred.length} worker(s) cover from their names: ${claimed.inferred.map((x) => `"${x.agent}" -> "${x.step}"`).join(", ")}`);
+      claimed.agents.forEach((w, i) => { workers[i] = w; });
+    }
+  }
   // Whether a make_decision step with labelled branches becomes a decision node
   // (server/decision-settings.ts); a step's own config.decisionKind overrides it.
   const decisionKind = (await getDecisionSettings().catch(() => null))?.stepKind ?? false;
