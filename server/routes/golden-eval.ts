@@ -370,6 +370,186 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
 });
 
 /**
+ * POST /api/evals/:id/execute
+ *
+ * Runs a suite whose cases live in eval_test_cases, which until now nothing
+ * could execute. run-golden above covers suites linked to a golden dataset;
+ * POST /api/evals/:id/runs only INSERTS a run row and returns it, leaving the
+ * row at status "running" forever unless an external harness posts case results
+ * back. Measured on this platform: of the 17 suites covering the two MGA
+ * journeys, 0 had a golden dataset and none had ever been executed, so the
+ * promotion gate blocked production on pass rates nobody had ever produced.
+ *
+ * Same scope as run-golden, deliberately: PROMPT-LEVEL. Each case runs against
+ * the agent's real assembled system prompt and the same on-demand skills the
+ * runtime offers, then is judged. No MCP dispatch and no team graph, so the run
+ * records mode "prompt_level" and a score is never read as an integration result.
+ *
+ * These cases carry no evaluationCriteria -- only expectedOutput -- so the
+ * expected output is passed as the single criterion. That keeps the judgement
+ * binary per case rather than inventing a granularity the data does not have.
+ */
+router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"), async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const suite = await storage.getEvalSuite(req.params.id as string);
+    if (!suite) return res.status(404).json({ error: "Eval suite not found" });
+    if (suite.goldenDatasetId) {
+      return res.status(400).json({ error: "This suite is linked to a golden dataset; use /api/evals/:id/run-golden so one suite is not scored two different ways." });
+    }
+    if (!suite.agentId) return res.status(400).json({ error: "Suite is not bound to an agent, so there is nothing to run it against" });
+    const agent = await storage.getAgent(suite.agentId, orgId ?? undefined);
+    if (!agent) return res.status(404).json({ error: "Agent for this suite not found" });
+
+    const allCases = (await storage.getEvalTestCases(suite.id)).filter(c => (c.status ?? "active") === "active");
+    // A suite with no cases must not produce a run at all. Scoring zero cases
+    // yields a 100% pass rate on an empty denominator, which the promotion gate
+    // would then read as a measured success -- the exact confusion between
+    // "nothing failed" and "nothing ran" that the gate was just taught to avoid.
+    if (allCases.length === 0) {
+      return res.status(400).json({ error: "Suite has no active test cases, so there is nothing to measure", totalCases: 0 });
+    }
+    const limit = Math.min(Number(req.body?.limit) || allCases.length, 25);
+    const cases = allCases.slice(0, limit);
+
+    const systemPrompt = await buildAgentSystemPromptWithGovernance(agent, orgId ?? undefined);
+    const readableSkills = await resolveReadableSkills(agent.id, orgId).catch(() => [] as Skill[]);
+    const skillCatalog = skillCatalogPrompt(readableSkills);
+    const evalSystemPrompt = skillCatalog ? `${systemPrompt}\n\n${skillCatalog}` : systemPrompt;
+
+    const run = await storage.createEvalRun({
+      suiteId: suite.id,
+      agentId: agent.id,
+      status: "running",
+      totalCases: cases.length,
+      triggeredBy: (req.body?.triggeredBy as string) || "manual",
+      environment: (agent as any).environment || "staging",
+    });
+
+    const judged: JudgedCase[] = [];
+    let unjudgeable = 0;
+    for (const tc of cases) {
+      const started = Date.now();
+      const expected = typeof tc.expectedOutput === "string"
+        ? tc.expectedOutput.trim()
+        : JSON.stringify(tc.expectedOutput ?? "").trim();
+      const input: any = tc.inputData ?? {};
+      const scenario = [input.prompt, input.context ? `Context: ${input.context}` : ""].filter(Boolean).join("\n\n")
+        || JSON.stringify(input);
+
+      // A case with nothing to judge against is counted as failed rather than
+      // skipped. Skipping it would quietly raise the suite's pass rate on the
+      // cases that happen to be well-formed; the failing reason names the case
+      // as the problem, not the agent.
+      if (!expected) {
+        unjudgeable++;
+        judged.push({
+          caseId: tc.id, name: tc.name, latencyMs: 0, passed: false, score: 0,
+          criteriaMet: [], criteriaMissed: [], actualOutput: "", skillsLoaded: [],
+          reasoning: "Test case has no expectedOutput, so nothing could be judged against it.",
+        });
+        await storage.createEvalCaseResult({
+          runId: run.id, caseId: tc.id, passed: false,
+          actualOutput: {} as any,
+          scorerOutputs: { score: 0, passingScore: 1, unjudgeable: true } as any,
+          failingReason: "Test case has no expectedOutput — fix the case, not the agent",
+          latencyMs: 0,
+        });
+        continue;
+      }
+
+      let result: Awaited<ReturnType<typeof judgeCase>>;
+      try {
+        result = await judgeCase({
+          systemPrompt: evalSystemPrompt,
+          agentId: agent.id,
+          orgId,
+          readableSkills,
+          scenario,
+          expectedBehavior: expected,
+          criteria: [expected],
+          passingScore: 1,
+        });
+      } catch (err: any) {
+        result = {
+          passed: false, score: 0, criteriaMet: [], criteriaMissed: [expected],
+          reasoning: `Execution failed: ${err?.message}`, actualOutput: "", skillsLoaded: [],
+        };
+      }
+      const latencyMs = Date.now() - started;
+      judged.push({ caseId: tc.id, name: tc.name, latencyMs, ...result });
+
+      await storage.createEvalCaseResult({
+        runId: run.id,
+        caseId: tc.id,
+        passed: result.passed,
+        actualOutput: { response: result.actualOutput, skillsLoaded: result.skillsLoaded } as any,
+        scorerOutputs: {
+          score: result.score,
+          passingScore: 1,
+          criteriaMet: result.criteriaMet,
+          criteriaMissed: result.criteriaMissed,
+          judgeReasoning: result.reasoning,
+        } as any,
+        failingReason: result.passed ? null : (result.criteriaMissed.join("; ") || result.reasoning),
+        latencyMs,
+      });
+    }
+
+    const passed = judged.filter(c => c.passed).length;
+    // 0-1 fraction, matching insertEvalRunSchema's contract -- the skill-eval
+    // runner in agents.ts writes 0-100 through updateEvalRun and bypasses that
+    // validation; do not copy it.
+    const passRate = cases.length > 0 ? passed / cases.length : 0;
+    const avgLatencyMs = cases.length > 0 ? Math.round(judged.reduce((a, c) => a + c.latencyMs, 0) / cases.length) : 0;
+
+    await storage.updateEvalRun(run.id, {
+      status: "completed",
+      passedCases: passed,
+      failedCases: cases.length - passed,
+      passRate,
+      avgLatencyMs,
+      completedAt: new Date(),
+      resultsJson: {
+        mode: "prompt_level",
+        note: "Scored against the agent's assembled system prompt (ontology, bound policies with directives) plus its on-demand skills. MCP tools were not dispatched and no team graph was executed.",
+        source: "eval_test_cases",
+        criteriaSource: "expectedOutput (these cases carry no explicit evaluationCriteria)",
+        unjudgeableCases: unjudgeable,
+        skills: {
+          offered: readableSkills.map(s => s.name),
+          casesThatLoadedASkill: judged.filter(c => c.skillsLoaded.length > 0).length,
+        },
+      } as any,
+    });
+
+    // lastRunAt is what the promotion gate reads to tell "never evaluated" from
+    // "evaluated and failed", so it is written here and nowhere else.
+    await storage.updateEvalSuite(suite.id, { passRate, lastRunAt: new Date() });
+
+    res.json({
+      runId: run.id,
+      mode: "prompt_level",
+      agent: { id: agent.id, name: agent.name },
+      suite: { id: suite.id, name: suite.name },
+      totalCases: cases.length,
+      passedCases: passed,
+      failedCases: cases.length - passed,
+      unjudgeableCases: unjudgeable,
+      passRate,
+      avgLatencyMs,
+      cases: judged.map(c => ({
+        caseId: c.caseId, name: c.name, passed: c.passed, score: c.score,
+        reasoning: c.reasoning, skillsLoaded: c.skillsLoaded, latencyMs: c.latencyMs,
+      })),
+    });
+  } catch (e: any) {
+    console.error("[eval-execute] failed:", e);
+    res.status(500).json({ error: e.message || "Failed to execute eval suite" });
+  }
+});
+
+/**
  * POST /api/golden-datasets/link-suites
  * Links eval suites to a golden dataset for agents in a given industry (and
  * optionally sub-vertical), so an existing suite gains a regression baseline
