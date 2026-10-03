@@ -1,9 +1,3 @@
-// MUST be the first import: resolves any `<VAR>_FILE`-backed secret onto
-// process.env before any other module is evaluated. Several modules below
-// (./db, ./embeddings via ./routes, ./agent-runtime) read their env vars at
-// module-load time to build long-lived clients — see server/secrets.ts.
-import "./secrets";
-
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
