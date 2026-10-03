@@ -105,6 +105,140 @@ async function answerCase(p: {
   return { text: "", skillsLoaded };
 }
 
+/**
+ * Two criterion strings naming the same requirement. The examiner is asked to
+ * return criterion text exactly; models paraphrase, so exact equality alone
+ * made a met criterion read as missed.
+ */
+export function sameCriterion(a: string, b: string): boolean {
+  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  const x = norm(a), y = norm(b);
+  if (x === y) return true;
+  // Containment only once there is enough text for it to mean something --
+  // on short strings it would match unrelated criteria.
+  return x.length >= 20 && y.length >= 20 && (x.includes(y) || y.includes(x));
+}
+
+/**
+ * Which instrument can score a case.
+ *
+ * Measured on the 17 MGA suites: 146 active cases, of which 107 carry an
+ * OBJECT expectedOutput, not prose. Passing a stringified object to the
+ * compliance examiner as criterion text scored every one of them 0 whatever
+ * the agent said, because no model echoes raw JSON back verbatim.
+ *
+ *  - "structured": the case asserts specific FIELD VALUES
+ *    ({kpiName, threshold, slaBreached, expectedAction|withinTarget|
+ *    marginOfSafety}). That is a comparison, not a judgement -- scoring it
+ *    deterministically is both correct and one model call cheaper per case.
+ *  - "prose": a sentence a judge can read, either expectedOutput itself or the
+ *    expectedBehavior field of the {compliant, regulationRef, expectedBehavior}
+ *    regulation shape.
+ *  - "none": nothing to score against; the caller counts it unjudgeable rather
+ *    than letting it depress the pass rate as if the agent had failed.
+ *
+ * kpiName is excluded from the asserted keys deliberately: it restates the
+ * input, so comparing it would fail an otherwise-correct verdict on wording.
+ */
+export type CaseInstrument =
+  | { kind: "structured"; expected: Record<string, any>; keys: string[] }
+  | { kind: "prose"; criterion: string }
+  | { kind: "none" };
+
+const DESCRIPTIVE_KEYS = new Set(["kpiName", "kpiId", "unit", "regulationRef", "conceptId", "conceptLabel"]);
+
+export function classifyEvalCase(tc: { expectedOutput?: any }): CaseInstrument {
+  const eo = tc.expectedOutput;
+  if (typeof eo === "string") {
+    const s = eo.trim();
+    return s ? { kind: "prose", criterion: s } : { kind: "none" };
+  }
+  if (eo && typeof eo === "object" && !Array.isArray(eo)) {
+    const behaviour = typeof eo.expectedBehavior === "string" ? eo.expectedBehavior.trim() : "";
+    if (behaviour) return { kind: "prose", criterion: behaviour };
+    const keys = Object.keys(eo).filter(k => !DESCRIPTIVE_KEYS.has(k) && eo[k] !== null && eo[k] !== undefined);
+    if (keys.length > 0) return { kind: "structured", expected: eo as Record<string, any>, keys };
+  }
+  return { kind: "none" };
+}
+
+/** The first JSON object in a model answer, fences and prose tolerated. */
+export function extractJsonObject(text: string): Record<string, any> | null {
+  if (!text) return null;
+  const stripped = stripJsonFences(text).trim();
+  for (const candidate of [stripped, text]) {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start < 0 || end <= start) continue;
+    try {
+      const parsed = JSON.parse(candidate.slice(start, end + 1));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch { /* fall through to the next candidate */ }
+  }
+  return null;
+}
+
+/**
+ * Does the agent's value satisfy the asserted one? Booleans and numbers
+ * compare by value; a string compares on a slug so "alert and escalate"
+ * satisfies "alert_and_escalate" -- the assertion is about the decision, not
+ * the formatting.
+ */
+export function valueSatisfies(expected: any, actual: any): boolean {
+  if (actual === undefined || actual === null) return false;
+  if (typeof expected === "boolean") {
+    if (typeof actual === "boolean") return actual === expected;
+    const s = String(actual).trim().toLowerCase();
+    return (expected && (s === "true" || s === "yes")) || (!expected && (s === "false" || s === "no"));
+  }
+  if (typeof expected === "number") {
+    const n = typeof actual === "number" ? actual : Number(String(actual).replace(/[,%\s]/g, ""));
+    return Number.isFinite(n) && Math.abs(n - expected) < 1e-9;
+  }
+  if (typeof expected === "string") {
+    const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const e = slug(expected), a = slug(String(actual));
+    return e === a || (e.length >= 4 && a.includes(e));
+  }
+  return JSON.stringify(expected) === JSON.stringify(actual);
+}
+
+/**
+ * Scores a structured case against the agent's own JSON verdict. Returns the
+ * per-field outcome so a wrong value is never confused with no answer at all:
+ * `noVerdict` says the agent produced nothing parseable, which is a different
+ * defect from producing the wrong figure and is reported as such.
+ */
+export function scoreStructuredCase(
+  expected: Record<string, any>,
+  keys: string[],
+  answerText: string,
+): { passed: boolean; score: number; met: string[]; missed: string[]; noVerdict: boolean; reasoning: string } {
+  const verdict = extractJsonObject(answerText);
+  const describe = (k: string) => `${k} = ${JSON.stringify(expected[k])}`;
+  if (!verdict) {
+    return {
+      passed: false, score: 0, met: [], missed: keys.map(describe), noVerdict: true,
+      reasoning: `The agent returned no parseable JSON verdict, so the asserted fields (${keys.join(", ")}) could not be compared. This is a missing answer, not a wrong one.`,
+    };
+  }
+  const met: string[] = [], missed: string[] = [];
+  for (const k of keys) {
+    (valueSatisfies(expected[k], verdict[k]) ? met : missed).push(describe(k));
+  }
+  const score = keys.length > 0 ? met.length / keys.length : 0;
+  return {
+    passed: missed.length === 0,
+    score,
+    met,
+    missed,
+    noVerdict: false,
+    reasoning: missed.length === 0
+      ? `All ${keys.length} asserted field(s) matched the agent's verdict.`
+      : `Mismatched: ${missed.map(m => `${m} (agent gave ${JSON.stringify(verdict[m.split(" = ")[0]])})`).join("; ")}.`,
+  };
+}
+
 export async function judgeCase(params: {
   systemPrompt: string;
   scenario: string;
@@ -159,9 +293,20 @@ ${actualOutput}`,
       reasoning: String(parsed.reasoning || ""),
     };
     const answers: Record<string, boolean> = {};
+    const seen = examiner as { met: string[]; missed: string[] };
     for (const k of keys) {
       const c = params.criteria[Number(k.slice(1))];
-      answers[k] = examiner.met.some((m) => m.trim().toLowerCase() === c.trim().toLowerCase()) && !examiner.missed.some((m) => m.trim().toLowerCase() === c.trim().toLowerCase());
+      const inMet = seen.met.some((m) => sameCriterion(m, c));
+      const inMissed = seen.missed.some((m) => sameCriterion(m, c));
+      // A judge that paraphrases a criterion instead of echoing it verbatim
+      // used to land in NEITHER list, which then read as missed -- the case
+      // failed on the judge's wording rather than on the agent's answer. With
+      // one criterion there is no ambiguity about which it meant, so its own
+      // met/missed verdict is used; with several, an unmatched criterion stays
+      // missed, because crediting it would guess which one the judge meant.
+      answers[k] = inMet ? !inMissed
+        : inMissed ? false
+        : params.criteria.length === 1 && seen.met.length > 0 && seen.missed.length === 0;
     }
     return { answers, model: r.model, latencyMs: r.latencyMs, inputTokens: r.inputTokens, costUsd: r.costUsd };
   };
@@ -385,9 +530,13 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
  * runtime offers, then is judged. No MCP dispatch and no team graph, so the run
  * records mode "prompt_level" and a score is never read as an integration result.
  *
- * These cases carry no evaluationCriteria -- only expectedOutput -- so the
- * expected output is passed as the single criterion. That keeps the judgement
- * binary per case rather than inventing a granularity the data does not have.
+ * These cases carry no evaluationCriteria, only expectedOutput, and that field
+ * is not one shape: measured across the 17 MGA suites, 39 of 146 active cases
+ * hold prose and 107 hold an object asserting field values. Each case is routed
+ * to the instrument that can actually score it (see classifyEvalCase) --
+ * prose to the examiner, asserted fields to a deterministic comparison. The
+ * first version of this route stringified every object into criterion text,
+ * which scored all 107 zero no matter how the agent answered.
  */
 router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"), async (req, res) => {
   try {
@@ -428,11 +577,12 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
 
     const judged: JudgedCase[] = [];
     let unjudgeable = 0;
+    // Reported per run, so a reader can see which cases were compared and
+    // which were a model's judgement rather than assuming one instrument.
+    const byInstrument = { structured_comparison: 0, prose_judge: 0, no_instrument: 0 };
     for (const tc of cases) {
       const started = Date.now();
-      const expected = typeof tc.expectedOutput === "string"
-        ? tc.expectedOutput.trim()
-        : JSON.stringify(tc.expectedOutput ?? "").trim();
+      const instrument = classifyEvalCase(tc);
       const input: any = tc.inputData ?? {};
       const scenario = [input.prompt, input.context ? `Context: ${input.context}` : ""].filter(Boolean).join("\n\n")
         || JSON.stringify(input);
@@ -441,8 +591,9 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
       // skipped. Skipping it would quietly raise the suite's pass rate on the
       // cases that happen to be well-formed; the failing reason names the case
       // as the problem, not the agent.
-      if (!expected) {
+      if (instrument.kind === "none") {
         unjudgeable++;
+        byInstrument.no_instrument++;
         judged.push({
           caseId: tc.id, name: tc.name, latencyMs: 0, passed: false, score: 0,
           criteriaMet: [], criteriaMissed: [], actualOutput: "", skillsLoaded: [],
@@ -458,6 +609,64 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
         continue;
       }
 
+      // A case asserting field values is a comparison, so it is scored by
+      // comparison: the agent answers under its real prompt, and its own JSON
+      // verdict is checked field by field. No examiner call -- an LLM asked to
+      // echo raw JSON as criterion text failed all 107 of these regardless of
+      // what the agent said.
+      if (instrument.kind === "structured") {
+        byInstrument.structured_comparison++;
+        let answerText = "";
+        let skillsLoaded: string[] = [];
+        let scored: ReturnType<typeof scoreStructuredCase>;
+        try {
+          const answer = await answerCase({
+            systemPrompt: evalSystemPrompt,
+            agentId: agent.id,
+            orgId,
+            readableSkills,
+            scenario: `${scenario}\n\nReturn ONLY a JSON object with exactly these keys: ${instrument.keys.join(", ")}. Do not wrap it in prose.`,
+          });
+          answerText = answer.text;
+          skillsLoaded = answer.skillsLoaded;
+          scored = scoreStructuredCase(instrument.expected, instrument.keys, answerText);
+        } catch (err: any) {
+          scored = {
+            passed: false, score: 0, met: [], missed: instrument.keys,
+            noVerdict: true, reasoning: `Execution failed: ${err?.message}`,
+          };
+        }
+        const latencyMs = Date.now() - started;
+        judged.push({
+          caseId: tc.id, name: tc.name, latencyMs,
+          passed: scored.passed, score: scored.score,
+          criteriaMet: scored.met, criteriaMissed: scored.missed,
+          reasoning: scored.reasoning, actualOutput: answerText, skillsLoaded,
+        });
+        await storage.createEvalCaseResult({
+          runId: run.id,
+          caseId: tc.id,
+          passed: scored.passed,
+          actualOutput: { response: answerText, skillsLoaded } as any,
+          scorerOutputs: {
+            score: scored.score,
+            passingScore: 1,
+            criteriaMet: scored.met,
+            criteriaMissed: scored.missed,
+            judgeReasoning: scored.reasoning,
+            // Deterministic, so a reader can tell this score was not a model's
+            // opinion -- and noVerdict separates "said nothing parseable" from
+            // "said the wrong thing".
+            instrument: "structured_comparison",
+            noVerdict: scored.noVerdict,
+          } as any,
+          failingReason: scored.passed ? null : scored.reasoning,
+          latencyMs,
+        });
+        continue;
+      }
+
+      byInstrument.prose_judge++;
       let result: Awaited<ReturnType<typeof judgeCase>>;
       try {
         result = await judgeCase({
@@ -466,13 +675,13 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
           orgId,
           readableSkills,
           scenario,
-          expectedBehavior: expected,
-          criteria: [expected],
+          expectedBehavior: instrument.criterion,
+          criteria: [instrument.criterion],
           passingScore: 1,
         });
       } catch (err: any) {
         result = {
-          passed: false, score: 0, criteriaMet: [], criteriaMissed: [expected],
+          passed: false, score: 0, criteriaMet: [], criteriaMissed: [instrument.criterion],
           reasoning: `Execution failed: ${err?.message}`, actualOutput: "", skillsLoaded: [],
         };
       }
@@ -514,7 +723,8 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
         mode: "prompt_level",
         note: "Scored against the agent's assembled system prompt (ontology, bound policies with directives) plus its on-demand skills. MCP tools were not dispatched and no team graph was executed.",
         source: "eval_test_cases",
-        criteriaSource: "expectedOutput (these cases carry no explicit evaluationCriteria)",
+        criteriaSource: "expectedOutput (these cases carry no explicit evaluationCriteria), routed per case to a deterministic field comparison or the prose examiner",
+        instruments: byInstrument,
         unjudgeableCases: unjudgeable,
         skills: {
           offered: readableSkills.map(s => s.name),
@@ -536,6 +746,7 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
       passedCases: passed,
       failedCases: cases.length - passed,
       unjudgeableCases: unjudgeable,
+      instruments: byInstrument,
       passRate,
       avgLatencyMs,
       cases: judged.map(c => ({
