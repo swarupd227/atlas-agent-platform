@@ -39,10 +39,13 @@ import {
   Hash,
   DollarSign,
   User,
+  Repeat,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { MAX_REPEATS } from "@shared/eval-stability";
+import { estimateRepeatedRun } from "@shared/eval-repeat-estimate";
 
 function statusBadge(status: string, passRate: number | null) {
   if (status === "completed") {
@@ -84,6 +87,7 @@ export default function EvalRuns() {
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>("__none__");
   const [judgeModel, setJudgeModel] = useState<string>("__default__");
+  const [runRepeats, setRunRepeats] = useState<number>(1);
 
   const { data: runs, isLoading: runsLoading } = useQuery<EvalTestRun[]>({
     queryKey: ["/api/eval/runs"],
@@ -137,6 +141,7 @@ export default function EvalRuns() {
         metricIds: selectedMetricIds,
         metricCollectionId: selectedCollectionId === "__none__" ? undefined : selectedCollectionId,
         judgeModelOverride: judgeModel === "__default__" ? undefined : judgeModel,
+        repeats: runRepeats > 1 ? runRepeats : undefined,
         triggeredBy: "user",
       });
       if (!res.ok) {
@@ -155,6 +160,14 @@ export default function EvalRuns() {
   });
 
   const canStartRun = !!runAgentId && !!runDatasetId;
+  const runDataset = datasetMap.get(runDatasetId);
+  const repeatEstimate = estimateRepeatedRun({
+    goldenCount: runDataset?.goldenCount ?? 0,
+    repeats: runRepeats,
+    agentId: runAgentId,
+    datasetId: runDatasetId,
+    priorRuns: runs ?? [],
+  });
 
   const toggleMetric = (id: string) => {
     setSelectedMetricIds((prev) =>
@@ -327,11 +340,29 @@ export default function EvalRuns() {
                   </Select>
                 </div>
 
+                {/* Answers per golden */}
+                <div>
+                  <Label className="text-xs mb-1.5 block font-medium">
+                    <Repeat className="w-3 h-3 inline mr-1" />
+                    Answers per golden
+                  </Label>
+                  <Select value={String(runRepeats)} onValueChange={(v) => setRunRepeats(Number(v))}>
+                    <SelectTrigger className="h-8 text-xs" data-testid="select-run-repeats">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: MAX_REPEATS }, (_, i) => i + 1).map((n) => (
+                        <SelectItem key={n} value={String(n)}>{n === 1 ? "1 (as usual)" : `${n} times`}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 {/* Start button */}
                 <div className="flex items-end">
                   <Button
                     className="w-full h-8"
-                    disabled={!canStartRun || startRunMutation.isPending}
+                    disabled={!canStartRun || repeatEstimate.overLimit || startRunMutation.isPending}
                     onClick={() => startRunMutation.mutate()}
                     data-testid="button-start-run"
                   >
@@ -340,6 +371,30 @@ export default function EvalRuns() {
                   </Button>
                 </div>
               </div>
+
+              {/* What a repeated run comes to */}
+              {runRepeats > 1 && (
+                <div className="mt-4 rounded-md border border-border bg-background/60 p-3 text-xs space-y-1" data-testid="card-run-repeats">
+                  <p data-testid="text-run-repeats-summary">
+                    {runDataset
+                      ? `${runDataset.goldenCount ?? 0} goldens × ${runRepeats} = ${repeatEstimate.attempts} answers.`
+                      : "Pick a dataset to see how many answers this comes to."}
+                  </p>
+                  {repeatEstimate.estimatedCostUsd != null && (
+                    <p className="text-muted-foreground" data-testid="text-run-repeats-cost">
+                      About ${repeatEstimate.estimatedCostUsd.toFixed(2)}, estimated from the cost per answer of the last completed run of this agent on this dataset ({repeatEstimate.basedOnRunId?.slice(0, 8)}).
+                    </p>
+                  )}
+                  {repeatEstimate.overLimit && (
+                    <p className="text-red-600" data-testid="text-run-repeats-over-limit">
+                      A run is limited to {repeatEstimate.limit} answers. Lower the number of answers per golden, or use a smaller dataset.
+                    </p>
+                  )}
+                  <p className="text-muted-foreground">
+                    A repeated run is a consistency check. It passes a golden only if every answer passes, and it does not set a gate or serve as the baseline for the regression check.
+                  </p>
+                </div>
+              )}
 
               {/* Metric multi-select */}
               {metrics.length > 0 && (
