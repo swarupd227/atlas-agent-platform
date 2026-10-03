@@ -58,6 +58,7 @@ import mgaBillingGlRouter from "./mock-mcp/mga-billing-gl";
 import mgaTpaClaimsRouter from "./mock-mcp/mga-tpa-claims";
 import serviceNowCmdbMockRouter from "./mock-mcp/servicenow-cmdb";
 import retail365DataLakeRouter from "./mock-mcp/365-data-lake";
+import retail365KycRouter, { teamsRouter as retail365TeamsRouter } from "./mock-mcp/365-kyc";
 import surplusLinesComplianceRouter from "./mock-mcp/surplus-lines-compliance";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
@@ -324,6 +325,8 @@ export async function registerRoutes(
   app.use("/api/mock/mga-tpa-claims", mgaTpaClaimsRouter);
   app.use("/api/mock/servicenow-cmdb", serviceNowCmdbMockRouter);
   app.use("/api/mock/365-data-lake", retail365DataLakeRouter);
+  app.use("/api/mock/365-salesforce-kyc", retail365KycRouter);
+  app.use("/api/mock/365-teams", retail365TeamsRouter);
   app.use("/api/mock/surplus-lines-compliance", surplusLinesComplianceRouter);
   app.use("/api/mock/adobe", adobeAnalyticsRouter);
   app.use("/api/mock/marketo", marketoRouter);
