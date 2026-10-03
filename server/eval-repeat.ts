@@ -8,7 +8,7 @@
  * existing readers display. With one attempt this reduces to what the runners
  * did before, so a run that asks for no repeats is unchanged.
  */
-import { summarizeAttempts, type CaseStability } from "@shared/eval-stability";
+import { summarizeAttempts, type CaseStability, type FieldDisagreement } from "@shared/eval-stability";
 
 /** Attempts of one case in flight at once. */
 export const ATTEMPT_CONCURRENCY = 3;
@@ -46,6 +46,12 @@ export function syncLimitError(caseCount: number, repeats: number): string | nul
   const attempts = caseCount * repeats;
   if (attempts <= SYNC_ATTEMPT_LIMIT) return null;
   return `${attempts} attempts is more than one request can wait for (${SYNC_ATTEMPT_LIMIT}); a repeated run that large needs the background mode, which is not available yet`;
+}
+
+/** The labels that changed between attempts, in words: "severity (high x2, medium x1)". Empty when none did. */
+export function describeUnstableFields(fields: FieldDisagreement[]): string {
+  if (fields.length === 0) return "";
+  return `values changed: ${fields.map(f => `${f.key} (${f.values.map(v => `${v.value} x${v.count}`).join(", ")})`).join("; ")}`;
 }
 
 export interface ScoredAttempt {

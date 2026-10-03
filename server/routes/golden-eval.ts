@@ -9,7 +9,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Skill } from "@shared/schema";
 import { resolveReadableSkills, skillCatalogPrompt, skillToolsFor, executeBuiltinSkillTool, READ_SKILL_TOOL } from "../builtin-skill-tools";
 import { resolveRepeats, summarizeRun, type CaseStability } from "@shared/eval-stability";
-import { runAttempts, foldAttempts, syncLimitError } from "../eval-repeat";
+import { runAttempts, foldAttempts, syncLimitError, describeUnstableFields } from "../eval-repeat";
 
 const router = Router();
 
@@ -596,6 +596,13 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
     const limit = Math.min(Number(req.body?.limit) || allCases.length, 25);
     const cases = allCases.slice(0, limit);
 
+    // Refused before the run row exists, so a bad request leaves nothing "running".
+    const resolved = resolveRepeats(req.body?.repeats, cases.length);
+    if (!resolved.ok) return res.status(400).json({ error: resolved.error });
+    const repeats = resolved.repeats;
+    const tooLarge = syncLimitError(cases.length, repeats);
+    if (tooLarge) return res.status(400).json({ error: tooLarge });
+
     const systemPrompt = await buildAgentSystemPromptWithGovernance(agent, orgId ?? undefined);
     const readableSkills = await resolveReadableSkills(agent.id, orgId).catch(() => [] as Skill[]);
     const skillCatalog = skillCatalogPrompt(readableSkills);
@@ -651,40 +658,58 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
       // what the agent said.
       if (instrument.kind === "structured") {
         byInstrument.structured_comparison++;
-        let answerText = "";
-        let skillsLoaded: string[] = [];
-        let scored: ReturnType<typeof scoreStructuredCase>;
-        try {
-          const answer = await answerCase({
-            systemPrompt: evalSystemPrompt,
-            agentId: agent.id,
-            orgId,
-            readableSkills,
-            scenario: `${scenario}\n\nReturn ONLY a JSON object with exactly these keys: ${instrument.keys.join(", ")}. Do not wrap it in prose.`,
-          });
-          answerText = answer.text;
-          skillsLoaded = answer.skillsLoaded;
-          scored = scoreStructuredCase(instrument.expected, instrument.keys, answerText);
-        } catch (err: any) {
-          scored = {
-            passed: false, score: 0, met: [], missed: instrument.keys,
-            noVerdict: true, reasoning: `Execution failed: ${err?.message}`,
+        // One attempt per repeat. A thrown attempt is a failed attempt with no
+        // verdict, so one bad call does not discard the others.
+        const attempts = await runAttempts(repeats, async () => {
+          const attemptStarted = Date.now();
+          let answerText = "";
+          let skillsLoaded: string[] = [];
+          let scored: ReturnType<typeof scoreStructuredCase>;
+          try {
+            const answer = await answerCase({
+              systemPrompt: evalSystemPrompt,
+              agentId: agent.id,
+              orgId,
+              readableSkills,
+              scenario: `${scenario}\n\nReturn ONLY a JSON object with exactly these keys: ${instrument.keys.join(", ")}. Do not wrap it in prose.`,
+            });
+            answerText = answer.text;
+            skillsLoaded = answer.skillsLoaded;
+            scored = scoreStructuredCase(instrument.expected, instrument.keys, answerText);
+          } catch (err: any) {
+            scored = {
+              passed: false, score: 0, met: [], missed: instrument.keys,
+              noVerdict: true, reasoning: `Execution failed: ${err?.message}`,
+            };
+          }
+          return {
+            scored, answerText, skillsLoaded,
+            passed: scored.passed, score: scored.score,
+            verdict: extractJsonObject(answerText),
+            latencyMs: Date.now() - attemptStarted,
           };
-        }
+        });
+        // The case passes only if every attempt did, and the asserted fields
+        // are checked for a value that changed between attempts. With one
+        // attempt this is the attempt's own result, as before.
+        const { representative, score, stability } = foldAttempts(attempts, { keys: instrument.keys, verdict: a => a.verdict });
+        const { scored, answerText, skillsLoaded } = representative;
         const latencyMs = Date.now() - started;
         judged.push({
           caseId: tc.id, name: tc.name, latencyMs,
-          passed: scored.passed, score: scored.score,
+          passed: stability.passed, score,
           criteriaMet: scored.met, criteriaMissed: scored.missed,
           reasoning: scored.reasoning, actualOutput: answerText, skillsLoaded,
+          ...(repeats > 1 ? { stability } : {}),
         });
+        const changed = describeUnstableFields(stability.unstableFields);
         await storage.createEvalCaseResult({
           runId: run.id,
           caseId: tc.id,
-          passed: scored.passed,
+          passed: stability.passed,
           actualOutput: { response: answerText, skillsLoaded } as any,
           scorerOutputs: {
-            score: scored.score,
+            score,
             passingScore: 1,
             criteriaMet: scored.met,
             criteriaMissed: scored.missed,
@@ -694,48 +719,69 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
             // "said the wrong thing".
             instrument: "structured_comparison",
             noVerdict: scored.noVerdict,
+            ...(repeats > 1 ? {
+              stability,
+              attempts: attempts.map(a => ({
+                passed: a.passed, score: a.score, criteriaMissed: a.scored.missed, reasoning: a.scored.reasoning,
+                noVerdict: a.scored.noVerdict, verdict: a.verdict, response: a.answerText,
+                skillsLoaded: a.skillsLoaded, latencyMs: a.latencyMs,
+              })),
+            } : {}),
           } as any,
-          failingReason: scored.passed ? null : scored.reasoning,
+          failingReason: stability.passed ? null : [stability.failingReason, scored.reasoning, changed].filter(Boolean).join("; "),
           latencyMs,
         });
         continue;
       }
 
       byInstrument.prose_judge++;
-      let result: Awaited<ReturnType<typeof judgeCase>>;
-      try {
-        result = await judgeCase({
-          systemPrompt: evalSystemPrompt,
-          agentId: agent.id,
-          orgId,
-          readableSkills,
-          scenario,
-          expectedBehavior: instrument.criterion,
-          criteria: [instrument.criterion],
-          passingScore: 1,
-        });
-      } catch (err: any) {
-        result = {
-          passed: false, score: 0, criteriaMet: [], criteriaMissed: [instrument.criterion],
-          reasoning: `Execution failed: ${err?.message}`, actualOutput: "", skillsLoaded: [],
-        };
-      }
+      const attempts = await runAttempts(repeats, async () => {
+        const attemptStarted = Date.now();
+        try {
+          const r = await judgeCase({
+            systemPrompt: evalSystemPrompt,
+            agentId: agent.id,
+            orgId,
+            readableSkills,
+            scenario,
+            expectedBehavior: instrument.criterion,
+            criteria: [instrument.criterion],
+            passingScore: 1,
+          });
+          return { ...r, latencyMs: Date.now() - attemptStarted };
+        } catch (err: any) {
+          return {
+            passed: false, score: 0, criteriaMet: [], criteriaMissed: [instrument.criterion],
+            reasoning: `Execution failed: ${err?.message}`, actualOutput: "", skillsLoaded: [] as string[],
+            latencyMs: Date.now() - attemptStarted,
+          };
+        }
+      });
+      const { representative: result, score, stability } = foldAttempts(attempts);
       const latencyMs = Date.now() - started;
-      judged.push({ caseId: tc.id, name: tc.name, latencyMs, ...result });
+      judged.push({ caseId: tc.id, name: tc.name, ...result, latencyMs, passed: stability.passed, score, ...(repeats > 1 ? { stability } : {}) });
 
+      const missedText = result.criteriaMissed.join("; ") || result.reasoning;
       await storage.createEvalCaseResult({
         runId: run.id,
         caseId: tc.id,
-        passed: result.passed,
+        passed: stability.passed,
         actualOutput: { response: result.actualOutput, skillsLoaded: result.skillsLoaded } as any,
         scorerOutputs: {
-          score: result.score,
+          score,
           passingScore: 1,
           criteriaMet: result.criteriaMet,
           criteriaMissed: result.criteriaMissed,
           judgeReasoning: result.reasoning,
+          ...(repeats > 1 ? {
+            stability,
+            attempts: attempts.map(a => ({
+              passed: a.passed, score: a.score, criteriaMissed: a.criteriaMissed, reasoning: a.reasoning,
+              response: a.actualOutput, skillsLoaded: a.skillsLoaded, latencyMs: a.latencyMs,
+            })),
+          } : {}),
         } as any,
-        failingReason: result.passed ? null : (result.criteriaMissed.join("; ") || result.reasoning),
+        failingReason: stability.passed ? null : (stability.failingReason ? `${stability.failingReason}; ${missedText}` : missedText),
         latencyMs,
       });
     }
@@ -746,6 +792,10 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
     // validation; do not copy it.
     const passRate = cases.length > 0 ? passed / cases.length : 0;
     const avgLatencyMs = cases.length > 0 ? Math.round(judged.reduce((a, c) => a + c.latencyMs, 0) / cases.length) : 0;
+    // Cases with nothing to judge never ran, so they are left out of the figures.
+    const stabilitySummary = repeats > 1
+      ? { repeats, stability: summarizeRun(judged.filter(c => c.stability).map(c => ({ caseId: c.caseId, stability: c.stability! }))) }
+      : {};
 
     await storage.updateEvalRun(run.id, {
       status: "completed",
@@ -761,6 +811,7 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
         criteriaSource: "expectedOutput (these cases carry no explicit evaluationCriteria), routed per case to a deterministic field comparison or the prose examiner",
         instruments: byInstrument,
         unjudgeableCases: unjudgeable,
+        ...stabilitySummary,
         skills: {
           offered: readableSkills.map(s => s.name),
           casesThatLoadedASkill: judged.filter(c => c.skillsLoaded.length > 0).length,
@@ -784,9 +835,15 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
       instruments: byInstrument,
       passRate,
       avgLatencyMs,
+      ...stabilitySummary,
       cases: judged.map(c => ({
         caseId: c.caseId, name: c.name, passed: c.passed, score: c.score,
         reasoning: c.reasoning, skillsLoaded: c.skillsLoaded, latencyMs: c.latencyMs,
+        ...(c.stability ? {
+          attempts: c.stability.attempts, passedAttempts: c.stability.passedAttempts,
+          outcome: c.stability.outcome, consistency: c.stability.consistency,
+          unstableFields: c.stability.unstableFields,
+        } : {}),
       })),
     });
   } catch (e: any) {

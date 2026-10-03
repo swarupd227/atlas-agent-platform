@@ -9,7 +9,7 @@
  *   - a repeated run too large for one request is refused with the numbers.
  */
 import { describe, it, expect } from "vitest";
-import { runAttempts, foldAttempts, syncLimitError, ATTEMPT_CONCURRENCY, SYNC_ATTEMPT_LIMIT } from "../server/eval-repeat";
+import { runAttempts, foldAttempts, syncLimitError, describeUnstableFields, ATTEMPT_CONCURRENCY, SYNC_ATTEMPT_LIMIT } from "../server/eval-repeat";
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -61,6 +61,20 @@ describe("syncLimitError", () => {
     expect(msg).toContain("20 attempts");
     expect(msg).toContain(String(SYNC_ATTEMPT_LIMIT));
     expect(msg).toContain("background");
+  });
+});
+
+describe("describeUnstableFields", () => {
+  it("is empty when no label changed", () => {
+    expect(describeUnstableFields([])).toBe("");
+  });
+
+  it("names each changed label with how often each value appeared", () => {
+    const text = describeUnstableFields([
+      { key: "severity", values: [{ value: "high", count: 3 }, { value: "medium", count: 1 }], agreement: 0.75 },
+      { key: "action", values: [{ value: "notify_owner", count: 2 }, { value: "(missing)", count: 2 }], agreement: 0.5 },
+    ]);
+    expect(text).toBe("values changed: severity (high x3, medium x1); action (notify_owner x2, (missing) x2)");
   });
 });
 
