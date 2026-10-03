@@ -46,6 +46,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { MAX_REPEATS } from "@shared/eval-stability";
 import { estimateRepeatedRun } from "@shared/eval-repeat-estimate";
+import { isRepeatedRun } from "@shared/eval-run-view";
 
 function statusBadge(status: string, passRate: number | null) {
   if (status === "completed") {
@@ -497,6 +498,16 @@ export default function EvalRuns() {
                         {pct != null && (
                           <span className={`text-xs font-semibold ${pct >= 85 ? "text-emerald-600" : pct >= 70 ? "text-amber-600" : "text-red-600"}`}>
                             {pct}% pass
+                          </span>
+                        )}
+                        {isRepeatedRun(run) && (
+                          <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20" data-testid={`badge-run-repeats-${run.id}`}>
+                            <Repeat className="w-2.5 h-2.5 mr-1" />×{run.repeats} answers
+                          </Badge>
+                        )}
+                        {isRepeatedRun(run) && run.status === "completed" && (run.flakyCount ?? 0) > 0 && (
+                          <span className="text-xs font-medium text-amber-600" data-testid={`text-run-flaky-${run.id}`}>
+                            {run.flakyCount} flaky
                           </span>
                         )}
                         {(run.status === "running" || run.status === "pending") && run.totalGoldens != null && (

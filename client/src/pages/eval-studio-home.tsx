@@ -26,6 +26,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { QueryBoundary } from "@/components/ui-vocab";
 import { formatDateTime } from "@/lib/format";
 import type { Agent } from "@shared/schema";
+import { isRepeatedRun, previousComparableRun } from "@shared/eval-run-view";
 
 interface EvalRun {
   id: string;
@@ -44,6 +45,11 @@ interface EvalRun {
   tags?: string[] | null;
   isBaseline?: boolean | null;
   triggeredBy?: string | null;
+  /** Answers per golden. Above 1 the run is a consistency check, scored strictly and not gated. */
+  repeats?: number | null;
+  /** Goldens whose answers did not all agree. Set only on a repeated run. */
+  flakyCount?: number | null;
+  consistency?: number | null;
 }
 
 interface EvalGate {
@@ -234,6 +240,7 @@ export default function EvalStudioHome() {
                       <div className="flex items-center gap-1.5 flex-wrap font-mono text-[10px] text-muted-foreground">
                         <span>{agentRuns.length} run{agentRuns.length === 1 ? "" : "s"}</span>
                         {last?.failedCount ? <span className="text-red-600 dark:text-red-400">{last.failedCount} failed</span> : null}
+                        {last && isRepeatedRun(last) && (last.flakyCount ?? 0) > 0 && <span className="text-amber-600 dark:text-amber-400">{last.flakyCount} flaky</span>}
                         {verdict === "fail" && <span className="text-red-600 dark:text-red-400">gate failed</span>}
                         {verdict === "warn" && <span className="text-amber-600 dark:text-amber-400">gate warning</span>}
                         {verdict === "pass" && <span className="text-emerald-600 dark:text-emerald-400">gate passed</span>}
@@ -264,7 +271,7 @@ export default function EvalStudioHome() {
 
 function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[]; gate?: EvalGate }) {
   const last = runs[0];
-  const previous = runs.find((r, i) => i > 0 && r.passRate != null);
+  const previous = previousComparableRun(runs);
   const delta = last?.passRate != null && previous?.passRate != null ? (last.passRate - previous.passRate) * 100 : null;
   const verdict = gateVerdict(last);
   const threshold = gateThreshold(gate);
@@ -290,9 +297,18 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
                 <span className={`text-2xl font-semibold tabular-nums ${rateTone(last.passRate)}`}>{pct(last.passRate)}</span>
                 <span className="text-sm text-muted-foreground">
                   {last.passedCount ?? 0} of {last.totalGoldens ?? 0} cases passed
+                  {isRepeatedRun(last) && <> every time, over {last.repeats} answers each</>}
                   {delta != null && <> · {delta >= 0 ? "+" : ""}{Math.round(delta * 10) / 10} points since the run before</>}
                 </span>
               </div>
+              {isRepeatedRun(last) && last.status === "completed" && (
+                <div className="text-sm" data-testid="text-last-run-flaky">
+                  {(last.flakyCount ?? 0) > 0
+                    ? <span className="text-amber-600 dark:text-amber-400">{last.flakyCount} case{last.flakyCount === 1 ? "" : "s"} did not answer the same way each time</span>
+                    : <span className="text-emerald-600 dark:text-emerald-400">Every case answered the same way each time</span>}
+                  {last.consistency != null && <span className="text-muted-foreground"> · {Math.round(last.consistency * 100)}% of answers agree</span>}
+                </div>
+              )}
               <div className="font-mono text-[11px] text-muted-foreground">
                 {[last.status, last.completedAt ? formatDateTime(last.completedAt) : last.startedAt ? formatDateTime(last.startedAt) : null, last.costUsd != null ? `$${last.costUsd.toFixed(4)}` : null].filter(Boolean).join(" · ")}
               </div>
@@ -321,6 +337,8 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
                 <><ShieldAlert className="w-3.5 h-3.5 mt-0.5 text-amber-500 shrink-0" /><span>The last run is under the gate's target but above the warning line.</span></>
               ) : verdict === "pass" ? (
                 <><ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-emerald-500 shrink-0" /><span>The last run passed the gate.</span></>
+              ) : last && isRepeatedRun(last) ? (
+                <><CircleSlash className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" /><span className="text-muted-foreground" data-testid="text-gate-repeated">The last run answered each case several times to check consistency. That kind of run does not set a gate verdict, so it neither passed nor failed the gate.</span></>
               ) : (
                 <><CircleSlash className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" /><span className="text-muted-foreground">A gate is set, but the last run recorded no verdict — it predates the gate or did not finish.</span></>
               )}
@@ -350,6 +368,7 @@ function AgentEvalDetail({ agent, runs, gate }: { agent: Agent; runs: EvalRun[];
                   <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
                     {[r.status, r.completedAt ? formatDateTime(r.completedAt) : r.startedAt ? formatDateTime(r.startedAt) : "not started"].filter(Boolean).join(" · ")}
                   </span>
+                  {isRepeatedRun(r) && <span className="shrink-0 font-mono text-[11px] text-muted-foreground" data-testid={`text-run-repeated-${r.id}`}>×{r.repeats}{(r.flakyCount ?? 0) > 0 ? ` · ${r.flakyCount} flaky` : ""}</span>}
                   {(r.failedCount ?? 0) > 0 && <span className="shrink-0 text-[11px] text-red-600 dark:text-red-400">{r.failedCount} failed</span>}
                   <Link href={`/evals/runs/${r.id}`} className="shrink-0 text-[11px] underline underline-offset-2">Open</Link>
                 </li>

@@ -1,7 +1,16 @@
-import { useState, useMemo, useCallback } from "react";
+import { Fragment, useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useSearch } from "wouter";
 import type { Agent, EvalTestRun, EvalTrace, EvalGolden } from "@shared/schema";
+import {
+  collapseByGolden,
+  filterGoldenRows,
+  groupTracesByGolden,
+  isRepeatedRun,
+  type GoldenAttempts,
+  type GoldenStatus,
+  type RowFilter,
+} from "@shared/eval-run-view";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,6 +54,7 @@ import {
   TrendingDown,
   TrendingUp,
   Minus,
+  Repeat,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
 
@@ -105,7 +115,7 @@ function exportCsv(
   filename: string
 ) {
   const rows = [
-    ["golden_id", "input", "expected_output", "pass_fail", "latency_ms", "cost_usd", "total_tokens"].join(","),
+    ["golden_id", "input", "expected_output", "pass_fail", "latency_ms", "cost_usd", "total_tokens", "attempt"].join(","),
     ...traces.map((t) => {
       const g = goldenMap.get(t.goldenId);
       return [
@@ -116,6 +126,7 @@ function exportCsv(
         t.latencyMs ?? "",
         t.costUsd ?? "",
         t.totalTokens ?? "",
+        t.attempt ?? 1,
       ].join(",");
     }),
   ];
@@ -126,6 +137,269 @@ function exportCsv(
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ── Traces ────────────────────────────────────────────────────────────────────
+
+const TRACE_PAGE_SIZE = 200;
+// A repeated run holds at most 300 answers (MAX_STUDIO_ATTEMPTS), so two pages; this is a backstop.
+const MAX_TRACE_PAGES = 5;
+
+/**
+ * An ordinary run is one request, as it always was. A repeated run has several
+ * traces per golden and can pass one page, so it reads every page: the page
+ * groups them by golden and would otherwise show a golden with answers missing.
+ */
+async function fetchTraces(runId: string, passFail: "pass" | "fail" | null, allPages: boolean): Promise<EvalTrace[]> {
+  const get = async (pageNo: number) => {
+    const params = new URLSearchParams({ limit: String(TRACE_PAGE_SIZE) });
+    if (passFail) params.set("passFail", passFail);
+    if (pageNo > 1) params.set("page", String(pageNo));
+    const res = await fetch(`/api/eval/runs/${runId}/traces?${params}`);
+    return res.json();
+  };
+  const first = await get(1);
+  if (!allPages || !Array.isArray(first) || first.length < TRACE_PAGE_SIZE) return first;
+  const all: EvalTrace[] = [...first];
+  for (let pageNo = 2; pageNo <= MAX_TRACE_PAGES; pageNo++) {
+    const batch = await get(pageNo);
+    if (!Array.isArray(batch)) break;
+    all.push(...batch);
+    if (batch.length < TRACE_PAGE_SIZE) break;
+  }
+  return all;
+}
+
+// ── Comparison cell ───────────────────────────────────────────────────────────
+
+interface Comparison {
+  status: "regressed" | "improved" | "unchanged" | "new";
+  scoreDelta: number | null;
+}
+
+function CompareCell({ cmp }: { cmp: Comparison | undefined }) {
+  if (!cmp) return <td className="px-4 py-2.5 text-muted-foreground text-[10px]">—</td>;
+  const deltaStr = cmp.scoreDelta != null
+    ? `${cmp.scoreDelta > 0 ? "+" : ""}${(cmp.scoreDelta * 100).toFixed(1)}%`
+    : null;
+  if (cmp.status === "regressed") return (
+    <td className="px-4 py-2.5">
+      <span className="flex items-center gap-1 text-[10px] text-red-600 font-medium">
+        <TrendingDown className="w-3 h-3" /> Regressed
+      </span>
+      {deltaStr && <span className="text-[9px] text-red-400 mt-0.5 block">{deltaStr}</span>}
+    </td>
+  );
+  if (cmp.status === "improved") return (
+    <td className="px-4 py-2.5">
+      <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
+        <TrendingUp className="w-3 h-3" /> Improved
+      </span>
+      {deltaStr && <span className="text-[9px] text-emerald-400 mt-0.5 block">{deltaStr}</span>}
+    </td>
+  );
+  if (cmp.status === "new") return (
+    <td className="px-4 py-2.5">
+      <span className="text-[10px] text-blue-500 font-medium">New</span>
+    </td>
+  );
+  return (
+    <td className="px-4 py-2.5">
+      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+        <Minus className="w-3 h-3" /> Same
+      </span>
+      {deltaStr && <span className="text-[9px] text-muted-foreground/60 mt-0.5 block">{deltaStr}</span>}
+    </td>
+  );
+}
+
+// ── Repeated runs ─────────────────────────────────────────────────────────────
+
+function PassFailBadge({ passFail, active }: { passFail: boolean | null | undefined; active: boolean }) {
+  if (passFail === true) return (
+    <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+      <CheckCircle2 className="w-2.5 h-2.5 mr-1" />Pass
+    </Badge>
+  );
+  if (passFail === false) return (
+    <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 border-red-500/20">
+      <XCircle className="w-2.5 h-2.5 mr-1" />Fail
+    </Badge>
+  );
+  if (active) return (
+    <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-600 border-blue-500/20 animate-pulse">
+      <Loader2 className="w-2.5 h-2.5 mr-1 animate-spin" />Evaluating
+    </Badge>
+  );
+  return <Badge variant="outline" className="text-[10px]">—</Badge>;
+}
+
+function GoldenStatusBadge({ status, active }: { status: GoldenStatus; active: boolean }) {
+  if (status === "flaky") return (
+    <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/20" data-testid="badge-golden-flaky">
+      <AlertTriangle className="w-2.5 h-2.5 mr-1" />Flaky
+    </Badge>
+  );
+  return <PassFailBadge passFail={status === "pass" ? true : status === "fail" ? false : null} active={active} />;
+}
+
+function StabilityCard({ run, rows }: { run: EvalTestRun; rows: Array<GoldenAttempts<EvalTrace>> }) {
+  const done = run.status === "completed";
+  const flaky = done ? (run.flakyCount ?? 0) : rows.filter((r) => r.status === "flaky").length;
+  const consistency = done && run.consistency != null ? Math.round(run.consistency * 100) : null;
+  const answers = rows.reduce((s, r) => s + r.finished, 0);
+  const total = (run.totalGoldens ?? 0) * (run.repeats ?? 1);
+  return (
+    <Card data-testid="card-run-stability">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Repeat className="w-4 h-4 text-primary" />
+          Consistency
+          <Badge variant="outline" className="ml-1 text-[10px]" data-testid="badge-run-repeats">
+            {run.repeats} answers per golden
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-md border p-3">
+            <div className="text-[10px] text-muted-foreground mb-1">Agreeing answers</div>
+            <div className="text-2xl font-bold" data-testid="text-run-consistency">{consistency != null ? `${consistency}%` : "—"}</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">mean share of a golden's answers that agree</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-[10px] text-muted-foreground mb-1">Flaky goldens</div>
+            <div className={`text-2xl font-bold ${flaky > 0 ? "text-amber-600" : ""}`} data-testid="text-run-flaky">{flaky}</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">{done ? "answers disagreed" : "disagreeing so far"}</div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-[10px] text-muted-foreground mb-1">Answers</div>
+            <div className="text-2xl font-bold">{answers}{total > 0 && <span className="text-sm font-normal text-muted-foreground"> / {total}</span>}</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">{run.totalGoldens ?? 0} goldens × {run.repeats}</div>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-3" data-testid="text-run-stability-note">
+          A golden passes only if every one of its {run.repeats} answers passes. A repeated run does not set a gate and is not the baseline for the regression check.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function meanOf(values: Array<number | null | undefined>): number | null {
+  const v = values.filter((x): x is number => typeof x === "number");
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+}
+
+interface RepeatedTableProps {
+  rows: Array<GoldenAttempts<EvalTrace>>;
+  goldenMap: Map<string, EvalGolden>;
+  comparisonMap: Map<string, Comparison> | null;
+  active: boolean;
+  filter: RowFilter;
+  expanded: Record<string, boolean>;
+  onToggle: (goldenId: string, open: boolean) => void;
+}
+
+function RepeatedResultsTable({ rows, goldenMap, comparisonMap, active, filter, expanded, onToggle }: RepeatedTableProps) {
+  if (rows.length === 0) {
+    return (
+      <div className="py-12 text-center text-sm text-muted-foreground" data-testid="text-no-golden-rows">
+        {filter === "flaky" ? "No flaky goldens: every golden answered the same way each time." : "No goldens match this filter."}
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b bg-muted/30">
+            <th className="text-left px-4 py-2.5 text-muted-foreground font-medium">Golden</th>
+            <th className="text-left px-4 py-2.5 text-muted-foreground font-medium min-w-[200px]">Input</th>
+            <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-20">Result</th>
+            {comparisonMap && <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-24">vs Baseline</th>}
+            <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-36">Answers</th>
+            <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-32">Scores</th>
+            <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-24">Latency</th>
+            <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-20">Cost</th>
+            <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-16">Trace</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {rows.map((row) => {
+            const g = goldenMap.get(row.goldenId);
+            const open = expanded[row.goldenId] ?? row.status === "flaky";
+            const latency = meanOf(row.attempts.map((a) => a.latencyMs));
+            const cost = row.attempts.reduce((s, a) => s + (a.costUsd ?? 0), 0);
+            const remaining = row.expected - row.finished;
+            return (
+              <Fragment key={row.goldenId}>
+                <tr className="hover:bg-muted/20 transition-colors" data-testid={`row-golden-${row.goldenId}`}>
+                  <td className="px-4 py-2.5 font-mono text-muted-foreground">
+                    <button
+                      className="flex items-center gap-1 hover:text-foreground transition-colors"
+                      onClick={() => onToggle(row.goldenId, !open)}
+                      aria-expanded={open}
+                      data-testid={`button-toggle-golden-${row.goldenId}`}
+                    >
+                      <ChevronRight className={`w-3 h-3 transition-transform ${open ? "rotate-90" : ""}`} />
+                      {row.goldenId.slice(0, 8)}
+                    </button>
+                  </td>
+                  <td className="px-4 py-2.5 max-w-[200px]">
+                    <span className="font-mono line-clamp-2 text-[11px] leading-relaxed">
+                      {g?.input ?? <span className="italic text-muted-foreground/50">unknown golden</span>}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5"><GoldenStatusBadge status={row.status} active={active} /></td>
+                  {comparisonMap && <CompareCell cmp={comparisonMap.get(row.goldenId)} />}
+                  <td className="px-4 py-2.5" data-testid={`text-golden-answers-${row.goldenId}`}>
+                    <span className="font-medium">{row.stability.passedAttempts} of {row.finished} passed</span>
+                    {row.status === "flaky" && row.stability.consistency != null && (
+                      <span className="text-[10px] text-amber-600 block">{Math.round(row.stability.consistency * 100)}% agree</span>
+                    )}
+                    {remaining > 0 && <span className="text-[10px] text-muted-foreground block">{remaining} to go</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-muted-foreground/40">—</td>
+                  <td className="px-4 py-2.5 text-muted-foreground">
+                    {latency != null ? `${Math.round(latency).toLocaleString()}ms` : "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-muted-foreground">{cost > 0 ? `$${cost.toFixed(5)}` : "—"}</td>
+                  <td className="px-4 py-2.5" />
+                </tr>
+                {open && row.attempts.map((t) => (
+                  <tr key={t.id} className="bg-muted/10 hover:bg-muted/20 transition-colors" data-testid={`row-trace-${t.id}`}>
+                    <td className="pl-9 pr-4 py-2 text-muted-foreground">Answer {t.attempt ?? 1}</td>
+                    <td className="px-4 py-2" />
+                    <td className="px-4 py-2">
+                      <PassFailBadge passFail={t.passFail} active={active} />
+                      {t.agentFailed && <div className="text-[9px] text-red-500 mt-0.5">agent error</div>}
+                    </td>
+                    {comparisonMap && <td />}
+                    <td className="px-4 py-2" />
+                    <td className="px-4 py-2"><ScoreCell scores={t.scores} /></td>
+                    <td className="px-4 py-2 text-muted-foreground">{t.latencyMs != null ? `${t.latencyMs.toLocaleString()}ms` : "—"}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{t.costUsd != null && t.costUsd > 0 ? `$${t.costUsd.toFixed(5)}` : "—"}</td>
+                    <td className="px-4 py-2">
+                      <Link href={`/evals/traces/${t.id}`}>
+                        <button
+                          className="flex items-center gap-0.5 text-[10px] text-primary/70 hover:text-primary transition-colors"
+                          data-testid={`link-trace-${t.id}`}
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          View
+                        </button>
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 // ── Progress bar ──────────────────────────────────────────────────────────────
@@ -155,7 +429,7 @@ function ProgressBar({ run }: ProgressBarProps) {
             Progress
           </span>
           <span className="text-xs text-muted-foreground font-normal">
-            {evaluated} / {total} evaluated
+            {evaluated} / {total} evaluated{isRepeatedRun(run) ? ` · ${run.repeats} answers each` : ""}
           </span>
         </CardTitle>
       </CardHeader>
@@ -210,11 +484,12 @@ function ProgressBar({ run }: ProgressBarProps) {
 export default function EvalRunDetail() {
   const { id } = useParams<{ id: string }>();
   const search = useSearch();
-  const initialFilter = useMemo<"all" | "pass" | "fail">(() => {
+  const initialFilter = useMemo<RowFilter>(() => {
     const pf = new URLSearchParams(search).get("passFail");
     return pf === "fail" ? "fail" : pf === "pass" ? "pass" : "all";
   }, []);
-  const [tracesFilter, setTracesFilter] = useState<"all" | "pass" | "fail">(initialFilter);
+  const [tracesFilter, setTracesFilter] = useState<RowFilter>(initialFilter);
+  const [expandedGoldens, setExpandedGoldens] = useState<Record<string, boolean>>({});
   const [compareDialogOpen, setCompareDialogOpen] = useState(false);
   const [compareRunId, setCompareRunId] = useState<string | null>(null);
 
@@ -248,48 +523,46 @@ export default function EvalRunDetail() {
     );
   }, [agentRuns, run]);
 
-  const tracesQueryKey = ["/api/eval/runs", id, "traces", tracesFilter];
+  // A repeated run has several traces per golden. The page reads all of them and filters by golden,
+  // since "failed" for a golden depends on its other answers; an ordinary run filters on the server.
+  const repeated = isRepeatedRun(run);
+  const serverFilter: "pass" | "fail" | null = !repeated && (tracesFilter === "pass" || tracesFilter === "fail") ? tracesFilter : null;
+  const tracesQueryKey = ["/api/eval/runs", id, "traces", serverFilter ?? "all", repeated ? "all-pages" : "first-page"];
   const { data: traces, isLoading: tracesLoading } = useQuery<EvalTrace[]>({
     queryKey: tracesQueryKey,
-    queryFn: async () => {
-      const params = new URLSearchParams({ limit: "200" });
-      if (tracesFilter !== "all") params.set("passFail", tracesFilter);
-      const res = await fetch(`/api/eval/runs/${id}/traces?${params}`);
-      return res.json();
-    },
+    queryFn: () => fetchTraces(id!, serverFilter, repeated),
     enabled: !!id && !!run,
     refetchInterval: run?.status === "pending" || run?.status === "running" ? 3000 : false,
   });
 
+  const compareRun = comparableRuns.find((r) => r.id === compareRunId);
+
   // Comparison run traces
   const { data: compareTraces, isLoading: compareTracesLoading } = useQuery<EvalTrace[]>({
     queryKey: ["/api/eval/runs", compareRunId, "traces", "all"],
-    queryFn: async () => {
-      const res = await fetch(`/api/eval/runs/${compareRunId}/traces?limit=200`);
-      return res.json();
-    },
+    queryFn: () => fetchTraces(compareRunId!, null, isRepeatedRun(compareRun)),
     enabled: !!compareRunId,
   });
 
-  // Helper: compute average of numeric values in a scores object
-  const avgScore = (scores: unknown): number | null => {
-    if (!scores || typeof scores !== "object") return null;
-    const vals = Object.values(scores as Record<string, unknown>).filter((v) => typeof v === "number") as number[];
-    if (!vals.length) return null;
-    return vals.reduce((a, b) => a + b, 0) / vals.length;
-  };
+  // One row per golden for a repeated run: all its answers, and the golden's own verdict.
+  const allGoldenRows = useMemo(
+    () => (repeated && traces ? groupTracesByGolden(traces, run?.repeats ?? 1) : []),
+    [repeated, traces, run?.repeats],
+  );
+  const goldenRows = useMemo(() => filterGoldenRows(allGoldenRows, tracesFilter), [allGoldenRows, tracesFilter]);
 
-  // Build comparison map: goldenId → comparison data
+  // Build comparison map: goldenId → comparison data. Each side is one verdict and one score per
+  // golden, so a repeated run is read as a whole and not as whichever of its answers came last.
   const comparisonMap = useMemo(() => {
     if (!traces || !compareTraces) return null;
-    const baseMap = new Map<string, { passFail: boolean | null; avg: number | null }>();
-    for (const t of compareTraces) baseMap.set(t.goldenId, { passFail: t.passFail ?? null, avg: avgScore(t.scores) });
+    const baseMap = collapseByGolden(compareTraces, compareRun?.repeats ?? 1);
+    const currentMap = collapseByGolden(traces, run?.repeats ?? 1);
     const result = new Map<string, { current: boolean | null; baseline: boolean | null; status: "regressed" | "improved" | "unchanged" | "new"; scoreDelta: number | null }>();
-    for (const t of traces) {
-      const base = baseMap.get(t.goldenId);
-      const currentPf = t.passFail ?? null;
+    for (const [goldenId, cur] of Array.from(currentMap.entries())) {
+      const base = baseMap.get(goldenId);
+      const currentPf = cur.passFail;
       const baselinePf = base?.passFail ?? null;
-      const currentAvg = avgScore(t.scores);
+      const currentAvg = cur.avg;
       const baselineAvg = base?.avg ?? null;
       const scoreDelta = (currentAvg != null && baselineAvg != null) ? currentAvg - baselineAvg : null;
 
@@ -305,12 +578,10 @@ export default function EvalRunDetail() {
         else if (baselinePf === false && currentPf === true) status = "improved";
         else status = "unchanged";
       }
-      result.set(t.goldenId, { current: currentPf, baseline: baselinePf, status, scoreDelta });
+      result.set(goldenId, { current: currentPf, baseline: baselinePf, status, scoreDelta });
     }
     return result;
-  }, [traces, compareTraces]);
-
-  const compareRun = comparableRuns.find((r) => r.id === compareRunId);
+  }, [traces, compareTraces, compareRun?.repeats, run?.repeats]);
 
   const { data: goldens } = useQuery<EvalGolden[]>({
     queryKey: ["/api/eval/datasets", run?.datasetId, "goldens-all"],
@@ -455,6 +726,11 @@ export default function EvalRunDetail() {
                 <Badge variant="outline" className={`ml-1 text-[10px] ${badge.cls}`}>
                   {badge.label} pass rate
                 </Badge>
+                {repeated && (
+                  <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20" data-testid="badge-repeated-run">
+                    <Repeat className="w-2.5 h-2.5 mr-1" /> Repeated ×{run.repeats}
+                  </Badge>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -473,7 +749,9 @@ export default function EvalRunDetail() {
                   <div className={`text-2xl font-bold ${passRatePct != null && passRatePct >= 85 ? "text-emerald-600" : passRatePct != null && passRatePct >= 70 ? "text-amber-600" : "text-red-600"}`}>
                     {passRatePct != null ? `${passRatePct}%` : "—"}
                   </div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">threshold 85%</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {repeated ? "strict, no gate" : "threshold 85%"}
+                  </div>
                 </div>
                 <div className="rounded-md border p-3">
                   <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
@@ -482,7 +760,7 @@ export default function EvalRunDetail() {
                   <div className="text-2xl font-bold">{run.totalGoldens ?? "—"}</div>
                   {run.passedCount != null && run.failedCount != null && (
                     <div className="text-[10px] text-muted-foreground mt-0.5">
-                      {run.passedCount} passed · {run.failedCount} failed
+                      {run.passedCount} passed · {run.failedCount} failed{repeated ? ` · ×${run.repeats} answers` : ""}
                     </div>
                   )}
                 </div>
@@ -529,6 +807,8 @@ export default function EvalRunDetail() {
             </CardContent>
           </Card>
 
+          {repeated && <StabilityCard run={run} rows={allGoldenRows} />}
+
           {/* Per-golden traces table */}
           <Card data-testid="card-run-traces">
             <CardHeader className="pb-3">
@@ -537,18 +817,21 @@ export default function EvalRunDetail() {
                   <Hash className="w-4 h-4 text-primary" />
                   Per-Golden Results
                   {traces && (
-                    <span className="text-muted-foreground font-normal text-xs">({traces.length} loaded)</span>
+                    <span className="text-muted-foreground font-normal text-xs">
+                      {repeated ? `(${allGoldenRows.length} goldens · ${traces.length} answers)` : `(${traces.length} loaded)`}
+                    </span>
                   )}
                 </CardTitle>
                 <div className="flex items-center gap-2">
-                  <Select value={tracesFilter} onValueChange={(v) => setTracesFilter(v as "all" | "pass" | "fail")}>
-                    <SelectTrigger className="h-7 w-24 text-xs" data-testid="select-traces-filter">
+                  <Select value={tracesFilter} onValueChange={(v) => setTracesFilter(v as RowFilter)}>
+                    <SelectTrigger className="h-7 w-28 text-xs" data-testid="select-traces-filter">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
                       <SelectItem value="pass">Passed</SelectItem>
                       <SelectItem value="fail">Failed</SelectItem>
+                      {repeated && <SelectItem value="flaky">Flaky only</SelectItem>}
                     </SelectContent>
                   </Select>
                 </div>
@@ -574,6 +857,16 @@ export default function EvalRunDetail() {
                     </>
                   )}
                 </div>
+              ) : repeated ? (
+                <RepeatedResultsTable
+                  rows={goldenRows}
+                  goldenMap={goldenMap}
+                  comparisonMap={comparisonMap}
+                  active={run.status === "running" || run.status === "pending"}
+                  filter={tracesFilter}
+                  expanded={expandedGoldens}
+                  onToggle={(goldenId, open) => setExpandedGoldens((prev) => ({ ...prev, [goldenId]: open }))}
+                />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -626,42 +919,7 @@ export default function EvalRunDetail() {
                                 <div className="text-[9px] text-red-500 mt-0.5">agent error</div>
                               )}
                             </td>
-                            {comparisonMap && (() => {
-                              const cmp = comparisonMap.get(t.goldenId);
-                              if (!cmp) return <td className="px-4 py-2.5 text-muted-foreground text-[10px]">—</td>;
-                              const deltaStr = cmp.scoreDelta != null
-                                ? `${cmp.scoreDelta > 0 ? "+" : ""}${(cmp.scoreDelta * 100).toFixed(1)}%`
-                                : null;
-                              if (cmp.status === "regressed") return (
-                                <td className="px-4 py-2.5">
-                                  <span className="flex items-center gap-1 text-[10px] text-red-600 font-medium">
-                                    <TrendingDown className="w-3 h-3" /> Regressed
-                                  </span>
-                                  {deltaStr && <span className="text-[9px] text-red-400 mt-0.5 block">{deltaStr}</span>}
-                                </td>
-                              );
-                              if (cmp.status === "improved") return (
-                                <td className="px-4 py-2.5">
-                                  <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
-                                    <TrendingUp className="w-3 h-3" /> Improved
-                                  </span>
-                                  {deltaStr && <span className="text-[9px] text-emerald-400 mt-0.5 block">{deltaStr}</span>}
-                                </td>
-                              );
-                              if (cmp.status === "new") return (
-                                <td className="px-4 py-2.5">
-                                  <span className="text-[10px] text-blue-500 font-medium">New</span>
-                                </td>
-                              );
-                              return (
-                                <td className="px-4 py-2.5">
-                                  <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                                    <Minus className="w-3 h-3" /> Same
-                                  </span>
-                                  {deltaStr && <span className="text-[9px] text-muted-foreground/60 mt-0.5 block">{deltaStr}</span>}
-                                </td>
-                              );
-                            })()}
+                            {comparisonMap && <CompareCell cmp={comparisonMap.get(t.goldenId)} />}
                             <td className="px-4 py-2.5">
                               <ScoreCell scores={t.scores} />
                             </td>
@@ -715,6 +973,12 @@ export default function EvalRunDetail() {
                   <span className="text-muted-foreground">Completed</span>
                   <span className="text-xs">{completedAtDate ? formatDate(completedAtDate) : "—"}</span>
                 </div>
+                {repeated && (
+                  <div className="flex justify-between py-1.5 border-b">
+                    <span className="text-muted-foreground">Answers per golden</span>
+                    <span className="text-xs">{run.repeats}</span>
+                  </div>
+                )}
                 {run.triggeredBy && (
                   <div className="flex justify-between py-1.5 border-b">
                     <span className="text-muted-foreground">Triggered by</span>
@@ -786,7 +1050,10 @@ export default function EvalRunDetail() {
                     data-testid={`option-compare-run-${r.id}`}
                   >
                     <div>
-                      <div className="text-sm font-mono font-medium">{r.id.slice(0, 8)}</div>
+                      <div className="text-sm font-mono font-medium">
+                        {r.id.slice(0, 8)}
+                        {isRepeatedRun(r) && <span className="ml-2 text-[10px] font-sans font-normal text-primary">×{r.repeats} answers</span>}
+                      </div>
                       <div className="text-[11px] text-muted-foreground mt-0.5">
                         {rDate ? formatDate(rDate) : "—"}
                         {r.datasetId && <span className="ml-2 font-mono">{r.datasetId.slice(0, 8)}</span>}
