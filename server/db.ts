@@ -2023,6 +2023,36 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_decision_classifiers_org ON decision_classifiers (organization_id, name);
     `);
 
+    // Intelligence Context Layer, phase 1: decisions indexed BY BUSINESS
+    // OBJECT. Phase 0 read prior decisions by scanning the most recent runs
+    // and asking each whether its state mentioned the subject. Measured on
+    // live data that fails: five finished runs had decided on SUB-2026-8891,
+    // four sat outside the 60-run window and the fifth was the asking run, so
+    // the layer reported "no record" for a submission it had bound twice.
+    // A lookup on subject cannot go stale with traffic the way a recency scan
+    // does.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS decision_records (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        subject VARCHAR NOT NULL,
+        subject_type VARCHAR NOT NULL,
+        team_agent_id VARCHAR,
+        run_id VARCHAR NOT NULL,
+        decided_at TIMESTAMP,
+        decision JSONB NOT NULL DEFAULT '{}'::jsonb,
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        from_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      -- One record per (subject, run): a run is re-recorded, not duplicated,
+      -- if its completion is processed twice.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_records_subject_run ON decision_records (subject, run_id);
+      -- The lookup this exists for.
+      CREATE INDEX IF NOT EXISTS idx_decision_records_subject ON decision_records (subject, decided_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_decision_records_org_subject ON decision_records (organization_id, subject);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

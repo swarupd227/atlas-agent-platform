@@ -22,6 +22,12 @@ const runs: any[] = [];
 // are mocked, and a test asserts the index was actually consulted.
 const blueprintNodes: any[] = [];
 const getTeamBlueprintNodes = vi.fn(async () => blueprintNodes);
+// Phase 1: decisions indexed by subject. Without this in the mock the
+// resolver silently falls back to the recency scan and every assertion
+// below would cover the WRONG path.
+let decisionRecords: any[] = [];
+const getDecisionRecordsBySubjects = vi.fn(async (subjects: string[]) => decisionRecords.filter((r) => subjects.includes(r.subject)));
+const upsertDecisionRecord = vi.fn(async (rec: any) => { decisionRecords.push(rec); return rec; });
 // The flag now lives in platform_settings, as GUARDRAIL_REVIEW and
 // DECISION_STEP_KIND do, so it is togglable from the UI.
 let settingValue: string | null = null;
@@ -32,9 +38,11 @@ vi.mock("../server/storage", () => ({
     getAgent: vi.fn(async (id: string) => ({ id, name: "E&S Property Binding Orchestrator", blueprintId: "bp1" })),
     getTeamBlueprintNodes,
     getPlatformSetting,
+    getDecisionRecordsBySubjects,
+    upsertDecisionRecord,
   },
 }));
-const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled } = await import("../server/intelligence-context");
+const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions } = await import("../server/intelligence-context");
 
 // Verbatim shape from the live run.
 const LIVE_STATE = {
@@ -290,6 +298,128 @@ describe("resolveContext authority", () => {
     runs.push(run({ id: "sameBroker", teamAgentId: "teamZ", finalState: { submissionId: "SUB-2026-8888", brokerCode: "BRK-14", status: "bound" } }));
     const r = await resolveContext({ subjects: ["submission:SUB-2026-1111", "broker:BRK-14"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
     expect(r.items[0].matchAxis).toBe("same_customer");
+  });
+});
+
+describe("indexed decision records (phase 1)", () => {
+  beforeEach(() => { runs.length = 0; decisionRecords = []; blueprintNodes.length = 0; settingValue = "on"; });
+
+  const record = (over: any = {}) => ({
+    subject: "submission:SUB-2026-8891",
+    subjectType: "submission",
+    teamAgentId: "teamA",
+    runId: "oldrun1",
+    decidedAt: new Date("2026-10-03T15:46:50Z"),
+    decision: { status: "bound and active", policyNumber: "POL-2026-8891-CP" },
+    evidence: { fetch_treaty_terms: { limit: 50_000_000 } },
+    fromKeys: ["status", "policyNumber"],
+    ...over,
+  });
+
+  it("finds a decision the recency scan would have missed entirely", async () => {
+    // The live failure: five finished runs had decided on this submission,
+    // four outside the 60-run window and the fifth the asking run, so the scan
+    // reported no record. The index does not care how much traffic followed.
+    decisionRecords.push(record());
+    runs.length = 0; // nothing in the scan window at all
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0].tier).toBe("authoritative");
+    expect(r.items[0].decision.policyNumber).toBe("POL-2026-8891-CP");
+    expect(r.items[0].citation.runId).toBe("oldrun1");
+    expect(r.missedSubjects).toEqual([]);
+  });
+
+  it("keeps evidence separate in an indexed record too", async () => {
+    decisionRecords.push(record());
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(Object.keys(r.items[0].evidence)).toContain("fetch_treaty_terms");
+    expect(Object.keys(r.items[0].decision)).not.toContain("fetch_treaty_terms");
+  });
+
+  it("is precedent, and withheld from bind, when the record is another journey's", async () => {
+    decisionRecords.push(record({ teamAgentId: "teamB" }));
+    const draft = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(draft.items[0].tier).toBe("precedent");
+    const bind = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "bind", surface: "team_run", teamAgentId: "teamA" });
+    expect(bind.items).toHaveLength(0);
+    expect(bind.omissions.some((o) => o.reason === "withheld_precedent_for_purpose")).toBe(true);
+  });
+
+  it("never hands a run its own decision back", async () => {
+    decisionRecords.push(record({ runId: "thisrun" }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA", excludeRunId: "thisrun" });
+    expect(r.items).toHaveLength(0);
+  });
+
+  it("does not list the same run twice from index and scan", async () => {
+    decisionRecords.push(record({ runId: "shared1" }));
+    runs.push(run({ id: "shared1", teamAgentId: "teamA" }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items.filter((i) => i.citation.runId === "shared1")).toHaveLength(1);
+  });
+
+  it("says the search was bounded when it fell back to the scan", async () => {
+    // No index hit: the omission must not claim the object has no history,
+    // only that the bounded search found none.
+    const r = await resolveContext({ subjects: ["submission:SUB-0000-0000"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    const miss = r.omissions.find((o) => o.reason === "no_record");
+    expect(miss!.detail).toMatch(/most recent run\(s\) searched/);
+    expect(miss!.detail).toMatch(/not a statement that none exists/);
+  });
+});
+
+describe("recordRunDecisions (phase 1 write path)", () => {
+  beforeEach(() => { decisionRecords = []; upsertDecisionRecord.mockClear(); });
+
+  const nodeConfig = {
+    n1: { stateKey: "bind_policy", nodeType: "decision" },
+    n2: { stateKey: "fetch_treaty_terms", nodeType: "tool_call" },
+  };
+
+  it("writes one record per business object the run decided about", async () => {
+    const res = await recordRunDecisions({
+      runId: "r1", teamAgentId: "teamA", teamName: "E&S Property Binding Orchestrator", orgId: "org1",
+      state: { submissionId: "SUB-2026-8891", policyNumber: "POL-2026-8891-CP", bind_policy: "bound", fetch_treaty_terms: { limit: 50 }, nextSteps: ["x"] },
+      nodeConfig, decidedAt: new Date("2026-10-04T12:00:00Z"),
+    });
+    expect(res.written).toBe(2);
+    expect(res.subjects.sort()).toEqual(["policy:POL-2026-8891-CP", "submission:SUB-2026-8891"]);
+    const written = upsertDecisionRecord.mock.calls.map((c: any[]) => c[0]);
+    // Classification still applies: session state is not written as a decision.
+    expect(Object.keys(written[0].decision)).toContain("bind_policy");
+    expect(Object.keys(written[0].decision)).not.toContain("nextSteps");
+    expect(Object.keys(written[0].evidence)).toContain("fetch_treaty_terms");
+    expect(written[0].subjectType).toBe("submission");
+  });
+
+  it("writes nothing when the run established a subject but decided nothing", async () => {
+    // An empty row where a reader expects a judgement is worse than no row.
+    const res = await recordRunDecisions({
+      runId: "r2", teamAgentId: "teamA", teamName: "T", orgId: null,
+      state: { submissionId: "SUB-2026-8891", nextSteps: ["x"], iterationsUsed: 3 },
+      nodeConfig: {}, decidedAt: new Date(),
+    });
+    expect(res.written).toBe(0);
+    expect(upsertDecisionRecord).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when no business object was named", async () => {
+    const res = await recordRunDecisions({
+      runId: "r3", teamAgentId: "teamA", teamName: "T", orgId: null,
+      state: { bind_policy: "bound" }, nodeConfig, decidedAt: new Date(),
+    });
+    expect(res).toEqual({ written: 0, subjects: [] });
+  });
+
+  it("never throws when a write fails", async () => {
+    upsertDecisionRecord.mockRejectedValueOnce(new Error("db down"));
+    // The run has already finished; recording it must not fail it after the fact.
+    const res = await recordRunDecisions({
+      runId: "r4", teamAgentId: "teamA", teamName: "T", orgId: null,
+      state: { submissionId: "SUB-2026-8891", bind_policy: "bound" }, nodeConfig, decidedAt: new Date(),
+    });
+    expect(res.written).toBe(0);
   });
 });
 

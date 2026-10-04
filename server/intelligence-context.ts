@@ -35,6 +35,8 @@ export interface ResolveContextInput {
   limit?: number;
   /** How many runs to scan. Bounded so a cold call cannot walk all history. */
   scanRuns?: number;
+  /** The asking run, so it is never handed its own decision back as precedent. */
+  excludeRunId?: string;
 }
 
 const DEFAULT_LIMIT = 8;
@@ -118,6 +120,15 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
   const requested = [...new Set(input.subjects.filter(Boolean))];
   const omissions: Omission[] = [];
 
+  // Indexed records first. This is the whole point of phase 1: a lookup on the
+  // subject cannot be pushed out of range by other journeys' traffic, which is
+  // what made the recency scan report "no record" for a submission that had
+  // been bound twice. The scan stays as a fallback for runs that finished
+  // before indexing existed.
+  const indexed = await (storage as any).getDecisionRecordsBySubjects?.(requested, input.orgId ?? undefined, scan)
+    .catch((err: any) => { console.error("[intelligence-context] decision-record lookup failed:", err?.message); return null; });
+  const scanned = { byIndex: Array.isArray(indexed) && indexed.length > 0, runs: scan };
+
   // A failed history read is reported, not turned into an empty list. Swallowed,
   // it rendered as "no finished run recorded a decision on <subject>" -- which
   // tells a reader the object is new when the truth is that nobody looked.
@@ -168,7 +179,39 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
   const seenSubjects = new Set<Subject>();
   let withheld = 0;
 
+  // Indexed records become items directly: the subject is the key they were
+  // stored under, so there is nothing to re-derive and nothing to miss.
+  for (const rec of (Array.isArray(indexed) ? indexed : [])) {
+    const decidedAt = rec.decidedAt ? new Date(rec.decidedAt) : null;
+    if (input.asOf && decidedAt && decidedAt > input.asOf) continue;
+    if (rec.runId === input.excludeRunId) continue;
+    const sameJourney = !!input.teamAgentId && rec.teamAgentId === input.teamAgentId;
+    const tier: ContextItem["tier"] = sameJourney ? "authoritative" : "precedent";
+    if (tier === "precedent" && !precedentAllowedFor(input.purpose)) { withheld++; continue; }
+    const axis = tier === "precedent" ? "same_class_of_business" as MatchAxis : undefined;
+    seenSubjects.add(rec.subject);
+    items.push({
+      subject: rec.subject,
+      tier,
+      ...(axis ? { matchAxis: axis } : {}),
+      decision: (rec.decision ?? {}) as Record<string, unknown>,
+      evidence: (rec.evidence ?? {}) as Record<string, unknown>,
+      narrative: {},
+      citation: {
+        runId: rec.runId,
+        teamAgentId: rec.teamAgentId ?? null,
+        decidedAt: decidedAt ? decidedAt.toISOString() : null,
+        status: "completed",
+        fromKeys: Array.isArray(rec.fromKeys) ? rec.fromKeys as string[] : [],
+      },
+    });
+  }
+
+  const indexedRunIds = new Set((Array.isArray(indexed) ? indexed : []).map((r: any) => r.runId));
   for (const run of runs) {
+    // Already covered by an indexed record; scanning it again would list the
+    // same decision twice from two sources.
+    if (indexedRunIds.has(run.id)) continue;
     // Only a finished run has a decision. A run still going has an opinion.
     if (!["completed", "completed_with_skips", "succeeded"].includes(String(run.status))) continue;
     const decidedAt = (run.completedAt ?? run.startedAt ?? null) as Date | null;
@@ -247,7 +290,21 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
       count: missed.length,
     });
   } else {
-    for (const s of missed) omissions.push({ reason: "no_record", subject: s, detail: `No finished run recorded a decision on ${s}` });
+    // Says what was searched, not what exists. The previous wording -- "No
+    // finished run recorded a decision on <subject>" -- asserted absence from
+    // a bounded scan, and was measurably false: five finished runs had decided
+    // on SUB-2026-8891 while four sat outside the window and the fifth was the
+    // asking run itself. Overclaiming here breaks the one distinction this
+    // layer exists to preserve.
+    for (const s of missed) {
+      omissions.push({
+        reason: "no_record",
+        subject: s,
+        detail: scanned.byIndex
+          ? `No decision record is held for ${s}`
+          : `No decision on ${s} was found in the ${scanned.runs} most recent run(s) searched — this is the limit of the search, not a statement that none exists`,
+      });
+    }
   }
   if (withheld > 0) {
     omissions.push({
@@ -281,6 +338,70 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
     missedSubjects: missed,
     unclassifiedKeys: [...unclassified],
   };
+}
+
+/**
+ * Indexes a finished run's decisions by the business objects they were about.
+ *
+ * Phase 1's write path, and the answer to what phase 0 could not do. Retrieval
+ * by recency scan reported "no record" for SUB-2026-8891 while five finished
+ * runs had decided on it -- four outside the window, the fifth the asking run.
+ * A row per (subject, run) makes the next read a lookup.
+ *
+ * Writes only what classification says is durable, so framework bookkeeping
+ * does not become enterprise record. Never throws: the run has already
+ * finished, and recording it for the future must not retrospectively fail it.
+ */
+export async function recordRunDecisions(input: {
+  runId: string;
+  teamAgentId: string;
+  teamName: string;
+  orgId?: string | null;
+  state: Record<string, unknown> | null | undefined;
+  nodeConfig: Record<string, { stateKey?: string | null; nodeType?: string | null; outputContractId?: string | null; label?: string | null }>;
+  decidedAt: Date;
+}): Promise<{ written: number; subjects: Subject[] }> {
+  const extracted = extractSubjects(input.state);
+  const subjects = extracted.map(s => s.subject);
+  if (subjects.length === 0) return { written: 0, subjects: [] };
+
+  const steps = buildStepIndex(Object.values(input.nodeConfig ?? {}), { teamStateKey: teamStateKeyFor(input.teamName) });
+  const { byRole, fromKeys } = traceStateOf(input.state, steps);
+  const decision = { ...byRole.decision, ...byRole.approval, ...byRole.artefact };
+  const evidence = { ...byRole.evidence };
+
+  // A run that established a subject but decided nothing about it is not a
+  // decision record. Writing one would put an empty row where a reader expects
+  // a judgement.
+  //
+  // The keys that PRODUCED the subjects do not count towards that: a record
+  // whose only content is `submissionId: SUB-2026-8891`, filed under
+  // submission:SUB-2026-8891, restates its own key and asserts nothing. Same
+  // tautology as scoring an eval field the agent was handed in its input.
+  const subjectKeys = new Set(extracted.map(s => s.fromKey));
+  const judgement = Object.keys(decision).filter(k => !subjectKeys.has(k));
+  if (judgement.length === 0) return { written: 0, subjects };
+
+  let written = 0;
+  for (const subject of subjects) {
+    try {
+      await (storage as any).upsertDecisionRecord?.({
+        organizationId: input.orgId ?? null,
+        subject,
+        subjectType: subject.split(":")[0],
+        teamAgentId: input.teamAgentId,
+        runId: input.runId,
+        decidedAt: input.decidedAt,
+        decision,
+        evidence,
+        fromKeys,
+      });
+      written++;
+    } catch (err: any) {
+      console.error(`[intelligence-context] could not record ${subject} for run ${input.runId}:`, err?.message);
+    }
+  }
+  return { written, subjects };
 }
 
 /** The platform setting that turns this layer on. "on" or "off". */

@@ -6,7 +6,7 @@ import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { rerankChunks } from "./retrieval-rerank";
 import { raiseGuardrailReview } from "./guardrail-review";
-import { priorDecisionsForPrompt } from "./intelligence-context";
+import { priorDecisionsForPrompt, recordRunDecisions } from "./intelligence-context";
 import { recomputeOutcomeKpis, resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
@@ -3825,6 +3825,22 @@ async function executeTeamAgentDagRun(
     });
     publishDagRunEvent(dagRun.id, { type: "run_complete", runStatus: deriveRunStatus(result), totalWaves: wavePlan.totalWaves });
     recordDagRunOutcomeEvent(teamAgentId, dagRun.id, deriveRunStatus(result), result.totalCostUsd).catch(() => {});
+    // Index this run's decisions by the business objects they were about, so a
+    // later run can look them up instead of scanning recent history and hoping.
+    // Not awaited and never allowed to throw: the run has finished, and
+    // recording it for the future must not retrospectively fail it.
+    recordRunDecisions({
+      runId: dagRun.id,
+      teamAgentId,
+      teamName: teamAgentName ?? "",
+      orgId: organizationId,
+      state: result.finalState,
+      // The plan's own node config, which already carries each step's stateKey
+      // and nodeType -- the same contract the classifier reads, without a
+      // second fetch of the blueprint.
+      nodeConfig: wavePlan.nodeConfig as Record<string, { stateKey?: string | null; nodeType?: string | null; outputContractId?: string | null; label?: string | null }>,
+      decidedAt: new Date(),
+    }).catch((err) => console.error("[intelligence-context] could not index this run's decisions:", err?.message));
     // Guardrail flags worth a person's attention become one review in the
     // Approval Queue when GUARDRAIL_REVIEW is on (server/guardrail-review.ts).
     // Not awaited: the run has finished, and raising it can never fail it.

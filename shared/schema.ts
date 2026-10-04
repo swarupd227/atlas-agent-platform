@@ -1559,6 +1559,40 @@ export const insertDagStateSchemaSchema = createInsertSchema(dagStateSchemas).om
 export type InsertDagStateSchema = z.infer<typeof insertDagStateSchemaSchema>;
 export type DagStateSchema = typeof dagStateSchemas.$inferSelect;
 
+/**
+ * Intelligence Context Layer, phase 1: a decision indexed by the business
+ * object it was about.
+ *
+ * Phase 0 retrieved by scanning the most recent runs. Measured on live data
+ * that fails: five finished runs had decided on SUB-2026-8891, four fell
+ * outside the scan window and the fifth was the run doing the asking, so the
+ * layer reported "no record" for a submission it had bound twice. Retrieval
+ * has to be a lookup on the subject, which is what this table makes possible.
+ *
+ * Created by runStartupMigrations, not db:push -- see server/db.ts.
+ */
+export const decisionRecords = pgTable("decision_records", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  /** "<type>:<natural key>", e.g. submission:SUB-2026-8891. */
+  subject: varchar("subject").notNull(),
+  subjectType: varchar("subject_type").notNull(),
+  teamAgentId: varchar("team_agent_id"),
+  runId: varchar("run_id").notNull(),
+  decidedAt: timestamp("decided_at"),
+  /** Decision-relevant state only: verdicts, approvals, artefacts. */
+  decision: jsonb("decision").notNull().default(sql`'{}'::jsonb`),
+  /** The connectors' own answers, kept apart from the verdicts. */
+  evidence: jsonb("evidence").notNull().default(sql`'{}'::jsonb`),
+  /** The state keys this was drawn from, so a reader can check it. */
+  fromKeys: jsonb("from_keys").notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDecisionRecordSchema = createInsertSchema(decisionRecords).omit({ id: true, createdAt: true });
+export type InsertDecisionRecord = z.infer<typeof insertDecisionRecordSchema>;
+export type DecisionRecord = typeof decisionRecords.$inferSelect;
+
 export const dagExecutionRuns = pgTable("dag_execution_runs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   teamAgentId: varchar("team_agent_id"),

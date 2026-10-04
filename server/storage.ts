@@ -14,6 +14,7 @@ import {
   type LlmProviderKey, type InsertLlmProviderKey,
   users, agents, agentMandates, agentTaskClasses, agentWarrants, mandateDerivations, mandateDerivedItems, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
+  decisionRecords,
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
   improvementRecommendations, autonomousActionLogs, agentVersions,
   policyExceptions, complianceReports,
@@ -42,6 +43,7 @@ import {
   type EvalTestCase, type InsertEvalTestCase,
   type EvalRun, type InsertEvalRun,
   type EvalCaseResult, type InsertEvalCaseResult,
+  type DecisionRecord, type InsertDecisionRecord,
   type ImprovementRecommendation, type InsertImprovementRecommendation,
   type AutonomousActionLog, type InsertAutonomousActionLog,
   type AgentVersion,
@@ -612,6 +614,9 @@ export interface IStorage {
   updateMarketplaceInstallRequest(id: string, data: Partial<MarketplaceInstallRequest>): Promise<MarketplaceInstallRequest | undefined>;
   deleteMarketplaceInstallRequest(id: string): Promise<boolean>;
 
+  /** Intelligence Context Layer: decisions indexed by business object. */
+  upsertDecisionRecord(rec: InsertDecisionRecord): Promise<DecisionRecord>;
+  getDecisionRecordsBySubjects(subjects: string[], orgId?: string, limit?: number): Promise<DecisionRecord[]>;
   getPlatformSettings(): Promise<PlatformSetting[]>;
   getPlatformSetting(key: string): Promise<PlatformSetting | undefined>;
   upsertPlatformSetting(setting: InsertPlatformSetting): Promise<PlatformSetting>;
@@ -3324,6 +3329,30 @@ export class DatabaseStorage implements IStorage {
   async deleteMarketplaceInstallRequest(id: string) {
     const result = await db.delete(marketplaceInstallRequests).where(eq(marketplaceInstallRequests.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async upsertDecisionRecord(rec: InsertDecisionRecord) {
+    // One row per (subject, run): re-processing a completion re-records it
+    // rather than stacking duplicates, which would make the same decision look
+    // like several.
+    const [row] = await db
+      .insert(decisionRecords)
+      .values(rec as any)
+      .onConflictDoUpdate({
+        target: [decisionRecords.subject, decisionRecords.runId],
+        set: { decision: (rec as any).decision, evidence: (rec as any).evidence, fromKeys: (rec as any).fromKeys, decidedAt: (rec as any).decidedAt },
+      })
+      .returning();
+    return row;
+  }
+
+  async getDecisionRecordsBySubjects(subjects: string[], orgId?: string, limit: number = 50) {
+    if (!subjects.length) return [];
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const where = scopedOrgId
+      ? and(inArray(decisionRecords.subject, subjects), eq(decisionRecords.organizationId, scopedOrgId))
+      : inArray(decisionRecords.subject, subjects);
+    return db.select().from(decisionRecords).where(where).orderBy(desc(decisionRecords.decidedAt)).limit(limit);
   }
 
   async getPlatformSettings() {
