@@ -104,7 +104,14 @@ export function missingRequirement(node: {
         ? null
         : "has no tool bound";
     case "decision": {
-      const options = Array.isArray(cfg.decision?.options) ? cfg.decision.options : [];
+      // A label decision (and a branch decision) answers from decision.options; a scale decision answers from
+      // decision.levels, two to ten of them. Checking only options read every scale step as unrunnable.
+      const d = (cfg.decision ?? {}) as { answerType?: unknown; options?: unknown; levels?: unknown };
+      if (d.answerType === "score") {
+        const levels = Array.isArray(d.levels) ? d.levels : [];
+        return levels.length >= 2 && levels.length <= 10 ? null : "has fewer than two levels on its scale";
+      }
+      const options = Array.isArray(d.options) ? d.options : [];
       return options.length >= 2 ? null : "has fewer than two branches to decide between";
     }
     default:

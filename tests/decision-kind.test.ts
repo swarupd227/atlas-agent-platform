@@ -117,6 +117,10 @@ describe("the node-type registry and the run monitor's words", () => {
     expect(missingRequirement({ nodeType: "decision", config: {} })).toBe("has fewer than two branches to decide between");
     expect(missingRequirement({ nodeType: "decision", config: { decision: { question: "q", options: [{ label: "A" }] } } })).toBe("has fewer than two branches to decide between");
     expect(missingRequirement({ nodeType: "decision", config: { decision: { question: "q", options: [{ label: "A" }, { label: "B" }] } } })).toBeNull();
+    // A scale decision answers from its levels, not options (the live Score Completeness step was refused on this).
+    expect(missingRequirement({ nodeType: "decision", config: { decision: { question: "q", answerType: "score", levels: ["Incomplete", "Partial", "Complete"] } } })).toBeNull();
+    expect(missingRequirement({ nodeType: "decision", config: { decision: { question: "q", answerType: "score", levels: ["Only"] } } })).toBe("has fewer than two levels on its scale");
+    expect(missingRequirement({ nodeType: "decision", config: { decision: { question: "q", answerType: "score", levels: Array.from({ length: 11 }, (_, i) => String(i)) } } })).toBe("has fewer than two levels on its scale");
   });
 
   it("calls a decision a decision, and does not claim it runs without a model", () => {
