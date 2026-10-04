@@ -39,9 +39,16 @@ describe("buildHome", () => {
     expect(buildHome(input({ industry: { label: "Healthcare", source: "request", organizationLabel: "Insurance" } })).rows.at(-1)!.detail).toBe("Viewing Healthcare · Summit Equipment is Insurance");
   });
 
-  it("shows no cost or value figures, and says why", () => {
-    const home = buildHome(input());
-    expect(JSON.stringify(home.rows)).not.toMatch(/\$|cost|value|saved|ROI/i);
-    expect(home.notShown.join(" ")).toMatch(/aren't measured/);
+  it("shows no cost or value figures", () => {
+    // The invariant that matters: the briefing never puts an unmeasured
+    // business-value number in front of someone.
+    expect(JSON.stringify(buildHome(input()).rows)).not.toMatch(/\$|cost|value|saved|ROI/i);
+  });
+
+  it("does not explain the absence of figures it never showed", () => {
+    // It used to carry "Business value isn't shown here: the rates behind it
+    // aren't measured" as a standing footnote. Not showing a figure needs no
+    // caption; notShown is for a caveat on something the page DOES show.
+    expect(buildHome(input()).notShown).toEqual([]);
   });
 });

@@ -92,6 +92,13 @@ export function buildHome(input: HomeInput): HomeBriefing {
   return {
     organizationName: input.organizationName,
     rows: rows.filter((r): r is HomeRow => r !== null),
-    notShown: ["Business value isn't shown here: the rates behind it aren't measured."],
+    // Empty on purpose. This is for a caveat attached to something the page
+    // actually shows -- a figure whose basis is weak, a row that is partial.
+    // It is NOT for explaining the absence of things nobody asked for: the
+    // briefing used to carry "Business value isn't shown here: the rates behind
+    // it aren't measured", which was a permanent footnote about a figure that
+    // was never on the page. The test below still pins that no unmeasured value
+    // figure appears, which is the part that mattered.
+    notShown: [],
   };
 }
