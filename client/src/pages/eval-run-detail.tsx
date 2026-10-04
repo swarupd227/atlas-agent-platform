@@ -513,14 +513,23 @@ export default function EvalRunDetail() {
     },
   });
 
-  const { data: agents } = useQuery<Agent[]>({
-    queryKey: ["/api/agents"],
+  // Only the run's own agent, for its name. The whole agents list is megabytes on a large fleet and
+  // slows every request behind it, to turn one id into one name.
+  const { data: agent } = useQuery<Agent>({
+    queryKey: ["/api/agents", run?.agentId],
+    enabled: !!run?.agentId,
   });
 
-  // All runs for same agent (for comparison picker)
-  const { data: agentRuns } = useQuery<EvalTestRun[]>({
-    queryKey: ["/api/eval/runs"],
-    enabled: !!run?.agentId,
+  // Runs this one can be compared with: the same agent on the same dataset, fetched only once the
+  // picker is opened (or a comparison is in use), not on every visit to the page.
+  const { data: agentRuns, isLoading: agentRunsLoading } = useQuery<EvalTestRun[]>({
+    queryKey: ["/api/eval/runs", "comparable", run?.agentId, run?.datasetId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ agentId: run!.agentId, datasetId: run!.datasetId });
+      const res = await fetch(`/api/eval/runs?${params}`, { credentials: "include" });
+      return res.json();
+    },
+    enabled: !!run?.agentId && !!run?.datasetId && (compareDialogOpen || !!compareRunId),
   });
 
   const comparableRuns = useMemo(() => {
@@ -605,7 +614,6 @@ export default function EvalRunDetail() {
     return m;
   }, [goldens]);
 
-  const agent = run ? agents?.find(a => a.id === run.agentId) : undefined;
   const agentName = agent?.name ?? (run ? `Agent ${run.agentId.slice(0, 8)}` : "");
   const passRatePct = run?.passRate != null ? Math.round(run.passRate * 100) : null;
   const repeatedVerdict = hasRepeatedVerdict(run) && run ? repeatedRunVerdict(run) : null;
@@ -664,8 +672,8 @@ export default function EvalRunDetail() {
                 variant="outline"
                 size="sm"
                 onClick={() => setCompareDialogOpen(true)}
-                disabled={comparableRuns.length === 0}
-                title={comparableRuns.length === 0 ? "No other completed runs for this agent" : undefined}
+                disabled={agentRuns !== undefined && comparableRuns.length === 0}
+                title={agentRuns !== undefined && comparableRuns.length === 0 ? "No other completed runs for this agent" : undefined}
                 data-testid="button-compare-run"
               >
                 <GitCompare className="w-3.5 h-3.5 mr-1.5" />
@@ -1052,7 +1060,11 @@ export default function EvalRunDetail() {
               <Activity className="w-4 h-4 animate-pulse" /> Loading comparison traces…
             </div>
           )}
-          {comparableRuns.length === 0 ? (
+          {agentRunsLoading ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" data-testid="text-compare-runs-loading">
+              <Activity className="w-4 h-4 animate-pulse" /> Loading runs…
+            </div>
+          ) : comparableRuns.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
               No other completed runs found for this agent.
             </div>

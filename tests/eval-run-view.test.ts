@@ -248,6 +248,22 @@ describe("the run page", () => {
     expect(page).toMatch(/params\.set\("page", String\(pageNo\)\)/);
   });
 
+  it("asks for its own agent only, never the whole agents list (megabytes on a large fleet)", () => {
+    expect(page).toContain('queryKey: ["/api/agents", run?.agentId]');
+    expect(page).not.toMatch(/queryKey: \["\/api\/agents"\]/);
+  });
+
+  it("loads the comparison candidates only when the picker is opened, filtered to this agent and dataset", () => {
+    expect(page).toContain("(compareDialogOpen || !!compareRunId)");
+    expect(page).toContain("agentId: run!.agentId, datasetId: run!.datasetId");
+    expect(page).not.toMatch(/queryKey: \["\/api\/eval\/runs"\],\s*enabled: !!run\?\.agentId/);
+  });
+
+  it("does not disable Compare before the list it would show has been asked for", () => {
+    expect(page).toContain("disabled={agentRuns !== undefined && comparableRuns.length === 0}");
+    expect(page).toContain("text-compare-runs-loading");
+  });
+
   it("shows the repeated-run figures and the flaky filter only for a repeated run", () => {
     expect(page).toContain("card-run-stability");
     expect(page).toContain("select-traces-filter");
