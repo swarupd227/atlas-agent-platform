@@ -281,7 +281,15 @@ export function extractSubjects(state: Record<string, unknown> | null | undefine
 /** Why a requested subject returned nothing, or why an item was withheld. */
 export type OmissionReason =
   | "no_record" | "expired" | "unreviewed" | "low_confidence"
-  | "withheld_precedent_for_purpose" | "unclassified_keys";
+  | "withheld_precedent_for_purpose" | "unclassified_keys"
+  /**
+   * A team's blueprint could not be read, so its state was classified by key
+   * NAME instead of by the step that wrote it. Reported because the fallback
+   * is materially worse -- it misread three tool_call outputs as decisions on
+   * live data -- and a silently degraded answer looks exactly like a confident
+   * one.
+   */
+  | "blueprint_unavailable";
 
 export interface Omission {
   reason: OmissionReason;
@@ -300,8 +308,22 @@ export interface ContextItem {
   subject: Subject;
   tier: AuthorityTier;
   matchAxis?: MatchAxis;
-  /** Decision-relevant state only, never session state or plumbing. */
+  /** The verdicts and approvals: what was decided. Rendered in full. */
   decision: Record<string, unknown>;
+  /**
+   * The connectors' own answers. Kept SEPARATE and rendered as a reference,
+   * not inlined: one precedent item's evidence came to ~555 tokens of GL
+   * account arrays, period summaries and claims movements. A trace carries an
+   * index to the corpus, not the corpus.
+   */
+  evidence: Record<string, unknown>;
+  /**
+   * A step's prose: what an agent wrote without a declared output contract.
+   * Held apart from the verdicts because two runs of one journey produce
+   * different wording every time, and comparing it reported 15 conflicts
+   * where 2 were real.
+   */
+  narrative: Record<string, unknown>;
   citation: {
     runId: string;
     teamAgentId: string | null;
@@ -325,8 +347,29 @@ const PRECEDENT_WITHHELD_FROM: ReadonlySet<Purpose> = new Set<Purpose>(["decide"
 
 export const precedentAllowedFor = (purpose: Purpose): boolean => !PRECEDENT_WITHHELD_FROM.has(purpose);
 
+/**
+ * Two authoritative records of the same business object that disagree.
+ *
+ * Found immediately on live data: the E&S journey ran twice on
+ * SUB-2026-8891 and recorded `status` as "bound and active" and
+ * "bound_active", with entirely different clausesUsed. Both were being
+ * rendered as "This was decided on ..." with nothing to say they conflict.
+ *
+ * Surfaced rather than resolved by latest-wins, because "there are two
+ * different records of what was bound on this submission" is itself the most
+ * decision-relevant thing the layer can say. Silently picking one would hide
+ * a discrepancy an underwriter needs to see.
+ */
+export interface Conflict {
+  subject: Subject;
+  field: string;
+  values: Array<{ runId: string; decidedAt: string | null; value: unknown }>;
+}
+
 export interface ResolveContextResult {
   items: ContextItem[];
+  /** Disagreements between authoritative records of the same subject. */
+  conflicts: Conflict[];
   omissions: Omission[];
   usedSubjects: Subject[];
   missedSubjects: Subject[];

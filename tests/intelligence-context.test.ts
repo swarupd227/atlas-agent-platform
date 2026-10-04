@@ -291,6 +291,132 @@ describe("resolveContext authority", () => {
 describe("resolveContext omissions and honesty", () => {
   beforeEach(() => { runs.length = 0; });
 
+  it("returns nothing for a subject no run shares, from another journey", async () => {
+    // similar_risk used to fire whenever a run had ANY subject, so asking
+    // about a submission that never existed returned three precedent items.
+    // Relevance now needs an actual shared business object.
+    runs.push(run({ teamAgentId: "teamB", finalState: { submissionId: "SUB-2026-7777", status: "bound" } }));
+    const r = await resolveContext({ subjects: ["submission:SUB-9999-0000"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items).toHaveLength(0);
+    expect(r.omissions.some((o) => o.reason === "no_record")).toBe(true);
+  });
+
+  it("allows similar_risk only on a shared business object", async () => {
+    // Shares the binder the request asks about -> a real overlap.
+    runs.push(run({ id: "shared", teamAgentId: "teamB", finalState: { treatyReference: "CP-2026-17", status: "closed" } }));
+    const r = await resolveContext({ subjects: ["binder:CP-2026-17"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items.map((i) => i.matchAxis)).toContain("similar_risk");
+  });
+
+  it("surfaces conflicting authoritative records instead of picking one", async () => {
+    // The live case: the same journey ran twice on SUB-2026-8891 and recorded
+    // different status and clausesUsed.
+    runs.push(run({ id: "runA", teamAgentId: "teamA", completedAt: new Date("2026-10-03T10:00:00Z"), finalState: { submissionId: "SUB-2026-8891", status: "bound and active", clausesUsed: "CP 12 18" } }));
+    runs.push(run({ id: "runB", teamAgentId: "teamA", completedAt: new Date("2026-10-03T15:00:00Z"), finalState: { submissionId: "SUB-2026-8891", status: "bound_active", clausesUsed: "CP-1218" } }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items.filter((i) => i.tier === "authoritative").length).toBe(2);
+    const fields = r.conflicts.map((c) => c.field).sort();
+    expect(fields).toEqual(["clausesUsed", "status"]);
+    expect(r.conflicts[0].values).toHaveLength(2);
+    // Rendered as a warning, not a footnote, and not silently resolved.
+    const text = renderContextForPrompt(r);
+    expect(text).toMatch(/conflicting records/i);
+    expect(text).toMatch(/say so rather than choosing/i);
+  });
+
+  it("does not call two precedents disagreeing a conflict", async () => {
+    // Only authoritative records are compared: two precedents differing is
+    // normal and says nothing about the platform's own consistency.
+    runs.push(run({ id: "p1", teamAgentId: "teamB", finalState: { treatyReference: "CP-2026-17", status: "x" } }));
+    runs.push(run({ id: "p2", teamAgentId: "teamC", finalState: { treatyReference: "CP-2026-17", status: "y" } }));
+    const r = await resolveContext({ subjects: ["binder:CP-2026-17"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items.every((i) => i.tier === "precedent")).toBe(true);
+    expect(r.conflicts).toHaveLength(0);
+  });
+
+  it("references evidence rather than pasting connector payloads", async () => {
+    blueprintNodes.length = 0;
+    blueprintNodes.push({ stateKey: "read_general_ledger", nodeType: "tool_call" }, { stateKey: "bind_policy", nodeType: "decision" });
+    runs.push(run({
+      id: "ev", teamAgentId: "teamA",
+      finalState: {
+        submissionId: "SUB-2026-8891",
+        bind_policy: "bound",
+        read_general_ledger: { accounts: Array.from({ length: 12 }, (_, i) => ({ account: `acct-${i}`, debit: i * 1000 })) },
+      },
+    }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    const item = r.items[0];
+    expect(Object.keys(item.evidence)).toContain("read_general_ledger");
+    expect(Object.keys(item.decision)).not.toContain("read_general_ledger");
+    const text = renderContextForPrompt(r);
+    expect(text).toMatch(/evidence \(not inlined/);
+    // The payload itself must not reach the prompt.
+    expect(text).not.toContain("acct-7");
+    expect(text).toMatch(/read_general_ledger/);
+  });
+
+  it("does not cache a failed blueprint lookup, and says classification degraded", async () => {
+    // The live defect: `catch { index = null }` then caching that null meant
+    // one transient failure silently classified every later run of that team
+    // by key name -- which read three tool_call outputs as decisions.
+    const { storage } = await import("../server/storage");
+    (storage.getTeamBlueprintNodes as any).mockRejectedValueOnce(new Error("transient"));
+    runs.push(run({ id: "d1", teamAgentId: "teamA", finalState: { submissionId: "SUB-2026-8891", fetch_treaty_terms: { a: 1 } } }));
+    runs.push(run({ id: "d2", teamAgentId: "teamA", finalState: { submissionId: "SUB-2026-8891", fetch_treaty_terms: { a: 2 } } }));
+    blueprintNodes.length = 0;
+    blueprintNodes.push({ stateKey: "fetch_treaty_terms", nodeType: "tool_call" });
+
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    // The second run retried and succeeded, so at least one item classified
+    // the tool_call as evidence rather than as a decision.
+    expect(r.items.some((i) => "fetch_treaty_terms" in i.evidence)).toBe(true);
+    // And the degradation is reported rather than left to look confident.
+    expect(r.omissions.some((o) => o.reason === "blueprint_unavailable")).toBe(true);
+    expect(renderContextForPrompt(r)).toMatch(/classified by key name/);
+  });
+
+  it("states what it truncated, in every place it truncates", async () => {
+    // Silent truncation is the defect this layer exists to avoid: an agent
+    // shown 10 of 30 fields with no note cannot tell a short record from a
+    // cut one, and answers as though it saw everything.
+    blueprintNodes.length = 0;
+    // Inserted first so it lands inside the rendered window: keys render in
+    // insertion order, and a long value past the cut would never be clipped.
+    const state: any = { submissionId: "SUB-2026-8891", long_finding: "x".repeat(900) };
+    blueprintNodes.push({ stateKey: "long_finding", nodeType: "decision" });
+    for (let n = 0; n < 24; n++) {
+      blueprintNodes.push({ stateKey: `decide_${n}`, nodeType: "decision" });
+      state[`decide_${n}`] = `verdict ${n}`;
+    }
+    for (let n = 0; n < 11; n++) {
+      blueprintNodes.push({ stateKey: `fetch_${n}`, nodeType: "tool_call" });
+      state[`fetch_${n}`] = { rows: [1, 2, 3] };
+    }
+    runs.push(run({ id: "big", teamAgentId: "teamA", finalState: state }));
+
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    const text = renderContextForPrompt(r);
+    expect(text).toMatch(/further field\(s\) recorded on this run, not shown/);
+    expect(text).toMatch(/and \d+ more/);            // evidence list
+    expect(text).toMatch(/more chars\]/);            // a clipped value says so
+  });
+
+  it("says how many conflicts it did not list", async () => {
+    blueprintNodes.length = 0;
+    const mk = (suffix: string) => {
+      const s: any = { submissionId: "SUB-2026-8891" };
+      for (let n = 0; n < 9; n++) s[`decide_${n}`] = `verdict ${n}${suffix}`;
+      return s;
+    };
+    for (let n = 0; n < 9; n++) blueprintNodes.push({ stateKey: `decide_${n}`, nodeType: "decision" });
+    runs.push(run({ id: "c1", teamAgentId: "teamA", finalState: mk("a") }));
+    runs.push(run({ id: "c2", teamAgentId: "teamA", finalState: mk("b") }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.conflicts.length).toBeGreaterThan(6);
+    expect(renderContextForPrompt(r)).toMatch(/further conflicting field\(s\) not listed/);
+  });
+
   it("says no_record for a subject nothing decided on", async () => {
     const r = await resolveContext({ subjects: ["submission:SUB-2026-0000"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
     expect(r.items).toHaveLength(0);
@@ -322,9 +448,10 @@ describe("resolveContext omissions and honesty", () => {
     expect(getTeamBlueprintNodes).toHaveBeenCalledTimes(1); // cached across runs
     expect(r.items.length).toBeGreaterThan(0);
     // A tool_call's output is evidence and a decision node's is a decision --
-    // both durable, and both named by the step rather than by the key.
-    const keys = Object.keys(r.items[0].decision);
-    expect(keys).toContain("fetch_treaty_terms");
+    // both durable, both named by the step rather than by the key, and now
+    // held apart so the renderer can reference evidence instead of pasting it.
+    expect(Object.keys(r.items[0].evidence)).toContain("fetch_treaty_terms");
+    expect(Object.keys(r.items[0].decision)).toContain("classify_claim_type");
   });
 
   it("ignores runs that have not finished", async () => {
