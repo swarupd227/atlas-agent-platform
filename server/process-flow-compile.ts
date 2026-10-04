@@ -115,6 +115,11 @@ export function compileProcessFlow(graph: ProcessFlowGraph, opts: CompileOptions
     warn("no_end", "Flow has no End step, so it has no defined completion. Add an End step where the process finishes.");
   }
 
+  // Which edges point back up the flow. Needed by the cost findings below as
+  // well as by the plan: a back-edge becomes a revision rule on the reviewing
+  // step, so it is never judged as a branch.
+  const backIds = backEdgeIds(graph.nodes.map(n => n.id), validEdges);
+
   // ---- What this flow will cost to run ----
   // An author could previously commission a twenty-step flow without ever being
   // told it was twenty model calls. Two findings carry that: a decision whose
@@ -125,6 +130,10 @@ export function compileProcessFlow(graph: ProcessFlowGraph, opts: CompileOptions
     if (!condition) continue;
     if ((e as { rule?: unknown }).rule) continue;
     if (parseConditionToRule(condition)) continue;
+    // A back-edge is rework, not a branch: the build turns it into a revision
+    // rule, and its condition never routes anything. Warning about it sent
+    // authors to fix a model call that is never made.
+    if (backIds.has(e.id)) continue;
     // A branch out of a decision step is chosen by that step's one call, not
     // judged per edge.
     const source = nodeById.get(e.from);
@@ -176,7 +185,6 @@ export function compileProcessFlow(graph: ProcessFlowGraph, opts: CompileOptions
   // walk the build and the flow sync use, so all three agree on which edge of a
   // loop is the loop -- three private copies of this was how a flow could compile
   // clean here and still produce a team that could not run.
-  const backIds = backEdgeIds(graph.nodes.map(n => n.id), validEdges);
   const loops = validEdges.filter(e => backIds.has(e.id)).map(e => ({
     from: e.from, to: e.to, label: e.label, condition: e.condition,
   }));

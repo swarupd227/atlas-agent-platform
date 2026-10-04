@@ -23,6 +23,7 @@
 
 import type { ProcessNode, ProcessFlowGraph } from "./process-flow";
 import { parseConditionToRule } from "./condition-to-rule";
+import { backEdgeIds } from "./graph-cycles";
 
 export type ExecutionKind =
   /** A language model call. The only kind that costs tokens. */
@@ -330,7 +331,17 @@ export function estimateFlowCost(graph: Pick<ProcessFlowGraph, "nodes" | "edges"
   // exactly the flows an author had got right: "score > 5" was reported as a
   // model call it will never make. A branch out of a decision step is decided by
   // that step's one call, so it is not an edge call either.
+  // An edge pointing back up the flow is not a branch either: the build turns it
+  // into a revision rule on the reviewing step, and its condition is never
+  // evaluated as an edge. Counting it overstated every flow with a loop --
+  // including the platform's own Research & Report template, whose coverage
+  // review was reported as costing a call it will never make.
+  const loopIds = backEdgeIds(
+    graph.nodes.map((n) => n.id),
+    graph.edges.map((e) => ({ id: e.id, from: e.from, to: e.to })),
+  );
   const aiRoutedEdges = graph.edges.filter((e) => {
+    if (loopIds.has(e.id)) return false;
     if (decisionNodeIds.has(e.from)) return false;
     const condition = str(e.condition);
     const hasCondition = !!condition || !!str(e.label);

@@ -13,6 +13,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { findRetrievalOverlaps, describeOverlap } from "../shared/retrieval-overlap";
 import { verdictFrom, VERDICT_WORDS, REWORK_REQUESTED_RULE } from "../shared/rework-rule";
+import { parseConditionToRule } from "../shared/condition-to-rule";
 import { VERDICT_RE } from "../server/dag-execution-engine";
 import { evaluateRule } from "../server/rule-evaluator";
 import type { CitedSource } from "../shared/retrieval-citations";
@@ -159,6 +160,20 @@ describe("a flow that checks its own coverage", () => {
     expect(tpl).toMatch(/maxRounds: 2/);
     // Both branches out of the review, or neither fires and the run dead-ends.
     expect(tpl).toContain('from: "cover", to: "report"');
+  });
+
+  it("routes its own loop without a model call", () => {
+    // The template told authors to answer with requiresRevision while the parser
+    // did not recognise it, so the branch reading it was judged by a model on
+    // every run -- the platform at odds with its own advice.
+    expect(parseConditionToRule("requiresRevision")).not.toBeNull();
+    expect(parseConditionToRule("needsReview")).not.toBeNull();
+    // Written as a comparison in the template as well, so it holds whatever the
+    // prefix list accepts later.
+    const tpl = page.slice(page.indexOf('key: "research"'));
+    expect(tpl).toContain('condition: "requiresRevision == true"');
+    // And a branch NAME still cannot become a field nothing writes.
+    expect(parseConditionToRule("Rejected")).toBeNull();
   });
 
   it("tells the reviewer to answer with the field, not the word", () => {

@@ -125,7 +125,7 @@ const STARTER_TEMPLATES: Array<{ key: string; name: string; blurb: string; nodes
       // The back-edge: Sync to Automation turns this into a revision rule on the
       // coverage step, so a gap sends the run back to planning rather than
       // shipping a partial answer. maxRounds is the cap on how often.
-      { id: "e5", from: "cover", to: "plan", label: "Questions still unanswered", condition: "requiresRevision", maxRounds: 2 },
+      { id: "e5", from: "cover", to: "plan", label: "Questions still unanswered", condition: "requiresRevision == true", maxRounds: 2 },
       { id: "e6", from: "cover", to: "report", label: "Coverage complete", condition: "requiresRevision == false" },
       { id: "e7", from: "report", to: "e" },
     ],

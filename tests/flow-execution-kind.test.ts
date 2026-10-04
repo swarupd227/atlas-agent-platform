@@ -145,6 +145,28 @@ describe("what a flow will cost per run", () => {
     expect(cost.approxUsdPerRun).toBeGreaterThan(0);
   });
 
+  it("does not count an edge pointing back up the flow", () => {
+    // A back-edge becomes a revision rule on the reviewing step; its condition
+    // never routes anything. Counting it overstated every flow with a loop,
+    // including the platform's own Research & Report template.
+    const withLoop = {
+      nodes: [
+        { id: "plan", type: "ai_reasoning", label: "Plan" },
+        { id: "draft", type: "ai_reasoning", label: "Draft" },
+        { id: "review", type: "ai_reasoning", label: "Coverage review" },
+      ] as ProcessNode[],
+      edges: [
+        { id: "f1", from: "plan", to: "draft" },
+        { id: "f2", from: "draft", to: "review" },
+        { id: "back", from: "review", to: "plan", label: "Questions unanswered", condition: "the coverage reads thin" },
+      ],
+    };
+    expect(estimateFlowCost(withLoop).aiRoutedEdges).toBe(0);
+    // The same condition on a FORWARD edge is still a model call.
+    const forward = { ...withLoop, edges: [withLoop.edges[0], { ...withLoop.edges[2], id: "f3", from: "draft", to: "review" }] };
+    expect(estimateFlowCost(forward as any).aiRoutedEdges).toBe(1);
+  });
+
   it("counts a branch that genuinely needs judging", () => {
     const judged = {
       ...flow,

@@ -126,7 +126,12 @@ export function parseConditionToRule(condition: string | null | undefined): Rule
   // booleans: a branch called "Rejected" would otherwise become
   // `Rejected == true`, a field no step writes, so the branch would quietly
   // never fire -- worse than paying for the model call.
-  const BOOLEAN_FIELD = /^(?:approved|is[A-Z][A-Za-z0-9]*|has[A-Z][A-Za-z0-9]*|was[A-Z][A-Za-z0-9]*)$/;
+  // The conventional prefixes a boolean field is written with. `requires…` and
+  // `needs…` were missing, which put the platform's own Research & Report
+  // template at odds with itself: it tells a reviewer to answer with
+  // `requiresRevision`, and the branch reading that field was then judged by a
+  // model on every run.
+  const BOOLEAN_FIELD = /^(?:approved|(?:is|has|was|requires|needs|should|must|can)[A-Z][A-Za-z0-9]*)$/;
   const negated = /^(?:not|no)\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(body);
   if (negated && BOOLEAN_FIELD.test(negated[1])) {
     return { combinator: "AND", conditions: [{ field: negated[1], operator: "==", value: false }] };
