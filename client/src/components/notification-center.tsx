@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useState, useEffect, useRef } from "react";
 import {
   Bell, CheckCircle, AlertTriangle, TrendingDown, ArrowRight,
-  CreditCard, Clock, ShieldAlert, Zap, Ban,
+  CreditCard, Clock, ShieldAlert, Ban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -68,22 +68,16 @@ interface PolicyException {
   expiresAt: string | null;
 }
 
-interface AuditEvent {
-  id: string;
-  eventType: string;
-  objectType: string;
-  objectName: string;
-  severity: string;
-  timestamp: string;
-}
-
 export function NotificationCenter() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const seenViolationIds = useRef<Set<string>>(new Set());
 
+  // Pending approvals only, under the same key and request as the sidebar's badge, so the two share one
+  // fetch. The bell is on every page; the full approvals list is a megabyte it does not need.
   const { data: approvals } = useQuery<Approval[]>({
-    queryKey: ["/api/approvals"],
+    queryKey: ["/api/approvals", "pending"],
+    queryFn: () => fetch("/api/approvals?status=pending", { credentials: "include" }).then((r) => r.json()),
   });
 
   const { data: driftSignals } = useQuery<DriftSignal[]>({
@@ -96,10 +90,6 @@ export function NotificationCenter() {
 
   const { data: exceptions } = useQuery<PolicyException[]>({
     queryKey: ["/api/policy-exceptions"],
-  });
-
-  const { data: auditEvents } = useQuery<AuditEvent[]>({
-    queryKey: ["/api/audit-events"],
   });
 
   const { data: criticalViolations } = useQuery<CriticalViolation[]>({
@@ -136,14 +126,7 @@ export function NotificationCenter() {
     return exp > now && exp < sevenDaysFromNow;
   });
 
-  const recentIncidents = (auditEvents || []).filter((e) => {
-    if (e.eventType !== "incident_created" || e.severity !== "critical") return false;
-    const ts = new Date(e.timestamp);
-    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    return ts > oneDayAgo;
-  }).slice(0, 3);
-
-  const totalCount = pendingApprovals.length + criticalDrift.length + readyInvoices.length + expiringExceptions.length + recentIncidents.length + activeCriticalViolations.length;
+  const totalCount = pendingApprovals.length + criticalDrift.length + readyInvoices.length + expiringExceptions.length + activeCriticalViolations.length;
 
   return (
     <Popover>
@@ -225,21 +208,6 @@ export function NotificationCenter() {
                       subtitle={`${v.rule} · ${v.severity}`}
                       onClick={() => navigate("/governance")}
                       testId={`notification-violation-${i}`}
-                    />
-                  ))}
-                </NotificationSection>
-              )}
-
-              {recentIncidents.length > 0 && (
-                <NotificationSection title="Incidents Triggered" bordered>
-                  {recentIncidents.map((e, i) => (
-                    <NotificationItem
-                      key={e.id}
-                      icon={<Zap className="w-3.5 h-3.5 text-red-500 shrink-0" />}
-                      title={e.objectName}
-                      subtitle={`${e.eventType.replace(/_/g, " ")} \u00b7 ${e.severity}`}
-                      onClick={() => navigate("/monitor")}
-                      testId={`notification-incident-${i}`}
                     />
                   ))}
                 </NotificationSection>
