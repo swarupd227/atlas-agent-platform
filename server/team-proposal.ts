@@ -1023,6 +1023,13 @@ Also try to set "branchRule" — a single deterministic comparison — whenever 
 Leave "branchRule" as null (branchCondition only) when the condition genuinely requires judgment the source agent's structured output can't answer directly (sentiment, open-ended quality, "looks suspicious", etc) — never invent a field name that isn't in that agent's outputSchema.
 
 ═══════════════════════════════════════════
+COVERING THE WHOLE ASK (a coverage review step)
+A plan can be well-formed, pass every eval, and still answer four of the six things it was asked -- the failure is not a broken step, it is a decomposition that was too narrow, and nothing downstream notices. For a research-shaped ask (gather evidence from several places, then produce a written answer), propose a coverage review step after the drafting step:
+- Its job is one question per planned item: which part of the draft answers it? It must answer with a boolean field "requiresRevision", plus a list naming any item left unanswered.
+- Give it an edge back to the PLANNING or GATHERING step with "type": "conditional", "branchCondition": "requiresRevision" and "maxRounds": 2. The platform turns an edge pointing back up the flow into a revision rule on the reviewing step: the target runs again with the findings, and every step between the two follows, at most that many times.
+- Tell it in its systemPrompt not to use the word "fail" in its prose, and to say requiresRevision instead. A rework rule also matches a pronounced verdict, and a reviewer that passes the work while writing "nothing failed" has historically sent runs back for no reason.
+Do not add this to a journey that produces one record or one decision; it is for the ones that answer a question in several parts.
+
 STEPS THAT NEED NO MODEL (execution)
 Every agent you propose is a model call on every run, so a twenty-step plan of agents is twenty model calls. The engine can run four kinds of step for nothing, and you should use them wherever the step honestly is one:
 - Arithmetic, counting, totals, thresholds, percentages, reshaping or renaming fields, picking the top N of something already scored: "execution": {"kind":"expression","expression":"<JSONata over the run's state>"}.

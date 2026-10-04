@@ -100,6 +100,36 @@ const STARTER_TEMPLATES: Array<{ key: string; name: string; blurb: string; nodes
       { id: "e9", from: "credit", to: "e" },
     ],
   },
+  {
+    // A decomposition can be well-formed, pass its evals, and still answer four
+    // of the six things it was asked. The coverage review is the step that
+    // notices: its back-edge returns the run to the planning step with the gaps
+    // named, and everything between the two runs again (up to the round limit).
+    key: "research",
+    name: "Research & Report",
+    blurb: "Plan the questions, gather evidence, draft, check nothing was missed, then report.",
+    nodes: [
+      { id: "t", type: "trigger", label: "Research request received" },
+      { id: "plan", type: "ai_reasoning", label: "Plan the questions to answer", description: "Break the request into the specific questions a complete answer must cover, and list them." },
+      { id: "find", type: "get_info", label: "Gather the evidence", description: "Search the sources for each question. Bind a knowledge base here and this step retrieves instead of reasoning." },
+      { id: "draft", type: "ai_reasoning", label: "Draft the answer", description: "Answer each planned question from the evidence, citing the passage labels it came from." },
+      { id: "cover", type: "ai_reasoning", label: "Coverage review", description: "For each planned question, say which part of the draft answers it. Answer with requiresRevision true or false, and name any question left unanswered. Do not use the word fail in your prose -- say requiresRevision instead." },
+      { id: "report", type: "take_action", label: "Produce the report" },
+      { id: "e", type: "end", label: "Delivered" },
+    ],
+    edges: [
+      { id: "e1", from: "t", to: "plan" },
+      { id: "e2", from: "plan", to: "find" },
+      { id: "e3", from: "find", to: "draft" },
+      { id: "e4", from: "draft", to: "cover" },
+      // The back-edge: Sync to Automation turns this into a revision rule on the
+      // coverage step, so a gap sends the run back to planning rather than
+      // shipping a partial answer. maxRounds is the cap on how often.
+      { id: "e5", from: "cover", to: "plan", label: "Questions still unanswered", condition: "requiresRevision", maxRounds: 2 },
+      { id: "e6", from: "cover", to: "report", label: "Coverage complete", condition: "requiresRevision == false" },
+      { id: "e7", from: "report", to: "e" },
+    ],
+  },
 ];
 
 // Staged status lines shown while the AI drafts a flow, so the ~6s round-trip

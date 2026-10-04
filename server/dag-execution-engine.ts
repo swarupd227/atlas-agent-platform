@@ -15,6 +15,8 @@ import { validateRunInput, RunInputError } from "@shared/run-input";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
 import { citePassages, CITATION_RULE, type CitedSource } from "@shared/retrieval-citations";
+import { verdictFrom, VERDICT_WORDS } from "@shared/rework-rule";
+import { findRetrievalOverlaps, describeOverlap } from "@shared/retrieval-overlap";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, collectRuleLeaves, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
 import { collectRunFiles } from "@shared/run-files";
@@ -1228,6 +1230,14 @@ export const VERIFIED_FACTS_STATE_SUFFIX = "_verified";
 export const KB_SOURCES_STATE_SUFFIX = "_sources";
 
 /**
+ * Where a run records that two steps retrieved the same passages.
+ *
+ * The `__` prefix is load-bearing: buildAgentInput skips those keys, so this is
+ * on the run for a person to read and in no prompt for a model to be puzzled by.
+ */
+export const RETRIEVAL_OVERLAP_STATE_KEY = "__retrieval_overlap";
+
+/**
  * A review step's verdict, as it writes it: a heading such as "## QA: PASS".
  * Read by the approval gate for its evidence and by the claim-versus-facts
  * check below; one pattern, so the two cannot disagree about what a verdict is.
@@ -1770,6 +1780,21 @@ export class DAGExecutionEngine {
         break;
       }
 
+      // Two steps that retrieved the same passages. Recorded, never acted on:
+      // steps citing one clause can both be right, and a run must not fail over
+      // it. The key is `__`-prefixed, which buildAgentInput skips, so the finding
+      // reaches the run record and the monitor without costing a prompt anything
+      // or telling an agent about plumbing it cannot act on.
+      const sourcesByStep: Record<string, any> = {};
+      for (const [key, value] of Object.entries(currentState)) {
+        if (key.endsWith(KB_SOURCES_STATE_SUFFIX) && Array.isArray(value)) sourcesByStep[key.slice(0, -KB_SOURCES_STATE_SUFFIX.length)] = value;
+      }
+      const overlaps = findRetrievalOverlaps(sourcesByStep);
+      if (overlaps.length > 0) {
+        currentState = { ...currentState, [RETRIEVAL_OVERLAP_STATE_KEY]: overlaps.map(describeOverlap) };
+        for (const line of overlaps.map(describeOverlap)) console.warn(`[dag] duplicated retrieval: ${line}`);
+      }
+
       // Revise on failure: a reviewer in this wave whose output matches its
       // policy sends the run back to its target with its findings, and every
       // node between the two runs again.
@@ -1886,7 +1911,19 @@ export class DAGExecutionEngine {
       if (used >= policy.maxRounds) continue;
       const text = nodeOutputText.get(nr.nodeId);
       if (!text) continue;
-      const facts = { ...(extractStructuredOutput(text) ?? {}), output: text };
+      // `verdict` is the reviewer's pronouncement as a field the rule can match,
+      // rather than the word wherever it appears in the prose. The rule used to
+      // fire on `output contains "fail"`, so a reviewer passing the work with
+      // "no gaps found, nothing failed" sent the run back to its planning step
+      // and re-ran every approval gate on the way. A verdict the reviewer put in
+      // its own structured output wins; this only fills the gap.
+      const structured = extractStructuredOutput(text) ?? {};
+      const pronounced = verdictFrom(text);
+      const facts = {
+        ...structured,
+        output: text,
+        ...(structured.verdict === undefined && pronounced ? { verdict: pronounced } : {}),
+      };
       if (!evaluateRule(policy.when, facts).result) continue;
       const nodeIds = revisionLoopNodes(policy.targetNodeId, nr.nodeId, plan.edgeMap);
       const targetWaveIndex = plan.waves.findIndex((w) => w.nodes.includes(policy.targetNodeId));

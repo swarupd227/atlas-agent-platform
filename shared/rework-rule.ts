@@ -49,10 +49,41 @@ export function isCurrentReworkRule(when: unknown): boolean {
   return canonical(when) === canonical(REWORK_REQUESTED_RULE);
 }
 
+/**
+ * The words a review step pronounces its verdict in. Shared with the engine's
+ * VERDICT_RE (server/dag-execution-engine.ts), which reads the same line for the
+ * verdict-versus-facts check; a test asserts the two agree, because a word in one
+ * list and not the other is a verdict that routes one way and is audited another.
+ */
+export const VERDICT_WORDS = ["PASS", "FAIL", "BLOCKED", "APPROVED", "REJECTED"] as const;
+
+/**
+ * The verdict a reviewer pronounced, or undefined if it did not pronounce one.
+ *
+ * Read from a verdict HEADING ("## QA: FAIL") or from a line that opens with the
+ * word ("FAIL - three defects"), never from the middle of a sentence. That
+ * distinction is the whole point: the rule below used to fire on `output contains
+ * "fail"`, so a reviewer passing the work with "no gaps found, nothing failed"
+ * sent the run back to its planning step and re-ran every approval gate on the way
+ * -- for the word "failed" in a sentence saying the opposite.
+ */
+export function verdictFrom(text: unknown): string | undefined {
+  if (typeof text !== "string" || !text) return undefined;
+  const words = VERDICT_WORDS.join("|");
+  const heading = new RegExp(`^##?\\s*[\\w :/&-]{0,40}?(${words})\\b`, "im").exec(text);
+  if (heading) return heading[1].toUpperCase();
+  const opener = new RegExp(`^\\s*\\**(${words})\\**\\s*[:.\\-—]`, "im").exec(text);
+  return opener ? opener[1].toUpperCase() : undefined;
+}
+
 export const REWORK_REQUESTED_RULE: RuleGroup = {
   combinator: "OR",
   conditions: [
-    { field: "output", operator: "contains", value: "fail" },
+    // The verdict as pronounced, not the word wherever it appears. decideRevision
+    // computes `verdict` with verdictFrom above.
+    { field: "verdict", operator: "==", value: "FAIL" },
+    { field: "verdict", operator: "==", value: "BLOCKED" },
+    { field: "verdict", operator: "==", value: "REJECTED" },
     { field: "accepted", operator: "==", value: false },
     { field: "approved", operator: "==", value: false },
     { field: "redraft", operator: "==", value: true },

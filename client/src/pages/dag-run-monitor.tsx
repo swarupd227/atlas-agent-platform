@@ -522,6 +522,14 @@ export default function DagRunMonitor() {
   // The files the run currently stands behind: from its latest state, so a file
   // a revision replaced (or withdrew) is not offered here as the deliverable.
   const runFiles = runDeliverables(run.finalState ?? run.currentState, steps);
+  // Steps that retrieved the same passages. The engine records this on the run
+  // under a __-prefixed key, which no prompt ever sees; it is here because the
+  // person reading the run is the one who can decide whether it is waste.
+  const retrievalOverlaps: string[] = (() => {
+    const state = (run.finalState ?? run.currentState) as Record<string, unknown> | null;
+    const found = state?.__retrieval_overlap;
+    return Array.isArray(found) ? found.filter((l): l is string => typeof l === "string") : [];
+  })();
   const completedCount = steps.filter(s => s.state === "completed").length;
   const failedCount = steps.filter(s => s.state === "failed").length;
   const skippedNodes = allNodes.filter(n => n.status === "skipped");
@@ -870,6 +878,24 @@ export default function DagRunMonitor() {
                 <span>Select a step to see what it produced</span>
               </div>
             </div>
+
+            {/* Duplicated retrieval: stated, not judged -- two steps citing one
+                clause can both be right, so this names what was shared and
+                leaves the conclusion to the reader. */}
+            {retrievalOverlaps.length > 0 && (
+              <div className="rounded-xl border bg-card p-4 flex flex-col gap-2" data-testid="card-retrieval-overlap">
+                <div className="flex items-baseline justify-between gap-3">
+                  <h2 className="text-base font-semibold" style={DISPLAY}>Steps that used the same evidence</h2>
+                  <Eyebrow>{retrievalOverlaps.length} pair{retrievalOverlaps.length !== 1 ? "s" : ""}</Eyebrow>
+                </div>
+                <ul className="flex flex-col gap-1">
+                  {retrievalOverlaps.map((line, i) => (
+                    <li key={i} className="text-sm text-muted-foreground" data-testid={`retrieval-overlap-${i}`}>{line}</li>
+                  ))}
+                </ul>
+                <p className="text-xs text-muted-foreground">Worth checking whether the work was split as intended. Two steps can legitimately rest on the same passage.</p>
+              </div>
+            )}
 
             {/* Deliverables */}
             {runFiles.length > 0 && (
