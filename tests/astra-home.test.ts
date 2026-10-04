@@ -8,7 +8,7 @@ const input = (over: Partial<HomeInput> = {}): HomeInput => ({
   organizationName: "Summit Equipment",
   industry: { label: "Equipment Dealers & Distribution", source: "tenant", organizationLabel: null },
   needs: { ok: true, data: { needsDecisionCount: 3, urgentCount: 1, decidableHere: 2 } },
-  agents: { ok: true, data: { runnable: 5 } },
+  agents: { ok: true, data: { offered: 5, teamSteps: 0 } },
   outcomes: { ok: true, data: { total: 4, pendingReview: 1 } },
   connectors: { ok: true, data: { total: 6, connected: 2, notConnected: 1 } },
   ...over,
@@ -21,6 +21,18 @@ describe("buildHome", () => {
     expect(home.rows[0]).toMatchObject({ count: 3, detail: "1 urgent · 2 you can decide here", tone: "attention" });
     expect(home.rows.find((r) => r.id === "industry")).toMatchObject({ detail: "Equipment Dealers & Distribution, set for Summit Equipment", tone: "neutral" });
     for (const row of home.rows) expect(row.prompt.length).toBeGreaterThan(10);
+  });
+
+  it("counts the agents a person would pick, and names the team steps instead of folding them in", () => {
+    // The row used to show listRunnableAgents().length, which for a role that
+    // can view agents includes every team's internal workers -- 1,036 on the
+    // live platform, almost all of them team implementation detail. The
+    // Workspace excludes those on purpose (UX audit F-4); the briefing now
+    // agrees with it, and says what else is reachable rather than hiding it.
+    const row = buildHome(input({ agents: { ok: true, data: { offered: 12, teamSteps: 1024 } } })).rows.find((r) => r.id === "agents")!;
+    expect(row).toMatchObject({ count: 12, detail: "1,024 team steps you can also run" });
+    const none = buildHome(input({ agents: { ok: true, data: { offered: 0, teamSteps: 0 } } })).rows.find((r) => r.id === "agents")!;
+    expect(none).toMatchObject({ count: 0, detail: "None yet" });
   });
 
   it("leaves out a section the role can't see, rather than showing it as empty", () => {

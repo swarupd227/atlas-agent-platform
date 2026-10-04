@@ -283,6 +283,34 @@ async function listRunnableAgents(orgId: string, role: RoleId) {
 }
 
 /**
+ * The same two sets listRunnableAgents returns, counted, for the briefing row.
+ *
+ * The row used to show listRunnableAgents().length, which is right for the tool
+ * and wrong for a person: for a role that can view agents that list adds every
+ * team's internal workers, so an admin's home read "1,036 agents you can run" --
+ * a number that is true, useless, and mostly team implementation detail.
+ * getWorkspaceAgents already draws the line the Workspace draws (UX audit F-4:
+ * address the team's orchestrator, not its sub-agents), so the count leads with
+ * that and says what else is reachable rather than folding it in.
+ *
+ * One getAgentsForWorkspace read for both figures, since the briefing is the
+ * surface where that read's cost was already a problem.
+ */
+async function runnableAgentCounts(orgId: string, role: RoleId): Promise<{ offered: number; teamSteps: number }> {
+  const all = await storage.getAgentsForWorkspace(orgId);
+  const offered = await getWorkspaceAgents(orgId, role, all);
+  if (!hasPermission(role, "view_agents")) return { offered: offered.length, teamSteps: 0 };
+  const offeredIds = new Set(offered.map((a) => a.id));
+  const teamSteps = all.filter((a) => {
+    if (offeredIds.has(a.id) || a.agentType === "team" || !RUNNABLE_STATUSES.has(a.status)) return false;
+    if (role === "admin") return true;
+    const audience = ((a as any).workspaceAudience as string[] | null) ?? [];
+    return audience.length === 0 || audience.includes(role);
+  }).length;
+  return { offered: offered.length, teamSteps };
+}
+
+/**
  * Runs are addressed by id alone in workspace-run.ts; Astra only touches a run
  * that belongs to the caller's organization (a run with no organization is
  * treated as belonging to none).
@@ -1671,6 +1699,7 @@ export function createAstraServices(): AstraServices {
     linkConnector,
     recordAudit,
     listRunnableAgents,
+    runnableAgentCounts,
     startAgentRun,
     getAgentRun,
     decideAgentRun,

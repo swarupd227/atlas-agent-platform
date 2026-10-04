@@ -15,7 +15,8 @@ export interface HomeInput {
   organizationName: string | null;
   industry: { label: string | null; source: "tenant" | "request" | "none"; organizationLabel: string | null };
   needs: HomeSection<{ needsDecisionCount: number; urgentCount: number; decidableHere: number }>;
-  agents: HomeSection<{ runnable: number }>;
+  /** offered: what the Workspace puts in front of someone. teamSteps: a team's internal steps, reachable but not offered. */
+  agents: HomeSection<{ offered: number; teamSteps: number }>;
   outcomes: HomeSection<{ total: number; pendingReview: number }>;
   connectors: HomeSection<{ total: number; connected: number; notConnected: number }>;
 }
@@ -61,8 +62,12 @@ export function buildHome(input: HomeInput): HomeBriefing {
       tone: d.needsDecisionCount > 0 ? "attention" : "neutral",
     })),
     sectionRow(input.agents, { id: "agents", label: "Agents you can run", prompt: "I want one of my agents to do a piece of work. Which ones can I run?" }, (d) => ({
-      count: d.runnable,
-      detail: d.runnable === 0 ? "None yet" : null,
+      // The agents a person would pick, not every agent that could technically
+      // be addressed: a team's internal steps are reachable but are not what
+      // this row is for. They are named rather than hidden, because someone
+      // building agents does run a step by itself.
+      count: d.offered,
+      detail: d.teamSteps > 0 ? `${d.teamSteps.toLocaleString()} team steps you can also run` : d.offered === 0 ? "None yet" : null,
       tone: "neutral",
     })),
     sectionRow(input.outcomes, { id: "outcomes", label: "Outcomes", prompt: "Show me our outcomes and which are waiting for review." }, (d) => ({

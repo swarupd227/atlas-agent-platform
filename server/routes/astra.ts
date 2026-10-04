@@ -241,7 +241,7 @@ router.get("/api/astra/home", checkPermission("use_astra"), async (req, res) => 
         decidableHere: items.filter((i) => i.canDecideHere).length,
       };
     }, timings, "needs"),
-    section(async () => ({ runnable: (await services.listRunnableAgents(ctx.orgId, ctx.role)).length }), timings, "agents"),
+    section(() => services.runnableAgentCounts(ctx.orgId, ctx.role), timings, "agents"),
     section(() => services.outcomeCounts(ctx.orgId), timings, "outcomes"),
     can("view_agents")
       ? section(async () => {
