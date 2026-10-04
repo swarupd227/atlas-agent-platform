@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { OrgSettings, AdminUser, EnvironmentConfig, SecretRotationPolicy, AdminWebhook } from "@shared/schema";
+import type { OrgSettings, AdminUser, EnvironmentConfig, SecretRotationPolicy, AdminWebhook, PlatformSetting } from "@shared/schema";
 
 const ROLES = [
   { value: "platform_operator", label: "Platform Operator" },
@@ -58,6 +58,117 @@ function daysUntil(date: string | Date | null): number | null {
 }
 
 interface SlaTimer { hours: number; escalateAfter: number }
+
+/**
+ * Platform feature flags, toggled here rather than by an environment variable.
+ *
+ * Several flags existed with no way to see or change them from the platform --
+ * GUARDRAIL_REVIEW and DECISION_STEP_KIND were flippable only by an API call,
+ * and the Intelligence Context Layer was first gated on env vars, which needed
+ * a Cloud Shell round trip and an app restart to change.
+ *
+ * Generic on purpose: any platform setting whose value is exactly "on" or "off"
+ * appears here, so a new flag needs no change to this page. Settings holding
+ * JSON (thresholds, site overrides) are deliberately left out -- a switch
+ * cannot express them and silently rendering one as off would be wrong.
+ */
+function PlatformFlagsTab() {
+  const { toast } = useToast();
+  const { data: settings, isLoading } = useQuery<PlatformSetting[]>({ queryKey: ["/api/platform-settings"] });
+
+  const [pending, setPending] = useState<string | null>(null);
+  const toggle = useMutation({
+    mutationFn: ({ setting, on, vocab }: { setting: PlatformSetting; on: boolean; vocab: [string, string] }) =>
+      apiRequest("PUT", `/api/platform-settings/${encodeURIComponent(setting.key)}`, {
+        value: on ? vocab[0] : vocab[1],
+        // Carried through so a write does not blank the text that explains the
+        // flag to the next person who opens this page.
+        description: setting.description ?? undefined,
+        category: setting.category ?? undefined,
+      }),
+    onSuccess: (_res, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/platform-settings"] });
+      setPending(null);
+      toast({ title: `${vars.setting.key} is now ${vars.on ? vars.vocab[0] : vars.vocab[1]}` });
+    },
+    onError: (err: any, vars) => {
+      setPending(null);
+      // Says which flag failed and leaves the switch where it was: a toggle
+      // that springs back with no message reads as the platform ignoring you.
+      toast({ title: `Could not change ${vars.setting.key}`, description: String(err?.message ?? err), variant: "destructive" });
+    },
+  });
+
+  // Two vocabularies are in use: "on"/"off" (the decisions flags) and
+  // "true"/"false" (the observability ones). Both are booleans and both belong
+  // here, but a write must keep the vocabulary the setting already uses --
+  // flipping GUARDRAIL_REVIEW to "true" would read as off to the server, which
+  // compares against "on".
+  const VOCAB: Array<[string, string]> = [["on", "off"], ["true", "false"]];
+  const vocabOf = (s: PlatformSetting) => {
+    const v = String(s.value ?? "").trim().toLowerCase();
+    return VOCAB.find(([y, n]) => v === y || v === n) ?? null;
+  };
+  const isFlag = (s: PlatformSetting) => vocabOf(s) !== null;
+  const isOn = (s: PlatformSetting) => {
+    const pair = vocabOf(s);
+    return !!pair && String(s.value).trim().toLowerCase() === pair[0];
+  };
+  const flags = (settings ?? []).filter(isFlag).sort((a, b) => a.key.localeCompare(b.key));
+  const nonFlags = (settings ?? []).filter((s) => !isFlag(s));
+
+  if (isLoading) return <Skeleton className="h-48 w-full" data-testid="skeleton-platform-flags" />;
+
+  return (
+    <Card data-testid="card-platform-flags">
+      <CardHeader>
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Zap className="w-4 h-4" />
+          Platform Flags
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Each change takes effect on the next run — no redeploy or restart. Every change is recorded in the audit trail.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {flags.length === 0 && (
+          <p className="text-sm text-muted-foreground" data-testid="text-no-platform-flags">No on/off flags are configured.</p>
+        )}
+        {flags.map((s) => {
+          const on = isOn(s);
+          const vocab = vocabOf(s)!;
+          return (
+            <div key={s.key} className="flex items-start justify-between gap-4 border-b pb-4 last:border-b-0 last:pb-0">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium font-mono" data-testid={`text-flag-key-${s.key}`}>{s.key}</span>
+                  <Badge variant={on ? "default" : "secondary"} data-testid={`badge-flag-state-${s.key}`}>{on ? vocab[0] : vocab[1]}</Badge>
+                  {s.category && <Badge variant="outline">{s.category}</Badge>}
+                </div>
+                {s.description && (
+                  <p className="text-xs text-muted-foreground mt-1" data-testid={`text-flag-description-${s.key}`}>{s.description}</p>
+                )}
+              </div>
+              <Switch
+                checked={on}
+                disabled={pending === s.key}
+                onCheckedChange={(next) => { setPending(s.key); toggle.mutate({ setting: s, on: next, vocab }); }}
+                data-testid={`switch-flag-${s.key}`}
+              />
+            </div>
+          );
+        })}
+        {nonFlags.length > 0 && (
+          // Named rather than hidden: a reader who knows there are more
+          // settings should not have to wonder where they went.
+          <p className="text-xs text-muted-foreground pt-2" data-testid="text-non-flag-settings">
+            {nonFlags.length} further setting(s) are not simple on/off values and are not editable here: {nonFlags.map((s) => s.key).join(", ")}.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function OrgSettingsTab() {
   const { toast } = useToast();
@@ -1071,6 +1182,10 @@ export default function Admin() {
             <Settings className="w-3.5 h-3.5 mr-1.5" />
             Org Settings
           </TabsTrigger>
+          <TabsTrigger value="platform-flags" data-testid="tab-platform-flags">
+            <Zap className="w-3.5 h-3.5 mr-1.5" />
+            Platform Flags
+          </TabsTrigger>
           <TabsTrigger value="users" data-testid="tab-users">
             <Users className="w-3.5 h-3.5 mr-1.5" />
             Users & Roles
@@ -1091,6 +1206,10 @@ export default function Admin() {
 
         <TabsContent value="org-settings" className="mt-4">
           <OrgSettingsTab />
+        </TabsContent>
+
+        <TabsContent value="platform-flags" className="mt-4">
+          <PlatformFlagsTab />
         </TabsContent>
 
         <TabsContent value="users" className="mt-4">

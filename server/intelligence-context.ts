@@ -283,23 +283,37 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
   };
 }
 
+/** The platform setting that turns this layer on. "on" or "off". */
+export const INTELLIGENCE_CONTEXT_SETTING = "INTELLIGENCE_CONTEXT";
+
 /**
- * Is the layer on for this team?
+ * Is the layer on?
  *
- * Two env vars rather than anything per-journey in code: INTELLIGENCE_CONTEXT_ENABLED
- * turns the feature on at all, and INTELLIGENCE_CONTEXT_TEAMS optionally narrows it to
- * a comma-separated list of team agent ids. Rolling out to one journey is then
- * configuration, not a branch naming that journey -- the same capability has to
- * work for the next one without a code change.
+ * A platform setting, not an environment variable. The first version used env
+ * vars and that was the wrong call: flipping it needed a Cloud Shell round trip
+ * and an app restart, and a list of team ids in an env var is invisible to
+ * anyone looking at the platform. This follows the pattern GUARDRAIL_REVIEW and
+ * DECISION_STEP_KIND already use -- a row in platform_settings, readable and
+ * writable through /api/platform-settings/:key, so it is togglable from the UI
+ * and visible beside the other flags.
  *
- * Off unless explicitly enabled: this reads prior decisions into a live prompt,
- * and a default-on read path is a default-on behaviour change.
+ * There is deliberately no per-journey scoping here. A journey only receives
+ * context when its state names a business object, so the layer is already
+ * self-limiting; and if per-journey enablement is ever wanted it belongs on the
+ * team record, where an operator can see it, not in a configured id list.
+ *
+ * Off unless explicitly turned on: this reads prior decisions into a live
+ * prompt, and a default-on read path is a default-on behaviour change. A failed
+ * read is off, never on.
  */
-export function intelligenceContextEnabledFor(teamAgentId?: string | null): boolean {
-  if (String(process.env.INTELLIGENCE_CONTEXT_ENABLED ?? "").toLowerCase() !== "true") return false;
-  const only = String(process.env.INTELLIGENCE_CONTEXT_TEAMS ?? "")
-    .split(",").map(s => s.trim()).filter(Boolean);
-  return only.length === 0 || (!!teamAgentId && only.includes(teamAgentId));
+export async function intelligenceContextEnabled(): Promise<boolean> {
+  try {
+    const row = await (storage as { getPlatformSetting?: (key: string) => Promise<{ value?: string | null } | undefined> })
+      .getPlatformSetting?.(INTELLIGENCE_CONTEXT_SETTING);
+    return String(row?.value ?? "").trim().toLowerCase() === "on";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -317,7 +331,7 @@ export async function priorDecisionsForPrompt(input: {
   purpose: Purpose;
   limit?: number;
 }): Promise<string> {
-  if (!intelligenceContextEnabledFor(input.teamAgentId)) return "";
+  if (!(await intelligenceContextEnabled())) return "";
   // The subjects come from the state the run has reached: the step being
   // prompted is mid-run, and what it is deciding about is whatever upstream
   // steps have established.

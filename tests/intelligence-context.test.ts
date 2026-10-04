@@ -22,14 +22,19 @@ const runs: any[] = [];
 // are mocked, and a test asserts the index was actually consulted.
 const blueprintNodes: any[] = [];
 const getTeamBlueprintNodes = vi.fn(async () => blueprintNodes);
+// The flag now lives in platform_settings, as GUARDRAIL_REVIEW and
+// DECISION_STEP_KIND do, so it is togglable from the UI.
+let settingValue: string | null = null;
+const getPlatformSetting = vi.fn(async () => (settingValue === null ? undefined : { value: settingValue }));
 vi.mock("../server/storage", () => ({
   storage: {
     listDagExecutionRunsByOrg: vi.fn(async () => runs),
     getAgent: vi.fn(async (id: string) => ({ id, name: "E&S Property Binding Orchestrator", blueprintId: "bp1" })),
     getTeamBlueprintNodes,
+    getPlatformSetting,
   },
 }));
-const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabledFor } = await import("../server/intelligence-context");
+const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled } = await import("../server/intelligence-context");
 
 // Verbatim shape from the live run.
 const LIVE_STATE = {
@@ -291,38 +296,42 @@ describe("resolveContext authority", () => {
 describe("the flag, and what the engine gets", () => {
   beforeEach(() => {
     runs.length = 0;
-    delete process.env.INTELLIGENCE_CONTEXT_ENABLED;
-    delete process.env.INTELLIGENCE_CONTEXT_TEAMS;
+    settingValue = "on";
     blueprintNodes.length = 0;
   });
 
-  it("returns nothing at all unless explicitly enabled", async () => {
+  it("is off when the setting is absent, off, or unreadable", async () => {
     runs.push(run({ teamAgentId: "teamA" }));
-    // Off by default: this reads prior decisions into a live prompt, and a
-    // default-on read path is a default-on behaviour change.
-    expect(await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" })).toBe("");
-    expect(intelligenceContextEnabledFor("teamA")).toBe(false);
-
-    process.env.INTELLIGENCE_CONTEXT_ENABLED = "false";
-    expect(intelligenceContextEnabledFor("teamA")).toBe(false);
+    // A row that was never seeded, an explicit off, and a read that throws
+    // must all mean off. A default-on read path is a default-on behaviour
+    // change, and a failed read must never be mistaken for permission.
+    for (const v of [null, "off", "", "OFF "]) {
+      settingValue = v;
+      expect(await intelligenceContextEnabled(), String(v)).toBe(false);
+      expect(await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" }), String(v)).toBe("");
+    }
+    getPlatformSetting.mockRejectedValueOnce(new Error("db down"));
+    expect(await intelligenceContextEnabled()).toBe(false);
   });
 
-  it("narrows to named teams by configuration, not by a branch naming a journey", async () => {
-    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
-    process.env.INTELLIGENCE_CONTEXT_TEAMS = "teamA, teamC";
-    expect(intelligenceContextEnabledFor("teamA")).toBe(true);
-    expect(intelligenceContextEnabledFor("teamC")).toBe(true);
-    expect(intelligenceContextEnabledFor("teamB")).toBe(false);
-    expect(intelligenceContextEnabledFor(null)).toBe(false);
+  it("is on when the platform setting says on, whatever the casing", async () => {
+    for (const v of ["on", "ON", " on "]) {
+      settingValue = v;
+      expect(await intelligenceContextEnabled(), v).toBe(true);
+    }
   });
 
-  it("applies to every team when no allowlist is given", () => {
-    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
-    expect(intelligenceContextEnabledFor("anything")).toBe(true);
+  it("reads the flag from platform_settings, not from the environment", async () => {
+    // The env-var version needed a Cloud Shell round trip and an app restart
+    // to flip, and was invisible in the platform.
+    settingValue = "on";
+    getPlatformSetting.mockClear();
+    runs.push(run({ teamAgentId: "teamA" }));
+    await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
+    expect(getPlatformSetting).toHaveBeenCalledWith("INTELLIGENCE_CONTEXT");
   });
 
   it("returns nothing when the step names no business object", async () => {
-    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
     runs.push(run({ teamAgentId: "teamA" }));
     // No subject means nothing to anchor on, and a prompt must not be given
     // context retrieved against nothing.
@@ -331,8 +340,6 @@ describe("the flag, and what the engine gets", () => {
   });
 
   it("gives the engine rendered text when enabled and anchored", async () => {
-    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
-    process.env.INTELLIGENCE_CONTEXT_TEAMS = "teamA";
     runs.push(run({ teamAgentId: "teamA" }));
     const text = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
     expect(text).toMatch(/## Prior decisions/);
@@ -340,7 +347,6 @@ describe("the flag, and what the engine gets", () => {
   });
 
   it("says history was unreadable rather than claiming there is no prior decision", async () => {
-    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
     const { storage } = await import("../server/storage");
     (storage.listDagExecutionRunsByOrg as any).mockRejectedValueOnce(new Error("db down"));
     // The failure used to render as "No finished run recorded a decision on

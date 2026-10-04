@@ -1773,6 +1773,12 @@ export async function seedDatabase() {
         description: "on = a team run that finishes with a high-severity policy flag, or a review verdict that disagrees with the run's facts, raises one Guardrail Review in the Approval Queue with the flags as evidence. off = flags stay on the run and in the guardrail_flags KPI statistic.",
         category: "decisions",
       },
+      {
+        key: "INTELLIGENCE_CONTEXT",
+        value: "off",
+        description: "on = a step is shown the prior decisions recorded against the business objects its run has reached (the binder, period or submission in its state), with each item marked authoritative or precedent and every omission stated. Conflicting records of one object are reported rather than resolved. off = steps see no prior decisions, as before. Only decision-relevant state is read; session state and framework bookkeeping are excluded.",
+        category: "decisions",
+      },
     ];
     const missingSettings = seedRowsMissing(existingSettings, defaultSettings, "key");
     if (missingSettings.length > 0) {
