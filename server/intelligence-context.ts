@@ -85,20 +85,20 @@ function findConflicts(items: ContextItem[]): Conflict[] {
   }
   for (const [subject, group] of bySubject) {
     if (group.length < 2) continue;
-    const fields = new Set(group.flatMap((i) => Object.keys(i.decision)));
+    const fields = new Set(group.flatMap((i: ContextItem) => Object.keys(i.decision)));
     for (const field of fields) {
-      const present = group.filter((i) => field in i.decision);
+      const present = group.filter((i: ContextItem) => field in i.decision);
       if (present.length < 2) continue;
       // Only a value short enough to be a fact can be a conflict of fact. A
       // long block differing is two accounts of the same thing, not two
       // claims about it, and reporting it drowns the real conflicts.
-      if (present.some((i) => JSON.stringify(i.decision[field] ?? "").length > 240)) continue;
-      const distinct = new Set(present.map((i) => JSON.stringify(i.decision[field])));
+      if (present.some((i: ContextItem) => JSON.stringify(i.decision[field] ?? "").length > 240)) continue;
+      const distinct = new Set(present.map((i: ContextItem) => JSON.stringify(i.decision[field])));
       if (distinct.size < 2) continue;
       conflicts.push({
         subject,
         field,
-        values: present.map((i) => ({ runId: i.citation.runId, decidedAt: i.citation.decidedAt, value: i.decision[field] })),
+        values: present.map((i: ContextItem) => ({ runId: i.citation.runId, decidedAt: i.citation.decidedAt, value: i.decision[field] })),
       });
     }
   }
@@ -324,19 +324,40 @@ export async function intelligenceContextEnabled(): Promise<boolean> {
  * and every gate -- the flag, the subject check, the purpose -- lives with the
  * code that owns it.
  */
+/**
+ * What was injected, in a form a run record can keep.
+ *
+ * The text alone is not enough. A caller that only gets a string can put it in
+ * a prompt and cannot put it anywhere a person will later read -- which is how
+ * the first version changed what an agent was told and left no trace of having
+ * done so, against this layer's own rule that retrieval must be visible in the
+ * run record.
+ */
+export interface PriorContextForPrompt {
+  /** The prompt block, or "" when nothing was injected. */
+  text: string;
+  /** Business objects the step's state named. Present even when nothing matched. */
+  subjects: Subject[];
+  items: Array<{ subject: Subject; tier: string; matchAxis?: string; runId: string; decidedAt: string | null }>;
+  conflicts: Array<{ subject: Subject; field: string }>;
+  omissions: Array<{ reason: string; detail: string }>;
+}
+
+const NOTHING: PriorContextForPrompt = { text: "", subjects: [], items: [], conflicts: [], omissions: [] };
+
 export async function priorDecisionsForPrompt(input: {
   teamAgentId: string;
   state: Record<string, unknown> | null | undefined;
   orgId?: string | null;
   purpose: Purpose;
   limit?: number;
-}): Promise<string> {
-  if (!(await intelligenceContextEnabled())) return "";
+}): Promise<PriorContextForPrompt> {
+  if (!(await intelligenceContextEnabled())) return NOTHING;
   // The subjects come from the state the run has reached: the step being
   // prompted is mid-run, and what it is deciding about is whatever upstream
   // steps have established.
   const subjects = extractSubjects(input.state).map(s => s.subject);
-  if (subjects.length === 0) return "";
+  if (subjects.length === 0) return NOTHING;
   try {
     const resolved = await resolveContext({
       subjects,
@@ -346,12 +367,21 @@ export async function priorDecisionsForPrompt(input: {
       teamAgentId: input.teamAgentId,
       limit: input.limit ?? 3,
     });
-    return renderContextForPrompt(resolved);
+    return {
+      text: renderContextForPrompt(resolved),
+      subjects,
+      items: resolved.items.map(i => ({
+        subject: i.subject, tier: i.tier, ...(i.matchAxis ? { matchAxis: i.matchAxis } : {}),
+        runId: i.citation.runId, decidedAt: i.citation.decidedAt,
+      })),
+      conflicts: resolved.conflicts.map(c => ({ subject: c.subject, field: c.field })),
+      omissions: resolved.omissions.map(o => ({ reason: o.reason, detail: o.detail })),
+    };
   } catch (err: any) {
     // A failure here must not fail the step. The run proceeds without prior
     // context, which is how every run worked before this existed.
     console.error("[intelligence-context] resolve failed; step continues without prior decisions:", err?.message);
-    return "";
+    return NOTHING;
   }
 }
 

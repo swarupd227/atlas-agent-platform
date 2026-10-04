@@ -356,6 +356,20 @@ export interface NodeExecutionResult {
   // more of its own nodes -- lets the outer run's status honestly reflect a
   // nested skip even though this wrapper node otherwise "completed" fine.
   childSkippedCount?: number;
+  /**
+   * The prior decisions this step was shown, and what was withheld or missing.
+   * Persisted with the wave result so an explanation of the step can say what
+   * it was told. Until this existed the layer changed an agent's prompt and
+   * left no trace: promptInputs never crosses invokeAgentWithTimeout's result
+   * contract, so the block lived only in the model call.
+   */
+  priorContext?: {
+    text: string;
+    subjects: string[];
+    items: Array<{ subject: string; tier: string; matchAxis?: string; runId: string; decidedAt: string | null }>;
+    conflicts: Array<{ subject: string; field: string }>;
+    omissions: Array<{ reason: string; detail: string }>;
+  };
   costUsd?: number;
   toolCallCount?: number;
   /** Model calls this node made that were served by a provider other than its agent's own. */
@@ -2312,7 +2326,7 @@ export class DAGExecutionEngine {
       orgId: config.organizationId ?? null,
       purpose: "draft",
     });
-    const agentInputWithPrior = priorDecisions ? `${agentInput}\n\n${priorDecisions}` : agentInput;
+    const agentInputWithPrior = priorDecisions.text ? `${agentInput}\n\n${priorDecisions.text}` : agentInput;
 
     const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInputWithPrior, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds);
 
@@ -2458,6 +2472,12 @@ export class DAGExecutionEngine {
       ...(workerResult.truncated ? { truncated: true } : {}),
       ...(workerResult.failedFileAttempts?.length ? { failedFileAttempts: workerResult.failedFileAttempts } : {}),
       ...(judgments.length ? { judgments } : {}),
+      // What prior decisions this step was shown, kept with the step that was
+      // shown them. Recorded whenever subjects were found, even if nothing
+      // matched -- "we looked and found nothing on this binder" is a different
+      // fact from "we never looked", and an explanation needs to tell them
+      // apart.
+      ...(priorDecisions.subjects.length ? { priorContext: priorDecisions } : {}),
     };
   }
 

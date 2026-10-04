@@ -598,8 +598,8 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
       orgId,
       purpose: "draft",
     });
-    if (priorForCase) casesWithPriorContext++;
-    const scenario = priorForCase ? `${baseScenario}\n\n${priorForCase}` : baseScenario;
+    if (priorForCase.text) casesWithPriorContext++;
+    const scenario = priorForCase.text ? `${baseScenario}\n\n${priorForCase.text}` : baseScenario;
 
     // A case with nothing to judge against is counted as failed rather than
     // skipped. Skipping it would quietly raise the suite's pass rate on the

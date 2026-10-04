@@ -308,7 +308,7 @@ describe("the flag, and what the engine gets", () => {
     for (const v of [null, "off", "", "OFF "]) {
       settingValue = v;
       expect(await intelligenceContextEnabled(), String(v)).toBe(false);
-      expect(await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" }), String(v)).toBe("");
+      expect((await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" })).text, String(v)).toBe("");
     }
     getPlatformSetting.mockRejectedValueOnce(new Error("db down"));
     expect(await intelligenceContextEnabled()).toBe(false);
@@ -335,15 +335,21 @@ describe("the flag, and what the engine gets", () => {
     runs.push(run({ teamAgentId: "teamA" }));
     // No subject means nothing to anchor on, and a prompt must not be given
     // context retrieved against nothing.
-    const text = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: { nextSteps: ["x"], iterationsUsed: 2 }, purpose: "draft" });
-    expect(text).toBe("");
+    const prior = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: { nextSteps: ["x"], iterationsUsed: 2 }, purpose: "draft" });
+    expect(prior.text).toBe("");
+    // No subjects found, so the record says so rather than being empty-but-silent.
+    expect(prior.subjects).toEqual([]);
   });
 
   it("gives the engine rendered text when enabled and anchored", async () => {
     runs.push(run({ teamAgentId: "teamA" }));
-    const text = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
-    expect(text).toMatch(/## Prior decisions/);
-    expect(text).toMatch(/submission:SUB-2026-8891/);
+    const prior = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
+    expect(prior.text).toMatch(/## Prior decisions/);
+    expect(prior.text).toMatch(/submission:SUB-2026-8891/);
+    // The record a run can keep: what was retrieved and from where.
+    expect(prior.subjects).toContain("submission:SUB-2026-8891");
+    expect(prior.items.length).toBeGreaterThan(0);
+    expect(prior.items[0]).toHaveProperty("runId");
   });
 
   it("says history was unreadable rather than claiming there is no prior decision", async () => {
@@ -352,10 +358,11 @@ describe("the flag, and what the engine gets", () => {
     // The failure used to render as "No finished run recorded a decision on
     // submission:SUB-2026-8891", which invites the agent to treat the
     // submission as new. The step still proceeds -- it just is not lied to.
-    const text = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
-    expect(text).toMatch(/could not be read/i);
-    expect(text).toMatch(/UNKNOWN — not absent/);
-    expect(text).not.toMatch(/No finished run recorded/);
+    const prior = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
+    expect(prior.text).toMatch(/could not be read/i);
+    expect(prior.text).toMatch(/UNKNOWN — not absent/);
+    expect(prior.text).not.toMatch(/No finished run recorded/);
+    expect(prior.omissions.map((o) => o.reason)).toContain("history_unavailable");
   });
 
   it("does not claim no_record for any subject when the history read failed", async () => {
