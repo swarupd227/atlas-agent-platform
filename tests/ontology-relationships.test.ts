@@ -152,6 +152,10 @@ describe("the graph router", () => {
     expect(db.rows.get("policy").systemsOfRecord).toEqual([{ name: "policy administration", role: "master" }]);
     expect(db.rows.get("policy").tags).toEqual(["policy"]);
     expect(db.rows.get("mortgagee").relationships).toEqual([{ predicate: "securedOn", type: "securedOn", targetId: "building" }]);
+    // A second dry run finds nothing to do, even when the column hands the keys back in a different order (jsonb does).
+    for (const [id, row] of db.rows) db.rows.set(id, { ...row, relationships: (row.relationships || []).map((r: any) => Object.fromEntries(Object.entries(r).sort(([a], [b]) => a.length - b.length || a.localeCompare(b)))) });
+    const again = await call("POST", "/api/ontology/migrate-relationships", { industryId: "insurance" });
+    expect(again.json).toMatchObject({ changed: 0, relationshipsNormalized: 0, systemsOfRecordSet: 0 });
   });
   it("serves the vocabulary", async () => {
     const v = await call("GET", "/api/ontology/relationship-vocabulary");

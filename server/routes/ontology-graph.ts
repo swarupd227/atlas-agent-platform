@@ -95,9 +95,17 @@ router.post("/api/ontology/migrate-relationships", checkPermission("create_modif
     const labelIndex = new Map<string, string[]>();
     for (const c of all) { const k = c.label.toLowerCase(); labelIndex.set(k, [...(labelIndex.get(k) ?? []), c.id]); }
 
+    // jsonb hands keys back in its own order, so equality is decided on the normalised rows, field by field,
+    // never on JSON text; otherwise every row the migration wrote would read as changed on the next dry run.
+    const sameRows = (a: OntologyRelationship[], b: OntologyRelationship[]) =>
+      a.length === b.length && a.every((x, i) => x.predicate === b[i].predicate && x.targetId === b[i].targetId && (x.label ?? null) === (b[i].label ?? null) && (x.cardinality ?? null) === (b[i].cardinality ?? null) && (x.inverse ?? null) === (b[i].inverse ?? null) && x.type === b[i].type);
     const report = { industryId, concepts: all.length, changed: 0, relationshipsNormalized: 0, targetsResolved: 0, systemsOfRecordSet: 0, unresolved: [] as string[], applied: !!apply };
     for (const c of all) {
-      const before = JSON.stringify(c.relationships ?? []);
+      const stored = (Array.isArray(c.relationships) ? (c.relationships as unknown[]) : []).map((raw) => {
+        const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+        // The stored row as it is, with no mapping: a legacy type or a missing inverse must still count as a change.
+        return { predicate: String(r.predicate ?? ""), type: String(r.type ?? ""), targetId: String(r.targetId ?? r.target ?? ""), label: typeof r.label === "string" ? r.label : undefined, cardinality: r.cardinality as OntologyRelationship["cardinality"], inverse: typeof r.inverse === "string" ? r.inverse : undefined } as OntologyRelationship;
+      });
       const rels: OntologyRelationship[] = [];
       for (const raw of Array.isArray(c.relationships) ? (c.relationships as unknown[]) : []) {
         const r = normalizeRelationship(raw);
@@ -113,7 +121,7 @@ router.post("/api/ontology/migrate-relationships", checkPermission("create_modif
       const existingSor = normalizeSystemsOfRecord((c as { systemsOfRecord?: unknown }).systemsOfRecord);
       const mergedSor = existingSor.length ? existingSor : systems;
       const patch: Record<string, unknown> = {};
-      if (JSON.stringify(rels) !== before) { patch.relationships = rels; report.relationshipsNormalized++; }
+      if (!sameRows(stored, rels)) { patch.relationships = rels; report.relationshipsNormalized++; }
       if (systems.length && !existingSor.length) { patch.systemsOfRecord = mergedSor; patch.tags = remainingTags; report.systemsOfRecordSet++; }
       if (Object.keys(patch).length) {
         report.changed++;
