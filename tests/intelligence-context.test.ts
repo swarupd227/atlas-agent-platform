@@ -359,6 +359,40 @@ describe("indexed decision records (phase 1)", () => {
     expect(r.items.filter((i) => i.citation.runId === "shared1")).toHaveLength(1);
   });
 
+  it("shows one decision once, however many objects it was filed under", async () => {
+    // Measured live: a run indexed against a submission, its policy and its
+    // binder was rendered three times, about two thirds of every injected
+    // block. An agent reading three identical records may take repetition for
+    // corroboration, and one source counted three times is not three sources.
+    decisionRecords.push(record({ subject: "submission:SUB-2026-8891", subjectType: "submission" }));
+    decisionRecords.push(record({ subject: "policy:POL-2026-8891-CP", subjectType: "policy" }));
+    decisionRecords.push(record({ subject: "binder:CP-2026-17", subjectType: "binder" }));
+    const subjects = ["submission:SUB-2026-8891", "policy:POL-2026-8891-CP", "binder:CP-2026-17"];
+    const r = await resolveContext({ subjects, purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0].subjects.sort()).toEqual([...subjects].sort());
+    // Breadth is kept, not discarded: all three are served, none reported missing.
+    expect(r.usedSubjects.sort()).toEqual([...subjects].sort());
+    expect(r.missedSubjects).toEqual([]);
+
+    const text = renderContextForPrompt(r);
+    expect(text.match(/This was decided on/g)).toHaveLength(1);
+    expect(text).toContain("binder:CP-2026-17");
+    expect(text).toContain("policy:POL-2026-8891-CP");
+    // The decision body appears once, not three times.
+    expect(text.match(/POL-2026-8891-CP/g)!.length).toBeLessThan(4);
+  });
+
+  it("still lists genuinely different runs separately", async () => {
+    // Collapsing must not hide corroboration that is real.
+    decisionRecords.push(record({ runId: "runOne" }));
+    decisionRecords.push(record({ runId: "runTwo", decidedAt: new Date("2026-10-02T10:00:00Z") }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items).toHaveLength(2);
+    expect(r.items.map((i) => i.citation.runId).sort()).toEqual(["runOne", "runTwo"]);
+  });
+
   it("says the search was bounded when it fell back to the scan", async () => {
     // No index hit: the omission must not claim the object has no history,
     // only that the bounded search found none.

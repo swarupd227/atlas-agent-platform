@@ -313,6 +313,17 @@ export type MatchAxis = "same_customer" | "same_class_of_business" | "similar_ri
 
 export interface ContextItem {
   subject: Subject;
+  /**
+   * Every business object this one decision was recorded against.
+   *
+   * A run is indexed once per subject, so a request naming a submission, its
+   * policy and its binder matched the same decision three times and the step
+   * was shown three identical records -- measured at roughly two thirds of
+   * every injected block. Worse than the tokens: an agent reading three
+   * identical records may take repetition for corroboration, and one source
+   * counted three times is not three sources agreeing.
+   */
+  subjects: Subject[];
   tier: AuthorityTier;
   matchAxis?: MatchAxis;
   /** The verdicts and approvals: what was decided. Rendered in full. */

@@ -192,6 +192,7 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
     seenSubjects.add(rec.subject);
     items.push({
       subject: rec.subject,
+      subjects: [rec.subject],
       tier,
       ...(axis ? { matchAxis: axis } : {}),
       decision: (rec.decision ?? {}) as Record<string, unknown>,
@@ -254,6 +255,7 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
     seenSubjects.add(anchor);
     items.push({
       subject: anchor,
+      subjects: [anchor],
       tier,
       ...(axis ? { matchAxis: axis } : {}),
       decision,
@@ -269,6 +271,25 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
     });
   }
 
+  // One decision, not one per subject it was filed under. A run indexed
+  // against a submission, its policy and its binder matched three times and was
+  // rendered three times; collapsing by run keeps the evidence of breadth (the
+  // subjects it covers) without restating the decision.
+  const byRun = new Map<string, ContextItem>();
+  for (const item of items) {
+    const existing = byRun.get(item.citation.runId);
+    if (!existing) { byRun.set(item.citation.runId, item); continue; }
+    for (const s of item.subjects) if (!existing.subjects.includes(s)) existing.subjects.push(s);
+    // Prefer the subject the caller actually asked about as the headline.
+    if (requested.includes(item.subject) && !requested.includes(existing.subject)) existing.subject = item.subject;
+    // Authority wins: the same run cannot be both, but merging defensively
+    // avoids a precedent label hiding an authoritative record.
+    if (item.tier === "authoritative") { existing.tier = "authoritative"; delete (existing as { matchAxis?: MatchAxis }).matchAxis; }
+  }
+  const merged = [...byRun.values()];
+  items.length = 0;
+  items.push(...merged);
+
   // Authoritative first, then the stronger precedent axes, then recency.
   const axisRank: Record<string, number> = { same_customer: 0, same_class_of_business: 1, similar_risk: 2 };
   items.sort((a, b) => {
@@ -280,7 +301,10 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
 
   const kept = items.slice(0, limit);
 
-  const missed = requested.filter((s) => !kept.some((i) => i.subject === s));
+  // Against every subject an item covers, not just its headline: after
+  // collapsing by run, a served subject would otherwise be reported missing
+  // because another subject became the headline.
+  const missed = requested.filter((s) => !kept.some((i) => i.subjects.includes(s)));
   if (historyFailed) {
     // No no_record claims when the history could not be read: every subject
     // would be reported absent on no evidence.
@@ -334,7 +358,7 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
     items: kept,
     conflicts,
     omissions,
-    usedSubjects: [...new Set(kept.map((i) => i.subject))],
+    usedSubjects: [...new Set(kept.flatMap((i) => i.subjects))],
     missedSubjects: missed,
     unclassifiedKeys: [...unclassified],
   };
@@ -542,9 +566,14 @@ export function renderContextForPrompt(result: ResolveContextResult): string {
   }
 
   for (const i of result.items) {
+    // Names every object the one decision covers, rather than repeating the
+    // decision once per object.
+    const on = i.subjects.length > 1
+      ? `${i.subjects.slice(0, -1).join(", ")} and ${i.subjects[i.subjects.length - 1]}`
+      : i.subject;
     const head = i.tier === "authoritative"
-      ? `This was decided on ${i.subject}`
-      : `Precedent only (${(i.matchAxis ?? "").replace(/_/g, " ")}) — consider, do not copy — on ${i.subject}`;
+      ? `This was decided on ${on}`
+      : `Precedent only (${(i.matchAxis ?? "").replace(/_/g, " ")}) — consider, do not copy — on ${on}`;
     lines.push(`\n- **${head}**, run ${i.citation.runId.slice(0, 8)}${i.citation.decidedAt ? ` on ${i.citation.decidedAt.slice(0, 10)}` : ""}:`);
 
     const fields = Object.entries(i.decision);
