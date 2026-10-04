@@ -289,7 +289,14 @@ export type OmissionReason =
    * live data -- and a silently degraded answer looks exactly like a confident
    * one.
    */
-  | "blueprint_unavailable";
+  | "blueprint_unavailable"
+  /**
+   * Run history could not be read at all. Distinct from no_record, and the
+   * distinction is the whole point: "there is no prior decision" and "I could
+   * not look" must never render the same way. The first invites the agent to
+   * proceed as if the object were new.
+   */
+  | "history_unavailable";
 
 export interface Omission {
   reason: OmissionReason;

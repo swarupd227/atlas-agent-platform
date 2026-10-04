@@ -29,7 +29,7 @@ vi.mock("../server/storage", () => ({
     getTeamBlueprintNodes,
   },
 }));
-const { resolveContext, renderContextForPrompt } = await import("../server/intelligence-context");
+const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabledFor } = await import("../server/intelligence-context");
 
 // Verbatim shape from the live run.
 const LIVE_STATE = {
@@ -285,6 +285,79 @@ describe("resolveContext authority", () => {
     runs.push(run({ id: "sameBroker", teamAgentId: "teamZ", finalState: { submissionId: "SUB-2026-8888", brokerCode: "BRK-14", status: "bound" } }));
     const r = await resolveContext({ subjects: ["submission:SUB-2026-1111", "broker:BRK-14"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
     expect(r.items[0].matchAxis).toBe("same_customer");
+  });
+});
+
+describe("the flag, and what the engine gets", () => {
+  beforeEach(() => {
+    runs.length = 0;
+    delete process.env.INTELLIGENCE_CONTEXT_ENABLED;
+    delete process.env.INTELLIGENCE_CONTEXT_TEAMS;
+    blueprintNodes.length = 0;
+  });
+
+  it("returns nothing at all unless explicitly enabled", async () => {
+    runs.push(run({ teamAgentId: "teamA" }));
+    // Off by default: this reads prior decisions into a live prompt, and a
+    // default-on read path is a default-on behaviour change.
+    expect(await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" })).toBe("");
+    expect(intelligenceContextEnabledFor("teamA")).toBe(false);
+
+    process.env.INTELLIGENCE_CONTEXT_ENABLED = "false";
+    expect(intelligenceContextEnabledFor("teamA")).toBe(false);
+  });
+
+  it("narrows to named teams by configuration, not by a branch naming a journey", async () => {
+    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
+    process.env.INTELLIGENCE_CONTEXT_TEAMS = "teamA, teamC";
+    expect(intelligenceContextEnabledFor("teamA")).toBe(true);
+    expect(intelligenceContextEnabledFor("teamC")).toBe(true);
+    expect(intelligenceContextEnabledFor("teamB")).toBe(false);
+    expect(intelligenceContextEnabledFor(null)).toBe(false);
+  });
+
+  it("applies to every team when no allowlist is given", () => {
+    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
+    expect(intelligenceContextEnabledFor("anything")).toBe(true);
+  });
+
+  it("returns nothing when the step names no business object", async () => {
+    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
+    runs.push(run({ teamAgentId: "teamA" }));
+    // No subject means nothing to anchor on, and a prompt must not be given
+    // context retrieved against nothing.
+    const text = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: { nextSteps: ["x"], iterationsUsed: 2 }, purpose: "draft" });
+    expect(text).toBe("");
+  });
+
+  it("gives the engine rendered text when enabled and anchored", async () => {
+    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
+    process.env.INTELLIGENCE_CONTEXT_TEAMS = "teamA";
+    runs.push(run({ teamAgentId: "teamA" }));
+    const text = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
+    expect(text).toMatch(/## Prior decisions/);
+    expect(text).toMatch(/submission:SUB-2026-8891/);
+  });
+
+  it("says history was unreadable rather than claiming there is no prior decision", async () => {
+    process.env.INTELLIGENCE_CONTEXT_ENABLED = "true";
+    const { storage } = await import("../server/storage");
+    (storage.listDagExecutionRunsByOrg as any).mockRejectedValueOnce(new Error("db down"));
+    // The failure used to render as "No finished run recorded a decision on
+    // submission:SUB-2026-8891", which invites the agent to treat the
+    // submission as new. The step still proceeds -- it just is not lied to.
+    const text = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
+    expect(text).toMatch(/could not be read/i);
+    expect(text).toMatch(/UNKNOWN — not absent/);
+    expect(text).not.toMatch(/No finished run recorded/);
+  });
+
+  it("does not claim no_record for any subject when the history read failed", async () => {
+    const { storage } = await import("../server/storage");
+    (storage.listDagExecutionRunsByOrg as any).mockRejectedValueOnce(new Error("db down"));
+    const r = await resolveContext({ subjects: ["submission:SUB-1", "binder:CP-1"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.omissions.map((o) => o.reason)).toContain("history_unavailable");
+    expect(r.omissions.map((o) => o.reason)).not.toContain("no_record");
   });
 });
 

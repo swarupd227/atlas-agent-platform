@@ -6,6 +6,7 @@ import { evaluateRule } from "./rule-evaluator";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { rerankChunks } from "./retrieval-rerank";
 import { raiseGuardrailReview } from "./guardrail-review";
+import { priorDecisionsForPrompt } from "./intelligence-context";
 import { recomputeOutcomeKpis, resolvePolicyBundle } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools } from "./tool-dispatcher";
 import { PRICE_TABLE_VERSION } from "./llm-provider";
@@ -2299,7 +2300,21 @@ export class DAGExecutionEngine {
     }
 
     const upstreamGeneratedFileIds = collectUpstreamGeneratedFileIds(currentState);
-    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInput, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds);
+
+    // Intelligence Context Layer, phase 0: prior decisions on the business
+    // objects this run has reached. Off unless INTELLIGENCE_CONTEXT_ENABLED is
+    // set, and narrowable to named teams -- see priorDecisionsForPrompt. An
+    // agent node drafts, so precedent from another journey is allowed here;
+    // gate and decision nodes resolve with a purpose that withholds it.
+    const priorDecisions = await priorDecisionsForPrompt({
+      teamAgentId: config.teamAgentId,
+      state: currentState,
+      orgId: config.organizationId ?? null,
+      purpose: "draft",
+    });
+    const agentInputWithPrior = priorDecisions ? `${agentInput}\n\n${priorDecisions}` : agentInput;
+
+    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInputWithPrior, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds);
 
     const durationMs = Date.now() - start;
 

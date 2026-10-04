@@ -118,7 +118,15 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
   const requested = [...new Set(input.subjects.filter(Boolean))];
   const omissions: Omission[] = [];
 
-  const runs = await storage.listDagExecutionRunsByOrg(input.orgId ?? undefined, scan).catch(() => []);
+  // A failed history read is reported, not turned into an empty list. Swallowed,
+  // it rendered as "no finished run recorded a decision on <subject>" -- which
+  // tells a reader the object is new when the truth is that nobody looked.
+  let historyFailed = false;
+  const runs = await storage.listDagExecutionRunsByOrg(input.orgId ?? undefined, scan).catch((err: any) => {
+    historyFailed = true;
+    console.error("[intelligence-context] could not read run history:", err?.message);
+    return [] as Awaited<ReturnType<typeof storage.listDagExecutionRunsByOrg>>;
+  });
 
   // A state key is classified against the steps that WROTE it, so each run is
   // read against its own team's blueprint. Cached per team: a scan of 60 runs
@@ -230,7 +238,17 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
   const kept = items.slice(0, limit);
 
   const missed = requested.filter((s) => !kept.some((i) => i.subject === s));
-  for (const s of missed) omissions.push({ reason: "no_record", subject: s, detail: `No finished run recorded a decision on ${s}` });
+  if (historyFailed) {
+    // No no_record claims when the history could not be read: every subject
+    // would be reported absent on no evidence.
+    omissions.push({
+      reason: "history_unavailable",
+      detail: `Run history could not be read, so whether a prior decision exists on ${missed.join(", ") || "these subjects"} is UNKNOWN — not absent`,
+      count: missed.length,
+    });
+  } else {
+    for (const s of missed) omissions.push({ reason: "no_record", subject: s, detail: `No finished run recorded a decision on ${s}` });
+  }
   if (withheld > 0) {
     omissions.push({
       reason: "withheld_precedent_for_purpose",
@@ -263,6 +281,64 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
     missedSubjects: missed,
     unclassifiedKeys: [...unclassified],
   };
+}
+
+/**
+ * Is the layer on for this team?
+ *
+ * Two env vars rather than anything per-journey in code: INTELLIGENCE_CONTEXT_ENABLED
+ * turns the feature on at all, and INTELLIGENCE_CONTEXT_TEAMS optionally narrows it to
+ * a comma-separated list of team agent ids. Rolling out to one journey is then
+ * configuration, not a branch naming that journey -- the same capability has to
+ * work for the next one without a code change.
+ *
+ * Off unless explicitly enabled: this reads prior decisions into a live prompt,
+ * and a default-on read path is a default-on behaviour change.
+ */
+export function intelligenceContextEnabledFor(teamAgentId?: string | null): boolean {
+  if (String(process.env.INTELLIGENCE_CONTEXT_ENABLED ?? "").toLowerCase() !== "true") return false;
+  const only = String(process.env.INTELLIGENCE_CONTEXT_TEAMS ?? "")
+    .split(",").map(s => s.trim()).filter(Boolean);
+  return only.length === 0 || (!!teamAgentId && only.includes(teamAgentId));
+}
+
+/**
+ * Prior decisions for a running step, as prompt text, or "" when the layer is
+ * off, the step names no business object, or nothing was found.
+ *
+ * Kept here rather than at the call site so the engine's hunk is three lines
+ * and every gate -- the flag, the subject check, the purpose -- lives with the
+ * code that owns it.
+ */
+export async function priorDecisionsForPrompt(input: {
+  teamAgentId: string;
+  state: Record<string, unknown> | null | undefined;
+  orgId?: string | null;
+  purpose: Purpose;
+  limit?: number;
+}): Promise<string> {
+  if (!intelligenceContextEnabledFor(input.teamAgentId)) return "";
+  // The subjects come from the state the run has reached: the step being
+  // prompted is mid-run, and what it is deciding about is whatever upstream
+  // steps have established.
+  const subjects = extractSubjects(input.state).map(s => s.subject);
+  if (subjects.length === 0) return "";
+  try {
+    const resolved = await resolveContext({
+      subjects,
+      purpose: input.purpose,
+      surface: "team_run",
+      orgId: input.orgId ?? null,
+      teamAgentId: input.teamAgentId,
+      limit: input.limit ?? 3,
+    });
+    return renderContextForPrompt(resolved);
+  } catch (err: any) {
+    // A failure here must not fail the step. The run proceeds without prior
+    // context, which is how every run worked before this existed.
+    console.error("[intelligence-context] resolve failed; step continues without prior decisions:", err?.message);
+    return "";
+  }
 }
 
 /**
