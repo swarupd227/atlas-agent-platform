@@ -981,8 +981,9 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                   return (
                     <div className="flex flex-col gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-2" data-testid="decision-settings">
                       <label className="text-[10px] text-sky-700 dark:text-sky-400 uppercase tracking-wide font-medium">Decision</label>
+                      <span className="text-[11px] text-muted-foreground" data-testid="decision-explainer">This step asks one question about the file and writes the answer on it. The next steps act on that answer.</span>
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Answers with</label>
+                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">What this step decides</label>
                         <select
                           value={answerType}
                           onChange={e => {
@@ -993,17 +994,17 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                           className="h-7 text-xs rounded-md border bg-background px-1.5"
                           data-testid="select-node-answer-type"
                         >
-                          <option value="branch">A branch: one of the connections out</option>
-                          <option value="classify">A label, written to state</option>
-                          <option value="score">A level on a ladder, written to state</option>
+                          <option value="branch">Which path to take next</option>
+                          <option value="classify">What kind it is (a label)</option>
+                          <option value="score">How much, on a scale (a level)</option>
                         </select>
                         <span className="text-[10px] text-muted-foreground">
-                          {answerType === "branch" ? "Exactly one labelled connection out is taken." : `Later steps and the rules on the connections out read it as "${valueKey}".`}
+                          {answerType === "branch" ? "Exactly one of the labelled paths out is taken." : `The answer is saved on the file as "${valueKey}". Later steps and connection rules can read it.`}
                         </span>
                       </div>
                       {bindable.length > 0 && answerType !== "branch" && (
                         <div className="flex flex-col gap-1">
-                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Classifier</label>
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Saved question</label>
                           <select
                             value={bound ? bound.id : ""}
                             onChange={e => {
@@ -1016,16 +1017,16 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                             className="h-7 text-xs rounded-md border bg-background px-1.5"
                             data-testid="select-node-classifier"
                           >
-                            <option value="">None: this step's own question</option>
+                            <option value="">Write the question here</option>
                             {bindable.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                           </select>
                           <span className="text-[10px] text-muted-foreground">
-                            {bound ? "Bound: the question and answers below come from the classifier and are refreshed from it at build and sync." : "A classifier is one question asked the same way in more than one flow (Governance > Classifiers)."}
+                            {bound ? "Using the saved question. Its wording and answers are copied here and refreshed whenever the flow is built." : "A saved question is written once under Governance > Classifiers and can be used by any Decision in any flow."}
                           </span>
                         </div>
                       )}
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Question</label>
+                        <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">The question</label>
                         <Textarea
                           disabled={!!bound}
                           value={String((d.config?.question as string) || "")}
@@ -1035,37 +1036,37 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                           className="text-xs resize-none"
                           data-testid="input-node-question"
                         />
-                        <span className="text-[10px] text-muted-foreground">Answered from the previous steps' output. Left empty, the step's description is the question.</span>
+                        <span className="text-[10px] text-muted-foreground">Asked about what the previous steps produced. Leave it empty to use the step's description.</span>
                       </div>
                       {answerType === "classify" && (
                         <div className="flex flex-col gap-1">
-                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Labels</label>
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Possible answers</label>
                           {rawOptions.map((o, i) => (
                             <div key={i} className="flex items-center gap-1">
                               <Input
                                 value={o.label}
                                 onChange={e => setOptions(rawOptions.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
-                                placeholder="Label, e.g. high"
+                                placeholder="Answer, e.g. Property damage"
                                 className="h-7 text-xs"
                                 data-testid={`input-node-option-label-${i}`}
                               />
                               <Input
                                 value={o.description || ""}
                                 onChange={e => setOptions(rawOptions.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))}
-                                placeholder="When it applies"
+                                placeholder="When this answer applies"
                                 className="h-7 text-xs"
                                 data-testid={`input-node-option-desc-${i}`}
                               />
                               <button type="button" onClick={() => setOptions(rawOptions.filter((_, j) => j !== i))} className="rounded px-1 text-muted-foreground hover:text-foreground" aria-label="Remove label" data-testid={`button-remove-node-option-${i}`}>×</button>
                             </div>
                           ))}
-                          <button type="button" onClick={() => setOptions([...rawOptions, { label: "" }])} className="self-start text-[11px] text-sky-700 dark:text-sky-400 hover:underline" data-testid="button-add-node-option">+ Add label</button>
-                          {validOptions < 2 && <span className="text-[10px] text-amber-600">A classification needs at least two labels.</span>}
+                          <button type="button" onClick={() => setOptions([...rawOptions, { label: "" }])} className="self-start text-[11px] text-sky-700 dark:text-sky-400 hover:underline" data-testid="button-add-node-option">+ Add answer</button>
+                          {validOptions < 2 && <span className="text-[10px] text-amber-600">Give at least two answers.</span>}
                         </div>
                       )}
                       {answerType === "score" && (
                         <div className="flex flex-col gap-1">
-                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Ladder, low to high</label>
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Scale, lowest first</label>
                           {rawLevels.map((l, i) => (
                             <div key={i} className="flex items-center gap-1">
                               <span className="w-4 shrink-0 font-mono text-[10px] text-muted-foreground">{i}</span>
@@ -1080,7 +1081,7 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                             </div>
                           ))}
                           <button type="button" onClick={() => setLevels([...rawLevels, ""])} className="self-start text-[11px] text-sky-700 dark:text-sky-400 hover:underline" data-testid="button-add-node-level">+ Add level</button>
-                          {validLevels < 2 && <span className="text-[10px] text-amber-600">{rawLevels.length > 10 ? "A ladder has at most ten levels." : "A ladder needs at least two levels."}</span>}
+                          {validLevels < 2 && <span className="text-[10px] text-amber-600">{rawLevels.length > 10 ? "A scale has at most ten levels." : "Give at least two levels (ten at most)."}</span>}
                         </div>
                       )}
                       {answerType === "branch" && (
@@ -1106,8 +1107,8 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                           {kind === "decision"
                             ? explainKind({ type: d.ntype, config: d.config }, { outgoingEdges: outgoing, decisionKind })
                             : answerType === "classify"
-                            ? "Needs two or more labels to run as one decision call; until then it runs as an agent."
-                            : "Needs a ladder of two to ten levels to run as one decision call; until then it runs as an agent."}
+                            ? "Add at least two answers to run this as one quick decision. Until then an agent answers in prose."
+                            : "Add a scale of two to ten levels to run this as one quick decision. Until then an agent answers in prose."}
                         </span>
                       )}
                       {answerType === "branch" && (
@@ -1123,22 +1124,22 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                           className="h-7 text-xs rounded-md border bg-background px-1.5"
                           data-testid="select-node-decision-kind"
                         >
-                          <option value="default">Platform default ({decisionKind ? "one decision call" : "agent, then a call per branch"})</option>
-                          <option value="on">One decision call</option>
-                          <option value="off">Agent, then a model call per branch</option>
+                          <option value="default">Platform default ({decisionKind ? "one quick decision" : "an agent, then each path checked"})</option>
+                          <option value="on">One quick decision</option>
+                          <option value="off">An agent answers, then each path is checked</option>
                         </select>
                         <span className="text-[10px] text-muted-foreground" data-testid="decision-kind-preview">
                           {kind === "decision"
-                            ? "Will run as one decision call over the branches above; exactly one is taken."
+                            ? "Runs as one quick decision over the paths above. Exactly one is taken."
                             : branches.length < 2 && mode !== "off"
-                            ? "Needs two labelled branches to run as one decision call; until then it runs as an agent."
+                            ? "Needs two labelled paths to run as one quick decision. Until then an agent answers in prose."
                             : explainKind({ type: d.ntype, config: d.config }, { outgoingEdges: outgoing, decisionKind })}
                         </span>
                       </div>
                       )}
                       <div className="grid grid-cols-2 gap-2">
                         <div className="flex flex-col gap-1">
-                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">Confidence to act</label>
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">How sure before it acts</label>
                           <Input
                             type="number"
                             min={0}
@@ -1149,30 +1150,30 @@ function Canvas({ initialNodes, initialEdges, onChange, issues, overlay, decisio
                               const v = e.target.value === "" ? undefined : Math.min(1, Math.max(0, Number(e.target.value)));
                               patchNode(selNode.id, { config: { ...(d.config || {}), confidenceThreshold: v } }, `node:${selNode.id}:confidenceThreshold`);
                             }}
-                            placeholder="default"
+                            placeholder="0.85"
                             className="h-7 text-xs"
                             data-testid="input-node-confidence-threshold"
                           />
                         </div>
                         {answerType === "branch" && (
                         <div className="flex flex-col gap-1">
-                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">When unsure</label>
+                          <label className="font-mono text-[10.5px] text-muted-foreground uppercase tracking-[0.08em]">If not sure enough</label>
                           <select
                             value={d.config?.unsure === "gate" ? "gate" : "llm"}
                             onChange={e => patchNode(selNode.id, { config: { ...(d.config || {}), unsure: e.target.value === "gate" ? "gate" : undefined } })}
                             className="h-7 text-xs rounded-md border bg-background px-1.5"
                             data-testid="select-node-unsure"
                           >
-                            <option value="llm">Let an agent decide</option>
-                            <option value="gate">Go to the approval branch</option>
+                            <option value="llm">Ask an agent instead</option>
+                            <option value="gate">Take the approval path</option>
                           </select>
                         </div>
                         )}
                       </div>
                       <span className="text-[10px] text-muted-foreground">
                         {answerType === "branch"
-                          ? "Below the confidence, an agent makes the same choice instead, or the run goes down a branch that leads to an Approval step."
-                          : "Below the confidence, an agent answers the same question instead, and the run records that it did."}
+                          ? "If the decision model is less sure than this, an agent makes the choice instead, or the run takes the path that leads to an Approval step."
+                          : "If the decision model is less sure than this, an agent answers the same question instead, and the run says so."}
                       </span>
                     </div>
                   );

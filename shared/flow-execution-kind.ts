@@ -262,8 +262,8 @@ export function explainKind(node: Pick<ProcessNode, "type" | "config">, ctx?: Cl
   switch (kind) {
     case "decision": {
       const answerType = node.type === "make_decision" ? decisionAnswerType(node.config) : "branch";
-      if (answerType === "classify") return "Classified by one decision-model call over its options; the chosen label is written to state for later steps and rules. No agent call.";
-      if (answerType === "score") return "Scored by one decision-model call on its ladder; the level is written to state for later steps and rules. No agent call.";
+      if (answerType === "classify") return "One quick decision call picks one of the answers and saves it on the file. No agent runs here.";
+      if (answerType === "score") return "One quick decision call picks a level on the scale and saves it on the file. No agent runs here.";
       return "Decided by one decision-model call over its branches; exactly one branch is taken. No agent call.";
     }
     case "structural":
