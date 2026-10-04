@@ -37,6 +37,12 @@ vi.mock("../server/storage", () => ({
   },
 }));
 vi.mock("../server/auth", () => ({ getOrgId: () => "org1" }));
+// The executor now offers a case the prior decisions on the business objects in
+// its inputData, so an eval scores the prompt production assembles rather than
+// one the harness invents. Stubbed here so these tests measure the executor's
+// own decisions; the layer has its own suite.
+const priorDecisionsForPrompt = vi.fn(async () => "");
+vi.mock("../server/intelligence-context", () => ({ priorDecisionsForPrompt }));
 vi.mock("../server/permissions", () => ({ checkPermission: () => (_req: any, _res: any, next: any) => next() }));
 vi.mock("./helpers", () => ({ buildAgentSystemPromptWithGovernance: vi.fn(async () => "SYSTEM PROMPT") }));
 vi.mock("../server/routes/helpers", () => ({ buildAgentSystemPromptWithGovernance: vi.fn(async () => "SYSTEM PROMPT") }));
@@ -164,6 +170,26 @@ describe("POST /api/evals/:id/execute", () => {
     expect(capped.body.totalCases).toBe(25);
     const limited = await post("/api/evals/s1/execute", { limit: 3 });
     expect(limited.body.totalCases).toBe(3);
+  });
+
+  it("reports how many cases were given prior context, so a moved score is attributable", async () => {
+    // Without this, a pass rate that rose because prior decisions were
+    // injected would be indistinguishable from one that rose because the
+    // agent improved.
+    state.cases = [testCase(), testCase()];
+    priorDecisionsForPrompt.mockResolvedValueOnce("## Prior decisions\n- something");
+    const r = await post("/api/evals/s1/execute");
+    expect(r.body.casesWithPriorContext).toBe(1);
+    expect(state.runs[0].resultsJson.priorContext).toEqual({ casesWithPriorContext: 1, of: 2 });
+  });
+
+  it("reports zero when the layer is off, and the scenario is unchanged", async () => {
+    priorDecisionsForPrompt.mockResolvedValue("");
+    state.cases = [testCase()];
+    const r = await post("/api/evals/s1/execute");
+    expect(r.body.casesWithPriorContext).toBe(0);
+    // An existing suite's numbers must not move until someone turns it on.
+    expect(priorDecisionsForPrompt).toHaveBeenCalled();
   });
 
   it("records mode prompt_level so a score is not read as an integration result", async () => {

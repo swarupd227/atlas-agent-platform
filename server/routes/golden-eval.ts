@@ -8,6 +8,7 @@ import { decideMany, type DecisionQuestion } from "../decision-provider";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Skill, Agent, EvalSuite, EvalTestCase, GoldenDataset, GoldenTestCase } from "@shared/schema";
 import { resolveReadableSkills, skillCatalogPrompt, skillToolsFor, executeBuiltinSkillTool, READ_SKILL_TOOL } from "../builtin-skill-tools";
+import { priorDecisionsForPrompt } from "../intelligence-context";
 import { resolveRepeats, summarizeRun, type CaseStability } from "@shared/eval-stability";
 import { runAttempts, foldAttempts, meanLatencyMs, repeatedRowNotes, describeUnstableFields, EVAL_REPEAT_JOB } from "../eval-repeat";
 
@@ -570,12 +571,35 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
   // Reported per run, so a reader can see which cases were compared and
   // which were a model's judgement rather than assuming one instrument.
   const byInstrument = { structured_comparison: 0, prose_judge: 0, no_instrument: 0 };
+  // Reported on the run: a pass rate that moved because prior decisions were
+  // injected must be distinguishable from one that moved because the agent
+  // changed.
+  let casesWithPriorContext = 0;
   for (const tc of cases) {
     await onProgress?.(judged.length, cases.length);
     const instrument = classifyEvalCase(tc);
     const input: any = tc.inputData ?? {};
-    const scenario = [input.prompt, input.context ? `Context: ${input.context}` : ""].filter(Boolean).join("\n\n")
+    const baseScenario = [input.prompt, input.context ? `Context: ${input.context}` : ""].filter(Boolean).join("\n\n")
       || JSON.stringify(input);
+
+    // The eval must score the prompt production actually uses. Until this, it
+    // did not: a team run goes through the DAG engine, which offers a step the
+    // prior decisions on the business objects in its state, while an eval built
+    // its prompt from buildAgentSystemPromptWithGovernance alone. A suite that
+    // scores a different prompt than the runtime assembles is measuring
+    // something adjacent to production.
+    //
+    // Subjects come from the case's own inputData, which is the eval's
+    // equivalent of run state. Off unless the platform flag is on, so an
+    // existing suite's numbers do not move until someone turns it on.
+    const priorForCase = await priorDecisionsForPrompt({
+      teamAgentId: agent.id,
+      state: input,
+      orgId,
+      purpose: "draft",
+    });
+    if (priorForCase) casesWithPriorContext++;
+    const scenario = priorForCase ? `${baseScenario}\n\n${priorForCase}` : baseScenario;
 
     // A case with nothing to judge against is counted as failed rather than
     // skipped. Skipping it would quietly raise the suite's pass rate on the
@@ -760,6 +784,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
       source: "eval_test_cases",
       criteriaSource: "expectedOutput (these cases carry no explicit evaluationCriteria), routed per case to a deterministic field comparison or the prose examiner",
       instruments: byInstrument,
+      priorContext: { casesWithPriorContext, of: cases.length },
       unjudgeableCases: unjudgeable,
       ...stabilitySummary,
       skills: {
@@ -783,6 +808,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
     failedCases: cases.length - passed,
     unjudgeableCases: unjudgeable,
     instruments: byInstrument,
+    casesWithPriorContext,
     passRate,
     avgLatencyMs,
     ...stabilitySummary,
