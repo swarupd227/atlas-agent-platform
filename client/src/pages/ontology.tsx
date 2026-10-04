@@ -105,6 +105,7 @@ import { PermissionGate } from "@/components/role-provider";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { OntologyConcept as DbOntologyConcept, OntologyEnhancement } from "@shared/schema";
+import { normalizeRelationship, readsAs, groupOf, type SystemOfRecord } from "@shared/ontology-relationships";
 
 interface OntologyProperty {
   name: string;
@@ -113,7 +114,11 @@ interface OntologyProperty {
 }
 
 interface OntologyRelationship {
-  type: "parent" | "child" | "related" | "depends_on";
+  /** The predicate; the legacy four map onto the vocabulary on read (shared/ontology-relationships.ts). */
+  type: string;
+  predicate?: string;
+  inverse?: string;
+  cardinality?: "one" | "many";
   targetId: string;
   label: string;
   exists?: boolean;
@@ -148,6 +153,8 @@ interface ConceptView {
     redactionRequired: boolean;
     retentionDays: number | null;
   } | null;
+  /** Where this concept's instances live; `source` says where the definition came from. */
+  systemsOfRecord: SystemOfRecord[];
 }
 
 interface VersionHistoryEntry {
@@ -223,12 +230,18 @@ const AGENT_MAPPING: Record<string, { skills: string[]; agentTypes: string[] }> 
   "Distribution": { skills: ["Agent Licensing", "Commission Calculation", "Quote Comparison", "Lead Scoring"], agentTypes: ["Distribution Agent", "Commission Agent", "Quote Agent"] },
 };
 
+// Coloured by the predicate's group, so "is part of" and "contains" read as structure, "plays the role" as parties,
+// "has the reserve" as money, wherever the predicate itself came from.
 const relationshipTypeColors: Record<string, string> = {
-  parent: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-  child: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  related: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-  depends_on: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
+  structure: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+  parties: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+  coverage: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  money: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  process: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+  provenance: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
+  general: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
 };
+const relationshipColor = (predicate: string) => relationshipTypeColors[groupOf(predicate)] || "";
 
 const CATEGORY_COLORS = [
   "hsl(210, 70%, 55%)",
@@ -252,14 +265,14 @@ function toConceptView(c: DbOntologyConcept): ConceptView {
     description: c.description,
     industryId: c.industryId,
     properties: (c.properties as OntologyProperty[]) || [],
-    // Concepts store links as {targetId, label} or as {target, type}; read both so
-    // every link resolves and has readable text.
-    relationships: ((c.relationships as Array<Record<string, any>>) || []).map((r) => ({
-      ...r,
-      type: r.type || "related",
-      targetId: r.targetId ?? r.target,
-      label: r.label || String(r.type || "related").replace(/_/g, " "),
-    })) as OntologyRelationship[],
+    // Concepts store links in the old shape ({type, targetId}) or the new one ({predicate, targetId}); the shared
+    // normaliser reads both, maps the legacy types onto the vocabulary, and gives each link its reading.
+    relationships: ((c.relationships as unknown[]) || []).flatMap((raw) => {
+      const r = normalizeRelationship(raw);
+      if (!r) return [];
+      const given = raw && typeof raw === "object" ? (raw as { label?: unknown }).label : undefined;
+      return [{ ...r, label: typeof given === "string" && given.trim() ? given : readsAs(r.predicate) } as OntologyRelationship];
+    }),
     tags: c.tags || [],
     synonyms: c.synonyms || [],
     source: c.source || "industry-standard",
@@ -268,6 +281,7 @@ function toConceptView(c: DbOntologyConcept): ConceptView {
     industryRelevance: c.industryRelevance,
     version: c.version || 1,
     sensitivityClassification: (c.sensitivityClassification as ConceptView["sensitivityClassification"]) || null,
+    systemsOfRecord: Array.isArray((c as { systemsOfRecord?: unknown }).systemsOfRecord) ? ((c as { systemsOfRecord: SystemOfRecord[] }).systemsOfRecord) : [],
   };
 }
 
@@ -1632,6 +1646,14 @@ export default function OntologyExplorer() {
                     ))}
                   </div>
                 )}
+                {selectedConcept.systemsOfRecord.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5" data-testid="concept-systems-of-record">
+                    <span className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-muted-foreground">Held in</span>
+                    {selectedConcept.systemsOfRecord.map((s) => (
+                      <span key={`${s.name}-${s.role}`} className="rounded-full border px-2.5 py-0.5 text-xs" data-testid={`badge-sor-${s.name}`}>{s.name}<span className="text-muted-foreground"> · {s.role}</span></span>
+                    ))}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 font-mono text-[11.5px] text-muted-foreground">
                   <span data-testid={isCustom(selectedConcept) ? "badge-custom-extension" : undefined}>{isCustom(selectedConcept) ? "Added by your team" : "Industry standard"}</span>
                   <span data-testid="badge-concept-version">v{selectedConcept.version}</span>
@@ -2212,8 +2234,8 @@ export default function OntologyExplorer() {
                                   {enrichment.suggestedRelationships.map((rel, i) => (
                                     <div key={i} className={`p-3 rounded-md border ${rel.exists === false ? "border-amber-500/30 bg-amber-50/30 dark:bg-amber-950/20" : ""}`} data-testid={`preview-relationship-${i}`}>
                                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                        <Badge className={`text-[10px] ${relationshipTypeColors[rel.type] || ""}`}>
-                                          {rel.type.replace("_", " ")}
+                                        <Badge className={`text-[10px] ${relationshipColor(rel.type)}`}>
+                                          {readsAs(rel.type)}
                                         </Badge>
                                         {rel.exists === false ? (
                                           <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-600 dark:text-amber-400">

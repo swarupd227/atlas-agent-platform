@@ -2,6 +2,8 @@
 // named), coloured by domain, and the whole-ontology graph, coloured by category.
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { readsAs } from "@shared/ontology-relationships";
+
 export interface MapConcept {
   id: string;
   label: string;
@@ -50,7 +52,8 @@ export function buildIncoming(concepts: MapConcept[]) {
   const ids = new Set(concepts.map((c) => c.id));
   const incoming = new Map<string, Array<{ from: string; label: string }>>(concepts.map((c) => [c.id, []]));
   for (const c of concepts) for (const r of c.relationships) {
-    if (ids.has(r.targetId)) incoming.get(r.targetId)!.push({ from: c.id, label: r.label || r.type.replace(/_/g, " ") });
+    // The row reads "<from> <label> <this concept>", so the forward reading is the right one here.
+    if (ids.has(r.targetId)) incoming.get(r.targetId)!.push({ from: c.id, label: r.label || readsAs(r.type) });
   }
   return incoming;
 }

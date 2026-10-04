@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { normalizeRelationship, inverseOf } from "@shared/ontology-relationships";
 import { outputContractEnforcer } from "../services/output-contract-enforcer";
 import { checkStrictModeCompatible, checkSchemaComplexity } from "../services/json-schema-strict-compat";
 import { insertOutputContractSchema } from "../../shared/schema";
@@ -36,6 +37,9 @@ router.get("/api/output-contracts/:id", async (req, res) => {
 // Builds (does not save) the enum schema + alias normalizer that pins an output field to the
 // ontology's own vocabulary, so "use the ontology" is enforced rather than advisory.
 //   Concept-label vocabulary: { industryId, subVertical?, category?, conceptIds?, fieldName }
+//   Neighbour vocabulary:      { industryId, relatedTo: { conceptId, predicate }, fieldName }
+//     the concepts linked to conceptId by that predicate, read from either side (the kinds under Party Role are the
+//     concepts that say "specializes -> party-role", so asking for party-role's "specializedBy" finds them)
 //   Property-value vocabulary: { industryId, conceptId, propertyName, fieldName }
 router.post("/api/output-contracts/generate-from-ontology", async (req, res) => {
   try {
@@ -44,6 +48,7 @@ router.post("/api/output-contracts/generate-from-ontology", async (req, res) => 
       subVertical: z.string().optional(),
       category: z.string().optional(),
       conceptIds: z.array(z.string()).optional(),
+      relatedTo: z.object({ conceptId: z.string().min(1), predicate: z.string().min(1) }).optional(),
       conceptId: z.string().optional(),
       propertyName: z.string().optional(),
       fieldName: z.string().min(1),
@@ -73,9 +78,26 @@ router.post("/api/output-contracts/generate-from-ontology", async (req, res) => 
       if (list.length === 0) return res.status(400).json({ error: `Property ${b.propertyName} does not define an enumerated value set` });
       for (const v of list) { values.push(v); addAlias(v, v); }
     } else {
+      let neighbourIds: Set<string> | null = null;
+      if (b.relatedTo) {
+        const anchor = concepts.find(c => c.id === b.relatedTo!.conceptId);
+        if (!anchor) return res.status(404).json({ error: `Concept ${b.relatedTo.conceptId} not found` });
+        const wanted = b.relatedTo.predicate;
+        const back = inverseOf(wanted);
+        neighbourIds = new Set<string>();
+        for (const raw of Array.isArray(anchor.relationships) ? (anchor.relationships as unknown[]) : []) {
+          const r = normalizeRelationship(raw);
+          if (r && r.predicate === wanted) neighbourIds.add(r.targetId);
+        }
+        if (back) for (const c of concepts) for (const raw of Array.isArray(c.relationships) ? (c.relationships as unknown[]) : []) {
+          const r = normalizeRelationship(raw);
+          if (r && r.predicate === back && r.targetId === anchor.id) neighbourIds.add(c.id);
+        }
+      }
       const picked = concepts.filter(c =>
         (!b.category || c.category === b.category) &&
-        (!b.conceptIds || b.conceptIds.includes(c.id)));
+        (!b.conceptIds || b.conceptIds.includes(c.id)) &&
+        (!neighbourIds || neighbourIds.has(c.id)));
       if (picked.length === 0) return res.status(404).json({ error: "No ontology concepts match the selection" });
       for (const c of picked) {
         values.push(c.label);
