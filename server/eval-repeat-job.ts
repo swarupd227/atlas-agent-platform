@@ -71,11 +71,13 @@ export async function recoverOrphanedEvalRepeatJobs(now = Date.now()): Promise<n
       .where(and(eq(jobs.id, job.id), eq(jobs.status, "processing")))
       .returning({ id: jobs.id });
     if (claimed.length === 0) continue;
-    const runId = (job.payload as { runId?: string } | null)?.runId;
+    const { runId, repeats } = (job.payload as { runId?: string; repeats?: number } | null) ?? {};
     if (runId) {
       await db
         .update(evalRuns)
-        .set({ status: "failed", completedAt: new Date() })
+        // Keep the repeated-run marker: this row is no longer running, and without it it would read
+        // as an ordinary run that scored 0.
+        .set({ status: "failed", completedAt: new Date(), ...(repeats && repeats > 1 ? { resultsJson: { repeats, error: "Recovered: the process running this repeated eval stopped" } } : {}) })
         .where(and(eq(evalRuns.id, runId), eq(evalRuns.status, "running")));
     }
     failed++;

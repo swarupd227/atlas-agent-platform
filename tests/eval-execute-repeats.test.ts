@@ -238,7 +238,34 @@ describe("execute with repeats: other case kinds", () => {
     expect(r.body.passedCases).toBe(1);
     expect(r.body.passRate).toBe(0.5);
     expect(r.body.stability).toMatchObject({ flakyCases: 1, flipRate: 0.5 });
-    expect(state.suiteUpdates[0].passRate).toBe(0.5);
+    // The run records its strict rate; the suite's rate is left to ordinary runs.
+    expect(state.runs[0].passRate).toBe(0.5);
+    expect(state.suiteUpdates).toHaveLength(0);
+  });
+});
+
+describe("a repeated execute does not roll up onto its suite, and is marked from the start", () => {
+  it("leaves the suite's pass rate and lastRunAt alone", async () => {
+    state.cases = [severityCase()];
+    state.answers = [sev("High"), sev("Medium")];
+    await postAndFinish("/api/evals/s1/execute", { repeats: 2 });
+    expect(state.suiteUpdates).toHaveLength(0);
+    expect(state.runs[0].resultsJson.repeats).toBe(2);
+  });
+
+  it("still rolls an ordinary execute up onto its suite", async () => {
+    state.cases = [severityCase()];
+    state.answers = [sev("High")];
+    await post("/api/evals/s1/execute");
+    expect(state.suiteUpdates).toHaveLength(1);
+    expect(state.suiteUpdates[0].lastRunAt).toBeInstanceOf(Date);
+  });
+
+  it("carries resultsJson.repeats while queued, and keeps it when the job cannot be queued", async () => {
+    state.cases = [severityCase()];
+    const r = await post("/api/evals/s1/execute", { repeats: 3 });
+    expect(r.status).toBe(202);
+    expect(state.runs[0].resultsJson).toEqual({ repeats: 3 });
   });
 });
 

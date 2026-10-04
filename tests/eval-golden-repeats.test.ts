@@ -190,7 +190,9 @@ describe("run-golden with repeats", () => {
     expect(row.scorerOutputs.score).toBeCloseTo(0.75);
     // The reader sees the attempt that failed, not a lucky pass.
     expect(row.actualOutput.response).toBe("BAD");
-    expect(state.suiteUpdates[0].passRate).toBe(0);
+    // The run's own row keeps its strict rate; the suite's rate is left to ordinary runs.
+    expect(state.runs[0].passRate).toBe(0);
+    expect(state.suiteUpdates).toHaveLength(0);
   });
 
   it("reports a case that fails every time as a failure, not as inconsistent", async () => {
@@ -237,6 +239,55 @@ describe("run-golden with repeats", () => {
     expect(r.status).toBe(200);
     expect(r.body.results[0]).toMatchObject({ outcome: "flaky", passedAttempts: 2 });
     expect(state.runs[0].status).toBe("completed");
+  });
+});
+
+describe("a repeated run does not roll up onto its suite", () => {
+  it("leaves the suite's pass rate and lastRunAt alone, so the deployment gate keeps reading the last ordinary run", async () => {
+    state.answers = ["GOOD", "BAD", "GOOD"];
+    const r = await postAndFinish("/api/evals/s1/run-golden", { repeats: 3 });
+    expect(r.status).toBe(200);
+    expect(state.suiteUpdates).toHaveLength(0);
+    // ...while the run itself still records what it measured.
+    expect(state.runs[0]).toMatchObject({ status: "completed", passRate: 0 });
+    expect(state.runs[0].resultsJson.repeats).toBe(3);
+    expect(state.runs[0].resultsJson.stability.flakyCases).toBe(1);
+  });
+
+  it("still rolls an ordinary run up onto its suite, with lastRunAt", async () => {
+    await post("/api/evals/s1/run-golden");
+    expect(state.suiteUpdates).toHaveLength(1);
+    expect(state.suiteUpdates[0].passRate).toBe(1);
+    expect(state.suiteUpdates[0].lastRunAt).toBeInstanceOf(Date);
+  });
+
+  it("recordSuiteRate writes only for an ordinary run", async () => {
+    expect(await mod.recordSuiteRate("s1", 1, 0.9)).toBe(true);
+    expect(await mod.recordSuiteRate("s1", 2, 0.4)).toBe(false);
+    expect(await mod.recordSuiteRate("s1", 10, 1)).toBe(false);
+    expect(state.suiteUpdates).toHaveLength(1);
+    expect(state.suiteUpdates[0].passRate).toBe(0.9);
+  });
+});
+
+describe("a repeated run's row is marked from the moment it exists", () => {
+  it("carries resultsJson.repeats while it is still queued, so it never reads as an ordinary run that scored 0", async () => {
+    const r = await post("/api/evals/s1/run-golden", { repeats: 4 });
+    expect(r.status).toBe(202);
+    expect(state.runs[0].status).toBe("running");
+    expect(state.runs[0].resultsJson).toEqual({ repeats: 4 });
+  });
+
+  it("keeps the marker when the job cannot be queued", async () => {
+    state.failCreateJob = true;
+    await post("/api/evals/s1/run-golden", { repeats: 3 });
+    expect(state.runs[0].status).toBe("failed");
+    expect(state.runs[0].resultsJson).toMatchObject({ repeats: 3, error: "The run could not be queued" });
+  });
+
+  it("adds nothing to an ordinary run's row", () => {
+    expect(mod.repeatedRunMarker(1)).toEqual({});
+    expect(mod.repeatedRunMarker(5)).toEqual({ resultsJson: { repeats: 5 } });
   });
 });
 

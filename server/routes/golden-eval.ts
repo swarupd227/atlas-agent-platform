@@ -425,6 +425,33 @@ export interface RepeatRunPayload {
 }
 
 /**
+ * Rolls a finished run's pass rate up onto its suite, which is what the deployment gate, the
+ * readiness check, the canary and the deprecation signal read as "the suite's pass rate", and
+ * stamps lastRunAt, which the gate reads to tell "never evaluated" from "evaluated and failed".
+ *
+ * Only an ordinary run does. A repeated run is a consistency check scored strictly (a case
+ * passes only if every attempt does), so its rate is lower and not on the same scale; written
+ * here it would replace the suite's real rate and could block, or wave through, a promotion on a
+ * number nobody chose, and it would make a suite that was never evaluated look evaluated. The
+ * repeated run's own row keeps its rate and its stability figures, for people to read.
+ */
+export async function recordSuiteRate(suiteId: string, repeats: number, passRate: number): Promise<boolean> {
+  if (repeats > 1) return false;
+  await storage.updateEvalSuite(suiteId, { passRate, lastRunAt: new Date() });
+  return true;
+}
+
+/**
+ * What a repeated run's row says about itself from the moment it exists: resultsJson.repeats, the
+ * marker that readers use to tell it from an ordinary run. Without it, a repeated run that is
+ * still running, or that fails before it completes, would carry no marker and read as an
+ * ordinary run with a pass rate of 0. An ordinary run adds nothing.
+ */
+export function repeatedRunMarker(repeats: number): { resultsJson?: any } {
+  return repeats > 1 ? { resultsJson: { repeats } } : {};
+}
+
+/**
  * Hands a repeated run to the job worker and says where to read it. If the job
  * cannot be queued the run row is marked failed rather than left "running".
  */
@@ -433,7 +460,7 @@ async function queueRepeatRun(payload: RepeatRunPayload, totalCases: number) {
     const job = await storage.createJob({ type: EVAL_REPEAT_JOB, status: "queued", agentId: payload.agentId, payload: payload as any });
     return { runId: payload.runId, jobId: job.id, status: "running" as const, repeats: payload.repeats, totalCases, attempts: totalCases * payload.repeats };
   } catch (err) {
-    await storage.updateEvalRun(payload.runId, { status: "failed", completedAt: new Date(), resultsJson: { error: "The run could not be queued" } as any }).catch(() => {});
+    await storage.updateEvalRun(payload.runId, { status: "failed", completedAt: new Date(), resultsJson: { repeats: payload.repeats, error: "The run could not be queued" } as any }).catch(() => {});
     throw err;
   }
 }
@@ -540,7 +567,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
     } as any,
   });
 
-  await storage.updateEvalSuite(suite.id, { passRate, lastRunAt: new Date() });
+  await recordSuiteRate(suite.id, repeats, passRate);
 
   return {
     runId: run.id,
@@ -794,9 +821,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
     } as any,
   });
 
-  // lastRunAt is what the promotion gate reads to tell "never evaluated" from
-  // "evaluated and failed", so it is written here and nowhere else.
-  await storage.updateEvalSuite(suite.id, { passRate, lastRunAt: new Date() });
+  await recordSuiteRate(suite.id, repeats, passRate);
 
   return {
     runId: run.id,
@@ -893,6 +918,7 @@ router.post("/api/evals/:suiteId/run-golden", checkPermission("create_modify_blu
       totalCases: cases.length,
       triggeredBy: (req.body?.triggeredBy as string) || "manual",
       environment: (agent as any).environment || "staging",
+      ...repeatedRunMarker(repeats),
     });
 
     // A repeated run takes many times longer than a request can wait (Azure cuts one
@@ -970,6 +996,7 @@ router.post("/api/evals/:id/execute", checkPermission("create_modify_blueprints"
       totalCases: cases.length,
       triggeredBy: (req.body?.triggeredBy as string) || "manual",
       environment: (agent as any).environment || "staging",
+      ...repeatedRunMarker(repeats),
     });
 
     // See run-golden: a repeated run is queued, not answered in the request.

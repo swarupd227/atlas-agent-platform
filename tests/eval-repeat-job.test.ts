@@ -185,6 +185,21 @@ describe("recoverOrphanedEvalRepeatJobs", () => {
     expect(runWrites.every(w => w.patch.status === "failed")).toBe(true);
   });
 
+  it("keeps the repeated-run marker on a run it fails, so it never reads as an ordinary run that scored 0", async () => {
+    dbState.processing = [{ ...row("dead", "r1", ORPHANED_AFTER_MS + 5000), payload: { runId: "r1", repeats: 4, heartbeatAt: new Date(now - ORPHANED_AFTER_MS - 5000).toISOString() } }];
+    await recoverOrphanedEvalRepeatJobs(now);
+    const runWrite = dbState.writes.find(w => w.table === "evalRuns")!;
+    expect(runWrite.patch.status).toBe("failed");
+    expect(runWrite.patch.resultsJson).toMatchObject({ repeats: 4 });
+    expect(runWrite.patch.resultsJson.error).toMatch(/stopped/);
+  });
+
+  it("writes no marker for a job whose payload has no repeat count", async () => {
+    dbState.processing = [row("dead", "r1", ORPHANED_AFTER_MS + 5000)];
+    await recoverOrphanedEvalRepeatJobs(now);
+    expect(dbState.writes.find(w => w.table === "evalRuns")!.patch).not.toHaveProperty("resultsJson");
+  });
+
   it("does nothing to a run whose job finished between the check and the claim", async () => {
     dbState.processing = [row("dead", "r1", ORPHANED_AFTER_MS + 5000)];
     dbState.claim = false;
