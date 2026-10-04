@@ -394,6 +394,16 @@ function scheduleSummary(s: Submission) {
   for (const l of locs) classCounts[l.isoConstructionClass] = (classCounts[l.isoConstructionClass] || 0) + 1;
   const predominantIsoClass = Number(Object.entries(classCounts).sort((a, b) => b[1] - a[1])[0][0]);
 
+  // The predominant occupancy, summarised the same way as the construction
+  // class above. Without it the risk score's peer cohort fell back to
+  // "Unclassified", whose mean is 62 -- the same number the score lands on, so
+  // every submission benchmarked at exactly 0% against its peers. A benchmark
+  // that always reads "at cohort average" is not a benchmark, and the credit
+  // it was supposed to justify had nothing behind it.
+  const occupancyCounts: Record<string, number> = {};
+  for (const l of locs) occupancyCounts[l.occupancy] = (occupancyCounts[l.occupancy] || 0) + 1;
+  const predominantOccupancy = Object.entries(occupancyCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+
   // Accumulation is a county question, not a state one: a treaty is exhausted
   // by one storm crossing one coastline, and "FL" spans both Pensacola and
   // Ocala. Computed here, with byState, so a step can read where the exposure
@@ -422,6 +432,7 @@ function scheduleSummary(s: Submission) {
     // alphabetical list of counties.
     byCatZone: Object.fromEntries(Object.entries(byCatZone).sort((a, b) => b[1].tier1Tiv - a[1].tier1Tiv || b[1].tiv - a[1].tiv)),
     predominantIsoClass,
+    predominantOccupancy,
     sprinkleredPct: Math.round((locs.filter((l) => l.sprinklered === true).length / locs.length) * 100),
     unknownProtectionCount: locs.filter((l) => l.sprinklered === null).length,
     unknownRoofYearCount: locs.filter((l) => l.roofYear === null).length,

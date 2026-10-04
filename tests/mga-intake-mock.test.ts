@@ -93,6 +93,42 @@ describe("Bridge Specialty submission intake", () => {
     expect(res.status).toBe(422);
     expect(res.body.allowed).toContain("referred");
   });
+
+  // The schedule summarised its construction class but not its occupancy, so
+  // the risk score had nothing to pick a peer cohort from and fell back to
+  // "Unclassified" -- whose mean is 62, the same number the score lands on.
+  // Every submission benchmarked at exactly 0% against its peers, and the
+  // underwriting credit that benchmark was meant to justify had nothing behind
+  // it. A benchmark that always says "at cohort average" is not a benchmark.
+  it("summarises the predominant occupancy, so a peer cohort can be chosen", async () => {
+    const { body } = await get("/intake/submission?submissionId=SUB-2026-8891");
+    const occ = body.scheduleSummary.predominantOccupancy;
+    expect(typeof occ).toBe("string");
+    expect(occ).not.toBe("Unclassified");
+
+    // Read every row and recompute the mode, rather than trusting the summary's
+    // own arithmetic. Paging matters: the route caps a page at 50, so a single
+    // request would silently assert against a slice of the schedule.
+    const counts: Record<string, number> = {};
+    let seen = 0;
+    let total = -1;
+    for (let offset = 0; ; ) {
+      const page = await get(`/intake/sov-locations?submissionId=SUB-2026-8891&limit=50&offset=${offset}`);
+      expect(page.status).toBe(200);
+      total = page.body.totalMatching;
+      for (const l of page.body.locations) counts[l.occupancy] = (counts[l.occupancy] || 0) + 1;
+      seen += page.body.returned;
+      if (!page.body.hasMore) break;
+      offset += page.body.returned;
+      expect(page.body.returned).toBeGreaterThan(0); // never loop on an empty page
+    }
+    expect(seen).toBe(total); // the comparison below covers the whole schedule
+
+    // More than one occupancy present, or "commonest" would be trivially true.
+    expect(Object.keys(counts).length).toBeGreaterThan(1);
+    const mode = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+    expect(occ).toBe(mode);
+  });
 });
 
 describe("Insurity rating and predict engine", () => {
