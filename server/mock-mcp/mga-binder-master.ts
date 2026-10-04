@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import {
   BINDER_TERMS, CLOSE_TOLERANCES, PERIODS, isPeriod, now, money,
-  coastalTier1For, openingCoastalTier1, gwpFor, risksFor, type PeriodId,
+  coastalTier1For, openingCoastalTier1, gwpFor, risksFor, PERIOD_ORDER, type PeriodId,
 } from "./mga-close-seed";
 
 /**
@@ -89,7 +89,7 @@ router.get("/treaty-aggregates", (req: Request, res: Response) => {
   const headroom = cap - closing;
 
   // Run rate from the periods actually written this treaty year, not a guess.
-  const order: PeriodId[] = ["2026-01", "2026-02", "2026-03", "2026-04"];
+  const order = PERIOD_ORDER;
   const upto = order.slice(0, order.indexOf(periodId) + 1);
   const recent = upto.slice(-3);
   const runRate = money(recent.reduce((a, p) => a + coastalTier1For(p), 0) / recent.length);
@@ -178,7 +178,7 @@ router.post("/close-period", (req: Request, res: Response) => {
   if (!closedBy) return res.status(422).json({ error: "closedBy is required: a person closes a period." });
   const row = { closedAt: now(), closedBy, submissionReference: sub.reference };
   closed.set(periodId, row);
-  const order: PeriodId[] = ["2026-01", "2026-02", "2026-03", "2026-04"];
+  const order = PERIOD_ORDER;
   const nextPeriod = order[order.indexOf(periodId) + 1] ?? null;
   res.json({
     closed: true, periodId, ...row, nextPeriodOpened: nextPeriod,

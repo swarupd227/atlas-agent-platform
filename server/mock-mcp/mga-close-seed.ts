@@ -48,7 +48,20 @@ export const CLOSE_TOLERANCES = {
   maxCorrectionRounds: 2,
 } as const;
 
-export type PeriodId = "2026-01" | "2026-02" | "2026-03" | "2026-04";
+/**
+ * The binder's reporting calendar: the whole 2026 treaty year.
+ *
+ * The close demo exercises the first four. The rest exist because a treaty year
+ * has twelve reporting periods whether or not a demo closes them, and because
+ * the underwriting journey binds risks with effective dates later in the year:
+ * asked for the treaty position at 2026-11 the register used to answer
+ * "Unknown reporting period", which reads as a broken connector rather than as
+ * a calendar that stopped in April.
+ */
+export type PeriodId =
+  | "2026-01" | "2026-02" | "2026-03" | "2026-04"
+  | "2026-05" | "2026-06" | "2026-07" | "2026-08"
+  | "2026-09" | "2026-10" | "2026-11" | "2026-12";
 
 export interface RiskRow {
   policyNumber: string;
@@ -112,11 +125,34 @@ export const PERIODS: Record<PeriodId, {
     coastalTier1Written: 15_600_000,
   },
   "2026-04": { periodId: "2026-04", label: "April 2026", riskCount: 63, exercises: "capacity exhaustion (Decision D)", coastalTier1Written: 19_800_000 },
+  // Open, and nothing written yet. Zero risks and zero coastal TIV, so the
+  // treaty-year roll-forward is unchanged for the four periods the close
+  // demonstrates: the position at any later period is April's position,
+  // because nothing has been written since. That is also the true answer for
+  // an underwriter asking what capacity is left in November.
+  "2026-05": { periodId: "2026-05", label: "May 2026", riskCount: 0, exercises: "open, nothing written yet", coastalTier1Written: 0 },
+  "2026-06": { periodId: "2026-06", label: "June 2026", riskCount: 0, exercises: "open, nothing written yet", coastalTier1Written: 0 },
+  "2026-07": { periodId: "2026-07", label: "July 2026", riskCount: 0, exercises: "open, nothing written yet", coastalTier1Written: 0 },
+  "2026-08": { periodId: "2026-08", label: "August 2026", riskCount: 0, exercises: "open, nothing written yet", coastalTier1Written: 0 },
+  "2026-09": { periodId: "2026-09", label: "September 2026", riskCount: 0, exercises: "open, nothing written yet", coastalTier1Written: 0 },
+  "2026-10": { periodId: "2026-10", label: "October 2026", riskCount: 0, exercises: "open, nothing written yet", coastalTier1Written: 0 },
+  "2026-11": { periodId: "2026-11", label: "November 2026", riskCount: 0, exercises: "open; the period E&S submissions bind into", coastalTier1Written: 0 },
+  "2026-12": { periodId: "2026-12", label: "December 2026", riskCount: 0, exercises: "open, nothing written yet", coastalTier1Written: 0 },
 };
 
 /** Where the treaty year stood before any of these periods. */
 export const TREATY_YEAR_OPENING_COASTAL_TIER1 = 148_000_000;
-const PERIOD_ORDER: PeriodId[] = ["2026-01", "2026-02", "2026-03", "2026-04"];
+/**
+ * Exported, because the binder register had its own copy of this list in two
+ * places. A calendar kept in three spots is a calendar that will disagree with
+ * itself the first time one of them is extended -- which is exactly what the
+ * register did when it was asked for a period the seed knew nothing about.
+ */
+export const PERIOD_ORDER: PeriodId[] = [
+  "2026-01", "2026-02", "2026-03", "2026-04",
+  "2026-05", "2026-06", "2026-07", "2026-08",
+  "2026-09", "2026-10", "2026-11", "2026-12",
+];
 
 /**
  * The aggregate BEFORE this period, derived by chaining rather than stated.

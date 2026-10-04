@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  PERIODS, BINDER_TERMS, CLOSE_TOLERANCES, risksFor, gwpFor, coastalTier1For, isPeriod,
+  PERIODS, PERIOD_ORDER, BINDER_TERMS, CLOSE_TOLERANCES, risksFor, gwpFor, coastalTier1For, isPeriod,
   openingCoastalTier1, TREATY_YEAR_OPENING_COASTAL_TIER1,
 } from "../server/mock-mcp/mga-close-seed";
 
@@ -129,5 +129,48 @@ describe("the treaty-year roll-forward", () => {
     for (const p of ["2026-01", "2026-02", "2026-03", "2026-04"] as const) {
       for (const r of risksFor(p)) expect(r.coastalTier1Tiv).toBeLessThanOrEqual(Math.max(r.totalInsuredValue, 0));
     }
+  });
+});
+
+// The register's calendar used to stop at April, so asked for the treaty
+// position at 2026-11 -- the period E&S submissions bind into -- it answered
+// "Unknown reporting period", which reads as a broken connector rather than as
+// a calendar that ends early.
+describe("the binder's reporting calendar", () => {
+  it("covers the whole treaty year, not just the periods the close demonstrates", () => {
+    expect(PERIOD_ORDER).toHaveLength(12);
+    expect(PERIOD_ORDER[0]).toBe("2026-01");
+    expect(PERIOD_ORDER[11]).toBe("2026-12");
+    for (const p of PERIOD_ORDER) expect(isPeriod(p)).toBe(true);
+  });
+
+  it("answers for the period an E&S submission binds into", () => {
+    expect(isPeriod("2026-11")).toBe(true);
+    expect(PERIODS["2026-11"].label).toBe("November 2026");
+  });
+
+  it("leaves the four close periods exactly as they were", () => {
+    expect(PERIODS["2026-01"].coastalTier1Written).toBe(43_400_000);
+    expect(PERIODS["2026-02"].coastalTier1Written).toBe(14_200_000);
+    expect(PERIODS["2026-03"].coastalTier1Written).toBe(15_600_000);
+    expect(PERIODS["2026-04"].coastalTier1Written).toBe(19_800_000);
+    expect(risksFor("2026-03")).toHaveLength(47);
+  });
+
+  // The added periods write nothing, so the position later in the year is
+  // April's position. That is the honest answer -- and the one an underwriter
+  // needs: 9m of coastal headroom left, against a submission wanting to bind
+  // 72.4m of it.
+  it("carries April's position forward through the open periods", () => {
+    const april = openingCoastalTier1("2026-04") + coastalTier1For("2026-04");
+    for (const p of ["2026-05", "2026-09", "2026-11", "2026-12"] as const) {
+      expect(coastalTier1For(p)).toBe(0);
+      expect(openingCoastalTier1(p) + coastalTier1For(p)).toBe(april);
+    }
+    expect(BINDER_TERMS.coastalTier1TreatyYearCap - april).toBe(9_000_000);
+  });
+
+  it("writes no risks in a period nothing was written in", () => {
+    for (const p of ["2026-05", "2026-11"] as const) expect(risksFor(p)).toHaveLength(0);
   });
 });
