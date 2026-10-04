@@ -7,6 +7,7 @@ import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveOntologyTags, runParameterMatching } from "./helpers";
 import { ontologyCoverage } from "../ontology-coverage";
 import { checkVocabulary } from "@shared/ontology-vocabulary";
+import { validateRelationships, normalizeSystemsOfRecord } from "@shared/ontology-relationships";
 import { executeKGQueryTemplate } from "../agent-runtime";
 import {
   insertSkillSchema,
@@ -102,13 +103,20 @@ const router = Router();
         source: z.enum(["industry-standard", "custom-extension", "ai-subdomain"]).optional(),
         linkedRegulations: z.array(z.any()).optional(),
         sensitivityClassification: z.any().optional(),
+        systemsOfRecord: z.array(z.any()).optional(),
       });
       const parseResult = bodySchema.safeParse(req.body);
       if (!parseResult.success) {
         return res.status(400).json({ message: "Validation failed", errors: parseResult.error.errors });
       }
       const data = parseResult.data;
+      // A relationship must point at a concept of the same industry; a label is resolved when it names exactly one.
+      // An unknown predicate is kept and reported, so the vocabulary can grow from the data.
+      const peers = await storage.getOntologyConcepts(data.industryId);
+      const rv = validateRelationships(data.relationships, { ids: peers.map((c) => c.id), labels: new Map(peers.map((c) => [c.label.toLowerCase(), c.id])) });
+      if (rv.errors.length) return res.status(400).json({ message: "Relationship validation failed", errors: rv.errors, warnings: rv.warnings });
       const concept = await storage.createOntologyConcept({
+        systemsOfRecord: normalizeSystemsOfRecord(data.systemsOfRecord),
         sensitivityClassification: data.sensitivityClassification ?? null,
         id: data.id,
         industryId: data.industryId,
@@ -118,13 +126,13 @@ const router = Router();
         category: data.category,
         description: data.description,
         properties: data.properties || [],
-        relationships: data.relationships || [],
+        relationships: rv.normalized,
         tags: data.tags || [],
         synonyms: data.synonyms || [],
         source: data.source || "custom-extension",
         linkedRegulations: data.linkedRegulations || [],
       });
-      res.status(201).json(concept);
+      res.status(201).json(rv.warnings.length ? { ...concept, warnings: rv.warnings } : concept);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -149,6 +157,7 @@ const router = Router();
           industryRelevance: z.string().nullable().optional(),
           linkedRegulations: z.array(z.any()).optional(),
           sensitivityClassification: z.any().optional(),
+          systemsOfRecord: z.array(z.any()).optional(),
         })).min(1).max(100),
       });
       const parseResult = bulkSchema.safeParse(req.body);
@@ -158,9 +167,24 @@ const router = Router();
 
       const created = [];
       const errors: string[] = [];
-      for (const data of parseResult.data.concepts) {
+      const warnings: string[] = [];
+      const batch = parseResult.data.concepts;
+      const knownByIndustry = new Map<string, { ids: string[]; labels: Map<string, string> }>();
+      for (const data of batch) {
+        if (knownByIndustry.has(data.industryId)) continue;
+        const peers = await storage.getOntologyConcepts(data.industryId);
+        knownByIndustry.set(data.industryId, {
+          ids: [...peers.map((c) => c.id), ...batch.filter((b) => b.industryId === data.industryId).map((b) => b.id)],
+          labels: new Map(peers.map((c) => [c.label.toLowerCase(), c.id])),
+        });
+      }
+      for (const data of batch) {
+        const rv = validateRelationships(data.relationships, knownByIndustry.get(data.industryId)!);
+        if (rv.errors.length) { errors.push(`Refused "${data.label}": ${rv.errors.join("; ")}`); continue; }
+        for (const w of rv.warnings) warnings.push(`"${data.label}": ${w}`);
         try {
           const concept = await storage.createOntologyConcept({
+            systemsOfRecord: normalizeSystemsOfRecord(data.systemsOfRecord),
             id: data.id,
             industryId: data.industryId,
             subVerticals: data.subVerticals,
@@ -169,7 +193,7 @@ const router = Router();
             category: data.category,
             description: data.description,
             properties: data.properties || [],
-            relationships: data.relationships || [],
+            relationships: rv.normalized,
             tags: data.tags || [],
             synonyms: data.synonyms || [],
             source: data.source || "ai-subdomain",
@@ -183,7 +207,7 @@ const router = Router();
         }
       }
 
-      res.status(201).json({ created, count: created.length, errors });
+      res.status(201).json({ created, count: created.length, errors, warnings });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -208,8 +232,17 @@ const router = Router();
       const currentHistory = Array.isArray(existing.versionHistory) ? existing.versionHistory : [];
       const newVersion = (existing.version || 1) + 1;
 
+      const body = { ...(req.body || {}) } as Record<string, unknown>;
+      if ("relationships" in body) {
+        const peers = await storage.getOntologyConcepts(existing.industryId);
+        const rv = validateRelationships(body.relationships, { ids: peers.map((c) => c.id), labels: new Map(peers.map((c) => [c.label.toLowerCase(), c.id])) });
+        if (rv.errors.length) return res.status(400).json({ message: "Relationship validation failed", errors: rv.errors, warnings: rv.warnings });
+        body.relationships = rv.normalized;
+        if (rv.warnings.length) res.setHeader("X-Ontology-Warnings", String(rv.warnings.length));
+      }
+      if ("systemsOfRecord" in body) body.systemsOfRecord = normalizeSystemsOfRecord(body.systemsOfRecord);
       const updateData = {
-        ...req.body,
+        ...body,
         version: newVersion,
         versionHistory: [...currentHistory, previousSnapshot],
       };

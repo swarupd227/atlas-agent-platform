@@ -2071,6 +2071,9 @@ export const ontologyConcepts = pgTable("ontology_concepts", {
   version: integer("version").notNull().default(1),
   versionHistory: jsonb("version_history").default(sql`'[]'::jsonb`),
   sensitivityClassification: jsonb("sensitivity_classification"),
+  // Which systems hold this concept's instances: [{ name, connectorId?, role: master | copy | derived }].
+  // `source` says where the definition came from; this says where the data lives.
+  systemsOfRecord: jsonb("systems_of_record").default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -24,6 +24,7 @@ import createEvaluationsRouter from "./routes/evaluations";
 import skillsRouter from "./routes/skills";
 import workerTasksRouter from "./routes/worker-tasks";
 import classifiersRouter from "./routes/classifiers";
+import ontologyGraphRouter from "./routes/ontology-graph";
 import autonomyRouter from "./routes/autonomy";
 import shadowCanaryRouter from "./routes/shadow-canary";
 import outcomesRouter from "./routes/outcomes";
@@ -493,6 +494,7 @@ export async function registerRoutes(
   app.use(skillsRouter);
   app.use(workerTasksRouter);
   app.use(classifiersRouter);
+  app.use(ontologyGraphRouter);
   app.use(autonomyRouter);
   app.use(shadowCanaryRouter);
   app.use(piiRouter);

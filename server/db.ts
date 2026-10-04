@@ -1771,6 +1771,7 @@ export async function runStartupMigrations() {
       ALTER TABLE ontology_concepts DROP COLUMN IF EXISTS sub_vertical;
       ALTER TABLE ontology_concepts ADD COLUMN IF NOT EXISTS sub_verticals TEXT[];
       CREATE INDEX IF NOT EXISTS idx_ontology_concepts_sub_verticals ON ontology_concepts USING GIN(sub_verticals);
+      ALTER TABLE ontology_concepts ADD COLUMN IF NOT EXISTS systems_of_record JSONB DEFAULT '[]'::jsonb;
     `);
 
     // Vendor-native structured-output decoding (OpenAI json_schema strict mode /
