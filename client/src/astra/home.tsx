@@ -206,8 +206,12 @@ export function HomeActivityPanel() {
       <ActivityList label="In progress" items={data.inProgress} empty="Nothing is running right now." testId="astra-home-in-progress" />
       {/* "in the last 7 days", not "this week": the window is rolling, and the
           empty state already said so. On a Monday "this week" reads as "since
-          Monday" and the two lines described different periods. */}
-      <ActivityList label="Finished in the last 7 days" items={data.recent} empty="No runs finished in the last 7 days." testId="astra-home-recent" />
+          Monday" and the two lines described different periods.
+          "Ended", not "Finished": this list now also holds runs that stopped
+          without finishing -- an agent run whose process is gone. Saying
+          "finished" over a row that reads "never finished" is the contradiction
+          that put it under "In progress" in the first place. */}
+      <ActivityList label="Ended in the last 7 days" items={data.recent} empty="No runs ended in the last 7 days." testId="astra-home-recent" />
       {data.spend && (
         <section aria-label="Spend" data-testid="astra-home-spend">
           <h2 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Model spend · last {data.spend.days} days</h2>

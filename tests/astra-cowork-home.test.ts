@@ -73,10 +73,23 @@ describe("in progress", () => {
     expect(a.inProgress[0]).toMatchObject({ id: "w1", count: 3, detail: "3 runs waiting for an approval · oldest started 3 h ago" });
   });
 
-  it("calls an agent run still marked running after half an hour stalled: it lost its process", () => {
+  it("keeps an agent run that lost its process OUT of in progress, and still shows it", () => {
+    // It used to sit in "In progress". One did, for four days, saying "Started
+    // 4 days ago and never finished" under a heading claiming it was running --
+    // while this file's own threshold says such a run "lost its process and
+    // won't finish". It is not hidden: it moves to the ended list, red.
     const a = buildActivity({ teamRuns: [], agentRuns: [agent({ status: "running", createdAt: minsAgo(60 * 42) })], spend: null, now: NOW });
-    expect(a.inProgress[0]).toMatchObject({ status: "stalled" });
-    expect(a.inProgress[0].detail).toMatch(/^Started 42 h ago and never finished · “What does our travel policy/);
+    expect(a.inProgress).toEqual([]);
+    expect(a.recent[0]).toMatchObject({ id: "w1", status: "stalled" });
+    expect(a.recent[0].detail).toMatch(/^Started 42 h ago and never finished · “What does our travel policy/);
+  });
+
+  it("leaves a run waiting on a person in progress, however long it waits", () => {
+    // awaiting_approval is not abandoned: someone can still decide it, and it
+    // resumes. Only "running" with nothing executing it is.
+    const a = buildActivity({ teamRuns: [], agentRuns: [agent({ status: "awaiting_approval", createdAt: minsAgo(60 * 42) })], spend: null, now: NOW });
+    expect(a.inProgress.map((i) => i.id)).toEqual(["w1"]);
+    expect(a.inProgress[0].status).toBe("waiting");
   });
 
   it("names a run whose team was deleted instead of showing an id", () => {

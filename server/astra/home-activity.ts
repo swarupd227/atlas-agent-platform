@@ -71,6 +71,15 @@ const STALE_HEARTBEAT_MS = 5 * 60_000;
 const STALE_AGENT_RUN_MS = 30 * 60_000;
 const RECENT_WINDOW_MS = 7 * 86_400_000;
 
+/**
+ * A run still marked running long after it started, with nothing executing it.
+ * Not awaiting_approval: that one is genuinely waiting for a person and may be
+ * resumed whenever they decide.
+ */
+export function agentAbandoned(r: { status: string; createdAt: Date | string | null }, now: number): boolean {
+  return r.status === "running" && now - ms(r.createdAt) > STALE_AGENT_RUN_MS;
+}
+
 const ms = (t: Date | string | null | undefined) => (t ? new Date(t).getTime() : NaN);
 const iso = (t: Date | string | null | undefined) => (t ? new Date(t).toISOString() : null);
 
@@ -172,10 +181,18 @@ export function buildActivity(input: { teamRuns: TeamRunRow[]; agentRuns: AgentR
   const now = input.now ?? Date.now();
   const items = [
     ...input.teamRuns.map((r) => ({ item: teamItem(r, now), live: IN_FLIGHT_TEAM.has(r.status) })),
-    ...input.agentRuns.map((r) => ({ item: agentItem(r, now), live: IN_FLIGHT_AGENT.has(r.status) })),
+    ...input.agentRuns.map((r) => ({ item: agentItem(r, now), live: IN_FLIGHT_AGENT.has(r.status) && !agentAbandoned(r, now) })),
   ];
   const byNewest = (a: ActivityItem, b: ActivityItem) => (ms(b.at) || 0) - (ms(a.at) || 0);
-  // A run that lost its process stays in progress, labelled as stalled, rather than hidden.
+  // Still shown, never hidden -- but not under "In progress". An agent run whose
+  // process is gone is not progressing, and this file already says so
+  // (STALE_AGENT_RUN_MS: "lost its process and won't finish"); it used to say
+  // that inside the in-progress list, where one sat for four days claiming to be
+  // running. It moves to the ended list, red and saying it never finished, which
+  // is what happened. The row in the database still reads "running": nothing can
+  // end an agent run today -- the workspace routes are create, stream, resume
+  // and two reads, and cancel_run is for team runs -- so this corrects what the
+  // home reports, not the record. A reaper that closes the row is the next step.
   const inProgress = groupRepeats(items.filter((i) => i.live).map((i) => i.item).sort(byNewest), now);
   const recent = items
     .filter((i) => !i.live && now - (ms(i.item.at) || 0) <= RECENT_WINDOW_MS)
