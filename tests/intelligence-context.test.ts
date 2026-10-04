@@ -72,6 +72,14 @@ describe("classifyStateKey", () => {
     expect(classifyStateKey("workflowStatus")).toBe("session");
     expect(classifyStateKey("request")).toBe("session");
 
+    // A concern raised and resolved is the clearest decision-trace content in
+    // a run: the system of record keeps the final premium and keeps no trace
+    // that it was challenged once and corrected. This was classified session
+    // until the live content was read.
+    expect(classifyStateKey("revision_request")).toBe("decision");
+    // The round COUNT is still plumbing -- it does not say what the concern was.
+    expect(classifyStateKey("__revision")).toBe("plumbing");
+
     expect(classifyStateKey("policyNumber")).toBe("decision");
     expect(classifyStateKey("submissionId")).toBe("decision");
     expect(classifyStateKey("treatyReference")).toBe("decision");

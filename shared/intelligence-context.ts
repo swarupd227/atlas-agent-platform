@@ -170,7 +170,7 @@ const PLUMBING_KEYS = new Set([
  */
 const SESSION_KEYS = new Set([
   "nextAgent", "nextSteps", "workflowStatus", "orchestrationStatus", "workflowId",
-  "request", "revision_request", "currentStageId", "activeInterruptId",
+  "request", "currentStageId", "activeInterruptId",
 ]);
 
 /**
@@ -179,6 +179,15 @@ const SESSION_KEYS = new Set([
  * list would miss every new journey.
  */
 const DECISION_KEYS = new Set([
+  // A concern raised by a review step and then resolved. Live content:
+  // "REVISION ROUND 1 of 1: 'Pre-Bind Quality Checker' reviewed the result and
+  // sent it back to 'Premium Calculator' ... so it resolves every finding
+  // below." That is decision-relevant in the strongest sense -- a system of
+  // record keeps the final premium and keeps no trace that it was challenged
+  // once and corrected. It was classified as session state until measurement
+  // showed what it holds. (`__revision` stays plumbing: it counts the rounds,
+  // it does not say what the concern was.)
+  "revision_request",
   "status", "reconciled", "clausesUsed", "endorsementText", "notificationSent",
   "treatyReference", "treatyBinder", "treatyYear", "carrierCode", "policyNumber",
   "submissionId", "bordereauEntryId", "ledgerJournalId", "rate_as_submitted",
