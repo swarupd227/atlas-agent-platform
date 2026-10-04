@@ -149,7 +149,19 @@ export type CaseInstrument =
   | { kind: "prose"; criterion: string }
   | { kind: "none" };
 
-const DESCRIPTIVE_KEYS = new Set(["kpiName", "kpiId", "unit", "regulationRef", "conceptId", "conceptLabel"]);
+/**
+ * Keys that restate the input rather than asserting a judgement.
+ *
+ * kpiName was excluded from the start because it echoes the KPI's own name.
+ * `threshold` and `target` are the same thing and were missed: measured across
+ * the nine live KPI suites, `threshold` is asserted in 99 of 99 boundary cases
+ * and is present in inputData with the identical value in all 99. Comparing it
+ * marks a third of every case correct before the agent has judged anything,
+ * which is how those suites read 107/107. The generator still writes them into
+ * expectedOutput as context for whoever reads the row; they are simply not
+ * scored.
+ */
+const DESCRIPTIVE_KEYS = new Set(["kpiName", "kpiId", "unit", "regulationRef", "conceptId", "conceptLabel", "threshold", "target"]);
 
 export function classifyEvalCase(tc: { expectedOutput?: any }): CaseInstrument {
   const eo = tc.expectedOutput;

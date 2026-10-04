@@ -79,12 +79,44 @@ describe("classifyEvalCase", () => {
   it("routes an asserted-fields case to a comparison, not to the judge", () => {
     const i = classifyEvalCase({ expectedOutput: KPI_EXPECTED });
     expect(i.kind).toBe("structured");
-    expect(i.keys.sort()).toEqual(["expectedAction", "slaBreached", "threshold"]);
+    // threshold is NOT here: this assertion originally included it, which is
+    // what let 99 cases score a third of their fields for free.
+    expect(i.keys.sort()).toEqual(["expectedAction", "slaBreached"]);
   });
 
   it("excludes kpiName from the asserted keys", () => {
     // It restates the input, so comparing it fails a correct verdict on wording.
     expect(classifyEvalCase({ expectedOutput: KPI_EXPECTED }).keys).not.toContain("kpiName");
+  });
+
+  it("excludes threshold and target: they are handed to the agent in inputData", () => {
+    // Measured live: threshold was asserted in 99 of 99 boundary cases and
+    // present in inputData with the identical value in all 99, marking a
+    // third of every case correct before the agent judged anything. That is
+    // why nine suites read 107/107.
+    const i = classifyEvalCase({ expectedOutput: { kpiName: "x", threshold: 95, slaBreached: true, expectedAction: "alert_and_escalate" } });
+    expect(i.keys).not.toContain("threshold");
+    expect(i.keys.sort()).toEqual(["expectedAction", "slaBreached"]);
+
+    const volume = classifyEvalCase({ expectedOutput: { kpiName: "x", target: 400, targetMet: false, gap: 40 } });
+    expect(volume.keys).not.toContain("target");
+    expect(volume.keys.sort()).toEqual(["gap", "targetMet"]);
+  });
+
+  it("still asserts something for every live case shape once those are removed", () => {
+    // If stripping them emptied a shape, that shape would silently become
+    // unjudgeable and stop counting at all.
+    for (const shape of [
+      { kpiName: "x", threshold: 95, slaBreached: true, expectedAction: "alert_and_escalate" },
+      { kpiName: "x", threshold: 95, slaBreached: false, marginOfSafety: 0 },
+      { kpiName: "x", threshold: 95, slaBreached: false, withinTarget: true },
+      { kpiName: "x", target: 400, targetMet: true },
+      { kpiName: "x", threshold: 95, target: 100, slaBreached: false },
+    ]) {
+      const i = classifyEvalCase({ expectedOutput: shape });
+      expect(i.kind, JSON.stringify(shape)).toBe("structured");
+      expect(i.keys.length, JSON.stringify(shape)).toBeGreaterThan(0);
+    }
   });
 
   it("judges the regulation shape on expectedBehavior, not on the serialized object", () => {
