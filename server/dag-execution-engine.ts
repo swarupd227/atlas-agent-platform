@@ -3529,6 +3529,19 @@ export class DAGExecutionEngine {
         traceId: (result as any).step?.id || "",
         ...(Array.isArray((result as any).generatedFiles) && (result as any).generatedFiles.length ? { generatedFiles: (result as any).generatedFiles } : {}),
         ...(Array.isArray((result as any).failedFileAttempts) && (result as any).failedFileAttempts.length ? { failedFileAttempts: (result as any).failedFileAttempts } : {}),
+        // The passages this step retrieved. Carried on `Array.isArray` alone and
+        // NOT on `.length`, unlike the three above: an empty array means "this
+        // step searched and found nothing", which executeWorkerNode records as a
+        // real `_sources` key, and only an ABSENT key means it never searched.
+        // Dropping the empty one would conflate those two again.
+        //
+        // This line is the fix for the defect the comment on this function's
+        // return type warns about: the type declared `retrievedSources` while the
+        // body never assigned it, so retrieval provenance died here for every
+        // agent step with a linked knowledge base -- which left the duplicated-
+        // retrieval check with nothing to compare and its run-monitor card unable
+        // to render at all. Optional field, so tsc never objected.
+        ...(Array.isArray((result as any).retrievedSources) ? { retrievedSources: (result as any).retrievedSources } : {}),
         // The connectors' own answers, and the figures the step asserted, so
         // the caller can record the first and check the second against it.
         // Passed through unconditionally: "nothing captured, and here is why"

@@ -72,6 +72,72 @@ describe("the fields a worker returns reach the engine", () => {
     expect(body).not.toMatch(/\.\.\.\([^)]*verifiedFactsNote[^)]*\?\s*\{/);
   });
 
+  // The list above is hand-maintained, and that is exactly how this happened a
+  // second time: retrievedSources was added to the return TYPE and to the worker,
+  // read for by executeWorkerNode, and never assigned in the rebuild. The four
+  // fields named above were all present, so this file stayed green while every
+  // agent step with a linked knowledge base lost its retrieval provenance -- and
+  // with it the duplicated-retrieval check, which had no second step to compare
+  // and a run-monitor card that could never render. These two check the rule
+  // itself instead of a list of its past victims.
+
+  /** Field names at the TOP level of a type literal, ignoring nested ones. */
+  function topLevelFields(typeLiteral: string): string[] {
+    const names: string[] = [];
+    let depth = 0;
+    let current = "";
+    for (const ch of typeLiteral) {
+      if (ch === "{" || ch === "<" || ch === "(" || ch === "[") depth++;
+      else if (ch === "}" || ch === ">" || ch === ")" || ch === "]") depth--;
+      if (ch === ";" && depth === 0) {
+        names.push(current);
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    names.push(current);
+    return names.map((part) => part.match(/^\s*(\w+)\??\s*:/)?.[1]).filter((n): n is string => !!n);
+  }
+
+  /** The object the success path returns, which is where the rebuild happens. */
+  function rebuiltResult(): string {
+    const race = engine.indexOf("await Promise.race([workerPromise, timeoutPromise])");
+    expect(race, "the success path should await the race").toBeGreaterThan(-1);
+    const start = engine.indexOf("return {", race);
+    const end = engine.indexOf("\n      };", start);
+    expect(end).toBeGreaterThan(start);
+    return engine.slice(start, end);
+  }
+
+  it("assigns EVERY field its return type declares, not just the remembered ones", () => {
+    const signature = invokeAgentWithTimeoutSource().split("\n").find((l) => l.includes("): Promise<")) ?? "";
+    const literal = signature.slice(signature.indexOf("Promise<{") + "Promise<{".length, signature.lastIndexOf("}>"));
+    const declared = topLevelFields(literal);
+
+    // Guard the guard: an empty parse would make the assertion below pass
+    // vacuously, which is the same shape of failure as the bug it looks for.
+    expect(declared.length, "parsed no fields off the return type").toBeGreaterThan(10);
+    for (const field of CARRIED) expect(declared).toContain(field);
+    expect(declared).toContain("retrievedSources");
+
+    const body = rebuiltResult();
+    const dropped = declared.filter((name) => !new RegExp(`\\b${name}\\s*:`).test(body));
+    expect(dropped, `declared on the contract but never assigned in the rebuild: ${dropped.join(", ")}`).toEqual([]);
+  });
+
+  it("keeps a step's retrieved passages even when it found none", () => {
+    const line = rebuiltResult().split("\n").find((l) => /\bretrievedSources\s*:/.test(l));
+    expect(line, "retrievedSources is dropped by invokeAgentWithTimeout").toBeTruthy();
+
+    // An empty array records "this step searched and found nothing", which
+    // executeWorkerNode writes as a real _sources key; only an ABSENT key means
+    // it never searched. A .length guard here would conflate the two again.
+    expect(line).not.toMatch(/retrievedSources\.length|retrievedSources\s*&&/);
+    expect(line).toMatch(/Array\.isArray\(/);
+    expect(engine, "executeWorkerNode no longer reads retrievedSources").toContain("workerResult.retrievedSources");
+  });
+
   it("still reads them on the other side, under the same names", () => {
     // Both halves, so a rename on either side fails here rather than in a run.
     for (const field of CARRIED) {
