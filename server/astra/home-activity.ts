@@ -194,11 +194,18 @@ export function buildActivity(input: { teamRuns: TeamRunRow[]; agentRuns: AgentR
   // and two reads, and cancel_run is for team runs -- so this corrects what the
   // home reports, not the record. A reaper that closes the row is the next step.
   const inProgress = groupRepeats(items.filter((i) => i.live).map((i) => i.item).sort(byNewest), now);
-  const recent = items
+  const ended = items
     .filter((i) => !i.live && now - (ms(i.item.at) || 0) <= RECENT_WINDOW_MS)
     .map((i) => i.item)
-    .sort(byNewest)
-    .slice(0, 6);
+    .sort(byNewest);
+  // Abandoned runs go first, because sorting by recency buries exactly the rows
+  // worth seeing: an abandoned run is old by definition, so six of today's runs
+  // pushed the four-day-old one off a six-row list and it vanished from the home
+  // altogether -- "not hidden" was true of the list it left, not of the page.
+  // Grouped, so one agent piling up is one line rather than six. If abandoned
+  // runs ever fill the list on their own, that is a state worth looking at.
+  const abandonedRow = (i: ActivityItem) => i.kind === "agent_run" && i.status === "stalled";
+  const recent = [...groupRepeats(ended.filter(abandonedRow), now), ...ended.filter((i) => !abandonedRow(i))].slice(0, 6);
   return {
     inProgress: inProgress.slice(0, 6),
     recent,

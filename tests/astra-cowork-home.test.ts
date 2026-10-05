@@ -84,6 +84,35 @@ describe("in progress", () => {
     expect(a.recent[0].detail).toMatch(/^Started 42 h ago and never finished · “What does our travel policy/);
   });
 
+  it("keeps an abandoned run visible when a busy day would sort it off the list", () => {
+    // Measured live after the first fix: the abandoned run left "In progress"
+    // and then did not appear anywhere, because recent sorts newest-first and
+    // slices to six, and six of that day's team runs were newer. It was 4.57
+    // days old, well inside the 7-day window -- the slice dropped it, not the
+    // window. Abandoned runs now lead the list, so the slice cannot.
+    const a = buildActivity({
+      teamRuns: [1, 2, 3, 4, 5, 6].map((n) => team({ id: `t${n}`, status: "completed", completedAt: minsAgo(n), createdAt: minsAgo(n) })),
+      agentRuns: [agent({ id: "zombie", status: "running", createdAt: minsAgo(60 * 42) })],
+      spend: null,
+      now: NOW,
+    });
+    expect(a.inProgress).toEqual([]);
+    expect(a.recent).toHaveLength(6);
+    expect(a.recent[0]).toMatchObject({ id: "zombie", status: "stalled" });
+  });
+
+  it("reads several abandoned runs of one agent as one line, not six", () => {
+    const a = buildActivity({
+      teamRuns: [],
+      agentRuns: [1, 2, 3].map((n) => agent({ id: `z${n}`, status: "running", createdAt: minsAgo(60 * (40 + n)) })),
+      spend: null,
+      now: NOW,
+    });
+    expect(a.recent).toHaveLength(1);
+    expect(a.recent[0]).toMatchObject({ count: 3 });
+    expect(a.recent[0].detail).toMatch(/^3 runs stalled · oldest started 43 h ago$/);
+  });
+
   it("leaves a run waiting on a person in progress, however long it waits", () => {
     // awaiting_approval is not abandoned: someone can still decide it, and it
     // resumes. Only "running" with nothing executing it is.
