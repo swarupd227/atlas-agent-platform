@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
+import { gradedSuiteRuns } from "../eval-run-scope";
 import { isKnownIndustry } from "@shared/industry-filter";
 import { resolveReadableSkills, skillCatalogPrompt } from "../builtin-skill-tools";
 import { db } from "../db";
@@ -2496,7 +2497,8 @@ const router = Router();
       const agentDrift: Array<{ agentId: string; metric: string; driftPercent: number; severity: string }> = [];
       const allSuites = evalSuites;
       for (const suite of allSuites.filter(s => s.agentId === agentId)) {
-        const runs = await storage.getEvalRunsBySuite(suite.id);
+        // Ordinary runs only: a repeated run's strict rate would show as drift that is not there.
+        const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
         if (runs.length < 2) continue;
         const sorted = [...runs].sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
         const latest = sorted[0];
@@ -2747,7 +2749,8 @@ const router = Router();
       const agentSuites = evalSuites.filter(s => s.agentId === deployment.agentId);
       let latestPassRate = 0;
       for (const suite of agentSuites) {
-        const runs = await storage.getEvalRunsBySuite(suite.id);
+        // Ordinary runs only: auto-promote must not be blocked, or let through, on a repeated run's strict rate.
+        const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
         if (runs.length > 0) {
           const sorted = [...runs].sort((a, b) =>
             new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()

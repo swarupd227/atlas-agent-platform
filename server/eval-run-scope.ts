@@ -27,6 +27,23 @@ export function gradedRuns<T extends { repeats?: number | null }>(runs: T[]): T[
   return runs.filter(isGradedRun);
 }
 
+/**
+ * The same rule for the older eval suites (table eval_runs). A repeated suite run marks itself in
+ * resultsJson.repeats (from the moment it is created), not in a column, so the marker is read from
+ * there. Anything that judges an agent from a suite's run history — drift, readiness, the canary
+ * stage, the policy-evidence gate, the flywheel — takes ordinary runs only; a screen that just lists
+ * the runs for a person to read keeps every one. A repeated run's strict rate is not on an ordinary
+ * run's scale, so as "the latest run" or in an average it shows as drift or a regression that is not.
+ */
+export const isGradedSuiteRun = (r: { resultsJson?: unknown }): boolean => {
+  const n = (r.resultsJson as { repeats?: unknown } | null | undefined)?.repeats;
+  return typeof n !== "number" || n <= 1;
+};
+
+export function gradedSuiteRuns<T extends { resultsJson?: unknown }>(runs: T[]): T[] {
+  return runs.filter(isGradedSuiteRun);
+}
+
 export type ServerGateStatus = "pass" | "warn" | "fail" | "unknown";
 
 type Timed = { completedAt?: Date | string | null; startedAt?: Date | string | null };

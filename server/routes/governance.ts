@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as nodeCrypto from "node:crypto";
 import { storage } from "../storage";
+import { gradedSuiteRuns } from "../eval-run-scope";
 import { db } from "../db";
 import { resumeTeamAgentDagRun } from "../dag-execution-engine";
 import { resumeWorkspaceRun } from "../workspace-run";
@@ -2857,10 +2858,11 @@ Ontology: ${ontologyName || "industry standard"}`,
       }> = [];
 
       for (const suite of evalSuites) {
-        const runs = await storage.getEvalRunsBySuite(suite.id);
+        // Ordinary runs only: a repeated run's strict rate would show as a degraded signal.
+        const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
         if (runs.length < 2) continue;
-        
-        const sorted = [...runs].sort((a, b) => 
+
+        const sorted = [...runs].sort((a, b) =>
           new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
         );
         
@@ -2932,7 +2934,7 @@ Ontology: ${ontologyName || "industry standard"}`,
       
       for (const suite of evalSuites) {
         if (suite.type === "red_team" || suite.type === "accuracy" || suite.type === "faithfulness") {
-          const runs = await storage.getEvalRunsBySuite(suite.id);
+          const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
           if (runs.length < 2) continue;
           const sorted = [...runs].sort((a, b) =>
             new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
@@ -3010,7 +3012,7 @@ Ontology: ${ontologyName || "industry standard"}`,
         const drifts: DriftSignal[] = [];
 
         for (const suite of agentSuites) {
-          const runs = await storage.getEvalRunsBySuite(suite.id);
+          const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
           if (runs.length < 2) continue;
           const sorted = [...runs].sort((a, b) =>
             new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()

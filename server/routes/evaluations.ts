@@ -2,6 +2,7 @@ import { Router } from "express";
 import { validateTeamGraph } from "../team-graph-validate";
 import { z } from "zod";
 import { storage } from "../storage";
+import { gradedSuiteRuns } from "../eval-run-scope";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
 import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError, draftSingleAgent } from "./helpers";
@@ -538,7 +539,9 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       const suite = await storage.getEvalSuite(suiteId);
       if (!suite) return res.status(404).json({ message: "Eval suite not found" });
 
-      const runs = await storage.getEvalRuns(suiteId);
+      // Ordinary runs only: a repeated run's cases pass only if every attempt did, so diffing it against
+      // an ordinary run reports regressions and a pass-rate drop that are not real, and a critical KPI breach.
+      const runs = gradedSuiteRuns(await storage.getEvalRuns(suiteId));
       if (runs.length < 2) {
         return res.json({
           hasDrift: false,

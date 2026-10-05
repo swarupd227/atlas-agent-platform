@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { gradedSuiteRuns } from "../eval-run-scope";
 import { applyRecommendationEffect } from "../action-decisions";
 import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
@@ -2814,7 +2815,8 @@ Analyze and respond in JSON:
       // this reports the agent's current baseline as the best available
       // real signal, rather than pretending a suite ran against the patch.
       const allEvalRuns = await storage.getAllEvalRuns();
-      const agentEvalRuns = allEvalRuns
+      // Ordinary runs only: a repeated run's strict rate would understate the agent's baseline.
+      const agentEvalRuns = gradedSuiteRuns(allEvalRuns)
         .filter(r => r.agentId === patch.agentId && r.status === "completed")
         .sort((a, b) => new Date(b.completedAt || b.startedAt || 0).getTime() - new Date(a.completedAt || a.startedAt || 0).getTime());
       const latestRun = agentEvalRuns[0];

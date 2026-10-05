@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
+import { gradedSuiteRuns } from "../eval-run-scope";
 import { resolveAgentIndustry } from "../agent-industry";
 import { getOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
@@ -331,7 +332,8 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
               let totalCases = 0;
               let passedCases = 0;
               for (const suite of agentSuites) {
-                const runs = await storage.getEvalRuns(suite.id);
+                // Ordinary runs only: a repeated run's strict per-case results would fail this stage on a consistency check.
+                const runs = gradedSuiteRuns(await storage.getEvalRuns(suite.id));
                 const latestRun = runs.length > 0 ? runs[0] : null;
                 if (latestRun) {
                   const results = await storage.getEvalCaseResults(latestRun.id);

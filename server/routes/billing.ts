@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { gradedSuiteRuns } from "../eval-run-scope";
 import { z } from "zod";
 import { checkPermission } from "../permissions";
 import { generateKpiAlignedEvalSuite } from "./helpers";
@@ -394,7 +395,8 @@ const router = Router();
       }
 
       const latestRunBySuite = new Map<string, { passRate: number | null; startedAt: Date | null }>();
-      for (const run of allEvalRuns) {
+      // Ordinary runs only: a repeated run would become a suite's "latest" and drag an outcome's eval pass rate down.
+      for (const run of gradedSuiteRuns(allEvalRuns)) {
         const existing = latestRunBySuite.get(run.suiteId);
         const runDate = run.startedAt ? new Date(run.startedAt) : null;
         if (!existing || (runDate && (!existing.startedAt || runDate > existing.startedAt))) {

@@ -9,6 +9,7 @@
  */
 import * as nodeCrypto from "crypto";
 import { storage } from "./storage";
+import { gradedSuiteRuns } from "./eval-run-scope";
 import { assessToolAlignment } from "./ontology-alignment";
 import { insertDeploymentSchema } from "@shared/schema";
 import { resolveOntologyTags, resolvePolicyBundle } from "./routes/helpers";
@@ -425,7 +426,10 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
             const agentEvalSuites = await storage.getEvalsByAgent(source.agentId);
             const allCompletedEvalRuns: Array<{ run: any; suiteId: string }> = [];
             for (const suite of agentEvalSuites) {
-              const runs = await storage.getEvalRuns(suite.id);
+              // Ordinary runs only: a repeated run is a consistency check that records no policyChecks,
+              // so as "the latest run" it would block promotion with missing_eval_policy_checks and hide
+              // the ordinary run's evidence.
+              const runs = gradedSuiteRuns(await storage.getEvalRuns(suite.id));
               for (const r of runs) {
                 if (r.status === "completed" || r.status === "failed") {
                   allCompletedEvalRuns.push({ run: r, suiteId: suite.id });

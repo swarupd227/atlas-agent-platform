@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
+import { gradedSuiteRuns } from "../eval-run-scope";
 import { validateDecisionSetting } from "../decision-settings";
 import { decideMany, knownIncumbent } from "../decision-provider";
 import { parseOpenApiSpec, OpenApiParseError, type ParsedOpenApiSpec } from "../openapi-import";
@@ -270,7 +271,9 @@ function hashCode(str: string): number {
       // that). A single getAllEvalRuns() call replaces both.
       const allEvalRuns = await storage.getAllEvalRuns();
       const runsBySuite = new Map<string, typeof allEvalRuns>();
-      for (const r of allEvalRuns) {
+      // Ordinary runs only: this feeds the drift on an agent's card, and a repeated run's strict rate is not on that scale.
+      // (The backlog count below still counts every run.)
+      for (const r of gradedSuiteRuns(allEvalRuns)) {
         if (!r.suiteId) continue;
         const list = runsBySuite.get(r.suiteId);
         if (list) list.push(r); else runsBySuite.set(r.suiteId, [r]);
@@ -17034,7 +17037,8 @@ Return ONLY a valid JSON object.`
             const agentSuites = await storage.getEvalsByAgent(agent.id);
             const recentRuns: any[] = [];
             for (const suite of agentSuites.slice(0, 3)) {
-              const runs = await storage.getEvalRunsBySuite(suite.id);
+              // Ordinary runs only: a repeated run's strict rate would read to the model as eval degradation.
+              const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
               const sorted = runs.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
               recentRuns.push(...sorted.slice(0, 3).map(r => ({
                 suiteName: suite.name,
@@ -17472,7 +17476,7 @@ Return ONLY a valid JSON object.`
         const agentSuites = await storage.getEvalsByAgent(agent.id);
         const recentRuns: any[] = [];
         for (const suite of agentSuites.slice(0, 5)) {
-          const runs = await storage.getEvalRunsBySuite(suite.id);
+          const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
           const sorted = runs.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
           recentRuns.push(...sorted.slice(0, 5).map(r => ({
             suiteId: suite.id,
@@ -17808,7 +17812,7 @@ Respond with JSON:
             if (agentSuites.length > 0) {
               const recentRunInfo: string[] = [];
               for (const suite of agentSuites.slice(0, 3)) {
-                const runs = await storage.getEvalRunsBySuite(suite.id);
+                const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
                 const sorted = runs.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
                 for (const r of sorted.slice(0, 2)) {
                   recentRunInfo.push(`Suite "${suite.name}": passRate=${r.passRate}%, failed=${r.failedCases}/${r.totalCases}`);
@@ -20917,7 +20921,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const failedCaseResults: Array<{ caseResult: any; testCase: any; suite: any }> = [];
 
       for (const suite of evalSuitesList) {
-        const runs = await storage.getEvalRuns(suite.id);
+        const runs = gradedSuiteRuns(await storage.getEvalRuns(suite.id));
         const sortedRuns = runs.sort((a, b) => {
           const aTime = a.startedAt ? new Date(a.startedAt).getTime() : 0;
           const bTime = b.startedAt ? new Date(b.startedAt).getTime() : 0;
