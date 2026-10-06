@@ -55,7 +55,8 @@ describe("promotion eval gate: never-run vs failed", () => {
   });
 
   it("still reports a genuinely low pass rate as a failure", async () => {
-    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 12 }));
+    // Suite pass rates are 0-1 fractions (that is what every runner stores); the gate reports 12%.
+    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 0.12 }));
     const r = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
     expect(r.status).toBe(400);
     expect(r.body.failingSuites).toHaveLength(1);
@@ -65,7 +66,7 @@ describe("promotion eval gate: never-run vs failed", () => {
   });
 
   it("names both when a run has both problems", async () => {
-    suites.push(suite({ id: "a", name: "Ran And Failed", lastRunAt: new Date().toISOString(), passRate: 5 }));
+    suites.push(suite({ id: "a", name: "Ran And Failed", lastRunAt: new Date().toISOString(), passRate: 0.05 }));
     suites.push(suite({ id: "b", name: "Never Ran", lastRunAt: null, passRate: 0 }));
     const r = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
     expect(r.body.failingSuites.map((s: any) => s.name)).toEqual(["Ran And Failed"]);
@@ -74,9 +75,48 @@ describe("promotion eval gate: never-run vs failed", () => {
   });
 
   it("lets a measured, passing agent through", async () => {
-    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 95 }));
+    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 0.95 }));
     const r = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
     expect(r.status).not.toBe(400);
+  });
+
+  it("lets a perfect suite through: the gate used to read 1.0 as 'below 80', so nothing could pass", async () => {
+    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 1 }));
+    const r = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
+    expect(r.status).not.toBe(400);
+    expect(r.body.evalGateBlocked).toBeUndefined();
+  });
+
+  it("holds the production threshold exactly: 80% passes, 79% is blocked and reported as 79", async () => {
+    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: Math.fround(0.8) }));
+    const ok = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
+    expect(ok.body.evalGateBlocked).toBeUndefined();
+
+    suites.length = 0;
+    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 0.79 }));
+    const blocked = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.failingSuites[0].passRate).toBe(79);
+    expect(blocked.body.threshold).toBe(80);
+  });
+
+  it("meets an agent's own threshold exactly even though the stored rate is a 4-byte float", async () => {
+    const { storage } = await import("../server/storage");
+    (storage.getAgent as any).mockResolvedValueOnce({
+      id: "agent1", runtimeConfig: { promotionGateOverrides: { minEvalPassRate: 70 } },
+    });
+    // 7 of 10 reads back from a REAL column as 0.6999999881...
+    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: Math.fround(0.7) }));
+    const r = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
+    expect(r.body.evalGateBlocked).toBeUndefined();
+  });
+
+  it("blocks when any one of several suites is under the bar and names only that one", async () => {
+    suites.push(suite({ id: "a", name: "Good", lastRunAt: new Date().toISOString(), passRate: 0.95 }));
+    suites.push(suite({ id: "b", name: "Weak", lastRunAt: new Date().toISOString(), passRate: 0.6 }));
+    const r = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
+    expect(r.status).toBe(400);
+    expect(r.body.failingSuites.map((s: any) => [s.name, s.passRate])).toEqual([["Weak", 60]]);
   });
 
   it("files an audit event when a bypass covers only never-run suites", async () => {
@@ -94,7 +134,7 @@ describe("promotion eval gate: never-run vs failed", () => {
     // Promoting pilot -> prod, so the applied default is 80. Assert against the
     // threshold the response reports rather than a literal, so this keeps
     // testing the invariant if the defaults are ever retuned.
-    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 10 }));
+    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 0.1 }));
     const r = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
     const blocked = auditEvents.find((e) => e.action === "eval_gate_blocked");
     expect(blocked).toBeDefined();
@@ -106,9 +146,9 @@ describe("promotion eval gate: never-run vs failed", () => {
     (storage.getAgent as any).mockResolvedValueOnce({
       id: "agent1", runtimeConfig: { promotionGateOverrides: { minEvalPassRate: 40 } },
     });
-    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 50 }));
+    suites.push(suite({ lastRunAt: new Date().toISOString(), passRate: 0.5 }));
     const r = await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", {});
-    // 50 clears a 40 threshold, so the gate must not block.
+    // 50% clears a 40 threshold, so the gate must not block.
     expect(r.body.evalGateBlocked).toBeUndefined();
   });
 });
