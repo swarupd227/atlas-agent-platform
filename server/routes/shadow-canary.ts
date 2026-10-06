@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { gradedSuiteRuns } from "../eval-run-scope";
+import { aggregateSuitePassPercent } from "@shared/eval-threshold";
 import { resolveAgentIndustry } from "../agent-industry";
 import { getOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
@@ -1226,16 +1227,28 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     const downstreamFailureRate = downstreamTraces.length > 0 ? (downstreamFailed / downstreamTraces.length) * 100 : 0;
 
     const evalSuitesList = await storage.getEvalsByAgent(matchedAgent.id);
-    const evalPassRate = evalSuitesList.length > 0
-      ? evalSuitesList.reduce((s, e) => s + (e.passRate || 0), 0) / evalSuitesList.length
-      : null;
+    // The mean of the MEASURED suites' 0-1 pass rates, as a percentage: the
+    // threshold and the gate's unit are percent.
+    //
+    // The old form summed `e.passRate || 0` and divided by every suite, so one
+    // real suite at 95% among nine never-run ones reported 9.5% canary health.
+    // That is not a lenient reading of the data, it is a fabricated number.
+    const evalAgg = aggregateSuitePassPercent(evalSuitesList);
+    const evalPassRate = evalAgg.percent;
 
     const errorRatePasses = errorRate <= thresholds.maxErrorRate;
     const latencyPasses = avgLatency <= thresholds.latencyThreshold;
     const policyPasses = policyComplianceRate >= thresholds.minPolicyComplianceRate;
     const costDriftPasses = costDriftRatio === null ? true : costDriftRatio <= thresholds.maxCostDriftMultiplier;
     const downstreamPasses = downstreamFailureRate <= thresholds.maxDownstreamFailureRate;
-    const evalPasses = thresholds.minEvalPassRate === null || evalPassRate === null ? true : evalPassRate >= thresholds.minEvalPassRate;
+    // Unmeasured does not pass. A canary whose agent has eval suites that
+    // nobody has run must not sail through on a null, which is what "no rate
+    // means no opinion" would do -- and the promotion gate in
+    // deployment-actions.ts already blocks on unevaluated for the same reason.
+    // No suites at all is still "no opinion", as before.
+    const evalPasses = thresholds.minEvalPassRate === null ? true
+      : evalPassRate !== null ? evalPassRate >= thresholds.minEvalPassRate
+      : evalSuitesList.length === 0;
     const allGatesPass = errorRatePasses && latencyPasses && policyPasses && costDriftPasses && downstreamPasses && evalPasses;
 
     const lastHealthSnapshot: Record<string, unknown> = {
@@ -1247,7 +1260,10 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         policyCompliance: { value: policyComplianceRate, threshold: thresholds.minPolicyComplianceRate, passes: policyPasses, unit: "%" },
         costDrift: { value: costDriftRatio, threshold: thresholds.maxCostDriftMultiplier, passes: costDriftPasses, unit: "x" },
         downstreamFailureRate: { value: downstreamFailureRate, threshold: thresholds.maxDownstreamFailureRate, passes: downstreamPasses, unit: "%" },
-        evalPassRate: { value: evalPassRate, threshold: thresholds.minEvalPassRate, passes: evalPasses, unit: "%" },
+        // measuredSuites/unmeasuredSuites are carried so a reader can tell a
+        // null that means "nothing to measure" from one that means "nobody has
+        // measured it", which the value alone cannot say.
+        evalPassRate: { value: evalPassRate, threshold: thresholds.minEvalPassRate, passes: evalPasses, unit: "%", measuredSuites: evalAgg.measured, unmeasuredSuites: evalAgg.unmeasured },
       },
       allGatesPass,
       successRate,

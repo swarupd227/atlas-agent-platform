@@ -1,5 +1,6 @@
 import { storage } from "./storage";
 import { pickRegressionBaseline, regressionCheck } from "./eval-regression";
+import { aggregateSuitePassPercent } from "@shared/eval-threshold";
 import { runBaselineStaticChecks } from "./eval-baseline-checks";
 import { resolvePolicyBundle } from "./routes/helpers";
 import { resolveAgentIndustry } from "./agent-industry";
@@ -2055,9 +2056,14 @@ async function computeCanaryHealthSnapshot(dep: {
 
   // Eval pass rate from active eval suites
   const evalSuitesList = await storage.getEvalsByAgent(dep.agentId);
-  const evalPassRate = evalSuitesList.length > 0
-    ? evalSuitesList.reduce((s, e) => s + (e.passRate || 0), 0) / evalSuitesList.length
-    : null;
+  // The mean of the MEASURED suites' 0-1 pass rates, as a percentage: the threshold, the gate's unit
+  // and the text built from it are all percent.
+  //
+  // The old form summed `e.passRate || 0` over every suite, so one measured
+  // suite at 95% among nine never-run ones reported 9.5% canary health -- a
+  // number no run produced. Unmeasured suites are counted separately instead.
+  const evalAgg = aggregateSuitePassPercent(evalSuitesList);
+  const evalPassRate = evalAgg.percent;
 
   // Gate verdicts
   const errorRatePasses = errorRate <= maxErrorRate;
@@ -2065,7 +2071,11 @@ async function computeCanaryHealthSnapshot(dep: {
   const policyPasses = policyComplianceRate >= minPolicyComplianceRate;
   const costDriftPasses = costDriftRatio === null ? true : costDriftRatio <= maxCostDriftMultiplier;
   const downstreamPasses = downstreamFailureRate <= maxDownstreamFailureRate;
-  const evalPasses = (minEvalPassRate === null || evalPassRate === null) ? true : evalPassRate >= minEvalPassRate;
+  // Unmeasured does not pass: a canary whose agent has suites nobody has run
+  // must not sail through on a null. No suites at all is still "no opinion".
+  const evalPasses = minEvalPassRate === null ? true
+    : evalPassRate !== null ? evalPassRate >= minEvalPassRate
+    : evalSuitesList.length === 0;
   const allGatesPass = errorRatePasses && latencyPasses && policyPasses && costDriftPasses && downstreamPasses && evalPasses;
 
   const lastHealthSnapshot = {
@@ -2077,7 +2087,7 @@ async function computeCanaryHealthSnapshot(dep: {
       policyCompliance: { value: policyComplianceRate, threshold: minPolicyComplianceRate, passes: policyPasses, unit: "%" },
       costDrift: { value: costDriftRatio, threshold: maxCostDriftMultiplier, passes: costDriftPasses, unit: "x" },
       downstreamFailureRate: { value: downstreamFailureRate, threshold: maxDownstreamFailureRate, passes: downstreamPasses, unit: "%" },
-      evalPassRate: { value: evalPassRate, threshold: minEvalPassRate, passes: evalPasses, unit: "%" },
+      evalPassRate: { value: evalPassRate, threshold: minEvalPassRate, passes: evalPasses, unit: "%", measuredSuites: evalAgg.measured, unmeasuredSuites: evalAgg.unmeasured },
     },
     allGatesPass,
   };

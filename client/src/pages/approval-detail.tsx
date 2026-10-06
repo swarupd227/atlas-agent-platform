@@ -63,6 +63,8 @@ import { DiffViewer } from "@/components/diff-viewer";
 import { PermissionGate, usePermission, useRole } from "@/components/role-provider";
 import type { Approval, Agent, EvalSuite, Policy, AuditEvent, McpApp } from "@shared/schema";
 import McpAppRenderer from "@/components/mcp-app-renderer";
+import { suitePassPercent } from "@shared/eval-threshold";
+import { NOT_MEASURED } from "@/lib/measured";
 
 interface ApprovalDetailData extends Approval {
   agent: Agent | null;
@@ -744,18 +746,23 @@ export default function ApprovalDetail() {
                     <div className="flex flex-col gap-2">
                       {(evidence.evalResults.after as any[]).map((suite: any, i: number) => {
                         const before = (evidence.evalResults.before as any[])?.[i];
-                        const passRate = suite.passRate ?? suite.pass_rate ?? 0;
-                        const beforeRate = before?.passRate ?? before?.pass_rate ?? 0;
-                        const delta = passRate - beforeRate;
-                        const passColor = passRate >= 90 ? "text-emerald-600 dark:text-emerald-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+                        // The server now sends these as percentages, or null
+                        // when nobody ran the suite. They used to arrive as 0-1
+                        // fractions and be compared against 90, so a 95% suite
+                        // rendered "1.0%" in red; and an unrun suite rendered
+                        // "0.0%", which reads as failing everything.
+                        const passRate = suite.passRate ?? suite.pass_rate ?? null;
+                        const beforeRate = before?.passRate ?? before?.pass_rate ?? null;
+                        const delta = passRate !== null && beforeRate !== null ? passRate - beforeRate : null;
+                        const passColor = passRate === null ? "text-muted-foreground" : passRate >= 90 ? "text-emerald-600 dark:text-emerald-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
                         return (
                           <div key={i} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`eval-comparison-${i}`}>
                             <span className="text-sm">{suite.name || `Suite ${i + 1}`}</span>
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs text-muted-foreground">{beforeRate.toFixed(1)}%</span>
+                              <span className="text-xs text-muted-foreground">{beforeRate !== null ? `${beforeRate.toFixed(1)}%` : NOT_MEASURED}</span>
                               <ArrowLeft className="w-3 h-3 text-muted-foreground rotate-180" />
-                              <span className={`text-sm font-medium ${passColor}`}>{passRate.toFixed(1)}%</span>
-                              {delta > 0 ? (
+                              <span className={`text-sm font-medium ${passColor}`}>{passRate !== null ? `${passRate.toFixed(1)}%` : NOT_MEASURED}</span>
+                              {delta !== null && delta > 0 ? (
                                 <div className="flex items-center gap-1" data-testid={`eval-delta-improved-${i}`}>
                                   <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
                                   <Badge
@@ -765,7 +772,7 @@ export default function ApprovalDetail() {
                                     +{delta.toFixed(1)}% improved
                                   </Badge>
                                 </div>
-                              ) : delta < 0 ? (
+                              ) : delta !== null && delta < 0 ? (
                                 <div className="flex items-center gap-1" data-testid={`eval-delta-regressed-${i}`}>
                                   <TrendingDown className="w-3.5 h-3.5 text-red-500" />
                                   <Badge
@@ -792,13 +799,17 @@ export default function ApprovalDetail() {
                 ) : approval.evalSuites && approval.evalSuites.length > 0 ? (
                   <div className="flex flex-col gap-2" data-testid="eval-suites-list">
                     {approval.evalSuites.map((suite, i) => {
-                      const passRate = suite.passRate || 0;
-                      const passColor = passRate >= 90 ? "text-emerald-600 dark:text-emerald-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+                      // Percent or null. These are raw eval_suites rows whose
+                      // pass_rate is a 0-1 fraction, so the old `|| 0` form
+                      // compared 0.95 against 90 and rendered every passing
+                      // suite as "1.0%" in red.
+                      const passRate = suitePassPercent(suite);
+                      const passColor = passRate === null ? "text-muted-foreground" : passRate >= 90 ? "text-emerald-600 dark:text-emerald-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
                       return (
                         <div key={suite.id} className="flex items-center justify-between gap-2 flex-wrap" data-testid={`eval-suite-${suite.id}`}>
                           <span className="text-sm">{suite.name}</span>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`text-sm font-medium ${passColor}`}>{passRate.toFixed(1)}%</span>
+                            <span className={`text-sm font-medium ${passColor}`}>{passRate !== null ? `${passRate.toFixed(1)}%` : NOT_MEASURED}</span>
                             <span className="text-xs text-muted-foreground">{suite.totalCases || 0} cases</span>
                           </div>
                         </div>

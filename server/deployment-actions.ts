@@ -10,6 +10,8 @@
 import * as nodeCrypto from "crypto";
 import { storage } from "./storage";
 import { gradedSuiteRuns } from "./eval-run-scope";
+import { meetsThreshold, percentOf } from "./eval-threshold";
+import { suitePassPercent } from "@shared/eval-threshold";
 import { assessToolAlignment } from "./ontology-alignment";
 import { insertDeploymentSchema } from "@shared/schema";
 import { resolveOntologyTags, resolvePolicyBundle } from "./routes/helpers";
@@ -170,7 +172,11 @@ export async function createDeploymentAction(ctx: DeploymentActionContext, body:
           riskTier,
           strategy,
           environment: env,
-          evalResults: agentSuites.map(s => ({ name: s.name, passRate: s.passRate, totalCases: s.totalCases })),
+          // passRate as a PERCENTAGE, or null when nobody ran the suite. It
+          // used to be the raw 0-1 fraction, which approval-detail.tsx then
+          // compared against 90 and rendered as "1.0%" for a 95% suite; and an
+          // unrun suite arrived as 0, which reads as failing every case.
+          evalResults: agentSuites.map(s => ({ name: s.name, passRate: suitePassPercent(s), totalCases: s.totalCases })),
           metrics: {
             successRate: successRate.toFixed(1) + "%",
             traceCount: totalT,
@@ -255,9 +261,11 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
           unevaluatedSuites.push({ name: suite.name });
           continue;
         }
-        const passRate = suite.passRate ?? 0;
-        if (passRate < configuredEvalThreshold) {
-          failingSuites.push({ name: suite.name, passRate });
+        // suite.passRate is a 0-1 fraction and the threshold is a percentage (80, 60, or the agent's
+        // own). Compared directly, 0.9 < 80 held for every suite and nothing could ever pass.
+        // failingSuites reports the rate in percent, which is how the messages and the UI show it.
+        if (!meetsThreshold(suite.passRate, configuredEvalThreshold)) {
+          failingSuites.push({ name: suite.name, passRate: percentOf(suite.passRate) });
         }
       }
 
@@ -609,7 +617,11 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
           version: source.version,
           riskTier: agent?.riskTier || "MEDIUM",
           autonomyMode: agent?.autonomyMode || "supervised",
-          evalResults: agentSuites.map(s => ({ name: s.name, passRate: s.passRate, totalCases: s.totalCases })),
+          // passRate as a PERCENTAGE, or null when nobody ran the suite. It
+          // used to be the raw 0-1 fraction, which approval-detail.tsx then
+          // compared against 90 and rendered as "1.0%" for a 95% suite; and an
+          // unrun suite arrived as 0, which reads as failing every case.
+          evalResults: agentSuites.map(s => ({ name: s.name, passRate: suitePassPercent(s), totalCases: s.totalCases })),
           canaryMetrics: {
             successRate: successRate.toFixed(1) + "%",
             avgLatency: avgLat + "ms",

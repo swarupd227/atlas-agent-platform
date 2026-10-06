@@ -115,6 +115,8 @@ import { formatMs } from "@/components/shared-utils";
 import { OutputContractEditor } from "@/components/output-contract-editor";
 import { GenerationMetadataDashboard } from "@/components/generation-metadata-dashboard";
 import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs";
+import { suitePassPercent, suitePassFraction } from "@shared/eval-threshold";
+import { measuredRate } from "@/lib/measured";
 
 
 class AgentDetailErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -3003,8 +3005,20 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{((suite.passRate || 0) * 100).toFixed(0)}%</span>
-                      <Progress value={(suite.passRate || 0) * 100} className="h-1.5 w-16" />
+                      {/* Not 0%: `passRate || 0` claimed this agent failed every
+                          case in suites nobody had ever executed -- 630 of 690
+                          suites on the live database. Rendered through
+                          lib/measured so the platform says "not measured" the
+                          same way here as on the Monitor. */}
+                      {(() => {
+                        const m = measuredRate(suitePassFraction(suite), { ok: 90, warn: 75 });
+                        return (
+                          <>
+                            <span className={`text-sm font-medium ${m.measured ? "" : "text-muted-foreground"}`}>{m.text}</span>
+                            {m.measured && <Progress value={suitePassPercent(suite)!} className="h-1.5 w-16" />}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 </Link>

@@ -52,6 +52,8 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
 import type { Approval, EvalSuite, EvalRun, Agent, OutcomeContract } from "@shared/schema";
+import { suitePassPercent, suitePassFraction } from "@shared/eval-threshold";
+import { measuredRate, TONE_CLASS, NOT_MEASURED } from "@/lib/measured";
 
 const TYPE_META: Record<string, { label: string; icon: any; color: string }> = {
   outcome_certification: { label: "Outcome Certification", icon: Award, color: "text-blue-500" },
@@ -581,14 +583,23 @@ function ApprovalDetail({ approval, evalSuites, driftSignals, outcomes, decideMu
                     <Link href={`/evals/${suite.id}`}>
                       <span className="text-xs font-medium underline decoration-muted-foreground/30" data-testid={`link-eval-suite-${suite.id}`}>{suite.name}</span>
                     </Link>
-                    <div className="flex items-center gap-2">
-                      <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-                        <div className={`h-full rounded-full ${(suite.passRate ?? 0) > 0.9 ? "bg-emerald-500" : (suite.passRate ?? 0) > 0.75 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${((suite.passRate ?? 0) * 100).toFixed(0)}%` }} />
-                      </div>
-                      <span className={`text-xs font-semibold ${(suite.passRate ?? 0) > 0.9 ? "text-emerald-600 dark:text-emerald-400" : (suite.passRate ?? 0) > 0.75 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
-                        {((suite.passRate ?? 0) * 100).toFixed(0)}%
-                      </span>
-                    </div>
+                    {/* An unrun suite showed a full-width red bar at 0%, which
+                        reads as "failed everything" when nobody has measured it.
+                        Red is a claim about the suite and there is nothing to
+                        claim, so an unmeasured one is muted and carries no bar. */}
+                    {(() => {
+                      const m = measuredRate(suitePassFraction(suite), { ok: 90, warn: 75 });
+                      if (!m.measured) return <span className={`text-xs px-1.5 py-0.5 rounded ${TONE_CLASS[m.tone]}`}>{m.text}</span>;
+                      const pct = suitePassPercent(suite)!;
+                      return (
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div className={`h-full rounded-full ${m.tone === "ok" ? "bg-emerald-500" : m.tone === "warn" ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${pct.toFixed(0)}%` }} />
+                          </div>
+                          <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${TONE_CLASS[m.tone]}`}>{pct.toFixed(0)}%</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
@@ -866,10 +877,10 @@ export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }
             <div className="flex flex-col gap-1.5">
               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Eval Results</span>
               <div className="grid grid-cols-2 gap-1.5">
-                {(ev.evalResults as Array<{name: string; passRate: number; totalCases: number}>).map((s, i) => (
+                {(ev.evalResults as Array<{name: string; passRate: number | null; totalCases: number}>).map((s, i) => (
                   <div key={i} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/20">
                     <span className="text-xs font-medium truncate">{s.name}</span>
-                    <span className={`text-xs font-semibold ${(s.passRate ?? 0) >= 80 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>{(s.passRate ?? 0).toFixed(0)}%</span>
+                    <span className={`text-xs font-semibold ${s.passRate == null ? "text-muted-foreground" : s.passRate >= 80 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>{s.passRate != null ? `${s.passRate.toFixed(0)}%` : NOT_MEASURED}</span>
                   </div>
                 ))}
               </div>

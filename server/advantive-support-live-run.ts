@@ -506,7 +506,6 @@ export async function ensureAdvSupportAgents(): Promise<void> {
         name:         EVAL_SUITE_NAME,
         type:         "regression",
         industry:     "technology_saas",
-        passRate:     0.93,
         totalCases:   10,
         coverageTags: ["intent_classification", "product_routing", "kb_search", "confidence_scoring", "log_analysis", "escalation_packaging", "salesforce_sync", "t2_routing", "am_notification", "audit_trail"],
         thresholdConfig: { minPassRate: 0.85 },

@@ -359,7 +359,6 @@ export async function ensureOtcFulfillmentAgents(): Promise<void> {
         name:        EVAL_SUITE_NAME,
         type:        "regression",
         industry:    "manufacturing",
-        passRate:    0.95,
         totalCases:  10,
         coverageTags: ["disruption_detection", "rerouting_strategy", "sla_protection", "carrier_signals", "customer_notification", "tier_compliance", "escalation_routing"],
         thresholdConfig: { minPassRate: 0.90 },

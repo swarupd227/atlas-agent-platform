@@ -485,6 +485,17 @@ export default function EvalDetail() {
   }
 
   const thresholdConfig = suite.thresholdConfig as Record<string, unknown> | null;
+  /**
+   * The threshold a person configured, in percent, or null when none is set.
+   *
+   * The fallback used to be the suite's own achieved pass rate, which answers
+   * "required to pass" with whatever it happened to score -- and once pass_rate
+   * became nullable for unrun suites, that fallback read "0% required to pass".
+   * Neither is a threshold. Unset says unset.
+   */
+  const configuredPassThreshold = thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig
+    ? Number(thresholdConfig.passThreshold) * 100
+    : null;
   const scorerConfig = (suite.scorerConfig || []) as ScorerEntry[];
   const environmentThresholds = (suite.environmentThresholds || {
     staging: { passThreshold: 0.7, allowFailures: true },
@@ -1614,7 +1625,7 @@ export default function EvalDetail() {
                 </div>
                 {!editScoring && (
                   <Button variant="outline" size="sm" data-testid="button-edit-scoring" onClick={() => {
-                    const ct = thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig ? Number(thresholdConfig.passThreshold) * 100 : (suite.passRate || 0) * 100;
+                    const ct = configuredPassThreshold ?? "";
                     const cs = thresholdConfig && typeof thresholdConfig === "object" && "schedule" in thresholdConfig ? String(thresholdConfig.schedule) : "";
                     setEditPassThreshold(String(ct)); setEditSchedule(cs); setEditScoring(true);
                   }}><Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit</Button>
@@ -1640,11 +1651,11 @@ export default function EvalDetail() {
                   <>
                     <div className="flex items-baseline gap-2">
                       <span className="text-4xl font-bold tracking-tight" data-testid="text-pass-threshold">
-                        {thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig ? `${Number(thresholdConfig.passThreshold) * 100}%` : `${(suite.passRate || 0) * 100}%`}
+                        {configuredPassThreshold !== null ? `${configuredPassThreshold}%` : "Not set"}
                       </span>
                       <span className="text-sm text-muted-foreground">required to pass</span>
                     </div>
-                    <Progress value={thresholdConfig && typeof thresholdConfig === "object" && "passThreshold" in thresholdConfig ? Number(thresholdConfig.passThreshold) * 100 : (suite.passRate || 0) * 100} className="h-2" />
+                    <Progress value={configuredPassThreshold ?? 0} className="h-2" />
                   </>
                 )}
               </CardContent>

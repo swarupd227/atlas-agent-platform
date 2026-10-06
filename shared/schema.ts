@@ -500,7 +500,15 @@ export const evalSuites = pgTable("eval_suites", {
   skillId: varchar("skill_id"),
   name: text("name").notNull(),
   type: text("type").default("regression"),
-  passRate: real("pass_rate").default(0),
+  /**
+   * Nullable, and deliberately WITHOUT a default: null means nobody has run
+   * this suite. It used to default to 0, which gave the column no state for
+   * "never measured" -- 630 of 690 suites on the live database read as "0%
+   * passed" when the truth was that nobody had ever executed them, and not one
+   * suite held a real measured zero. Read it through suitePassFraction() in
+   * shared/eval-threshold.ts, never with `?? 0`.
+   */
+  passRate: real("pass_rate"),
   totalCases: integer("total_cases").default(0),
   lastRunAt: timestamp("last_run_at"),
   thresholdConfig: jsonb("threshold_config"),

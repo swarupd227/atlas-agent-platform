@@ -82,6 +82,8 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { packWizardPresets, packWizardContexts } from "@shared/industry-packs";
+import { suitePassPercent } from "@shared/eval-threshold";
+import { NOT_MEASURED } from "@/lib/measured";
 
 const iconMap: Record<string, LucideIcon> = {
   headphones: Headphones,
@@ -5297,7 +5299,10 @@ function Step6EvalSuite({
     name: string;
     type: string;
     totalCases: number;
-    passRate: number;
+    // Null until a run produces one, so it renders as "not run yet" rather
+    // than as 0% -- see shared/eval-threshold.ts.
+    passRate: number | null;
+    lastRunAt: string | null;
   }>>({
     queryKey: ["/api/eval-suites"],
   });
@@ -5380,7 +5385,7 @@ function Step6EvalSuite({
                       <Badge variant="outline" className="text-[10px]">{suite.type}</Badge>
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {suite.totalCases} cases | {suite.passRate}% pass rate
+                      {suite.totalCases} cases | {suitePassPercent(suite) !== null ? `${suitePassPercent(suite)}% pass rate` : NOT_MEASURED}
                     </p>
                   </div>
                 </div>

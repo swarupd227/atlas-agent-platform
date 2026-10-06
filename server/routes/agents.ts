@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { gradedSuiteRuns } from "../eval-run-scope";
+import { meetsThreshold, percentOf, runPassFraction } from "../eval-threshold";
+import { isSuiteMeasured, suitePassFraction } from "@shared/eval-threshold";
 import { isKnownIndustry } from "@shared/industry-filter";
 import { resolveReadableSkills, skillCatalogPrompt } from "../builtin-skill-tools";
 import { db } from "../db";
@@ -2536,10 +2538,21 @@ const router = Router();
       const latencyPassThreshold = typeof gateOverrides.maxLatencyMs === "number" ? gateOverrides.maxLatencyMs : 2000;
       const latencyWarnThreshold = typeof gateOverrides.maxLatencyWarnMs === "number" ? gateOverrides.maxLatencyWarnMs : Math.max(latencyPassThreshold, 5000);
 
-      const minEvalPassRate = agentSuites.length > 0
-        ? Math.min(...agentSuites.map(s => s.passRate ?? 0))
+      // Suite pass rates are 0-1 fractions; the threshold is a percentage. Compare, and show, in percent.
+      //
+      // Only MEASURED suites. `s.passRate ?? 0` dragged the minimum to 0 the
+      // moment one suite had never been run, so the gate read "worst suite: 0%"
+      // off a suite nobody had executed -- and an unrun suite then appeared in
+      // failingSuiteNames as though the agent had failed it. The two are
+      // different facts and are now reported separately: unmeasured suites are
+      // named as unmeasured, and a gate with nothing measured stays "unknown"
+      // rather than becoming "fail".
+      const measuredSuites = agentSuites.filter(isSuiteMeasured);
+      const minEvalPassRate = measuredSuites.length > 0
+        ? percentOf(Math.min(...measuredSuites.map(s => suitePassFraction(s)!)))
         : null;
-      const failingSuiteNames = agentSuites.filter(s => (s.passRate ?? 0) < evalPassThreshold).map(s => s.name);
+      const failingSuiteNames = measuredSuites.filter(s => !meetsThreshold(suitePassFraction(s), evalPassThreshold)).map(s => s.name);
+      const unmeasuredSuiteNames = agentSuites.filter(s => !isSuiteMeasured(s)).map(s => s.name);
 
       const criticalDrift = agentDrift.filter((d: any) => d.severity === "critical");
       const highDrift = agentDrift.filter((d: any) => d.severity === "high");
@@ -2553,8 +2566,19 @@ const router = Router();
         {
           name: "Eval Pass Rate",
           status: evalStatus,
-          value: minEvalPassRate !== null ? `${minEvalPassRate.toFixed(1)}%` : "No evals",
-          detail: failingSuiteNames.length > 0 ? `Failing: ${failingSuiteNames.join(", ")}` : agentSuites.length > 0 ? `${agentSuites.length} suite(s) passing` : "No eval suite found",
+          // "Not run" and "no suite" are different answers, and the old copy
+          // gave both of them as "No evals". Likewise the passing count said
+          // `agentSuites.length` even when most of those suites had never been
+          // executed, so ten suites with one measured read as "10 passing".
+          value: minEvalPassRate !== null ? `${minEvalPassRate.toFixed(1)}%`
+            : agentSuites.length > 0 ? "Not run" : "No evals",
+          detail: failingSuiteNames.length > 0
+            ? `Failing: ${failingSuiteNames.join(", ")}${unmeasuredSuiteNames.length > 0 ? ` · never run: ${unmeasuredSuiteNames.join(", ")}` : ""}`
+            : measuredSuites.length > 0
+              ? `${measuredSuites.length} of ${agentSuites.length} suite(s) measured and passing${unmeasuredSuiteNames.length > 0 ? ` · never run: ${unmeasuredSuiteNames.join(", ")}` : ""}`
+              : agentSuites.length > 0
+                ? `${agentSuites.length} suite(s) exist but none has been run`
+                : "No eval suite found",
           enforced: evalPassThreshold > 0,
           threshold: evalPassThreshold,
         },
@@ -2755,7 +2779,9 @@ const router = Router();
           const sorted = [...runs].sort((a, b) =>
             new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
           );
-          latestPassRate = Math.max(latestPassRate, sorted[0].passRate || 0);
+          // In percent, from the run's case counts (one runner stores its rate as a percentage, the rest as
+          // a fraction), so it compares with the percentage threshold below.
+          latestPassRate = Math.max(latestPassRate, percentOf(runPassFraction(sorted[0])));
         }
       }
 

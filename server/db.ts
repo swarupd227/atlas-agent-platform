@@ -2073,6 +2073,22 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_decision_records_live ON decision_records (subject, superseded_at, expires_at);
     `);
 
+    // eval_suites.pass_rate: give the column a state for "never measured".
+    //
+    // It carried DEFAULT 0, so a suite nobody had run was stored as 0% rather
+    // than as absent, and every reader doing `pass_rate || 0` reported "failed
+    // every case" about a suite that had never been executed. Measured here
+    // before changing anything: 630 of 690 suites sat at exactly 0 with no
+    // last_run_at, and ZERO suites held a 0 that a run had actually produced.
+    // That is why the backfill below is safe -- there is no real zero to lose.
+    //
+    // Idempotent: dropping an absent default is a no-op, and after the first
+    // run no row matches the UPDATE's predicate.
+    await client.query(`
+      ALTER TABLE eval_suites ALTER COLUMN pass_rate DROP DEFAULT;
+      UPDATE eval_suites SET pass_rate = NULL WHERE pass_rate = 0 AND last_run_at IS NULL;
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);
