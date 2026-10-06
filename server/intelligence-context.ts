@@ -483,7 +483,8 @@ export interface PriorContextForPrompt {
   text: string;
   /** Business objects the step's state named. Present even when nothing matched. */
   subjects: Subject[];
-  items: Array<{ subject: Subject; tier: string; matchAxis?: string; runId: string; decidedAt: string | null }>;
+  /** `subjects` on an item is every object that one decision answered for. */
+  items: Array<{ subject: Subject; subjects: Subject[]; tier: string; matchAxis?: string; runId: string; decidedAt: string | null }>;
   conflicts: Array<{ subject: Subject; field: string }>;
   omissions: Array<{ reason: string; detail: string }>;
 }
@@ -516,7 +517,14 @@ export async function priorDecisionsForPrompt(input: {
       text: renderContextForPrompt(resolved),
       subjects,
       items: resolved.items.map(i => ({
-        subject: i.subject, tier: i.tier, ...(i.matchAxis ? { matchAxis: i.matchAxis } : {}),
+        subject: i.subject,
+        // Every object this one decision answered for, not just the headline.
+        // Without it the record understates what the step was shown: one
+        // decision covering a submission, its policy and its binder read as
+        // having covered one, and a reader of the run could not tell a
+        // collapsed item from a single-subject one.
+        subjects: i.subjects,
+        tier: i.tier, ...(i.matchAxis ? { matchAxis: i.matchAxis } : {}),
         runId: i.citation.runId, decidedAt: i.citation.decidedAt,
       })),
       conflicts: resolved.conflicts.map(c => ({ subject: c.subject, field: c.field })),

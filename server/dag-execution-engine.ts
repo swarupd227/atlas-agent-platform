@@ -366,7 +366,7 @@ export interface NodeExecutionResult {
   priorContext?: {
     text: string;
     subjects: string[];
-    items: Array<{ subject: string; tier: string; matchAxis?: string; runId: string; decidedAt: string | null }>;
+    items: Array<{ subject: string; subjects: string[]; tier: string; matchAxis?: string; runId: string; decidedAt: string | null }>;
     conflicts: Array<{ subject: string; field: string }>;
     omissions: Array<{ reason: string; detail: string }>;
   };

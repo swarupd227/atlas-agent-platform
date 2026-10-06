@@ -251,7 +251,7 @@ describe("extractSubjects", () => {
 });
 
 describe("resolveContext authority", () => {
-  beforeEach(() => { runs.length = 0; });
+  beforeEach(() => { runs.length = 0; decisionRecords = []; });
 
   it("is authoritative only for the same subject in the same journey", async () => {
     runs.push(run({ teamAgentId: "teamA" }));
@@ -462,6 +462,10 @@ describe("the flag, and what the engine gets", () => {
     runs.length = 0;
     settingValue = "on";
     blueprintNodes.length = 0;
+    // The index is shared state too: without this, a test that seeds decision
+    // records leaves them for the next one, which then measures something
+    // nobody set up.
+    decisionRecords = [];
   });
 
   it("is off when the setting is absent, off, or unreadable", async () => {
@@ -505,6 +509,29 @@ describe("the flag, and what the engine gets", () => {
     expect(prior.subjects).toEqual([]);
   });
 
+  it("records which objects each prior decision covered, not just the headline", async () => {
+    // Without this the run record understates what the step saw: a decision
+    // covering a submission, its policy and its binder read as covering one,
+    // and twice led me to report "collapse not proven" from a record that
+    // could not show it either way.
+    decisionRecords = [];
+    for (const subject of ["submission:SUB-2026-8891", "policy:POL-2026-8891-CP", "binder:CP-2026-17"]) {
+      decisionRecords.push({
+        subject, subjectType: subject.split(":")[0], teamAgentId: "teamA", runId: "oneRun",
+        decidedAt: new Date("2026-10-05T10:00:00Z"),
+        decision: { status: "bound and active" }, evidence: {}, fromKeys: ["status"],
+      });
+    }
+    const prior = await priorDecisionsForPrompt({
+      teamAgentId: "teamA",
+      state: { submissionId: "SUB-2026-8891", policyNumber: "POL-2026-8891-CP", treatyReference: "CP-2026-17" },
+      purpose: "draft",
+    });
+    expect(prior.items).toHaveLength(1);
+    expect(prior.items[0].subjects.sort()).toEqual(["binder:CP-2026-17", "policy:POL-2026-8891-CP", "submission:SUB-2026-8891"]);
+    expect(prior.items[0].runId).toBe("oneRun");
+  });
+
   it("gives the engine rendered text when enabled and anchored", async () => {
     runs.push(run({ teamAgentId: "teamA" }));
     const prior = await priorDecisionsForPrompt({ teamAgentId: "teamA", state: LIVE_STATE, purpose: "draft" });
@@ -539,7 +566,7 @@ describe("the flag, and what the engine gets", () => {
 });
 
 describe("resolveContext omissions and honesty", () => {
-  beforeEach(() => { runs.length = 0; });
+  beforeEach(() => { runs.length = 0; decisionRecords = []; });
 
   it("returns nothing for a subject no run shares, from another journey", async () => {
     // similar_risk used to fire whenever a run had ANY subject, so asking
