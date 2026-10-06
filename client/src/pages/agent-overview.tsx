@@ -388,8 +388,32 @@ function Setup({ agent }: { agent: Agent }) {
 
       <Block title="Skills it starts with" empty="None preloaded.">
         {skills.length === 0 ? <p className="text-sm text-muted-foreground">None preloaded.</p> : (
-          <ul className="flex flex-wrap gap-1.5">
-            {skills.map((s, i) => <li key={i}><Badge variant="outline" className="text-[11px]">{s.name ?? s.skillId ?? `skill ${i + 1}`}</Badge></li>)}
+          <ul className="flex flex-wrap gap-1.5" data-testid="skills-list">
+            {skills.map((s, i) => {
+              // The stored binding is { skillId, skillName, domain } -- the shape
+              // agent-detail writes when a skill is attached, and the one
+              // template-detail reads. This read `s.name`, which those rows do
+              // not have, so every skill rendered as its raw UUID while the name
+              // sat in the row unused. `s.name` stays in the chain because the
+              // wizard and outcome-detail build bindings through
+              // resolveMatchedSkills, and dropping it could regress those.
+              const label = s.skillName ?? s.name ?? s.skillId ?? `skill ${i + 1}`;
+              const id = typeof s.skillId === "string" ? s.skillId : undefined;
+              return (
+                <li key={id ?? i}>
+                  <Link
+                    href="/skills"
+                    // The id is still worth having when a binding is stale and
+                    // the name cannot be resolved -- just not as the label.
+                    title={id && id !== label ? `${label} (${id})` : label}
+                    className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs hover:bg-muted/50"
+                  >
+                    {label}
+                    <ArrowUpRight className="h-3 w-3" />
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Block>
