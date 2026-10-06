@@ -221,6 +221,7 @@ interface FlywheelMetrics {
     outcomeName: string;
     groundTruthCases: number;
     acceptanceRate: number;
+    /** The outcome's mean eval pass rate as a 0-1 fraction (the server rounds it to two decimals). */
     evalPassRate: number;
   }>;
 }
@@ -1863,7 +1864,7 @@ function FlywheelTabContent({
                     </TableCell>
                     <TableCell className="text-right">
                       {os.evalPassRate > 0 ? (
-                        <span className="text-sm">{os.evalPassRate.toFixed(1)}%</span>
+                        <span className="text-sm" data-testid="text-flywheel-eval-pass-rate">{Math.round(os.evalPassRate * 100)}%</span>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}

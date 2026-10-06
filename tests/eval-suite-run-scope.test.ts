@@ -109,6 +109,17 @@ describe("the flywheel page's eval pass rate for an outcome", () => {
     db.runs = [run({ passRate: 0.4, resultsJson: { repeats: 3 } })];
     expect(await evalPassRate()).toBe(0);
   });
+
+  it("is a 0-1 fraction, rounded to two decimals, and the page shows it as a whole percent", async () => {
+    db.runs = [run({ passRate: 11 / 12 })];
+    expect(await evalPassRate()).toBe(0.92); // a fraction, not 91.67
+    // The page scales it. Printed as it came, a 90% outcome read "0.9%".
+    const page = readFileSync(new URL("../client/src/pages/billing.tsx", import.meta.url), "utf8");
+    expect(page).toContain("{Math.round(os.evalPassRate * 100)}%");
+    expect(page).not.toContain("os.evalPassRate.toFixed(1)");
+    expect(Math.round(0.92 * 100)).toBe(92);
+    expect(Math.round(0.9 * 100)).toBe(90);
+  });
 });
 
 describe("every reader of eval_runs history either filters or is a known display-only one", () => {
