@@ -145,6 +145,26 @@ export function TeamRun({ props, onAsk, onDecide, activeActionId }: {
       {run.answer && (
         <div>
           <Label>Answer</Label>
+          {/*
+            An answer nothing was dispatched for is a narrative, and the run says
+            so further down -- the platform-verified log is appended to the
+            output, below the fold. Live 2026-10-05: a refund run reported
+            "paymentStatus: Processed after manager approval, customerNotified:
+            true" with 0 tool calls across every step, because the team's one
+            tool was a name and a description with no server behind it. The
+            ground truth was on the same screen and had to be scrolled to.
+
+            run.toolCalls is the dispatcher's own count (toolCallResults, the
+            source the verified log reads), not the model's. It counts calls
+            that SUCCEEDED, so the wording is "completed", not "attempted": a
+            run whose only call errored also reads 0, and saying "nothing was
+            dispatched" there would be the wrong words.
+          */}
+          {run.toolCalls === 0 && (
+            <p className="mb-2 rounded border border-[hsl(var(--astra-warn)/0.45)] px-2.5 py-2 text-xs leading-snug" data-testid="astra-team-run-no-tool-calls">
+              No tool calls completed in this run. What follows is what the agents wrote, not confirmed actions.
+            </p>
+          )}
           <Markdown text={run.answer} className="astra-md" />
         </div>
       )}
