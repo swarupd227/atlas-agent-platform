@@ -16,7 +16,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { kpiHealth } from "../client/src/pages/overview";
+import { kpiHealth, failingKpis } from "../client/src/pages/overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 
@@ -133,5 +133,51 @@ describe("the Dashboard shows its state without being asked", () => {
     const card = page.slice(page.indexOf('label="Attention"'));
     expect(card.slice(0, 900)).toContain('attentionCount === 0');
     expect(card.slice(0, 900)).toContain('"all clear"');
+  });
+});
+
+/**
+ * "At Risk" and the Attention count.
+ *
+ * Measured live 2026-10-06: 43 of 71 outcomes read At Risk, and 39 of them only
+ * because a KPI had never been measured — an unrecorded KPI has progress 0, and
+ * the rule was `progress < 80`. 21 of 173 KPIs have ever been recorded. Four
+ * outcomes had a genuinely measured KPI below target.
+ *
+ * kpiHealth was fixed for exactly this and this second rule on the same page
+ * was not, so the Dashboard treated "not measured" correctly in one number and
+ * as failure in another.
+ */
+describe("failingKpis", () => {
+  const k = (over: Partial<{ progress: number; measuredAt: string | null }> = {}) =>
+    ({ progress: 50, measuredAt: "2026-10-01T00:00:00Z", ...over });
+
+  it("counts a measured KPI below target", () => {
+    expect(failingKpis([k({ progress: 40 })])).toHaveLength(1);
+  });
+
+  it("does not count a KPI nobody has measured, however low its progress reads", () => {
+    // The whole bug: progress 0 means "no value recorded", not "failing".
+    expect(failingKpis([k({ progress: 0, measuredAt: null })])).toEqual([]);
+  });
+
+  it("does not count a measured KPI that is on target", () => {
+    expect(failingKpis([k({ progress: 95 })])).toEqual([]);
+  });
+
+  it("defining a KPI does not put an outcome at risk", () => {
+    // The direction that mattered: before, adding an unmeasured KPI to a
+    // healthy outcome made it At Risk, so the way to look healthy was to
+    // define nothing.
+    const before = failingKpis([k({ progress: 90 })]);
+    const after = failingKpis([k({ progress: 90 }), k({ progress: 0, measuredAt: null })]);
+    expect(after.length).toBe(before.length);
+  });
+
+  it("the live shape: 39 unmeasured-only outcomes drop out, 4 real ones remain", () => {
+    const unmeasuredOnly = Array.from({ length: 39 }, () => [k({ progress: 0, measuredAt: null }), k({ progress: 90 })]);
+    const reallyFailing = Array.from({ length: 4 }, () => [k({ progress: 30 })]);
+    const atRisk = [...unmeasuredOnly, ...reallyFailing].filter((kpis) => failingKpis(kpis).length > 0);
+    expect(atRisk).toHaveLength(4);
   });
 });

@@ -399,12 +399,32 @@ export function kpiHealth(outcomes: Array<{ kpis: KpiSummary[] }>): {
   };
 }
 
+/**
+ * The KPIs of an outcome that are actually failing.
+ *
+ * A KPI nobody has recorded has progress 0, so `progress < 80` counted every
+ * unmeasured KPI as a failure: measured live 2026-10-06, 43 of 71 outcomes read
+ * "At Risk", and **39 of them only because a KPI had never been measured** --
+ * 21 of 173 KPIs have ever been recorded. Four outcomes had a real one.
+ *
+ * It is the same mistake kpiHealth above was fixed for, left behind in a second
+ * rule on the same page: not measured treated as failing. It also runs the wrong
+ * way round -- defining a KPI put an outcome At Risk until someone measured it,
+ * so the way to look healthy was to define nothing.
+ *
+ * Unmeasured is worth surfacing; it is just not risk, and it does not belong in
+ * the same count.
+ */
+export function failingKpis<T extends { progress: number; measuredAt?: string | null }>(kpis: T[]): T[] {
+  return kpis.filter((k) => !!k.measuredAt && k.progress < 80);
+}
+
 function PlatformPulseStrip({ data }: { data: OverviewData }) {
   const activeOutcomes = data.outcomeHealth.filter((o) => o.status === "active" || o.status === "agents_assigned").length;
 
   const { value: overallHealth, measured: measuredCount, total: totalKpis, proxyOnly } = kpiHealth(data.outcomeHealth);
 
-  const outcomesAtRisk = data.outcomeHealth.filter((o) => o.kpis.some((k) => k.progress < 80)).length;
+  const outcomesAtRisk = data.outcomeHealth.filter((o) => failingKpis(o.kpis).length > 0).length;
   const overdueApprovals = data.approvalQueue.items.filter((a) => a.dueDate && new Date(a.dueDate).getTime() < Date.now()).length;
   const agentsWithIncidents = data.agentsAtRisk.filter((a) => a.openIncidents > 0 || (a.lastDrift && Math.abs(a.lastDrift.driftPercent) > 10)).length;
   const attentionCount = outcomesAtRisk + overdueApprovals + agentsWithIncidents;
@@ -491,7 +511,10 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
   });
 
   data.outcomeHealth.forEach((o) => {
-    const worstKpi = o.kpis.filter((k) => k.progress < 80).sort((a, b) => a.progress - b.progress)[0];
+    // Same rule as the Attention count, so the list and the number agree. This
+    // one also reported an unmeasured KPI as "at 0% (target: …)", which reads as
+    // a measurement rather than its absence.
+    const worstKpi = failingKpis(o.kpis).sort((a, b) => a.progress - b.progress)[0];
     if (worstKpi) {
       items.push({
         id: `outcome-${o.id}`,
