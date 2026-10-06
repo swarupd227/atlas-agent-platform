@@ -2053,6 +2053,26 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_decision_records_org_subject ON decision_records (organization_id, subject);
     `);
 
+    // Intelligence Context Layer, phase 3: quality, retention and supersession.
+    // The table shipped without any of these, so three OmissionReason values --
+    // expired, unreviewed, low_confidence -- were declared and could never
+    // fire, and nothing written could ever be retired. Added separately rather
+    // than folded into the CREATE above so an existing table gains them.
+    await client.query(`
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS decided_by VARCHAR;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS review_state VARCHAR NOT NULL DEFAULT 'unreviewed';
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS confidence REAL;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS effective_from TIMESTAMP;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS superseded_by VARCHAR;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMP;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS superseded_by_user_id VARCHAR;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS superseded_reason TEXT;
+      -- Recall reads the live records for a subject; a superseded or expired
+      -- one is withheld, so keep that filter cheap.
+      CREATE INDEX IF NOT EXISTS idx_decision_records_live ON decision_records (subject, superseded_at, expires_at);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

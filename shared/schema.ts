@@ -1586,6 +1586,44 @@ export const decisionRecords = pgTable("decision_records", {
   evidence: jsonb("evidence").notNull().default(sql`'{}'::jsonb`),
   /** The state keys this was drawn from, so a reader can check it. */
   fromKeys: jsonb("from_keys").notNull().default(sql`'[]'::jsonb`),
+
+  // --- provenance -------------------------------------------------------
+  /** Who or what decided: the agent, or the person who settled a gate. */
+  decidedBy: varchar("decided_by"),
+
+  // --- quality ----------------------------------------------------------
+  /**
+   * "unreviewed" | "reviewed" | "authoritative".
+   *
+   * Derived at write time from whether the run passed a human approval gate --
+   * a platform signal, not a model's opinion of itself. A reviewer can raise
+   * it; nothing lowers it automatically.
+   */
+  reviewState: varchar("review_state").notNull().default("unreviewed"),
+  /**
+   * 0-1, set by a reviewer. Deliberately NOT written by the producing run: a
+   * model's self-reported confidence is the cheapest and least trustworthy
+   * signal there is, and this week an agent asserted a figure it had not read.
+   * Null means nobody has judged it, which is not the same as low.
+   */
+  confidence: real("confidence"),
+
+  // --- retention --------------------------------------------------------
+  effectiveFrom: timestamp("effective_from"),
+  /** Null means no expiry has been set, not that it never goes stale. */
+  expiresAt: timestamp("expires_at"),
+
+  // --- supersession -----------------------------------------------------
+  /**
+   * The record that replaced this one. Supersession is a PERSON deciding that
+   * one record replaces another, which is why it carries its own provenance --
+   * expiry is a clock, this is a judgement.
+   */
+  supersededBy: varchar("superseded_by"),
+  supersededAt: timestamp("superseded_at"),
+  supersededByUserId: varchar("superseded_by_user_id"),
+  supersededReason: text("superseded_reason"),
+
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -19,7 +19,7 @@ import { storage } from "./storage";
 import {
   extractSubjects, traceStateOf, precedentAllowedFor, buildStepIndex, teamStateKeyFor,
   type ContextItem, type Omission, type Purpose, type ResolveContextResult, type Subject, type MatchAxis,
-  type StepContract, type Conflict,
+  type StepContract, type Conflict, type OmissionReason,
 } from "@shared/intelligence-context";
 
 export interface ResolveContextInput {
@@ -38,6 +38,13 @@ export interface ResolveContextInput {
   /** The asking run, so it is never handed its own decision back as precedent. */
   excludeRunId?: string;
 }
+
+/**
+ * Below this, a reviewer-set confidence withholds a record from reuse. Only a
+ * REVIEWER sets confidence, so this never fires on an unjudged record -- null
+ * means nobody has judged it, which is not the same as low.
+ */
+const LOW_CONFIDENCE = 0.5;
 
 const DEFAULT_LIMIT = 8;
 const DEFAULT_SCAN = 60;
@@ -181,10 +188,44 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
 
   // Indexed records become items directly: the subject is the key they were
   // stored under, so there is nothing to re-derive and nothing to miss.
+  const gated: Array<{ reason: OmissionReason; subject: Subject; detail: string }> = [];
+  const now = input.asOf ?? new Date();
+  // Read once, not per record: the lifecycle branches below always apply, and
+  // only the review requirement is flagged. See RECALL_REQUIRE_REVIEW_SETTING
+  // for why those two are not switched on together.
+  const requireReview = await settingIsOn(RECALL_REQUIRE_REVIEW_SETTING);
   for (const rec of (Array.isArray(indexed) ? indexed : [])) {
     const decidedAt = rec.decidedAt ? new Date(rec.decidedAt) : null;
     if (input.asOf && decidedAt && decidedAt > input.asOf) continue;
     if (rec.runId === input.excludeRunId) continue;
+
+    // The recall gate. Each refusal is REPORTED, never a silent drop: a record
+    // withheld because nobody reviewed it and a subject with no record at all
+    // are different facts, and three of these reasons were declared in the
+    // contract for two days without anything able to produce them.
+    if (rec.supersededAt) {
+      gated.push({
+        reason: "superseded", subject: rec.subject,
+        detail: `A decision on ${rec.subject} from run ${String(rec.runId).slice(0, 8)} was superseded${rec.supersededBy ? ` by record ${String(rec.supersededBy).slice(0, 8)}` : ""}${rec.supersededReason ? `: ${String(rec.supersededReason).slice(0, 160)}` : ""}`,
+      });
+      continue;
+    }
+    if (rec.expiresAt && new Date(rec.expiresAt) <= now) {
+      gated.push({ reason: "expired", subject: rec.subject, detail: `A decision on ${rec.subject} expired on ${new Date(rec.expiresAt).toISOString().slice(0, 10)} and is not offered as current` });
+      continue;
+    }
+    if (rec.effectiveFrom && new Date(rec.effectiveFrom) > now) {
+      gated.push({ reason: "not_yet_effective", subject: rec.subject, detail: `A decision on ${rec.subject} does not take effect until ${new Date(rec.effectiveFrom).toISOString().slice(0, 10)}, so it is not offered as current` });
+      continue;
+    }
+    if (requireReview && String(rec.reviewState ?? "unreviewed") === "unreviewed") {
+      gated.push({ reason: "unreviewed", subject: rec.subject, detail: `A decision on ${rec.subject} from run ${String(rec.runId).slice(0, 8)} exists but no one has reviewed it, so it is not offered as precedent` });
+      continue;
+    }
+    if (requireReview && typeof rec.confidence === "number" && rec.confidence < LOW_CONFIDENCE) {
+      gated.push({ reason: "low_confidence", subject: rec.subject, detail: `A decision on ${rec.subject} was judged ${(rec.confidence * 100).toFixed(0)}% confident, below the ${(LOW_CONFIDENCE * 100).toFixed(0)}% bar for reuse` });
+      continue;
+    }
     const sameJourney = !!input.teamAgentId && rec.teamAgentId === input.teamAgentId;
     const tier: ContextItem["tier"] = sameJourney ? "authoritative" : "precedent";
     if (tier === "precedent" && !precedentAllowedFor(input.purpose)) { withheld++; continue; }
@@ -305,13 +346,21 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
   // collapsing by run, a served subject would otherwise be reported missing
   // because another subject became the headline.
   const missed = requested.filter((s) => !kept.some((i) => i.subjects.includes(s)));
+  // A subject the gate refused is NOT a subject with no record. Both are
+  // "nothing was served", and reporting them the same way is the one confusion
+  // this layer exists to prevent: the caller would read "no decision is held on
+  // this submission" when one is held, was found, and was deliberately withheld
+  // pending review. The gate's own omission below carries the real reason, so
+  // the absence claims skip these.
+  const gatedSubjects = new Set(gated.map((g) => g.subject));
+  const unexplained = missed.filter((s) => !gatedSubjects.has(s));
   if (historyFailed) {
     // No no_record claims when the history could not be read: every subject
     // would be reported absent on no evidence.
     omissions.push({
       reason: "history_unavailable",
-      detail: `Run history could not be read, so whether a prior decision exists on ${missed.join(", ") || "these subjects"} is UNKNOWN — not absent`,
-      count: missed.length,
+      detail: `Run history could not be read, so whether a prior decision exists on ${unexplained.join(", ") || "these subjects"} is UNKNOWN — not absent`,
+      count: unexplained.length,
     });
   } else {
     // Says what was searched, not what exists. The previous wording -- "No
@@ -320,7 +369,7 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
     // on SUB-2026-8891 while four sat outside the window and the fifth was the
     // asking run itself. Overclaiming here breaks the one distinction this
     // layer exists to preserve.
-    for (const s of missed) {
+    for (const s of unexplained) {
       omissions.push({
         reason: "no_record",
         subject: s,
@@ -337,6 +386,10 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
       count: withheld,
     });
   }
+  // Refusals from the recall gate. Reported per subject, because "withheld
+  // because nobody reviewed it" and "none exists" must never render alike.
+  for (const g of gated) omissions.push({ reason: g.reason, subject: g.subject, detail: g.detail });
+
   if (degraded.size > 0) {
     omissions.push({
       reason: "blueprint_unavailable",
@@ -406,6 +459,17 @@ export async function recordRunDecisions(input: {
   const judgement = Object.keys(decision).filter(k => !subjectKeys.has(k));
   if (judgement.length === 0) return { written: 0, subjects };
 
+  // Reviewed means a person settled a gate on this run. That is a platform
+  // signal rather than the model's opinion of itself, and it is the reason
+  // confidence is left for a reviewer to set: an agent's self-reported
+  // confidence is the cheapest and least trustworthy number available.
+  //
+  // Defaulting everything to "unreviewed" and then withholding unreviewed
+  // records would have turned the layer off silently, which is a worse failure
+  // than the one the gate exists to prevent.
+  const passedAGate = Object.keys(byRole.approval).length > 0;
+  const reviewState = passedAGate ? "reviewed" : "unreviewed";
+
   let written = 0;
   for (const subject of subjects) {
     try {
@@ -419,6 +483,9 @@ export async function recordRunDecisions(input: {
         decision,
         evidence,
         fromKeys,
+        reviewState,
+        decidedBy: input.teamName || input.teamAgentId,
+        effectiveFrom: input.decidedAt,
       });
       written++;
     } catch (err: any) {
@@ -452,9 +519,35 @@ export const INTELLIGENCE_CONTEXT_SETTING = "INTELLIGENCE_CONTEXT";
  * read is off, never on.
  */
 export async function intelligenceContextEnabled(): Promise<boolean> {
+  return settingIsOn(INTELLIGENCE_CONTEXT_SETTING);
+}
+
+/**
+ * The review requirement, as its own flag, and the reason it is separate.
+ *
+ * The recall gate's six branches are not equally safe to switch on. Nobody
+ * disputes that a superseded, expired or not-yet-effective record should be
+ * withheld -- those states exist only because someone set them deliberately.
+ * The review requirement is different: `review_state` defaults to `unreviewed`,
+ * so the moment the column existed EVERY record already in production became
+ * unreviewed, including the E&S records this layer was proved on. Turning the
+ * requirement on with the column would have stopped the layer serving anything,
+ * on a deploy whose release note said "quality gate".
+ *
+ * Backfilling those rows to `reviewed` was the other option and is worse: it
+ * would assert a review that never happened, in the one feature whose job is to
+ * say truthfully where a decision came from. So the data stays honest and the
+ * requirement waits for a review path to exist, behind a flag an operator can
+ * see in Admin -> Platform Flags.
+ *
+ * Off unless explicitly turned on, and a failed read is off.
+ */
+export const RECALL_REQUIRE_REVIEW_SETTING = "INTELLIGENCE_RECALL_REQUIRE_REVIEW";
+
+async function settingIsOn(key: string): Promise<boolean> {
   try {
     const row = await (storage as { getPlatformSetting?: (key: string) => Promise<{ value?: string | null } | undefined> })
-      .getPlatformSetting?.(INTELLIGENCE_CONTEXT_SETTING);
+      .getPlatformSetting?.(key);
     return String(row?.value ?? "").trim().toLowerCase() === "on";
   } catch {
     return false;

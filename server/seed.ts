@@ -1779,6 +1779,12 @@ export async function seedDatabase() {
         description: "on = a step is shown the prior decisions recorded against the business objects its run has reached (the binder, period or submission in its state), with each item marked authoritative or precedent and every omission stated. Conflicting records of one object are reported rather than resolved. off = steps see no prior decisions, as before. Only decision-relevant state is read; session state and framework bookkeeping are excluded.",
         category: "decisions",
       },
+      {
+        key: "INTELLIGENCE_RECALL_REQUIRE_REVIEW",
+        value: "off",
+        description: "on = a recorded decision is offered to a later step only once someone has reviewed it, and one a reviewer judged below 50% confident is withheld; each refusal is stated as its own reason, never as \"no decision exists\". off = reviewed and unreviewed records are both offered. Superseded, expired and not-yet-effective records are withheld either way. Turn this on once there is a way to work through the review backlog — review_state defaults to unreviewed, so with it on, records written before a review existed are withheld.",
+        category: "decisions",
+      },
     ];
     const missingSettings = seedRowsMissing(existingSettings, defaultSettings, "key");
     if (missingSettings.length > 0) {

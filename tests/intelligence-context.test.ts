@@ -10,6 +10,8 @@
  * of state in one object is the thing being guarded against.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "fs";
+import path from "path";
 import {
   classifyStateKey, extractSubjects, decisionStateOf, precedentAllowedFor,
   roleOfStateKey, buildStepIndex, traceStateOf, isDurableRole, teamStateKeyFor,
@@ -30,8 +32,16 @@ const getDecisionRecordsBySubjects = vi.fn(async (subjects: string[]) => decisio
 const upsertDecisionRecord = vi.fn(async (rec: any) => { decisionRecords.push(rec); return rec; });
 // The flag now lives in platform_settings, as GUARDRAIL_REVIEW and
 // DECISION_STEP_KIND do, so it is togglable from the UI.
+// Keyed, because there are two settings now -- the layer itself and the recall
+// gate's review requirement. A mock that answered every key with one value
+// would make a test of either flag silently test both.
 let settingValue: string | null = null;
-const getPlatformSetting = vi.fn(async () => (settingValue === null ? undefined : { value: settingValue }));
+let settings: Record<string, string> = {};
+const getPlatformSetting = vi.fn(async (key: string) => {
+  if (key in settings) return { value: settings[key] };
+  if (key === "INTELLIGENCE_CONTEXT") return settingValue === null ? undefined : { value: settingValue };
+  return undefined;
+});
 vi.mock("../server/storage", () => ({
   storage: {
     listDagExecutionRunsByOrg: vi.fn(async () => runs),
@@ -302,13 +312,22 @@ describe("resolveContext authority", () => {
 });
 
 describe("indexed decision records (phase 1)", () => {
-  beforeEach(() => { runs.length = 0; decisionRecords = []; blueprintNodes.length = 0; settingValue = "on"; });
+  // The review requirement is on for this block, because the tests below are
+  // about what the gate does when it IS enforcing. Its default-off behaviour --
+  // which is what production gets on the next deploy -- has its own test.
+  beforeEach(() => {
+    runs.length = 0; decisionRecords = []; blueprintNodes.length = 0; settingValue = "on";
+    settings = { INTELLIGENCE_RECALL_REQUIRE_REVIEW: "on" };
+  });
 
   const record = (over: any = {}) => ({
     subject: "submission:SUB-2026-8891",
     subjectType: "submission",
     teamAgentId: "teamA",
     runId: "oldrun1",
+    // Reviewed by default in the fixture: the gate is exercised by the tests
+    // that set reviewState explicitly, not by every unrelated one.
+    reviewState: "reviewed",
     decidedAt: new Date("2026-10-03T15:46:50Z"),
     decision: { status: "bound and active", policyNumber: "POL-2026-8891-CP" },
     evidence: { fetch_treaty_terms: { limit: 50_000_000 } },
@@ -391,6 +410,108 @@ describe("indexed decision records (phase 1)", () => {
     const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
     expect(r.items).toHaveLength(2);
     expect(r.items.map((i) => i.citation.runId).sort()).toEqual(["runOne", "runTwo"]);
+  });
+
+  it("withholds an unreviewed record and SAYS so", async () => {
+    // The three reasons that could never fire: a record exists, is deliberately
+    // not offered, and the caller is told which of those it is.
+    decisionRecords.push(record({ reviewState: "unreviewed" }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items).toHaveLength(0);
+    const o = r.omissions.find((x) => x.reason === "unreviewed");
+    expect(o!.detail).toMatch(/exists but no one has reviewed it/);
+    // And it must NOT also claim there is no record.
+    expect(r.omissions.some((x) => x.reason === "no_record")).toBe(false);
+  });
+
+  it("offers a reviewed record, and one a reviewer marked authoritative", async () => {
+    for (const reviewState of ["reviewed", "authoritative"]) {
+      decisionRecords = [record({ reviewState })];
+      const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+      expect(r.items, reviewState).toHaveLength(1);
+    }
+  });
+
+  it("withholds an expired record without calling it absent", async () => {
+    decisionRecords.push(record({ reviewState: "reviewed", expiresAt: new Date("2026-01-01T00:00:00Z") }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items).toHaveLength(0);
+    expect(r.omissions.find((x) => x.reason === "expired")!.detail).toMatch(/expired on 2026-01-01/);
+  });
+
+  it("withholds a low-confidence record, but not one nobody has judged", async () => {
+    decisionRecords.push(record({ reviewState: "reviewed", confidence: 0.2 }));
+    const low = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(low.items).toHaveLength(0);
+    expect(low.omissions.find((x) => x.reason === "low_confidence")!.detail).toMatch(/20% confident/);
+
+    // null confidence means unjudged, which is NOT low.
+    decisionRecords = [record({ reviewState: "reviewed", confidence: null })];
+    const unjudged = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(unjudged.items).toHaveLength(1);
+  });
+
+  it("withholds a superseded record and names what replaced it", async () => {
+    decisionRecords.push(record({
+      reviewState: "reviewed", supersededAt: new Date("2026-10-06T09:00:00Z"),
+      supersededBy: "newrecord123", supersededReason: "clausesUsed was wrong; the later run is correct",
+    }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items).toHaveLength(0);
+    const o = r.omissions.find((x) => x.reason === "superseded");
+    // A reader must be able to follow the chain, not wonder where it went.
+    expect(o!.detail).toMatch(/superseded by record newrecor/);
+    expect(o!.detail).toMatch(/clausesUsed was wrong/);
+  });
+
+  it("serves an unreviewed record while the review requirement is off", async () => {
+    // What production gets on the next deploy, and the reason the requirement
+    // is a separate flag. review_state defaults to "unreviewed", so adding the
+    // column made every record already written -- including the E&S ones this
+    // layer was proved on -- unreviewed. Enforcing by default would have taken
+    // the layer silently offline under a release note about quality.
+    settings = {}; // the requirement unset, i.e. the shipped default
+    decisionRecords.push(record({ reviewState: "unreviewed" }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items).toHaveLength(1);
+    expect(r.omissions.some((x) => x.reason === "unreviewed")).toBe(false);
+
+    // And the lifecycle branches are NOT flagged: a superseded record is
+    // withheld whether or not the review requirement is on, because someone
+    // set that state deliberately.
+    decisionRecords = [record({ reviewState: "unreviewed", supersededAt: new Date("2026-10-06T09:00:00Z"), supersededBy: "newrec01" })];
+    const sup = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(sup.items).toHaveLength(0);
+    expect(sup.omissions.some((x) => x.reason === "superseded")).toBe(true);
+  });
+
+  it("suppresses no_record only for the gated subject, not for its neighbours", async () => {
+    // The complement of the test above, and the reason it is needed: the fix
+    // that stopped a withheld subject reading as absent could just as easily
+    // have silenced a genuine absence sitting beside it. One subject is held
+    // back by the gate, the other has nothing at all; each must get its OWN
+    // reason.
+    decisionRecords.push(record({ subject: "submission:SUB-2026-8891", reviewState: "unreviewed" }));
+    const r = await resolveContext({
+      subjects: ["submission:SUB-2026-8891", "submission:SUB-NOTHING-HERE"],
+      purpose: "draft", surface: "team_run", teamAgentId: "teamA",
+    });
+    expect(r.items).toHaveLength(0);
+    expect(r.omissions.filter((x) => x.reason === "no_record").map((x) => x.subject))
+      .toEqual(["submission:SUB-NOTHING-HERE"]);
+    expect(r.omissions.filter((x) => x.reason === "unreviewed").map((x) => x.subject))
+      .toEqual(["submission:SUB-2026-8891"]);
+  });
+
+  it("honours effectiveFrom, so a record does not apply before it applies", async () => {
+    decisionRecords.push(record({ reviewState: "reviewed", effectiveFrom: new Date("2027-01-01T00:00:00Z") }));
+    const r = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
+    expect(r.items).toHaveLength(0);
+    // Held back, so SAID -- the gate's one rule. This was a silent `continue`
+    // at first, which is the defect the other five branches were written to
+    // avoid.
+    expect(r.omissions.find((x) => x.reason === "not_yet_effective")!.detail).toMatch(/until 2027-01-01/);
+    expect(r.omissions.some((x) => x.reason === "no_record")).toBe(false);
   });
 
   it("says the search was bounded when it fell back to the scan", async () => {
@@ -518,6 +639,9 @@ describe("the flag, and what the engine gets", () => {
     for (const subject of ["submission:SUB-2026-8891", "policy:POL-2026-8891-CP", "binder:CP-2026-17"]) {
       decisionRecords.push({
         subject, subjectType: subject.split(":")[0], teamAgentId: "teamA", runId: "oneRun",
+        // Reviewed, or the recall gate withholds it and this test measures the
+        // gate instead of the subject coverage it is about.
+        reviewState: "reviewed",
         decidedAt: new Date("2026-10-05T10:00:00Z"),
         decision: { status: "bound and active" }, evidence: {}, fromKeys: ["status"],
       });
@@ -759,5 +883,48 @@ describe("resolveContext omissions and honesty", () => {
 
     const prec = await resolveContext({ subjects: ["submission:SUB-2026-8891"], purpose: "draft", surface: "team_run", teamAgentId: "teamA" });
     expect(renderContextForPrompt(prec)).toMatch(/do not copy/);
+  });
+});
+
+describe("the contract cannot name a condition it cannot report", () => {
+  /**
+   * The defect this exists for is written up in design section 6b: `expired`,
+   * `unreviewed` and `low_confidence` sat in the OmissionReason union for two
+   * days with nothing in the codebase able to produce them. Every behavioural
+   * test passed throughout, because a reason that never fires breaks no
+   * assertion -- it just quietly makes the contract a claim rather than a
+   * description.
+   *
+   * So this reads the two files as TEXT and reports what it found, not what it
+   * concluded: the union's members on one side, the reasons actually pushed on
+   * the other. It is a static check and says so.
+   */
+  const read = (p: string) => readFileSync(path.join(__dirname, "..", p), "utf8");
+
+  it("every declared OmissionReason is pushed somewhere in the server", () => {
+    const shared = read("shared/intelligence-context.ts");
+    const union = shared.slice(shared.indexOf("export type OmissionReason ="));
+    const declared = [...union.slice(0, union.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    // Guard the parser itself: a regex that matched nothing would make this
+    // test pass by measuring an empty list.
+    expect(declared.length).toBeGreaterThan(8);
+    expect(declared).toContain("no_record");
+
+    const server = read("server/intelligence-context.ts");
+    const produced = new Set([...server.matchAll(/reason:\s*"([a-z_]+)"/g)].map((m) => m[1]));
+    expect([...produced].length).toBeGreaterThan(0);
+
+    const unreachable = declared.filter((r) => !produced.has(r));
+    expect(unreachable, `declared but never pushed: ${unreachable.join(", ")}`).toEqual([]);
+  });
+
+  it("and every reason pushed is declared, so no caller sees an unknown one", () => {
+    const server = read("server/intelligence-context.ts");
+    const shared = read("shared/intelligence-context.ts");
+    const union = shared.slice(shared.indexOf("export type OmissionReason ="));
+    const declared = new Set([...union.slice(0, union.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
+    const produced = [...new Set([...server.matchAll(/reason:\s*"([a-z_]+)"/g)].map((m) => m[1]))];
+    const undeclared = produced.filter((r) => !declared.has(r));
+    expect(undeclared, `pushed but not in the union: ${undeclared.join(", ")}`).toEqual([]);
   });
 });

@@ -322,6 +322,99 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     }
   });
 
+  /**
+   * Intelligence Context Layer: review and supersession.
+   *
+   * A record written by a run is "unreviewed" unless the run passed a human
+   * approval gate, and an unreviewed record is withheld from reuse. These two
+   * routes are how a person changes that, and how a disagreement gets settled:
+   * two runs recorded conflicting answers for SUB-2026-8891 and, until this
+   * existed, both would be offered as equally authoritative to every future
+   * run, forever.
+   */
+  router.patch("/api/decision-records/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const existing = await storage.getDecisionRecord(req.params.id as string);
+      if (!existing) return res.status(404).json({ error: "Decision record not found" });
+      const patch: Record<string, unknown> = {};
+      const state = req.body?.reviewState;
+      if (state !== undefined) {
+        if (!["unreviewed", "reviewed", "authoritative"].includes(String(state))) {
+          return res.status(400).json({ error: `reviewState must be unreviewed, reviewed or authoritative` });
+        }
+        patch.reviewState = state;
+      }
+      if (req.body?.confidence !== undefined) {
+        const c = Number(req.body.confidence);
+        // A confidence outside 0-1 is a mistake, not a strong opinion.
+        if (!Number.isFinite(c) || c < 0 || c > 1) return res.status(400).json({ error: "confidence must be a number between 0 and 1" });
+        patch.confidence = c;
+      }
+      if (req.body?.expiresAt !== undefined) patch.expiresAt = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nothing to change: send reviewState, confidence or expiresAt" });
+
+      const updated = await storage.updateDecisionRecord(existing.id, patch as any);
+      await storage.createAuditEvent({
+        organizationId: getOrgId(req) ?? undefined,
+        actorType: "user",
+        actorId: (req as any).authUser?.userId ?? undefined,
+        action: "decision_record_reviewed",
+        objectType: "decision_record",
+        objectId: existing.id,
+        details: JSON.stringify({ subject: existing.subject, runId: existing.runId, from: { reviewState: existing.reviewState, confidence: existing.confidence }, to: patch }),
+        ontologyTags: resolveOntologyTags("eval", "decision_record_reviewed"),
+      });
+      res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  router.post("/api/decision-records/:id/supersede", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const existing = await storage.getDecisionRecord(req.params.id as string);
+      if (!existing) return res.status(404).json({ error: "Decision record not found" });
+      if (existing.supersededAt) return res.status(400).json({ error: "This record was already superseded; supersede the record that replaced it instead" });
+
+      // The replacement, when named, must be real and about the same object --
+      // superseding a binder's decision with a decision about another binder
+      // would silently lose the first and answer the wrong question.
+      const replacementId = req.body?.supersededBy ? String(req.body.supersededBy) : null;
+      if (replacementId) {
+        if (replacementId === existing.id) return res.status(400).json({ error: "A record cannot supersede itself" });
+        const replacement = await storage.getDecisionRecord(replacementId);
+        if (!replacement) return res.status(400).json({ error: "The replacement record does not exist" });
+        if (replacement.subject !== existing.subject) {
+          return res.status(400).json({ error: `The replacement is about ${replacement.subject}, not ${existing.subject}` });
+        }
+      }
+      const reason = req.body?.reason ? String(req.body.reason).slice(0, 2000) : null;
+      if (!reason) return res.status(400).json({ error: "A reason is required: supersession is a judgement, and the record has to say why" });
+
+      const updated = await storage.supersedeDecisionRecord(existing.id, {
+        supersededBy: replacementId,
+        userId: (req as any).authUser?.userId ?? null,
+        reason,
+      });
+      await storage.createAuditEvent({
+        organizationId: getOrgId(req) ?? undefined,
+        actorType: "user",
+        actorId: (req as any).authUser?.userId ?? undefined,
+        action: "decision_record_superseded",
+        objectType: "decision_record",
+        objectId: existing.id,
+        details: JSON.stringify({ subject: existing.subject, runId: existing.runId, supersededBy: replacementId, reason }),
+        ontologyTags: resolveOntologyTags("eval", "decision_record_superseded"),
+      });
+      // Withheld from reuse, still readable: "we decided X, then replaced it
+      // with Y" is the audit story, so supersession hides a record from recall
+      // rather than from the record.
+      res.json({ ...updated, note: "Withheld from reuse. Still readable here and in the audit trail." });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   router.get("/api/evals/:id/runs", async (req, res) => {
     const runs = await storage.getEvalRuns(req.params.id);
     res.json(runs);

@@ -283,6 +283,18 @@ export type OmissionReason =
   | "no_record" | "expired" | "unreviewed" | "low_confidence"
   | "withheld_precedent_for_purpose" | "unclassified_keys"
   /**
+   * Withheld by the recall gate, alongside "expired", "unreviewed" and
+   * "low_confidence" above. Each is a REFUSAL a caller can act on, not an
+   * absence: a record exists and is deliberately not being offered.
+   *
+   * "not_yet_effective" is the mirror of "expired" -- a decision dated to
+   * start applying later. It is reported rather than skipped for the same
+   * reason as the rest: the gate has exactly one rule, which is that nothing
+   * it holds back goes unreported.
+   */
+  | "superseded"
+  | "not_yet_effective"
+  /**
    * A team's blueprint could not be read, so its state was classified by key
    * NAME instead of by the step that wrote it. Reported because the fallback
    * is materially worse -- it misread three tool_call outputs as decisions on

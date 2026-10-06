@@ -617,6 +617,11 @@ export interface IStorage {
   /** Intelligence Context Layer: decisions indexed by business object. */
   upsertDecisionRecord(rec: InsertDecisionRecord): Promise<DecisionRecord>;
   getDecisionRecordsBySubjects(subjects: string[], orgId?: string, limit?: number): Promise<DecisionRecord[]>;
+  getDecisionRecord(id: string): Promise<DecisionRecord | undefined>;
+  /** Review actions: reviewState, confidence, expiresAt. */
+  updateDecisionRecord(id: string, data: Partial<DecisionRecord>): Promise<DecisionRecord | undefined>;
+  /** A person deciding one record replaces another; carries its own provenance. */
+  supersedeDecisionRecord(id: string, by: { supersededBy?: string | null; userId?: string | null; reason?: string | null }): Promise<DecisionRecord | undefined>;
   getPlatformSettings(): Promise<PlatformSetting[]>;
   getPlatformSetting(key: string): Promise<PlatformSetting | undefined>;
   upsertPlatformSetting(setting: InsertPlatformSetting): Promise<PlatformSetting>;
@@ -3342,6 +3347,25 @@ export class DatabaseStorage implements IStorage {
         target: [decisionRecords.subject, decisionRecords.runId],
         set: { decision: (rec as any).decision, evidence: (rec as any).evidence, fromKeys: (rec as any).fromKeys, decidedAt: (rec as any).decidedAt },
       })
+      .returning();
+    return row;
+  }
+
+  async getDecisionRecord(id: string) {
+    const [row] = await db.select().from(decisionRecords).where(eq(decisionRecords.id, id));
+    return row;
+  }
+
+  async updateDecisionRecord(id: string, data: Partial<DecisionRecord>) {
+    const [row] = await db.update(decisionRecords).set(data as any).where(eq(decisionRecords.id, id)).returning();
+    return row;
+  }
+
+  async supersedeDecisionRecord(id: string, by: { supersededBy?: string | null; userId?: string | null; reason?: string | null }) {
+    const [row] = await db
+      .update(decisionRecords)
+      .set({ supersededAt: new Date(), supersededBy: by.supersededBy ?? null, supersededByUserId: by.userId ?? null, supersededReason: by.reason ?? null } as any)
+      .where(eq(decisionRecords.id, id))
       .returning();
     return row;
   }
