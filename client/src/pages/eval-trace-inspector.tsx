@@ -41,8 +41,10 @@ import {
   Hash,
   Activity,
   Coins,
+  Repeat,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
+import { answerPosition } from "@shared/eval-run-view";
 
 // ── marked config ─────────────────────────────────────────────────────────────
 
@@ -874,6 +876,19 @@ export default function EvalTraceInspector() {
         <div className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-2 py-0.5 font-mono" data-testid="text-run-id">
           Run {trace.runId.slice(0, 12)}
         </div>
+
+        {/* Which of a repeated run's answers this is */}
+        {answerPosition(trace, run) && (
+          <Badge
+            variant="outline"
+            className="text-[10px] bg-primary/10 text-primary border-primary/20"
+            title={`This golden was answered ${answerPosition(trace, run)!.of} times in this run; this is answer ${answerPosition(trace, run)!.answer}. Open the run to see the others.`}
+            data-testid="badge-answer-of"
+          >
+            <Repeat className="w-2.5 h-2.5 mr-1" />
+            Answer {answerPosition(trace, run)!.answer} of {answerPosition(trace, run)!.of}
+          </Badge>
+        )}
 
         {/* Golden input preview */}
         {golden?.input && (

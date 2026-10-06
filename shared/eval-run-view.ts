@@ -41,6 +41,24 @@ export interface GoldenAttempts<T extends TraceLike> {
 export const isRepeatedRun = (run: { repeats?: number | null } | null | undefined): boolean => (run?.repeats ?? 1) > 1;
 
 /**
+ * "Answer 2 of 5" for a trace: which of a repeated run's answers to its golden this trace is. A trace
+ * page for one answer used to say nothing of the others, so a reader could not tell it was one of
+ * several. Only a repeated run has the line (an ordinary run's one trace is simply the answer), and
+ * only when the trace knows its attempt: a trace from before repeats has none, and one whose attempt
+ * is not within the run's repeat count is not described rather than described wrongly.
+ */
+export function answerPosition(
+  trace: { attempt?: number | null } | null | undefined,
+  run: { repeats?: number | null } | null | undefined,
+): { answer: number; of: number } | null {
+  if (!trace || !isRepeatedRun(run)) return null;
+  const of = run!.repeats as number;
+  const answer = trace.attempt;
+  if (typeof answer !== "number" || !Number.isInteger(answer) || answer < 1 || answer > of) return null;
+  return { answer, of };
+}
+
+/**
  * The pass rate a patch's eval bundle (patches.eval_bundle) shows, as a whole percent, or null when
  * it has none. The bundle is a loose JSON blob that several writers have filled over time, and its
  * passRate is not on one scale: the patch-eval route copied it from the agent's latest run, a 0-1

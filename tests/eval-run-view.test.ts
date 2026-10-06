@@ -18,7 +18,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   groupTracesByGolden, collapseByGolden, filterGoldenRows, isRepeatedRun, meanScore, previousComparableRun,
-  repeatedRunVerdict, hasRepeatedVerdict, bundlePassPercent, type TraceLike,
+  repeatedRunVerdict, hasRepeatedVerdict, bundlePassPercent, answerPosition, type TraceLike,
 } from "../shared/eval-run-view";
 import { runRateTone } from "../client/src/pages/eval-studio-home";
 
@@ -179,6 +179,43 @@ describe("runRateTone: the Studio home does not band a repeated run's strict rat
   it("leaves a repeated run's rate neutral, however low", () => {
     expect(runRateTone({ passRate: 0.4, repeats: 3 })).toBe("text-muted-foreground");
     expect(runRateTone({ passRate: 0.95, repeats: 5 })).toBe("text-muted-foreground");
+  });
+});
+
+describe("answerPosition: which of a repeated run's answers a trace is", () => {
+  it("is the trace's attempt out of the run's repeat count", () => {
+    expect(answerPosition({ attempt: 2 }, { repeats: 5 })).toEqual({ answer: 2, of: 5 });
+    expect(answerPosition({ attempt: 1 }, { repeats: 3 })).toEqual({ answer: 1, of: 3 });
+    expect(answerPosition({ attempt: 10 }, { repeats: 10 })).toEqual({ answer: 10, of: 10 });
+  });
+
+  it("says nothing for an ordinary run, whose one trace is simply the answer", () => {
+    expect(answerPosition({ attempt: 1 }, { repeats: 1 })).toBeNull();
+    expect(answerPosition({ attempt: 1 }, { repeats: null })).toBeNull();
+    expect(answerPosition({ attempt: 1 }, {})).toBeNull();
+  });
+
+  it("says nothing when it cannot say it right: no attempt, or one outside the repeat count", () => {
+    for (const attempt of [null, undefined, 0, -1, 4, 1.5, NaN, "2" as any]) {
+      expect(answerPosition({ attempt }, { repeats: 3 })).toBeNull();
+    }
+  });
+
+  it("says nothing before the trace or the run has loaded", () => {
+    expect(answerPosition(null, { repeats: 3 })).toBeNull();
+    expect(answerPosition({ attempt: 2 }, null)).toBeNull();
+    expect(answerPosition(undefined, undefined)).toBeNull();
+  });
+});
+
+describe("the trace page", () => {
+  const inspector = readFileSync(new URL("../client/src/pages/eval-trace-inspector.tsx", import.meta.url), "utf8");
+
+  it("says which answer the trace is, through answerPosition, only when there is something to say", () => {
+    expect(inspector).toContain('import { answerPosition } from "@shared/eval-run-view";');
+    expect(inspector).toContain("{answerPosition(trace, run) && (");
+    expect(inspector).toContain('data-testid="badge-answer-of"');
+    expect(inspector).toMatch(/Answer \{answerPosition\(trace, run\)!\.answer\} of \{answerPosition\(trace, run\)!\.of\}/);
   });
 });
 
