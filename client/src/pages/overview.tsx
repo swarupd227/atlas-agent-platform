@@ -431,7 +431,30 @@ function PlatformPulseStrip({ data }: { data: OverviewData }) {
         testId="pulse-overall-health"
       />
       <PulseCard label="Agents Running" value={data.systemStatus.activeAgents} sub={`/ ${data.systemStatus.totalAgents}`} icon={Bot} iconClass="text-primary" iconBg="bg-primary/10" href="/agents" tooltip="Agents actively executing. Click to view agent registry, health scores, and runtime status." testId="pulse-agents-running" />
-      <PulseCard label="Attention" value={attentionCount} sub={attentionCount === 0 ? "all clear" : "items"} icon={AlertTriangle} iconClass={attColor} iconBg={attBg} href="/approvals" tooltip={`${outcomesAtRisk} outcomes at risk, ${overdueApprovals} overdue approvals, ${agentsWithIncidents} agents with issues. Click to review pending approvals.`} testId="pulse-attention-items" />
+      {/*
+        The card said "45 items", which is three unlike things added together:
+        outcomes at risk, overdue approvals and agents with incidents. A reader
+        could neither act on 45 nor check it -- 45 overdue approvals and 45
+        bored agents are the same number here. The parts were already written,
+        in the tooltip, where only a hover found them; they are the subtitle now.
+      */}
+      <PulseCard
+        label="Attention"
+        value={attentionCount}
+        sub={attentionCount === 0
+          ? "all clear"
+          : [
+              outcomesAtRisk ? `${outcomesAtRisk} outcome${outcomesAtRisk === 1 ? "" : "s"}` : null,
+              overdueApprovals ? `${overdueApprovals} approval${overdueApprovals === 1 ? "" : "s"}` : null,
+              agentsWithIncidents ? `${agentsWithIncidents} agent${agentsWithIncidents === 1 ? "" : "s"}` : null,
+            ].filter(Boolean).join(" · ")}
+        icon={AlertTriangle}
+        iconClass={attColor}
+        iconBg={attBg}
+        href="/approvals"
+        tooltip={`${outcomesAtRisk} outcomes at risk, ${overdueApprovals} overdue approvals, ${agentsWithIncidents} agents with issues. Click to review pending approvals.`}
+        testId="pulse-attention-items"
+      />
     </div>
   );
 }
@@ -549,7 +572,15 @@ function NeedsAttentionSection({ data }: { data: OverviewData }) {
   );
 }
 
-function CollapsibleSection({ title, badge, defaultOpen = false, viewAllHref, children }: { title: string; badge?: string | number; defaultOpen?: boolean; viewAllHref?: string; children: ReactNode }) {
+/**
+ * Open by default. Every section on this page was collapsed, so a dashboard
+ * whose job is "show me the state" opened as five headings and a count: "Agents
+ * At Risk 10" said there was a problem and not what it was, and the whole page
+ * came to 401 characters of text. Collapsing is still here for a reader who
+ * wants it shut; it is no longer what they arrive at. A section not worth
+ * opening is not worth a place on the page.
+ */
+function CollapsibleSection({ title, badge, defaultOpen = true, viewAllHref, children }: { title: string; badge?: string | number; defaultOpen?: boolean; viewAllHref?: string; children: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="rounded-lg border bg-card">

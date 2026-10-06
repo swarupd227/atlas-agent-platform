@@ -14,7 +14,11 @@
  * landing page for every role without Cowork.
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { kpiHealth } from "../client/src/pages/overview";
+
+const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 
 const kpi = (over: Partial<Parameters<typeof kpiHealth>[0][number]["kpis"][number]> = {}) => ({
   id: "k1", name: "A KPI", unit: "%", current: 50, target: 100, progress: 50,
@@ -93,5 +97,41 @@ describe("the live shape it was built for", () => {
     expect(r.measured).toBe(21);
     expect(r.total).toBe(166);
     expect(r.proxyOnly).toBe(true);
+  });
+});
+
+/**
+ * What the Dashboard shows before anyone clicks.
+ *
+ * Measured live 2026-10-06: the whole page came to 401 characters of text —
+ * four numbers, three at-risk outcomes, and five headings. Every section was
+ * collapsed, so "Agents At Risk 10" said there was a problem and not what it
+ * was, and "Attention 45" was three unlike things added together.
+ */
+describe("the Dashboard shows its state without being asked", () => {
+  const page = read("client", "src", "pages", "overview.tsx");
+
+  it("opens its sections by default", () => {
+    expect(page).toContain("defaultOpen = true");
+    expect(page).not.toContain("defaultOpen = false");
+  });
+
+  it("keeps collapsing available for a reader who wants it shut", () => {
+    // The point is what you ARRIVE at, not removing the control.
+    expect(page).toContain("const [open, setOpen] = useState(defaultOpen)");
+  });
+
+  it("breaks the attention count into its parts, not just a sum", () => {
+    // 45 overdue approvals and 45 bored agents were the same number before.
+    const card = page.slice(page.indexOf('label="Attention"'));
+    expect(card.slice(0, 900)).toContain("outcomesAtRisk ? `${outcomesAtRisk} outcome");
+    expect(card.slice(0, 900)).toContain("overdueApprovals ? `${overdueApprovals} approval");
+    expect(card.slice(0, 900)).toContain("agentsWithIncidents ? `${agentsWithIncidents} agent");
+  });
+
+  it("still says all clear when there is nothing", () => {
+    const card = page.slice(page.indexOf('label="Attention"'));
+    expect(card.slice(0, 900)).toContain('attentionCount === 0');
+    expect(card.slice(0, 900)).toContain('"all clear"');
   });
 });
