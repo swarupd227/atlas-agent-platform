@@ -12,6 +12,7 @@ const db = vi.hoisted(() => ({
   resumed: [] as string[],
   deployments: new Map<string, any>(),
   agents: new Map<string, any>(),
+  dagRuns: new Map<string, any>(),
 }));
 
 vi.mock("../server/storage", () => ({
@@ -32,6 +33,7 @@ vi.mock("../server/storage", () => ({
     }),
     updateOutcome: vi.fn(async (id: string, data: any) => { db.outcomes.set(id, { ...db.outcomes.get(id), ...data }); return {}; }),
     listDagExecutionRunsByStatus: vi.fn(async () => db.runs),
+    getDagExecutionRun: vi.fn(async (id: string) => (db.dagRuns.has(id) ? { ...db.dagRuns.get(id) } : undefined)),
     getDeployment: vi.fn(async (id: string) => (db.deployments.has(id) ? { ...db.deployments.get(id) } : undefined)),
     updateDeployment: vi.fn(async (id: string, data: any) => { db.deployments.set(id, { ...db.deployments.get(id), ...data }); return {}; }),
     getAgent: vi.fn(async (id: string) => (db.agents.has(id) ? { ...db.agents.get(id) } : undefined)),
@@ -59,6 +61,7 @@ beforeEach(() => {
   db.resumed.length = 0;
   db.deployments.clear();
   db.agents.clear();
+  db.dagRuns.clear();
   db.outcomes.set("out-1", { id: "out-1", organizationId: "org-a", name: "Reduce DSO", status: "pending_review" });
   db.approvals.set("apr-review", { id: "apr-review", organizationId: "org-a", type: "outcome_review", objectType: "outcome_contract", objectId: "out-1", objectName: "Reduce DSO", status: "pending" });
   db.approvals.set("apr-gate", { id: "apr-gate", organizationId: "org-a", type: "hitl_gate", objectType: "pipeline_gate", objectName: "Manager Approval", status: "pending" });
@@ -115,6 +118,54 @@ describe("decideApproval", () => {
     db.approvals.set("apr-gate", { ...db.approvals.get("apr-gate"), requiredReviewerRole: "compliance_security" });
     expect(await code(decideApproval({ ...base, role: "expert_validator", approvalId: "apr-gate", decision: "approved" }))).toBe("not_allowed");
     expect(await code(decideApproval({ ...base, role: "compliance_security", approvalId: "apr-gate", decision: "approved" }))).toBe("ok");
+  });
+
+  // An expired gate stays decidable on purpose, so a run still waiting can be
+  // rescued. But the rescue only reaches a run in `waiting_approval`, and the
+  // run's own pendingApprovalId is cleared when it stops -- so a decision on a
+  // finished run's gate used to flip the row to "approved", write an
+  // approval_approved audit event, and resume nothing. The audit trail then
+  // claimed a human had approved a gate whose run declined hours earlier.
+  describe("a gate whose run has already finished", () => {
+    const expiredGateOn = (runId: string) => {
+      db.approvals.set("apr-gate", {
+        ...db.approvals.get("apr-gate"), status: "expired", evidenceJson: { runId },
+      });
+    };
+
+    it("cannot be decided, and nothing is written", async () => {
+      db.dagRuns.set("run-done", { id: "run-done", status: "completed_with_skips" });
+      expiredGateOn("run-done");
+      expect(await code(decideApproval({ ...base, role: "admin", approvalId: "apr-gate", decision: "approved" }))).toBe("not_pending");
+      expect(db.approvals.get("apr-gate").status).toBe("expired"); // not flipped
+      expect(db.audit).toHaveLength(0); // and no approval_approved event
+    });
+
+    it("is refused for every finished status, not just the happy one", async () => {
+      for (const status of ["completed", "completed_with_skips", "failed", "cancelled"]) {
+        db.dagRuns.set("run-done", { id: "run-done", status });
+        expiredGateOn("run-done");
+        expect(await code(decideApproval({ ...base, role: "admin", approvalId: "apr-gate", decision: "approved" }))).toBe("not_pending");
+      }
+    });
+
+    it("is still decidable while the run is genuinely waiting, and resumes it", async () => {
+      db.dagRuns.set("run-1", { id: "run-1", status: "waiting_approval" });
+      db.runs.push({ id: "run-1", pendingApprovalId: "apr-gate" });
+      expiredGateOn("run-1");
+      expect(await code(decideApproval({ ...base, role: "admin", approvalId: "apr-gate", decision: "approved" }))).toBe("ok");
+      await vi.waitFor(() => expect(db.resumed).toEqual(["run-1"]));
+    });
+
+    // Fails open: a gate we cannot trace to a run must stay decidable, or a
+    // lookup gap would block legitimate approvals.
+    it("stays decidable when the gate records no run, or the run is unknown", async () => {
+      expiredGateOn("");
+      expect(await code(decideApproval({ ...base, role: "admin", approvalId: "apr-gate", decision: "approved" }))).toBe("ok");
+      db.approvals.set("apr-gate", { ...db.approvals.get("apr-gate"), status: "expired" });
+      expiredGateOn("run-never-stored");
+      expect(await code(decideApproval({ ...base, role: "admin", approvalId: "apr-gate", decision: "approved" }))).toBe("ok");
+    });
   });
 
   it("without routing, needs approve_changes", async () => {

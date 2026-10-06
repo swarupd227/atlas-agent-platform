@@ -57,9 +57,18 @@ export function resumeTeamRunWaitingOn(approvalId: string): void {
   storage.listDagExecutionRunsByStatus("waiting_approval")
     .then(runs => {
       const match = runs.find(r => r.pendingApprovalId === approvalId);
-      if (match) resumeTeamAgentDagRun(match.id).catch(err => console.error(`[dag-resume] fast-path resume of ${match.id} failed:`, err.message));
+      if (match) {
+        resumeTeamAgentDagRun(match.id).catch(err => console.error(`[dag-resume] fast-path resume of ${match.id} failed:`, err.message));
+        return;
+      }
+      // Say so. A decision that resumes nothing used to leave no trace at all,
+      // which is how an approval recorded against an already-finished run went
+      // unnoticed. gateDecisionMootReason now refuses that case up front, so
+      // reaching here means a gate decision found no waiting run for some other
+      // reason -- worth seeing rather than swallowing.
+      console.warn(`[dag-resume] approval ${approvalId} was decided but no run is waiting on it; nothing to resume`);
     })
-    .catch(() => {});
+    .catch(err => console.error(`[dag-resume] could not look for a run waiting on ${approvalId}:`, err?.message ?? err));
 }
 
 /**
@@ -410,6 +419,43 @@ export async function applyApprovalEffects(approval: Approval, status: string | 
  */
 export const OPEN_APPROVAL_STATUSES = new Set(["pending", "changes_requested", "expired"]);
 
+/** A DAG run that has stopped. Deciding its gate can no longer change anything. */
+const FINISHED_RUN_STATUSES = new Set(["completed", "completed_with_skips", "failed", "cancelled"]);
+
+/**
+ * Is deciding this pipeline gate still capable of doing anything?
+ *
+ * `expired` is intentionally decidable (see OPEN_APPROVAL_STATUSES): a gate
+ * that timed out while its run waits can still be rescued, and
+ * resumeTeamRunWaitingOn picks the run up. But that resume only matches a run
+ * still in `waiting_approval`. Once the run has finished, the decision cannot
+ * reach it -- and what happened before this check existed is that the row
+ * flipped to `approved`, an `approval_approved` audit event was written, and
+ * the resume silently matched nothing. The audit trail then said a human had
+ * approved a gate whose run had already declined and moved on hours earlier.
+ * For a governance product that contradiction is worse than the dead click.
+ *
+ * Returns a message to refuse with, or null to allow. Fails OPEN: if the run
+ * cannot be identified or read, the decision proceeds exactly as before, so a
+ * lookup problem can never block a legitimate approval.
+ */
+export async function gateDecisionMootReason(approval: Approval): Promise<string | null> {
+  if (approval.objectType !== "pipeline_gate") return null;
+  // The run id recorded when the gate was raised. `pendingApprovalId` on the
+  // run is cleared once the run stops, so it cannot answer this question --
+  // which is exactly why the stale decision went through unnoticed.
+  const runId = (approval.evidenceJson as any)?.runId;
+  if (typeof runId !== "string" || !runId) return null;
+  let run: { status?: string | null } | undefined;
+  try {
+    run = await storage.getDagExecutionRun(runId);
+  } catch {
+    return null; // cannot tell -> allow, same as before
+  }
+  if (!run?.status || !FINISHED_RUN_STATUSES.has(run.status)) return null;
+  return `The run this gate belongs to (${runId.slice(0, 8)}) already finished as "${run.status}" without this decision, so approving or refusing it now would change nothing. Deciding it anyway would record an approval the run never acted on. Re-run the team if this still needs to happen.`;
+}
+
 export interface DecideApprovalInput {
   orgId: string;
   role: RoleId;
@@ -436,6 +482,9 @@ export async function decideApproval(input: DecideApprovalInput) {
   if (!allowed.allowed) {
     throw new ApprovalDecisionError(`The ${input.role} role can't decide this approval (${allowed.reason}).`, "not_allowed");
   }
+  // A gate whose run has already finished cannot be rescued by deciding it.
+  const moot = await gateDecisionMootReason(approval);
+  if (moot) throw new ApprovalDecisionError(moot, "not_pending");
 
   // The same follow-up the Approvals page creates: a pending task on the same object, linked back.
   let followUpTaskId: string | null = null;

@@ -3304,6 +3304,16 @@ function rejectionReason(approval: { decidedBy?: string | null; constraintsJson?
   return `Rejected by ${approval.decidedBy || "a reviewer"}${given ? `: ${String(given).trim()}` : ""}`;
 }
 
+/**
+ * Wait for a human to decide a HITL gate.
+ *
+ * The returned `expired` distinguishes "nobody decided in time" from "a human
+ * said no". Both come back `approved: false`, and before this flag nothing
+ * downstream could tell them apart: the edge router reads `approved`, so a gate
+ * nobody looked at took the same branch a real refusal would, and the run
+ * recorded a decline no reviewer had made. The reason string said "timed out",
+ * but only a person reading the node's output would ever see it.
+ */
 export async function waitForApproval(
   agentId: string,
   gateName: string,
@@ -3321,7 +3331,7 @@ export async function waitForApproval(
    * description that leads with the artifact actually being approved.
    */
   approvalMeta?: { objectName?: string; description?: string; evidenceJson?: Record<string, unknown> },
-): Promise<{ approved: boolean; decidedBy?: string; reason?: string; approvalId?: string }> {
+): Promise<{ approved: boolean; decidedBy?: string; reason?: string; approvalId?: string; expired?: boolean }> {
   // Resuming a DAG run re-runs the whole paused wave (see resumeTeamAgentDagRun
   // in dag-execution-engine.ts), including the gate node itself -- without
   // this check, every resume would create a brand-new "pending" approval and
@@ -3334,7 +3344,7 @@ export async function waitForApproval(
     console.log(`[agent-runtime] HITL gate "${gateName}" already decided (id=${approval.id}, status=${approval.status}) -- resuming without re-waiting`);
     if (approval.status === "approved") return { approved: true, decidedBy: approval.decidedBy || "human", reason: "Approved", approvalId: approval.id };
     if (approval.status === "rejected") return { approved: false, decidedBy: approval.decidedBy || "human", reason: rejectionReason(approval), approvalId: approval.id };
-    return { approved: false, reason: `Gate already ${approval.status}`, approvalId: approval.id };
+    return { approved: false, reason: `Gate already ${approval.status}`, approvalId: approval.id, ...(approval.status === "expired" ? { expired: true } : {}) };
   }
   if (!approval) {
     // File the decision with the organization that owns the run's agent, so it
@@ -3383,7 +3393,18 @@ export async function waitForApproval(
   }
   await storage.updateApproval(approval.id, { status: "expired" } as any);
   console.log(`[agent-runtime] HITL gate "${gateName}" timed out`);
-  return { approved: false, reason: `Gate timed out after ${Math.round(timeoutMs / 60000)} minutes` };
+  // Say the duration in a unit that is actually meaningful: the old wording
+  // rounded to minutes, so any gate configured below a minute reported that it
+  // "timed out after 0 minutes".
+  const waited = timeoutMs >= 60_000
+    ? `${Math.round(timeoutMs / 60000)} minute${Math.round(timeoutMs / 60000) === 1 ? "" : "s"}`
+    : `${Math.round(timeoutMs / 1000)}s`;
+  return {
+    approved: false,
+    expired: true,
+    reason: `Nobody approved or refused this gate: it timed out after ${waited} with no decision.`,
+    approvalId: approval.id,
+  };
 }
 
 // ── Conditional edge: use LLM to evaluate condition string against worker output
@@ -4413,6 +4434,10 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
           approved: approvalResult.approved,
           decidedBy: approvalResult.decidedBy,
           reason: approvalResult.reason,
+          // Same reason as the DAG engine's gate output: a halt because nobody
+          // looked is not a halt because someone refused, and the timeline
+          // should not read as though a reviewer decided.
+          ...(approvalResult.expired ? { expired: true } : {}),
         },
       });
       if (!approvalResult.approved) {
@@ -4420,7 +4445,9 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
         shouldHalt = true;
         allSteps.push({
           id: `team_gate_halt_${gate.nodeId}`,
-          name: `Pipeline halted: gate "${gate.label}" not approved`,
+          name: approvalResult.expired
+            ? `Pipeline halted: gate "${gate.label}" expired with no decision`
+            : `Pipeline halted: gate "${gate.label}" not approved`,
           type: "escalation",
           status: "completed",
           startedAt: new Date().toISOString(),

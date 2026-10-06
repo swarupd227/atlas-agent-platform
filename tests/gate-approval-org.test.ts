@@ -42,4 +42,16 @@ describe("gate approvals", () => {
     expect(created[0]).not.toHaveProperty("organizationId");
     expect(result.reason).toContain("timed out");
   });
+
+  // A timeout and a refusal both come back approved:false. Before `expired`
+  // nothing could tell them apart, so a gate nobody looked at routed down the
+  // decline branch and the run recorded a decision no reviewer had made. The
+  // flag is what a condition can branch on; the prose above is only for people.
+  it("marks an expired gate as expired, not merely unapproved", async () => {
+    agents.set("team-1", { id: "team-1", organizationId: "org-a" });
+    const result = await waitForApproval("team-1", "Manager Approval", "approval", "context", 0);
+    expect(result.approved).toBe(false);
+    expect(result.expired).toBe(true);
+    expect(result.approvalId).toBe("apr-1"); // the decision is citable downstream
+  });
 });

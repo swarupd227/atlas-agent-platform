@@ -3269,13 +3269,21 @@ export class DAGExecutionEngine {
       // `approved` off this output to pick the branch (gateEdgeSatisfied), so
       // an empty output on rejection meant the decline branch could not be
       // routed to even once the run was allowed to continue.
+      //
+      // `expired: true` when nobody decided in time. Without it the state said
+      // only `approved: false`, which a condition cannot tell apart from a
+      // refusal -- so a gate nobody looked at routed down the decline branch
+      // and the run recorded a decision no reviewer had made. An author can now
+      // write a condition on it and give expiry its own path.
       output: result.approved || declineRoute
-        ? { [nc.stateKey]: { approved: !!result.approved, decidedBy: result.decidedBy, approvalId: result.approvalId || approvalId || undefined, ...(result.approved ? {} : { reason: result.reason || undefined }) } }
+        ? { [nc.stateKey]: { approved: !!result.approved, decidedBy: result.decidedBy, approvalId: result.approvalId || approvalId || undefined, ...(result.expired ? { expired: true } : {}), ...(result.approved ? {} : { reason: result.reason || undefined }) } }
         : {},
       // Only an error when there is nowhere to go. A decline that follows its
       // own branch is not an error, and reporting one would put every declined
       // risk into the fleet's failure numbers.
-      error: result.approved || declineRoute ? undefined : (result.reason || "Approval gate rejected or timed out"),
+      error: result.approved || declineRoute
+        ? undefined
+        : (result.reason || (result.expired ? "The approval gate expired with no decision" : "The approval gate was refused")),
       durationMs: Date.now() - start,
       promptTokens: 0,
       completionTokens: 0,

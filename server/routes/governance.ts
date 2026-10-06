@@ -5,7 +5,7 @@ import { gradedSuiteRuns } from "../eval-run-scope";
 import { db } from "../db";
 import { resumeTeamAgentDagRun } from "../dag-execution-engine";
 import { resumeWorkspaceRun } from "../workspace-run";
-import { applyApprovalEffects } from "../approval-decision";
+import { applyApprovalEffects, gateDecisionMootReason } from "../approval-decision";
 import { bindPolicyToOutcome } from "../policy-actions";
 import { promoteToBaseline } from "../services/screenshot-baseline";
 import { desc, eq, and, inArray, sql } from "drizzle-orm";
@@ -1276,6 +1276,11 @@ Ontology: ${ontologyName || "industry standard"}`,
         status: approval.status,
       });
     }
+    // An expired gate stays decidable on purpose, so a run still waiting can be
+    // rescued -- but only while there is a run left to rescue. Shared with
+    // Astra's decideApproval so both surfaces refuse the same thing.
+    const moot = await gateDecisionMootReason(approval);
+    if (moot) return res.status(409).json({ message: moot, status: approval.status });
     const { status, constraintsJson, followUpTask } = req.body;
     // The real signed-in user (production) or the active demo role (demo mode) -- never a client-supplied
     // "decidedBy" string, which any caller could set to whatever text it likes.
