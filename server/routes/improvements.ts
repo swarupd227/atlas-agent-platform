@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { gradedSuiteRuns } from "../eval-run-scope";
+import { runPassFraction } from "../eval-threshold";
 import { applyRecommendationEffect } from "../action-decisions";
 import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
@@ -2827,7 +2828,9 @@ Analyze and respond in JSON:
         totalCases: latestRun.totalCases || 0,
         passed: latestRun.passedCases || 0,
         failed: latestRun.failedCases || 0,
-        passRate: latestRun.passRate || 0,
+        // A 0-1 fraction, from the run's case counts: the stored rate is a fraction for most runners but a
+        // percentage for the skill-eval route, and the bundle's readers need one scale.
+        passRate: runPassFraction(latestRun),
         evaluatedAt: new Date().toISOString(),
         source: "agent_baseline",
         note: "Reflects the agent's most recent completed eval run; the patch itself has not been evaluated yet.",

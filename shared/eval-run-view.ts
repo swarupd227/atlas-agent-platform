@@ -40,6 +40,26 @@ export interface GoldenAttempts<T extends TraceLike> {
 
 export const isRepeatedRun = (run: { repeats?: number | null } | null | undefined): boolean => (run?.repeats ?? 1) > 1;
 
+/**
+ * The pass rate a patch's eval bundle (patches.eval_bundle) shows, as a whole percent, or null when
+ * it has none. The bundle is a loose JSON blob that several writers have filled over time, and its
+ * passRate is not on one scale: the patch-eval route copied it from the agent's latest run, a 0-1
+ * fraction for most runners and a percentage for the skill-eval runner. The page printed it with a
+ * percent sign, so a 90% baseline read "0.9%". The bundle also carries the case counts, which have
+ * no scale, so they are read first; only a bundle with none falls back to the stored rate, which is
+ * taken as a fraction (it cannot exceed 1) unless it is above 1, when it can only be a percentage.
+ */
+export function bundlePassPercent(bundle: unknown): number | null {
+  if (!bundle || typeof bundle !== "object") return null;
+  const b = bundle as Record<string, unknown>;
+  const total = typeof b.totalCases === "number" ? b.totalCases : NaN;
+  const passed = typeof b.passed === "number" ? b.passed : NaN;
+  if (total > 0 && Number.isFinite(passed) && passed >= 0) return Math.round((passed / total) * 100);
+  const rate = b.passRate;
+  if (typeof rate !== "number" || !Number.isFinite(rate) || rate < 0) return null;
+  return Math.round(rate <= 1 ? rate * 100 : rate);
+}
+
 export interface RepeatedRunVerdict {
   label: "Inconsistent" | "Consistent";
   /** "warn" is amber. Never red or green: see repeatedRunVerdict. */

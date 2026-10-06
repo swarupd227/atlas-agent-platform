@@ -57,6 +57,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatDate } from "@/components/shared-utils";
 import { useLocation, Link } from "wouter";
 import type { Patch, Experiment, Agent } from "@shared/schema";
+import { bundlePassPercent } from "@shared/eval-run-view";
 
 interface TimelineEntry {
   id: string;
@@ -916,13 +917,13 @@ export default function Optimization() {
                               Eval Results
                             </span>
                             <div className="flex items-center gap-4 mt-1 text-xs flex-wrap">
-                              {evalResults.passRate != null && (
+                              {bundlePassPercent(evalResults) != null && (
                                 <div>
                                   <span className="text-muted-foreground">
                                     Pass Rate:{" "}
                                   </span>
-                                  <span className="font-medium">
-                                    {String(evalResults.passRate)}%
+                                  <span className="font-medium" data-testid={`text-eval-pass-rate-${patch.id}`}>
+                                    {bundlePassPercent(evalResults)}%
                                   </span>
                                 </div>
                               )}

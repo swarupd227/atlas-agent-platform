@@ -18,7 +18,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   groupTracesByGolden, collapseByGolden, filterGoldenRows, isRepeatedRun, meanScore, previousComparableRun,
-  repeatedRunVerdict, hasRepeatedVerdict, type TraceLike,
+  repeatedRunVerdict, hasRepeatedVerdict, bundlePassPercent, type TraceLike,
 } from "../shared/eval-run-view";
 import { runRateTone } from "../client/src/pages/eval-studio-home";
 
@@ -179,6 +179,63 @@ describe("runRateTone: the Studio home does not band a repeated run's strict rat
   it("leaves a repeated run's rate neutral, however low", () => {
     expect(runRateTone({ passRate: 0.4, repeats: 3 })).toBe("text-muted-foreground");
     expect(runRateTone({ passRate: 0.95, repeats: 5 })).toBe("text-muted-foreground");
+  });
+});
+
+describe("bundlePassPercent: the pass rate a patch's eval bundle shows", () => {
+  it("reads the case counts first, which have no scale", () => {
+    expect(bundlePassPercent({ totalCases: 10, passed: 9, failed: 1, passRate: 0.9 })).toBe(90);
+    // a bundle copied from the skill-eval runner, which stored a percentage, reads the same
+    expect(bundlePassPercent({ totalCases: 10, passed: 9, failed: 1, passRate: 90 })).toBe(90);
+    expect(bundlePassPercent({ totalCases: 12, passed: 11, passRate: 0.9166667 })).toBe(92);
+    expect(bundlePassPercent({ totalCases: 4, passed: 0, passRate: 0 })).toBe(0);
+    expect(bundlePassPercent({ totalCases: 3, passed: 3 })).toBe(100);
+  });
+
+  it("is why the counts come first: a skill-eval run with 1 of 100 passing stores passRate 1, meaning 1%", () => {
+    expect(bundlePassPercent({ totalCases: 100, passed: 1, failed: 99, passRate: 1 })).toBe(1);
+    // read as a fraction, the same stored value would be 100%
+    expect(bundlePassPercent({ passRate: 1 })).toBe(100);
+  });
+
+  it("falls back to the stored rate, as a fraction, when there are no counts", () => {
+    expect(bundlePassPercent({ passRate: 0.9 })).toBe(90);
+    expect(bundlePassPercent({ passRate: 1 })).toBe(100);
+    expect(bundlePassPercent({ passRate: 0 })).toBe(0);
+    expect(bundlePassPercent({ totalCases: 0, passed: 0, passRate: 0.75 })).toBe(75);
+  });
+
+  it("takes a stored rate above 1 as already a percentage, since a fraction cannot exceed 1", () => {
+    expect(bundlePassPercent({ passRate: 92 })).toBe(92);
+    expect(bundlePassPercent({ passRate: 87.5 })).toBe(88);
+  });
+
+  it("has nothing to show for a bundle with no rate, as when no eval run exists", () => {
+    expect(bundlePassPercent({ passRate: null, totalCases: 0, passed: 0, source: "unavailable" })).toBeNull();
+    for (const b of [null, undefined, {}, "x", 7, [], { passRate: "0.9" }, { passRate: NaN }, { passRate: -1 }]) {
+      expect(bundlePassPercent(b)).toBeNull();
+    }
+  });
+});
+
+describe("the patch eval bundle's producer and page", () => {
+  const optimization = readFileSync(new URL("../client/src/pages/optimization.tsx", import.meta.url), "utf8");
+  const improvements = readFileSync(new URL("../server/routes/improvements.ts", import.meta.url), "utf8");
+
+  it("the page shows the rate through bundlePassPercent and never prints the stored value raw", () => {
+    expect(optimization).toContain('import { bundlePassPercent } from "@shared/eval-run-view";');
+    expect(optimization).toContain("{bundlePassPercent(evalResults)}%");
+    expect(optimization).not.toContain("String(evalResults.passRate)");
+  });
+
+  it("the page shows no Pass Rate row for a bundle that has none", () => {
+    expect(optimization).toContain("{bundlePassPercent(evalResults) != null && (");
+  });
+
+  it("the patch-eval route stores a true fraction, from the run's case counts", () => {
+    expect(improvements).toContain('import { runPassFraction } from "../eval-threshold";');
+    expect(improvements).toContain("passRate: runPassFraction(latestRun),");
+    expect(improvements).not.toContain("passRate: latestRun.passRate || 0,");
   });
 });
 
