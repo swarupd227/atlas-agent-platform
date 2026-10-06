@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatDate } from "@/lib/format";
+import { measuredRate, measuredScore, TONE_CLASS } from "@/lib/measured";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
@@ -1365,14 +1366,17 @@ export default function Monitor() {
                   </thead>
                   <tbody>
                     {agents?.map((agent) => {
-                      const sr = (agent.successRate || 0) * 100;
+                      // null is "nobody measured this", not zero. 975 of 1,096
+                      // agents are null for both, so `|| 0` painted most of the
+                      // fleet red at 0.0% and buried the six that really are 0.
+                      const srv = measuredRate(agent.successRate, { ok: 95, warn: 85 });
+                      const hsv = measuredScore(agent.healthScore, { ok: 80, warn: 60 });
                       const lat = agent.avgLatencyMs || 0;
-                      const hs = agent.healthScore || 0;
                       const cpr = agent.costPerRun || 0;
 
-                      const srColor = sr >= 95 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : sr >= 85 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-red-500/20 text-red-700 dark:text-red-300";
+                      const srColor = TONE_CLASS[srv.tone];
                       const latColor = lat <= 500 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : lat <= 1500 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-red-500/20 text-red-700 dark:text-red-300";
-                      const hsColor = hs >= 80 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : hs >= 60 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-red-500/20 text-red-700 dark:text-red-300";
+                      const hsColor = TONE_CLASS[hsv.tone];
                       const cprColor = cpr <= 0.10 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : cpr <= 0.30 ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-red-500/20 text-red-700 dark:text-red-300";
 
                       return (
@@ -1394,8 +1398,8 @@ export default function Monitor() {
                             <StatusBadge status={agent.status} />
                           </td>
                           <td className="py-2.5 px-3 text-center">
-                            <span className={`inline-block px-2 py-1 rounded-md text-[11px] font-semibold ${srColor}`}>
-                              {sr.toFixed(1)}%
+                            <span className={`inline-block px-2 py-1 rounded-md text-[11px] font-semibold ${srColor}`} data-testid={`heatmap-success-${agent.id}`}>
+                              {srv.text}
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-center">
@@ -1404,8 +1408,8 @@ export default function Monitor() {
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-center">
-                            <span className={`inline-block px-2 py-1 rounded-md text-[11px] font-semibold ${hsColor}`}>
-                              {hs}%
+                            <span className={`inline-block px-2 py-1 rounded-md text-[11px] font-semibold ${hsColor}`} data-testid={`heatmap-health-${agent.id}`}>
+                              {hsv.text}
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-center">
@@ -2053,8 +2057,12 @@ export default function Monitor() {
                       <div className="grid grid-cols-4 gap-3">
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success</span>
-                          <span className="text-sm font-semibold">{((agent.successRate || 0) * 100).toFixed(1)}%</span>
-                          <Progress value={(agent.successRate || 0) * 100} className="h-1" />
+                          {/* An empty bar and a 0% bar look identical; the one
+                              that was never measured gets no bar at all. */}
+                          <span className={`text-sm font-semibold${agent.successRate == null ? " text-muted-foreground" : ""}`} data-testid={`agent-card-success-${agent.id}`}>
+                            {measuredRate(agent.successRate, { ok: 95, warn: 85 }).text}
+                          </span>
+                          {agent.successRate != null && <Progress value={agent.successRate * 100} className="h-1" />}
                         </div>
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">P95 Latency</span>
@@ -2077,8 +2085,11 @@ export default function Monitor() {
                         </div>
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Health</span>
-                          <span className="text-sm font-semibold">{agent.healthScore}%</span>
-                          <Progress value={agent.healthScore || 0} className="h-1" />
+                          {/* Rendered "null%" verbatim before this. */}
+                          <span className={`text-sm font-semibold${agent.healthScore == null ? " text-muted-foreground" : ""}`} data-testid={`agent-card-health-${agent.id}`}>
+                            {measuredScore(agent.healthScore, { ok: 80, warn: 60 }).text}
+                          </span>
+                          {agent.healthScore != null && <Progress value={agent.healthScore} className="h-1" />}
                         </div>
                         <div className="flex flex-col gap-1">
                           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost/Run</span>
@@ -2314,8 +2325,8 @@ export default function Monitor() {
             const agentDrift = driftSignals?.filter(s => s.agentId === agent.id) || [];
             const agentViolations = policyViolations?.filter(v => v.agentId === agent.id) || [];
             const agentOutcomes = getAffectedOutcomes(agent.id);
-            const sr = (agent.successRate || 0) * 100;
-            const hs = agent.healthScore || 0;
+            const srv = measuredRate(agent.successRate, { ok: 95, warn: 85 });
+            const hsv = measuredScore(agent.healthScore, { ok: 80, warn: 60 });
 
             const rootCauses: Array<{ category: string; icon: any; iconColor: string; description: string; confidence: number }> = [];
             const passDrift = agentDrift.filter(s => s.metric === "pass_rate" && s.status === "degraded");
@@ -2375,11 +2386,11 @@ export default function Monitor() {
                 <div className="grid grid-cols-4 gap-3">
                   <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success Rate</span>
-                    <span className={`text-lg font-bold ${sr >= 95 ? "text-emerald-600 dark:text-emerald-400" : sr >= 85 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>{sr.toFixed(1)}%</span>
+                    <span className={`text-lg font-bold ${srv.tone === "unmeasured" ? "text-muted-foreground" : srv.tone === "ok" ? "text-emerald-600 dark:text-emerald-400" : srv.tone === "warn" ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>{srv.text}</span>
                   </div>
                   <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Health Score</span>
-                    <span className={`text-lg font-bold ${hs >= 80 ? "text-emerald-600 dark:text-emerald-400" : hs >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>{hs}%</span>
+                    <span className={`text-lg font-bold ${hsv.tone === "unmeasured" ? "text-muted-foreground" : hsv.tone === "ok" ? "text-emerald-600 dark:text-emerald-400" : hsv.tone === "warn" ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>{hsv.text}</span>
                   </div>
                   <div className="flex flex-col gap-1 p-3 rounded-md bg-muted/30">
                     <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
