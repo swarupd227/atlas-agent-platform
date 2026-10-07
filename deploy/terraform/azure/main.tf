@@ -24,6 +24,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -52,9 +56,12 @@ resource "random_password" "integration_vault_key" {
   special = false
 }
 
-resource "random_password" "audit_signing_key" {
-  length  = 44
-  special = false
+# The audit chain is signed with Ed25519 (server/audit-signing.ts), so this has to be a real
+# private key, not a random string: the app refuses to start writing audit events with anything
+# else. The PEM is base64-encoded below because a multi-line value is not safe in an app setting;
+# the app accepts either form.
+resource "tls_private_key" "audit_signing_key" {
+  algorithm = "ED25519"
 }
 
 resource "random_password" "public_api_key" {
@@ -175,7 +182,7 @@ resource "azurerm_linux_web_app" "main" {
     DATABASE_URL                   = local.database_url
     JWT_SECRET                     = random_password.jwt_secret.result
     INTEGRATION_VAULT_KEY          = random_password.integration_vault_key.result
-    AUDIT_SIGNING_PRIVATE_KEY      = random_password.audit_signing_key.result
+    AUDIT_SIGNING_PRIVATE_KEY      = base64encode(tls_private_key.audit_signing_key.private_key_pem_pkcs8)
     ASTRA_PUBLIC_API_KEY           = random_password.public_api_key.result
     BOOTSTRAP_ADMIN_PASSWORD       = random_password.bootstrap_admin.result
     DEFAULT_LLM_PROVIDER           = var.default_llm_provider

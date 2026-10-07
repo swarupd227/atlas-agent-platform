@@ -113,3 +113,14 @@ variable "enable_demos" {
   type        = bool
   default     = false
 }
+
+variable "db_ssl_mode" {
+  description = "sslmode in the DATABASE_URL. The app's pg client verifies the server certificate against Node's CA store, which does not contain Amazon's RDS CA, so 'require' fails to connect. 'no-verify' encrypts the connection but does not authenticate the server. To verify it, trust the RDS CA bundle on the instance (NODE_EXTRA_CA_CERTS) and set this to 'require'."
+  type        = string
+  default     = "no-verify"
+
+  validation {
+    condition     = contains(["no-verify", "require"], var.db_ssl_mode)
+    error_message = "db_ssl_mode must be no-verify or require."
+  }
+}

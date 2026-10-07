@@ -17,9 +17,9 @@
 # built Node server with `npm start` — no Docker — exactly like the Azure path.
 # EB uploads a zip of the built app and runs it, mirroring Azure zip-deploy.
 #
-# NOTE: This variant is provided for the client per their AWS request. It has NOT
-# been validated in the current test environment (only Azure is testable here).
-# Run `terraform validate` / `plan` in an AWS account before relying on it.
+# NOTE: This variant is provided for the client per their AWS request. `terraform validate`
+# passes, but it has NOT been planned or applied in an AWS account, and nothing has been run
+# against the RDS instance it creates. Run `terraform plan` in an AWS account before relying on it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 terraform {
@@ -32,6 +32,10 @@ terraform {
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
     }
   }
 }
@@ -55,9 +59,12 @@ resource "random_password" "integration_vault_key" {
   length  = 44
   special = false
 }
-resource "random_password" "audit_signing_key" {
-  length  = 44
-  special = false
+# The audit chain is signed with Ed25519 (server/audit-signing.ts), so this has to be a real
+# private key, not a random string: the app refuses to start writing audit events with anything
+# else. The PEM is base64-encoded below because a multi-line value is not safe in an app setting;
+# the app accepts either form.
+resource "tls_private_key" "audit_signing_key" {
+  algorithm = "ED25519"
 }
 resource "random_password" "public_api_key" {
   length  = 40
@@ -158,11 +165,12 @@ resource "aws_db_instance" "main" {
 # ── Elastic Beanstalk (Node.js) ──────────────────────────────────────────────
 locals {
   database_url = format(
-    "postgresql://%s:%s@%s:5432/%s?sslmode=require",
+    "postgresql://%s:%s@%s:5432/%s?sslmode=%s",
     var.db_admin_username,
     random_password.db.result,
     aws_db_instance.main.address,
     var.db_name,
+    var.db_ssl_mode,
   )
 }
 
@@ -230,7 +238,7 @@ resource "aws_elastic_beanstalk_environment" "main" {
       DATABASE_URL              = local.database_url
       JWT_SECRET                = random_password.jwt_secret.result
       INTEGRATION_VAULT_KEY     = random_password.integration_vault_key.result
-      AUDIT_SIGNING_PRIVATE_KEY = random_password.audit_signing_key.result
+      AUDIT_SIGNING_PRIVATE_KEY = base64encode(tls_private_key.audit_signing_key.private_key_pem_pkcs8)
       ASTRA_PUBLIC_API_KEY      = random_password.public_api_key.result
       BOOTSTRAP_ADMIN_PASSWORD  = random_password.bootstrap_admin.result
       DEFAULT_LLM_PROVIDER      = var.default_llm_provider
