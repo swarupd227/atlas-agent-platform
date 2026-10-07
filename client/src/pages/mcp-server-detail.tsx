@@ -182,8 +182,9 @@ export default function McpServerDetail() {
   const saveAuthMutation = useMutation({
     mutationFn: () => {
       let config: Record<string, string> = {};
-      if (authType === "bearer_token") config = { token: authToken };
-      else if (authType === "api_key") config = { keyName: authKeyName, keyValue: authKeyValue };
+      // The shapes buildMcpAuthHeaders reads (server/mcp-client.ts): bearer {token}, api_key {headerName, value}.
+      if (authType === "bearer") config = { token: authToken };
+      else if (authType === "api_key") config = { headerName: authKeyName, value: authKeyValue };
       else if (authType === "oauth2") config = { accessToken: authAccessToken };
       return apiRequest("PUT", `/api/mcp-servers/${id}/auth`, { authType, config });
     },
@@ -1442,14 +1443,14 @@ export default function McpServerDetail() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">none</SelectItem>
-                      <SelectItem value="bearer_token">bearer_token</SelectItem>
+                      <SelectItem value="bearer">bearer</SelectItem>
                       <SelectItem value="api_key">api_key</SelectItem>
                       <SelectItem value="oauth2">oauth2</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
-                {authType === "bearer_token" && (
+                {authType === "bearer" && (
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="auth-token">Token</Label>
                     <Input

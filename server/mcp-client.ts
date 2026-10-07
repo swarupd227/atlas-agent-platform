@@ -120,11 +120,14 @@ export async function buildMcpAuthHeaders(
 
   switch (auth.authType) {
     case "api_key": {
-      const headerName = (cfg.headerName as string | undefined) ?? "X-API-Key";
-      const value = cfg.value as string | undefined;
+      // `keyName`/`keyValue` is the shape the server detail page used to save, so
+      // credentials stored through it still resolve.
+      const headerName = (cfg.headerName as string | undefined) || (cfg.keyName as string | undefined) || "X-API-Key";
+      const value = (cfg.value as string | undefined) || (cfg.keyValue as string | undefined);
       if (!value) return {};
       return { [headerName]: value };
     }
+    case "bearer_token": // what the server detail page used to save for a bearer token
     case "bearer": {
       const token = cfg.token as string | undefined;
       if (!token) return {};
@@ -144,6 +147,20 @@ export async function buildMcpAuthHeaders(
     default:
       return {};
   }
+}
+
+/**
+ * The auth record to use for a call. A caller that already holds one passes it
+ * (null meaning "none"). One that doesn't passes nothing and gets the server's
+ * stored record, so a credential configured on a server is sent on every call,
+ * not only where a caller remembered to load it. Agent tool calls, Initialize and
+ * catalog sync all called these functions without one, so a configured key was
+ * sent on health probes and on nothing else.
+ */
+async function resolveAuth(server: McpServer, auth: McpServerAuth | null | undefined): Promise<McpServerAuth | null> {
+  if (auth !== undefined) return auth;
+  const { storage } = await import("./storage");
+  return (await storage.getMcpServerAuth(server.id)) ?? null;
 }
 
 // ─── Connection cache ─────────────────────────────────────────────────────────
@@ -205,7 +222,7 @@ export async function mcpInitialize(server: McpServer, auth?: McpServerAuth | nu
   if (!server.url) throw new Error("MCP server has no URL");
 
   evictConnection(server.id);
-  const authHeaders = await buildMcpAuthHeaders(server, auth);
+  const authHeaders = await buildMcpAuthHeaders(server, await resolveAuth(server, auth));
   const { client, transport } = await getConnection(server.id, server.url, authHeaders);
 
   const sdkServerVersion = client.getServerVersion();
@@ -263,7 +280,7 @@ export async function mcpInitialize(server: McpServer, auth?: McpServerAuth | nu
 
 export async function mcpListTools(server: McpServer, auth?: McpServerAuth | null): Promise<McpToolDef[]> {
   if (!server.url) throw new Error("MCP server has no URL");
-  const authHeaders = await buildMcpAuthHeaders(server, auth);
+  const authHeaders = await buildMcpAuthHeaders(server, await resolveAuth(server, auth));
   let conn: CachedConnection;
   try {
     conn = await getConnection(server.id, server.url, authHeaders);
@@ -299,7 +316,7 @@ export async function mcpCallTool(
   auth?: McpServerAuth | null,
 ): Promise<unknown> {
   if (!server.url) throw new Error("MCP server has no URL");
-  const authHeaders = await buildMcpAuthHeaders(server, auth);
+  const authHeaders = await buildMcpAuthHeaders(server, await resolveAuth(server, auth));
   let conn: CachedConnection;
   try {
     conn = await getConnection(server.id, server.url, authHeaders);
@@ -323,7 +340,7 @@ export async function mcpCallTool(
 
 export async function mcpListResources(server: McpServer, auth?: McpServerAuth | null): Promise<McpResourceDef[]> {
   if (!server.url) throw new Error("MCP server has no URL");
-  const authHeaders = await buildMcpAuthHeaders(server, auth);
+  const authHeaders = await buildMcpAuthHeaders(server, await resolveAuth(server, auth));
   const { client } = await getConnection(server.id, server.url, authHeaders);
   const result = await client.listResources();
   return result.resources.map((r) => ({
@@ -336,7 +353,7 @@ export async function mcpListResources(server: McpServer, auth?: McpServerAuth |
 
 export async function mcpListPrompts(server: McpServer, auth?: McpServerAuth | null): Promise<McpPromptDef[]> {
   if (!server.url) throw new Error("MCP server has no URL");
-  const authHeaders = await buildMcpAuthHeaders(server, auth);
+  const authHeaders = await buildMcpAuthHeaders(server, await resolveAuth(server, auth));
   const { client } = await getConnection(server.id, server.url, authHeaders);
   const result = await client.listPrompts();
   return result.prompts.map((p) => ({
