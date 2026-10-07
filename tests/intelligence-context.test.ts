@@ -52,7 +52,7 @@ vi.mock("../server/storage", () => ({
     upsertDecisionRecord,
   },
 }));
-const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions } = await import("../server/intelligence-context");
+const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions, recallVerdict } = await import("../server/intelligence-context");
 
 // Verbatim shape from the live run.
 const LIVE_STATE = {
@@ -926,5 +926,53 @@ describe("the contract cannot name a condition it cannot report", () => {
     const produced = [...new Set([...server.matchAll(/reason:\s*"([a-z_]+)"/g)].map((m) => m[1]))];
     const undeclared = produced.filter((r) => !declared.has(r));
     expect(undeclared, `pushed but not in the union: ${undeclared.join(", ")}`).toEqual([]);
+  });
+});
+
+describe("recallVerdict: the gate, as the review queue sees it", () => {
+  /**
+   * The queue and the resolver must never disagree about why a record is
+   * withheld, which is why both call this. These test the function directly,
+   * because the route layer would otherwise be the only place the reviewer's
+   * view is checked, and a second copy of five branches is how `?? 0` ended up
+   * in fourteen readers.
+   */
+  const rec = (over: any = {}) => ({ subject: "submission:SUB-1", runId: "runabcdef12", reviewState: "reviewed", ...over });
+
+  it("offers a reviewed, live record", () => {
+    expect(recallVerdict(rec(), { requireReview: true })).toEqual({ recallable: true });
+  });
+
+  it("explains each refusal in terms a reviewer can act on", () => {
+    const cases: Array<[any, string, RegExp]> = [
+      [{ supersededAt: new Date(), supersededBy: "newrec0099", supersededReason: "clausesUsed was wrong" }, "superseded", /superseded by record newrec00.*clausesUsed was wrong/],
+      [{ expiresAt: new Date("2020-01-01") }, "expired", /expired on 2020-01-01/],
+      [{ effectiveFrom: new Date("2099-01-01") }, "not_yet_effective", /until 2099-01-01/],
+      [{ reviewState: "unreviewed" }, "unreviewed", /no one has reviewed it/],
+      [{ confidence: 0.1 }, "low_confidence", /10% confident/],
+    ];
+    for (const [over, reason, detail] of cases) {
+      const v = recallVerdict(rec(over), { requireReview: true });
+      expect(v.recallable, reason).toBe(false);
+      expect(v.reason, reason).toBe(reason);
+      expect(v.detail, reason).toMatch(detail);
+    }
+  });
+
+  it("reports supersession ahead of expiry when a record is both", () => {
+    // More useful to hear from the person who replaced it than from the clock.
+    const v = recallVerdict(rec({ supersededAt: new Date(), expiresAt: new Date("2020-01-01") }), { requireReview: true });
+    expect(v.reason).toBe("superseded");
+  });
+
+  it("leaves the two flagged branches alone when the requirement is off", () => {
+    expect(recallVerdict(rec({ reviewState: "unreviewed" }), { requireReview: false })).toEqual({ recallable: true });
+    expect(recallVerdict(rec({ confidence: 0.1 }), { requireReview: false })).toEqual({ recallable: true });
+    // The lifecycle branches still apply either way: someone set those states.
+    expect(recallVerdict(rec({ supersededAt: new Date() }), { requireReview: false }).recallable).toBe(false);
+  });
+
+  it("treats an unjudged confidence as unjudged, not as low", () => {
+    expect(recallVerdict(rec({ confidence: null }), { requireReview: true }).recallable).toBe(true);
   });
 });

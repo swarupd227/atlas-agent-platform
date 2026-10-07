@@ -617,7 +617,18 @@ export interface IStorage {
   /** Intelligence Context Layer: decisions indexed by business object. */
   upsertDecisionRecord(rec: InsertDecisionRecord): Promise<DecisionRecord>;
   getDecisionRecordsBySubjects(subjects: string[], orgId?: string, limit?: number): Promise<DecisionRecord[]>;
-  getDecisionRecord(id: string): Promise<DecisionRecord | undefined>;
+  /** Org-scoped: a record owned by another tenant comes back undefined. */
+  getDecisionRecord(id: string, orgId?: string): Promise<DecisionRecord | undefined>;
+  /**
+   * The review queue. Returns the page AND the unfiltered total, because a
+   * caller shown 50 rows out of an unknown number cannot tell "that is all"
+   * from "there is more" -- the same ambiguity this layer exists to remove.
+   */
+  listDecisionRecords(opts: {
+    orgId?: string; subject?: string; subjectType?: string; teamAgentId?: string;
+    reviewState?: string; lifecycle?: "live" | "superseded" | "expired" | "pending" | "all";
+    limit?: number; offset?: number;
+  }): Promise<{ rows: DecisionRecord[]; total: number }>;
   /** Review actions: reviewState, confidence, expiresAt. */
   updateDecisionRecord(id: string, data: Partial<DecisionRecord>): Promise<DecisionRecord | undefined>;
   /** A person deciding one record replaces another; carries its own provenance. */
@@ -3351,8 +3362,19 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async getDecisionRecord(id: string) {
-    const [row] = await db.select().from(decisionRecords).where(eq(decisionRecords.id, id));
+  async getDecisionRecord(id: string, orgId?: string) {
+    // Org-scoped. Without this, an id was enough to read -- and through the
+    // PATCH and supersede routes to WRITE -- another tenant's decision record,
+    // because a by-id lookup has no org in it and the routes had no check of
+    // their own. Records with a null organizationId are platform-level rather
+    // than another tenant's, so they stay visible; a record owned by a
+    // different org is returned as undefined, which the routes surface as 404
+    // rather than 403 so the lookup does not confirm that the id exists.
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const where = scopedOrgId
+      ? and(eq(decisionRecords.id, id), or(eq(decisionRecords.organizationId, scopedOrgId), isNull(decisionRecords.organizationId)))
+      : eq(decisionRecords.id, id);
+    const [row] = await db.select().from(decisionRecords).where(where);
     return row;
   }
 
@@ -3368,6 +3390,61 @@ export class DatabaseStorage implements IStorage {
       .where(eq(decisionRecords.id, id))
       .returning();
     return row;
+  }
+
+  async listDecisionRecords(opts: {
+    orgId?: string; subject?: string; subjectType?: string; teamAgentId?: string;
+    reviewState?: string; lifecycle?: "live" | "superseded" | "expired" | "pending" | "all";
+    limit?: number; offset?: number;
+  }) {
+    const scopedOrgId = resolveOrgIdForRead(opts.orgId);
+    const now = new Date();
+    const clauses: any[] = [];
+    if (scopedOrgId) clauses.push(eq(decisionRecords.organizationId, scopedOrgId));
+    if (opts.subject) clauses.push(eq(decisionRecords.subject, opts.subject));
+    if (opts.subjectType) clauses.push(eq(decisionRecords.subjectType, opts.subjectType));
+    if (opts.teamAgentId) clauses.push(eq(decisionRecords.teamAgentId, opts.teamAgentId));
+    if (opts.reviewState) clauses.push(eq(decisionRecords.reviewState, opts.reviewState));
+
+    // Lifecycle mirrors the recall gate's branches so the queue and the
+    // resolver cannot disagree about what "live" means. "pending" is the
+    // reviewer's working set: live, and nobody has looked at it yet.
+    switch (opts.lifecycle ?? "live") {
+      case "superseded":
+        clauses.push(isNotNull(decisionRecords.supersededAt));
+        break;
+      case "expired":
+        clauses.push(isNull(decisionRecords.supersededAt), isNotNull(decisionRecords.expiresAt), lte(decisionRecords.expiresAt, now));
+        break;
+      case "pending":
+        clauses.push(
+          isNull(decisionRecords.supersededAt),
+          or(isNull(decisionRecords.expiresAt), gte(decisionRecords.expiresAt, now)),
+          eq(decisionRecords.reviewState, "unreviewed"),
+        );
+        break;
+      case "live":
+        clauses.push(
+          isNull(decisionRecords.supersededAt),
+          or(isNull(decisionRecords.expiresAt), gte(decisionRecords.expiresAt, now)),
+          or(isNull(decisionRecords.effectiveFrom), lte(decisionRecords.effectiveFrom, now)),
+        );
+        break;
+      case "all":
+        break;
+    }
+    const where = clauses.length ? and(...clauses) : undefined;
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const offset = Math.max(opts.offset ?? 0, 0);
+
+    const rows = await db.select().from(decisionRecords)
+      .where(where as any)
+      .orderBy(desc(decisionRecords.decidedAt))
+      .limit(limit).offset(offset);
+    // Counted in SQL, not by length of the page: the point of returning it is
+    // to say how much is behind the page.
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(decisionRecords).where(where as any);
+    return { rows, total: Number(n) };
   }
 
   async getDecisionRecordsBySubjects(subjects: string[], orgId?: string, limit: number = 50) {

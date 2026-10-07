@@ -3,6 +3,7 @@ import { validateTeamGraph } from "../team-graph-validate";
 import { z } from "zod";
 import { storage } from "../storage";
 import { gradedSuiteRuns } from "../eval-run-scope";
+import { recallVerdict, RECALL_REQUIRE_REVIEW_SETTING } from "../intelligence-context";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
 import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError, draftSingleAgent } from "./helpers";
@@ -332,9 +333,95 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
    * existed, both would be offered as equally authoritative to every future
    * run, forever.
    */
+  /**
+   * The review queue, and the thing that was missing: until this existed the
+   * PATCH and supersede routes below took an :id that nothing would give you,
+   * so the INTELLIGENCE_RECALL_REQUIRE_REVIEW flag could be switched on but the
+   * backlog it creates could not be worked through. A gate you cannot clear is
+   * not a quality control, it is an off switch.
+   *
+   * Every row carries the recall gate's OWN verdict, from the same function
+   * resolveContext uses, so "withheld because nobody reviewed it" and
+   * "withheld because someone replaced it" are distinguishable here exactly as
+   * they are in a prompt. A flat list of records would make the reviewer guess.
+   */
+  router.get("/api/decision-records", async (req, res) => {
+    try {
+      const q = req.query as Record<string, string | undefined>;
+      const lifecycle = (q.lifecycle ?? "live") as "live" | "superseded" | "expired" | "pending" | "all";
+      if (!["live", "superseded", "expired", "pending", "all"].includes(lifecycle)) {
+        return res.status(400).json({ error: `lifecycle must be one of live, superseded, expired, pending, all` });
+      }
+      if (q.reviewState && !["unreviewed", "reviewed", "authoritative"].includes(q.reviewState)) {
+        return res.status(400).json({ error: "reviewState must be unreviewed, reviewed or authoritative" });
+      }
+      const limit = q.limit ? Number(q.limit) : 50;
+      const offset = q.offset ? Number(q.offset) : 0;
+      if (!Number.isFinite(limit) || !Number.isFinite(offset)) return res.status(400).json({ error: "limit and offset must be numbers" });
+
+      const { rows, total } = await storage.listDecisionRecords({
+        orgId: getOrgId(req) ?? undefined,
+        subject: q.subject, subjectType: q.subjectType, teamAgentId: q.teamAgentId,
+        reviewState: q.reviewState, lifecycle, limit, offset,
+      });
+
+      const requireReview = String((await storage.getPlatformSetting(RECALL_REQUIRE_REVIEW_SETTING))?.value ?? "").trim().toLowerCase() === "on";
+      const now = new Date();
+      const records = rows.map((r) => {
+        const v = recallVerdict(r as any, { requireReview, now });
+        return {
+          ...r,
+          recall: {
+            recallable: v.recallable,
+            reason: v.reason ?? null,
+            detail: v.detail ?? null,
+          },
+        };
+      });
+
+      res.json({
+        records,
+        total,
+        returned: records.length,
+        // Said out loud, because a reviewer needs to know whether clearing this
+        // queue changes anything. With the flag off, an unreviewed record is
+        // still offered for reuse, so reviewing is curation, not unblocking.
+        reviewRequirement: requireReview ? "on" : "off",
+        reviewRequirementNote: requireReview
+          ? "Unreviewed and low-confidence records are being withheld from reuse."
+          : `Unreviewed records are still offered for reuse. Turn ${RECALL_REQUIRE_REVIEW_SETTING} on in Admin > Platform Flags to enforce review.`,
+      });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  /** One record in full, for a reviewer deciding about it. */
+  router.get("/api/decision-records/:id", async (req, res) => {
+    try {
+      const rec = await storage.getDecisionRecord(req.params.id as string, getOrgId(req) ?? undefined);
+      if (!rec) return res.status(404).json({ error: "Decision record not found" });
+      const requireReview = String((await storage.getPlatformSetting(RECALL_REQUIRE_REVIEW_SETTING))?.value ?? "").trim().toLowerCase() === "on";
+      const v = recallVerdict(rec as any, { requireReview });
+      // A superseded record stays readable -- "we decided X, then replaced it
+      // with Y" is the audit story -- so this resolves the replacement rather
+      // than leaving the reader with an id.
+      const replacement = rec.supersededBy ? await storage.getDecisionRecord(rec.supersededBy, getOrgId(req) ?? undefined) : undefined;
+      res.json({
+        ...rec,
+        recall: { recallable: v.recallable, reason: v.reason ?? null, detail: v.detail ?? null },
+        supersededByRecord: replacement
+          ? { id: replacement.id, subject: replacement.subject, runId: replacement.runId, decidedAt: replacement.decidedAt, decision: replacement.decision }
+          : null,
+      });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   router.patch("/api/decision-records/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
-      const existing = await storage.getDecisionRecord(req.params.id as string);
+      const existing = await storage.getDecisionRecord(req.params.id as string, getOrgId(req) ?? undefined);
       if (!existing) return res.status(404).json({ error: "Decision record not found" });
       const patch: Record<string, unknown> = {};
       const state = req.body?.reviewState;
@@ -372,7 +459,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
 
   router.post("/api/decision-records/:id/supersede", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
-      const existing = await storage.getDecisionRecord(req.params.id as string);
+      const existing = await storage.getDecisionRecord(req.params.id as string, getOrgId(req) ?? undefined);
       if (!existing) return res.status(404).json({ error: "Decision record not found" });
       if (existing.supersededAt) return res.status(400).json({ error: "This record was already superseded; supersede the record that replaced it instead" });
 
@@ -382,7 +469,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       const replacementId = req.body?.supersededBy ? String(req.body.supersededBy) : null;
       if (replacementId) {
         if (replacementId === existing.id) return res.status(400).json({ error: "A record cannot supersede itself" });
-        const replacement = await storage.getDecisionRecord(replacementId);
+        const replacement = await storage.getDecisionRecord(replacementId, getOrgId(req) ?? undefined);
         if (!replacement) return res.status(400).json({ error: "The replacement record does not exist" });
         if (replacement.subject !== existing.subject) {
           return res.status(400).json({ error: `The replacement is about ${replacement.subject}, not ${existing.subject}` });

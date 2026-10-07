@@ -285,3 +285,52 @@ describe("route wiring (static guard against a revert)", () => {
     }
   });
 });
+
+/**
+ * Decision records, added 8 Oct 2026 for the same defect class as the findings
+ * above, and introduced by the same mistake: a by-id lookup has no org in it,
+ * so unless the route adds one, an id is enough.
+ *
+ * `GET /api/decision-records/:id` would have read, and `PATCH
+ * /api/decision-records/:id` and `POST /api/decision-records/:id/supersede`
+ * already DID write, any tenant's decision record — a record that holds the
+ * business decision a run reached, which is exactly the content this layer
+ * exists to protect. The scoping now lives in storage.getDecisionRecord so a
+ * future call site inherits it rather than having to remember.
+ *
+ * Static, like the route-order check above: it reads the source and reports
+ * what it found, which is what catches a NEW call site that forgets the org.
+ */
+describe("decision records are scoped to the caller's tenant", () => {
+  const storageSrc = readFileSync(join(__dirname, "..", "server", "storage.ts"), "utf8");
+  const routesSrc = readFileSync(join(__dirname, "..", "server", "routes", "evaluations.ts"), "utf8");
+
+  it("the storage lookup filters by organization, not by id alone", () => {
+    const at = storageSrc.indexOf("async getDecisionRecord(id: string");
+    expect(at, "getDecisionRecord not found").toBeGreaterThan(-1);
+    const body = storageSrc.slice(at, at + 1400);
+    expect(body).toContain("orgId?: string");
+    expect(body).toContain("resolveOrgIdForRead(orgId)");
+    expect(body).toContain("eq(decisionRecords.organizationId, scopedOrgId)");
+    // The unscoped form that shipped first, which must not come back.
+    expect(body).not.toMatch(/where\(eq\(decisionRecords\.id, id\)\);/);
+  });
+
+  it("every route call site passes the caller's org", () => {
+    const calls = routesSrc.match(/storage\.getDecisionRecord\([^)]*\)/g) ?? [];
+    // Guard the matcher: an empty list would make this pass by measuring nothing.
+    expect(calls.length).toBeGreaterThanOrEqual(5);
+    const unscoped = calls.filter((c) => !c.includes("getOrgId(req)"));
+    expect(unscoped, `call sites with no org: ${unscoped.join(" | ")}`).toEqual([]);
+  });
+
+  it("the list route scopes too, and does not accept an org from the query", () => {
+    const at = routesSrc.indexOf('router.get("/api/decision-records"');
+    expect(at).toBeGreaterThan(-1);
+    const body = routesSrc.slice(at, routesSrc.indexOf('router.get("/api/decision-records/:id"'));
+    expect(body).toContain("orgId: getOrgId(req)");
+    // A caller-supplied org would hand the tenant boundary to the caller.
+    expect(body).not.toMatch(/orgId:\s*q\.orgId/);
+    expect(body).not.toMatch(/req\.query\.organizationId/);
+  });
+});

@@ -46,6 +46,62 @@ export interface ResolveContextInput {
  */
 const LOW_CONFIDENCE = 0.5;
 
+/** What a record is, and why, when it is NOT offered for reuse. */
+export interface RecallVerdict {
+  recallable: boolean;
+  /** Set when recallable is false. The same OmissionReason a caller would see. */
+  reason?: OmissionReason;
+  detail?: string;
+}
+
+/**
+ * The recall gate, in ONE place.
+ *
+ * It began inline inside resolveContext, which was fine while resolveContext
+ * was the only caller. The review queue needs the same verdict -- a reviewer
+ * working through the backlog has to be told "withheld because nobody reviewed
+ * it" rather than shown an undifferentiated list -- and a second copy of five
+ * branches would drift from the first. Today's lesson from the eval work was
+ * exactly this: `?? 0` in fourteen readers was the defect, and one shared
+ * definition was the fix.
+ *
+ * Order matters. Superseded is reported before expired, because a record that
+ * was both replaced AND timed out is more usefully explained by the person who
+ * replaced it than by the clock.
+ */
+export function recallVerdict(
+  rec: {
+    subject: string; runId?: string | null; reviewState?: string | null; confidence?: number | null;
+    supersededAt?: Date | string | null; supersededBy?: string | null; supersededReason?: string | null;
+    expiresAt?: Date | string | null; effectiveFrom?: Date | string | null;
+  },
+  opts: { requireReview: boolean; now?: Date },
+): RecallVerdict {
+  const now = opts.now ?? new Date();
+  const run = String(rec.runId ?? "").slice(0, 8);
+  if (rec.supersededAt) {
+    return {
+      recallable: false, reason: "superseded",
+      detail: `A decision on ${rec.subject} from run ${run} was superseded${rec.supersededBy ? ` by record ${String(rec.supersededBy).slice(0, 8)}` : ""}${rec.supersededReason ? `: ${String(rec.supersededReason).slice(0, 160)}` : ""}`,
+    };
+  }
+  if (rec.expiresAt && new Date(rec.expiresAt) <= now) {
+    return { recallable: false, reason: "expired", detail: `A decision on ${rec.subject} expired on ${new Date(rec.expiresAt).toISOString().slice(0, 10)} and is not offered as current` };
+  }
+  if (rec.effectiveFrom && new Date(rec.effectiveFrom) > now) {
+    return { recallable: false, reason: "not_yet_effective", detail: `A decision on ${rec.subject} does not take effect until ${new Date(rec.effectiveFrom).toISOString().slice(0, 10)}, so it is not offered as current` };
+  }
+  // The two behind the flag. See RECALL_REQUIRE_REVIEW_SETTING for why these
+  // are not switched on with the lifecycle branches above.
+  if (opts.requireReview && String(rec.reviewState ?? "unreviewed") === "unreviewed") {
+    return { recallable: false, reason: "unreviewed", detail: `A decision on ${rec.subject} from run ${run} exists but no one has reviewed it, so it is not offered as precedent` };
+  }
+  if (opts.requireReview && typeof rec.confidence === "number" && rec.confidence < LOW_CONFIDENCE) {
+    return { recallable: false, reason: "low_confidence", detail: `A decision on ${rec.subject} was judged ${(rec.confidence * 100).toFixed(0)}% confident, below the ${(LOW_CONFIDENCE * 100).toFixed(0)}% bar for reuse` };
+  }
+  return { recallable: true };
+}
+
 const DEFAULT_LIMIT = 8;
 const DEFAULT_SCAN = 60;
 
@@ -199,31 +255,12 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
     if (input.asOf && decidedAt && decidedAt > input.asOf) continue;
     if (rec.runId === input.excludeRunId) continue;
 
-    // The recall gate. Each refusal is REPORTED, never a silent drop: a record
-    // withheld because nobody reviewed it and a subject with no record at all
-    // are different facts, and three of these reasons were declared in the
-    // contract for two days without anything able to produce them.
-    if (rec.supersededAt) {
-      gated.push({
-        reason: "superseded", subject: rec.subject,
-        detail: `A decision on ${rec.subject} from run ${String(rec.runId).slice(0, 8)} was superseded${rec.supersededBy ? ` by record ${String(rec.supersededBy).slice(0, 8)}` : ""}${rec.supersededReason ? `: ${String(rec.supersededReason).slice(0, 160)}` : ""}`,
-      });
-      continue;
-    }
-    if (rec.expiresAt && new Date(rec.expiresAt) <= now) {
-      gated.push({ reason: "expired", subject: rec.subject, detail: `A decision on ${rec.subject} expired on ${new Date(rec.expiresAt).toISOString().slice(0, 10)} and is not offered as current` });
-      continue;
-    }
-    if (rec.effectiveFrom && new Date(rec.effectiveFrom) > now) {
-      gated.push({ reason: "not_yet_effective", subject: rec.subject, detail: `A decision on ${rec.subject} does not take effect until ${new Date(rec.effectiveFrom).toISOString().slice(0, 10)}, so it is not offered as current` });
-      continue;
-    }
-    if (requireReview && String(rec.reviewState ?? "unreviewed") === "unreviewed") {
-      gated.push({ reason: "unreviewed", subject: rec.subject, detail: `A decision on ${rec.subject} from run ${String(rec.runId).slice(0, 8)} exists but no one has reviewed it, so it is not offered as precedent` });
-      continue;
-    }
-    if (requireReview && typeof rec.confidence === "number" && rec.confidence < LOW_CONFIDENCE) {
-      gated.push({ reason: "low_confidence", subject: rec.subject, detail: `A decision on ${rec.subject} was judged ${(rec.confidence * 100).toFixed(0)}% confident, below the ${(LOW_CONFIDENCE * 100).toFixed(0)}% bar for reuse` });
+    // The recall gate, through the one function that owns it. Each refusal is
+    // REPORTED, never a silent drop: a record withheld because nobody reviewed
+    // it and a subject with no record at all are different facts.
+    const verdict = recallVerdict(rec, { requireReview, now });
+    if (!verdict.recallable) {
+      gated.push({ reason: verdict.reason!, subject: rec.subject, detail: verdict.detail! });
       continue;
     }
     const sameJourney = !!input.teamAgentId && rec.teamAgentId === input.teamAgentId;
