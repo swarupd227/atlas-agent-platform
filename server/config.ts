@@ -1,6 +1,7 @@
 // Centralized startup configuration & environment validation.
 // Phase 0 hardening: fail fast on misconfiguration; gate demo surfaces off in prod.
 import { getSecurityMode } from "./auth";
+import { describeOutboundPolicy, validateOutboundPolicyEnv } from "./url-safety";
 
 /** True when demo & mock surfaces (/demo-api, /api/mock, mock-MCP, demo seeders) should be active. */
 export function demosEnabled(): boolean {
@@ -31,6 +32,9 @@ export function validateEnv(): void {
     }
   }
 
+  // A malformed allowlist must stop the server: ignoring it would silently change what the app can reach.
+  errors.push(...validateOutboundPolicyEnv());
+
   if (errors.length > 0) {
     console.error(
       "[config] FATAL — invalid environment; refusing to start:\n  - " + errors.join("\n  - "),
@@ -41,4 +45,6 @@ export function validateEnv(): void {
   console.log(
     `[config] security_mode=${getSecurityMode()} demos_enabled=${demosEnabled()} node_env=${process.env.NODE_ENV ?? "unset"}`,
   );
+  const outboundPolicy = describeOutboundPolicy();
+  if (outboundPolicy) console.log(`[config] ${outboundPolicy}`);
 }

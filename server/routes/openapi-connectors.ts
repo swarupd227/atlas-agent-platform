@@ -19,7 +19,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { checkPermission } from "../permissions";
-import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
+import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
 import { parseOpenApiSpec, OpenApiParseError } from "../openapi-import";
 import { insertMcpServerAuthSchema } from "@shared/schema";
 
@@ -46,7 +46,7 @@ router.post("/api/openapi-import/parse", checkPermission("manage_mcp_servers"), 
     if (specUrl) {
       const check = await safeUrlOrThrow(specUrl);
       if (!check.ok) return res.status(400).json({ message: check.message });
-      const resp = await fetch(specUrl, { signal: AbortSignal.timeout(10_000) });
+      const resp = await safeFetch(specUrl, { signal: AbortSignal.timeout(10_000) });
       if (!resp.ok) return res.status(502).json({ message: `Fetching the spec failed: HTTP ${resp.status}` });
       rawSpec = await resp.text();
     } else {

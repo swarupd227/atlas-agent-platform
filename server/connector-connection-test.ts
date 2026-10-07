@@ -14,7 +14,7 @@
  */
 import { getIntegrationDef } from "./integrations/registry";
 import { getDefaultOrgId } from "./auth";
-import { assertSafeOutboundUrl, UnsafeUrlError } from "./url-safety";
+import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "./url-safety";
 
 /** One source of truth for the shape: whatever the function below returns. */
 export type ConnectionTestResult = Awaited<ReturnType<typeof testConnectionHealth>>;
@@ -104,7 +104,7 @@ export async function testConnectionHealth(
     switch (integrationId) {
       case "salesforce": {
         const instanceUrl = credentials.instance_url ?? "https://login.salesforce.com";
-        const r = await fetch(`${instanceUrl}/services/data/v59.0/`, {
+        const r = await safeFetch(`${instanceUrl}/services/data/v59.0/`, {
           headers: { Authorization: `Bearer ${credentials.access_token}` },
           redirect: "manual",
           signal: AbortSignal.timeout(5000),
@@ -123,7 +123,7 @@ export async function testConnectionHealth(
           : { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
       }
       case "jira": {
-        const r = await fetch(`${credentials.base_url}/rest/api/3/myself`, {
+        const r = await safeFetch(`${credentials.base_url}/rest/api/3/myself`, {
           redirect: "manual",
           headers: {
             Authorization: `Basic ${Buffer.from(`${credentials.email}:${credentials.api_token}`).toString("base64")}`,
@@ -153,7 +153,7 @@ export async function testConnectionHealth(
           : { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
       }
       case "servicenow": {
-        const r = await fetch(`${credentials.instance_url}/api/now/table/incident?sysparm_limit=1`, {
+        const r = await safeFetch(`${credentials.instance_url}/api/now/table/incident?sysparm_limit=1`, {
           redirect: "manual",
           headers: {
             Authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`,
@@ -190,7 +190,7 @@ export async function testConnectionHealth(
         // n8n exposes /healthz on self-hosted instances; try it first, then fall back to root
         const headers: Record<string, string> = {};
         if (credentials.apiKey) headers["X-N8N-API-KEY"] = credentials.apiKey;
-        const r = await fetch(`${baseUrl}/healthz`, { headers, redirect: "manual", signal: AbortSignal.timeout(5000) });
+        const r = await safeFetch(`${baseUrl}/healthz`, { headers, redirect: "manual", signal: AbortSignal.timeout(5000) });
         if (r.ok || r.status === 404) {
           // 404 on /healthz means n8n is reachable but endpoint doesn't exist on older builds
           return { ok: true, latencyMs: Date.now() - start };

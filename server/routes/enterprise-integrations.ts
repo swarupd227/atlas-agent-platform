@@ -9,7 +9,7 @@ import { customToolInputSchema, validateCustomDef, toDef, buildInputSchema, risk
 import { callN8nWorkflow } from "../integrations/n8n";
 import { getDefaultOrgId, getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
-import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
+import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
 import { db } from "../db";
 import { mcpServers, auditEvents, integrationConnections, agentMcpServers } from "@shared/schema";
 import { eq, and, gte, like, isNull } from "drizzle-orm";
@@ -1628,6 +1628,7 @@ router.post("/api/integrations/n8n/call", checkPermission("manage_mcp_servers"),
       method,
       apiKey: credentials.apiKey || undefined,
       timeoutMs: 15000,
+      fetchImpl: safeFetch,
     });
 
     res.json({ webhookUrl, ...result });

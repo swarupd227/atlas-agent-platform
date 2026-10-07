@@ -5,7 +5,7 @@ import { gradedSuiteRuns } from "../eval-run-scope";
 import { validateDecisionSetting } from "../decision-settings";
 import { decideMany, knownIncumbent } from "../decision-provider";
 import { parseOpenApiSpec, OpenApiParseError, type ParsedOpenApiSpec } from "../openapi-import";
-import { assertSafeOutboundUrl } from "../url-safety";
+import { assertSafeOutboundUrl, safeFetch } from "../url-safety";
 import { CURATED_OPENAPI_CATALOG } from "../marketplace-seed-data";
 import { contextPriorityFor, wizardContextFor, wizardPresetFor } from "@shared/wizard-presets";
 import { resolveAgentIndustry } from "../agent-industry";
@@ -12799,8 +12799,7 @@ async function discoverOpenApiOperations(serverUrl: string): Promise<ParsedOpenA
   for (const path of ["openapi.json", "openapi.yaml", "swagger.json"]) {
     try {
       const url = new URL(path, base).href;
-      await assertSafeOutboundUrl(url);
-      const resp = await fetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: "application/json, application/yaml;q=0.9, */*;q=0.5" } });
+      const resp = await safeFetch(url, { signal: AbortSignal.timeout(10_000), headers: { accept: "application/json, application/yaml;q=0.9, */*;q=0.5" } });
       if (!resp.ok) continue;
       return parseOpenApiSpec(await resp.text());
     } catch {
@@ -15242,7 +15241,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     do {
       const url = new URL(source.apiUrl);
       if (cursor) url.searchParams.set("cursor", cursor);
-      const resp = await fetch(url.toString(), { signal: AbortSignal.timeout(10_000) });
+      const resp = await safeFetch(url.toString(), { signal: AbortSignal.timeout(10_000) });
       if (!resp.ok) throw new Error(`Registry returned HTTP ${resp.status}`);
       const body: any = await resp.json();
       const entries: any[] = Array.isArray(body.servers) ? body.servers : [];
@@ -15487,8 +15486,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
       if (server.sourceKind === "openapi") {
         if (!server.openApiSpecUrl) return res.status(500).json({ message: "This catalog entry has no OpenAPI spec URL configured." });
         try {
-          await assertSafeOutboundUrl(server.openApiSpecUrl);
-          const resp = await fetch(server.openApiSpecUrl, { signal: AbortSignal.timeout(10_000) });
+          const resp = await safeFetch(server.openApiSpecUrl, { signal: AbortSignal.timeout(10_000) });
           if (!resp.ok) return res.status(502).json({ message: `Fetching the spec failed: HTTP ${resp.status}` });
           const specText = await resp.text();
           const parsed = parseOpenApiSpec(specText);

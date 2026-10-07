@@ -76,6 +76,8 @@ services:
       INTEGRATION_VAULT_KEY: ${INTEGRATION_VAULT_KEY:?set INTEGRATION_VAULT_KEY in .env}
       # `production` (default, enforced auth) or `demo` (auth bypass — never for real use).
       SECURITY_MODE: ${SECURITY_MODE:-production}
+      # Private ranges the server may fetch from (see .env.example). Empty = none.
+      ASTRA_ALLOWED_PRIVATE_CIDRS: ${ASTRA_ALLOWED_PRIVATE_CIDRS:-}
       # Seeds a `admin` user on first boot with this password (username is fixed to `admin`).
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in .env}
       # Optional model/integration keys — pass through when set.

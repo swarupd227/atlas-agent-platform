@@ -127,3 +127,9 @@ variable "enable_demos" {
   type        = bool
   default     = false
 }
+
+variable "allowed_private_cidrs" {
+  description = "Private address ranges the app may fetch from (ASTRA_ALLOWED_PRIVATE_CIDRS), e.g. \"10.20.0.0/16,10.30.4.7@8443\" (@port limits an entry to one port). Empty means none. Loopback, link-local and cloud-metadata addresses can never be listed."
+  type        = string
+  default     = ""
+}

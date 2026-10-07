@@ -12,7 +12,7 @@ import { storage } from "../storage";
 import { callN8nWorkflow } from "../integrations/n8n";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { decryptCredentialMap } from "../credential-vault";
-import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
+import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
 
 const router = Router();
 
@@ -186,7 +186,7 @@ router.post("/api/v1/integrations/n8n/call", requireApiKey, async (req: Request,
         return res.status(400).json({ error: e instanceof UnsafeUrlError ? e.message : "That webhookUrl isn't reachable from this action." });
       }
     }
-    const out = await callN8nWorkflow({ webhookUrl, payload, method, apiKey });
+    const out = await callN8nWorkflow({ webhookUrl, payload, method, apiKey, fetchImpl: callerSuppliedUrl ? safeFetch : undefined });
     res.status(out.ok ? 200 : 502).json(out);
   } catch (err: any) {
     res.status(500).json({ error: err?.message || "Failed to call n8n" });

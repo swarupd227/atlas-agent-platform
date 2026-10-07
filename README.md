@@ -29,6 +29,7 @@ Copy `.env.example` to `.env` (git-ignored) and fill in:
 | `DATABASE_URL` | Optional | Points at an external/managed Postgres instead; takes precedence over `POSTGRES_*`. Must support the pgvector extension. |
 | `PORT` | Default `5000` | Port the app listens on. |
 | `SECURITY_MODE` | Default `production` | `demo` bypasses auth entirely — never use it for a real deployment. |
+| `ASTRA_ALLOWED_PRIVATE_CIDRS` | Optional | Private address ranges the server may fetch from, e.g. `10.20.0.0/16,10.30.4.7@8443` (`@port` limits an entry to one port). Empty by default, so private addresses are refused. Loopback, link-local and cloud-metadata addresses can never be listed, and an invalid entry stops the server at boot. |
 | `ANTHROPIC_API_KEY` (or `AI_INTEGRATIONS_ANTHROPIC_API_KEY`) | Powers the agents | Either name is accepted. |
 | `OPENAI_API_KEY` | Optional | Alternate model provider. |
 | `GITHUB_TOKEN` | Optional | GitHub connector. |

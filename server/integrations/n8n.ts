@@ -10,6 +10,12 @@ export interface N8nCallInput {
   /** Optional n8n API key / webhook auth header value. */
   apiKey?: string;
   timeoutMs?: number;
+  /**
+   * The fetch to use. A caller whose URL came from a request passes safeFetch, so the address
+   * that was checked is the address connected to. An organization's own stored n8n URL is
+   * deliberately not restricted (a private n8n is the common case), so it uses the default.
+   */
+  fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
 }
 
 export interface N8nCallResult {
@@ -20,14 +26,14 @@ export interface N8nCallResult {
 }
 
 export async function callN8nWorkflow(input: N8nCallInput): Promise<N8nCallResult> {
-  const { webhookUrl, payload, method = "POST", apiKey, timeoutMs = 30000 } = input;
+  const { webhookUrl, payload, method = "POST", apiKey, timeoutMs = 30000, fetchImpl = fetch } = input;
   if (!webhookUrl || !/^https?:\/\//i.test(webhookUrl)) {
     return { ok: false, status: 0, data: null, error: "A valid n8n webhookUrl (http/https) is required" };
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(webhookUrl, {
+    const res = await fetchImpl(webhookUrl, {
       method,
       headers: {
         "Content-Type": "application/json",

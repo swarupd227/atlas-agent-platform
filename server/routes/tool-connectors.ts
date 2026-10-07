@@ -5,7 +5,7 @@ import { insertToolConnectorSchema } from "@shared/schema";
 import { getOrgId } from "../auth";
 import { jobEvents } from "../worker";
 import { handleZodError } from "./helpers";
-import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
+import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
 import { checkPermission } from "../permissions";
 import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-requirements";
 
@@ -72,7 +72,7 @@ router.use("/api/admin", checkPermission("manage_security"));
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10000);
         try {
-          const response = await fetch(testUrl, {
+          const response = await safeFetch(testUrl, {
             method: "GET",
             signal: controller.signal,
             headers: { "User-Agent": "NousOrchestrator/1.0 ConnectorTest" },
@@ -529,7 +529,7 @@ router.delete("/api/admin/webhooks/:id", async (req, res) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10000);
         try {
-          const response = await fetch(webhookUrl, {
+          const response = await safeFetch(webhookUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json", "User-Agent": "NousOrchestrator/1.0 WebhookTest" },
             body: JSON.stringify(testPayload),

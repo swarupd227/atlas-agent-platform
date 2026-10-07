@@ -8,7 +8,7 @@ import OpenAI from "openai";
 import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
 import { getOrgId, getDefaultOrgId } from "./auth";
 import { checkPermission, getRequestRole } from "./permissions";
-import { assertSafeOutboundUrl, UnsafeUrlError } from "./url-safety";
+import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "./url-safety";
 import { sensitivitySecondOpinion } from "./kb-sensitivity";
 
 interface OntologyAlignmentResult {
@@ -546,12 +546,11 @@ function sourceDateFromResponse(response: globalThis.Response): string | undefin
 }
 
 async function fetchWebContentWithLinks(url: string): Promise<{ text: string; links: string[]; sourceDate?: string }> {
-  // SSRF guard: resolves the hostname and refuses private/loopback/link-local
-  // targets before the real request is made. Applied to every page fetched
-  // (root ingestion AND each crawled link), since a same-domain link can
-  // still be re-pointed at an internal address via DNS.
-  await assertSafeOutboundUrl(url);
-  const response = await fetch(url, {
+  // SSRF guard: safeFetch resolves the hostname once, refuses private/loopback/link-local
+  // targets, connects to the address it checked, and judges every redirect the same way.
+  // Applied to every page fetched (root ingestion AND each crawled link), since a
+  // same-domain link can still be re-pointed at an internal address via DNS.
+  const response = await safeFetch(url, {
     headers: { "User-Agent": "NousAgent-KB/1.0" },
     signal: AbortSignal.timeout(15000),
   });
