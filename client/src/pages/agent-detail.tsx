@@ -1196,12 +1196,12 @@ function AgentDetailInner() {
   const { data: outcomeSlaReviewEvents } = useQuery<Array<{ id: string; action: string; objectId: string | null; details: any; createdAt?: string }>>({
     queryKey: ["/api/agents", agentId, "sla-review-events"],
     queryFn: async () => {
-      const res = await fetch("/api/audit-events");
+      // Ask for the rows we want. This used to fetch every audit event the org
+      // has -- 12,176 of them, 11.3MB -- to keep the few matching one action.
+      const res = await fetch(`/api/audit-events?action=agent.outcome_sla_review_required&object_id=${encodeURIComponent(agentId!)}&limit=50`);
       if (!res.ok) return [];
       const all = await res.json();
-      return all.filter((e: any) =>
-        e.action === "agent.outcome_sla_review_required" && e.objectId === agentId
-      ).sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      return all.sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     },
     enabled: !!agentId && !!agent?.outcomeId,
   });
@@ -1216,11 +1216,11 @@ function AgentDetailInner() {
   const { data: agentAuditEvents } = useQuery<Array<{ id: string; action: string; objectId: string; details: any; timestamp: string; createdAt?: string }>>({
     queryKey: ["/api/agents", agentId, "audit-events"],
     queryFn: async () => {
-      const res = await fetch("/api/audit-events");
+      // Same as above: filtered server-side rather than downloading the lot.
+      const res = await fetch(`/api/audit-events?action=agent.config_changed&object_id=${encodeURIComponent(agentId!)}&limit=50`);
       if (!res.ok) return [];
       const all = await res.json();
       return (all || [])
-        .filter((e: any) => e.objectId === agentId && e.action === "agent.config_changed")
         .sort((a: any, b: any) => new Date(b.timestamp || b.createdAt || 0).getTime() - new Date(a.timestamp || a.createdAt || 0).getTime())
         .slice(0, 5);
     },

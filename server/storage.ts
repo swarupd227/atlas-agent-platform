@@ -363,6 +363,8 @@ export interface IStorage {
   getEvalRuns(suiteId: string): Promise<EvalRun[]>;
   getEvalRunsBySuite(suiteId: string): Promise<EvalRun[]>;
   getAllEvalRuns(): Promise<EvalRun[]>;
+  /** Runs for many suites in one query; the loop form was a 72s N+1. */
+  getEvalRunsBySuiteIds(suiteIds: string[]): Promise<EvalRun[]>;
   createEvalRun(run: InsertEvalRun): Promise<EvalRun>;
   updateEvalRun(id: string, data: Partial<InsertEvalRun>): Promise<EvalRun | undefined>;
   getEvalSuitesBySkill(skillId: string): Promise<EvalSuite[]>;
@@ -1949,6 +1951,21 @@ export class DatabaseStorage implements IStorage {
 
   async getAllEvalRuns() {
     return db.select().from(evalRuns);
+  }
+
+  /**
+   * Runs for many suites in ONE query.
+   *
+   * /api/drift-signals awaited getEvalRunsBySuite(suite.id) inside a loop over
+   * every suite: 701 sequential round trips, measured at 72.7 seconds against
+   * the live database. Node is single-threaded, so for that whole minute every
+   * other request queued behind it -- /version, which touches no database at
+   * all, was taking seconds, and the Dashboard and Monitor rendered nothing.
+   * An N+1 is not just slow here, it is an availability problem.
+   */
+  async getEvalRunsBySuiteIds(suiteIds: string[]) {
+    if (!suiteIds.length) return [];
+    return db.select().from(evalRuns).where(inArray(evalRuns.suiteId, suiteIds));
   }
 
   async createEvalRun(run: InsertEvalRun) {

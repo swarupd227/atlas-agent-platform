@@ -1400,7 +1400,32 @@ Ontology: ${ontologyName || "industry standard"}`,
       });
     }
 
-    res.json(filtered.map(e => redactPayload(e, level)));
+    // Filter and page in the database's stead, because this route had neither
+    // and every caller downloaded the lot: measured on the live app, 12,176
+    // events and 11.3MB per call, 5.4s to serialise. Two callers on the agent
+    // page pull all of it to keep the handful of rows matching one action and
+    // one objectId. Serialising 11MB blocks the event loop, so this was an
+    // availability cost as much as a transfer one.
+    const action = req.query.action as string | undefined;
+    const objectId = (req.query.object_id ?? req.query.objectId) as string | undefined;
+    if (action) filtered = filtered.filter(e => e.action === action);
+    if (objectId) filtered = filtered.filter(e => e.objectId === objectId);
+
+    const total = filtered.length;
+    const rawLimit = Number(req.query.limit);
+    // A default cap rather than none. 1000 is generous for every caller today
+    // and bounds the worst case; a caller wanting more asks for it.
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 5000) : 1000;
+    const rawOffset = Number(req.query.offset);
+    const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+    const page = filtered.slice(offset, offset + limit);
+
+    // Said out loud, in headers so the array response shape is unchanged: a
+    // caller that receives 1000 of 12,176 must be able to tell that it is
+    // holding a page and not the whole history.
+    res.setHeader("X-Total-Count", String(total));
+    res.setHeader("X-Returned-Count", String(page.length));
+    res.json(page.map(e => redactPayload(e, level)));
   });
 
   // Verify hash chain integrity
@@ -2862,9 +2887,22 @@ Ontology: ${ontologyName || "industry standard"}`,
         detectedAt: string;
       }> = [];
 
+      // One query for every suite's runs, grouped here, instead of one query
+      // per suite inside the loop. The loop form was 701 sequential round trips
+      // and 72.7 seconds against the live database, and because Node is
+      // single-threaded that starved every other request for the duration --
+      // /version, which touches no database, was taking seconds, and the
+      // Dashboard and Monitor rendered nothing while it ran.
+      const runsBySuite = new Map<string, Awaited<ReturnType<typeof storage.getEvalRunsBySuite>>>();
+      for (const run of await storage.getEvalRunsBySuiteIds(evalSuites.map((s) => s.id))) {
+        const list = runsBySuite.get(run.suiteId);
+        if (list) list.push(run);
+        else runsBySuite.set(run.suiteId, [run]);
+      }
+
       for (const suite of evalSuites) {
         // Ordinary runs only: a repeated run's strict rate would show as a degraded signal.
-        const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
+        const runs = gradedSuiteRuns(runsBySuite.get(suite.id) ?? []);
         if (runs.length < 2) continue;
 
         const sorted = [...runs].sort((a, b) =>
@@ -2939,7 +2977,10 @@ Ontology: ${ontologyName || "industry standard"}`,
       
       for (const suite of evalSuites) {
         if (suite.type === "red_team" || suite.type === "accuracy" || suite.type === "faithfulness") {
-          const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
+          // Same map as the loop above. This second pass was the half of the
+          // N+1 that a fixture of plain "regression" suites cannot reach, so it
+          // survived the first fix and the first test of it.
+          const runs = gradedSuiteRuns(runsBySuite.get(suite.id) ?? []);
           if (runs.length < 2) continue;
           const sorted = [...runs].sort((a, b) =>
             new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
@@ -3012,12 +3053,23 @@ Ontology: ${ontologyName || "industry standard"}`,
 
       const agentDriftMap = new Map<string, DriftSignal[]>();
 
+      // One query for every bound agent's suites, not one per suite inside a
+      // loop inside a loop. Same N+1 as /api/drift-signals, in a second route.
+      const killChainRuns = new Map<string, Awaited<ReturnType<typeof storage.getEvalRunsBySuite>>>();
+      for (const run of await storage.getEvalRunsBySuiteIds(
+        evalSuites.filter(s => boundAgents.some(a => a.id === s.agentId)).map(s => s.id),
+      )) {
+        const list = killChainRuns.get(run.suiteId);
+        if (list) list.push(run);
+        else killChainRuns.set(run.suiteId, [run]);
+      }
+
       for (const agent of boundAgents) {
         const agentSuites = evalSuites.filter(s => s.agentId === agent.id);
         const drifts: DriftSignal[] = [];
 
         for (const suite of agentSuites) {
-          const runs = gradedSuiteRuns(await storage.getEvalRunsBySuite(suite.id));
+          const runs = gradedSuiteRuns(killChainRuns.get(suite.id) ?? []);
           if (runs.length < 2) continue;
           const sorted = [...runs].sort((a, b) =>
             new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
