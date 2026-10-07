@@ -1418,6 +1418,438 @@ function getServerDefinitions(): MockMcpServerDef[] {
       ],
     },
     {
+      name: "MGA Oversight Data",
+      description: "Simulated carrier-side oversight data for the Delegated Authority Review journey: MGAs, agreement versions, bordereaux, governed-metric inputs and scoped context (letters, calls, emails). Every read names a reviewer and one MGA and is refused outside that reviewer's scope; context is filtered by permission and the evidence cutoff before it is ranked. Read-only. Sample data.",
+      baseUrl: `${BASE_URL}/api/mock/mga-oversight-data`,
+      tools: [
+        {
+          name: "oversight_check_scope",
+          description: "Check a review's scope before anything is read: the reviewer, the MGA, that the agreement belongs to that MGA, the period and the evidence cutoff. Returns ok and a list of errors; it never picks an entity when they conflict.",
+          endpoint: "/review-scope",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string",
+                "description": "The reviewer's identity"
+              },
+              "mga_id": {
+                "type": "string",
+                "description": "The MGA, e.g. AGY-HARB-01"
+              },
+              "agreement_id": {
+                "type": "string"
+              },
+              "period": {
+                "type": "string",
+                "description": "e.g. 2026-02"
+              },
+              "evidence_cutoff": {
+                "type": "string",
+                "description": "e.g. 2026-02-28"
+              }
+            },
+            "required": [
+              "reviewer",
+              "mga_id",
+              "agreement_id",
+              "period",
+              "evidence_cutoff"
+            ]
+          },
+        },
+        {
+          name: "oversight_list_sources",
+          description: "List the sources this review may rely on: metadata only (id, version, hash, kind, authored date), each marked contemporaneous or subsequent_context against the evidence cutoff. Restricted and revoked sources are counted, not listed.",
+          endpoint: "/sources",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string",
+                "description": "The reviewer's identity"
+              },
+              "mga_id": {
+                "type": "string",
+                "description": "The MGA, e.g. AGY-HARB-01"
+              },
+              "evidence_cutoff": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reviewer",
+              "mga_id",
+              "evidence_cutoff"
+            ]
+          },
+        },
+        {
+          name: "oversight_get_bordereau",
+          description: "Read an MGA's bordereau rows for a period (kind premium or claims), each with its source, sheet and row. A value the MGA did not report stays null.",
+          endpoint: "/bordereau",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string",
+                "description": "The reviewer's identity"
+              },
+              "mga_id": {
+                "type": "string",
+                "description": "The MGA, e.g. AGY-HARB-01"
+              },
+              "period": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "description": "premium or claims"
+              }
+            },
+            "required": [
+              "reviewer",
+              "mga_id",
+              "period"
+            ]
+          },
+        },
+        {
+          name: "oversight_get_agreement_versions",
+          description: "Read every version of an MGA's binding authority agreement, with the dates each applied (classes, territories, limits, referral lines). The review picks the version in force on each transaction date.",
+          endpoint: "/agreement-versions",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string",
+                "description": "The reviewer's identity"
+              },
+              "mga_id": {
+                "type": "string",
+                "description": "The MGA, e.g. AGY-HARB-01"
+              },
+              "agreement_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reviewer",
+              "mga_id",
+              "agreement_id"
+            ]
+          },
+        },
+        {
+          name: "oversight_get_performance_inputs",
+          description: "Read the figures a governed metric needs for a period and the prior period (earned premium, incurred losses, target), with the metric's definition and version. The ratio is calculated by the review, not here.",
+          endpoint: "/performance-inputs",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string",
+                "description": "The reviewer's identity"
+              },
+              "mga_id": {
+                "type": "string",
+                "description": "The MGA, e.g. AGY-HARB-01"
+              },
+              "period": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reviewer",
+              "mga_id",
+              "period"
+            ]
+          },
+        },
+        {
+          name: "oversight_retrieve_context",
+          description: "Retrieve evidence spans for one MGA, filtered by permission and the evidence cutoff before they are ranked. Later material is labelled subsequent_context; subsequent=exclude gives the reporting-period view. Reports what it withheld, and says 'No accessible context found' when there is none.",
+          endpoint: "/context",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string",
+                "description": "The reviewer's identity"
+              },
+              "mga_id": {
+                "type": "string",
+                "description": "The MGA, e.g. AGY-HARB-01"
+              },
+              "evidence_cutoff": {
+                "type": "string"
+              },
+              "query": {
+                "type": "string",
+                "description": "What to look for"
+              },
+              "subsequent": {
+                "type": "string",
+                "description": "include (default, labelled) or exclude"
+              }
+            },
+            "required": [
+              "reviewer",
+              "mga_id",
+              "evidence_cutoff"
+            ]
+          },
+        },
+        {
+          name: "oversight_get_source_excerpt",
+          description: "Open one cited span of one source. Permission and MGA scope are re-checked, so another MGA's source or a restricted one is refused.",
+          endpoint: "/source-excerpt",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string",
+                "description": "The reviewer's identity"
+              },
+              "mga_id": {
+                "type": "string",
+                "description": "The MGA, e.g. AGY-HARB-01"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "span": {
+                "type": "number",
+                "description": "Span number, from 1"
+              }
+            },
+            "required": [
+              "reviewer",
+              "mga_id",
+              "source_id"
+            ]
+          },
+        },
+      ],
+    },
+    {
+      name: "MGA Oversight Actions",
+      description: "Simulated action ledger and outbox for the Delegated Authority Review journey. Drafts are versioned and hashed, approvals bind to one version and to a role, routing is idempotent and allowlisted and writes only to a simulated outbox, and every call is audited. There is no way here to change an MGA's authority, sanction it or send a real message.",
+      baseUrl: `${BASE_URL}/api/mock/mga-oversight-actions`,
+      tools: [
+        {
+          name: "oversight_save_action_draft",
+          description: "Save a proposed follow-up as a versioned draft pending approval. Only the allowlisted action type and the MGA's contact on file are accepted, and it needs evidence references. Changing a saved draft makes a new version and voids approvals of the old one. No external effect.",
+          endpoint: "/action-draft",
+          method: "POST",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string"
+              },
+              "mga_id": {
+                "type": "string"
+              },
+              "review_id": {
+                "type": "string"
+              },
+              "action_id": {
+                "type": "string",
+                "description": "Set to edit an existing draft"
+              },
+              "action_type": {
+                "type": "string",
+                "description": "request_missing_evidence"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "due_at": {
+                "type": "string"
+              },
+              "recipient": {
+                "type": "string"
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "required_approver_role": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reviewer",
+              "mga_id",
+              "review_id",
+              "action_type",
+              "owner",
+              "due_at",
+              "recipient",
+              "evidence_refs",
+              "subject",
+              "body"
+            ]
+          },
+        },
+        {
+          name: "oversight_record_approval",
+          description: "Record a person's decision on one version of an action. Refused for a stale version, a changed hash, or a decider who does not hold the role the action needs.",
+          endpoint: "/approval",
+          method: "POST",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "action_id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "number"
+              },
+              "content_hash": {
+                "type": "string"
+              },
+              "approval_id": {
+                "type": "string"
+              },
+              "decided_by": {
+                "type": "string"
+              },
+              "decision": {
+                "type": "string",
+                "description": "approved or rejected"
+              }
+            },
+            "required": [
+              "action_id",
+              "version",
+              "content_hash",
+              "approval_id",
+              "decided_by",
+              "decision"
+            ]
+          },
+        },
+        {
+          name: "oversight_route_action",
+          description: "Route an approved action to the simulated outbox. Needs an approval of the current version, an idempotency key, and allowlisted type and recipient. A repeat with the same key returns the same receipt; a second key is refused.",
+          endpoint: "/route",
+          method: "POST",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "action_id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "number"
+              },
+              "idempotency_key": {
+                "type": "string"
+              },
+              "routed_by": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action_id",
+              "version",
+              "idempotency_key"
+            ]
+          },
+        },
+        {
+          name: "oversight_get_action",
+          description: "Read an action's current state: its version and hash, approvals, routing receipt, any response and any closure.",
+          endpoint: "/action",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "action_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action_id"
+            ]
+          },
+        },
+        {
+          name: "oversight_pending_responses",
+          description: "List routed actions whose MGA has replied and that are not yet closed, for the reviewer's MGAs.",
+          endpoint: "/pending-responses",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reviewer"
+            ]
+          },
+        },
+        {
+          name: "oversight_close_action",
+          description: "Close an action awaiting a response. Needs a disposition (evidence_validated or justified_disposition) and a reason: a reply alone does not close it.",
+          endpoint: "/close",
+          method: "POST",
+          inputSchema: {
+            "type": "object",
+            "properties": {
+              "action_id": {
+                "type": "string"
+              },
+              "closed_by": {
+                "type": "string"
+              },
+              "disposition": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action_id",
+              "closed_by",
+              "disposition",
+              "reason"
+            ]
+          },
+        },
+        {
+          name: "oversight_audit",
+          description: "Read the append-only audit of every call this system has handled, including every refusal, in sequence.",
+          endpoint: "/audit",
+          method: "GET",
+          inputSchema: {
+            "type": "object",
+            "properties": {}
+          },
+        },
+      ],
+    },
+    {
       name: "365 Retail Salesforce KYC",
       description: "Simulated Salesforce KYC form, review cases and risk status for the 365 Retail Markets UC09 KYC validation workflow. Tax IDs and bank accounts are returned masked; exact comparisons run inside the system and come back as verdicts. The only writes are a review case (Medium and High only) and a risk status. There is deliberately no way to approve KYC, block an account, change bank details or activate payments.",
       baseUrl: `${BASE_URL}/api/mock/365-salesforce-kyc`,
