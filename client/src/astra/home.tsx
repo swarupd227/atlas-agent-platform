@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { ArrowUpRight, ChevronRight } from "lucide-react";
+import { ArrowUpRight, ChevronRight, MessageSquare } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { getApiHeaders } from "@/lib/queryClient";
 import { useIndustry } from "@/components/industry-provider";
@@ -158,7 +158,9 @@ export function timeAgo(at: string | null, now = Date.now()): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-function ActivityList({ label, items, empty, testId }: { label: string; items: ActivityItem[]; empty: string; testId: string }) {
+const ROW_CLASS = "group flex items-center gap-3 px-3 py-2.5 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+
+function ActivityList({ label, items, empty, testId, onSend }: { label: string; items: ActivityItem[]; empty: string; testId: string; onSend: (text: string) => void }) {
   return (
     <section aria-label={label} data-testid={testId}>
       <h2 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">{label}</h2>
@@ -168,11 +170,19 @@ function ActivityList({ label, items, empty, testId }: { label: string; items: A
         <ul className="divide-y divide-border overflow-hidden rounded-md border border-border bg-card">
           {items.map((i) => (
             <li key={`${i.kind}:${i.id}`}>
-              <Link
-                href={`~${i.href}`}
-                className="group flex items-center gap-3 px-3 py-2.5 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-                data-testid={`astra-activity-${i.kind}-${i.id}`}
-              >
+              {/*
+                A row with a page goes to it; a row without one ASKS. An agent
+                run has no page: its href was "/workspace", which opened a blank
+                Agent Workspace saying "Choose an agent…" with no sign of the run
+                you clicked. Astra has the run tooling and answers in place, the
+                way the briefing rows above already do.
+              */}
+              {i.href ? (
+                <Link
+                  href={`~${i.href}`}
+                  className={ROW_CLASS}
+                  data-testid={`astra-activity-${i.kind}-${i.id}`}
+                >
                 <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[i.status]}`} aria-label={STATUS_WORD[i.status]} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">
@@ -182,8 +192,28 @@ function ActivityList({ label, items, empty, testId }: { label: string; items: A
                   <span className={`block truncate text-xs ${i.status === "failed" || i.status === "stalled" ? "text-[hsl(var(--astra-fail))]" : "text-muted-foreground"}`}>{i.detail}</span>
                 </span>
                 <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">{timeAgo(i.at)}</span>
-                <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60 group-hover:text-foreground" aria-hidden />
-              </Link>
+                  <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60 group-hover:text-foreground" aria-hidden />
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSend(i.ask ?? `What happened in the ${i.title} run?`)}
+                  className={`w-full text-left ${ROW_CLASS}`}
+                  data-testid={`astra-activity-${i.kind}-${i.id}`}
+                  title={i.ask}
+                >
+                <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[i.status]}`} aria-label={STATUS_WORD[i.status]} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">
+                    {i.title}
+                    <span className="ml-2 text-xs text-muted-foreground">{i.kind === "team_run" ? "Team" : "Agent"}</span>
+                  </span>
+                  <span className={`block truncate text-xs ${i.status === "failed" || i.status === "stalled" ? "text-[hsl(var(--astra-fail))]" : "text-muted-foreground"}`}>{i.detail}</span>
+                </span>
+                <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">{timeAgo(i.at)}</span>
+                  <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60 group-hover:text-foreground" aria-hidden />
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -193,7 +223,7 @@ function ActivityList({ label, items, empty, testId }: { label: string; items: A
 }
 
 /** In progress, recent and spend: each line a summary, each link the detail. */
-export function HomeActivityPanel() {
+export function HomeActivityPanel({ onSend }: { onSend: (text: string) => void }) {
   const { data, isLoading, isError } = useHomeActivity();
   if (isLoading) {
     return <div className="h-24 animate-pulse rounded-md bg-card" aria-busy="true" aria-label="Loading activity" />;
@@ -203,7 +233,7 @@ export function HomeActivityPanel() {
   }
   return (
     <div className="space-y-6">
-      <ActivityList label="In progress" items={data.inProgress} empty="Nothing is running right now." testId="astra-home-in-progress" />
+      <ActivityList label="In progress" items={data.inProgress} empty="Nothing is running right now." testId="astra-home-in-progress" onSend={onSend} />
       {/* "in the last 7 days", not "this week": the window is rolling, and the
           empty state already said so. On a Monday "this week" reads as "since
           Monday" and the two lines described different periods.
@@ -211,7 +241,7 @@ export function HomeActivityPanel() {
           without finishing -- an agent run whose process is gone. Saying
           "finished" over a row that reads "never finished" is the contradiction
           that put it under "In progress" in the first place. */}
-      <ActivityList label="Ended in the last 7 days" items={data.recent} empty="No runs ended in the last 7 days." testId="astra-home-recent" />
+      <ActivityList label="Ended in the last 7 days" items={data.recent} empty="No runs ended in the last 7 days." testId="astra-home-recent" onSend={onSend} />
       {data.spend && (
         <section aria-label="Spend" data-testid="astra-home-spend">
           <h2 className="mb-2 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Model spend · last {data.spend.days} days</h2>

@@ -310,7 +310,7 @@ export function Thread({
             <div className="space-y-8 pt-[4vh]" data-testid="astra-cowork-home">
               <HomeGreeting />
               <HomeBriefing onSend={onSend} />
-              <HomeActivityPanel />
+              <HomeActivityPanel onSend={onSend} />
               <section aria-label="Start something">
                 {/* No standing promise about confirmation or provenance here. The
                     confirm card shows what will change before it changes, and the

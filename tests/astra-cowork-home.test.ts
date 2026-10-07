@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { buildActivity, duration, type AgentRunRow, type TeamRunRow } from "../server/astra/home-activity";
+import { buildActivity, duration, agentRunPrompt, type AgentRunRow, type TeamRunRow } from "../server/astra/home-activity";
 import { greetingFor, waitingLine, timeAgo } from "../client/src/astra/home";
 import { homeRoute } from "../client/src/lib/home-route";
 
@@ -234,5 +234,63 @@ describe("Astra Cowork is the default surface", () => {
     expect(sidebar).toContain("Astra Cowork");
     expect(sidebar).not.toMatch(/>\s*Ask Astra\s*</);
     expect(read("client", "src", "astra", "astra-layout.tsx")).toContain('"Astra Cowork"');
+  });
+});
+
+/**
+ * Where a row on the home page goes when you click it.
+ *
+ * Reported by the user: every Agent row opened the Agent Workspace with nothing
+ * loaded. Measured live 2026-10-07 — of 7 activity rows, the 3 Team rows went to
+ * /dag-runs/:id and loaded the run (10,351 chars), and all 4 Agent rows went to
+ * a hardcoded "/workspace" with no run id, landing on 252 characters of empty
+ * form reading "Choose an agent…". It could not have worked with an id either:
+ * that page sets its runId only from a live run_started stream event.
+ *
+ * So an agent run has no page, and the row asks Astra instead — which has the
+ * run tooling and answers in place, the way the briefing rows already do.
+ */
+describe("a row with no page asks instead of navigating", () => {
+  const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8");
+
+  it("gives an agent run no href, and a question to ask", () => {
+    const a = buildActivity({ teamRuns: [], agentRuns: [agent({ status: "completed" })], spend: null, now: NOW });
+    const row = a.recent[0];
+    expect(row.href).toBeNull();
+    expect(row.ask).toMatch(/^What happened in the /);
+  });
+
+  it("never points an agent run at the empty workspace again", () => {
+    const a = buildActivity({
+      teamRuns: [],
+      agentRuns: [agent({ id: "w1", status: "running" }), agent({ id: "w2", status: "awaiting_approval" }), agent({ id: "w3", status: "failed" })],
+      spend: null,
+      now: NOW,
+    });
+    for (const row of [...a.inProgress, ...a.recent]) {
+      expect(row.href).not.toBe("/workspace");
+    }
+  });
+
+  it("keeps the team run's page, which works", () => {
+    const a = buildActivity({ teamRuns: [team({ id: "t1" })], agentRuns: [], spend: null, now: NOW });
+    expect(a.inProgress[0].href).toBe("/dag-runs/t1");
+    expect(a.inProgress[0].ask).toBeUndefined();
+  });
+
+  it("names the run and when it ran, so the conversation does not open by asking which one", () => {
+    // Two runs of one agent are told apart by time, not by id, in anything a
+    // person reads.
+    expect(agentRunPrompt("Northgate Policy Assistant", minsAgo(60 * 4), NOW))
+      .toBe("What happened in the Northgate Policy Assistant run from 4 h ago?");
+    expect(agentRunPrompt("An agent", null, NOW)).toBe("What happened in the An agent run?");
+  });
+
+  it("the client renders a button, not a link, when there is nowhere to go", () => {
+    const home = read("client", "src", "astra", "home.tsx");
+    expect(home).toContain("{i.href ? (");
+    expect(home).toContain("onClick={() => onSend(i.ask");
+    // Both branches share one class so they cannot drift apart visually.
+    expect(home).toContain("const ROW_CLASS");
   });
 });

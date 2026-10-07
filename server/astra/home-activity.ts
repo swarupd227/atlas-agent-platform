@@ -49,7 +49,16 @@ export interface ActivityItem {
   detail: string;
   status: "running" | "waiting" | "stalled" | "completed" | "failed";
   at: string | null;
-  href: string;
+  /**
+   * Where the row goes, or null when there is nowhere to send anyone. A team
+   * run has /dag-runs/:id; an agent run had "/workspace" hardcoded with no id,
+   * which opened an empty Agent Workspace asking you to choose an agent -- and
+   * could not have worked with an id either, because that page sets its runId
+   * only from a live run_started stream event and cannot open a past run.
+   */
+  href: string | null;
+  /** What to ask Astra instead, when href is null. */
+  ask?: string;
   /** How many runs this line stands for, when several were grouped. */
   count?: number;
 }
@@ -125,9 +134,21 @@ function teamItem(r: TeamRunRow, now: number): ActivityItem {
   return { id: r.id, kind: "team_run", title, detail, status: failed ? "failed" : "completed", at: iso(r.completedAt ?? r.createdAt), href };
 }
 
+/**
+ * What to put to Astra about this run. It names the run so the conversation
+ * does not open by asking which one, and says when it ran because two runs of
+ * one agent are told apart by time, not by id, in anything a person reads.
+ */
+export function agentRunPrompt(agentName: string, at: string | null, now = Date.now()): string {
+  const when = at ? ` from ${duration(ms(at), now)} ago` : "";
+  return `What happened in the ${agentName} run${when}?`;
+}
+
 function agentItem(r: AgentRunRow, now: number): ActivityItem {
   const title = r.agentName || "An agent that no longer exists";
-  const href = "/workspace";
+  // No href: see ActivityItem.href. The row asks Astra, which has the run
+  // tooling and answers with its proof, rather than opening a blank page.
+  const href = null;
   const asked = oneLine(r.requestText, 60);
   if (IN_FLIGHT_AGENT.has(r.status)) {
     const waiting = r.status === "awaiting_approval";
@@ -143,12 +164,14 @@ function agentItem(r: AgentRunRow, now: number): ActivityItem {
       status: waiting ? "waiting" : stalled ? "stalled" : "running",
       at: iso(r.createdAt),
       href,
+      ask: agentRunPrompt(title, iso(r.createdAt), now),
     };
   }
   const failed = r.status !== "completed";
   // The question says what the run was for; the answer's first line is often the model clearing its throat.
   const detail = failed ? (r.status === "denied" ? "Stopped: the approval was denied" : "Failed") : asked ? `Answered “${asked}”` : "Finished";
-  return { id: r.id, kind: "agent_run", title, detail, status: failed ? "failed" : "completed", at: iso(r.updatedAt ?? r.createdAt), href };
+  const at = iso(r.updatedAt ?? r.createdAt);
+  return { id: r.id, kind: "agent_run", title, detail, status: failed ? "failed" : "completed", at, href, ask: agentRunPrompt(title, at, now) };
 }
 
 /**

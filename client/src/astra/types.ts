@@ -168,7 +168,10 @@ export interface ActivityItem {
   detail: string;
   status: "running" | "waiting" | "stalled" | "completed" | "failed";
   at: string | null;
-  href: string;
+  /** null when there is nowhere to send anyone; the row asks Astra instead. */
+  href: string | null;
+  /** What to ask Astra, when href is null. */
+  ask?: string;
   count?: number;
 }
 
