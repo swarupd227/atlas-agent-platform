@@ -44,7 +44,7 @@ import {
   Repeat,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
-import { answerPosition } from "@shared/eval-run-view";
+import { answerPosition, defaultCompareAnswer, isRepeatedRun, pickComparisonTrace } from "@shared/eval-run-view";
 
 // ── marked config ─────────────────────────────────────────────────────────────
 
@@ -390,15 +390,25 @@ function SideBySideCompareDialog({
   open,
   onClose,
   currentTrace,
+  currentRun,
   baselineTrace,
 }: {
   open: boolean;
   onClose: () => void;
   currentTrace: TraceWithSpans;
+  currentRun: EvalTestRun | undefined;
   baselineTrace: TraceWithSpans;
 }) {
   const [leftSel, setLeftSel] = useState<string | null>(null);
   const [rightSel, setRightSel] = useState<string | null>(null);
+  // Which answer each side is, when its run was repeated: "Answer 2 of 3", not just a run id.
+  const { data: baselineRun } = useQuery<EvalTestRun>({
+    queryKey: ["/api/eval/runs", baselineTrace.runId],
+    queryFn: async () => (await fetch(`/api/eval/runs/${baselineTrace.runId}`)).json(),
+    enabled: !!baselineTrace.runId,
+  });
+  const currentAnswer = answerPosition(currentTrace, currentRun);
+  const baselineAnswer = answerPosition(baselineTrace, baselineRun);
 
   function buildSpanKeys(spans: EvalSpan[]): string[] {
     const typeCounts: Record<string, number> = {};
@@ -457,7 +467,9 @@ function SideBySideCompareDialog({
           <div className="w-1/2 border-r flex flex-col min-h-0">
             <div className="px-3 py-2 bg-muted/20 border-b shrink-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Current</p>
-              <p className="text-[10px] text-muted-foreground">{currentTrace.runId.slice(0, 12)}</p>
+              <p className="text-[10px] text-muted-foreground" data-testid="text-compare-current-label">
+                {currentTrace.runId.slice(0, 12)}{currentAnswer ? ` · Answer ${currentAnswer.answer} of ${currentAnswer.of}` : ""}
+              </p>
             </div>
             <div className="flex-1 overflow-y-auto py-1">
               {(currentTrace.spanTree ?? []).map((root) => (
@@ -477,7 +489,9 @@ function SideBySideCompareDialog({
           <div className="w-1/2 flex flex-col min-h-0">
             <div className="px-3 py-2 bg-muted/20 border-b shrink-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Baseline</p>
-              <p className="text-[10px] text-muted-foreground">{baselineTrace.runId.slice(0, 12)}</p>
+              <p className="text-[10px] text-muted-foreground" data-testid="text-compare-baseline-label">
+                {baselineTrace.runId.slice(0, 12)}{baselineAnswer ? ` · Answer ${baselineAnswer.answer} of ${baselineAnswer.of}` : ""}
+              </p>
             </div>
             <div className="flex-1 overflow-y-auto py-1">
               {(baselineTrace.spanTree ?? []).map((root) => (
@@ -621,22 +635,34 @@ function ComparePickerDialog({
   }, [runs, currentTrace.runId, agentId]);
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // For a repeated run: which of its answers to compare with. Null for a run answered once.
+  const [answer, setAnswer] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const selectedRun = candidates.find((r) => r.id === selectedRunId);
 
   const handleConfirm = async () => {
-    if (!selectedRunId) return;
+    if (!selectedRunId || !selectedRun) return;
     setLoading(true);
     try {
+      // Every answer this run holds for the golden (at most MAX_REPEATS), not the first row of a
+      // newest-first list: for a repeated run that was one arbitrary answer of several.
       const res = await fetch(
-        `/api/eval/runs/${selectedRunId}/traces?goldenId=${currentTrace.goldenId}&limit=1`,
+        `/api/eval/runs/${selectedRunId}/traces?goldenId=${encodeURIComponent(currentTrace.goldenId)}&limit=50`,
       );
       const traces: EvalTrace[] = await res.json();
-      if (!traces || traces.length === 0) {
-        toast({ title: "No trace found", description: "This run has no trace for the same golden.", variant: "destructive" });
+      const picked = Array.isArray(traces) ? pickComparisonTrace(traces, selectedRun, answer) : null;
+      if (!picked) {
+        toast({
+          title: "No trace found",
+          description: isRepeatedRun(selectedRun) && answer != null
+            ? `This run has no answer ${answer} for the same golden.`
+            : "This run has no trace for the same golden.",
+          variant: "destructive",
+        });
         return;
       }
-      onSelectCompare(traces[0].id);
+      onSelectCompare(picked.id);
       onClose();
     } catch {
       toast({ title: "Failed to load comparison", variant: "destructive" });
@@ -664,21 +690,46 @@ function ComparePickerDialog({
             candidates.map((r) => (
               <button
                 key={r.id}
-                onClick={() => setSelectedRunId(r.id)}
+                onClick={() => { setSelectedRunId(r.id); setAnswer(defaultCompareAnswer(currentTrace, r)); }}
                 className={`w-full text-left rounded-md border px-3 py-2 text-xs transition-colors hover:bg-muted/40 ${
                   selectedRunId === r.id ? "border-primary/50 bg-primary/5" : "border-border"
                 }`}
                 data-testid={`compare-run-${r.id}`}
               >
-                <div className="font-mono font-medium">{r.id.slice(0, 16)}</div>
+                <div className="font-mono font-medium">
+                  {r.id.slice(0, 16)}
+                  {isRepeatedRun(r) && <span className="ml-2 font-sans font-normal text-primary">×{r.repeats} answers</span>}
+                </div>
                 <div className="text-muted-foreground mt-0.5">
-                  {r.passRate != null ? `${Math.round(r.passRate * 100)}% pass` : "—"} ·{" "}
+                  {r.passRate != null ? `${Math.round(r.passRate * 100)}% ${isRepeatedRun(r) ? "strict pass" : "pass"}` : "—"} ·{" "}
                   {r.startedAt ? formatDate(r.startedAt as string) : "—"}
                 </div>
               </button>
             ))
           )}
         </div>
+        {selectedRun && isRepeatedRun(selectedRun) && (
+          <div className="flex flex-col gap-1.5" data-testid="compare-answer-picker">
+            <span className="text-[11px] text-muted-foreground">
+              This run answered the golden {selectedRun.repeats} times. Compare with which answer?
+            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {Array.from({ length: selectedRun.repeats as number }, (_, i) => i + 1).map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setAnswer(n)}
+                  className={`h-7 min-w-7 px-2 rounded-md border text-xs transition-colors hover:bg-muted/40 ${
+                    answer === n ? "border-primary/50 bg-primary/10 text-primary font-medium" : "border-border"
+                  }`}
+                  aria-pressed={answer === n}
+                  data-testid={`compare-answer-${n}`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="flex justify-end gap-2 mt-2">
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
           <Button
@@ -1281,6 +1332,7 @@ export default function EvalTraceInspector() {
           open={compareViewOpen}
           onClose={() => setCompareViewOpen(false)}
           currentTrace={trace}
+          currentRun={run}
           baselineTrace={compareTrace}
         />
       )}

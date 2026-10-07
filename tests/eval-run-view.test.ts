@@ -18,7 +18,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   groupTracesByGolden, collapseByGolden, filterGoldenRows, isRepeatedRun, meanScore, previousComparableRun,
-  repeatedRunVerdict, hasRepeatedVerdict, bundlePassPercent, answerPosition, type TraceLike,
+  repeatedRunVerdict, hasRepeatedVerdict, bundlePassPercent, answerPosition, defaultCompareAnswer, pickComparisonTrace, type TraceLike,
 } from "../shared/eval-run-view";
 import { runRateTone } from "../client/src/pages/eval-studio-home";
 
@@ -208,11 +208,89 @@ describe("answerPosition: which of a repeated run's answers a trace is", () => {
   });
 });
 
+describe("defaultCompareAnswer / pickComparisonTrace: setting a trace beside the same golden in another run", () => {
+  const t = (id: string, attempt: number | null) => ({ id, attempt });
+  const rep3 = { repeats: 3 };
+
+  it("defaults to the answer with the same number as the one being viewed", () => {
+    expect(defaultCompareAnswer({ attempt: 2 }, rep3)).toBe(2);
+    expect(defaultCompareAnswer({ attempt: 3 }, rep3)).toBe(3);
+  });
+
+  it("defaults to the first answer when the viewed trace has no matching one", () => {
+    expect(defaultCompareAnswer({ attempt: 1 }, rep3)).toBe(1);
+    expect(defaultCompareAnswer({ attempt: 5 }, rep3)).toBe(1); // the other run answered only 3 times
+    expect(defaultCompareAnswer({ attempt: null }, rep3)).toBe(1);
+    expect(defaultCompareAnswer(null, rep3)).toBe(1);
+    expect(defaultCompareAnswer({ attempt: 0 }, rep3)).toBe(1);
+  });
+
+  it("has no answer to choose for a run answered once", () => {
+    expect(defaultCompareAnswer({ attempt: 2 }, { repeats: 1 })).toBeNull();
+    expect(defaultCompareAnswer({ attempt: 2 }, { repeats: null })).toBeNull();
+    expect(defaultCompareAnswer({ attempt: 2 }, undefined)).toBeNull();
+  });
+
+  it("takes the chosen answer from a repeated run, whatever order the traces came in", () => {
+    // newest first, as the traces route returns them: limit=1 used to take the first of these
+    const list = [t("a3", 3), t("a1", 1), t("a2", 2)];
+    expect(pickComparisonTrace(list, rep3, 2)?.id).toBe("a2");
+    expect(pickComparisonTrace(list, rep3, 1)?.id).toBe("a1");
+    expect(pickComparisonTrace(list, rep3, 3)?.id).toBe("a3");
+  });
+
+  it("picks nothing, rather than another answer, when the chosen one is missing or none was chosen", () => {
+    expect(pickComparisonTrace([t("a1", 1), t("a3", 3)], rep3, 2)).toBeNull();
+    expect(pickComparisonTrace([t("a1", 1)], rep3, null)).toBeNull();
+    expect(pickComparisonTrace([], rep3, 1)).toBeNull();
+  });
+
+  it("takes the one trace of a run answered once, and nothing when it has none", () => {
+    expect(pickComparisonTrace([t("only", 1)], { repeats: 1 }, null)?.id).toBe("only");
+    expect(pickComparisonTrace([t("only", null)], {}, null)?.id).toBe("only");
+    expect(pickComparisonTrace([], { repeats: 1 }, null)).toBeNull();
+  });
+});
+
+describe("the trace page's Compare dialog and panel", () => {
+  const inspector = readFileSync(new URL("../client/src/pages/eval-trace-inspector.tsx", import.meta.url), "utf8");
+
+  it("asks for every answer to the golden in the chosen run and picks by number, not limit=1", () => {
+    expect(inspector).toContain("goldenId=${encodeURIComponent(currentTrace.goldenId)}&limit=50");
+    expect(inspector).not.toContain("&limit=1");
+    expect(inspector).toContain("pickComparisonTrace(traces, selectedRun, answer)");
+    expect(inspector).not.toContain("onSelectCompare(traces[0].id)");
+  });
+
+  it("offers the answers of a repeated run, defaulting to the one being viewed", () => {
+    expect(inspector).toContain("setAnswer(defaultCompareAnswer(currentTrace, r))");
+    expect(inspector).toContain('data-testid="compare-answer-picker"');
+    expect(inspector).toContain("compare-answer-${n}");
+  });
+
+  it("shows the answer chooser only for a repeated run, and tags a repeated candidate", () => {
+    expect(inspector).toContain("{selectedRun && isRepeatedRun(selectedRun) && (");
+    expect(inspector).toContain('{isRepeatedRun(r) && <span className="ml-2 font-sans font-normal text-primary">×{r.repeats} answers</span>}');
+    expect(inspector).toContain('{isRepeatedRun(r) ? "strict pass" : "pass"}');
+  });
+
+  it("labels both sides of the panel with their answer, from the answer's own number", () => {
+    expect(inspector).toContain("{currentAnswer ? ` · Answer ${currentAnswer.answer} of ${currentAnswer.of}` : \"\"}");
+    expect(inspector).toContain("{baselineAnswer ? ` · Answer ${baselineAnswer.answer} of ${baselineAnswer.of}` : \"\"}");
+  });
+
+  it("says which answer each side of the panel is", () => {
+    expect(inspector).toContain("answerPosition(currentTrace, currentRun)");
+    expect(inspector).toContain("answerPosition(baselineTrace, baselineRun)");
+    expect(inspector).toContain("currentRun={run}");
+  });
+});
+
 describe("the trace page", () => {
   const inspector = readFileSync(new URL("../client/src/pages/eval-trace-inspector.tsx", import.meta.url), "utf8");
 
   it("says which answer the trace is, through answerPosition, only when there is something to say", () => {
-    expect(inspector).toContain('import { answerPosition } from "@shared/eval-run-view";');
+    expect(inspector).toMatch(/import \{[^}]*\banswerPosition\b[^}]*\} from "@shared\/eval-run-view";/);
     expect(inspector).toContain("{answerPosition(trace, run) && (");
     expect(inspector).toContain('data-testid="badge-answer-of"');
     expect(inspector).toMatch(/Answer \{answerPosition\(trace, run\)!\.answer\} of \{answerPosition\(trace, run\)!\.of\}/);

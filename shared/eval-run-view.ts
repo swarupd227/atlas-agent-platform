@@ -59,6 +59,39 @@ export function answerPosition(
 }
 
 /**
+ * Which answer to compare with when a trace is set beside the same golden in another run. A repeated
+ * run holds several traces for one golden, so "the trace for this golden" is not one trace. The
+ * default is the answer with the same number as the one being viewed (the second against the second),
+ * or the first when the viewed trace is not one of several or has no such answer; null for a run that
+ * was not repeated, which has only one.
+ */
+export function defaultCompareAnswer(
+  current: { attempt?: number | null } | null | undefined,
+  target: { repeats?: number | null } | null | undefined,
+): number | null {
+  if (!isRepeatedRun(target)) return null;
+  const of = target!.repeats as number;
+  const a = current?.attempt;
+  return typeof a === "number" && Number.isInteger(a) && a >= 1 && a <= of ? a : 1;
+}
+
+/**
+ * The trace to compare with, out of a golden's traces in the other run. An ordinary run has one, so
+ * it is that one. A repeated run is answered by number: the chosen answer, or none, never "whichever
+ * was written last", which is what taking the first row of a newest-first list gave.
+ */
+export function pickComparisonTrace<T extends { attempt?: number | null }>(
+  traces: T[],
+  target: { repeats?: number | null } | null | undefined,
+  answer: number | null,
+): T | null {
+  if (!traces || traces.length === 0) return null;
+  if (!isRepeatedRun(target)) return traces[0];
+  if (answer == null) return null;
+  return traces.find((t) => t.attempt === answer) ?? null;
+}
+
+/**
  * The pass rate a patch's eval bundle (patches.eval_bundle) shows, as a whole percent, or null when
  * it has none. The bundle is a loose JSON blob that several writers have filled over time, and its
  * passRate is not on one scale: the patch-eval route copied it from the agent's latest run, a 0-1
