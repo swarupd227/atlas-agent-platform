@@ -41,6 +41,14 @@ export const FINISHED_STATUSES = new Set(["rolled_back", "promoted", "superseded
 /** Has not been live yet, so whatever approval it needs has not been given by going live before. */
 const NEVER_LIVE_STATUSES = new Set(["pending", "awaiting_approval", "pipeline_failed"]);
 
+/**
+ * Approval statuses that are still waiting on a decision: the same set as OPEN_APPROVAL_STATUSES in
+ * approval-decision.ts (a test holds them equal; it is not imported so this module stays light).
+ * An approval that expired, or was sent back for changes, can still be decided on the approval
+ * pages, so a deployment holding one is awaiting a decision, not refused.
+ */
+export const OPEN_APPROVAL_STATUSES = new Set(["pending", "changes_requested", "expired"]);
+
 /** Routing actions that put a deployment in front of traffic. The others (shadow off, rollback) take it out. */
 export const GOES_LIVE_ACTIONS = new Set(["shadow_on", "canary_start", "canary_increase", "full_rollout"]);
 
@@ -99,11 +107,12 @@ export async function checkMayGoLive(deployment: { id: string; agentId: string; 
 
   if (NEVER_LIVE_STATUSES.has(deployment.status)) {
     const approval = await latestApprovalFor(deployment.id, ctx.orgId);
-    if (approval && approval.status === "pending") {
-      return refuse(409, "awaiting_approval", `This deployment is waiting on its ${String(approval.type).replace(/_/g, " ")} approval; it goes live when that is approved.`, { approvalId: approval.id });
+    if (approval && OPEN_APPROVAL_STATUSES.has(approval.status)) {
+      const state = approval.status === "pending" ? "is waiting for a decision" : approval.status === "expired" ? "expired without a decision (it can still be decided)" : "was sent back for changes";
+      return refuse(409, "awaiting_approval", `This deployment's ${String(approval.type).replace(/_/g, " ")} approval ${state}; it goes live when that is approved.`, { approvalId: approval.id, approvalStatus: approval.status });
     }
     if (approval && approval.status !== "approved") {
-      return refuse(409, "approval_not_granted", `This deployment's ${String(approval.type).replace(/_/g, " ")} approval was ${approval.status}; it cannot go live until a new one is approved.`, { approvalId: approval.id });
+      return refuse(409, "approval_not_granted", `This deployment's ${String(approval.type).replace(/_/g, " ")} approval was ${approval.status}; create a new deployment to ask again.`, { approvalId: approval.id, approvalStatus: approval.status });
     }
     if (prod && !approval) {
       const agent = await storage.getAgent(deployment.agentId, ctx.orgId);
