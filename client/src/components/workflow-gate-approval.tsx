@@ -26,7 +26,7 @@ import { PermissionGate } from "@/components/role-provider";
 import type { Approval, AuditEvent } from "@shared/schema";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
 import type { GateEvidence } from "@/components/gate-evidence";
-import { splitWorkingNotes } from "@/lib/agent-output";
+import { splitWorkingNotes, stripVerifiedLedger } from "@/lib/agent-output";
 
 interface WaveNode { nodeId: string; status: string; error?: string; durationMs: number; output: Record<string, any> }
 interface Wave { waveNumber: number; revisionRound?: number; nodes: WaveNode[] }
@@ -77,12 +77,19 @@ function duration(ms: number | null | undefined): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
 
-/** A step's own text output, without the platform's tool-call ledger (that lives on the run page). */
+/**
+ * A step's own text output, without the platform's tool-call ledger.
+ *
+ * The ledger is written for the next agent rather than for a reader, and it is
+ * now folded away wherever a person reads a step -- here and on the run page,
+ * which used to show it inline. The rule itself lives in @/lib/agent-output so
+ * a fourth surface does not have to rediscover it.
+ */
 function stepText(output: Record<string, any> | undefined): string {
   if (!output) return "";
   return Object.entries(output)
     .filter(([k, v]) => !k.endsWith(FILES_KEY_SUFFIX) && !["selectedAgentName", "managerReasoning", "__meta"].includes(k) && typeof v === "string" && v.trim())
-    .map(([, v]) => String(v).split(/\n-{3,}\nPLATFORM-VERIFIED TOOL CALL LOG/)[0].trim())
+    .map(([, v]) => stripVerifiedLedger(String(v)).trim())
     .join("\n\n");
 }
 
