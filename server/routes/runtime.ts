@@ -5,7 +5,7 @@ import { gradedSuiteRuns } from "../eval-run-scope";
 import { validateDecisionSetting } from "../decision-settings";
 import { decideMany, knownIncumbent } from "../decision-provider";
 import { parseOpenApiSpec, OpenApiParseError, type ParsedOpenApiSpec } from "../openapi-import";
-import { assertSafeOutboundUrl, safeFetch } from "../url-safety";
+import { assertSafeOutboundUrl, safeFetch, vetMcpUrl } from "../url-safety";
 import { CURATED_OPENAPI_CATALOG } from "../marketplace-seed-data";
 import { contextPriorityFor, wizardContextFor, wizardPresetFor } from "@shared/wizard-presets";
 import { resolveAgentIndustry } from "../agent-industry";
@@ -12495,6 +12495,12 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   router.post("/api/mcp-servers", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
       const data = insertMcpServerSchema.parse(req.body);
+      // Where the connector points is judged against the outbound policy (url-safety.ts): refused
+      // under ASTRA_OUTBOUND_POLICY=enforce, only logged under the default "audit".
+      if (data.url) {
+        const vetted = await vetMcpUrl(data.url, `register:${data.name}`);
+        if (!vetted.ok) return res.status(400).json({ message: vetted.message });
+      }
       // Ownership comes from the authenticated request, never the body -- a body
       // organizationId would let a caller plant a connector in another tenant.
       // Likewise status and allowlisted: accepting them from the body let a
@@ -12544,6 +12550,10 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         if (path === null) {
           sanitized.healthDetail = null;
         }
+      }
+      if (typeof sanitized.url === "string" && sanitized.url) {
+        const vetted = await vetMcpUrl(sanitized.url, `edit:${req.params.id}`);
+        if (!vetted.ok) return res.status(400).json({ message: vetted.message });
       }
       const server = await storage.updateMcpServer(req.params.id as string, sanitized);
       if (!server) return res.status(404).json({ message: "MCP server not found" });

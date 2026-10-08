@@ -258,6 +258,11 @@ resource "aws_elastic_beanstalk_environment" "main" {
     name      = "ASTRA_ALLOWED_PRIVATE_CIDRS"
     value     = var.allowed_private_cidrs
   }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "ASTRA_OUTBOUND_POLICY"
+    value     = var.outbound_policy
+  }
 
   # EB's Node proxy listens on 80 and forwards to the app's PORT (8080 above).
   setting {

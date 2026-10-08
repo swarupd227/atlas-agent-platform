@@ -130,3 +130,14 @@ variable "allowed_private_cidrs" {
   type        = string
   default     = ""
 }
+
+variable "outbound_policy" {
+  description = "ASTRA_OUTBOUND_POLICY: how admin-configured targets (MCP servers, rest-proxy connectors) are treated. audit logs what enforce would refuse and refuses nothing; enforce refuses private ranges not in allowed_private_cidrs and loopback other than the app's own port; off does neither. URLs a person supplies are always enforced."
+  type        = string
+  default     = "audit"
+
+  validation {
+    condition     = contains(["audit", "enforce", "off"], var.outbound_policy)
+    error_message = "outbound_policy must be audit, enforce or off."
+  }
+}

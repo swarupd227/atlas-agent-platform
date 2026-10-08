@@ -78,6 +78,8 @@ services:
       SECURITY_MODE: ${SECURITY_MODE:-production}
       # Private ranges the server may fetch from (see .env.example). Empty = none.
       ASTRA_ALLOWED_PRIVATE_CIDRS: ${ASTRA_ALLOWED_PRIVATE_CIDRS:-}
+      # audit (default: log what enforce would refuse), enforce, or off -- see .env.example.
+      ASTRA_OUTBOUND_POLICY: ${ASTRA_OUTBOUND_POLICY:-audit}
       # Seeds a `admin` user on first boot with this password (username is fixed to `admin`).
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in .env}
       # Optional model/integration keys — pass through when set.

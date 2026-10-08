@@ -27,6 +27,7 @@ import { hasReadOnlyToolName } from "./tool-read-only";
 import { shadowApprovalRisk } from "./approval-risk-shadow";
 import { storage } from "./storage";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpAuthHeaders } from "./mcp-client";
+import { credentialsForStatusUrl, policyFetch } from "./url-safety";
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
 import { coerceToolArgsToSchema } from "./tool-arg-coercion";
@@ -852,7 +853,7 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
     }
   }
 
-  const res = await fetch(fetchUrl, fetchOpts);
+  const res = await policyFetch(`rest-proxy:${tool.serverName}`)(fetchUrl, fetchOpts);
   if (!res.ok) {
     // The API's own explanation ("fullName is required", "No account ACCT-1")
     // is what lets the model correct its call; the status code alone does not.
@@ -884,7 +885,7 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
       const pollUrl = /^https?:\/\//i.test(statusPath)
         ? statusPath
         : `${baseUrl}/${statusPath.replace(/^\//, "")}`;
-      return pollAsyncJob(pollUrl, { ...authHeaders, ...headerParams }, `${tool.serverName}/${tool.toolName}`, accepted?.poll_seconds);
+      return pollAsyncJob(pollUrl, credentialsForStatusUrl(pollUrl, baseUrl, { ...authHeaders, ...headerParams }), `${tool.serverName}/${tool.toolName}`, accepted?.poll_seconds);
     }
     return accepted;
   }
@@ -929,7 +930,7 @@ async function pollAsyncJob(
     if (currentLlmAbortSignal()?.aborted) throw new Error(`${toolLabel}: stopped waiting on the async job because the run was cancelled`);
     let payload: any;
     try {
-      const res = await fetch(pollUrl, Object.keys(headers).length ? { headers } : undefined);
+      const res = await policyFetch(`rest-proxy-poll:${toolLabel}`)(pollUrl, Object.keys(headers).length ? { headers } : undefined);
       if (!res.ok) throw new Error(`status ${res.status}`);
       payload = await res.json();
       consecutiveFailures = 0;

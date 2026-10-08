@@ -13,19 +13,21 @@ const h = vi.hoisted(() => ({ fetchMock: vi.fn(), agents: [] as any[] }));
 
 vi.mock("dns/promises", () => ({ default: { lookup: vi.fn() }, lookup: vi.fn() }));
 vi.mock("undici", () => ({
-  Agent: class { opts: any; constructor(opts: any) { this.opts = opts; h.agents.push(this); } },
+  Agent: class { opts: any; close = vi.fn(async () => {}); constructor(opts: any) { this.opts = opts; h.agents.push(this); } },
   fetch: (...args: any[]) => h.fetchMock(...args),
 }));
 
 import dns from "dns/promises";
 import {
-  UnsafeUrlError, assertSafeOutboundUrl, describeOutboundPolicy, parseAllowedPrivateCidrs, safeFetch, validateOutboundPolicyEnv,
+  UnsafeUrlError, assertSafeOutboundUrl, describeOutboundPolicy, parseAllowedPrivateCidrs, resetOutboundAgentsForTests, safeFetch,
+  validateOutboundPolicyEnv,
 } from "../server/url-safety";
 
 const ENV = "ASTRA_ALLOWED_PRIVATE_CIDRS";
 const saved = process.env[ENV];
 beforeEach(() => {
   delete process.env[ENV];
+  resetOutboundAgentsForTests();
   vi.mocked(dns.lookup).mockReset();
   h.fetchMock.mockReset();
   h.agents.length = 0;
@@ -188,15 +190,15 @@ describe("what an operator cannot list", () => {
     expect(validateOutboundPolicyEnv()).toEqual([]);
     process.env[ENV] = "10.0.0.0/8";
     expect(validateOutboundPolicyEnv()).toEqual([]);
-    expect(describeOutboundPolicy()).toBe("outbound_private_allowlist=10.0.0.0/8");
+    expect(describeOutboundPolicy()).toBe("outbound_policy=audit outbound_private_allowlist=10.0.0.0/8");
     process.env[ENV] = "127.0.0.0/8";
     expect(validateOutboundPolicyEnv()[0]).toMatch(/ASTRA_ALLOWED_PRIVATE_CIDRS is invalid/);
     process.env[ENV] = "oops";
     expect(validateOutboundPolicyEnv()[0]).toMatch(/not an IP address/);
   });
 
-  it("is silent about a policy that isn't set", () => {
-    expect(describeOutboundPolicy()).toBeNull();
+  it("names the mode even when no private range is allowed", () => {
+    expect(describeOutboundPolicy()).toBe("outbound_policy=audit");
   });
 
   it("stops the server at boot when the setting is invalid", () => {

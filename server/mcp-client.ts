@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer, McpServerAuth } from "@shared/schema";
 import { findMcpOAuthProvider, getMcpOAuthClientCredentials } from "./mcp-oauth-providers";
+import { policyFetch } from "./url-safety";
 
 export interface McpToolDef {
   name: string;
@@ -195,12 +196,15 @@ async function getConnection(
     evictConnection(serverId);
   }
 
+  // Every request the transport makes goes through the outbound policy (url-safety.ts).
+  const fetch = policyFetch(`mcp:${serverId}`);
   const hasHeaders = Object.keys(authHeaders).length > 0;
   const transport = hasHeaders
     ? new StreamableHTTPClientTransport(new URL(serverUrl), {
         requestInit: { headers: authHeaders },
+        fetch,
       })
-    : new StreamableHTTPClientTransport(new URL(serverUrl));
+    : new StreamableHTTPClientTransport(new URL(serverUrl), { fetch });
 
   const client = new Client({ name: "atlas-platform", version: "1.0.0" });
   await client.connect(transport);

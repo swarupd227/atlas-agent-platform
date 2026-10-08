@@ -28,10 +28,16 @@
  *      itself, validating every hop, because a public URL can redirect to an
  *      internal one.
  *
- * Applied to fetches whose URL a person or a caller supplies. Deliberately NOT
- * applied to MCP server registration or calls: an admin registering a connector
- * against an internal endpoint is the intended product behavior there (see
- * ASTRA_OUTBOUND_POLICY for how that is being brought under the same rules).
+ * Applied, always, to fetches whose URL a person or a caller supplies.
+ *
+ * MCP servers and rest-proxy connectors are different: an admin registering a
+ * connector against an internal endpoint is intended product behavior, and this
+ * platform's own connectors are reached on localhost. They follow the same rules
+ * under ASTRA_OUTBOUND_POLICY (policyFetch, vetMcpUrl): "audit" by default, which
+ * logs what "enforce" would refuse and refuses nothing, so a deployment can read
+ * what enforcing would break before it does. In enforce, loopback is allowed only
+ * on this server's own port (or anywhere under SECURITY_MODE=demo), and private
+ * ranges need the same allowlist.
  */
 import dns from "dns/promises";
 import net from "net";
@@ -221,20 +227,43 @@ function allowEntries(): AllowEntry[] {
   return cachedEntries;
 }
 
-/** Problems with the outbound policy in the environment, for the boot-time check. */
-export function validateOutboundPolicyEnv(): string[] {
-  try {
-    parseAllowedPrivateCidrs(process.env.ASTRA_ALLOWED_PRIVATE_CIDRS);
-    return [];
-  } catch (e: any) {
-    return [`ASTRA_ALLOWED_PRIVATE_CIDRS is invalid: ${e.message}`];
-  }
+export type OutboundPolicyMode = "off" | "audit" | "enforce";
+
+/**
+ * ASTRA_OUTBOUND_POLICY: how the operator-configured MCP and rest-proxy targets are treated.
+ * "enforce" refuses a target the policy refuses. "audit" (the default) changes nothing and logs
+ * each target "enforce" would have refused, so a deployment can read what it would break before
+ * turning enforcement on. "off" does neither. The paths that fetch a URL a person supplies are
+ * always enforced, whatever this says.
+ */
+export function outboundPolicyMode(): OutboundPolicyMode {
+  const raw = (process.env.ASTRA_OUTBOUND_POLICY ?? "").trim().toLowerCase();
+  if (raw === "") return "audit";
+  if (raw === "off" || raw === "audit" || raw === "enforce") return raw;
+  throw new Error(`must be off, audit or enforce (got "${raw}")`);
 }
 
-/** A line for the startup log, or null when no private range is allowed. */
-export function describeOutboundPolicy(): string | null {
+/** Problems with the outbound policy in the environment, for the boot-time check. */
+export function validateOutboundPolicyEnv(): string[] {
+  const problems: string[] = [];
+  try {
+    parseAllowedPrivateCidrs(process.env.ASTRA_ALLOWED_PRIVATE_CIDRS);
+  } catch (e: any) {
+    problems.push(`ASTRA_ALLOWED_PRIVATE_CIDRS is invalid: ${e.message}`);
+  }
+  try {
+    outboundPolicyMode();
+  } catch (e: any) {
+    problems.push(`ASTRA_OUTBOUND_POLICY is invalid: ${e.message}`);
+  }
+  return problems;
+}
+
+/** A line for the startup log. */
+export function describeOutboundPolicy(): string {
   const entries = allowEntries();
-  return entries.length > 0 ? `outbound_private_allowlist=${entries.map((e) => e.text).join(",")}` : null;
+  const allow = entries.length > 0 ? ` outbound_private_allowlist=${entries.map((e) => e.text).join(",")}` : "";
+  return `outbound_policy=${outboundPolicyMode()}${allow}`;
 }
 
 const logged = new Set<string>();
@@ -266,6 +295,27 @@ export interface UrlSafetyResult {
   reason?: string;
 }
 
+export interface OutboundOptions {
+  /**
+   * "deny" (the default): loopback is never reachable. "self": `localhost` or a literal loopback
+   * address is reachable on this server's own port, which is how the in-process connectors are
+   * reached, and on any port when SECURITY_MODE=demo. A hostname that merely resolves to loopback
+   * is never allowed. For the operator-configured MCP and rest-proxy targets.
+   */
+  loopback?: "deny" | "self";
+}
+
+function isLoopbackLiteral(ip: string): boolean {
+  if (net.isIPv4(ip)) return ip.startsWith("127.");
+  const g = ipv6Groups(ip);
+  return !!g && g.slice(0, 7).every((x) => x === 0) && g[7] === 1;
+}
+
+function loopbackAllowed(port: number): boolean {
+  if (process.env.SECURITY_MODE === "demo") return true;
+  return port === parseInt(process.env.PORT || "5000", 10);
+}
+
 export interface OutboundTarget {
   url: URL;
   hostname: string;
@@ -278,7 +328,7 @@ export interface OutboundTarget {
  * Validates a URL and resolves it once. http(s) only, not a blocked hostname,
  * and every address it resolves to must be public or on the operator's list.
  */
-export async function resolveOutboundTarget(rawUrl: string): Promise<OutboundTarget> {
+export async function resolveOutboundTarget(rawUrl: string, options: OutboundOptions = {}): Promise<OutboundTarget> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -291,10 +341,17 @@ export async function resolveOutboundTarget(rawUrl: string): Promise<OutboundTar
   // The URL parser keeps the brackets on an IPv6 literal, and a trailing dot is the same host.
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   const port = url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
+  const literal = net.isIP(hostname);
+  if (options.loopback === "self" && (hostname === "localhost" || (literal && isLoopbackLiteral(hostname)))) {
+    if (!loopbackAllowed(port)) {
+      throw new UnsafeUrlError(`Host "${hostname}" is not reachable: loopback is only allowed on this server's own port.`);
+    }
+    const address = literal ? hostname : "127.0.0.1";
+    return { url, hostname, port, addresses: [{ address, family: address.includes(":") ? 6 : 4 }] };
+  }
   if (BLOCKED_HOSTNAMES.has(hostname) || hostname.endsWith(".localhost")) {
     throw new UnsafeUrlError(`Host "${hostname}" is not reachable from this action.`);
   }
-  const literal = net.isIP(hostname);
   if (literal) {
     if (!permitted(hostname, port, hostname)) throw new UnsafeUrlError(`Host "${hostname}" resolves to a private/internal address.`);
     return { url, hostname, port, addresses: [{ address: hostname, family: literal === 4 ? 4 : 6 }] };
@@ -342,9 +399,39 @@ export function pinnedLookup(addresses: Array<{ address: string; family: 4 | 6 }
   };
 }
 
-// One Agent per hop, holding no idle sockets: the connection belongs to the address validated for this hop.
-function pinnedAgent(addresses: OutboundTarget["addresses"]): Agent {
-  return new Agent({ keepAliveTimeout: 1, keepAliveMaxTimeout: 1, connect: { lookup: pinnedLookup(addresses) as any } });
+// A connection belongs to the addresses validated for it, so agents are kept per
+// (origin, validated address set). An MCP session makes many requests to one host and should not
+// pay a new TCP and TLS handshake for each; a changed DNS answer is a different key and gets a new
+// agent at once, and an agent is retired after AGENT_TTL_MS in any case.
+const AGENT_TTL_MS = 30_000;
+const AGENT_CACHE_MAX = 256;
+const agentCache = new Map<string, { agent: Agent; expires: number }>();
+
+function retire(agent: Agent): void {
+  // close() waits for requests in flight to finish.
+  void Promise.resolve(agent.close()).catch(() => undefined);
+}
+
+function pinnedAgent(target: OutboundTarget): Agent {
+  const key = `${target.url.protocol}//${target.hostname}:${target.port}|${target.addresses.map((a) => a.address).sort().join(",")}`;
+  const now = Date.now();
+  const hit = agentCache.get(key);
+  if (hit && hit.expires > now) return hit.agent;
+  if (hit) { agentCache.delete(key); retire(hit.agent); }
+  if (agentCache.size >= AGENT_CACHE_MAX) {
+    const oldest = agentCache.keys().next().value as string;
+    retire(agentCache.get(oldest)!.agent);
+    agentCache.delete(oldest);
+  }
+  const agent = new Agent({ keepAliveTimeout: 10_000, keepAliveMaxTimeout: 30_000, connect: { lookup: pinnedLookup(target.addresses) as any } });
+  agentCache.set(key, { agent, expires: now + AGENT_TTL_MS });
+  return agent;
+}
+
+/** For tests: forget every cached agent. */
+export function resetOutboundAgentsForTests(): void {
+  agentCache.forEach(({ agent }) => retire(agent));
+  agentCache.clear();
 }
 
 const KEPT_ON_CROSS_ORIGIN_REDIRECT = new Set(["accept", "accept-language", "accept-encoding", "user-agent", "content-type"]);
@@ -356,17 +443,17 @@ const KEPT_ON_CROSS_ORIGIN_REDIRECT = new Set(["accept", "accept-language", "acc
  * a few harmless ones, so credentials aimed at one host are not handed to another. For other
  * methods a redirect response is returned as it is.
  */
-export async function safeFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
+export async function safeFetch(input: string | URL, init: RequestInit = {}, options: OutboundOptions = {}): Promise<Response> {
   const method = (init.method ?? "GET").toUpperCase();
   const followRedirects = (method === "GET" || method === "HEAD") && init.redirect !== "manual" && init.redirect !== "error";
   let url = String(input);
   let headers = new Headers(init.headers as any);
   for (let hop = 0; ; hop++) {
-    const target = await resolveOutboundTarget(url);
+    const target = await resolveOutboundTarget(url, options);
     const response = (await undiciFetch(target.url, {
       ...(init as any),
       headers,
-      dispatcher: pinnedAgent(target.addresses),
+      dispatcher: pinnedAgent(target),
       redirect: "manual",
     })) as unknown as Response;
     const redirected = response.status >= 300 && response.status < 400 && response.headers.get("location");
@@ -383,4 +470,90 @@ export async function safeFetch(input: string | URL, init: RequestInit = {}): Pr
     }
     url = next.href;
   }
+}
+
+// ─── Operator-configured targets (MCP servers, rest-proxy connectors) ────────
+
+const auditSeen = new Set<string>();
+
+function hostPort(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}:${u.port || (u.protocol === "https:" ? 443 : 80)}`;
+  } catch {
+    return url.slice(0, 80);
+  }
+}
+
+/** Logs, once per label and target, what "enforce" would refuse. Never delays or fails the call. */
+function auditOutbound(url: string, label: string): void {
+  void (async () => {
+    try {
+      await resolveOutboundTarget(url, { loopback: "self" });
+    } catch (e: any) {
+      // A name that does not resolve is not a policy question: the call fails on its own.
+      if (!(e instanceof UnsafeUrlError) || /^Could not resolve/.test(e.message)) return;
+      const key = `${label}|${hostPort(url)}`;
+      if (auditSeen.has(key)) return;
+      if (auditSeen.size > 2000) auditSeen.clear();
+      auditSeen.add(key);
+      console.warn(`[outbound-policy] audit: ASTRA_OUTBOUND_POLICY=enforce would refuse ${label} -> ${hostPort(url)}: ${e.message}`);
+    }
+  })();
+}
+
+/**
+ * The fetch for an operator-configured target. In "enforce" it is safeFetch with loopback limited
+ * to this server's own port; in "audit" it is the ordinary fetch plus a log of what enforce would
+ * refuse; in "off" it is the ordinary fetch. The mode is read per call, so it can be changed
+ * without rebuilding a client.
+ */
+export function policyFetch(label: string): (input: string | URL, init?: RequestInit) => Promise<Response> {
+  return async (input, init) => {
+    const mode = outboundPolicyMode();
+    if (mode === "enforce") return safeFetch(input, init, { loopback: "self" });
+    if (mode === "audit") auditOutbound(String(input), label);
+    return fetch(input, init);
+  };
+}
+
+/**
+ * Judges an MCP server URL when it is registered or edited. A definite violation is refused in
+ * "enforce" and logged in "audit". A URL that is not http(s), or a name that does not resolve
+ * (which says nothing about where it would point), is let through.
+ */
+export async function vetMcpUrl(rawUrl: string, label: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const mode = outboundPolicyMode();
+  if (mode === "off") return { ok: true };
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { ok: true };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return { ok: true };
+  try {
+    await resolveOutboundTarget(rawUrl, { loopback: "self" });
+    return { ok: true };
+  } catch (e: any) {
+    if (!(e instanceof UnsafeUrlError) || /^Could not resolve/.test(e.message)) return { ok: true };
+    if (mode === "enforce") return { ok: false, message: e.message };
+    auditOutbound(rawUrl, label);
+    return { ok: true };
+  }
+}
+/**
+ * The headers to send when following a job status URL. The URL comes from the remote service's own
+ * response, and it may be absolute, so it can name a different host than the connector's. The
+ * connector's credentials are for the connector's origin: sent to any other host, they would hand
+ * them to whatever the response said. A status URL on another origin is followed without them.
+ */
+export function credentialsForStatusUrl(pollUrl: string, baseUrl: string, headers: Record<string, string>): Record<string, string> {
+  try {
+    if (new URL(pollUrl).origin === new URL(baseUrl).origin) return headers;
+  } catch { /* an unparseable URL gets no credentials either */ }
+  if (Object.keys(headers).length > 0) {
+    console.warn(`[tool-dispatcher] job status URL is on a different origin than the connector; following it without the connector's credentials`);
+  }
+  return {};
 }

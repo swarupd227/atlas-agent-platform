@@ -45,6 +45,5 @@ export function validateEnv(): void {
   console.log(
     `[config] security_mode=${getSecurityMode()} demos_enabled=${demosEnabled()} node_env=${process.env.NODE_ENV ?? "unset"}`,
   );
-  const outboundPolicy = describeOutboundPolicy();
-  if (outboundPolicy) console.log(`[config] ${outboundPolicy}`);
+  console.log(`[config] ${describeOutboundPolicy()}`);
 }

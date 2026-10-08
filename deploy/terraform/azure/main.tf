@@ -190,6 +190,7 @@ resource "azurerm_linux_web_app" "main" {
     OPENAI_API_KEY                 = var.openai_api_key
     ENABLE_DEMOS                   = var.enable_demos ? "true" : "false"
     ASTRA_ALLOWED_PRIVATE_CIDRS    = var.allowed_private_cidrs
+    ASTRA_OUTBOUND_POLICY          = var.outbound_policy
     SCM_DO_BUILD_DURING_DEPLOYMENT = "false" # code is shipped pre-built by deploy.sh
     WEBSITE_NODE_DEFAULT_VERSION   = "~22"
     WEBSITE_RUN_FROM_PACKAGE       = "0"
