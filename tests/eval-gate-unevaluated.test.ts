@@ -123,7 +123,8 @@ describe("promotion eval gate: never-run vs failed", () => {
     // Splitting unevaluated out of failingSuites would otherwise let this
     // bypass happen with no audit trail at all.
     suites.push(suite({ lastRunAt: null, passRate: 0 }));
-    await promoteDeploymentAction({ orgId: "org1" } as any, "dep1", { bypassEvalGate: true, approvedBy: "swarupd" });
+    // The actor is the signed-in person from the context; a name in the body is not one.
+    await promoteDeploymentAction({ orgId: "org1", actor: "swarupd", canDeployProd: true } as any, "dep1", { bypassEvalGate: true, approvedBy: "someone-else" });
     const bypass = auditEvents.find((e) => e.action === "eval_gate_bypassed");
     expect(bypass).toBeDefined();
     expect(bypass.actorId).toBe("swarupd");

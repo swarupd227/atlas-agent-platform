@@ -50,7 +50,7 @@ import {
 } from "./helpers";
 import * as nodeCrypto from "crypto";
 import { changeRoutingAction, checkDeploymentFreeze, createDeploymentAction, promoteDeploymentAction, rollbackDeploymentAction } from "../deployment-actions";
-import { LIVE_STATUSES, checkMayGoLive, isProdEnv, recordLifecycleEvent } from "../deployment-lifecycle";
+import { LIVE_STATUSES, checkMayGoLive, isProdEnv, parseFreezeRequest, recordLifecycleEvent } from "../deployment-lifecycle";
 import { lifecycleContext } from "../deployment-request-context";
 import {
   startAgentRuntime,
@@ -2305,34 +2305,30 @@ const router = Router();
 
   router.post("/api/deployments/freeze", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const { action, scope, targetId, reason } = req.body;
-      if (!action || !scope) {
-        return res.status(400).json({ message: "action and scope are required" });
+      const parsed = parseFreezeRequest(req.body);
+      if (!parsed.ok) return res.status(parsed.status).json({ message: parsed.message });
+      const { action, scope, targetId, reason } = parsed;
+
+      // Anyone who can deploy can freeze: stopping is the safe direction. Lifting a freeze puts
+      // deployments back in motion, which an engineer must not be able to do to an organization-wide
+      // freeze that someone else called, so it needs deploy_prod.
+      if (action === "unfreeze" && !hasPermission(getRequestRole(req), "deploy_prod")) {
+        return res.status(403).json({ message: "Lifting a freeze needs deploy_prod." });
+      }
+      if (scope === "agent" && !(await storage.getAgent(targetId, getOrgId(req)))) {
+        return res.status(404).json({ message: "No agent with that id in this organization." });
       }
 
-      const auditEvents = await storage.getAuditEvents(getOrgId(req));
-      const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
-      const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
-      const crypto = await import("crypto");
-      const eventData = `${maxSeq + 1}:deployment_${action}:${targetId || scope}:${Date.now()}`;
-      const eventHash = `sha256:${nodeCrypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
-
+      const eventAction = action === "freeze" ? "deployment_freeze" : "deployment_unfreeze";
       const auditEvent = await storage.createAuditEvent({
         actorType: "user",
-        actorId: "operator",
-        action: action === "freeze" ? "deployment_freeze" : "deployment_unfreeze",
+        actorId: getRequestActorLabel(req),
+        action: eventAction,
         objectType: "deployment",
-        objectId: targetId || scope,
-        details: JSON.stringify({
-          scope,
-          targetId: targetId || scope,
-          reason: reason || "",
-          action,
-        }),
-        sequenceNum: maxSeq + 1,
-        previousHash: lastHash,
-        eventHash,
-        ontologyTags: resolveOntologyTags("deployment", action === "freeze" ? "deployment_freeze" : "deployment_unfreeze", { details: reason || "" }),
+        objectId: targetId,
+        organizationId: getOrgId(req),
+        details: JSON.stringify({ scope, targetId, reason, action }),
+        ontologyTags: resolveOntologyTags("deployment", eventAction, { details: reason }),
       });
 
       res.json({ success: true, event: auditEvent });

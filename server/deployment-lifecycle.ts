@@ -129,6 +129,46 @@ export async function checkMayGoLive(deployment: { id: string; agentId: string; 
   return { ok: true };
 }
 
+/**
+ * A request to skip a gate (the eval pass rate, ontology alignment) is a decision to ship something
+ * the gate would have stopped, so it needs deploy_prod, and it is recorded against the signed-in
+ * person: a name in the request body is not evidence of who asked.
+ */
+export function bypassRefusal(ctx: LifecycleContext, gate: string): { status: number; body: Record<string, unknown> } | null {
+  if (ctx.canDeployProd === false) {
+    return { status: 403, body: { blocked: true, reason: "deploy_prod_required", message: `Bypassing the ${gate} needs deploy_prod.` } };
+  }
+  return null;
+}
+
+/** The person to record a decision against. */
+export const actorOf = (ctx: LifecycleContext, fallback = "unknown"): string => ctx.actor || fallback;
+
+export type FreezeRequest =
+  | { ok: true; action: "freeze" | "unfreeze"; scope: "org" | "agent"; targetId: string; reason: string }
+  | { ok: false; status: number; message: string };
+
+/**
+ * A freeze or unfreeze request, read strictly. The endpoint used to treat any action that was not
+ * "freeze" as an unfreeze, and recorded an org-wide freeze under whatever target id came with it,
+ * where the freeze check never looked for it. An org freeze is recorded as "org".
+ */
+export function parseFreezeRequest(body: Record<string, unknown> | undefined): FreezeRequest {
+  const { action, scope, targetId, reason } = body ?? {};
+  if (action !== "freeze" && action !== "unfreeze") return { ok: false, status: 400, message: 'action must be "freeze" or "unfreeze".' };
+  if (scope !== "org" && scope !== "agent") return { ok: false, status: 400, message: 'scope must be "org" or "agent".' };
+  if (scope === "agent" && (typeof targetId !== "string" || targetId.trim() === "")) {
+    return { ok: false, status: 400, message: "An agent freeze needs the agent's id as targetId." };
+  }
+  return {
+    ok: true,
+    action,
+    scope,
+    targetId: scope === "org" ? "org" : String(targetId).trim(),
+    reason: typeof reason === "string" ? reason.slice(0, 500) : "",
+  };
+}
+
 /** One audit event for a lifecycle change, naming the signed-in person. */
 export async function recordLifecycleEvent(ctx: LifecycleContext, deploymentId: string, action: string, details: Record<string, unknown>): Promise<void> {
   try {
