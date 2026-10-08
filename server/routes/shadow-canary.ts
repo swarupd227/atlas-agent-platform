@@ -7,6 +7,8 @@ import { resolveAgentIndustry } from "../agent-industry";
 import { getOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
 import { buildAgentSystemPromptWithGovernance } from "./helpers";
+import { checkMayGoLive, isProdEnv, recordLifecycleEvent } from "../deployment-lifecycle";
+import { lifecycleContext } from "../deployment-request-context";
 import { llmInvokeRateLimiter } from "../rate-limits";
 import {
   executePromptWithMcp,
@@ -307,6 +309,13 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const stages = (deployment.pipelineStages as any[]) || [];
       if (stages.length === 0) return res.status(400).json({ message: "No pipeline stages configured" });
 
+      // Running the pipeline ends by taking the deployment live, so it passes the same checks a
+      // start does (server/deployment-lifecycle.ts): not frozen, not finished, no approval waiting
+      // or refused, and for production deploy_prod and an approved launch readiness.
+      const lifecycle = lifecycleContext(req);
+      const verdict = await checkMayGoLive(deployment, lifecycle);
+      if (!verdict.ok) return res.status(verdict.status).json(verdict.body);
+
       const deployAgent = await storage.getAgent(deployment.agentId, getOrgId(req));
       const pipelineResults: Array<{ stage: string; type: string; status: string; findings: any }> = [];
       const updatedStages: any[] = [];
@@ -484,6 +493,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       if (deployAgent) {
         await storage.updateAgent(deployment.agentId, { status: "deployed" });
       }
+      await recordLifecycleEvent(lifecycle, deployment.id, "deployment_status_changed", { from: deployment.status, to: "deployed", via: "run-pipeline", environment: deployment.environment });
       const richSystemPrompt = deployAgent ? await buildAgentSystemPromptWithGovernance(deployAgent, getOrgId(req)) : undefined;
       const runtimeResult = await startAgentRuntime((req.params.id as string), richSystemPrompt);
       console.log(`[deploy] Agent runtime: ${runtimeResult.message}`);
@@ -497,19 +507,24 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
   router.post("/api/deployments/:id/start-runtime", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
       const dep = await storage.getDeployment(req.params.id as string, getOrgId(req));
+      if (!dep) return res.status(404).json({ error: "Deployment not found" });
+      // Starting a runtime is taking the deployment live. Without these checks a pending
+      // deployment became "deployed" (and its agent reachable) with its approval undecided.
+      const lifecycle = lifecycleContext(req);
+      const verdict = await checkMayGoLive(dep, lifecycle);
+      if (!verdict.ok) return res.status(verdict.status).json(verdict.body);
       let richPrompt: string | undefined;
       let agent: any = null;
-      if (dep) {
-        agent = await storage.getAgent(dep.agentId, getOrgId(req));
-        if (agent) richPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
-      }
+      agent = await storage.getAgent(dep.agentId, getOrgId(req));
+      if (agent) richPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
       const result = await startAgentRuntime((req.params.id as string), richPrompt);
-      if (dep && (result.started || result.message?.includes("already running"))) {
+      if (result.started || result.message?.includes("already running")) {
         if (dep.status === "pending" || dep.status === "inactive") {
           await storage.updateDeployment((req.params.id as string), {
             status: "deployed",
             ...(dep.deployedAt ? {} : { deployedAt: new Date() }),
           }, getOrgId(req));
+          await recordLifecycleEvent(lifecycle, dep.id, "deployment_status_changed", { from: dep.status, to: "deployed", via: "start-runtime", environment: dep.environment });
         }
         if (agent && agent.status !== "deployed") {
           await storage.updateAgent(dep.agentId, { status: "deployed" });
@@ -531,6 +546,8 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const result = await stopAgentRuntime(req.params.id as string);
       if (result.stopped) {
         await storage.updateDeployment(req.params.id as string, { status: "inactive" }, getOrgId(req));
+        // Stopping is never held back by a freeze, so it is always recorded: who stopped what.
+        await recordLifecycleEvent(lifecycleContext(req), dep.id, "deployment_status_changed", { from: dep.status, to: "inactive", via: "stop-runtime", environment: dep.environment });
       }
       res.json(result);
     } catch (e: any) {
@@ -585,6 +602,10 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     try {
       const deployment = await storage.getDeployment(req.params.id as string, getOrgId(req));
       if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+
+      // Executing now runs the agent as this deployment, with its tools: the same checks as a start.
+      const verdict = await checkMayGoLive(deployment, lifecycleContext(req));
+      if (!verdict.ok) return res.status(verdict.status).json(verdict.body);
 
       const agent = await storage.getAgent(deployment.agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
@@ -668,7 +689,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
       const trace = await storage.createTrace({
         agentId: deployment.agentId,
-        environment: "prod",
+        // The deployment's own environment: this used to be "prod" for every manual run, so a
+        // staging run counted toward the agent's production health.
+        environment: isProdEnv(deployment.environment) ? "prod" : (deployment.environment || "staging"),
         status: result.success ? "completed" : "failed",
         triggeredBy: "manual",
         latencyMs: result.summary.latencyMs || 0,
@@ -739,7 +762,14 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         await storage.ensureAgentVersion(req.params.id, depVersion, "active");
       }
 
+      // The same checks as any other start: a freeze holds this back, and so does an approval
+      // still waiting on the deployment it found.
+      const lifecycle = lifecycleContext(req);
+      const verdict = await checkMayGoLive(deployment!, lifecycle);
+      if (!verdict.ok) return res.status(verdict.status).json(verdict.body);
+
       if (deployment.status !== "deployed") {
+        await recordLifecycleEvent(lifecycle, deployment.id, "deployment_status_changed", { from: deployment.status, to: "deployed", via: "deploy-and-run", environment: deployment.environment });
         const pipelineStages = Array.isArray(deployment.pipelineStages)
           ? (deployment.pipelineStages as any[]).map(s => ({ ...s, status: "skipped", completedAt: new Date().toISOString(), attestation: "Not run: deployed straight to staging with Deploy & Run" }))
           : [];

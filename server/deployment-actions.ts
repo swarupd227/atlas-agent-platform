@@ -19,41 +19,33 @@ import { ensureAarConfig } from "./routes/aar";
 import { buildBlastRadius } from "./blast-radius";
 import { checkBlueprintInvariants } from "./blueprint-invariants";
 import { stopAgentRuntime } from "./agent-runtime";
+import { GOES_LIVE_ACTIONS, checkDeploymentFreeze, checkMayGoLive, isProdEnv, recordLifecycleEvent, sanitizeCreateBody, type LifecycleContext } from "./deployment-lifecycle";
 
-export interface DeploymentActionContext {
-  orgId: string | undefined;
-}
+export { checkDeploymentFreeze };
+
+/** Who is acting, for the lifecycle rules (server/deployment-lifecycle.ts). */
+export type DeploymentActionContext = LifecycleContext;
 
 export interface ActionResult {
   status: number;
   body: any;
 }
 
-export async function checkDeploymentFreeze(orgId: string | undefined, agentId: string | undefined): Promise<{ frozen: boolean; reason?: string; scope?: string }> {
-  const auditEvents = await storage.getAuditEvents(orgId);
-  const freezeEvents = auditEvents.filter(e => e.action === "deployment_freeze" || e.action === "deployment_unfreeze");
-  const statusMap: Record<string, { frozen: boolean; reason?: string; scope?: string }> = {};
-  for (const evt of freezeEvents) {
-    try {
-      const details = JSON.parse(evt.details || "{}");
-      const key = details.targetId || details.scope || "unknown";
-      if (evt.action === "deployment_freeze") {
-        statusMap[key] = { frozen: true, reason: details.reason, scope: details.scope };
-      } else {
-        delete statusMap[key];
-      }
-    } catch {}
-  }
-  if (statusMap["org"]?.frozen) return statusMap["org"];
-  if (agentId && statusMap[agentId]?.frozen) return statusMap[agentId];
-  return { frozen: false };
-}
-
 export async function createDeploymentAction(ctx: DeploymentActionContext, body: any): Promise<ActionResult> {
     const bypassOntologyCheck = body.bypassOntologyCheck === true;
-    const { bypassOntologyCheck: _boc, organizationId: _orgIdFromBody, ...deploymentBody } = body;
-    const data = insertDeploymentSchema.parse(deploymentBody);
+    // The client says which agent, where and how; the server owns the status (always pending: a
+    // deployment goes live through its approval or a rollout change) and everything about who
+    // approved it and when.
+    const sanitized = sanitizeCreateBody(body);
+    if (sanitized.refusal) return { status: 400, body: { message: sanitized.refusal } };
+    const data = insertDeploymentSchema.parse({ ...sanitized.fields, status: "pending" });
     const env = data.environment || "staging";
+
+    // Creating a production deployment is a production action: the Deploy dialog spells it
+    // "production", promotion spells it "prod", and both are production.
+    if (isProdEnv(env) && ctx.canDeployProd === false) {
+      return { status: 403, body: { message: "Creating a production deployment needs deploy_prod." } };
+    }
 
     const freezeCheck = await checkDeploymentFreeze(ctx.orgId, data.agentId);
     if (freezeCheck.frozen) {
@@ -78,7 +70,7 @@ export async function createDeploymentAction(ctx: DeploymentActionContext, body:
       }
     }
 
-    if (env === "prod" && agent) {
+    if (isProdEnv(env) && agent) {
       // The same assessment Astra's agent_ontology_alignment reports, so what
       // a refusal here says and what the conversation explains cannot drift.
       const alignment = await assessToolAlignment(data.agentId);
@@ -137,13 +129,13 @@ export async function createDeploymentAction(ctx: DeploymentActionContext, body:
     const strategy = deployment.rolloutStrategy || "canary";
 
     const needsApproval =
-      env === "prod" ||
+      isProdEnv(env) ||
       riskTier === "HIGH" || riskTier === "CRITICAL" ||
       (env === "pilot" && (riskTier === "MEDIUM" || riskTier === "HIGH" || riskTier === "CRITICAL"));
 
     let approval = null;
     if (needsApproval) {
-      const approvalType = env === "prod" ? "launch_readiness" : "deployment_review";
+      const approvalType = isProdEnv(env) ? "launch_readiness" : "deployment_review";
       const riskScore = riskTier === "CRITICAL" ? 10 : riskTier === "HIGH" ? 8 : riskTier === "MEDIUM" ? 5 : 3;
 
       const evalSuites = await storage.getEvalSuites();
@@ -210,7 +202,8 @@ export async function createDeploymentAction(ctx: DeploymentActionContext, body:
       }
     }
 
-    return { status: 201, body: { ...deployment, approval, strategyWarning } };
+    await recordLifecycleEvent(ctx, deployment.id, "deployment_created", { environment: env, status: deployment.status, version: deployment.version, approvalId: approval?.id ?? null });
+    return { status: 201, body: { ...deployment, approval, strategyWarning, ...(sanitized.ignored.length > 0 ? { ignoredFields: sanitized.ignored } : {}) } };
 }
 
 export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: string, body: any): Promise<ActionResult> {
@@ -684,12 +677,18 @@ export async function changeRoutingAction(ctx: DeploymentActionContext, id: stri
     const deployment = await storage.getDeployment(id, ctx.orgId);
     if (!deployment) return { status: 404, body: { message: "Deployment not found" } };
 
-    const routingFreezeCheck = await checkDeploymentFreeze(ctx.orgId, deployment.agentId);
-    if (routingFreezeCheck.frozen) {
-      return { status: 423, body: { message: `Deployments are frozen${routingFreezeCheck.reason ? `: ${routingFreezeCheck.reason}` : ""}`, frozen: true } };
-    }
-
     const { shadowEnabled, canaryPercent, action } = body;
+
+    // An action that puts the deployment in front of traffic passes the lifecycle checks: not
+    // frozen, not finished, no approval waiting or refused, and for production deploy_prod and an
+    // approved launch readiness. This used to set a live status on a deployment whose approval had
+    // not been decided. Taking a deployment OUT of traffic (shadow off, rollback) is never held back
+    // by a freeze: an emergency stop that a freeze can block is not one.
+    const goesLive = GOES_LIVE_ACTIONS.has(action) || (!action && (shadowEnabled === true || (typeof canaryPercent === "number" && canaryPercent > 0)));
+    if (goesLive) {
+      const verdict = await checkMayGoLive(deployment, ctx);
+      if (!verdict.ok) return { status: verdict.status, body: verdict.body };
+    }
     const updateData: Record<string, unknown> = {};
 
     if (action === "shadow_on") {
@@ -800,6 +799,10 @@ export async function changeRoutingAction(ctx: DeploymentActionContext, id: stri
     }
 
     const updated = await storage.updateDeployment(deployment.id, updateData, ctx.orgId);
+
+    if (updateData.status) {
+      await recordLifecycleEvent(ctx, deployment.id, "deployment_status_changed", { from: deployment.status, to: updateData.status, via: `routing:${action || "update"}`, environment: deployment.environment });
+    }
 
     const allEvents = await storage.getAuditEvents(ctx.orgId);
     const maxSeq = allEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);

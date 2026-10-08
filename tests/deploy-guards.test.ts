@@ -102,7 +102,9 @@ describe("route guards", () => {
 
   it("checks deploy_prod before a promotion reaches production", () => {
     expect(agents()).toContain('if (target === "prod" && !hasPermission(getRequestRole(req), "deploy_prod"))');
-    expect(agents()).toContain('if (goesLive && existing.environment === "prod" && !hasPermission(getRequestRole(req), "deploy_prod"))');
+    // A raw edit that takes a production deployment live: deploy_prod, read from the request by
+    // lifecycleContext (the same two spellings of production the lifecycle checks use).
+    expect(agents()).toContain("if (isProdEnv(existing.environment) && ctx.canDeployProd === false)");
   });
 
   it("stops a raw edit from moving a deployment between environments", () => {

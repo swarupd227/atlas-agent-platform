@@ -50,6 +50,8 @@ import {
 } from "./helpers";
 import * as nodeCrypto from "crypto";
 import { changeRoutingAction, checkDeploymentFreeze, createDeploymentAction, promoteDeploymentAction, rollbackDeploymentAction } from "../deployment-actions";
+import { LIVE_STATUSES, checkMayGoLive, isProdEnv, recordLifecycleEvent } from "../deployment-lifecycle";
+import { lifecycleContext } from "../deployment-request-context";
 import {
   startAgentRuntime,
   stopAgentRuntime,
@@ -2233,7 +2235,7 @@ const router = Router();
 
   router.post("/api/deployments", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const r = await createDeploymentAction({ orgId: getOrgId(req) }, req.body ?? {});
+      const r = await createDeploymentAction(lifecycleContext(req), req.body ?? {});
       res.status(r.status).json(r.body);
     } catch (e) {
       handleZodError(res, e);
@@ -2350,17 +2352,37 @@ const router = Router();
     try {
       const existing = await storage.getDeployment(req.params.id as string, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Deployment not found" });
-      const data = insertDeploymentSchema.partial().parse(req.body);
+      // A raw edit changes how a deployment rolls out, not who approved it or what state it is
+      // in: the status is limited to going live (through the lifecycle checks) or stopping, and
+      // the fields the server owns (approver, signature, promotion and timestamps, the pipeline
+      // and evidence state) are not editable here.
+      const EDITABLE = ["environment", "status", "rolloutStrategy", "canaryPercent", "canaryConfig", "rollbackConfig", "autopromoteConfig", "customization", "industry", "agentName", "version"];
+      const data = insertDeploymentSchema.partial().parse(Object.fromEntries(Object.entries(req.body ?? {}).filter(([k]) => EDITABLE.includes(k))));
       // Promotion is what moves a deployment between environments, and it runs
       // the gates and files an approval. A raw edit must not do it quietly.
       if (data.environment && data.environment !== existing.environment) {
         return res.status(400).json({ message: "Use promote to move a deployment between environments." });
       }
-      const goesLive = ["deployed", "active", "canary"].includes(String(data.status ?? ""));
-      if (goesLive && existing.environment === "prod" && !hasPermission(getRequestRole(req), "deploy_prod")) {
-        return res.status(403).json({ message: "Taking a production deployment live needs deploy_prod." });
+      if (data.status !== undefined && !LIVE_STATUSES.has(String(data.status)) && data.status !== "inactive") {
+        return res.status(400).json({ message: "A deployment's status is set by promoting, rolling back, stopping or approving it, not by an edit." });
+      }
+      const goesLive = LIVE_STATUSES.has(String(data.status ?? ""));
+      if (goesLive) {
+        const ctx = lifecycleContext(req);
+        if (isProdEnv(existing.environment) && ctx.canDeployProd === false) {
+          return res.status(403).json({ message: "Taking a production deployment live needs deploy_prod." });
+        }
+        // Already live (graduating from shadow to canary, say) stays within what was approved;
+        // anything else has to pass the checks a start does.
+        if (!LIVE_STATUSES.has(existing.status)) {
+          const verdict = await checkMayGoLive(existing, ctx);
+          if (!verdict.ok) return res.status(verdict.status).json(verdict.body);
+        }
       }
       const updated = await storage.updateDeployment((req.params.id as string), data, getOrgId(req));
+      if (updated && data.status && data.status !== existing.status) {
+        await recordLifecycleEvent(lifecycleContext(req), existing.id, "deployment_status_changed", { from: existing.status, to: data.status, via: "edit", environment: existing.environment });
+      }
       if (!updated) return res.status(404).json({ message: "Deployment not found" });
 
       if (req.body.status === "active" && existing.status !== "active") {
@@ -2471,7 +2493,7 @@ const router = Router();
       if (target === "prod" && !hasPermission(getRequestRole(req), "deploy_prod")) {
         return res.status(403).json({ message: "Promoting into production needs deploy_prod." });
       }
-      const r = await promoteDeploymentAction({ orgId: getOrgId(req) }, req.params.id as string, req.body ?? {});
+      const r = await promoteDeploymentAction(lifecycleContext(req), req.params.id as string, req.body ?? {});
       res.status(r.status).json(r.body);
     } catch (e) {
       handleZodError(res, e);
@@ -2480,7 +2502,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/routing", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const r = await changeRoutingAction({ orgId: getOrgId(req) }, req.params.id as string, req.body ?? {});
+      const r = await changeRoutingAction(lifecycleContext(req), req.params.id as string, req.body ?? {});
       res.status(r.status).json(r.body);
     } catch (e) {
       handleZodError(res, e);
@@ -2718,7 +2740,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/rollback", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const r = await rollbackDeploymentAction({ orgId: getOrgId(req) }, req.params.id as string, req.body ?? {});
+      const r = await rollbackDeploymentAction(lifecycleContext(req), req.params.id as string, req.body ?? {});
       res.status(r.status).json(r.body);
     } catch (e) {
       handleZodError(res, e);
