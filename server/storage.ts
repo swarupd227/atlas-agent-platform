@@ -1,5 +1,6 @@
 import { eq, ne, desc, inArray, and, like, or, sql, isNull, isNotNull, lte, gte, asc, lt, getTableColumns } from "drizzle-orm";
 import { createHash } from "crypto";
+import { LockdownError, agentApiKeysAllowed } from "./lockdown";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
 import { buildCanonicalAuditPayload, computeEventHash, computeMerkleRoot, signAuditPayload, verifyAuditSignature } from "./audit-signing";
@@ -4664,11 +4665,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAgentApiKeyByHash(keyHash: string): Promise<AgentApiKey | undefined> {
+    // Every place that checks an agent key (the gateway, A2A, the public API) comes through here, so a
+    // deployment that has turned agent API keys off (server/lockdown.ts) finds no key at all.
+    if (!agentApiKeysAllowed()) return undefined;
     const [key] = await db.select().from(agentApiKeys).where(and(eq(agentApiKeys.keyHash, keyHash), eq(agentApiKeys.isActive, true)));
     return key;
   }
 
   async createAgentApiKey(key: InsertAgentApiKey): Promise<AgentApiKey> {
+    if (!agentApiKeysAllowed()) throw new LockdownError("Agent API keys");
     const [created] = await db.insert(agentApiKeys).values(key).returning();
     return created;
   }

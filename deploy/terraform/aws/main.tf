@@ -263,6 +263,11 @@ resource "aws_elastic_beanstalk_environment" "main" {
     name      = "ASTRA_OUTBOUND_POLICY"
     value     = var.outbound_policy
   }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "ASTRA_LOCKDOWN"
+    value     = var.lockdown
+  }
 
   # EB's Node proxy listens on 80 and forwards to the app's PORT (8080 above).
   setting {

@@ -1,5 +1,8 @@
 import { storage } from "./storage";
 import { encryptCredential, decryptCredential } from "./credential-vault";
+import { LockdownError, getLockdown } from "./lockdown";
+
+const envOnly = (): boolean => getLockdown().llmKeys === "env-only";
 
 // Central place for "where does this provider's API key actually come from"
 // -- an Admin-set key in the encrypted vault (llm_provider_keys table) takes
@@ -57,7 +60,9 @@ export async function resolveProviderKey(provider: LlmProviderName): Promise<Res
 
   let resolved: ResolvedKey;
   try {
-    const row = await storage.getLlmProviderKey(provider);
+    // A deployment that takes its LLM keys from the environment only (server/lockdown.ts) never reads
+    // the vault: a key an administrator stored earlier, or one planted since, is not used.
+    const row = envOnly() ? undefined : await storage.getLlmProviderKey(provider);
     if (row) {
       resolved = { apiKey: decryptCredential(row.apiKeyBlob), baseUrl: row.baseUrl ?? envBaseUrl(provider), source: "vault" };
     } else {
@@ -79,6 +84,7 @@ export async function resolveProviderKey(provider: LlmProviderName): Promise<Res
 }
 
 export async function saveProviderKey(provider: LlmProviderName, apiKey: string, baseUrl: string | undefined, updatedBy: string | undefined) {
+  if (envOnly()) throw new LockdownError("Entering an LLM provider key");
   const row = await storage.upsertLlmProviderKey({
     provider,
     apiKeyBlob: encryptCredential(apiKey),
@@ -105,7 +111,8 @@ export interface ProviderKeyStatus {
 }
 
 export async function listProviderKeyStatuses(): Promise<ProviderKeyStatus[]> {
-  const rows = await storage.listLlmProviderKeys();
+  // Stored keys are ignored when the deployment is env-only, so they are not reported as in use.
+  const rows = envOnly() ? [] : await storage.listLlmProviderKeys();
   const byProvider = new Map(rows.map((r) => [r.provider as LlmProviderName, r]));
   return (Object.keys(ENV_VARS) as LlmProviderName[]).map((provider) => {
     const row = byProvider.get(provider);

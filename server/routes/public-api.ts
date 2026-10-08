@@ -13,6 +13,7 @@ import { callN8nWorkflow } from "../integrations/n8n";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { decryptCredentialMap } from "../credential-vault";
 import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
+import { getLockdown } from "../lockdown";
 
 const router = Router();
 
@@ -25,6 +26,11 @@ function extractKey(req: Request): string | undefined {
 }
 
 async function requireApiKey(req: Request, res: Response, next: NextFunction) {
+  // The route group is closed at the mount too (routes.ts); this keeps the shared env key from being
+  // honoured if this router is ever mounted somewhere that mount does not cover.
+  if (getLockdown().apiKeys.publicApi === "off") {
+    return res.status(403).json({ message: "The public API is disabled by this deployment's platform policy.", reason: "platform_lockdown", surface: "The public API" });
+  }
   const provided = extractKey(req);
   if (!provided) return res.status(401).json({ error: "Missing API key" });
 
