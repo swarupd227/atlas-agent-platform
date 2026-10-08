@@ -506,16 +506,46 @@ async function collectContextUsed(runId: string): Promise<Record<string, unknown
         if ((wave as any).priorContext) nodes.push(wave);
       }
     }
+    // Deduplicated across steps, and this is not cosmetic.
+    //
+    // Every step in a run is shown the SAME prior decisions, so collecting them
+    // per step multiplied them by the number of steps: the first live record
+    // carried 9 items describing 3 prior decisions, 3 conflicts describing 1,
+    // and 3 omissions describing 1. A reader of that record would conclude the
+    // decision was taken with nine precedents in view. It was three. In a
+    // record whose purpose is to say truthfully what a decision was made on,
+    // an inflated count is a false statement, not untidiness.
+    //
+    // `stepsShown` keeps the other fact -- how many steps saw context -- so
+    // nothing is lost by counting each prior decision once.
+    const seenItem = new Set<string>();
+    const seenConflict = new Set<string>();
+    const seenOmission = new Set<string>();
     for (const n of nodes) {
       const pc = n?.priorContext;
       if (!pc) continue;
       stepsShown++;
       for (const s of (pc.subjects ?? [])) subjects.add(String(s));
       for (const it of (pc.items ?? [])) {
+        // A prior decision is identified by the run that made it and the object
+        // it was about; the same pair twice is one decision shown twice.
+        const k = `${it.runId}|${it.subject}`;
+        if (seenItem.has(k)) continue;
+        seenItem.add(k);
         items.push({ subject: it.subject, tier: it.tier, matchAxis: it.matchAxis ?? null, runId: it.runId, decidedAt: it.decidedAt ?? null });
       }
-      for (const c of (pc.conflicts ?? [])) conflicts.push({ subject: c.subject, field: c.field });
-      for (const o of (pc.omissions ?? [])) omissions.push({ reason: o.reason, detail: o.detail });
+      for (const c of (pc.conflicts ?? [])) {
+        const k = `${c.subject}|${c.field}`;
+        if (seenConflict.has(k)) continue;
+        seenConflict.add(k);
+        conflicts.push({ subject: c.subject, field: c.field });
+      }
+      for (const o of (pc.omissions ?? [])) {
+        const k = `${o.reason}|${o.detail}`;
+        if (seenOmission.has(k)) continue;
+        seenOmission.add(k);
+        omissions.push({ reason: o.reason, detail: o.detail });
+      }
     }
     // Captured, even when nothing was shown: a run where no step saw prior
     // context is a fact worth recording, and it is NOT the same as a run whose

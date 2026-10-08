@@ -1112,3 +1112,91 @@ describe("recordRunDecisions records its provenance (phase 4)", () => {
     expect(rec.controlsApplied).toBeNull();
   });
 });
+
+describe("contextUsed counts each prior decision once, not once per step", () => {
+  /**
+   * Found in production, not here. The first live record carried 9 items
+   * describing 3 prior decisions, 3 conflicts describing 1, and 3 omissions
+   * describing 1, because every step in a run is shown the SAME prior context
+   * and it was collected per step.
+   *
+   * Every fixture above had a single step, so the multiplication could not
+   * appear. That is the same blind spot as the drift-signals loop: a fixture
+   * that cannot reach the condition reports a clean green.
+   *
+   * It matters because this record exists to say what a decision was made on.
+   * "Nine precedents were in view" when three were is a false statement in a
+   * compliance artefact, not a tidiness problem.
+   */
+  const nodeConfig = {
+    n1: { stateKey: "bind_policy", nodeType: "decision" },
+    n2: { stateKey: "fetch_treaty_terms", nodeType: "tool_call" },
+  };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound", fetch_treaty_terms: { limit: 50 } };
+
+  // What the engine actually persists: the same block attached to each step.
+  const shown = {
+    subjects: ["submission:SUB-2026-8891"],
+    items: [
+      { subject: "submission:SUB-2026-8891", tier: "authoritative", runId: "runAAA", decidedAt: "2026-10-08T09:00:00Z" },
+      { subject: "submission:SUB-2026-8891", tier: "authoritative", runId: "runBBB", decidedAt: "2026-10-08T10:00:00Z" },
+    ],
+    conflicts: [{ subject: "submission:SUB-2026-8891", field: "status" }],
+    omissions: [{ reason: "unclassified_keys", detail: "3 state keys could not be classified" }],
+  };
+
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear();
+    policyBundle = null;
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", priorContext: shown },
+      { nodeId: "n2", priorContext: shown },
+      { nodeId: "n3", priorContext: shown },
+    ] }] };
+  });
+
+  it("reports 3 steps and 2 prior decisions, not 6", async () => {
+    await recordRunDecisions({
+      runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+      state, nodeConfig, decidedAt: new Date("2026-10-08T12:00:00Z"),
+    });
+    const cu = upsertDecisionRecord.mock.calls[0][0].contextUsed;
+    expect(cu.stepsShown).toBe(3);
+    expect(cu.items).toHaveLength(2);
+    expect(cu.items.map((i: any) => i.runId).sort()).toEqual(["runAAA", "runBBB"]);
+    expect(cu.conflicts).toHaveLength(1);
+    expect(cu.omissions).toHaveLength(1);
+  });
+
+  it("keeps two decisions that differ only by the run that made them", async () => {
+    // Dedupe must not collapse genuinely different precedents. Same object,
+    // two runs, is two decisions -- that is corroboration and it is real.
+    await recordRunDecisions({
+      runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+      state, nodeConfig, decidedAt: new Date("2026-10-08T12:00:00Z"),
+    });
+    const cu = upsertDecisionRecord.mock.calls[0][0].contextUsed;
+    expect(new Set(cu.items.map((i: any) => i.runId)).size).toBe(2);
+  });
+
+  it("keeps the same run's decisions about DIFFERENT objects", async () => {
+    const twoSubjects = {
+      ...shown,
+      items: [
+        { subject: "submission:SUB-2026-8891", tier: "authoritative", runId: "runAAA", decidedAt: "2026-10-08T09:00:00Z" },
+        { subject: "binder:CP-2026-17", tier: "authoritative", runId: "runAAA", decidedAt: "2026-10-08T09:00:00Z" },
+      ],
+    };
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", priorContext: twoSubjects },
+      { nodeId: "n2", priorContext: twoSubjects },
+    ] }] };
+    await recordRunDecisions({
+      runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+      state, nodeConfig, decidedAt: new Date("2026-10-08T12:00:00Z"),
+    });
+    const cu = upsertDecisionRecord.mock.calls[0][0].contextUsed;
+    expect(cu.items).toHaveLength(2);
+    expect(cu.items.map((i: any) => i.subject).sort()).toEqual(["binder:CP-2026-17", "submission:SUB-2026-8891"]);
+  });
+});
