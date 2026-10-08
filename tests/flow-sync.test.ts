@@ -155,6 +155,38 @@ describe("the correlation itself", () => {
     expect(stepUnchanged(stored, { ...step, label: "Treaty limit check" })).toBe(false);
   });
 
+  // Binding a tool to an existing step touched none of the fields the
+  // correlation compared, so the step read as unchanged, the planner found no
+  // drift, and the automation kept running the tool-less agent. The sync could
+  // already build a tool_call node; it never decided to. Observed on the
+  // Account Establishment journey: three bound steps, sync reported "nothing
+  // to do", and it was telling the truth about what it had looked at.
+  it("notices a tool being bound to a step that had none", () => {
+    const step = { id: "s7", label: "Search & Duplicate Check", description: "", type: "get_info", config: {} };
+    const stored = stepCorrelation(step);
+    expect(stored.sourceTool).toBeNull();
+    expect(stepUnchanged(stored, step)).toBe(true);
+
+    const bound = { ...step, config: { toolName: "search_accounts", toolServerId: "srv-1", toolArgs: { name: "x" } } };
+    expect(stepUnchanged(stored, bound)).toBe(false);
+
+    // and once bound, a change to the tool, the server or the arguments is
+    // still a change -- the whole binding is the fingerprint, not just a name.
+    const boundStored = stepCorrelation(bound);
+    expect(stepUnchanged(boundStored, bound)).toBe(true);
+    expect(stepUnchanged(boundStored, { ...bound, config: { ...bound.config, toolName: "get_account" } })).toBe(false);
+    expect(stepUnchanged(boundStored, { ...bound, config: { ...bound.config, toolServerId: "srv-2" } })).toBe(false);
+    expect(stepUnchanged(boundStored, { ...bound, config: { ...bound.config, toolArgs: { name: "y" } } })).toBe(false);
+  });
+
+  it("does not call a step bound just because it carries stray tool arguments", () => {
+    // Only a named tool is a binding. Treating a bare toolArgs as one would
+    // rebuild steps nobody touched.
+    const step = { id: "s8", label: "Notify", description: "", type: "send_notification", config: { toolArgs: { to: "broker" } } };
+    expect(stepCorrelation(step).sourceTool).toBeNull();
+    expect(stepUnchanged(stepCorrelation(step), step)).toBe(true);
+  });
+
   it("leaves the steps that are drawn but never run out of it", () => {
     expect(STRUCTURAL_NODE_TYPES.has("trigger")).toBe(true);
     expect(STRUCTURAL_NODE_TYPES.has("end")).toBe(true);

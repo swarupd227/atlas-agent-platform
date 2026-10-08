@@ -51,9 +51,31 @@ export interface StepCorrelation {
    * a change to it is a change the sync can see.
    */
   factsCheck: "flag" | "fail";
+  /**
+   * Which tool the step calls, on which server, with which arguments.
+   *
+   * Without it, binding a tool to an existing step was invisible: the label,
+   * description, type and actor were all untouched, so the step read as
+   * unchanged, the planner found no drift, and the automation went on running
+   * the tool-less agent. The sync could already BUILD a tool_call node; it
+   * never decided to, because the binding was not something it compared.
+   * Found on the Account Establishment journey, where three bound steps
+   * produced a sync that correctly reported "nothing to do".
+   */
+  sourceTool: string | null;
 }
 
 const DECISION_KEYS = ["answerType", "question", "options", "levels", "confidenceThreshold", "unsure", "classifierId"] as const;
+
+const TOOL_KEYS = ["toolName", "toolServerId", "toolArgs"] as const;
+
+function toolFingerprint(config: Record<string, any>): string | null {
+  const picked: Record<string, unknown> = {};
+  for (const k of TOOL_KEYS) if (config[k] !== undefined && config[k] !== null && config[k] !== "") picked[k] = config[k];
+  // Only a named tool is a binding. A stray toolArgs with no tool is not one,
+  // and treating it as a change would rebuild steps nobody touched.
+  return picked.toolName ? JSON.stringify(picked) : null;
+}
 
 function decisionFingerprint(step: CorrelatableStep, config: Record<string, any>): string | null {
   if (step.type !== "make_decision") return null;
@@ -78,6 +100,7 @@ export function stepCorrelation(step: CorrelatableStep): StepCorrelation {
     sourceExpression: config.expression || null,
     sourceDecision: decisionFingerprint(step, config),
     factsCheck: config.factsCheck === "fail" ? "fail" : "flag",
+    sourceTool: toolFingerprint(config),
   };
 }
 
@@ -93,5 +116,9 @@ export function stepUnchanged(storedConfig: unknown, step: CorrelatableStep): bo
     && (cfg.sourceExpression || null) === now.sourceExpression
     && (cfg.sourceDecision || null) === now.sourceDecision
     // A node written before the setting existed reads as the default.
-    && (cfg.factsCheck === "fail" ? "fail" : "flag") === now.factsCheck;
+    && (cfg.factsCheck === "fail" ? "fail" : "flag") === now.factsCheck
+    // A node written before tool bindings were compared carries no
+    // sourceTool, which reads as null -- the same as a step with no tool, so
+    // nothing that was genuinely unbound is rebuilt.
+    && (cfg.sourceTool || null) === now.sourceTool;
 }

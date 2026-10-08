@@ -243,6 +243,13 @@ const SUBJECT_PATTERNS: Array<{ type: string; re: RegExp }> = [
   { type: "binder", re: /\bCP-\d{4}-\d+\b/g },
   { type: "broker", re: /\bBRK-[0-9A-Z-]{2,}\b/g },
   { type: "agency", re: /\bAGY-[0-9A-Z-]{2,}\b/g },
+  // An account is the anchor of the five Account journeys, and until this
+  // pattern existed none of them could use this layer at all: every other
+  // pattern here names an E&S object, so extractSubjects returned nothing on
+  // an account run and the whole layer was a silent no-op for them. Measured
+  // on the Account Establishment journey's own history -- 17 distinct ACCT-
+  // ids across its last 50 runs, every one of them invisible.
+  { type: "account", re: /\bACCT-[0-9A-Z-]{3,}\b/g },
   // A period is only a period when a key says so: "2026-11" appears in
   // timestamps everywhere, and anchoring on those would attach decisions to
   // the month they happened to run in.

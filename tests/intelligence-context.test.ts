@@ -248,6 +248,32 @@ describe("extractSubjects", () => {
     expect(map["policy:POL-2026-8891-CP"]).toBe("policyNumber");
   });
 
+  // Every other pattern names an E&S object, so an account run extracted no
+  // subject at all and the whole layer was a silent no-op for the five Account
+  // journeys -- 17 distinct ACCT- ids across one journey's last 50 runs, none
+  // of them visible to recall.
+  it("finds an account, which the five Account journeys are anchored on", () => {
+    const subs = extractSubjects({
+      account_search: "Matched existing account ACCT-101004 (Acme Components Inc).",
+      accountId: "ACCT-372419",
+    });
+    const map = Object.fromEntries(subs.map((s) => [s.subject, s.fromKey]));
+    expect(Object.keys(map)).toContain("account:ACCT-101004");
+    expect(Object.keys(map)).toContain("account:ACCT-372419");
+    expect(map["account:ACCT-372419"]).toBe("accountId");
+  });
+
+  it("reads an account id that is not purely numeric", () => {
+    // Live data carries both ACCT-101004 and ACCT-REQ-VOSTOK-001; a digits-only
+    // pattern would silently cover some accounts and not others.
+    expect(extractSubjects({ accountId: "ACCT-REQ-VOSTOK-001" }).map(s => s.subject))
+      .toEqual(["account:ACCT-REQ-VOSTOK-001"]);
+  });
+
+  it("does not mistake other identifiers for an account", () => {
+    expect(extractSubjects({ note: "ACCOUNTING-2026 and ACCT- alone" }).map(s => s.subject)).toEqual([]);
+  });
+
   it("does not turn a timestamp into an accounting period", () => {
     // "2026-11" appears in dates everywhere; anchoring on those would attach
     // decisions to the month they happened to run in.
