@@ -139,3 +139,62 @@ describe("the write path cannot forget to attribute", () => {
     expect((src.match(/"text-embedding-3-small"/g) ?? []).length).toBe(1);
   });
 });
+
+/**
+ * The surfaces that answer "what state are these embeddings in".
+ *
+ * Adding the columns was not the capability. /embedding-status existed
+ * precisely to answer this question and could only count vectors, so a base
+ * whose text had all changed since embedding reported "fully embedded",
+ * identically to one that was current. Only one of those means search works.
+ */
+describe("embedding-status reports what the vectors ARE", () => {
+  const { readFileSync } = require("fs");
+  const { join } = require("path");
+  const src = readFileSync(join(__dirname, "..", "server", "kb-routes.ts"), "utf8");
+  const statusRoute = src.slice(src.indexOf('app.get("/api/knowledge-bases/:id/embedding-status"'));
+  const body = statusRoute.slice(0, statusRoute.indexOf("\n  });"));
+
+  it("classifies every chunk rather than counting vectors", () => {
+    expect(body).toContain("chunkVectorState");
+    expect(body).toContain("states[chunkVectorState");
+  });
+
+  it("keeps the three keys existing callers read", () => {
+    // knowledge-base-detail.tsx consumes these; widening a response must not
+    // break the page that already reads it.
+    for (const k of ["total", "withEmbeddings", "withoutEmbeddings"]) expect(body).toContain(k);
+  });
+
+  it("counts vectors in ONE query, not one per chunk", () => {
+    expect(body).not.toMatch(/for \(const chunk of chunks\)[\s\S]{0,200}db\.execute/);
+    expect(body).toContain("WHERE knowledge_base_id =");
+  });
+});
+
+describe("re-embedding stale or unattributed vectors is opt-in", () => {
+  const { readFileSync } = require("fs");
+  const { join } = require("path");
+  const src = readFileSync(join(__dirname, "..", "server", "kb-routes.ts"), "utf8");
+  const embedRoute = src.slice(src.indexOf('app.post("/api/knowledge-bases/:id/embed"'));
+  const body = embedRoute.slice(0, embedRoute.indexOf("\n  });"));
+
+  it("defaults to chunks with no vector, so nobody re-embeds the platform by accident", () => {
+    // The cost is real: widening the default would re-embed every chunk the
+    // first time anyone pressed the button.
+    expect(body).toContain('const include = String((req.query.include ?? "")).toLowerCase()');
+    expect(body).toContain('const wantStale = include === "stale" || include === "all"');
+    expect(body).toContain('const wantUnattributed = include === "unattributed" || include === "all"');
+    expect(body).toContain('if (state === "never_embedded") missingChunks.push(chunk)');
+  });
+
+  it("does not report 'all chunks already have embeddings' when they are stale or unattributed", () => {
+    // True and misleading is the failure mode this whole layer is about.
+    expect(body).toContain("would be re-embedded with include=all");
+    expect(body).toContain("states: skipped");
+  });
+
+  it("checks which chunks have a vector in one query", () => {
+    expect(body).not.toMatch(/for \(const chunk of chunks\) \{\s*const check = await db\.execute/);
+  });
+});

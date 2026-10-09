@@ -1112,15 +1112,58 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const pgReady = await ensurePgVector();
       if (!pgReady) return res.status(500).json({ message: "Vector database not available" });
 
+      // One query for the whole base, not one per chunk. The loop form was an
+      // N+1 of the same shape that made /api/drift-signals take 72 seconds.
+      const vecRows = await db.execute(sql`
+        SELECT id, embedding IS NOT NULL AS has_emb
+          FROM knowledge_chunks WHERE knowledge_base_id = ${req.params.id as string}
+      `);
+      const hasVector = new Map<string, boolean>();
+      for (const r of (vecRows.rows ?? []) as any[]) hasVector.set(String(r.id), !!r.has_emb);
+
+      /**
+       * What to embed. The default is unchanged -- chunks with no vector --
+       * because widening it by default would re-embed every chunk on the
+       * platform at OpenAI's expense the first time anyone pressed the button.
+       *
+       * `include=stale` also re-embeds a vector whose text has changed since
+       * it was computed, and `include=unattributed` one stored before
+       * knowledge_chunks recorded what it represents (design section 6f).
+       * `include=all` does both. Opt-in, because the cost is real and the
+       * caller should choose to pay it.
+       */
+      const include = String((req.query.include ?? "")).toLowerCase();
+      const wantStale = include === "stale" || include === "all";
+      const wantUnattributed = include === "unattributed" || include === "all";
+      const { chunkVectorState } = await import("./embeddings");
+
       const missingChunks: typeof chunks = [];
       for (const chunk of chunks) {
-        const check = await db.execute(sql`SELECT embedding IS NOT NULL as has_emb FROM knowledge_chunks WHERE id = ${chunk.id}`);
-        if (check.rows?.[0] && !(check.rows[0] as any).has_emb) {
-          missingChunks.push(chunk);
-        }
+        const state = chunkVectorState(chunk as any, hasVector.get(chunk.id) ?? false);
+        if (state === "never_embedded") missingChunks.push(chunk);
+        else if (wantStale && (state === "stale" || state === "model_changed")) missingChunks.push(chunk);
+        else if (wantUnattributed && state === "unattributed") missingChunks.push(chunk);
       }
 
-      if (missingChunks.length === 0) return res.json({ total: chunks.length, embedded: 0, alreadyEmbedded: chunks.length, message: "All chunks already have embeddings" });
+      // "Nothing to do" is not the same as "all current", and saying the first
+      // when the second is false is the confusion this layer exists to remove:
+      // with the default include, a base of entirely unattributed vectors
+      // reports "all chunks already have embeddings", which is true and
+      // misleading. Name what was skipped.
+      if (missingChunks.length === 0) {
+        const skipped = chunks.reduce((acc: Record<string, number>, c) => {
+          const s = chunkVectorState(c as any, hasVector.get(c.id) ?? false);
+          acc[s] = (acc[s] ?? 0) + 1;
+          return acc;
+        }, {});
+        const needsAttention = (skipped.stale ?? 0) + (skipped.model_changed ?? 0) + (skipped.unattributed ?? 0);
+        return res.json({
+          total: chunks.length, embedded: 0, alreadyEmbedded: chunks.length, states: skipped,
+          message: needsAttention > 0
+            ? `No chunk is missing a vector, but ${needsAttention} would be re-embedded with include=all (stale or unattributed).`
+            : "All chunks already have embeddings",
+        });
+      }
 
       const texts = missingChunks.map(c => c.content);
       const embeddings = await generateEmbeddings(texts);
@@ -1145,20 +1188,50 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
       const chunks = await storage.getKnowledgeChunks(req.params.id as string);
-      if (chunks.length === 0) return res.json({ total: 0, withEmbeddings: 0, withoutEmbeddings: 0 });
+      if (chunks.length === 0) return res.json({ total: 0, withEmbeddings: 0, withoutEmbeddings: 0, states: {} });
 
       try {
         const result = await db.execute(sql`
-          SELECT COUNT(*) as total,
-                 COUNT(embedding) as with_embeddings
-          FROM knowledge_chunks WHERE knowledge_base_id = ${req.params.id as string}
+          SELECT id, embedding IS NOT NULL AS has_emb
+            FROM knowledge_chunks WHERE knowledge_base_id = ${req.params.id as string}
         `);
-        const row = result.rows?.[0] as any;
-        const total = parseInt(row?.total || "0");
-        const withEmb = parseInt(row?.with_embeddings || "0");
-        res.json({ total, withEmbeddings: withEmb, withoutEmbeddings: total - withEmb });
+        const hasVector = new Map<string, boolean>();
+        for (const r of (result.rows ?? []) as any[]) hasVector.set(String(r.id), !!r.has_emb);
+        const total = chunks.length;
+        const withEmb = chunks.filter(c => hasVector.get(c.id)).length;
+
+        /**
+         * What the vectors ARE, not just how many exist (design section 6f).
+         *
+         * This endpoint's job is to say what state a base's embeddings are in,
+         * and it could only count them: a base of vectors computed from text
+         * that has since changed reported "fully embedded", identically to one
+         * that was current. Those are different facts and only one of them
+         * means search will work.
+         *
+         * The old three keys are unchanged so existing callers keep working.
+         */
+        const { chunkVectorState } = await import("./embeddings");
+        const states: Record<string, number> = { current: 0, stale: 0, model_changed: 0, never_embedded: 0, unattributed: 0 };
+        for (const c of chunks) states[chunkVectorState(c as any, hasVector.get(c.id) ?? false)]++;
+
+        res.json({
+          total, withEmbeddings: withEmb, withoutEmbeddings: total - withEmb,
+          states,
+          // Said plainly, because a count a reader has to interpret is how
+          // "0% passed" meant "never measured" for 630 eval suites.
+          summary: states.current === total
+            ? "Every chunk's vector matches its current text."
+            : [
+                states.current ? `${states.current} current` : null,
+                states.stale ? `${states.stale} stale (text changed since embedding)` : null,
+                states.model_changed ? `${states.model_changed} embedded by a different model` : null,
+                states.unattributed ? `${states.unattributed} unattributed (embedded before the platform recorded what a vector represents)` : null,
+                states.never_embedded ? `${states.never_embedded} never embedded` : null,
+              ].filter(Boolean).join(", "),
+        });
       } catch {
-        res.json({ total: chunks.length, withEmbeddings: 0, withoutEmbeddings: chunks.length });
+        res.json({ total: chunks.length, withEmbeddings: 0, withoutEmbeddings: chunks.length, states: {} });
       }
     } catch (error: any) {
       res.status(500).json({ message: error.message });
