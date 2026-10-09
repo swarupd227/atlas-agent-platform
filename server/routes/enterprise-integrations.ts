@@ -11,6 +11,7 @@ import { getDefaultOrgId, getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
 import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
 import { connectorAllowed } from "../lockdown";
+import { vetConnectorCredentials } from "../connector-targets";
 import { db } from "../db";
 import { mcpServers, auditEvents, integrationConnections, agentMcpServers } from "@shared/schema";
 import { eq, and, gte, like, isNull } from "drizzle-orm";
@@ -107,6 +108,11 @@ router.post("/api/enterprise-integrations/:id/connect", checkPermission("manage_
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.flatten() });
     }
+
+    // Where this connector will send its calls is checked before anything is stored or tested:
+    // the test below would otherwise be the first request to an address nobody has judged.
+    const vetted = await vetConnectorCredentials(integrationId, parsed.data.credentials);
+    if (!vetted.ok) return res.status(400).json({ error: vetted.message, problems: vetted.problems });
 
     const credentialBlob = encryptCredentialMap(parsed.data.credentials);
 
@@ -286,6 +292,9 @@ router.patch("/api/enterprise-integrations/connections/:connectionId/config", ch
 
     const existingCreds = conn.credentialBlob ? decryptCredentialMap(conn.credentialBlob) : {};
     const mergedCreds = { ...existingCreds, ...parsed.data.credentials };
+    // Only the fields being changed are judged, so an old value elsewhere does not block this edit.
+    const vetted = await vetConnectorCredentials(conn.integrationId, mergedCreds, Object.keys(parsed.data.credentials));
+    if (!vetted.ok) return res.status(400).json({ error: vetted.message, problems: vetted.problems });
     const credentialBlob = encryptCredentialMap(mergedCreds);
 
     await db.update(integrationConnections)

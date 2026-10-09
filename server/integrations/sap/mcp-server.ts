@@ -9,6 +9,7 @@ import { Router, Request, Response } from "express";
 import { RealMcpBase, type McpToolResult, type RealMcpToolDef } from "../../real-mcp-base";
 import { SapClient, type SapCredentials } from "./client";
 import { getOrgId, getDefaultOrgId } from "../../auth";
+import { policyFetch } from "../../url-safety";
 import {
   sap_get_sales_order,
   sap_search_sales_orders,
@@ -256,7 +257,7 @@ export function createSapRouter(): Router {
         ? `${credentials.base_url}/CompanyService_GetCompanyInfo`
         : `${credentials.base_url}/sap/opu/odata4/sap/api_business_partner/srvd_a2x/sap/business_partner/0001/?$top=1&$format=json`;
 
-      const testRes = await fetch(pingPath, { method: "GET", headers });
+      const testRes = await policyFetch("connector:sap")(pingPath, { method: "GET", headers });
       res.json({
         connected: testRes.ok,
         statusCode: testRes.status,

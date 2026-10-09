@@ -1,5 +1,7 @@
 import { decryptCredentialMap } from "./credential-vault";
 import { storage } from "./storage";
+import { UnsafeUrlError, outboundPolicyMode, policyFetch } from "./url-safety";
+import { checkConnectorTargets } from "./connector-targets";
 
 export interface McpToolResult {
   content: Array<{ type: "text"; text: string }>;
@@ -161,6 +163,20 @@ export abstract class RealMcpBase {
         : `Integration '${this.integrationId}' is not connected for this organization.`);
     }
 
+    // The address the customer saved, judged again at the moment it is used: a row saved before the
+    // address rules existed, or edited some other way, gets the same answer as a new one.
+    const mode = outboundPolicyMode();
+    if (mode !== "off") {
+      const problems = checkConnectorTargets(this.integrationId, credentials);
+      if (problems.length > 0) {
+        const why = problems.map((p) => p.message).join(" ");
+        if (mode === "enforce") {
+          return this.err(`Integration '${this.integrationId}' has an address this deployment does not allow: ${why} Correct it in Integrations.`);
+        }
+        warnOnce(`${this.integrationId}|${why}`, `[outbound-policy] audit: ASTRA_OUTBOUND_POLICY=enforce would refuse connector:${this.integrationId}: ${why}`);
+      }
+    }
+
     const startMs = Date.now();
     let result: McpToolResult;
     try {
@@ -269,13 +285,16 @@ export abstract class RealMcpBase {
     };
 
     let currentToken = bearerToken;
+    // The address is the customer's own, and the credentials go with the request, so every call
+    // runs under the outbound policy (server/url-safety.ts), not a bare fetch.
+    const send = policyFetch(`connector:${this.integrationId}`);
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const res = await fetch(url, {
+        const res = await send(url, {
           ...rest,
           headers: buildHeaders(currentToken),
           signal: controller.signal,
@@ -309,6 +328,8 @@ export abstract class RealMcpBase {
         return res;
       } catch (err: any) {
         clearTimeout(timeoutId);
+        // A refusal by the policy is the answer, not a transient failure to retry.
+        if (err instanceof UnsafeUrlError) throw err;
         const isAbort = err?.name === "AbortError";
         if (!isAbort && attempt < MAX_RETRIES - 1) {
           await sleep(RETRY_BASE_MS * Math.pow(2, attempt));
@@ -321,6 +342,14 @@ export abstract class RealMcpBase {
 
     throw new Error(`All ${MAX_RETRIES} attempts to ${url} failed`);
   }
+}
+
+const warned = new Set<string>();
+function warnOnce(key: string, line: string): void {
+  if (warned.has(key)) return;
+  if (warned.size > 500) warned.clear();
+  warned.add(key);
+  console.warn(line);
 }
 
 function sleep(ms: number): Promise<void> {
