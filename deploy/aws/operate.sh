@@ -648,7 +648,7 @@ harden_edge() {
   local instance_id target_health_json
   local distribution_json distribution_domain distribution_etag origin_matches origin_secret_value
   local origin_secret_file updated_distribution waf_arn rule_priority priorities candidate rule_arn
-  local prefix_list_id sg_rules public_rule_id direct_status edge_state
+  local prefix_list_id sg_rules public_rule_id direct_status direct_attempt edge_state
   local prefix_ingress_created=false
   require_commands "$AWS_BIN" jq "$CURL_BIN" "$OPENSSL_BIN"
   require_expected_account
@@ -830,8 +830,13 @@ harden_edge() {
     --listener-arn "$listener_arn" \
     --default-actions "file://$state_dir/listener-default-403.json" >/dev/null
 
-  direct_status=$($CURL_BIN --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' \
-    --connect-timeout 10 "http://${alb_dns}/health" || true)
+  direct_status=''
+  for (( direct_attempt=1; direct_attempt<=12; direct_attempt++ )); do
+    direct_status=$($CURL_BIN --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' \
+      --connect-timeout 10 "http://${alb_dns}/health" || true)
+    [[ "$direct_status" == 403 ]] && break
+    (( direct_attempt < 12 )) && sleep 5
+  done
   [[ "$direct_status" == 403 ]] || {
     printf 'ERROR: direct ALB request returned %s instead of 403.\n' "$direct_status" >&2
     return 1

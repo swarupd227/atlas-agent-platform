@@ -86,11 +86,12 @@ else
   fail 'edge operation verifies direct rejection and captures rollback state'
 fi
 
-direct_probe_source=$(sed -n '/direct_status=/,+2p' "$operation_source")
-if grep -Fq -- "--noproxy '*'" <<<"$direct_probe_source"; then
-  pass 'direct ALB verification bypasses ambient HTTP proxies'
+if grep -Fq -- "--noproxy '*'" "$operation_source" &&
+  grep -Fq 'direct_attempt<=12' "$operation_source" &&
+  grep -Fq '[[ "$direct_status" == 403 ]] && break' "$operation_source"; then
+  pass 'direct ALB verification bypasses proxies and waits for propagation'
 else
-  fail 'direct ALB verification bypasses ambient HTTP proxies'
+  fail 'direct ALB verification bypasses proxies and waits for propagation'
 fi
 
 if grep -Fq 'if [[ -e "$edge_state" ]]' "$operation_source" &&
