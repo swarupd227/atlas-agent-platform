@@ -268,6 +268,16 @@ resource "aws_elastic_beanstalk_environment" "main" {
     name      = "ASTRA_LOCKDOWN"
     value     = var.lockdown
   }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+    value     = var.otlp_traces_endpoint
+  }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "OTEL_EXPORTER_OTLP_HEADERS"
+    value     = var.otlp_headers
+  }
 
   # EB's Node proxy listens on 80 and forwards to the app's PORT (8080 above).
   setting {

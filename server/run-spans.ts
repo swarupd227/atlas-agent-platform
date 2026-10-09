@@ -97,64 +97,53 @@ export class RunSpanCollector {
 
   /** OTLP ExportTraceServiceRequest JSON — consumable by any OTel collector. */
   toOtlp(resourceAttributes: Record<string, string> = {}): unknown {
-    const attrKV = (attrs: Record<string, string | number | boolean>) =>
-      Object.entries(attrs).map(([key, value]) => ({
-        key,
-        value:
-          typeof value === "number" ? (Number.isInteger(value) ? { intValue: value } : { doubleValue: value }) :
-          typeof value === "boolean" ? { boolValue: value } :
-          { stringValue: String(value) },
-      }));
-    const msToNano = (ms: number) => String(Math.round(ms * 1e6));
-    return {
-      resourceSpans: [
-        {
-          resource: { attributes: attrKV({ "service.name": "atlas-agent-runtime", ...resourceAttributes }) },
-          scopeSpans: [
-            {
-              scope: { name: "atlas.run-spans", version: "1.0.0" },
-              spans: this.spans.map(s => ({
-                traceId: this.traceId,
-                spanId: s.spanId,
-                parentSpanId: s.parentSpanId ?? undefined,
-                name: s.name,
-                kind: 1, // SPAN_KIND_INTERNAL
-                startTimeUnixNano: msToNano(s.startMs),
-                endTimeUnixNano: msToNano(s.endMs ?? s.startMs),
-                attributes: attrKV({ "span.kind": s.kind, ...s.attributes }),
-                status: { code: s.status === "error" ? 2 : s.status === "ok" ? 1 : 0 },
-              })),
-            },
-          ],
-        },
-      ],
-    };
+    return { resourceSpans: [spansToResourceSpans(this.traceId, this.spans, resourceAttributes)] };
   }
 }
 
 /**
- * Best-effort OTLP forwarding to a configured collector endpoint. No-ops
- * (logs once) when OTEL_EXPORTER_OTLP_ENDPOINT is unset — never blocks or
- * fails a run. Fire-and-forget from the caller.
+ * One OTLP ResourceSpans entry for a trace's span list. Pure, so a trace read back from the database
+ * and a collector that has just finished produce the same thing. `includeErrors` false drops the
+ * `error.message` attribute, which can carry a vendor's error text and is the only free-text field a
+ * span has; the in-app span view keeps it, an export to another system leaves it out by default.
  */
-let warnedNoOtlp = false;
-export async function exportSpansOtlp(collector: RunSpanCollector, resourceAttributes: Record<string, string> = {}): Promise<void> {
-  const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-  if (!endpoint) {
-    if (!warnedNoOtlp) {
-      warnedNoOtlp = true;
-      console.log("[run-spans] OTEL_EXPORTER_OTLP_ENDPOINT unset — spans persisted to trace but not forwarded to a collector.");
-    }
-    return;
-  }
-  try {
-    await fetch(`${endpoint.replace(/\/$/, "")}/v1/traces`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(collector.toOtlp(resourceAttributes)),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch (err: any) {
-    console.warn(`[run-spans] OTLP export failed (non-fatal): ${err.message}`);
-  }
+export function spansToResourceSpans(
+  traceId: string,
+  spans: RunSpan[],
+  resourceAttributes: Record<string, string> = {},
+  options: { includeErrors?: boolean } = {},
+): Record<string, unknown> {
+  const includeErrors = options.includeErrors ?? true;
+  const attrKV = (attrs: Record<string, string | number | boolean>) =>
+    Object.entries(attrs).map(([key, value]) => ({
+      key,
+      value:
+        typeof value === "number" ? (Number.isInteger(value) ? { intValue: value } : { doubleValue: value }) :
+        typeof value === "boolean" ? { boolValue: value } :
+        { stringValue: String(value) },
+    }));
+  const msToNano = (ms: number) => String(Math.round(ms * 1e6));
+  return {
+    resource: { attributes: attrKV({ "service.name": "atlas-agent-runtime", ...resourceAttributes }) },
+    scopeSpans: [
+      {
+        scope: { name: "atlas.run-spans", version: "1.0.0" },
+        spans: spans.map(s => {
+          const attributes = { "span.kind": s.kind, ...s.attributes };
+          if (!includeErrors) delete (attributes as Record<string, unknown>)["error.message"];
+          return {
+            traceId,
+            spanId: s.spanId,
+            parentSpanId: s.parentSpanId ?? undefined,
+            name: s.name,
+            kind: 1, // SPAN_KIND_INTERNAL
+            startTimeUnixNano: msToNano(s.startMs),
+            endTimeUnixNano: msToNano(s.endMs ?? s.startMs),
+            attributes: attrKV(attributes),
+            status: { code: s.status === "error" ? 2 : s.status === "ok" ? 1 : 0 },
+          };
+        }),
+      },
+    ],
+  };
 }

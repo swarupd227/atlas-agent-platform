@@ -192,6 +192,8 @@ resource "azurerm_linux_web_app" "main" {
     ASTRA_ALLOWED_PRIVATE_CIDRS    = var.allowed_private_cidrs
     ASTRA_OUTBOUND_POLICY          = var.outbound_policy
     ASTRA_LOCKDOWN                 = var.lockdown
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = var.otlp_traces_endpoint
+    OTEL_EXPORTER_OTLP_HEADERS     = var.otlp_headers
     SCM_DO_BUILD_DURING_DEPLOYMENT = "false" # code is shipped pre-built by deploy.sh
     WEBSITE_NODE_DEFAULT_VERSION   = "~22"
     WEBSITE_RUN_FROM_PACKAGE       = "0"

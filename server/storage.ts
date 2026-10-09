@@ -4,6 +4,7 @@ import { LockdownError, agentApiKeysAllowed } from "./lockdown";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
 import { buildCanonicalAuditPayload, computeEventHash, computeMerkleRoot, signAuditPayload, verifyAuditSignature } from "./audit-signing";
+import { forwardTraceSpans } from "./otlp-export";
 import {
   integrationConnections,
   integrationOAuthApps,
@@ -1550,6 +1551,8 @@ export class DatabaseStorage implements IStorage {
   async createTrace(trace: InsertRunTrace) {
     const orgId = resolveOrgId(trace.organizationId);
     const [created] = await db.insert(runTraces).values({ ...trace, organizationId: orgId }).returning();
+    // Whatever runtime wrote this trace, its span tree goes to the configured OTLP backend (if any).
+    if (created?.spansJson) forwardTraceSpans(created);
     return created;
   }
 
@@ -2969,6 +2972,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateTrace(id: string, data: Partial<RunTrace>) {
     const [updated] = await db.update(runTraces).set(data).where(eq(runTraces.id, id)).returning();
+    if (data.spansJson && updated?.spansJson) forwardTraceSpans(updated);
     return updated;
   }
 

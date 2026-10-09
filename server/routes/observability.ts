@@ -3,6 +3,8 @@ import { db } from "../db";
 import { runTraces, agents, agentAlerts, jobs } from "@shared/schema";
 import { eq, gte, and, isNull, desc, or, sql } from "drizzle-orm";
 import { getOrgId } from "../auth";
+import { checkPermission } from "../permissions";
+import { getOtlpExportStatus } from "../otlp-export";
 
 const router = Router();
 
@@ -399,6 +401,12 @@ router.post("/api/observability/export/otlp", async (req: Request, res) => {
     console.error("[observability] OTLP ingest error:", err.message);
     res.status(500).json({ error: "Failed to ingest OTLP traces" });
   }
+});
+
+// Whether the run traces this server forwards (OTEL_EXPORTER_OTLP_*) are arriving: counts, the last
+// error, and where they go. Names the headers it sends, never their values, and only the host of the URL.
+router.get("/api/observability/export/status", checkPermission("manage_platform_settings"), (_req: Request, res) => {
+  res.json(getOtlpExportStatus());
 });
 
 export const otlpIngestRouter = Router();

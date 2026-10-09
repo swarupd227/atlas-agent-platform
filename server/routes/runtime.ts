@@ -85,7 +85,7 @@ import {
   runParameterMatching,
 } from "./helpers";
 import { dispatchToolCall, gatherAvailableTools } from "../tool-dispatcher";
-import { RunSpanCollector, exportSpansOtlp } from "../run-spans";
+import { RunSpanCollector } from "../run-spans";
 import { isRealMcpServer, mcpInitialize, mcpListTools, mcpListResources, mcpListPrompts } from "../mcp-client";
 import { getEnterpriseServerById } from "../integrations/register";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
@@ -917,8 +917,6 @@ function hashCode(str: string): number {
         spansJson: spans.toJSON(),
         endedAt: new Date(),
       });
-      // OTLP forwarding is best-effort and no-ops without a collector endpoint.
-      exportSpansOtlp(spans, { "agent.id": agentId, "run.trace_id": trace.id }).catch(() => {});
 
       await storage.updateAgent(agentId, {
         totalRuns: (agent.totalRuns || 0) + 1,

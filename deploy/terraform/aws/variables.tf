@@ -147,3 +147,16 @@ variable "lockdown" {
   type        = string
   default     = ""
 }
+
+variable "otlp_traces_endpoint" {
+  description = "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: where run traces are forwarded as OTLP over HTTP/JSON (a Datadog intake URL for your site, or a Collector/Datadog Agent). Empty sends nothing."
+  type        = string
+  default     = ""
+}
+
+variable "otlp_headers" {
+  description = "OTEL_EXPORTER_OTLP_HEADERS: request headers for the endpoint as name=value,name=value, e.g. dd-api-key=<key>. A secret: set via TF_VAR_otlp_headers."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

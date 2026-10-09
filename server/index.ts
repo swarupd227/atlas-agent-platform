@@ -18,6 +18,7 @@ import { authMiddleware, seedDefaultAdmin, getSecurityMode, setDefaultOrgId, isL
 import { storage } from "./storage";
 import { otlpIngestRouter } from "./routes/observability";
 import { pool } from "./db";
+import { flushOtlp } from "./otlp-export";
 import { validateEnv, demosEnabled } from "./config";
 
 // Fail fast on misconfiguration before anything else starts.
@@ -48,6 +49,8 @@ function shutdown(signal: string) {
     process.exit(1);
   }, 25_000);
   httpServer.close(async () => {
+    // Spans of the runs that just finished are still queued for the telemetry backend.
+    try { await flushOtlp(5_000); } catch { /* ignore */ }
     try { await pool.end(); } catch { /* ignore */ }
     clearTimeout(force);
     process.exit(0);

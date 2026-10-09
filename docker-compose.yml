@@ -82,6 +82,11 @@ services:
       ASTRA_OUTBOUND_POLICY: ${ASTRA_OUTBOUND_POLICY:-audit}
       # What this deployment does not allow at all (JSON); see .env.example. Empty = nothing.
       ASTRA_LOCKDOWN: ${ASTRA_LOCKDOWN:-}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
       # Seeds a `admin` user on first boot with this password (username is fixed to `admin`).
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in .env}
       # Optional model/integration keys — pass through when set.
