@@ -1579,6 +1579,42 @@ export type DagStateSchema = typeof dagStateSchemas.$inferSelect;
  *
  * Created by runStartupMigrations, not db:push -- see server/db.ts.
  */
+/**
+ * Every tool call the gated dispatcher handled, so a run can say what it DID
+ * and not only what it concluded (design section 6f, P4.2's actionsTaken).
+ *
+ * Deliberately NOT audit events, though the dispatcher already writes those for
+ * gate decisions. `createAuditEvent` takes a per-org advisory lock and appends
+ * to a hash chain, so one row per tool call would serialise every dispatch in
+ * the organisation behind that lock -- the same shape as the N+1 that made
+ * /api/drift-signals starve the process. This is an unlocked, unchained insert
+ * on a table indexed by the run.
+ *
+ * Written by the dispatcher rather than the DAG engine on purpose: every
+ * execution path goes through dispatchToolCall, while the engine sees only DAG
+ * runs. A provenance field fed from the engine would be silently empty for
+ * Cowork, the Playground and on-demand agents, and a reader could not tell
+ * that from "no tools were used".
+ */
+export const toolInvocations = pgTable("tool_invocations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  /** The dispatcher's traceId: the dag run id for a team run. Null off-run. */
+  runId: varchar("run_id"),
+  serverName: text("server_name"),
+  toolName: text("tool_name").notNull(),
+  /** The dispatcher's own outcome: success, tool_error, gate_blocked_*, etc. */
+  outcome: text("outcome").notNull(),
+  durationMs: integer("duration_ms"),
+  iteration: integer("iteration"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertToolInvocationSchema = createInsertSchema(toolInvocations).omit({ id: true });
+export type InsertToolInvocation = z.infer<typeof insertToolInvocationSchema>;
+export type ToolInvocation = typeof toolInvocations.$inferSelect;
+
 export const decisionRecords = pgTable("decision_records", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   organizationId: varchar("organization_id"),
@@ -1673,6 +1709,15 @@ export const decisionRecords = pgTable("decision_records", {
    * NULL means not captured; an empty array means captured, nothing flagged.
    */
   patternsFlagged: jsonb("patterns_flagged"),
+  /**
+   * What the run DID: the tools it called, from tool_invocations. The other
+   * half of the NAIC bulletin's "which system or person acted" -- a conclusion
+   * is not an action, and "it read these three systems and wrote to that one"
+   * is what an examiner is actually asking for.
+   *
+   * NULL means not captured; an empty array means captured, no tool was used.
+   */
+  actionsTaken: jsonb("actions_taken"),
   /**
    * The PERSON who settled the gate, when one did. `decidedBy` answers "which
    * system" (the team) and could never answer "which person", which is half of

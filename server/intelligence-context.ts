@@ -641,6 +641,49 @@ function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): 
 }
 
 /**
+ * P4.2 -- what the run DID, from the dispatcher's own record.
+ *
+ * A conclusion is not an action. "It read these three systems and wrote to
+ * that one" is what the NAIC bulletin's "which system or person acted" is
+ * actually asking, and until tool_invocations existed the platform kept only
+ * a COUNT: the DAG engine carries toolCallCount and discards the identities,
+ * so nothing persisted said which tools a run used.
+ *
+ * Refusals are kept alongside successes. "It tried to post to Teams and the
+ * policy stopped it" and "it never tried" are different facts, and a record
+ * that showed only successes would make them look identical.
+ *
+ * Returns null when the lookup failed, [] when the run used no tools.
+ */
+async function collectActionsTaken(runId: string): Promise<Array<Record<string, unknown>> | null> {
+  try {
+    const rows = await (storage as { getToolInvocationsByRun?: (id: string) => Promise<any[]> }).getToolInvocationsByRun?.(runId);
+    if (!Array.isArray(rows)) return null;
+    // Collapsed by (tool, outcome): a loop that called the same tool nine
+    // times is one action taken nine times, not nine actions -- the same
+    // inflation that made contextUsed read as nine precedents when it was
+    // three.
+    const byKey = new Map<string, Record<string, unknown>>();
+    for (const r of rows) {
+      const k = `${r.serverName ?? ""}|${r.toolName}|${r.outcome}`;
+      const seen = byKey.get(k);
+      if (seen) {
+        seen.calls = (seen.calls as number) + 1;
+        seen.totalMs = (seen.totalMs as number) + (r.durationMs ?? 0);
+        continue;
+      }
+      byKey.set(k, {
+        server: r.serverName ?? null, tool: r.toolName, outcome: r.outcome,
+        calls: 1, totalMs: r.durationMs ?? 0, firstAt: r.createdAt ?? null,
+      });
+    }
+    return [...byKey.values()];
+  } catch {
+    return null;
+  }
+}
+
+/**
  * P4.2 -- WHY, assembled from what the run did.
  *
  * The trap this avoids is asking the model. An agent asked "why did you decide
@@ -889,6 +932,7 @@ export async function recordRunDecisions(input: {
   // engine's wave shape. One extra read at the end of a finished run is the
   // cheaper trade.
   let patternsFlagged: Array<Record<string, unknown>> | null = null;
+  const actionsTaken = await collectActionsTaken(input.runId);
   let rationale: Record<string, unknown> | null = null;
   let approver: { userId: string | null; decidedAt: string | null } | null = null;
   try {
@@ -940,6 +984,7 @@ export async function recordRunDecisions(input: {
         controlsApplied,
         rationale,
         patternsFlagged,
+        actionsTaken,
         decidedByUserId: approver?.userId ?? null,
       });
       written++;

@@ -16,6 +16,7 @@ import {
   users, agents, agentMandates, agentTaskClasses, agentWarrants, mandateDerivations, mandateDerivedItems, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   decisionRecords,
+  toolInvocations,
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
   improvementRecommendations, autonomousActionLogs, agentVersions,
   policyExceptions, complianceReports,
@@ -45,6 +46,7 @@ import {
   type EvalRun, type InsertEvalRun,
   type EvalCaseResult, type InsertEvalCaseResult,
   type DecisionRecord, type InsertDecisionRecord,
+  type ToolInvocation, type InsertToolInvocation,
   type ImprovementRecommendation, type InsertImprovementRecommendation,
   type AutonomousActionLog, type InsertAutonomousActionLog,
   type AgentVersion,
@@ -622,6 +624,9 @@ export interface IStorage {
   getDecisionRecordsBySubjects(subjects: string[], orgId?: string, limit?: number): Promise<DecisionRecord[]>;
   /** Org-scoped: a record owned by another tenant comes back undefined. */
   getDecisionRecord(id: string, orgId?: string): Promise<DecisionRecord | undefined>;
+  /** What the gated dispatcher ran. Unlocked, unchained -- see the table's note. */
+  recordToolInvocation(inv: InsertToolInvocation): Promise<void>;
+  getToolInvocationsByRun(runId: string): Promise<ToolInvocation[]>;
   /**
    * The review queue. Returns the page AND the unfiltered total, because a
    * caller shown 50 rows out of an unknown number cannot tell "that is all"
@@ -3378,6 +3383,19 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return row;
+  }
+
+  async recordToolInvocation(inv: InsertToolInvocation) {
+    // Fire-and-forget by contract: a tool call must never fail because its
+    // provenance could not be written. The caller does not await this.
+    await db.insert(toolInvocations).values(inv);
+  }
+
+  async getToolInvocationsByRun(runId: string) {
+    if (!runId) return [];
+    return db.select().from(toolInvocations)
+      .where(eq(toolInvocations.runId, runId))
+      .orderBy(asc(toolInvocations.createdAt));
   }
 
   async getDecisionRecord(id: string, orgId?: string) {

@@ -994,13 +994,45 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // trail still apply.
   const skillRead = tool.serverId === BUILTIN_SKILL_SERVER_ID;
 
-  const finish = (partial: Omit<DispatchResult, "redactedArgs" | "startedAt" | "completedAt" | "durationMs">): DispatchResult => ({
-    ...partial,
-    redactedArgs,
-    startedAt,
-    completedAt: new Date().toISOString(),
-    durationMs: Date.now() - startMs,
-  });
+  const finish = (partial: Omit<DispatchResult, "redactedArgs" | "startedAt" | "completedAt" | "durationMs">): DispatchResult => {
+    const durationMs = Date.now() - startMs;
+    // Every outcome passes through here -- success, tool error, and each gate
+    // refusal -- which is why the record is written at this one point rather
+    // than on the success path. What a run ATTEMPTED and was refused is
+    // provenance too: "it tried to post to Teams and the policy stopped it"
+    // is a different fact from "it never tried", and a reader of a decision
+    // record needs to tell them apart.
+    //
+    // Never awaited and never allowed to throw: a tool call must not fail
+    // because its provenance could not be written. This is a plain insert on
+    // an unchained table, NOT an audit event -- createAuditEvent takes a
+    // per-org advisory lock, and one of those per tool call would serialise
+    // every dispatch in the organisation.
+    // Optional-chained deliberately. A storage without this method -- an older
+    // deployment mid-rollout, or any caller that supplies its own -- must not
+    // break every dispatch, which is exactly what `storage.x(...).catch()`
+    // would do by throwing on `undefined(...)` before the catch exists.
+    try {
+      void (storage as { recordToolInvocation?: (i: unknown) => Promise<unknown> })
+        .recordToolInvocation?.({
+          organizationId: req.orgId ?? null,
+          agentId,
+          runId: req.traceId ?? null,
+          serverName: tool.serverName ?? null,
+          toolName: tool.toolName,
+          outcome: partial.outcome,
+          durationMs,
+          iteration: req.iteration ?? null,
+        })?.catch?.(() => {});
+    } catch { /* provenance must never fail a tool call */ }
+    return {
+      ...partial,
+      redactedArgs,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      durationMs,
+    };
+  };
 
   // 1. Skill allowlist gate — skills grant tool capabilities; a declared
   //    allowlist that omits this tool refuses dispatch.

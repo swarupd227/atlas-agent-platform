@@ -35,6 +35,7 @@ let dagRun: any = null;
 let policyBundle: any = null;
 let approvals: any[] = [];
 // P4.4 fixtures: the agent -> outcome -> kpis -> readings chain.
+let toolInvocations: any = [];
 let agentsById: Record<string, any> = {};
 let kpisByOutcome: Record<string, any[]> = {};
 let readingsByOutcome: Record<string, any[]> = {};
@@ -65,6 +66,10 @@ vi.mock("../server/storage", () => ({
     listDagExecutionRunsByOrg: vi.fn(async () => runs),
     getDagExecutionRun: vi.fn(async () => dagRun),
     getApprovals: vi.fn(async () => approvals),
+    getToolInvocationsByRun: vi.fn(async () => {
+      if (toolInvocations === "throw") throw new Error("tool invocation lookup failed");
+      return toolInvocations;
+    }),
     getKpisByOutcome: vi.fn(async (o: string) => kpisByOutcome[o] ?? []),
     getKpiReadingsByOutcome: vi.fn(async (o: string) => readingsByOutcome[o] ?? []),
     getAgent: vi.fn(async (id: string) => {
@@ -1509,5 +1514,82 @@ describe("P4.4: what followed, as a link and never a verdict", () => {
     readingsByOutcome["o1"] = [{ id: "r1", kpiId: "k1", takenAt: new Date(base + DAY), value: 96, source: "manual" }];
     const o: any = await resolveOutcomeFor({ teamAgentId: "teamA", effectiveFrom: new Date(base) });
     expect(o).toMatchObject({ status: "measured", kpisMeasuredSince: 1, kpisTotal: 2 });
+  });
+});
+
+describe("actionsTaken: what the run DID, not only what it concluded", () => {
+  /**
+   * The other half of the NAIC row "which system or person acted". Until
+   * tool_invocations existed the platform kept only a COUNT -- the DAG engine
+   * carries toolCallCount and discards the identities -- so nothing persisted
+   * said which tools a run used. Verified on the live app: no tool name
+   * appeared anywhere in a persisted run.
+   *
+   * Recorded by the DISPATCHER, not the engine, so it covers every execution
+   * path rather than DAG runs only.
+   */
+  const nodeConfig = { n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" } };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound" };
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear(); policyBundle = null; approvals = [];
+    toolInvocations = []; dagRun = { id: "run-1", waveResults: [] };
+  });
+
+  it("names the tools, not just a count", async () => {
+    toolInvocations = [
+      { serverName: "salesforce", toolName: "get_account", outcome: "success", durationMs: 120, createdAt: new Date("2026-10-09T09:00:00Z") },
+      { serverName: "treaty_api", toolName: "fetch_limits", outcome: "success", durationMs: 300, createdAt: new Date("2026-10-09T09:01:00Z") },
+    ];
+    await write();
+    const a = upsertDecisionRecord.mock.calls[0][0].actionsTaken;
+    expect(a.map((x: any) => `${x.server}.${x.tool}`)).toEqual(["salesforce.get_account", "treaty_api.fetch_limits"]);
+    expect(a[0]).toMatchObject({ outcome: "success", calls: 1 });
+  });
+
+  it("keeps refusals, because 'tried and was blocked' is not 'never tried'", async () => {
+    toolInvocations = [
+      { serverName: "teams", toolName: "post_message", outcome: "gate_blocked_policy", durationMs: 2, createdAt: new Date() },
+    ];
+    await write();
+    const a = upsertDecisionRecord.mock.calls[0][0].actionsTaken;
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ tool: "post_message", outcome: "gate_blocked_policy" });
+  });
+
+  it("collapses a loop into one action called many times", async () => {
+    // Nine calls to the same tool is one action taken nine times, not nine
+    // actions -- the inflation that made contextUsed read as 9 precedents.
+    toolInvocations = Array.from({ length: 9 }, () => ({
+      serverName: "treaty_api", toolName: "fetch_limits", outcome: "success", durationMs: 10, createdAt: new Date(),
+    }));
+    await write();
+    const a = upsertDecisionRecord.mock.calls[0][0].actionsTaken;
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ calls: 9, totalMs: 90 });
+  });
+
+  it("separates the same tool succeeding and failing", async () => {
+    toolInvocations = [
+      { serverName: "treaty_api", toolName: "fetch_limits", outcome: "success", durationMs: 10, createdAt: new Date() },
+      { serverName: "treaty_api", toolName: "fetch_limits", outcome: "tool_error", durationMs: 5, createdAt: new Date() },
+    ];
+    await write();
+    const a = upsertDecisionRecord.mock.calls[0][0].actionsTaken;
+    expect(a.map((x: any) => x.outcome).sort()).toEqual(["success", "tool_error"]);
+  });
+
+  it("distinguishes 'used no tools' from 'could not look'", async () => {
+    toolInvocations = [];
+    await write();
+    expect(upsertDecisionRecord.mock.calls[0][0].actionsTaken).toEqual([]);
+
+    upsertDecisionRecord.mockClear();
+    toolInvocations = "throw";
+    await write();
+    expect(upsertDecisionRecord.mock.calls[0][0].actionsTaken).toBeNull();
   });
 });

@@ -2085,6 +2085,28 @@ export async function runStartupMigrations() {
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS rationale JSONB;
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS patterns_flagged JSONB;
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS decided_by_user_id VARCHAR;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS actions_taken JSONB;
+    `);
+
+    // What the gated dispatcher actually ran. Not audit_events: that write
+    // takes a per-org advisory lock and appends to a hash chain, so one row
+    // per tool call would serialise every dispatch in the org behind it.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tool_invocations (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        agent_id VARCHAR NOT NULL,
+        run_id VARCHAR,
+        server_name TEXT,
+        tool_name TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        duration_ms INTEGER,
+        iteration INTEGER,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      -- The lookup this exists for: everything a given run did.
+      CREATE INDEX IF NOT EXISTS idx_tool_invocations_run ON tool_invocations (run_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_tool_invocations_agent ON tool_invocations (agent_id, created_at DESC);
     `);
 
     // Design section 6f: a retrieval representation must say what content, and
