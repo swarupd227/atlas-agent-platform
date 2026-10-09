@@ -1373,3 +1373,47 @@ describe("'nothing flagged' and 'nothing checked' are different answers", () => 
     expect(rec.patternsFlagged).toHaveLength(1);
   });
 });
+
+describe("coverage: how much of the run was checked", () => {
+  /**
+   * A live E&S run reported all_passed off ONE judgment across seven steps.
+   * True, and far more reassuring than it should be. "1 check across 7 steps"
+   * and "7 checks across 7 steps" both read all_passed and are not the same
+   * assurance, so the record carries the coverage too.
+   */
+  const nodeConfig = { n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" } };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound" };
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+  beforeEach(() => { decisionRecords = []; upsertDecisionRecord.mockClear(); policyBundle = null; approvals = []; });
+
+  it("shows one check covering a seven-step run as exactly that", async () => {
+    // The live shape that prompted this.
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", judgments: [{ kind: "policy", subject: "limits", ok: true }] },
+      ...Array.from({ length: 6 }, (_, i) => ({ nodeId: `x${i}` })),
+    ] }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    expect(f).toMatchObject({ verification: "all_passed", checksRun: 1, stepsWithChecks: 1, steps: 7 });
+  });
+
+  it("distinguishes that from a run where every step was checked", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results:
+      Array.from({ length: 7 }, (_, i) => ({ nodeId: `n${i}`, judgments: [{ kind: "policy", subject: `s${i}`, ok: true }] })),
+    }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    // Same verification, very different coverage -- which is the point.
+    expect(f).toMatchObject({ verification: "all_passed", checksRun: 7, stepsWithChecks: 7, steps: 7 });
+  });
+
+  it("counts steps even when none of them checked anything", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: Array.from({ length: 4 }, (_, i) => ({ nodeId: `n${i}` })) }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    expect(f).toMatchObject({ verification: "none_ran", checksRun: 0, stepsWithChecks: 0, steps: 4 });
+  });
+});

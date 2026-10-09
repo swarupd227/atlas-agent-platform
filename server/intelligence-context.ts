@@ -605,7 +605,7 @@ async function collectContextUsed(runId: string): Promise<Record<string, unknown
  * the same judgment reaching the record once per step reads as several
  * findings when it is one.
  */
-function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): { flagged: Array<Record<string, unknown>>; checksRun: number } {
+function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): { flagged: Array<Record<string, unknown>>; checksRun: number; stepsWithChecks: number; steps: number } {
   const out: Array<Record<string, unknown>> = [];
   const seen = new Set<string>();
   // Counted alongside the failures, because "nothing was flagged" and "nothing
@@ -613,8 +613,16 @@ function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): 
   // apart. Measured on a live E&S run: ONE judgment across seven steps, so for
   // six of them a zero meant "unchecked" while reading as "clean".
   let checksRun = 0;
+  // Coverage, not just outcome. Measured on a live E&S run: ONE judgment
+  // across seven steps, which reports as all_passed -- true, and far more
+  // reassuring than it should be. A reader needs to see that one check
+  // covered a seven-step run before deciding what "passed" is worth.
+  let stepsWithChecks = 0;
+  let steps = 0;
   for (const n of nodeResultsOf(run)) {
+    steps++;
     const js = Array.isArray(n?.judgments) ? n.judgments : [];
+    if (js.length) stepsWithChecks++;
     checksRun += js.length;
     for (const j of js) {
       if (j?.ok !== false) continue;
@@ -629,7 +637,7 @@ function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): 
       });
     }
   }
-  return { flagged: out, checksRun };
+  return { flagged: out, checksRun, stepsWithChecks, steps };
 }
 
 /**
@@ -656,6 +664,8 @@ function buildRationale(input: {
   contextUsed: Record<string, unknown> | null;
   patternsFlagged: Array<Record<string, unknown>>;
   checksRun: number;
+  stepsWithChecks: number;
+  steps: number;
   narrative?: string | null;
   approver?: { userId: string | null; decidedAt: string | null } | null;
 }): Record<string, unknown> {
@@ -681,6 +691,11 @@ function buildRationale(input: {
       // run six of seven steps ran no check -- so the reassuring reading was
       // the wrong one for most of it.
       checksRun: input.checksRun,
+      // How much of the run was checked at all. "1 check across 7 steps" and
+      // "7 checks across 7 steps" both report all_passed, and they are not
+      // the same assurance.
+      stepsWithChecks: input.stepsWithChecks,
+      steps: input.steps,
       kinds: [...new Set(input.patternsFlagged.map(p => String(p.kind)))],
       verification: input.checksRun === 0 ? "none_ran" : input.patternsFlagged.length === 0 ? "all_passed" : "flagged",
     },
@@ -807,6 +822,8 @@ export async function recordRunDecisions(input: {
         contextUsed,
         patternsFlagged: pf.flagged,
         checksRun: pf.checksRun,
+        stepsWithChecks: pf.stepsWithChecks,
+        steps: pf.steps,
         // The team's own answer, if the trace carries one. Labelled as the
         // model's words inside buildRationale, never as the reason.
         narrative: typeof (input.state as any)?.[teamStateKeyFor(input.teamName)] === "string"
