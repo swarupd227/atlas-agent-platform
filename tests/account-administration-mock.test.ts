@@ -81,3 +81,80 @@ describe("account administration mock", () => {
     expect(res.body.recorded).toBe(false);
   });
 });
+
+/**
+ * Reading the relationship back. link_quote_to_account could write it, but
+ * nothing could read it: "one account has multiple policies, and a policy
+ * shows its account" had no system behind it, so an agent asked what an
+ * account held could only re-state what it had just linked itself.
+ */
+describe("what an account holds", () => {
+  it("lists what is linked, with who linked each and when", async () => {
+    await post("/account-links", { accountId: "ACCT-101233", quoteNumber: "Q-LINK-1", lineOfBusiness: "Commercial Property", actor: "Dana Ruiz" });
+    const res = await get("/account-links?accountId=ACCT-101233");
+    const link = res.links.find((l: any) => l.policyNumber === "Q-LINK-1");
+    expect(link).toBeTruthy();
+    expect(link.linkedBy).toBe("Dana Ruiz");
+    // Citable, not asserted: the audit row that created the link travels with it.
+    expect(link.auditId).toBeTruthy();
+    expect(link.linkedAt).toBeTruthy();
+  });
+
+  it("separates what is placed from what is merely quoted", async () => {
+    const res = await get("/account-links?accountId=ACCT-101233");
+    // A quoted link is not cover. Counting it as a line already held would
+    // suppress a real cross-sell opportunity.
+    expect(res.counts.quoted).toBeGreaterThan(0);
+    // total also covers expired links, so it is a floor not an identity.
+    expect(res.counts.total).toBeGreaterThanOrEqual(res.counts.quoted + res.counts.inForce);
+    expect(res.counts.total).toBe(res.links.length);
+    expect(res.linesOfBusiness).toContain("Commercial Property");
+  });
+
+  it("keeps an account invisible to a producer who may not see it", async () => {
+    // Same confidentiality rule as reading the account: a producer who cannot
+    // see the account must not learn its policy count either.
+    // Kestrel Foods is the seeded account another producer is actively quoting;
+    // an account with no active quote is visible by design, so using one would
+    // have proved nothing.
+    const hidden = await fetch(base + "/account-links?accountId=ACCT-100858&producerCode=NOT-THE-AOR");
+    expect(hidden.status).toBe(404);
+    const theirs = await fetch(base + "/account-links?accountId=ACCT-100858&producerCode=PSG-330");
+    expect(theirs.status).toBe(200);
+  });
+
+  it("refuses to unlink an in-force policy, and says why", async () => {
+    const seeded = await get("/account-links?accountId=ACCT-100417");
+    const inForce = seeded.links.find((l: any) => l.status === "in_force");
+    expect(inForce).toBeTruthy(); // the seed must contain one, or this proves nothing
+    const res = await post("/account-links/unlink", { accountId: "ACCT-100417", quoteNumber: inForce.policyNumber, reason: "tidying", actor: "tester" });
+    expect(res.body.unlinked).toBe(false);
+    expect(res.body.reason).toBe("in_force");
+    // A business refusal, not a transport error the caller might retry.
+    expect(res.status).toBe(200);
+    const after = await get("/account-links?accountId=ACCT-100417");
+    expect(after.links.some((l: any) => l.policyNumber === inForce.policyNumber)).toBe(true);
+  });
+
+  it("unlinks a quote, records why, and leaves the rest alone", async () => {
+    const before = (await get("/account-links?accountId=ACCT-101233")).counts.total;
+    const res = await post("/account-links/unlink", { accountId: "ACCT-101233", quoteNumber: "Q-LINK-1", reason: "quote withdrawn by the broker", actor: "Dana Ruiz" });
+    expect(res.body.unlinked).toBe(true);
+    expect(res.body.remaining).toBe(before - 1);
+    const after = await get("/account-links?accountId=ACCT-101233");
+    expect(after.links.some((l: any) => l.policyNumber === "Q-LINK-1")).toBe(false);
+  });
+
+  it("will not unlink without a reason", async () => {
+    await post("/account-links", { accountId: "ACCT-101233", quoteNumber: "Q-LINK-2", actor: "Dana Ruiz" });
+    const res = await post("/account-links/unlink", { accountId: "ACCT-101233", quoteNumber: "Q-LINK-2" });
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toContain("reason is required");
+  });
+
+  it("says plainly when the thing was never linked", async () => {
+    const res = await post("/account-links/unlink", { accountId: "ACCT-101233", quoteNumber: "Q-NEVER", reason: "x" });
+    expect(res.body.unlinked).toBe(false);
+    expect(res.body.reason).toBe("not_linked");
+  });
+});

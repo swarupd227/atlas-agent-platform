@@ -360,6 +360,95 @@ router.post("/account-links", (req: Request, res: Response) => {
   });
 });
 
+/**
+ * What is linked to this account, and who linked each of them.
+ *
+ * link_quote_to_account could write the relationship but nothing could read it
+ * back, so "one account can have multiple policies, and a policy displays its
+ * linked account" had no system behind it: an agent asked what an account held
+ * could only re-state what it had just linked itself. Each entry carries the
+ * audit row that created it, so the answer cites when and by whom rather than
+ * asserting the list.
+ */
+router.get("/account-links", (req: Request, res: Response) => {
+  const id = String(req.query.accountId || "").trim();
+  const producerCode = typeof req.query.producerCode === "string" ? req.query.producerCode.trim() : undefined;
+  const account = accounts.get(id);
+  // Same confidentiality rule as reading the account itself: a producer who
+  // cannot see the account must not learn its policy count either.
+  if (!account || !visibleTo(account, producerCode)) {
+    res.status(404).json({ error: `No account "${id}" found.` });
+    return;
+  }
+  const linkAudit = account.auditTrail.filter((e) => e.action === "quote_linked" || e.action === "quote_unlinked");
+  const links = account.linkedPolicies.map((p) => {
+    const linked = [...linkAudit].reverse().find((e) => e.action === "quote_linked" && (e.details as any)?.quoteNumber === p.policyNumber);
+    return {
+      ...p,
+      linkedBy: linked?.actor ?? null,
+      linkedAt: linked?.at ?? null,
+      auditId: linked?.auditId ?? null,
+    };
+  });
+  const inForce = links.filter((l) => l.status === "in_force");
+  res.json({
+    accountId: account.accountId,
+    legalName: account.legalName,
+    links,
+    counts: { total: links.length, inForce: inForce.length, quoted: links.filter((l) => l.status === "quoted").length },
+    linesOfBusiness: Array.from(new Set(links.map((l) => l.lineOfBusiness))).sort(),
+    retrievedAt: now(),
+    guidance: "Lines of business already on the account are not cross-sell opportunities. A quoted link is not cover: only in_force counts as placed.",
+  });
+});
+
+/**
+ * Unlink a quote or policy from an account.
+ *
+ * An in-force policy is refused: it is a contract, and detaching it from its
+ * account in a system of record is not an administrative correction. The
+ * refusal is a 200 with unlinked:false, like the duplicate refusal on create,
+ * because it is a business outcome the agent has to read and act on rather
+ * than a transport failure it might retry.
+ */
+router.post("/account-links/unlink", (req: Request, res: Response) => {
+  const b = (req.body || {}) as Record<string, any>;
+  const account = accounts.get(String(b.accountId || ""));
+  const quoteNumber = typeof b.quoteNumber === "string" ? b.quoteNumber.trim() : "";
+  const reason = typeof b.reason === "string" ? b.reason.trim() : "";
+  if (!account || !quoteNumber) {
+    res.status(account ? 400 : 404).json({ error: account ? "quoteNumber is required." : `No account "${b.accountId}" found.` });
+    return;
+  }
+  if (!reason) {
+    res.status(400).json({ error: "reason is required: an unlink is an auditable change, not a correction that explains itself." });
+    return;
+  }
+  const existing = account.linkedPolicies.find((p) => p.policyNumber === quoteNumber);
+  if (!existing) {
+    res.json({ unlinked: false, reason: "not_linked", message: `"${quoteNumber}" is not linked to ${account.accountId}.` });
+    return;
+  }
+  if (existing.status === "in_force") {
+    res.json({
+      unlinked: false,
+      reason: "in_force",
+      message: `"${quoteNumber}" is in force. An in-force policy is a contract: move it through a policy transaction, not by unlinking it here.`,
+    });
+    return;
+  }
+  account.linkedPolicies = account.linkedPolicies.filter((p) => p.policyNumber !== quoteNumber);
+  const at = now();
+  account.auditTrail.push({ auditId: auditId(`${quoteNumber}-unlink`), action: "quote_unlinked", actor: String(b.actor || "unknown"), at, details: { quoteNumber, reason } });
+  res.json({
+    unlinked: true,
+    accountId: account.accountId,
+    quoteNumber,
+    remaining: account.linkedPolicies.length,
+    auditId: account.auditTrail[account.auditTrail.length - 1].auditId,
+  });
+});
+
 // Accounts created by earlier runs change what later runs find: a second run
 // of the same request matches the account the first one created. A demo or a
 // test pass starts from the seeded book by resetting it.

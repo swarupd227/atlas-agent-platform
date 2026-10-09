@@ -164,6 +164,36 @@ function getServerDefinitions(): MockMcpServerDef[] {
             required: ["accountId", "quoteNumber"],
           },
         },
+        {
+          name: "list_account_links",
+          description: "Everything linked to an account -- quotes and policies -- with the line of business, status and who linked each, plus the lines of business already present. Use it to answer what an account holds, and to tell a real cross-sell gap from a line that is already there. A quoted link is not cover; only in_force is placed.",
+          endpoint: "/account-links",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              accountId: { type: "string", description: "Account id" },
+              producerCode: { type: "string", description: "Producer asking, so the same confidentiality rule applies as to reading the account" },
+            },
+            required: ["accountId"],
+          },
+        },
+        {
+          name: "unlink_quote_from_account",
+          description: "Detach a quote or policy from an account, with a reason, recorded in the audit trail. Refuses an in-force policy: that is a contract and moves through a policy transaction, not an unlink. A refusal returns unlinked:false with the reason, not an error.",
+          endpoint: "/account-links/unlink",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              accountId: { type: "string", description: "Account id" },
+              quoteNumber: { type: "string", description: "Quote or policy number to detach" },
+              reason: { type: "string", description: "Why it is being detached -- required, because an unlink is an auditable change" },
+              actor: { type: "string", description: "Who is detaching it" },
+            },
+            required: ["accountId", "quoteNumber", "reason"],
+          },
+        },
       ],
     },
     {
