@@ -10,6 +10,7 @@
  * neither is measured.
  */
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { cleanName } from "@shared/display-name";
 import { db } from "../db";
 import { agents, dagExecutionRuns, runTraces, workspaceRuns } from "@shared/schema";
 
@@ -110,7 +111,7 @@ function oneLine(text: string | null | undefined, max = 90): string | null {
 }
 
 function teamItem(r: TeamRunRow, now: number): ActivityItem {
-  const title = r.teamName || "A team that no longer exists";
+  const title = cleanName(r.teamName || "") || "A team that no longer exists";
   const started = ms(r.startedAt) || ms(r.createdAt);
   const href = `/dag-runs/${r.id}`;
   if (IN_FLIGHT_TEAM.has(r.status)) {
@@ -145,7 +146,7 @@ export function agentRunPrompt(agentName: string, at: string | null, now = Date.
 }
 
 function agentItem(r: AgentRunRow, now: number): ActivityItem {
-  const title = r.agentName || "An agent that no longer exists";
+  const title = cleanName(r.agentName || "") || "An agent that no longer exists";
   // No href: see ActivityItem.href. The row asks Astra, which has the run
   // tooling and answers with its proof, rather than opening a blank page.
   const href = null;

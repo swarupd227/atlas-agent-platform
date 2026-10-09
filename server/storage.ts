@@ -227,6 +227,7 @@ import {
   workerTasks, type WorkerTask, type InsertWorkerTask,
 } from "@shared/schema";
 import { completeTransition, failTransition, type WorkerTaskState } from "./worker-tasks";
+import { cleanName } from "@shared/display-name";
 
 /** A team's run history in brief (see summarizeDagExecutionRunsByTeamAgent). */
 export interface DagRunSummary {
@@ -1323,7 +1324,7 @@ export class DatabaseStorage implements IStorage {
       const [org] = await db.select({ industryId: organizations.industryId }).from(organizations).where(eq(organizations.id, orgId)).limit(1);
       industryId = org?.industryId ?? null;
     }
-    const [created] = await db.insert(agents).values({ ...agent, industryId, organizationId: orgId }).returning();
+    const [created] = await db.insert(agents).values({ ...agent, name: cleanName(agent.name), industryId, organizationId: orgId }).returning();
     return created;
   }
 
@@ -2036,7 +2037,10 @@ export class DatabaseStorage implements IStorage {
 
   async updateAgent(id: string, data: Partial<Agent>, orgId?: string) {
     const clause = orgId ? and(eq(agents.id, id), eq(agents.organizationId, orgId)) : eq(agents.id, id);
-    const [updated] = await db.update(agents).set({ ...data, updatedAt: new Date() }).where(clause).returning();
+    // Only when a rename was actually asked for: a missing name must stay
+    // missing, or every unrelated patch would overwrite the stored one.
+    const named = typeof data.name === "string" ? { name: cleanName(data.name) } : {};
+    const [updated] = await db.update(agents).set({ ...data, ...named, updatedAt: new Date() }).where(clause).returning();
     return updated;
   }
 

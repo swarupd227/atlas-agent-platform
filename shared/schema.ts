@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb, index, uniqueIndex, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { cleanName } from "./display-name";
 
 export const organizations = pgTable("organizations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -208,7 +209,12 @@ export const agents = pgTable("agents", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertAgentSchema = createInsertSchema(agents).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export const insertAgentSchema = createInsertSchema(agents).omit({ id: true, createdAt: true, updatedAt: true }).extend({
+  organizationId: z.string().optional(),
+  // The one field every surface prints inside a sentence, so stray
+  // whitespace in it is visible platform-wide. See cleanName.
+  name: z.string().transform(cleanName),
+});
 export type InsertAgent = z.infer<typeof insertAgentSchema>;
 export type Agent = typeof agents.$inferSelect;
 
