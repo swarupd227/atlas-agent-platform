@@ -3049,6 +3049,29 @@ export const insertAgentApiKeySchema = createInsertSchema(agentApiKeys).omit({ i
 export type InsertAgentApiKey = z.infer<typeof insertAgentApiKeySchema>;
 export type AgentApiKey = typeof agentApiKeys.$inferSelect;
 
+// Keys for a system outside the platform that reads an organization's audit log (a SIEM). Unlike an
+// agent key it belongs to the organization, and it unlocks one thing: reading that organization's audit
+// events. Only the SHA-256 of the key is kept. See server/audit-read-keys.ts.
+export const orgApiKeys = pgTable("org_api_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull(),
+  name: text("name").notNull(),
+  keyHash: text("key_hash").notNull().unique(),
+  keyPrefix: text("key_prefix").notNull(),
+  scopes: text("scopes").array().notNull().default(sql`'{audit:read}'::text[]`),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  expiresAt: timestamp("expires_at"),
+  lastUsedAt: timestamp("last_used_at"),
+  revokedAt: timestamp("revoked_at"),
+  revokedBy: text("revoked_by"),
+}, (table) => [
+  index("idx_org_api_keys_org").on(table.organizationId),
+]);
+
+export type OrgApiKey = typeof orgApiKeys.$inferSelect;
+
 export const agentChannels = pgTable("agent_channels", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   agentId: varchar("agent_id").notNull(),

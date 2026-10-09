@@ -19,6 +19,7 @@ import htmlPreviewRouter from "./routes/html-preview";
 import mandatesRouter from "./routes/mandates";
 import llmProvidersRouter from "./routes/llm-providers";
 import publicApiRouter from "./routes/public-api";
+import { auditReadKeysRouter } from "./routes/audit-read";
 import demoRouter from "./routes/demo";
 import createEvaluationsRouter from "./routes/evaluations";
 import skillsRouter from "./routes/skills";
@@ -342,6 +343,8 @@ export async function registerRoutes(
 
   // Public, API-key-authenticated surface for external automation (n8n, etc.)
   app.use(publicApiRouter);
+  // Minting, listing and revoking the keys an external system reads the audit log with.
+  app.use(auditReadKeysRouter);
 
   registerKnowledgeBaseRoutes(app);
   app.use("/api/mock/watchlist-screening", watchlistScreeningRouter);

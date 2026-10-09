@@ -348,6 +348,27 @@ export async function runStartupMigrations() {
         created_at TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_process_flow_versions_flow ON process_flow_versions (flow_id, created_at DESC);
+      -- Keys for a system outside the platform that reads an organization's audit log
+      -- (server/audit-read-keys.ts). Only the SHA-256 of a key is stored.
+      CREATE TABLE IF NOT EXISTS org_api_keys (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR NOT NULL,
+        name TEXT NOT NULL,
+        key_hash TEXT NOT NULL UNIQUE,
+        key_prefix TEXT NOT NULL,
+        scopes TEXT[] NOT NULL DEFAULT '{audit:read}',
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        expires_at TIMESTAMP,
+        last_used_at TIMESTAMP,
+        revoked_at TIMESTAMP,
+        revoked_by TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_org_api_keys_org ON org_api_keys (organization_id);
+      -- Reading the audit log in order from a position (and appending to it) is "this organization's
+      -- events by sequence number"; without an index that is a scan of everyone's events.
+      CREATE INDEX IF NOT EXISTS idx_audit_events_org_seq ON audit_events (organization_id, sequence_num);
       CREATE TABLE IF NOT EXISTS kpi_readings (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         kpi_id VARCHAR NOT NULL,
