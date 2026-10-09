@@ -1206,7 +1206,7 @@ Ontology: ${ontologyName || "industry standard"}`,
     const [agent, outcome, evalSuites, policies, relatedAudit] = await Promise.all([
       agentId ? storage.getAgent(agentId, orgId) : Promise.resolve(undefined),
       approval.outcomeId ? storage.getOutcome(approval.outcomeId, orgId) : Promise.resolve(null),
-      storage.getEvalSuites(),
+      storage.getEvalSuites(orgId),
       storage.getPolicies(orgId),
       approvalHistory(orgId ?? getDefaultOrgId() ?? undefined, approval, 20),
     ]);
@@ -2870,7 +2870,10 @@ Ontology: ${ontologyName || "industry standard"}`,
   // Agent Templates
   router.get("/api/drift-signals", async (req, res) => {
     try {
-      const evalSuites = await storage.getEvalSuites();
+      // Scoped. Unscoped, this listed every tenant's suites and called the
+      // ones whose agent it could not resolve "Unassigned agent" -- another
+      // organisation's suite name and pass rate, on your screen.
+      const evalSuites = await storage.getEvalSuites(getOrgId(req) ?? undefined);
       const agents = await storage.getAgents(getOrgId(req));
       const signals: Array<{
         id: string;
@@ -3038,7 +3041,7 @@ Ontology: ${ontologyName || "industry standard"}`,
       const kpis = await storage.getKpisByOutcome(outcome.id);
       const allAgents = await storage.getAgents(getOrgId(req));
       const boundAgents = allAgents.filter(a => a.outcomeId === outcome.id);
-      const evalSuites = await storage.getEvalSuites();
+      const evalSuites = await storage.getEvalSuites(getOrgId(req) ?? undefined);
 
       interface DriftSignal {
         metric: string;

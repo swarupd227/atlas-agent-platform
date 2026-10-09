@@ -2137,6 +2137,37 @@ export async function runStartupMigrations() {
       UPDATE eval_suites SET pass_rate = NULL WHERE pass_rate = 0 AND last_run_at IS NULL;
     `);
 
+    // Give the eval tables a tenant. eval_goldens and eval_test_runs have had
+    // organization_id from the start; eval_suites and eval_runs never did, so
+    // every reader of them saw every tenant's rows -- /api/drift-signals listed
+    // all of them and called the unresolvable ones "Unassigned agent".
+    //
+    // Backfilled from the agent that owns the suite, and from the suite for a
+    // run. A row whose agent is the "system" sentinel or has been deleted
+    // stays NULL: that is platform-level, not unowned, and the readers treat
+    // NULL as visible to everyone rather than hiding a suite nobody can claim.
+    //
+    // Idempotent: the UPDATEs only touch rows that are still NULL.
+    await client.query(`
+      ALTER TABLE eval_suites ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
+      ALTER TABLE eval_runs   ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
+
+      UPDATE eval_suites s SET organization_id = a.organization_id
+        FROM agents a
+       WHERE a.id = s.agent_id
+         AND s.organization_id IS NULL
+         AND a.organization_id IS NOT NULL;
+
+      UPDATE eval_runs r SET organization_id = s.organization_id
+        FROM eval_suites s
+       WHERE s.id = r.suite_id
+         AND r.organization_id IS NULL
+         AND s.organization_id IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_eval_suites_org ON eval_suites (organization_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_runs_org ON eval_runs (organization_id);
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);

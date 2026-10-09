@@ -306,7 +306,12 @@ export interface IStorage {
   getTracesByParentIds(parentIds: string[]): Promise<RunTrace[]>;
   createTrace(trace: InsertRunTrace): Promise<RunTrace>;
 
-  getEvalSuites(): Promise<EvalSuite[]>;
+  /**
+   * Scoped when an org is given. Called without one it still returns every
+   * suite, because 29 call sites exist and most are demo seeding or internal
+   * paths -- the serving routes are the ones that must pass an org.
+   */
+  getEvalSuites(orgId?: string): Promise<EvalSuite[]>;
   getEvalsByAgent(agentId: string): Promise<EvalSuite[]>;
   createEvalSuite(suite: InsertEvalSuite): Promise<EvalSuite>;
 
@@ -1556,8 +1561,16 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getEvalSuites() {
-    return db.select().from(evalSuites);
+  async getEvalSuites(orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (!scopedOrgId) return db.select().from(evalSuites);
+    // A suite with no organization_id is platform-level -- its agent is the
+    // "system" sentinel or has been deleted -- so it stays visible rather
+    // than vanishing from a tenant that has every right to see it. Same rule
+    // as getDecisionRecord. A suite belonging to ANOTHER tenant is excluded.
+    return db.select().from(evalSuites).where(
+      or(eq(evalSuites.organizationId, scopedOrgId), isNull(evalSuites.organizationId)),
+    );
   }
 
   async getEvalsByAgent(agentId: string) {
@@ -1565,7 +1578,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createEvalSuite(suite: InsertEvalSuite) {
-    const [created] = await db.insert(evalSuites).values(suite).returning();
+    // Derive the tenant from the agent when the caller did not supply one.
+    // The migration backfills existing rows, but without this every suite
+    // created afterwards would be NULL -- visible to every tenant -- and the
+    // leak would reopen for new data while the old data looked fixed. There
+    // are 29 call sites; one place that cannot be forgotten is the fix, the
+    // same reasoning as storeChunkEmbedding requiring its text.
+    let organizationId = (suite as { organizationId?: string | null }).organizationId ?? null;
+    if (!organizationId && suite.agentId && suite.agentId !== "system") {
+      try {
+        const [owner] = await db.select({ organizationId: agents.organizationId })
+          .from(agents).where(eq(agents.id, suite.agentId));
+        organizationId = owner?.organizationId ?? null;
+      } catch {
+        organizationId = null; // unresolvable stays platform-level, never a guess
+      }
+    }
+    const [created] = await db.insert(evalSuites).values({ ...suite, organizationId }).returning();
     return created;
   }
 

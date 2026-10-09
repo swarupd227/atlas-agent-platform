@@ -334,3 +334,66 @@ describe("decision records are scoped to the caller's tenant", () => {
     expect(body).not.toMatch(/req\.query\.organizationId/);
   });
 });
+
+/**
+ * Eval suites and runs, added 9 Oct 2026. Same defect class as the findings
+ * above and the decision records before them: eval_goldens and eval_test_runs
+ * have carried organization_id from the start, and eval_suites / eval_runs
+ * never did -- so every reader saw every tenant's rows.
+ *
+ * The visible one was /api/drift-signals, which listed all of them and
+ * labelled the ones whose agent it could not resolve "Unassigned agent" --
+ * another organisation's suite name and pass rate on your screen.
+ *
+ * Static, like the checks above: these catch a NEW reader that forgets the
+ * org, which is how the gap appeared in the first place.
+ */
+describe("eval suites are scoped to the caller's tenant", () => {
+  const storageSrc = readFileSync(join(__dirname, "..", "server", "storage.ts"), "utf8");
+  const govSrc = readFileSync(join(__dirname, "..", "server", "routes", "governance.ts"), "utf8");
+
+  it("the suite reader can be scoped, and keeps platform-level rows visible", () => {
+    const at = storageSrc.indexOf("async getEvalSuites(");
+    expect(at, "getEvalSuites not found").toBeGreaterThan(-1);
+    const body = storageSrc.slice(at, at + 900);
+    expect(body).toContain("orgId?: string");
+    expect(body).toContain("eq(evalSuites.organizationId, scopedOrgId)");
+    // The filter must be REACHABLE, not merely present. The first version of
+    // this test asserted only that the string existed, so changing the guard
+    // above it to `if (true) return db.select().from(evalSuites)` left the
+    // filter in the file, unreachable, and the test still passed while every
+    // tenant saw every suite again.
+    expect(body).toContain("if (!scopedOrgId) return db.select().from(evalSuites);");
+    expect(body).not.toMatch(/if \(true\)/);
+    // A suite with no org is the "system" sentinel or a deleted agent. Hiding
+    // it would strip platform suites from every tenant -- the same fail-open
+    // reasoning resolvePolicyBundle documents.
+    expect(body).toContain("isNull(evalSuites.organizationId)");
+  });
+
+  it("the governance routes that read every suite now pass an org", () => {
+    // /api/drift-signals and /api/outcomes/:id/kill-chain-alerts.
+    expect(govSrc).not.toMatch(/storage\.getEvalSuites\(\)/);
+    expect(govSrc).toContain("storage.getEvalSuites(getOrgId(req) ?? undefined)");
+  });
+
+  it("a new suite derives its tenant, so the gap cannot reopen for new rows", () => {
+    // The migration backfills what exists; without this every suite created
+    // afterwards would be NULL and visible to everyone, with the old data
+    // looking fixed.
+    const at = storageSrc.indexOf("async createEvalSuite(");
+    const body = storageSrc.slice(at, at + 1100);
+    expect(body).toContain("agents.organizationId");
+    expect(body).toContain('suite.agentId !== "system"');
+    expect(body).toContain("organizationId }).returning()");
+  });
+
+  it("the migration backfills from the agent and leaves unresolvable rows null", () => {
+    const db = readFileSync(join(__dirname, "..", "server", "db.ts"), "utf8");
+    expect(db).toContain("ALTER TABLE eval_suites ADD COLUMN IF NOT EXISTS organization_id VARCHAR");
+    expect(db).toContain("UPDATE eval_suites s SET organization_id = a.organization_id");
+    // Only still-null rows, so a re-run changes nothing.
+    expect(db).toContain("s.organization_id IS NULL");
+    expect(db).toContain("UPDATE eval_runs r SET organization_id = s.organization_id");
+  });
+});

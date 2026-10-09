@@ -502,6 +502,22 @@ export type RunTrace = typeof runTraces.$inferSelect;
 
 export const evalSuites = pgTable("eval_suites", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  /**
+   * The tenant this suite belongs to, derived from its agent.
+   *
+   * eval_goldens and eval_test_runs have carried this from the start; these
+   * two tables missed it, so every reader of eval_suites saw every tenant's
+   * suites. /api/drift-signals listed them all and labelled the ones whose
+   * agent it could not resolve "Unassigned agent", which is another
+   * organisation's suite name and pass rate on your screen.
+   *
+   * NULL means platform-level rather than unowned: a suite whose agentId is
+   * the "system" sentinel, or whose agent has since been deleted, has no
+   * tenant to attribute it to. Those stay visible to everyone, the same rule
+   * decision_records uses, because hiding a suite nobody can claim is a worse
+   * failure than showing it.
+   */
+  organizationId: varchar("organization_id"),
   agentId: varchar("agent_id").notNull(),
   skillId: varchar("skill_id"),
   name: text("name").notNull(),
@@ -916,6 +932,8 @@ export type EvalTestCase = typeof evalTestCases.$inferSelect;
 
 export const evalRuns = pgTable("eval_runs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  /** The tenant, inherited from the suite this run belongs to. See evalSuites. */
+  organizationId: varchar("organization_id"),
   suiteId: varchar("suite_id").notNull(),
   agentId: varchar("agent_id"),
   skillId: varchar("skill_id"),
