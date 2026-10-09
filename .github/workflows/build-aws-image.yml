@@ -1,0 +1,94 @@
+name: Build AWS image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Main-branch commit, tag, or ref to build
+        required: true
+        default: main
+        type: string
+      deployment_id:
+        description: Isolated AWS deployment identifier
+        required: true
+        default: demo
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-image-${{ inputs.deployment_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and push immutable image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AWS_REGION: us-east-1
+      AWS_ACCOUNT_ID: "964604400233"
+    steps:
+      - name: Validate deployment identifier
+        env:
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+        run: |
+          [[ "$DEPLOYMENT_ID" =~ ^[a-z0-9][a-z0-9-]{0,11}$ ]] || {
+            echo "Invalid deployment_id: $DEPLOYMENT_ID" >&2
+            exit 1
+          }
+
+      - name: Checkout approved source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+
+      - name: Verify source belongs to main
+        id: source
+        run: |
+          git fetch origin main --no-tags
+          source_sha=$(git rev-parse HEAD)
+          git merge-base --is-ancestor "$source_sha" origin/main || {
+            echo "Source commit is not part of origin/main: $source_sha" >&2
+            exit 1
+          }
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::964604400233:role/astra-agents-github-ecr-push
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          repository="astra-agents-${DEPLOYMENT_ID}-app"
+          aws ecr describe-repositories --repository-names "$repository" >/dev/null
+          image_uri="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${repository}:${SOURCE_SHA}"
+          docker build \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --tag "$image_uri" \
+            .
+          docker push "$image_uri"
+          digest=$(aws ecr describe-images \
+            --repository-name "$repository" \
+            --image-ids "imageTag=${SOURCE_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "### AWS image"
+            echo "- Commit: \`$SOURCE_SHA\`"
+            echo "- Repository: \`$repository\`"
+            echo "- Digest: \`$digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
