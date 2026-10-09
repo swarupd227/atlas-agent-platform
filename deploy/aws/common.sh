@@ -98,3 +98,78 @@ replace_json_secret_field() {
   chmod 0600 "$temporary_file"
   mv -f -- "$temporary_file" "$target_file"
 }
+
+non_cloudfront_origin_rule_ids() {
+  local rules_file=$1 prefix_list_id=$2 origin_port=$3
+  jq -r --arg prefix "$prefix_list_id" --argjson port "$origin_port" '
+    .SecurityGroupRules[]?
+    | select(.IsEgress == false)
+    | select(
+        .IpProtocol == "-1" or
+        (.IpProtocol == "tcp" and .FromPort <= $port and .ToPort >= $port)
+      )
+    | select(
+        .IpProtocol != "tcp" or .FromPort != $port or .ToPort != $port or
+        .PrefixListId != $prefix
+      )
+    | .SecurityGroupRuleId
+  ' "$rules_file"
+}
+
+assert_only_cloudfront_origin_ingress() {
+  local rules_file=$1 prefix_list_id=$2 origin_port=$3
+  jq -e --arg prefix "$prefix_list_id" --argjson port "$origin_port" '
+    [
+      .SecurityGroupRules[]?
+      | select(.IsEgress == false)
+      | select(
+          .IpProtocol == "-1" or
+          (.IpProtocol == "tcp" and .FromPort <= $port and .ToPort >= $port)
+        )
+    ] as $origin_rules
+    | ($origin_rules | length) == 1
+      and $origin_rules[0].IpProtocol == "tcp"
+      and $origin_rules[0].FromPort == $port
+      and $origin_rules[0].ToPort == $port
+      and $origin_rules[0].PrefixListId == $prefix
+  ' "$rules_file" >/dev/null
+}
+
+security_group_rule_permission() {
+  local rules_file=$1 rule_id=$2
+  jq -e --arg id "$rule_id" '
+    [.SecurityGroupRules[]? | select(.SecurityGroupRuleId == $id)]
+    | if length != 1 then error("security-group rule not found") else .[0] end
+    | . as $rule
+    | [
+        ({IpProtocol: $rule.IpProtocol}
+        + (if $rule.IpProtocol == "-1" then {}
+           else {FromPort: $rule.FromPort, ToPort: $rule.ToPort} end)
+        + (if $rule.CidrIpv4 then
+             {IpRanges: [({CidrIp: $rule.CidrIpv4}
+               + (if $rule.Description then {Description: $rule.Description} else {} end))]}
+           else {} end)
+        + (if $rule.CidrIpv6 then
+             {Ipv6Ranges: [({CidrIpv6: $rule.CidrIpv6}
+               + (if $rule.Description then {Description: $rule.Description} else {} end))]}
+           else {} end)
+        + (if $rule.PrefixListId then
+             {PrefixListIds: [({PrefixListId: $rule.PrefixListId}
+               + (if $rule.Description then {Description: $rule.Description} else {} end))]}
+           else {} end)
+        + (if $rule.ReferencedGroupInfo then
+             {UserIdGroupPairs: [
+               ({GroupId: $rule.ReferencedGroupInfo.GroupId}
+                + (if $rule.ReferencedGroupInfo.UserId then
+                     {UserId: $rule.ReferencedGroupInfo.UserId} else {} end)
+                + (if $rule.ReferencedGroupInfo.VpcId then
+                     {VpcId: $rule.ReferencedGroupInfo.VpcId} else {} end)
+                + (if $rule.ReferencedGroupInfo.VpcPeeringConnectionId then
+                     {VpcPeeringConnectionId: $rule.ReferencedGroupInfo.VpcPeeringConnectionId}
+                   else {} end)
+                + (if $rule.Description then {Description: $rule.Description} else {} end))
+             ]}
+           else {} end))
+      ]
+  ' "$rules_file"
+}

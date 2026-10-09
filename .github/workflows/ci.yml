@@ -33,6 +33,13 @@ jobs:
       - name: Build (client + server)
         run: npm run build
 
+      - name: AWS deployment contract tests
+        run: |
+          for test_file in deploy/aws/tests/*_test.sh; do
+            "$test_file"
+          done
+          bash -n deploy/aws/common.sh deploy/aws/operate.sh deploy/aws/provision.sh deploy/aws/cleanup.sh
+
       # Blocking gate: deterministic unit tests (no external services).
       # engine-parity + tool-dispatcher enforce that every execution engine
       # routes tool calls through the single gated dispatcher.

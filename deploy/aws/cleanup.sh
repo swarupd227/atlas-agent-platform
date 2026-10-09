@@ -19,6 +19,10 @@ show_phase() {
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REQUESTED_DEPLOYMENT_ID="${DEPLOYMENT_ID:-demo}"
+if [[ ! "$REQUESTED_DEPLOYMENT_ID" =~ ^[a-z0-9][a-z0-9-]{0,11}$ ]]; then
+  printf 'ERROR: DEPLOYMENT_ID must use 1-12 lowercase letters, numbers, or hyphens.\n' >&2
+  exit 1
+fi
 ASTRA_STATE_ROOT="${ASTRA_STATE_ROOT:-$SCRIPT_DIR/state}"
 STATE_FILE="$ASTRA_STATE_ROOT/$REQUESTED_DEPLOYMENT_ID/deployment-state.env"
 
@@ -39,13 +43,47 @@ for required_variable in \
   DB_INSTANCE_ID DB_SUBNET_GROUP RDS_MASTER_SECRET_ARN ALB_ARN ALB_DNS_NAME \
   TARGET_GROUP_ARN CLOUDFRONT_DISTRIBUTION_ID ECR_REPOSITORY APP_SECRET_ARN \
   SOURCE_SECRET_ARN EC2_ROLE_NAME INSTANCE_PROFILE_NAME LOG_GROUP \
-  ORIGIN_SECRET_NAME WAF_NAME WAF_LOG_GROUP; do
+  ORIGIN_SECRET_NAME WAF_NAME WAF_LOG_GROUP ALB_NAME TARGET_GROUP_NAME \
+  APP_SECRET_NAME SOURCE_SECRET_NAME ENVIRONMENT; do
   if [[ -z "${!required_variable:-}" ]]; then
     printf 'ERROR: %s is missing from deployment state.\n' "$required_variable" >&2
     exit 1
   fi
 done
 export AWS_DEFAULT_REGION="$AWS_REGION"
+
+EXPECTED_RESOURCE_PREFIX="astra-agents-$REQUESTED_DEPLOYMENT_ID"
+EXPECTED_ENVIRONMENT="${REQUESTED_DEPLOYMENT_ID}-isolated"
+[[ "$ACCOUNT_ID" == 964604400233 && "$AWS_REGION" == us-east-1 &&
+   "$RESOURCE_PREFIX" == "$EXPECTED_RESOURCE_PREFIX" &&
+   "$ENVIRONMENT" == "$EXPECTED_ENVIRONMENT" &&
+   "$EC2_INSTANCE_NAME" == "${EXPECTED_RESOURCE_PREFIX}-app" &&
+   "$DB_INSTANCE_ID" == "${EXPECTED_RESOURCE_PREFIX}-db" &&
+   "$DB_SUBNET_GROUP" == "${EXPECTED_RESOURCE_PREFIX}-db-subnets" &&
+   "$ALB_NAME" == "${EXPECTED_RESOURCE_PREFIX}-alb" &&
+   "$TARGET_GROUP_NAME" == "${EXPECTED_RESOURCE_PREFIX}-tg" &&
+   "$ECR_REPOSITORY" == "${EXPECTED_RESOURCE_PREFIX}-app" &&
+   "$EC2_ROLE_NAME" == "${EXPECTED_RESOURCE_PREFIX}-role" &&
+   "$INSTANCE_PROFILE_NAME" == "${EXPECTED_RESOURCE_PREFIX}-profile" &&
+   "$LOG_GROUP" == "/ec2/${EXPECTED_RESOURCE_PREFIX}/app" &&
+   "$APP_SECRET_NAME" == "astra-agents/${REQUESTED_DEPLOYMENT_ID}/app-env" &&
+   "$SOURCE_SECRET_NAME" == "astra-agents/${REQUESTED_DEPLOYMENT_ID}/azure-source" &&
+   "$ORIGIN_SECRET_NAME" == "astra-agents/${REQUESTED_DEPLOYMENT_ID}/cloudfront-origin" &&
+   "$WAF_NAME" == "${EXPECTED_RESOURCE_PREFIX}-cloudfront" &&
+   "$WAF_LOG_GROUP" == "aws-waf-logs-${EXPECTED_RESOURCE_PREFIX}-cloudfront" ]] || {
+  printf 'ERROR: deployment state names do not match the requested isolated boundary.\n' >&2
+  exit 1
+}
+[[ "$INSTANCE_ID" == i-* && "$VPC_ID" == vpc-* &&
+   "$CLOUDFRONT_DISTRIBUTION_ID" =~ ^E[A-Z0-9]+$ &&
+   "$ALB_ARN" == "arn:aws:elasticloadbalancing:${AWS_REGION}:${ACCOUNT_ID}:loadbalancer/app/${ALB_NAME}/"* &&
+   "$TARGET_GROUP_ARN" == "arn:aws:elasticloadbalancing:${AWS_REGION}:${ACCOUNT_ID}:targetgroup/${TARGET_GROUP_NAME}/"* &&
+   "$APP_SECRET_ARN" == "arn:aws:secretsmanager:${AWS_REGION}:${ACCOUNT_ID}:secret:${APP_SECRET_NAME}-"* &&
+   "$SOURCE_SECRET_ARN" == "arn:aws:secretsmanager:${AWS_REGION}:${ACCOUNT_ID}:secret:${SOURCE_SECRET_NAME}-"* &&
+   "$RDS_MASTER_SECRET_ARN" == "arn:aws:secretsmanager:${AWS_REGION}:${ACCOUNT_ID}:secret:rds!db-"* ]] || {
+  printf 'ERROR: deployment state identifiers or ARNs are outside the approved account boundary.\n' >&2
+  exit 1
+}
 
 show_phase "0/7" "Validate account and exact demo resource boundary"
 CURRENT_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -54,6 +92,39 @@ if [[ "$CURRENT_ACCOUNT_ID" != "$ACCOUNT_ID" ]]; then
     "$CURRENT_ACCOUNT_ID" "$ACCOUNT_ID" >&2
   exit 1
 fi
+
+ECR_ARN=$(aws ecr describe-repositories \
+  --region "$AWS_REGION" --repository-names "$ECR_REPOSITORY" \
+  --query 'repositories[0].repositoryArn' --output text)
+aws ecr list-tags-for-resource --region "$AWS_REGION" --resource-arn "$ECR_ARN" \
+  --output json | jq -e --arg environment "$ENVIRONMENT" '
+    any(.tags[]?; .Key == "Application" and .Value == "astra-agents") and
+    any(.tags[]?; .Key == "Environment" and .Value == $environment)
+  ' >/dev/null || {
+  printf 'ERROR: ECR repository ownership tags do not match this deployment.\n' >&2
+  exit 1
+}
+aws iam list-role-tags --role-name "$EC2_ROLE_NAME" --output json |
+  jq -e --arg environment "$ENVIRONMENT" '
+    any(.Tags[]?; .Key == "Application" and .Value == "astra-agents") and
+    any(.Tags[]?; .Key == "Environment" and .Value == $environment)
+  ' >/dev/null || {
+  printf 'ERROR: EC2 role ownership tags do not match this deployment.\n' >&2
+  exit 1
+}
+for ownership_secret in "$APP_SECRET_ARN" "$SOURCE_SECRET_ARN" "$ORIGIN_SECRET_NAME"; do
+  if secret_metadata=$(aws secretsmanager describe-secret \
+    --region "$AWS_REGION" --secret-id "$ownership_secret" --output json 2>/dev/null); then
+    jq -e --arg environment "$ENVIRONMENT" '
+      any(.Tags[]?; .Key == "Application" and .Value == "astra-agents") and
+      any(.Tags[]?; .Key == "Environment" and .Value == $environment)
+    ' <<<"$secret_metadata" >/dev/null || {
+      printf 'ERROR: secret ownership tags do not match this deployment: %s\n' \
+        "$ownership_secret" >&2
+      exit 1
+    }
+  fi
+done
 
 EXPECTED_VPC_NAME="${RESOURCE_PREFIX}-vpc"
 ACTUAL_VPC_NAME=$(aws ec2 describe-vpcs \

@@ -19,9 +19,19 @@ printf '%s\n' "$*" >>"$FAKE_AWS_LOG"
 case "$1 $2" in
   'sts get-caller-identity') printf '964604400233\n' ;;
   'iam get-open-id-connect-provider') printf '{"ClientIDList":["sts.amazonaws.com"]}\n' ;;
-  'iam get-role') exit 254 ;;
+  'iam get-role') [[ "${FAKE_EXISTING_ROLE:-}" == true ]] && printf '{}\n' || exit 254 ;;
   'iam create-role') printf 'arn:aws:iam::964604400233:role/astra-agents-github-ecr-push\n' ;;
+  'iam update-assume-role-policy') exit 0 ;;
   'iam put-role-policy') exit 0 ;;
+  'iam list-attached-role-policies')
+    if [[ "${FAKE_UNEXPECTED_POLICY:-}" == true ]]; then
+      printf '{"AttachedPolicies":[{"PolicyArn":"arn:aws:iam::aws:policy/AdministratorAccess"}]}\n'
+    else
+      printf '{"AttachedPolicies":[]}\n'
+    fi
+    ;;
+  'iam list-role-policies') printf '{"PolicyNames":[]}\n' ;;
+  'iam simulate-principal-policy') printf '{"EvaluationResults":[{"EvalActionName":"ssm:SendCommand","EvalDecision":"implicitDeny"}]}\n' ;;
   'ecr describe-repositories') exit 254 ;;
   'ecr create-repository') printf '964604400233.dkr.ecr.us-east-1.amazonaws.com/astra-agents-demo-app\n' ;;
   'ecr put-image-tag-mutability'|'ecr put-image-scanning-configuration'|'ecr put-lifecycle-policy') exit 0 ;;
@@ -48,7 +58,10 @@ if jq -e '
   .Statement | length == 1 and
   .[0].Principal.Federated == "arn:aws:iam::964604400233:oidc-provider/token.actions.githubusercontent.com" and
   .[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" and
-  .[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:swarupd227/atlas-agent-platform:ref:refs/heads/main"
+  (.[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] | sort) == ([
+    "repo:swarupd227/atlas-agent-platform:ref:refs/heads/fix/def-out-004",
+    "repo:swarupd227/atlas-agent-platform:ref:refs/heads/main"
+  ] | sort)
 ' "$trust" >/dev/null; then
   pass 'trust is restricted to the repository main ref and STS audience'
 else
@@ -74,6 +87,18 @@ else
 fi
 
 : >"$FAKE_AWS_LOG"
+export FAKE_EXISTING_ROLE=true FAKE_UNEXPECTED_POLICY=true
+if "$AWS_DIR/operate.sh" bootstrap-ci --deployment-id demo >/dev/null 2>&1; then
+  fail 'bootstrap-ci rejects a role with broader existing permissions'
+elif grep -Fq 'iam update-assume-role-policy' "$FAKE_AWS_LOG" ||
+     grep -Fq 'iam put-role-policy' "$FAKE_AWS_LOG"; then
+  fail 'bootstrap-ci rejects unexpected permissions before mutation'
+else
+  pass 'bootstrap-ci rejects unexpected permissions before mutation'
+fi
+unset FAKE_EXISTING_ROLE FAKE_UNEXPECTED_POLICY
+
+: >"$FAKE_AWS_LOG"
 if "$AWS_DIR/operate.sh" bootstrap-repository --deployment-id demo >/dev/null &&
    grep -Fq 'ecr create-repository' "$FAKE_AWS_LOG" &&
    grep -Fq -- '--image-tag-mutability IMMUTABLE' "$FAKE_AWS_LOG" &&
@@ -90,6 +115,7 @@ import YAML from 'yaml';
 const workflow = YAML.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const dispatch = workflow.on?.workflow_dispatch;
 if (!dispatch?.inputs?.source_ref?.required || !dispatch?.inputs?.deployment_id?.required) process.exit(1);
+if (!workflow.on?.push?.branches?.includes('fix/def-out-004')) process.exit(1);
 if (workflow.permissions?.contents !== 'read' || workflow.permissions?.['id-token'] !== 'write') process.exit(1);
 const text = JSON.stringify(workflow);
 if (!text.includes('docker build') || !text.includes('docker push')) process.exit(1);

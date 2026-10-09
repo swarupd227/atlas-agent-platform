@@ -84,6 +84,50 @@ if [[ ! "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   printf 'ERROR: digest %s is not tagged with a full source commit SHA.\n' "$IMAGE_DIGEST" >&2
   exit 1
 fi
+
+if [[ -e "$STATE_FILE" ]]; then
+  printf 'ERROR: deployment state already exists for %s; clean up or recover it before retrying.\n' \
+    "$DEPLOYMENT_ID" >&2
+  exit 1
+fi
+EXISTING_VPC_COUNT=$(aws ec2 describe-vpcs \
+  --region "$AWS_REGION" \
+  --filters "Name=tag:Name,Values=${RESOURCE_PREFIX}-vpc" \
+    "Name=tag:Environment,Values=$ENVIRONMENT" \
+  --query 'length(Vpcs)' --output text)
+EXISTING_INSTANCE_COUNT=$(aws ec2 describe-instances \
+  --region "$AWS_REGION" \
+  --filters "Name=tag:Name,Values=$EC2_INSTANCE_NAME" \
+    "Name=tag:Environment,Values=$ENVIRONMENT" \
+    'Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down' \
+  --query 'length(Reservations[].Instances[])' --output text)
+if (( EXISTING_VPC_COUNT != 0 || EXISTING_INSTANCE_COUNT != 0 )); then
+  printf 'ERROR: deployment-tagged VPC or EC2 resources already exist for %s.\n' \
+    "$DEPLOYMENT_ID" >&2
+  exit 1
+fi
+if aws rds describe-db-instances \
+    --region "$AWS_REGION" --db-instance-identifier "$DB_INSTANCE_ID" >/dev/null 2>&1 ||
+   aws elbv2 describe-load-balancers \
+    --region "$AWS_REGION" --names "$ALB_NAME" >/dev/null 2>&1 ||
+   aws secretsmanager describe-secret \
+    --region "$AWS_REGION" --secret-id "$APP_SECRET_NAME" >/dev/null 2>&1 ||
+   aws secretsmanager describe-secret \
+    --region "$AWS_REGION" --secret-id "$ORIGIN_SECRET_NAME" >/dev/null 2>&1 ||
+   aws iam get-role --role-name "$EC2_ROLE_NAME" >/dev/null 2>&1 ||
+   [[ $(aws logs describe-log-groups \
+      --region "$AWS_REGION" \
+      --log-group-name-prefix "$LOG_GROUP" \
+      --query "logGroups[?logGroupName=='${LOG_GROUP}'] | length(@)" \
+      --output text) != 0 ]] ||
+   [[ $(aws wafv2 list-web-acls \
+      --region us-east-1 --scope CLOUDFRONT \
+      --query "length(WebACLs[?Name=='${WAF_NAME}'])" \
+      --output text) != 0 ]]; then
+  printf 'ERROR: a named deployment resource already exists for %s; refusing to overwrite state.\n' \
+    "$DEPLOYMENT_ID" >&2
+  exit 1
+fi
 mkdir -p "$WORK_DIR"
 : > "$STATE_FILE"
 

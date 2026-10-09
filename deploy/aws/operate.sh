@@ -83,6 +83,72 @@ require_expected_account() {
   export ACCOUNT_ID
 }
 
+resolve_instance_role() {
+  local instance_id=$1 profile_arn profile_json
+  profile_arn=$(aws_cli ec2 describe-instances \
+    --region "$AWS_REGION" \
+    --instance-ids "$instance_id" \
+    --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' \
+    --output text)
+  [[ "$profile_arn" == arn:aws:iam::"${ACCOUNT_ID}":instance-profile/* ]] || {
+    printf 'ERROR: instance %s has no instance profile in the approved account.\n' "$instance_id" >&2
+    return 1
+  }
+  RESOLVED_INSTANCE_PROFILE_NAME=${profile_arn##*/}
+  profile_json=$(aws_cli iam get-instance-profile \
+    --instance-profile-name "$RESOLVED_INSTANCE_PROFILE_NAME" \
+    --output json)
+  [[ $(jq '.InstanceProfile.Roles | length' <<<"$profile_json") -eq 1 ]] || {
+    printf 'ERROR: instance profile %s must contain exactly one role.\n' \
+      "$RESOLVED_INSTANCE_PROFILE_NAME" >&2
+    return 1
+  }
+  RESOLVED_EC2_ROLE_NAME=$(jq -r '.InstanceProfile.Roles[0].RoleName' <<<"$profile_json")
+  [[ "$RESOLVED_INSTANCE_PROFILE_NAME" == "${RESOURCE_PREFIX}-profile" &&
+     "$RESOLVED_EC2_ROLE_NAME" == "${RESOURCE_PREFIX}-role" ]] || {
+    printf 'ERROR: instance %s is not attached to the dedicated %s role/profile.\n' \
+      "$instance_id" "$RESOURCE_PREFIX" >&2
+    return 1
+  }
+  export RESOLVED_INSTANCE_PROFILE_NAME RESOLVED_EC2_ROLE_NAME
+}
+
+assert_role_policy_boundary() {
+  local role_name=$1 allowed_inline=$2 allowed_managed_arn=${3:-}
+  local attached_json inline_json
+  attached_json=$(aws_cli iam list-attached-role-policies \
+    --role-name "$role_name" --output json)
+  inline_json=$(aws_cli iam list-role-policies \
+    --role-name "$role_name" --output json)
+  jq -e --arg allowed "$allowed_managed_arn" '
+    all(.AttachedPolicies[]?; $allowed != "" and .PolicyArn == $allowed)
+  ' <<<"$attached_json" >/dev/null || {
+    printf 'ERROR: role %s has an unexpected attached managed policy.\n' "$role_name" >&2
+    return 1
+  }
+  jq -e --arg allowed "$allowed_inline" '
+    all(.PolicyNames[]?; . == $allowed)
+  ' <<<"$inline_json" >/dev/null || {
+    printf 'ERROR: role %s has an unexpected inline policy.\n' "$role_name" >&2
+    return 1
+  }
+}
+
+assert_actions_not_allowed() {
+  local role_arn=$1
+  shift
+  local simulation
+  simulation=$(aws_cli iam simulate-principal-policy \
+    --policy-source-arn "$role_arn" \
+    --action-names "$@" \
+    --output json)
+  jq -e 'all(.EvaluationResults[]?; .EvalDecision != "allowed")' \
+    <<<"$simulation" >/dev/null || {
+    printf 'ERROR: role %s still allows a forbidden action.\n' "$role_arn" >&2
+    return 1
+  }
+}
+
 bootstrap_ci() {
   local state_dir provider_arn role_arn trust_file policy_file
   require_commands "$AWS_BIN" jq
@@ -98,7 +164,8 @@ bootstrap_ci() {
 
   jq -n \
     --arg provider "$provider_arn" \
-    --arg subject "repo:${GITHUB_REPOSITORY}:ref:refs/heads/main" '
+    --arg main_subject "repo:${GITHUB_REPOSITORY}:ref:refs/heads/main" \
+    --arg fix_subject "repo:${GITHUB_REPOSITORY}:ref:refs/heads/fix/def-out-004" '
     {
       Version: "2012-10-17",
       Statement: [{
@@ -107,7 +174,7 @@ bootstrap_ci() {
         Action: "sts:AssumeRoleWithWebIdentity",
         Condition: {StringEquals: {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": $subject
+          "token.actions.githubusercontent.com:sub": [$main_subject, $fix_subject]
         }}
       }]
     }
@@ -144,6 +211,7 @@ bootstrap_ci() {
   ' >"$policy_file"
 
   if aws_cli iam get-role --role-name "$GITHUB_DEPLOY_ROLE" >/dev/null 2>&1; then
+    assert_role_policy_boundary "$GITHUB_DEPLOY_ROLE" astra-agents-ecr-push
     aws_cli iam update-assume-role-policy \
       --role-name "$GITHUB_DEPLOY_ROLE" \
       --policy-document "file://$trust_file"
@@ -160,6 +228,8 @@ bootstrap_ci() {
     --role-name "$GITHUB_DEPLOY_ROLE" \
     --policy-name astra-agents-ecr-push \
     --policy-document "file://$policy_file"
+  assert_actions_not_allowed "$role_arn" \
+    ssm:SendCommand secretsmanager:GetSecretValue ec2:RunInstances iam:PassRole
 
   printf 'GitHub role ready: %s\n' "$role_arn"
 }
@@ -208,12 +278,18 @@ bootstrap_repository() {
 }
 
 harden_runtime_role() {
-  local state_dir policy_file role_name repository_arn app_secret_arn log_group_arn
+  local state_dir policy_file role_name role_arn instance_id repository_arn app_secret_arn log_group_arn
+  local ssm_managed_policy
   require_commands "$AWS_BIN" jq
   require_expected_account
+  instance_id=$(resolve_single_instance_id "$DEPLOYMENT_ID")
+  resolve_instance_role "$instance_id"
   state_dir=$(init_state_dir "$DEPLOYMENT_ID")
   policy_file="$state_dir/ec2-runtime-policy.json"
-  role_name="${RESOURCE_PREFIX}-role"
+  role_name=$RESOLVED_EC2_ROLE_NAME
+  role_arn="arn:aws:iam::${ACCOUNT_ID}:role/${role_name}"
+  ssm_managed_policy='arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+  assert_role_policy_boundary "$role_name" astra-agents-ec2-runtime "$ssm_managed_policy"
   repository_arn="arn:aws:ecr:${AWS_REGION}:${ACCOUNT_ID}:repository/${ECR_REPOSITORY}"
   app_secret_arn="arn:aws:secretsmanager:${AWS_REGION}:${ACCOUNT_ID}:secret:${APP_SECRET_NAME}-*"
   log_group_arn="arn:aws:logs:${AWS_REGION}:${ACCOUNT_ID}:log-group:/ec2/${RESOURCE_PREFIX}/app:*"
@@ -262,6 +338,8 @@ harden_runtime_role() {
     --role-name "$role_name" \
     --policy-name astra-agents-ec2-runtime \
     --policy-document "file://$policy_file"
+  assert_actions_not_allowed "$role_arn" \
+    ecr:PutImage ecr:InitiateLayerUpload ecr:UploadLayerPart ecr:CompleteLayerUpload
   printf 'Runtime role hardened: %s\n' "$role_name"
 }
 
@@ -567,19 +645,23 @@ ensure_cloudfront_waf() {
 
 harden_edge() {
   local state_dir alb_json alb_arn alb_dns alb_sg listener_json listener_arn target_group_arn
+  local instance_id target_health_json
   local distribution_json distribution_domain distribution_etag origin_matches origin_secret_value
   local origin_secret_file updated_distribution waf_arn rule_priority priorities candidate rule_arn
   local prefix_list_id sg_rules public_rule_id direct_status edge_state
+  local prefix_ingress_created=false
   require_commands "$AWS_BIN" jq "$CURL_BIN" "$OPENSSL_BIN"
   require_expected_account
+  instance_id=$(resolve_single_instance_id "$DEPLOYMENT_ID")
+  resolve_instance_role "$instance_id"
   [[ "$CLOUDFRONT_DISTRIBUTION_ID" =~ ^E[A-Z0-9]+$ ]] || {
     printf 'ERROR: harden-edge requires --distribution-id.\n' >&2
     return 2
   }
   state_dir=$(init_state_dir "$DEPLOYMENT_ID")
   edge_state="$state_dir/edge-state.env"
-  if [[ -f "$edge_state" ]] && grep -Fq 'export EDGE_STAGE=complete' "$edge_state"; then
-    printf 'ERROR: edge hardening is already recorded as complete; verify or roll it back first.\n' >&2
+  if [[ -e "$edge_state" ]]; then
+    printf 'ERROR: edge state already exists; verify or run rollback-edge before retrying.\n' >&2
     return 1
   fi
 
@@ -608,6 +690,17 @@ harden_edge() {
     --names "${RESOURCE_PREFIX}-tg" \
     --query 'TargetGroups[0].TargetGroupArn' \
     --output text)
+  target_health_json=$(aws_cli elbv2 describe-target-health \
+    --region "$AWS_REGION" \
+    --target-group-arn "$target_group_arn" \
+    --output json)
+  jq -e --arg instance "$instance_id" '
+    (.TargetHealthDescriptions | length) == 1 and
+    .TargetHealthDescriptions[0].Target.Id == $instance
+  ' <<<"$target_health_json" >/dev/null || {
+    printf 'ERROR: target group does not contain exactly the resolved deployment instance.\n' >&2
+    return 1
+  }
 
   distribution_json=$(aws_cli cloudfront get-distribution-config \
     --id "$CLOUDFRONT_DISTRIBUTION_ID" \
@@ -640,6 +733,7 @@ harden_edge() {
     printf 'export HTTP_LISTENER_ARN=%q\n' "$listener_arn"
     printf 'export ORIGIN_RULE_ARN=%q\n' ''
     printf 'export CLOUDFRONT_PREFIX_LIST_ID=%q\n' ''
+    printf 'export CLOUDFRONT_INGRESS_CREATED=false\n'
     printf 'export WAF_ARN=%q\n' ''
   } >"$edge_state"
   chmod 0600 "$edge_state"
@@ -668,6 +762,10 @@ harden_edge() {
   chmod 0600 "$origin_secret_file"
 
   waf_arn=$(ensure_cloudfront_waf "$state_dir")
+  {
+    printf 'export EDGE_STAGE=waf-ready\n'
+    printf 'export WAF_ARN=%q\n' "$waf_arn"
+  } >>"$edge_state"
   updated_distribution="$state_dir/distribution-hardened.json"
   jq --arg domain "$alb_dns" \
      --arg header 'X-Astra-Origin-Verify' \
@@ -721,6 +819,10 @@ harden_edge() {
     --actions "file://$state_dir/listener-origin-actions.json" \
     --query 'Rules[0].RuleArn' \
     --output text)
+  {
+    printf 'export EDGE_STAGE=listener-rule-created\n'
+    printf 'export ORIGIN_RULE_ARN=%q\n' "$rule_arn"
+  } >>"$edge_state"
   printf '[{"Type":"fixed-response","FixedResponseConfig":{"StatusCode":"403","ContentType":"text/plain","MessageBody":"Forbidden"}}]\n' \
     >"$state_dir/listener-default-403.json"
   aws_cli elbv2 modify-listener \
@@ -743,6 +845,10 @@ harden_edge() {
     --query 'PrefixLists[0].PrefixListId' \
     --output text)
   [[ "$prefix_list_id" == pl-* ]] || { printf 'ERROR: CloudFront origin prefix list was not found.\n' >&2; return 1; }
+  {
+    printf 'export EDGE_STAGE=prefix-list-resolved\n'
+    printf 'export CLOUDFRONT_PREFIX_LIST_ID=%q\n' "$prefix_list_id"
+  } >>"$edge_state"
   jq -n --arg prefix "$prefix_list_id" '[{
     IpProtocol: "tcp", FromPort: 80, ToPort: 80,
     PrefixListIds: [{PrefixListId: $prefix, Description: "CloudFront origin-facing only"}]
@@ -755,6 +861,8 @@ harden_edge() {
       --region "$AWS_REGION" \
       --group-id "$alb_sg" \
       --ip-permissions "file://$state_dir/cloudfront-ingress.json" >/dev/null
+    prefix_ingress_created=true
+    printf 'export CLOUDFRONT_INGRESS_CREATED=true\n' >>"$edge_state"
   fi
   while IFS= read -r public_rule_id; do
     [[ -n "$public_rule_id" ]] || continue
@@ -762,9 +870,18 @@ harden_edge() {
       --region "$AWS_REGION" \
       --group-id "$alb_sg" \
       --security-group-rule-ids "$public_rule_id" >/dev/null
-  done < <(jq -r '.SecurityGroupRules[]? |
-    select(.IsEgress == false and .IpProtocol == "tcp" and .FromPort == 80 and
-      .ToPort == 80 and .CidrIpv4 == "0.0.0.0/0") | .SecurityGroupRuleId' <<<"$sg_rules")
+  done < <(non_cloudfront_origin_rule_ids \
+    "$state_dir/security-group-before.json" "$prefix_list_id" 80)
+
+  aws_cli ec2 describe-security-group-rules \
+    --region "$AWS_REGION" \
+    --filters "Name=group-id,Values=$alb_sg" \
+    --output json >"$state_dir/security-group-hardened.json"
+  assert_only_cloudfront_origin_ingress \
+    "$state_dir/security-group-hardened.json" "$prefix_list_id" 80 || {
+      printf 'ERROR: ALB ingress is not restricted to the CloudFront managed prefix list.\n' >&2
+      return 1
+    }
 
   "$CURL_BIN" --fail --silent --show-error \
     --retry 6 --retry-all-errors --retry-delay 5 \
@@ -778,6 +895,7 @@ harden_edge() {
     printf 'export HTTP_LISTENER_ARN=%q\n' "$listener_arn"
     printf 'export ORIGIN_RULE_ARN=%q\n' "$rule_arn"
     printf 'export CLOUDFRONT_PREFIX_LIST_ID=%q\n' "$prefix_list_id"
+    printf 'export CLOUDFRONT_INGRESS_CREATED=%q\n' "$prefix_ingress_created"
     printf 'export WAF_ARN=%q\n' "$waf_arn"
   } >"$edge_state"
   chmod 0600 "$edge_state"
@@ -787,8 +905,9 @@ harden_edge() {
 }
 
 rollback_edge() {
-  local state_dir edge_state public_ingress listener_actions current_distribution current_etag
-  local restore_distribution distribution_domain sg_rules prefix_rule_id
+  local state_dir edge_state listener_actions current_distribution current_etag
+  local restore_distribution distribution_domain sg_rules prefix_rule_id original_rule_id
+  local current_rules_file restore_permission restored_ids_file
   require_commands "$AWS_BIN" jq "$CURL_BIN"
   require_expected_account
   state_dir=$(init_state_dir "$DEPLOYMENT_ID")
@@ -802,26 +921,40 @@ rollback_edge() {
   source "$edge_state"
   [[ "${CLOUDFRONT_DISTRIBUTION_ID:-}" =~ ^E[A-Z0-9]+$ &&
      "${ALB_SECURITY_GROUP_ID:-}" == sg-* &&
-     "${HTTP_LISTENER_ARN:-}" == arn:aws:elasticloadbalancing:* ]] || {
+     "${HTTP_LISTENER_ARN:-}" == arn:aws:elasticloadbalancing:* &&
+     "${CLOUDFRONT_INGRESS_CREATED:-false}" =~ ^(true|false)$ ]] || {
     printf 'ERROR: edge rollback state is invalid.\n' >&2
     return 1
   }
 
-  public_ingress="$state_dir/public-http-ingress.json"
-  printf '[{"IpProtocol":"tcp","FromPort":80,"ToPort":80,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"Temporary rollback HTTP access"}]}]\n' \
-    >"$public_ingress"
-  sg_rules=$(aws_cli ec2 describe-security-group-rules \
+  current_rules_file="$state_dir/security-group-rollback-current.json"
+  restore_permission="$state_dir/security-group-restore-permission.json"
+  restored_ids_file="$state_dir/security-group-restored-original-ids.txt"
+  touch "$restored_ids_file"
+  chmod 0600 "$restored_ids_file"
+  aws_cli ec2 describe-security-group-rules \
     --region "$AWS_REGION" \
     --filters "Name=group-id,Values=$ALB_SECURITY_GROUP_ID" \
-    --output json)
-  if ! jq -e 'any(.SecurityGroupRules[]?; .IsEgress == false and
-    .IpProtocol == "tcp" and .FromPort == 80 and .ToPort == 80 and
-    .CidrIpv4 == "0.0.0.0/0")' <<<"$sg_rules" >/dev/null; then
+    --output json >"$current_rules_file"
+  while IFS= read -r original_rule_id; do
+    [[ -n "$original_rule_id" ]] || continue
+    if jq -e --arg id "$original_rule_id" \
+        'any(.SecurityGroupRules[]?; .SecurityGroupRuleId == $id)' \
+        "$current_rules_file" >/dev/null ||
+       grep -Fxq "$original_rule_id" "$restored_ids_file"; then
+      continue
+    fi
+    security_group_rule_permission \
+      "$state_dir/security-group-before.json" "$original_rule_id" \
+      >"$restore_permission"
     aws_cli ec2 authorize-security-group-ingress \
       --region "$AWS_REGION" \
       --group-id "$ALB_SECURITY_GROUP_ID" \
-      --ip-permissions "file://$public_ingress" >/dev/null
-  fi
+      --ip-permissions "file://$restore_permission" >/dev/null
+    printf '%s\n' "$original_rule_id" >>"$restored_ids_file"
+  done < <(non_cloudfront_origin_rule_ids \
+    "$state_dir/security-group-before.json" \
+    "${CLOUDFRONT_PREFIX_LIST_ID:-}" 80)
 
   listener_actions="$state_dir/listener-restore-actions.json"
   jq --arg listener "$HTTP_LISTENER_ARN" \
@@ -861,27 +994,51 @@ rollback_edge() {
     --retry 6 --retry-all-errors --retry-delay 5 \
     "https://${distribution_domain}/health" >/dev/null
 
-  sg_rules=$(aws_cli ec2 describe-security-group-rules \
-    --region "$AWS_REGION" \
-    --filters "Name=group-id,Values=$ALB_SECURITY_GROUP_ID" \
-    --output json)
-  while IFS= read -r prefix_rule_id; do
-    [[ -n "$prefix_rule_id" ]] || continue
-    aws_cli ec2 revoke-security-group-ingress \
+  if [[ "${CLOUDFRONT_INGRESS_CREATED:-false}" == true ]]; then
+    sg_rules=$(aws_cli ec2 describe-security-group-rules \
       --region "$AWS_REGION" \
-      --group-id "$ALB_SECURITY_GROUP_ID" \
-      --security-group-rule-ids "$prefix_rule_id" >/dev/null
-  done < <(jq -r --arg prefix "${CLOUDFRONT_PREFIX_LIST_ID:-}" '.SecurityGroupRules[]? |
-    select(.IsEgress == false and .FromPort == 80 and .ToPort == 80 and
-      .PrefixListId == $prefix) | .SecurityGroupRuleId' <<<"$sg_rules")
+      --filters "Name=group-id,Values=$ALB_SECURITY_GROUP_ID" \
+      --output json)
+    while IFS= read -r prefix_rule_id; do
+      [[ -n "$prefix_rule_id" ]] || continue
+      aws_cli ec2 revoke-security-group-ingress \
+        --region "$AWS_REGION" \
+        --group-id "$ALB_SECURITY_GROUP_ID" \
+        --security-group-rule-ids "$prefix_rule_id" >/dev/null
+    done < <(jq -r --arg prefix "${CLOUDFRONT_PREFIX_LIST_ID:-}" '.SecurityGroupRules[]? |
+      select(.IsEgress == false and .IpProtocol == "tcp" and .FromPort == 80 and
+        .ToPort == 80 and .PrefixListId == $prefix) | .SecurityGroupRuleId' <<<"$sg_rules")
+  fi
   printf 'Edge rollback complete: https://%s\n' "$distribution_domain"
 }
 
 rotate_jwt() {
   local state_dir secret_response old_secret new_secret rotation_state old_version new_version new_jwt
+  local instance_id ssm_status actual_digest
   require_image_digest
   require_commands "$AWS_BIN" jq "$OPENSSL_BIN"
   require_expected_account
+  instance_id=$(resolve_single_instance_id "$DEPLOYMENT_ID")
+  resolve_instance_role "$instance_id"
+  ssm_status=$(aws_cli ssm describe-instance-information \
+    --region "$AWS_REGION" \
+    --filters "Key=InstanceIds,Values=$instance_id" \
+    --query 'InstanceInformationList[0].PingStatus' \
+    --output text)
+  [[ "$ssm_status" == Online ]] || {
+    printf 'ERROR: instance %s is not online in Systems Manager.\n' "$instance_id" >&2
+    return 1
+  }
+  actual_digest=$(aws_cli ecr describe-images \
+    --region "$AWS_REGION" \
+    --repository-name "$ECR_REPOSITORY" \
+    --image-ids "imageDigest=$IMAGE_DIGEST" \
+    --query 'imageDetails[0].imageDigest' \
+    --output text)
+  [[ "$actual_digest" == "$IMAGE_DIGEST" ]] || {
+    printf 'ERROR: digest %s does not exist in %s.\n' "$IMAGE_DIGEST" "$ECR_REPOSITORY" >&2
+    return 1
+  }
   state_dir=$(init_state_dir "$DEPLOYMENT_ID")
   secret_response="$state_dir/app-secret-current.json"
   old_secret="$state_dir/app-secret-old.json"

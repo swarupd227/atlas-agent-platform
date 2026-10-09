@@ -59,6 +59,25 @@ else
   fail 'cleanup owns WAF, WAF logs, and the origin secret'
 fi
 
+state_guard_line=$(grep -n -m1 '\[\[ -e "$STATE_FILE" \]\]' "$PROVISION" | cut -d: -f1 || true)
+state_truncate_line=$(grep -n -m1 ': > "$STATE_FILE"' "$PROVISION" | cut -d: -f1 || true)
+if [[ -n "$state_guard_line" && -n "$state_truncate_line" ]] &&
+   (( state_guard_line < state_truncate_line )) &&
+   grep -Fq 'deployment-tagged VPC or EC2 resources already exist' "$PROVISION"; then
+  pass 'provisioner refuses reused state and deployment-tagged resources before truncation'
+else
+  fail 'provisioner refuses reused state and deployment-tagged resources before truncation'
+fi
+
+if grep -Fq 'REQUESTED_DEPLOYMENT_ID" =~ ^[a-z0-9]' "$CLEANUP" &&
+   grep -Fq 'deployment state names do not match' "$CLEANUP" &&
+   grep -Fq 'deployment state identifiers or ARNs are outside' "$CLEANUP" &&
+   grep -Fq 'ownership tags do not match' "$CLEANUP"; then
+  pass 'cleanup validates ID, derived names, ARNs, and ownership tags'
+else
+  fail 'cleanup validates ID, derived names, ARNs, and ownership tags'
+fi
+
 if (( failures != 0 )); then
   printf '%s test(s) failed\n' "$failures" >&2
   exit 1

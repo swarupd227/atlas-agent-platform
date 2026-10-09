@@ -28,38 +28,38 @@
 
 ### Task 1: Deployment contract and shared shell library
 
-- [ ] Add executable contract tests for deployment ID validation, exact instance selection, state isolation, and command prerequisites.
-- [ ] Watch the tests fail because the shared library is absent.
-- [ ] Add `deploy/aws/common.sh` with the minimum functions required by the tests.
-- [ ] Run the contract tests and shell syntax checks.
-- [ ] Commit.
+- [x] Add executable contract tests for deployment ID validation, exact instance selection, state isolation, and command prerequisites.
+- [x] Watch the tests fail because the shared library is absent.
+- [x] Add `deploy/aws/common.sh` with the minimum functions required by the tests.
+- [x] Run the contract tests and shell syntax checks.
+- [x] Commit.
 
 ### Task 2: GitHub OIDC image build and least-privilege role
 
-- [ ] Add failing tests for trust-policy scope and ECR-only permissions.
-- [ ] Add the manual GitHub Actions image-build workflow and `bootstrap-ci` operation.
-- [ ] Verify the workflow contract and IAM policy tests.
-- [ ] Commit.
+- [x] Add failing tests for trust-policy scope and ECR-only permissions.
+- [x] Add the manual GitHub Actions image-build workflow and `bootstrap-ci` operation.
+- [x] Verify the workflow contract and IAM policy tests.
+- [x] Commit.
 
 ### Task 3: Digest deployment and EC2 pull-only permissions
 
-- [ ] Add failing tests for exact digest validation, SSM target isolation, rollback commands, and forbidden EC2 push actions.
-- [ ] Implement `deploy-image`, `verify`, and runtime-role hardening operations.
-- [ ] Run contract tests and syntax checks.
-- [ ] Commit.
+- [x] Add failing tests for exact digest validation, SSM target isolation, rollback commands, and forbidden EC2 push actions.
+- [x] Implement `deploy-image`, `verify`, and runtime-role hardening operations.
+- [x] Run contract tests and syntax checks.
+- [x] Commit.
 
 ### Task 4: Edge, WAF, and JWT operations
 
-- [ ] Add failing tests for safe ordering, direct-ALB rejection, WAF scope, and single-field JWT rotation.
-- [ ] Implement staged origin-header/ALB/prefix-list hardening, WAF creation/logging, JWT rotation, and rollback state capture.
-- [ ] Run contract tests and syntax checks.
-- [ ] Commit.
+- [x] Add failing tests for safe ordering, direct-ALB rejection, WAF scope, and single-field JWT rotation.
+- [x] Implement staged origin-header/ALB/prefix-list hardening, WAF creation/logging, JWT rotation, and rollback state capture.
+- [x] Run contract tests and syntax checks.
+- [x] Commit.
 
 ### Task 5: Fresh deployment, cleanup, documentation, and live rollout
 
-- [ ] Import and update the sequential provisioner so production EC2 never builds or pushes images.
-- [ ] Update cleanup for WAF, log group, and origin secret ownership.
-- [ ] Document exact build, deploy, verify, rollback, and deletion commands.
-- [ ] Run repository build, AWS shell tests, syntax checks, and diff checks.
-- [ ] Review the whole branch, fix important findings, and commit.
+- [x] Import and update the sequential provisioner so production EC2 never builds or pushes images.
+- [x] Update cleanup for WAF, log group, and origin secret ownership.
+- [x] Document exact build, deploy, verify, rollback, and deletion commands.
+- [x] Run repository build, AWS shell tests, syntax checks, and diff checks.
+- [x] Review the whole branch, fix important findings, and commit.
 - [ ] Apply the staged live rollout only after repository verification; verify every live acceptance criterion.

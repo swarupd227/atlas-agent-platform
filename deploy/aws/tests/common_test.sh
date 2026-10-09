@@ -85,6 +85,46 @@ else
   fail 'uses private state permissions without touching siblings'
 fi
 
+cat >"$tmp_dir/sg-rules.json" <<'JSON'
+{
+  "SecurityGroupRules": [
+    {"SecurityGroupRuleId":"allow-cf","IsEgress":false,"IpProtocol":"tcp","FromPort":80,"ToPort":80,"PrefixListId":"pl-cloudfront"},
+    {"SecurityGroupRuleId":"public-v4","IsEgress":false,"IpProtocol":"tcp","FromPort":80,"ToPort":80,"CidrIpv4":"0.0.0.0/0"},
+    {"SecurityGroupRuleId":"public-v6","IsEgress":false,"IpProtocol":"tcp","FromPort":0,"ToPort":443,"CidrIpv6":"::/0"},
+    {"SecurityGroupRuleId":"all-protocols","IsEgress":false,"IpProtocol":"-1","CidrIpv4":"10.0.0.0/8"},
+    {"SecurityGroupRuleId":"source-sg","IsEgress":false,"IpProtocol":"tcp","FromPort":80,"ToPort":80,"Description":"corporate proxy","ReferencedGroupInfo":{"GroupId":"sg-source","UserId":"964604400233"}},
+    {"SecurityGroupRuleId":"ssh-only","IsEgress":false,"IpProtocol":"tcp","FromPort":22,"ToPort":22,"CidrIpv4":"0.0.0.0/0"},
+    {"SecurityGroupRuleId":"egress","IsEgress":true,"IpProtocol":"-1","CidrIpv4":"0.0.0.0/0"}
+  ]
+}
+JSON
+mapfile -t unsafe_rules < <(non_cloudfront_origin_rule_ids \
+  "$tmp_dir/sg-rules.json" pl-cloudfront 80)
+if [[ "${unsafe_rules[*]}" == 'public-v4 public-v6 all-protocols source-sg' ]]; then
+  pass 'finds every non-CloudFront rule that permits the origin port'
+else
+  fail 'finds every non-CloudFront rule that permits the origin port'
+fi
+if assert_only_cloudfront_origin_ingress "$tmp_dir/sg-rules.json" pl-cloudfront 80; then
+  fail 'rejects mixed origin ingress'
+else
+  pass 'rejects mixed origin ingress'
+fi
+jq '{SecurityGroupRules:[.SecurityGroupRules[0],.SecurityGroupRules[5],.SecurityGroupRules[6]]}' \
+  "$tmp_dir/sg-rules.json" >"$tmp_dir/sg-rules-safe.json"
+assert_success 'accepts only exact CloudFront origin ingress' \
+  assert_only_cloudfront_origin_ingress "$tmp_dir/sg-rules-safe.json" pl-cloudfront 80
+
+if security_group_rule_permission "$tmp_dir/sg-rules.json" source-sg |
+  jq -e '.[0].IpProtocol == "tcp" and .[0].FromPort == 80 and
+    .[0].UserIdGroupPairs[0].GroupId == "sg-source" and
+    .[0].UserIdGroupPairs[0].UserId == "964604400233" and
+    .[0].UserIdGroupPairs[0].Description == "corporate proxy"' >/dev/null; then
+  pass 'reconstructs original source-security-group ingress for rollback'
+else
+  fail 'reconstructs original source-security-group ingress for rollback'
+fi
+
 if (( failures != 0 )); then
   printf '%s test(s) failed\n' "$failures" >&2
   exit 1

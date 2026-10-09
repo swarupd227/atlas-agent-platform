@@ -17,13 +17,29 @@ cat >"$fake_aws" <<'FAKE_AWS'
 printf '%s\n' "$*" >>"$FAKE_AWS_LOG"
 case "$1 $2" in
   'sts get-caller-identity') printf '964604400233\n' ;;
-  'ec2 describe-instances') printf 'i-0123456789abcdef0\n' ;;
+  'ec2 describe-instances')
+    if [[ "$*" == *IamInstanceProfile.Arn* ]]; then
+      printf 'arn:aws:iam::964604400233:instance-profile/astra-agents-demo-profile\n'
+    else
+      printf 'i-0123456789abcdef0\n'
+    fi
+    ;;
   'ssm describe-instance-information') printf 'Online\n' ;;
   'ecr describe-repositories') printf '964604400233.dkr.ecr.us-east-1.amazonaws.com/astra-agents-demo-app\n' ;;
   'ecr describe-images') printf '%s\n' "$EXPECTED_DIGEST" ;;
   'ssm send-command') printf 'command-123\n' ;;
   'ssm get-command-invocation') printf '{"Status":"Success","StandardOutputContent":"healthy","StandardErrorContent":""}\n' ;;
   'iam put-role-policy') exit 0 ;;
+  'iam get-instance-profile') printf '{"InstanceProfile":{"Roles":[{"RoleName":"astra-agents-demo-role"}]}}\n' ;;
+  'iam list-attached-role-policies') printf '{"AttachedPolicies":[{"PolicyArn":"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"}]}\n' ;;
+  'iam list-role-policies')
+    if [[ "${FAKE_UNEXPECTED_POLICY:-}" == true ]]; then
+      printf '{"PolicyNames":["astra-agents-ec2-runtime","legacy-ecr-admin"]}\n'
+    else
+      printf '{"PolicyNames":["astra-agents-ec2-runtime"]}\n'
+    fi
+    ;;
+  'iam simulate-principal-policy') printf '{"EvaluationResults":[{"EvalActionName":"ecr:PutImage","EvalDecision":"implicitDeny"}]}\n' ;;
   *) printf 'Unexpected fake AWS call: %s\n' "$*" >&2; exit 64 ;;
 esac
 FAKE_AWS
@@ -95,6 +111,17 @@ if jq -e '
 else
   fail 'EC2 policy retains pull actions and removes every push action'
 fi
+
+: >"$FAKE_AWS_LOG"
+export FAKE_UNEXPECTED_POLICY=true
+if "$AWS_DIR/operate.sh" harden-runtime-role --deployment-id demo >/dev/null 2>&1; then
+  fail 'runtime hardening rejects broader existing inline permissions'
+elif grep -Fq 'iam put-role-policy' "$FAKE_AWS_LOG"; then
+  fail 'runtime hardening rejects unexpected permissions before mutation'
+else
+  pass 'runtime hardening rejects unexpected permissions before mutation'
+fi
+unset FAKE_UNEXPECTED_POLICY
 
 : >"$FAKE_AWS_LOG"
 if "$AWS_DIR/operate.sh" verify \

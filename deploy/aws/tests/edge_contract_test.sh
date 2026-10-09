@@ -86,6 +86,37 @@ else
   fail 'edge operation verifies direct rejection and captures rollback state'
 fi
 
+if grep -Fq 'if [[ -e "$edge_state" ]]' "$operation_source" &&
+   grep -Fq 'export EDGE_STAGE=listener-rule-created' "$operation_source" &&
+   grep -Fq 'export ORIGIN_RULE_ARN=%q' "$operation_source" &&
+   grep -Fq 'non_cloudfront_origin_rule_ids' "$operation_source" &&
+   grep -Fq 'assert_only_cloudfront_origin_ingress' "$operation_source"; then
+  pass 'partial edge state cannot be overwritten and all alternate ingress is rejected'
+else
+  fail 'partial edge state cannot be overwritten and all alternate ingress is rejected'
+fi
+
+rollback_source=$(sed -n '/^rollback_edge()/,/^rotate_jwt()/p' "$operation_source")
+if grep -Fq 'security_group_rule_permission' <<<"$rollback_source" &&
+  grep -Fq 'security-group-before.json' <<<"$rollback_source" &&
+  grep -Fq 'CLOUDFRONT_INGRESS_CREATED' <<<"$rollback_source" &&
+  ! grep -Fq 'Temporary rollback HTTP access' <<<"$rollback_source"; then
+  pass 'edge rollback restores captured ingress without opening public HTTP'
+else
+  fail 'edge rollback restores captured ingress without opening public HTTP'
+fi
+
+rotate_source=$(sed -n '/^rotate_jwt()/,/^rollback_jwt()/p' "$operation_source")
+rotate_instance_line=$(grep -n -m1 'resolve_single_instance_id' <<<"$rotate_source" | cut -d: -f1 || true)
+rotate_secret_line=$(grep -n -m1 'put-secret-value' <<<"$rotate_source" | cut -d: -f1 || true)
+if [[ -n "$rotate_instance_line" && -n "$rotate_secret_line" ]] &&
+   (( rotate_instance_line < rotate_secret_line )) &&
+   grep -Fq 'target group does not contain exactly the resolved deployment instance' "$operation_source"; then
+  pass 'JWT and edge mutations require exact-instance preflight'
+else
+  fail 'JWT and edge mutations require exact-instance preflight'
+fi
+
 help_output=$($AWS_DIR/operate.sh help 2>&1 || true)
 if grep -Fq 'harden-edge' <<<"$help_output" &&
    grep -Fq 'rotate-jwt' <<<"$help_output"; then
