@@ -21,6 +21,24 @@ import { join } from "path";
 
 const src = (p: string) => readFileSync(join(__dirname, "..", p), "utf8");
 
+/**
+ * The body of one method, from its declaration to the next one.
+ *
+ * NOT a fixed character count. The first version read `slice(at, at + 1200)`
+ * from `async getAgentSummaries`, which is 134 characters longer than the
+ * method: the "omits the heavy fields" assertion below was partly judging
+ * whichever method came next. It also makes the verdict depend on line
+ * endings -- this tree stores LF, a checkout on Windows materialises CRLF,
+ * and the same slice in tests/tenant-scope.test.ts passed here and failed on
+ * a clean checkout of the same commit for exactly that reason.
+ */
+function methodBody(s: string, declaration: string): string {
+  const at = s.indexOf(declaration);
+  if (at < 0) return "";
+  const next = s.indexOf("\n  async ", at + declaration.length);
+  return next < 0 ? s.slice(at) : s.slice(at, next);
+}
+
 describe("components that only need a name and a status ask for the summary", () => {
   it("the sidebar does not pull the full list every 30 seconds", () => {
     const s = src("client/src/components/app-sidebar.tsx");
@@ -39,9 +57,8 @@ describe("components that only need a name and a status ask for the summary", ()
     // getAgentSummaries is the contract they depend on; if it stops selecting
     // one of these the components break silently with undefined.
     const s = src("server/storage.ts");
-    const at = s.indexOf("async getAgentSummaries");
-    expect(at, "getAgentSummaries not found").toBeGreaterThan(-1);
-    const body = s.slice(at, at + 1200);
+    expect(s.indexOf("async getAgentSummaries"), "getAgentSummaries not found").toBeGreaterThan(-1);
+    const body = methodBody(s, "async getAgentSummaries");
     for (const field of ["id", "name", "status", "outcomeId"]) {
       expect(body, `summary must select ${field}`).toContain(field);
     }
@@ -49,8 +66,8 @@ describe("components that only need a name and a status ask for the summary", ()
 
   it("the summary omits the three fields that are 78% of the payload", () => {
     const s = src("server/storage.ts");
-    const at = s.indexOf("async getAgentSummaries");
-    const body = s.slice(at, at + 1200);
+    const body = methodBody(s, "async getAgentSummaries");
+    expect(body.length, "empty body would pass every assertion below").toBeGreaterThan(200);
     for (const heavy of ["runtimeConfig", "systemPrompt", "blueprintJson"]) {
       expect(body, `summary must NOT select ${heavy}`).not.toContain(heavy);
     }

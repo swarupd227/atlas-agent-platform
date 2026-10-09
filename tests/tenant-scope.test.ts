@@ -287,6 +287,23 @@ describe("route wiring (static guard against a revert)", () => {
 });
 
 /**
+ * The body of one method, from its declaration to the next one.
+ *
+ * NOT a fixed character count. `slice(at, at + 1100)` passed here and failed
+ * on a clean checkout of the same commit: this tree stores LF, a checkout on
+ * Windows materialises CRLF, and the extra byte per line pushed the assertion
+ * target from 1,088 characters to 1,105 -- past the window. A test whose
+ * verdict depends on the line endings of the machine running it is measuring
+ * the machine.
+ */
+function methodBody(src: string, declaration: string): string {
+  const at = src.indexOf(declaration);
+  if (at < 0) return "";
+  const next = src.indexOf("\n  async ", at + declaration.length);
+  return next < 0 ? src.slice(at) : src.slice(at, next);
+}
+
+/**
  * Decision records, added 8 Oct 2026 for the same defect class as the findings
  * above, and introduced by the same mistake: a by-id lookup has no org in it,
  * so unless the route adds one, an id is enough.
@@ -308,7 +325,7 @@ describe("decision records are scoped to the caller's tenant", () => {
   it("the storage lookup filters by organization, not by id alone", () => {
     const at = storageSrc.indexOf("async getDecisionRecord(id: string");
     expect(at, "getDecisionRecord not found").toBeGreaterThan(-1);
-    const body = storageSrc.slice(at, at + 1400);
+    const body = methodBody(storageSrc, "async getDecisionRecord(id: string");
     expect(body).toContain("orgId?: string");
     expect(body).toContain("resolveOrgIdForRead(orgId)");
     expect(body).toContain("eq(decisionRecords.organizationId, scopedOrgId)");
@@ -355,7 +372,7 @@ describe("eval suites are scoped to the caller's tenant", () => {
   it("the suite reader can be scoped, and keeps platform-level rows visible", () => {
     const at = storageSrc.indexOf("async getEvalSuites(");
     expect(at, "getEvalSuites not found").toBeGreaterThan(-1);
-    const body = storageSrc.slice(at, at + 900);
+    const body = methodBody(storageSrc, "async getEvalSuites(");
     expect(body).toContain("orgId?: string");
     expect(body).toContain("eq(evalSuites.organizationId, scopedOrgId)");
     // The filter must be REACHABLE, not merely present. The first version of
@@ -382,7 +399,7 @@ describe("eval suites are scoped to the caller's tenant", () => {
     // afterwards would be NULL and visible to everyone, with the old data
     // looking fixed.
     const at = storageSrc.indexOf("async createEvalSuite(");
-    const body = storageSrc.slice(at, at + 1100);
+    const body = methodBody(storageSrc, "async createEvalSuite(");
     expect(body).toContain("agents.organizationId");
     expect(body).toContain('suite.agentId !== "system"');
     expect(body).toContain("organizationId }).returning()");
