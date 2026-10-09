@@ -1,9 +1,6 @@
 name: Build AWS image
 
 on:
-  push:
-    branches:
-      - fix/def-out-004
   workflow_dispatch:
     inputs:
       source_ref:
@@ -22,7 +19,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: aws-image-${{ inputs.deployment_id || 'demo' }}
+  group: aws-image-${{ inputs.deployment_id }}
   cancel-in-progress: false
 
 jobs:
@@ -33,10 +30,10 @@ jobs:
     env:
       AWS_REGION: us-east-1
       AWS_ACCOUNT_ID: "964604400233"
-      DEPLOYMENT_ID: ${{ inputs.deployment_id || 'demo' }}
-      SOURCE_REF: ${{ inputs.source_ref || github.sha }}
     steps:
       - name: Validate deployment identifier
+        env:
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
         run: |
           [[ "$DEPLOYMENT_ID" =~ ^[a-z0-9][a-z0-9-]{0,11}$ ]] || {
             echo "Invalid deployment_id: $DEPLOYMENT_ID" >&2
@@ -46,7 +43,7 @@ jobs:
       - name: Checkout approved source
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.SOURCE_REF }}
+          ref: ${{ inputs.source_ref }}
           fetch-depth: 0
 
       - name: Verify source belongs to main
@@ -54,18 +51,10 @@ jobs:
         run: |
           git fetch origin main --no-tags
           source_sha=$(git rev-parse HEAD)
-          if [[ "${GITHUB_EVENT_NAME}" == push ]]; then
-            [[ "${GITHUB_REF}" == refs/heads/fix/def-out-004 &&
-               "$source_sha" == "${GITHUB_SHA}" ]] || {
-              echo "Push builds are restricted to the exact KPI fix branch SHA." >&2
-              exit 1
-            }
-          else
-            git merge-base --is-ancestor "$source_sha" origin/main || {
-              echo "Manual source commit is not part of origin/main: $source_sha" >&2
-              exit 1
-            }
-          fi
+          git merge-base --is-ancestor "$source_sha" origin/main || {
+            echo "Source commit is not part of origin/main: $source_sha" >&2
+            exit 1
+          }
           echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
@@ -79,6 +68,7 @@ jobs:
 
       - name: Build and push image
         env:
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           repository="astra-agents-${DEPLOYMENT_ID}-app"
