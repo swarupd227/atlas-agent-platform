@@ -295,6 +295,7 @@ export async function registerRoutes(
   app.use("/api/gateway", lockdownGate("agentApiKeys"));
   app.use("/api/a2a", lockdownGate("agentApiKeys"));
   app.use("/api/agents/:agentId/api-keys", lockdownGate("agentApiKeys"));
+  app.use("/api/skills/:id/enable-code-execution", lockdownGate("codeExecution"));
   app.use("/api/admin/llm-provider-keys", llmKeyEntryGate);
   app.get("/api/platform/lockdown", (_req, res) => res.json(lockdownPublicView()));
 

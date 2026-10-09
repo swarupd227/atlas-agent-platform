@@ -87,7 +87,8 @@ describe("the config", () => {
       ["null", "null"],
       ["a misspelt switch, which would otherwise mean no restriction", '{"marketplce":"off"}'],
       ["a misspelt nested switch", '{"apiKeys":{"agents":"off"}}'],
-      ["a switch this version does not have", '{"nativeTools":{"webSearch":"off"}}'],
+      ["a switch this version does not have", '{"nativeTools":{"imageGeneration":"off"}}'],
+      ["a native tool switch that is not on or off", '{"nativeTools":{"webSearch":"maybe"}}'],
       ["a connector list that is not a list", '{"connectors":{"allow":"jira"}}'],
       ["a connector type that is not text", '{"connectors":{"allow":[7]}}'],
       ["an empty connector type", '{"connectors":{"allow":[""]}}'],
@@ -133,7 +134,7 @@ describe("the config", () => {
     expect(describeLockdown()).toBe("lockdown=none");
     lock({ marketplace: "off", apiKeys: { agent: "off", publicApi: "off" }, llmKeys: "env-only" });
     expect(describeLockdown()).toBe("lockdown=marketplace,agent-api-keys,public-api-key,llm-keys:env-only");
-    expect(lockdownPublicView()).toEqual({ active: true, marketplace: "off", apiKeys: { agent: "off", publicApi: "off" }, llmKeys: "env-only", connectors: { allow: null } });
+    expect(lockdownPublicView()).toEqual({ active: true, marketplace: "off", apiKeys: { agent: "off", publicApi: "off" }, llmKeys: "env-only", connectors: { allow: null }, nativeTools: { webSearch: "on", codeExecution: "on", documents: "on" } });
   });
 });
 

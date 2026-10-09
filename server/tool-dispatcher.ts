@@ -28,7 +28,7 @@ import { shadowApprovalRisk } from "./approval-risk-shadow";
 import { storage } from "./storage";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpAuthHeaders } from "./mcp-client";
 import { credentialsForStatusUrl, policyFetch } from "./url-safety";
-import { LockdownError, connectorAllowed, connectorKindOf } from "./lockdown";
+import { LockdownError, connectorAllowed, connectorKindOf, nativeToolAllowed } from "./lockdown";
 import { blockedConnectorKind } from "./connector-lockdown";
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
@@ -1046,9 +1046,14 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // 0. Platform lockdown — a connector of a type this deployment does not allow
   //    (server/lockdown.ts, connectors.allow) cannot be called, whatever else would
   //    permit it. The row stays; the call is refused and recorded.
-  const lockedKind = await blockedConnectorKind(tool.serverId);
+  // The platform's own document tools are not a connector but are switched the same way
+  // (nativeTools.documents), so they are refused here under their own name.
+  const { isBuiltinDocumentTool: isDocumentTool } = await import("./builtin-document-tools");
+  const lockedKind = (isDocumentTool(tool) && !nativeToolAllowed("documents")) ? "documents" : await blockedConnectorKind(tool.serverId);
   if (lockedKind) {
-    const reason = `The "${lockedKind}" connector type is disabled by this deployment's platform policy`;
+    const reason = lockedKind === "documents"
+      ? "Document generation is disabled by this deployment's platform policy"
+      : `The "${lockedKind}" connector type is disabled by this deployment's platform policy`;
     storage.createAuditEvent({
       actorType: "system",
       actorId: "platform_lockdown",

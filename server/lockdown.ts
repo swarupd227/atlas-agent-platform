@@ -49,8 +49,21 @@ const lockdownSchema = z
       })
       .strict()
       .optional(),
+    nativeTools: z
+      .object({
+        /** Anthropic's server-side web search, for agents that ask for it in their tools config. */
+        webSearch: onOff.optional(),
+        /** Anthropic's sandboxed code execution, and the approval to enable it on a skill. */
+        codeExecution: onOff.optional(),
+        /** The platform's own document tools: generate a PPTX or PDF, fill a template, inspect a deck. */
+        documents: onOff.optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
+
+export type NativeTool = "webSearch" | "codeExecution" | "documents";
 
 /** The two connector types that are not an integration in the registry. */
 export const GENERIC_CONNECTOR_KINDS: readonly string[] = ["mcp", "openapi"];
@@ -63,6 +76,7 @@ export interface Lockdown {
   llmKeys: "vault-and-env" | "env-only";
   /** The connector types allowed, or null when every type is. */
   connectors: { allow: readonly string[] | null };
+  nativeTools: { webSearch: "on" | "off"; codeExecution: "on" | "off"; documents: "on" | "off" };
 }
 
 export class LockdownError extends Error {
@@ -107,11 +121,18 @@ export function parseLockdown(raw: string | undefined): Lockdown {
     apiKeys: { agent: parsed.apiKeys?.agent ?? "on", publicApi: parsed.apiKeys?.publicApi ?? "on" },
     llmKeys: parsed.llmKeys ?? "vault-and-env",
     connectors: { allow: parsed.connectors ? Object.freeze(Array.from(new Set(parsed.connectors.allow))) : null },
+    nativeTools: { webSearch: parsed.nativeTools?.webSearch ?? "on", codeExecution: parsed.nativeTools?.codeExecution ?? "on", documents: parsed.nativeTools?.documents ?? "on" },
   };
   lockdown.active =
     lockdown.marketplace === "off" || lockdown.apiKeys.agent === "off" || lockdown.apiKeys.publicApi === "off" ||
-    lockdown.llmKeys === "env-only" || lockdown.connectors.allow !== null;
-  return Object.freeze({ ...lockdown, apiKeys: Object.freeze({ ...lockdown.apiKeys }), connectors: Object.freeze({ ...lockdown.connectors }) });
+    lockdown.llmKeys === "env-only" || lockdown.connectors.allow !== null ||
+    lockdown.nativeTools.webSearch === "off" || lockdown.nativeTools.codeExecution === "off" || lockdown.nativeTools.documents === "off";
+  return Object.freeze({
+    ...lockdown,
+    apiKeys: Object.freeze({ ...lockdown.apiKeys }),
+    connectors: Object.freeze({ ...lockdown.connectors }),
+    nativeTools: Object.freeze({ ...lockdown.nativeTools }),
+  });
 }
 
 let cachedKey: string | undefined | null = null;
@@ -154,6 +175,7 @@ export function describeLockdown(): string {
   const off = [
     l.marketplace === "off" && "marketplace", l.apiKeys.agent === "off" && "agent-api-keys", l.apiKeys.publicApi === "off" && "public-api-key",
     l.llmKeys === "env-only" && "llm-keys:env-only", l.connectors.allow && `connectors:${l.connectors.allow.length === 0 ? "none" : l.connectors.allow.join("+")}`,
+    l.nativeTools.webSearch === "off" && "web-search", l.nativeTools.codeExecution === "off" && "code-execution", l.nativeTools.documents === "off" && "documents",
   ].filter(Boolean);
   return `lockdown=${off.join(",")}`;
 }
@@ -161,8 +183,15 @@ export function describeLockdown(): string {
 /** What the app may show a signed-in user: which surfaces are closed on this deployment. */
 export function lockdownPublicView() {
   const l = getLockdown();
-  return { active: l.active, marketplace: l.marketplace, apiKeys: { ...l.apiKeys }, llmKeys: l.llmKeys, connectors: { allow: l.connectors.allow ? [...l.connectors.allow] : null } };
+  return {
+    active: l.active, marketplace: l.marketplace, apiKeys: { ...l.apiKeys }, llmKeys: l.llmKeys,
+    connectors: { allow: l.connectors.allow ? [...l.connectors.allow] : null },
+    nativeTools: { ...l.nativeTools },
+  };
 }
+
+/** Whether this deployment allows a platform-native tool (web search, code execution, document generation). */
+export const nativeToolAllowed = (tool: NativeTool): boolean => getLockdown().nativeTools[tool] !== "off";
 
 /**
  * The connector type of an mcp_servers row: the integration it is, or the generic kind of its
@@ -183,17 +212,21 @@ export function connectorAllowed(kind: string): boolean {
   return allow === null || allow.includes(kind);
 }
 
-export type GatedSurface = "marketplace" | "agentApiKeys" | "publicApi";
+export type GatedSurface = "marketplace" | "agentApiKeys" | "publicApi" | "codeExecution";
 
 const isClosed = (surface: GatedSurface): boolean => {
   const l = getLockdown();
-  return surface === "marketplace" ? l.marketplace === "off" : surface === "agentApiKeys" ? l.apiKeys.agent === "off" : l.apiKeys.publicApi === "off";
+  return surface === "marketplace" ? l.marketplace === "off"
+    : surface === "agentApiKeys" ? l.apiKeys.agent === "off"
+    : surface === "codeExecution" ? l.nativeTools.codeExecution === "off"
+    : l.apiKeys.publicApi === "off";
 };
 
 const LABEL: Record<GatedSurface, string> = {
   marketplace: "The connector marketplace",
   agentApiKeys: "Agent API keys",
   publicApi: "The public API",
+  codeExecution: "Code execution",
 };
 
 /** Whether agent API keys may be created or used on this deployment. */

@@ -146,7 +146,7 @@ variable "outbound_policy" {
 }
 
 variable "lockdown" {
-  description = "ASTRA_LOCKDOWN: JSON naming what this deployment does not allow at all, e.g. {\"marketplace\":\"off\",\"apiKeys\":{\"agent\":\"off\",\"publicApi\":\"off\"},\"llmKeys\":\"env-only\",\"connectors\":{\"allow\":[\"msgraph\",\"mcp\"]}}. Read once at start-up and not changeable from the app; an invalid value stops the server. Empty restricts nothing."
+  description = "ASTRA_LOCKDOWN: JSON naming what this deployment does not allow at all, e.g. {\"marketplace\":\"off\",\"apiKeys\":{\"agent\":\"off\",\"publicApi\":\"off\"},\"llmKeys\":\"env-only\",\"connectors\":{\"allow\":[\"msgraph\",\"mcp\"]},\"nativeTools\":{\"webSearch\":\"off\",\"codeExecution\":\"off\",\"documents\":\"off\"}}. Read once at start-up and not changeable from the app; an invalid value stops the server. Empty restricts nothing."
   type        = string
   default     = ""
 }

@@ -17,6 +17,7 @@ import { z } from "zod";
 import type { AvailableTool } from "./tool-dispatcher";
 import type { Skill } from "@shared/schema";
 import { storage } from "./storage";
+import { LockdownError, nativeToolAllowed } from "./lockdown";
 import {
   DOCUMENT_FORMATS,
   documentSpecSchema,
@@ -197,6 +198,8 @@ export function resolveDocumentMode(raw: string | null | undefined): DocumentGen
 
 /** The built-in document tools this agent's skills grant; empty for everyone else. */
 export function documentToolsForSkills(skills: Skill[], mode: DocumentGenerationMode = "auto"): AvailableTool[] {
+  // A deployment that has turned the document tools off (server/lockdown.ts) offers none.
+  if (!nativeToolAllowed("documents")) return [];
   // Sandbox-only agents must not see the portable tools, or the model will
   // reach for the cheaper one and the setting becomes advisory.
   if (mode === "sandbox") return [];
@@ -261,6 +264,7 @@ export async function executeBuiltinDocumentTool(
   args: Record<string, any>,
   ctx: { orgId?: string | null; agentId?: string; workspaceRunId?: string; traceId?: string },
 ): Promise<any> {
+  if (!nativeToolAllowed("documents")) throw new LockdownError("Document generation");
   // Inspection reads documents and produces none, so it needs no agent to attribute a file to.
   if (toolName === INSPECT_DOCUMENT_TOOL) return executeInspect(args, ctx);
   if (!ctx.agentId) throw new Error(`No agent context to generate a document for "${toolName}"`);

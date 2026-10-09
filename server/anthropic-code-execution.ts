@@ -10,6 +10,7 @@ import { evaluateActionPolicy } from "./tool-dispatcher";
 import type { AvailableTool } from "./tool-dispatcher";
 import { getAnthropicRawClient } from "./llm-provider";
 import { storage } from "./storage";
+import { nativeToolAllowed } from "./lockdown";
 import type { Skill } from "@shared/schema";
 
 const CODE_EXECUTION_TOOL_TYPE = "code_execution_20250825";
@@ -44,6 +45,8 @@ export function buildCodeExecutionRequestConfig(
    */
   excludeDocumentSkills = false,
 ): CodeExecutionRequestConfig | null {
+  // A deployment that has turned code execution off (server/lockdown.ts) offers none, approved or not.
+  if (!nativeToolAllowed("codeExecution")) return null;
   const approved = skills.filter((s) => s.skillKind === "code_execution" && s.codeExecutionApproved);
   if (approved.length === 0) return null;
 
@@ -116,6 +119,7 @@ export async function resolveCodeExecutionAccess(
   agentId: string,
   skills: Skill[],
 ): Promise<{ enabled: boolean; pendingApprovalId?: string }> {
+  if (!nativeToolAllowed("codeExecution")) return { enabled: false };
   const hasCodeExecutionSkill = skills.some((s) => s.skillKind === "code_execution");
   if (!hasCodeExecutionSkill) return { enabled: false };
 

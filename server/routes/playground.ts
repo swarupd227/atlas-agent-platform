@@ -6,6 +6,7 @@ import { db } from "../db";
 import { eq, desc } from "drizzle-orm";
 import { getOrgId } from "../auth";
 import { getRequestRole } from "../permissions";
+import { webSearchOffered } from "../native-tools";
 import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt, buildAgentSystemPromptWithGovernance, recomputeOutcomeKpis } from "./helpers";
 import { buildConversationHistoryText, FOLLOW_UP_CONTEXT_INSTRUCTIONS, type ChatToolCallSummary } from "../conversation-history";
@@ -170,7 +171,7 @@ const router = Router();
       const agentTools = Array.isArray(agent.toolsConfig)
         ? (agent.toolsConfig as Array<{ name?: string; type?: string }>)
         : [];
-      const webSearchEnabled = agentTools.some(t => t.name === "web_search" && t.type === "builtin");
+      const webSearchEnabled = webSearchOffered(agentTools);
 
       const mcpLinks = await storage.getAgentMcpServers(agentId);
       const mcpServerIds = mcpLinks.map(l => l.serverId);

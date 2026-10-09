@@ -40,7 +40,7 @@ const call = async (method: string, p: string) => {
 };
 
 it("found every mount in routes.ts", () => {
-  expect(mounts.map((m) => m.path).sort()).toEqual(["/api/a2a", "/api/admin/llm-provider-keys", "/api/agents/:agentId/api-keys", "/api/gateway", "/api/marketplace", "/api/v1"]);
+  expect(mounts.map((m) => m.path).sort()).toEqual(["/api/a2a", "/api/admin/llm-provider-keys", "/api/agents/:agentId/api-keys", "/api/gateway", "/api/marketplace", "/api/skills/:id/enable-code-execution", "/api/v1"]);
 });
 
 describe("nothing closed: every path is reached", () => {
@@ -48,7 +48,7 @@ describe("nothing closed: every path is reached", () => {
     ["GET", "/api/marketplace/servers"], ["POST", "/api/marketplace/servers/s1/install"], ["POST", "/api/marketplace/registry-sources/r1/sync"],
     ["POST", "/api/v1/runs"], ["POST", "/api/gateway/v1/invoke/ag-1"], ["POST", "/api/a2a/v1/agents/ag-1/message"],
     ["POST", "/api/agents/ag-1/api-keys"], ["GET", "/api/agents/ag-1/api-keys"], ["DELETE", "/api/agents/ag-1/api-keys/k1"],
-    ["POST", "/api/admin/llm-provider-keys/openai"],
+    ["POST", "/api/admin/llm-provider-keys/openai"], ["POST", "/api/skills/sk-1/enable-code-execution"],
   ];
   for (const [method, p] of paths) it(`${method} ${p}`, async () => { expect((await call(method, p)).body?.reached).toBe(`${method} ${p}`); });
 });
@@ -101,6 +101,14 @@ describe("LLM keys env-only", () => {
 describe("the endpoint the app reads", () => {
   it("reports what is closed", async () => {
     process.env.ASTRA_LOCKDOWN = '{"marketplace":"off","llmKeys":"env-only"}';
-    expect((await call("GET", "/api/platform/lockdown")).body).toEqual({ active: true, marketplace: "off", apiKeys: { agent: "on", publicApi: "on" }, llmKeys: "env-only", connectors: { allow: null } });
+    expect((await call("GET", "/api/platform/lockdown")).body).toEqual({ active: true, marketplace: "off", apiKeys: { agent: "on", publicApi: "on" }, llmKeys: "env-only", connectors: { allow: null }, nativeTools: { webSearch: "on", codeExecution: "on", documents: "on" } });
+  });
+});
+
+describe("code execution off", () => {
+  beforeEach(() => { process.env.ASTRA_LOCKDOWN = '{"nativeTools":{"codeExecution":"off"}}'; });
+  it("closes approving it on a skill", async () => { expect((await call("POST", "/api/skills/sk-1/enable-code-execution")).closed).toBe(true); });
+  it("leaves the rest of the skills routes alone", async () => {
+    for (const [method, p] of [["GET", "/api/skills"], ["POST", "/api/skills/sk-1/publish"], ["GET", "/api/skills/sk-1"]]) expect((await call(method, p)).closed, `${method} ${p}`).toBe(false);
   });
 });
