@@ -17,7 +17,8 @@ export function OutcomeKpiStrip({ agentId, compact = false }: OutcomeKpiStripPro
     queryKey: ["/api/kpis"],
   });
   const { data: agents } = useQuery<Array<{ id: string; outcomeId: string | null }>>({
-    queryKey: ["/api/agents"],
+    // The declared type above is {id, outcomeId}; both are in the summary.
+    queryKey: ["/api/agents?summary=1"],
   });
 
   if (!outcomes?.length || !kpis?.length) return null;

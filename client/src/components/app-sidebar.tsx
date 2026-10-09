@@ -453,8 +453,17 @@ function BusinessModeSidebar() {
     return location.startsWith(url);
   };
 
+  // The summary, not the full list. This runs on EVERY page and refetches
+  // every 30 seconds, and the full list is 5.17MB across 1,160 agents --
+  // ~10MB a minute per open tab, to compute the one integer below from two
+  // fields (status and outcomeId), both of which the summary carries. The
+  // summary is 0.80MB and 494ms against 4,302ms.
+  //
+  // A different query key means invalidateQueries(["/api/agents"]) elsewhere
+  // does not reach it, which is acceptable here and nowhere else: this is a
+  // count on a 30-second refetch, so it is never more than 30 seconds stale.
   const { data: workersData } = useQuery<Agent[]>({
-    queryKey: ["/api/agents"],
+    queryKey: ["/api/agents?summary=1"],
     refetchInterval: 30000,
     staleTime: 20000,
   });

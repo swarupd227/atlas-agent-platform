@@ -77,7 +77,9 @@ export function GlobalSearch() {
   // list with its large per-row jsonb payloads -- unconditionally on mount,
   // before the user ever opens it. That meant every single page load paid
   // for a search index nobody asked for yet. Only fetch once opened.
-  const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"], enabled: open });
+  // Name and id only (see filteredAgents below), so the summary suffices --
+  // the full list is 5.17MB and this opens on a keystroke.
+  const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents?summary=1"], enabled: open });
   const { data: outcomes } = useQuery<OutcomeContract[]>({ queryKey: ["/api/outcomes"], enabled: open });
   const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"], enabled: open });
   const { data: traces } = useQuery<RunTrace[]>({ queryKey: ["/api/traces"], enabled: open });
