@@ -62,4 +62,4 @@
 - [x] Document exact build, deploy, verify, rollback, and deletion commands.
 - [x] Run repository build, AWS shell tests, syntax checks, and diff checks.
 - [x] Review the whole branch, fix important findings, and commit.
-- [ ] Apply the staged live rollout only after repository verification; verify every live acceptance criterion.
+- [x] Apply the staged live rollout only after repository verification; verify every live acceptance criterion.
