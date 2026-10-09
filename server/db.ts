@@ -2083,6 +2083,18 @@ export async function runStartupMigrations() {
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS controls_applied JSONB;
     `);
 
+    // Design section 6f: a retrieval representation must say what content, and
+    // which version, it represents. Without these, "stale vector", "never
+    // embedded" and "vector belongs to older text" render identically -- which
+    // is why the 2026-09-19 embedding wipe is still recorded as cause unknown.
+    // Nullable: NULL means the vector predates these columns, which is a real
+    // state and not the same as having been checked.
+    await client.query(`
+      ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS content_hash VARCHAR;
+      ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedding_model VARCHAR;
+      ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMP;
+    `);
+
     // eval_suites.pass_rate: give the column a state for "never measured".
     //
     // It carried DEFAULT 0, so a suite nobody had run was stored as 0% rather

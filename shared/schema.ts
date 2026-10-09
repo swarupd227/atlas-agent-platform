@@ -3047,6 +3047,26 @@ export const knowledgeChunks = pgTable("knowledge_chunks", {
   tokenCount: integer("token_count"),
   retrievalCount: integer("retrieval_count").default(0),
   lastRetrievedAt: timestamp("last_retrieved_at"),
+
+  // --- what this vector actually represents (design section 6f) -----------
+  /**
+   * SHA-256 of the CHUNK TEXT the vector was computed from -- not of the
+   * source. A source-level hash cannot say that chunk 7 changed while 1-6 did
+   * not, which is exactly what a partial reprocess produces.
+   *
+   * Compare it against `content` to tell a current vector from one that
+   * belongs to older text. NULL means the embedding predates this column, or
+   * none was stored.
+   */
+  contentHash: varchar("content_hash"),
+  /**
+   * Which model produced the vector. It was previously only a literal in
+   * server/embeddings.ts, so a reader of a chunk could not tell whether two
+   * vectors were even comparable.
+   */
+  embeddingModel: varchar("embedding_model"),
+  /** When the vector was stored, so a re-embed is visible as an event. */
+  embeddedAt: timestamp("embedded_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

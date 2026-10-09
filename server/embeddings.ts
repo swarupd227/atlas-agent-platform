@@ -2,6 +2,19 @@ import OpenAI from "openai";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { getAllowedKbSensitivityLevels, type RoleId } from "./permissions";
+import { createHash } from "crypto";
+
+/**
+ * The model every vector in knowledge_chunks is computed with.
+ *
+ * Exported and stamped on each chunk rather than left as a literal inside the
+ * request: a reader of a chunk could not otherwise tell which model produced
+ * its vector, or whether two vectors sitting beside each other are even
+ * comparable. Changing this constant without re-embedding leaves rows whose
+ * stamp disagrees with the code -- which is the point. That disagreement is
+ * now visible instead of silent.
+ */
+export const EMBEDDING_MODEL = "text-embedding-3-small";
 
 const embeddingsApiKey = process.env.OPENAI_API_KEY;
 const openai = embeddingsApiKey
@@ -73,7 +86,7 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
     // for dense text such as CSV or code.
     const batch = texts.slice(i, i + batchSize).map((t) => (t.length > MAX_EMBEDDING_INPUT_CHARS ? t.slice(0, MAX_EMBEDDING_INPUT_CHARS) : t));
     const response = await openai.embeddings.create({
-      model: "text-embedding-3-small",
+      model: EMBEDDING_MODEL,
       input: batch,
     });
     allEmbeddings.push(...response.data.map((d) => d.embedding));
@@ -81,14 +94,66 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   return allEmbeddings;
 }
 
-export async function storeChunkEmbedding(chunkId: string, embedding: number[]): Promise<boolean> {
+/**
+ * SHA-256 of the exact text a vector was computed from.
+ *
+ * Of the CHUNK, not the source. A source-level hash cannot distinguish "chunk 7
+ * changed" from "chunks 1-6 are fine", which is precisely what a partial
+ * reprocess leaves behind. Hashed after the same truncation generateEmbeddings
+ * applies, so the hash describes what the model actually saw rather than what
+ * we intended it to see.
+ */
+export function chunkContentHash(text: string): string {
+  const seen = text.length > MAX_EMBEDDING_INPUT_CHARS ? text.slice(0, MAX_EMBEDDING_INPUT_CHARS) : text;
+  return createHash("sha256").update(seen, "utf8").digest("hex");
+}
+
+/**
+ * Store a vector together with what it represents.
+ *
+ * `text` is required, not optional, and that is the design: a caller cannot
+ * store a vector without saying what it was computed from. Stamping at each
+ * call site instead is the shape that let `?? 0` reach fourteen readers of a
+ * pass rate -- one place that cannot be forgotten is the fix.
+ */
+export async function storeChunkEmbedding(chunkId: string, embedding: number[], text: string): Promise<boolean> {
   const available = await ensurePgVector();
   if (!available) return false;
   const embeddingStr = `[${embedding.join(",")}]`;
+  const hash = chunkContentHash(text);
   await db.execute(
-    sql`UPDATE knowledge_chunks SET embedding = ${embeddingStr}::vector WHERE id = ${chunkId}`
+    sql`UPDATE knowledge_chunks
+           SET embedding = ${embeddingStr}::vector,
+               content_hash = ${hash},
+               embedding_model = ${EMBEDDING_MODEL},
+               embedded_at = NOW()
+         WHERE id = ${chunkId}`
   );
   return true;
+}
+
+/**
+ * What a chunk's vector actually is, as a fact a reader can act on.
+ *
+ * These states were indistinguishable before: no vector at all, a vector that
+ * matches the current text, and a vector computed from text that has since
+ * changed. The 2026-09-19 embedding wipe is still recorded as "cause unknown"
+ * largely because they rendered identically.
+ */
+export type ChunkVectorState = "current" | "stale" | "model_changed" | "never_embedded" | "unattributed";
+
+export function chunkVectorState(
+  chunk: { content: string; contentHash?: string | null; embeddingModel?: string | null },
+  hasVector: boolean,
+): ChunkVectorState {
+  if (!hasVector) return "never_embedded";
+  // Stored before these columns existed. NOT "current": there is no evidence
+  // either way, and answering "current" would be the fabrication this change
+  // exists to stop.
+  if (!chunk.contentHash) return "unattributed";
+  if (chunk.contentHash !== chunkContentHash(chunk.content)) return "stale";
+  if (chunk.embeddingModel && chunk.embeddingModel !== EMBEDDING_MODEL) return "model_changed";
+  return "current";
 }
 
 /**

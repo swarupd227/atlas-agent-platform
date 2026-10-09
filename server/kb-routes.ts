@@ -726,7 +726,9 @@ async function processSourceInBackground(sourceId: string, kbId: string, rescan 
       });
 
       if (embeddings && embeddings[i]) {
-        await storeChunkEmbedding(chunk.id, embeddings[i]);
+        // The same text that was embedded, so the stored hash describes the
+        // vector rather than whatever the chunk row happens to say later.
+        await storeChunkEmbedding(chunk.id, embeddings[i], chunks[i]);
       }
     }
 
@@ -1125,7 +1127,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       let embeddedCount = 0;
       for (let i = 0; i < missingChunks.length; i++) {
         if (embeddings[i]) {
-          await storeChunkEmbedding(missingChunks[i].id, embeddings[i]);
+          await storeChunkEmbedding(missingChunks[i].id, embeddings[i], texts[i]);
           embeddedCount++;
         }
       }
