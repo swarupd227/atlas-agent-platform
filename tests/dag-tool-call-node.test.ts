@@ -19,7 +19,15 @@ vi.mock("../server/agent-runtime", () => ({
   executeWorkerAgent: vi.fn(),
   waitForApproval: vi.fn(),
   evaluateCondition: vi.fn().mockResolvedValue(true),
-  extractStructuredOutput: vi.fn().mockReturnValue(null),
+  // Behaves like the real one: an agent step writes prose plus a ```json
+  // block, and this is what lifts the fields back out of it.
+  extractStructuredOutput: (text: string) => {
+    if (!text) return null;
+    try { return JSON.parse(text); } catch { /* not whole JSON */ }
+    const m = /```[^\n`]*\n?([\s\S]*?)```/.exec(text || "");
+    if (!m) return null;
+    try { return JSON.parse(m[1]); } catch { return null; }
+  },
   canonicalJsonStringify: (v: unknown) => JSON.stringify(v),
   detectTranscriptionDrift: vi.fn().mockReturnValue(null),
   buildPipelineState: (outputs: Map<string, string>, labels: Map<string, string>) => {
@@ -100,6 +108,56 @@ describe("a tool_call node", () => {
       ci: "c0063",
       note: "7 services exposed",
     });
+  });
+
+  // An agent step writes ONE string: prose, then a ```json block with the
+  // fields it was asked for. Rules could always read those fields, because
+  // buildPipelineState parses the block for them; tool arguments evaluated
+  // against the raw state, where the step's key holds only that string. Live
+  // on the Account journeys every argument came out empty while the value sat
+  // in plain sight in the step's own output.
+  it("reads a field out of an upstream step's json block, not just its raw state", async () => {
+    await run(
+      toolCallNode({
+        toolServerId: "srv-1", toolName: "snow_add_work_note",
+        toolArgs: { note: { $expr: "legalName" }, ci: { $expr: "producerCode" } },
+      }),
+      { orchestrator: 'Account established.\n\n```json\n{"legalName":"Harborline Marine Services LLC","producerCode":"P-4471"}\n```' },
+    );
+    expect(dispatchToolCall.mock.calls[0][0].args).toEqual({
+      note: "Harborline Marine Services LLC",
+      ci: "P-4471",
+    });
+  });
+
+  it("leaves the step's own text alone while doing it", async () => {
+    // The parsed fields are added, never substituted: an expression that reads
+    // the step's text must keep working.
+    await run(
+      toolCallNode({
+        toolServerId: "srv-1", toolName: "snow_add_work_note",
+        toolArgs: { note: { $expr: "$substring(orchestrator, 0, 7)" }, ci: { $expr: "legalName" } },
+      }),
+      { orchestrator: 'Summary.\n\n```json\n{"legalName":"Acme"}\n```' },
+    );
+    expect(dispatchToolCall.mock.calls[0][0].args).toEqual({ note: "Summary", ci: "Acme" });
+  });
+
+  it("omits an argument that resolves to nothing instead of sending null", async () => {
+    // It used to send null. A connector that stringifies its inputs then
+    // received the text "null": one searched for an account named "null", and
+    // another stored "null" as a REQUIRED address. Leaving the key out lets
+    // the tool's own validation refuse the call.
+    await run(
+      toolCallNode({
+        toolServerId: "srv-1", toolName: "snow_add_work_note",
+        toolArgs: { table: "change_request", ci: { $expr: "nothing.here" }, note: { $expr: "assessment.summary" } },
+      }),
+      { assessment: { summary: "7 services exposed" } },
+    );
+    const args = dispatchToolCall.mock.calls[0][0].args;
+    expect(args).toEqual({ table: "change_request", note: "7 services exposed" });
+    expect("ci" in args).toBe(false);
   });
 
   it("passes the team agent's policy bundle, so a free step is not an ungoverned one", async () => {

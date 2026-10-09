@@ -144,3 +144,9 @@ variable "outbound_policy" {
     error_message = "outbound_policy must be audit, enforce or off."
   }
 }
+
+variable "lockdown" {
+  description = "ASTRA_LOCKDOWN: JSON naming what this deployment does not allow at all, e.g. {\"marketplace\":\"off\",\"apiKeys\":{\"agent\":\"off\",\"publicApi\":\"off\"},\"llmKeys\":\"env-only\"}. Read once at start-up and not changeable from the app; an invalid value stops the server. Empty restricts nothing."
+  type        = string
+  default     = ""
+}

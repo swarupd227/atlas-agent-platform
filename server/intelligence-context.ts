@@ -482,6 +482,28 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
  * Returns null, not an empty object, when the run could not be read. "Not
  * captured" and "captured, nothing was shown" are different facts.
  */
+/**
+ * The run's node results, whatever shape the row stores them in.
+ *
+ * Older runs key them differently, so read whichever is present rather than
+ * assuming one shape and silently collecting nothing. Shared by every phase-4
+ * collector so the run is read ONCE per record rather than once per field.
+ */
+function nodeResultsOf(run: any): any[] {
+  const waves = Array.isArray(run?.waveResults) ? run.waveResults : [];
+  const nodes: any[] = [];
+  for (const wave of waves) {
+    if (Array.isArray(wave)) nodes.push(...wave);
+    else if (wave && typeof wave === "object") {
+      for (const k of ["results", "nodeResults", "nodes"]) {
+        if (Array.isArray((wave as any)[k])) nodes.push(...(wave as any)[k]);
+      }
+      if ((wave as any).priorContext || (wave as any).judgments) nodes.push(wave);
+    }
+  }
+  return nodes;
+}
+
 async function collectContextUsed(runId: string): Promise<Record<string, unknown> | null> {
   try {
     const run = await (storage as { getDagExecutionRun?: (id: string) => Promise<any> }).getDagExecutionRun?.(runId);
@@ -567,6 +589,190 @@ async function collectContextUsed(runId: string): Promise<Record<string, unknown
  * Imported lazily so this module does not pull the route helpers (and the data
  * layer behind them) into every importer of the context layer.
  */
+/**
+ * P4.2 -- what the run FLAGGED.
+ *
+ * A step's judgments are already on its node result as
+ * `{kind, subject, ok, severity, evidence}`; server/guardrail-review.ts walks
+ * exactly this structure to raise Approval Queue items. So this is a second
+ * extraction from a read the write path is already doing, not new machinery.
+ *
+ * Only the failures. A judgment that passed is the absence of a flag, and
+ * recording every check as a "pattern" would bury the two that matter under
+ * fifty that did not fire.
+ *
+ * Deduplicated per (kind, subject, step) for the reason section 6d records:
+ * the same judgment reaching the record once per step reads as several
+ * findings when it is one.
+ */
+function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): { flagged: Array<Record<string, unknown>>; checksRun: number; stepsWithChecks: number; steps: number } {
+  const out: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  // Counted alongside the failures, because "nothing was flagged" and "nothing
+  // was checked" are different facts and `count: 0` alone cannot tell them
+  // apart. Measured on a live E&S run: ONE judgment across seven steps, so for
+  // six of them a zero meant "unchecked" while reading as "clean".
+  let checksRun = 0;
+  // Coverage, not just outcome. Measured on a live E&S run: ONE judgment
+  // across seven steps, which reports as all_passed -- true, and far more
+  // reassuring than it should be. A reader needs to see that one check
+  // covered a seven-step run before deciding what "passed" is worth.
+  let stepsWithChecks = 0;
+  let steps = 0;
+  for (const n of nodeResultsOf(run)) {
+    steps++;
+    const js = Array.isArray(n?.judgments) ? n.judgments : [];
+    if (js.length) stepsWithChecks++;
+    checksRun += js.length;
+    for (const j of js) {
+      if (j?.ok !== false) continue;
+      const step = labelOf(String(n?.nodeId ?? ""));
+      const k = `${j.kind}|${j.subject}|${step}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({
+        step, kind: j.kind ?? null, subject: String(j.subject ?? ""),
+        severity: j.severity ?? null,
+        ...(j.evidence ? { evidence: String(j.evidence).slice(0, 1_000) } : {}),
+      });
+    }
+  }
+  return { flagged: out, checksRun, stepsWithChecks, steps };
+}
+
+/**
+ * P4.2 -- what the run DID, from the dispatcher's own record.
+ *
+ * A conclusion is not an action. "It read these three systems and wrote to
+ * that one" is what the NAIC bulletin's "which system or person acted" is
+ * actually asking, and until tool_invocations existed the platform kept only
+ * a COUNT: the DAG engine carries toolCallCount and discards the identities,
+ * so nothing persisted said which tools a run used.
+ *
+ * Refusals are kept alongside successes. "It tried to post to Teams and the
+ * policy stopped it" and "it never tried" are different facts, and a record
+ * that showed only successes would make them look identical.
+ *
+ * Returns null when the lookup failed, [] when the run used no tools.
+ */
+async function collectActionsTaken(runId: string): Promise<Array<Record<string, unknown>> | null> {
+  try {
+    const rows = await (storage as { getToolInvocationsByRun?: (id: string) => Promise<any[]> }).getToolInvocationsByRun?.(runId);
+    if (!Array.isArray(rows)) return null;
+    // Collapsed by (tool, outcome): a loop that called the same tool nine
+    // times is one action taken nine times, not nine actions -- the same
+    // inflation that made contextUsed read as nine precedents when it was
+    // three.
+    const byKey = new Map<string, Record<string, unknown>>();
+    for (const r of rows) {
+      const k = `${r.serverName ?? ""}|${r.toolName}|${r.outcome}`;
+      const seen = byKey.get(k);
+      if (seen) {
+        seen.calls = (seen.calls as number) + 1;
+        seen.totalMs = (seen.totalMs as number) + (r.durationMs ?? 0);
+        continue;
+      }
+      byKey.set(k, {
+        server: r.serverName ?? null, tool: r.toolName, outcome: r.outcome,
+        calls: 1, totalMs: r.durationMs ?? 0, firstAt: r.createdAt ?? null,
+      });
+    }
+    return [...byKey.values()];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * P4.2 -- WHY, assembled from what the run did.
+ *
+ * The trap this avoids is asking the model. An agent asked "why did you decide
+ * that?" after the fact produces a justification, and this platform has
+ * already measured one asserting a figure it had not read. A rationale filled
+ * that way is worse than an empty one, because it reads as evidence.
+ *
+ * So each part is something that HAPPENED, and each says where it came from:
+ *   basedOn   -- the prior decisions the run was shown (P4.1), by count
+ *   verified  -- state keys carrying the engine's _verified / _sources /
+ *                _citations evidence, i.e. facts a tool actually returned
+ *   flagged   -- checks the run ran and failed
+ *   gate      -- whether a person passed it, and who
+ *   narrative -- the model's own words, LABELLED as the model's words
+ *
+ * `narrative` is the one that could mislead, so it carries `source:
+ * "model_output"` and is never presented as the reason on its own.
+ */
+function buildRationale(input: {
+  state: Record<string, unknown> | null | undefined;
+  contextUsed: Record<string, unknown> | null;
+  patternsFlagged: Array<Record<string, unknown>>;
+  checksRun: number;
+  stepsWithChecks: number;
+  steps: number;
+  narrative?: string | null;
+  approver?: { userId: string | null; decidedAt: string | null } | null;
+}): Record<string, unknown> {
+  const st = (input.state ?? {}) as Record<string, unknown>;
+  const EVIDENCE_SUFFIXES = ["_verified", "_sources", "_citations"];
+  const verified = Object.keys(st).filter(k => EVIDENCE_SUFFIXES.some(s => k.endsWith(s)));
+  const cu = input.contextUsed as any;
+  return {
+    basedOn: {
+      priorDecisions: Array.isArray(cu?.items) ? cu.items.length : 0,
+      stepsShown: cu?.stepsShown ?? 0,
+      conflicts: Array.isArray(cu?.conflicts) ? cu.conflicts.length : 0,
+      // Said explicitly: a decision taken with nothing in view is a different
+      // thing from one taken against a known precedent, and "0" has to mean
+      // the first rather than being read as missing data.
+      source: cu === null ? "not_captured" : "prior_decisions",
+    },
+    verifiedFacts: { stateKeys: verified, count: verified.length, source: "tool_output" },
+    flagged: {
+      count: input.patternsFlagged.length,
+      // How many checks ran at all. Without it, `count: 0` is the same text
+      // for "every check passed" and "nothing was checked", and on a live E&S
+      // run six of seven steps ran no check -- so the reassuring reading was
+      // the wrong one for most of it.
+      checksRun: input.checksRun,
+      // How much of the run was checked at all. "1 check across 7 steps" and
+      // "7 checks across 7 steps" both report all_passed, and they are not
+      // the same assurance.
+      stepsWithChecks: input.stepsWithChecks,
+      steps: input.steps,
+      kinds: [...new Set(input.patternsFlagged.map(p => String(p.kind)))],
+      verification: input.checksRun === 0 ? "none_ran" : input.patternsFlagged.length === 0 ? "all_passed" : "flagged",
+    },
+    gate: input.approver?.userId
+      ? { passed: true, by: input.approver.userId, at: input.approver.decidedAt, source: "approval_record" }
+      : { passed: false, source: "approval_record" },
+    ...(input.narrative
+      // The model's words, kept because they are often the clearest summary,
+      // and labelled because they are not evidence of anything.
+      ? { narrative: { text: String(input.narrative).slice(0, 2_000), source: "model_output" } }
+      : {}),
+  };
+}
+
+/**
+ * P4.2 -- which PERSON settled the gate, if one did.
+ *
+ * A gate approval's objectId IS the dag run id (dag-execution-engine.ts), so
+ * this is a lookup rather than an inference. `decidedBy` on the record answers
+ * "which system"; this answers "which person", which is the other half of one
+ * NAIC row.
+ */
+async function collectApprover(runId: string, orgId?: string | null): Promise<{ userId: string | null; decidedAt: string | null } | null> {
+  try {
+    const all = await (storage as { getApprovals?: (o?: string) => Promise<any[]> }).getApprovals?.(orgId ?? undefined);
+    const forRun = (all ?? []).filter(a => a.objectId === runId && a.decidedBy);
+    if (!forRun.length) return null;
+    const latest = forRun.sort((a, b) => new Date(b.decidedAt ?? 0).getTime() - new Date(a.decidedAt ?? 0).getTime())[0];
+    return { userId: String(latest.decidedBy), decidedAt: latest.decidedAt ? new Date(latest.decidedAt).toISOString() : null };
+  } catch {
+    return null;
+  }
+}
+
 async function collectControlsApplied(teamAgentId: string, orgId?: string | null): Promise<Record<string, unknown> | null> {
   try {
     const { resolvePolicyBundle } = await import("./routes/helpers");
@@ -583,6 +789,87 @@ async function collectControlsApplied(teamAgentId: string, orgId?: string | null
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * P4.4 -- what followed a decision, as a LINK and never a verdict.
+ *
+ * Resolved at read time, not stored. The readings that matter arrive after the
+ * decision is written, so a stored column would be stale from the moment it
+ * was filled and would need a job to chase it. A decision record is read far
+ * less often than it is written; computing this on the way out is both cheaper
+ * and incapable of going stale.
+ *
+ * The shape is the design's (section 6e), and the refusal in it is the point:
+ * there is no `wasCorrect`. `kpi_readings` are AGGREGATE, time-windowed
+ * measurements (`statistic`, `windowDays`). They can say what a measure did
+ * over the window after a decision took effect. They cannot say whether one
+ * decision about one submission was right, and a boolean claiming otherwise
+ * would be the `pass_rate DEFAULT 0` defect with a worse blast radius -- a
+ * fabricated verdict inside a compliance record.
+ *
+ * A judgement that a specific decision WAS right belongs in `reviewState`,
+ * where a person signs it.
+ *
+ * `status` separates the three absences, which otherwise all render as an
+ * empty list: no outcome is bound to the team, the outcome has no KPIs, or
+ * nothing has been measured since. Only the third is "too early to tell".
+ */
+export async function resolveOutcomeFor(record: {
+  teamAgentId?: string | null;
+  effectiveFrom?: Date | string | null;
+  decidedAt?: Date | string | null;
+  organizationId?: string | null;
+}): Promise<Record<string, unknown>> {
+  const NOTE = "Aggregate and correlational. These are the outcome's measurements over the window after this decision took effect; they do not attribute the movement to this decision.";
+  try {
+    const st = storage as any;
+    if (!record.teamAgentId) return { status: "no_outcome_bound", attribution: "aggregate", note: NOTE };
+    const agent = await st.getAgent?.(record.teamAgentId, record.organizationId ?? undefined);
+    const outcomeId: string | undefined = agent?.outcomeId ?? undefined;
+    if (!outcomeId) return { status: "no_outcome_bound", attribution: "aggregate", note: NOTE };
+
+    const kpis = (await st.getKpisByOutcome?.(outcomeId)) ?? [];
+    if (!kpis.length) return { status: "no_kpis", outcomeId, attribution: "aggregate", note: NOTE };
+
+    const readings = (await st.getKpiReadingsByOutcome?.(outcomeId)) ?? [];
+    // From when the decision APPLIED, not when it was written: a decision
+    // dated to take effect later should not claim the readings before it did.
+    const from = new Date(record.effectiveFrom ?? record.decidedAt ?? 0).getTime();
+
+    const byKpi = kpis.map((k: any) => {
+      const mine = readings.filter((r: any) => r.kpiId === k.id);
+      const after = mine.filter((r: any) => new Date(r.takenAt ?? 0).getTime() >= from)
+        .sort((a: any, b: any) => new Date(a.takenAt ?? 0).getTime() - new Date(b.takenAt ?? 0).getTime());
+      // The last reading BEFORE, because "what the measure did after" is not
+      // interpretable without something to read it against. Absent is absent,
+      // not zero.
+      const before = mine.filter((r: any) => new Date(r.takenAt ?? 0).getTime() < from)
+        .sort((a: any, b: any) => new Date(b.takenAt ?? 0).getTime() - new Date(a.takenAt ?? 0).getTime())[0];
+      return {
+        kpiId: k.id, name: k.name, unit: k.unit, target: k.target,
+        before: before ? { readingId: before.id, takenAt: before.takenAt, value: before.value } : null,
+        readingsAfter: after.map((r: any) => ({
+          readingId: r.id, takenAt: r.takenAt, value: r.value,
+          source: r.source, statistic: r.statistic ?? null, windowDays: r.windowDays ?? null,
+        })),
+      };
+    });
+
+    const measured = byKpi.filter((k: { readingsAfter: unknown[] }) => k.readingsAfter.length > 0);
+    return {
+      status: measured.length ? "measured" : "no_readings_since",
+      outcomeId,
+      kpis: byKpi,
+      kpisMeasuredSince: measured.length,
+      kpisTotal: byKpi.length,
+      attribution: "aggregate",
+      note: NOTE,
+    };
+  } catch {
+    // Distinct from every "nothing found" above: we could not look.
+    return { status: "unavailable", attribution: "aggregate", note: NOTE };
   }
 }
 
@@ -639,6 +926,44 @@ export async function recordRunDecisions(input: {
   const contextUsed = await collectContextUsed(input.runId);
   const controlsApplied = await collectControlsApplied(input.teamAgentId, input.orgId);
 
+  // P4.2. The run is read once more here rather than threaded out of
+  // collectContextUsed, because that function's contract is one field and
+  // widening it to return the raw row would make every caller depend on the
+  // engine's wave shape. One extra read at the end of a finished run is the
+  // cheaper trade.
+  let patternsFlagged: Array<Record<string, unknown>> | null = null;
+  const actionsTaken = await collectActionsTaken(input.runId);
+  let rationale: Record<string, unknown> | null = null;
+  let approver: { userId: string | null; decidedAt: string | null } | null = null;
+  try {
+    const run = await (storage as { getDagExecutionRun?: (id: string) => Promise<any> }).getDagExecutionRun?.(input.runId);
+    approver = await collectApprover(input.runId, input.orgId);
+    if (run) {
+      const labelOf = (nodeId: string) => input.nodeConfig?.[nodeId]?.label || input.nodeConfig?.[nodeId]?.stateKey || nodeId;
+      const pf = collectPatternsFlagged(run, labelOf);
+      patternsFlagged = pf.flagged;
+      rationale = buildRationale({
+        state: input.state,
+        contextUsed,
+        patternsFlagged: pf.flagged,
+        checksRun: pf.checksRun,
+        stepsWithChecks: pf.stepsWithChecks,
+        steps: pf.steps,
+        // The team's own answer, if the trace carries one. Labelled as the
+        // model's words inside buildRationale, never as the reason.
+        narrative: typeof (input.state as any)?.[teamStateKeyFor(input.teamName)] === "string"
+          ? (input.state as any)[teamStateKeyFor(input.teamName)]
+          : null,
+        approver,
+      });
+    }
+  } catch {
+    // Provenance must never fail the write. A decision indexed without its
+    // rationale is recoverable; a decision not indexed at all is not.
+    patternsFlagged = null;
+    rationale = null;
+  }
+
   let written = 0;
   for (const subject of subjects) {
     try {
@@ -657,6 +982,10 @@ export async function recordRunDecisions(input: {
         effectiveFrom: input.decidedAt,
         contextUsed,
         controlsApplied,
+        rationale,
+        patternsFlagged,
+        actionsTaken,
+        decidedByUserId: approver?.userId ?? null,
       });
       written++;
     } catch (err: any) {

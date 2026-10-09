@@ -31,7 +31,7 @@ import { decisionOutcomeOf } from "@shared/run-overlay";
 import { DECISION_RECORD_SUFFIX } from "@shared/run-overlay";
 import { collectRunFiles, FILES_KEY_SUFFIX, type RunFile } from "@shared/run-files";
 import { inputFields } from "@shared/run-input";
-import { splitWorkingNotes, extractHtmlDocument, openRunStepHtml } from "@/lib/agent-output";
+import { splitWorkingNotes, extractHtmlDocument, openRunStepHtml, stripVerifiedLedger, isEmptyFactCapture } from "@/lib/agent-output";
 
 // Mirrors computeWaves()'s real output shape (server/dag-execution-engine.ts)
 // -- GET /api/team-agents/:id/dag-waves returns this raw wave plan, where
@@ -173,7 +173,12 @@ function outputEntries(node: DagWaveNodeResult | undefined): Array<{ key: string
   if (!out || typeof out !== "object") return [];
   return Object.entries(out)
     .filter(([k, v]) => !OUTPUT_NOISE_KEYS.has(k) && !k.endsWith(FILES_KEY_SUFFIX) && v != null && v !== "")
-    .map(([key, value]) => ({ key, text: formatOutputValue(value) }));
+    // The fact-capture record for a step that captured nothing says only that
+    // it captured nothing, and why. That is for whoever is debugging the run,
+    // not for the person reading what the step did.
+    .filter(([k, v]) => !isEmptyFactCapture(k, v))
+    .map(([key, value]) => ({ key, text: stripVerifiedLedger(formatOutputValue(value)) }))
+    .filter(({ text }) => text !== "");
 }
 
 /** A gate's recorded decision ({ approved, decidedBy }) under whatever state key it writes. */

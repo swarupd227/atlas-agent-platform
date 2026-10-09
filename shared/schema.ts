@@ -1579,6 +1579,42 @@ export type DagStateSchema = typeof dagStateSchemas.$inferSelect;
  *
  * Created by runStartupMigrations, not db:push -- see server/db.ts.
  */
+/**
+ * Every tool call the gated dispatcher handled, so a run can say what it DID
+ * and not only what it concluded (design section 6f, P4.2's actionsTaken).
+ *
+ * Deliberately NOT audit events, though the dispatcher already writes those for
+ * gate decisions. `createAuditEvent` takes a per-org advisory lock and appends
+ * to a hash chain, so one row per tool call would serialise every dispatch in
+ * the organisation behind that lock -- the same shape as the N+1 that made
+ * /api/drift-signals starve the process. This is an unlocked, unchained insert
+ * on a table indexed by the run.
+ *
+ * Written by the dispatcher rather than the DAG engine on purpose: every
+ * execution path goes through dispatchToolCall, while the engine sees only DAG
+ * runs. A provenance field fed from the engine would be silently empty for
+ * Cowork, the Playground and on-demand agents, and a reader could not tell
+ * that from "no tools were used".
+ */
+export const toolInvocations = pgTable("tool_invocations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  /** The dispatcher's traceId: the dag run id for a team run. Null off-run. */
+  runId: varchar("run_id"),
+  serverName: text("server_name"),
+  toolName: text("tool_name").notNull(),
+  /** The dispatcher's own outcome: success, tool_error, gate_blocked_*, etc. */
+  outcome: text("outcome").notNull(),
+  durationMs: integer("duration_ms"),
+  iteration: integer("iteration"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertToolInvocationSchema = createInsertSchema(toolInvocations).omit({ id: true });
+export type InsertToolInvocation = z.infer<typeof insertToolInvocationSchema>;
+export type ToolInvocation = typeof toolInvocations.$inferSelect;
+
 export const decisionRecords = pgTable("decision_records", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   organizationId: varchar("organization_id"),
@@ -1655,6 +1691,39 @@ export const decisionRecords = pgTable("decision_records", {
    * applied.
    */
   controlsApplied: jsonb("controls_applied"),
+  /**
+   * Why, assembled from what the run DID rather than by asking the model
+   * afterwards (design section 6e). An agent asked "why did you decide that?"
+   * produces a justification, and this platform has already caught one
+   * asserting a figure it had not read. Where the model's own words are kept
+   * they are labelled as the model's words, never as the reason.
+   *
+   * NULL means not captured.
+   */
+  rationale: jsonb("rationale"),
+  /**
+   * What the run flagged: the judgments that came back `ok: false`, with their
+   * kind, subject, severity and step. These are the checks the platform ran
+   * and failed, so they belong to the decision as much as its conclusion does.
+   *
+   * NULL means not captured; an empty array means captured, nothing flagged.
+   */
+  patternsFlagged: jsonb("patterns_flagged"),
+  /**
+   * What the run DID: the tools it called, from tool_invocations. The other
+   * half of the NAIC bulletin's "which system or person acted" -- a conclusion
+   * is not an action, and "it read these three systems and wrote to that one"
+   * is what an examiner is actually asking for.
+   *
+   * NULL means not captured; an empty array means captured, no tool was used.
+   */
+  actionsTaken: jsonb("actions_taken"),
+  /**
+   * The PERSON who settled the gate, when one did. `decidedBy` answers "which
+   * system" (the team) and could never answer "which person", which is half of
+   * one NAIC row on its own.
+   */
+  decidedByUserId: varchar("decided_by_user_id"),
 
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -3047,6 +3116,26 @@ export const knowledgeChunks = pgTable("knowledge_chunks", {
   tokenCount: integer("token_count"),
   retrievalCount: integer("retrieval_count").default(0),
   lastRetrievedAt: timestamp("last_retrieved_at"),
+
+  // --- what this vector actually represents (design section 6f) -----------
+  /**
+   * SHA-256 of the CHUNK TEXT the vector was computed from -- not of the
+   * source. A source-level hash cannot say that chunk 7 changed while 1-6 did
+   * not, which is exactly what a partial reprocess produces.
+   *
+   * Compare it against `content` to tell a current vector from one that
+   * belongs to older text. NULL means the embedding predates this column, or
+   * none was stored.
+   */
+  contentHash: varchar("content_hash"),
+  /**
+   * Which model produced the vector. It was previously only a literal in
+   * server/embeddings.ts, so a reader of a chunk could not tell whether two
+   * vectors were even comparable.
+   */
+  embeddingModel: varchar("embedding_model"),
+  /** When the vector was stored, so a re-embed is visible as an event. */
+  embeddedAt: timestamp("embedded_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

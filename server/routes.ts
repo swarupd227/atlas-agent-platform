@@ -141,6 +141,8 @@ import enterpriseIntegrationsRouter, { startTokenRefreshDaemon } from "./routes/
 import filesRouter from "./routes/files";
 import { registerEnterpriseIntegrations } from "./integrations/register";
 import { ensureMarketplaceSeedData } from "./marketplace-seed-data";
+import { getLockdown, llmKeyEntryGate, lockdownGate, lockdownPublicView } from "./lockdown";
+import { storage } from "./storage";
 import { createSalesforceRouter } from "./integrations/salesforce/mcp-server";
 import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
 import { createServiceNowRouter } from "./integrations/servicenow/mcp-server";
@@ -281,6 +283,18 @@ export async function registerRoutes(
 
   // ── Auth & OpenAPI router ─────────────────────────────────────
   app.use(authRouter);
+
+  // ── Platform lockdown (server/lockdown.ts) ────────────────────
+  // What this deployment does not allow at all, closed here for a whole route group at once and
+  // again at the lowest layer that does the work (the key lookups, the LLM key resolver), so a
+  // new route in a closed group is closed too. Nothing is restricted unless ASTRA_LOCKDOWN is set.
+  app.use("/api/marketplace", lockdownGate("marketplace"));
+  app.use("/api/v1", lockdownGate("publicApi"));
+  app.use("/api/gateway", lockdownGate("agentApiKeys"));
+  app.use("/api/a2a", lockdownGate("agentApiKeys"));
+  app.use("/api/agents/:agentId/api-keys", lockdownGate("agentApiKeys"));
+  app.use("/api/admin/llm-provider-keys", llmKeyEntryGate);
+  app.get("/api/platform/lockdown", (_req, res) => res.json(lockdownPublicView()));
 
   // ── Tenant scoping (server/tenant-scope.ts) ──────────────────
   // Registered before every feature router so no per-id route for a connector,
@@ -598,7 +612,22 @@ export async function registerRoutes(
 
   // Connector Library: real registry sources (replacing the fake seeded ones) before the
   // native connectors below upsert their catalog rows against NATIVE_REGISTRY_SOURCE_ID.
-  await ensureMarketplaceSeedData().catch((err: any) => console.error("[startup] ensureMarketplaceSeedData:", err?.message));
+  // With the marketplace closed (server/lockdown.ts) its registry sources are not seeded or synced.
+  if (getLockdown().marketplace !== "off") {
+    await ensureMarketplaceSeedData().catch((err: any) => console.error("[startup] ensureMarketplaceSeedData:", err?.message));
+  }
+
+  // A deployment with a lockdown says so in its audit trail at every start: what was closed, and when.
+  if (getLockdown().active) {
+    await storage.createAuditEvent({
+      actorType: "system",
+      actorId: "platform_lockdown",
+      action: "platform_lockdown_active",
+      objectType: "platform",
+      objectId: "lockdown",
+      details: JSON.stringify(lockdownPublicView()),
+    }).catch((err: any) => console.error("[startup] platform_lockdown_active audit event:", err?.message));
+  }
 
   // Register enterprise CRM integration MCP servers in catalog (idempotent)
   registerEnterpriseIntegrations().catch((err: any) =>

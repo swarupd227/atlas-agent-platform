@@ -1234,6 +1234,43 @@ export const GENERATED_FILES_STATE_SUFFIX = "_files";
 export const VERIFIED_FACTS_STATE_SUFFIX = "_verified";
 
 /**
+ * Run state with each agent step's structured fields reachable by name.
+ *
+ * An agent step writes ONE string under its state key: prose, then a \`\`\`json
+ * block holding the fields it was asked for. Rules have always been able to
+ * read those fields because buildPipelineState parses the block for them. Tool
+ * arguments evaluated against the raw state, where the only thing under the
+ * step's key is that string -- so `legalName` resolved to nothing however the
+ * expression was written, while the value sat in plain sight in the output.
+ *
+ * Additive and non-destructive: the original value stays exactly as it was
+ * under its own key, so an expression that reads the text still does. Parsed
+ * fields are filled in only where nothing already holds that name, because a
+ * real state key is more specific than a field lifted out of some step's
+ * output, and two steps emitting the same field name must not have the later
+ * one silently win over an explicit key.
+ */
+export function resolvableToolArgState(state: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = { ...state };
+  for (const value of Object.values(state)) {
+    if (typeof value !== "string" || !value) continue;
+    let parsed: Record<string, any> | null = null;
+    try {
+      parsed = extractStructuredOutput(value);
+    } catch {
+      parsed = null; // unparseable output is not an error here, just not a source of fields
+    }
+    if (!parsed) continue;
+    for (const [k, v] of Object.entries(parsed)) {
+      // Plumbing the model adds to its own block is not a business field.
+      if (k.startsWith("_") || k in out) continue;
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
  * Suffix for the sources behind a step's retrieved passages: which document each
  * came from, its link, and enough of the passage to recognise it.
  *
@@ -2729,16 +2766,33 @@ export class DAGExecutionEngine {
       traceId: "",
     });
 
+    // An agent step's structured fields live inside a \`\`\`json block in its
+    // output STRING, so nothing in raw state is named `legalName` even when the
+    // step emitted one. Rules never saw this because buildPipelineState parses
+    // the block for them; tool arguments resolved against the raw state and
+    // found nothing. Live on the Account journeys: every argument came out
+    // empty while the orchestrator's own output held the right values, and the
+    // one that appeared to work was matching a DIFFERENT step's connector echo
+    // from an earlier wave. Same parse as buildPipelineState, so a field
+    // readable by a rule is readable by a tool argument.
+    const resolvable = resolvableToolArgState(currentState);
+
     let args: Record<string, any> = {};
     try {
       for (const [name, spec] of Object.entries(nc.toolArgs ?? {})) {
         const expr = (spec as { $expr?: unknown } | null)?.$expr;
         if (typeof expr === "string") {
           const value = await Promise.race([
-            jsonata(expr).evaluate(currentState),
+            jsonata(expr).evaluate(resolvable),
             new Promise((_, reject) => setTimeout(() => reject(new Error(`argument "${name}" timed out`)), 5000)),
           ]);
-          args[name] = value === undefined ? null : value;
+          // An argument that resolved to nothing is OMITTED, not sent as null.
+          // It used to be sent, and a connector that stringifies its inputs
+          // received the text "null": search_accounts searched for an account
+          // named "null", and create_account accepted "null" for a REQUIRED
+          // address and stored it. Leaving the key out lets the tool's own
+          // validation refuse the call, which is the behaviour that caught this.
+          if (value !== undefined && value !== null) args[name] = value;
         } else {
           args[name] = spec;
         }

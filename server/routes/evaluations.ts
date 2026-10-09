@@ -3,7 +3,7 @@ import { validateTeamGraph } from "../team-graph-validate";
 import { z } from "zod";
 import { storage } from "../storage";
 import { gradedSuiteRuns } from "../eval-run-scope";
-import { recallVerdict, RECALL_REQUIRE_REVIEW_SETTING } from "../intelligence-context";
+import { recallVerdict, resolveOutcomeFor, RECALL_REQUIRE_REVIEW_SETTING } from "../intelligence-context";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
 import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError, draftSingleAgent } from "./helpers";
@@ -407,12 +407,22 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       // with Y" is the audit story -- so this resolves the replacement rather
       // than leaving the reader with an id.
       const replacement = rec.supersededBy ? await storage.getDecisionRecord(rec.supersededBy, getOrgId(req) ?? undefined) : undefined;
+      // P4.4: what followed. Resolved here rather than stored, because the
+      // readings arrive after the record is written -- a column would be stale
+      // from the moment it was filled. Only on the by-id route: doing it per
+      // row in the list would be an N+1 of exactly the shape that made
+      // /api/drift-signals take 72 seconds.
+      const outcome = await resolveOutcomeFor({
+        teamAgentId: rec.teamAgentId, effectiveFrom: rec.effectiveFrom,
+        decidedAt: rec.decidedAt, organizationId: getOrgId(req) ?? undefined,
+      });
       res.json({
         ...rec,
         recall: { recallable: v.recallable, reason: v.reason ?? null, detail: v.detail ?? null },
         supersededByRecord: replacement
           ? { id: replacement.id, subject: replacement.subject, runId: replacement.runId, decidedAt: replacement.decidedAt, decision: replacement.decision }
           : null,
+        outcome,
       });
     } catch (e) {
       handleZodError(res, e);

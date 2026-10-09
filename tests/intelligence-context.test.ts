@@ -33,6 +33,12 @@ let decisionRecords: any[] = [];
 // fail-soft path is exercised rather than assumed.
 let dagRun: any = null;
 let policyBundle: any = null;
+let approvals: any[] = [];
+// P4.4 fixtures: the agent -> outcome -> kpis -> readings chain.
+let toolInvocations: any = [];
+let agentsById: Record<string, any> = {};
+let kpisByOutcome: Record<string, any[]> = {};
+let readingsByOutcome: Record<string, any[]> = {};
 const getDecisionRecordsBySubjects = vi.fn(async (subjects: string[]) => decisionRecords.filter((r) => subjects.includes(r.subject)));
 const upsertDecisionRecord = vi.fn(async (rec: any) => { decisionRecords.push(rec); return rec; });
 // The flag now lives in platform_settings, as GUARDRAIL_REVIEW and
@@ -59,14 +65,25 @@ vi.mock("../server/storage", () => ({
   storage: {
     listDagExecutionRunsByOrg: vi.fn(async () => runs),
     getDagExecutionRun: vi.fn(async () => dagRun),
-    getAgent: vi.fn(async (id: string) => ({ id, name: "E&S Property Binding Orchestrator", blueprintId: "bp1" })),
+    getApprovals: vi.fn(async () => approvals),
+    getToolInvocationsByRun: vi.fn(async () => {
+      if (toolInvocations === "throw") throw new Error("tool invocation lookup failed");
+      return toolInvocations;
+    }),
+    getKpisByOutcome: vi.fn(async (o: string) => kpisByOutcome[o] ?? []),
+    getKpiReadingsByOutcome: vi.fn(async (o: string) => readingsByOutcome[o] ?? []),
+    getAgent: vi.fn(async (id: string) => {
+      if (agentsById[id] === "throw") throw new Error("agent lookup failed");
+      if (agentsById[id]) return agentsById[id];
+      return { id, name: "E&S Property Binding Orchestrator", blueprintId: "bp1" };
+    }),
     getTeamBlueprintNodes,
     getPlatformSetting,
     getDecisionRecordsBySubjects,
     upsertDecisionRecord,
   },
 }));
-const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions, recallVerdict } = await import("../server/intelligence-context");
+const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions, recallVerdict, resolveOutcomeFor } = await import("../server/intelligence-context");
 
 // Verbatim shape from the live run.
 const LIVE_STATE = {
@@ -1198,5 +1215,381 @@ describe("contextUsed counts each prior decision once, not once per step", () =>
     const cu = upsertDecisionRecord.mock.calls[0][0].contextUsed;
     expect(cu.items).toHaveLength(2);
     expect(cu.items.map((i: any) => i.subject).sort()).toEqual(["binder:CP-2026-17", "submission:SUB-2026-8891"]);
+  });
+});
+
+describe("P4.2: why, what was flagged, and which person settled it", () => {
+  /**
+   * The two NAIC rows the record scored worst on after P4.1: "what rationale
+   * was recorded" and the half of "which system or person acted" that names a
+   * person.
+   *
+   * The trap the rationale avoids is asking the model. An agent asked "why did
+   * you decide that?" produces a justification, and this platform has already
+   * caught one asserting a figure it had not read. So every part of the
+   * rationale is something that HAPPENED and says where it came from, and the
+   * model's own words are labelled as the model's words.
+   */
+  const nodeConfig = {
+    n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" },
+    n2: { stateKey: "fetch_treaty_terms", nodeType: "tool_call", label: "Treaty Lookup" },
+  };
+  const state = {
+    submissionId: "SUB-2026-8891",
+    bind_policy: "bound",
+    fetch_treaty_terms: { limit: 50 },
+    fetch_treaty_terms_verified: [{ fact: "treaty limit 50M", source: "treaty_api" }],
+    fetch_treaty_terms_sources: ["treaty_api"],
+  };
+
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear();
+    policyBundle = null; approvals = [];
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", judgments: [
+        { kind: "facts", subject: "treaty limit", ok: false, severity: "high", evidence: "stated 50M, tool returned 50M for a different treaty" },
+        { kind: "appetite", subject: "coastal TIV", ok: true },
+      ] },
+      { nodeId: "n2", judgments: [{ kind: "facts", subject: "treaty limit", ok: false, severity: "high" }] },
+    ] }] };
+  });
+
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+
+  it("records only the checks that FAILED, named by step", async () => {
+    await write();
+    const pf = upsertDecisionRecord.mock.calls[0][0].patternsFlagged;
+    // The passing judgment is the absence of a flag; recording it would bury
+    // the ones that matter.
+    expect(pf.map((p: any) => p.subject)).toEqual(["treaty limit", "treaty limit"]);
+    expect(pf[0]).toMatchObject({ step: "Binding Decision", kind: "facts", severity: "high" });
+    expect(pf[1].step).toBe("Treaty Lookup");
+    expect(pf.some((p: any) => p.subject === "coastal TIV")).toBe(false);
+  });
+
+  it("does not report the same judgment once per step as several findings", async () => {
+    // Two steps, same kind and subject, different steps: two entries, because
+    // they ARE different checks. The same step twice would be one.
+    dagRun.waveResults[0].results.push({ nodeId: "n1", judgments: [{ kind: "facts", subject: "treaty limit", ok: false }] });
+    await write();
+    const pf = upsertDecisionRecord.mock.calls[0][0].patternsFlagged;
+    expect(pf).toHaveLength(2);
+  });
+
+  it("builds the rationale from what happened, each part saying where it came from", async () => {
+    await write();
+    const r = upsertDecisionRecord.mock.calls[0][0].rationale;
+    // Facts a tool actually returned, found by the engine's evidence suffixes.
+    expect(r.verifiedFacts.stateKeys.sort()).toEqual(["fetch_treaty_terms_sources", "fetch_treaty_terms_verified"]);
+    expect(r.verifiedFacts.source).toBe("tool_output");
+    expect(r.flagged.count).toBe(2);
+    expect(r.flagged.kinds).toEqual(["facts"]);
+    expect(r.gate.source).toBe("approval_record");
+  });
+
+  it("labels the model's own words as the model's words", async () => {
+    // Kept because it is often the clearest summary; labelled because it is
+    // not evidence of anything.
+    // teamStateKeyFor("E&S") is "e_s" -- lowercased, non-alphanumerics to
+    // underscores. The first version of this test wrote "E_S", so the key
+    // never matched, narrative was undefined, and both assertions sat behind
+    // an `if` that never ran. A test that cannot fail is not a test.
+    (state as any).e_s = "Bound at 50M because the treaty permits it.";
+    await write();
+    const r = upsertDecisionRecord.mock.calls[0][0].rationale;
+    expect(r.narrative, "the narrative was not captured at all").toBeTruthy();
+    expect(r.narrative.text).toContain("Bound at 50M");
+    expect(r.narrative.source).toBe("model_output");
+    // Nothing else: the model's words carry their label and no implied status.
+    expect(Object.keys(r.narrative).sort()).toEqual(["source", "text"]);
+    delete (state as any).e_s;
+  });
+
+  it("names the person who settled the gate, not just the team", async () => {
+    approvals = [
+      { objectId: "run-1", decidedBy: "u-priya", decidedAt: new Date("2026-10-09T09:30:00Z") },
+      { objectId: "another-run", decidedBy: "u-someone-else", decidedAt: new Date() },
+    ];
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.decidedByUserId).toBe("u-priya");
+    expect(rec.rationale.gate).toMatchObject({ passed: true, by: "u-priya" });
+    // decidedBy still answers "which system".
+    expect(rec.decidedBy).toBe("E&S");
+  });
+
+  it("says a gate was NOT passed rather than leaving it ambiguous", async () => {
+    approvals = [];
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.decidedByUserId).toBeNull();
+    expect(rec.rationale.gate).toEqual({ passed: false, source: "approval_record" });
+  });
+
+  it("still indexes the decision when the rationale cannot be assembled", async () => {
+    dagRun = null;
+    await expect(write()).resolves.toBeTruthy();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.subject).toBe("submission:SUB-2026-8891");
+    expect(rec.rationale).toBeNull();
+    expect(rec.patternsFlagged).toBeNull();
+  });
+});
+
+describe("'nothing flagged' and 'nothing checked' are different answers", () => {
+  /**
+   * Found on a live E&S run: ONE judgment across seven steps. For six of them
+   * `flagged: 0` meant "no check ran", while reading exactly like "every check
+   * passed" -- the reassuring interpretation, and the wrong one.
+   *
+   * This is the same defect as a pass rate defaulting to 0, at a third layer.
+   */
+  const nodeConfig = { n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" } };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound" };
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+
+  beforeEach(() => { decisionRecords = []; upsertDecisionRecord.mockClear(); policyBundle = null; approvals = []; });
+
+  it("says none_ran when no step checked anything", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: [{ nodeId: "n1" }] }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    expect(f).toMatchObject({ count: 0, checksRun: 0, verification: "none_ran" });
+  });
+
+  it("says all_passed when checks ran and none failed", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", judgments: [{ kind: "policy", subject: "limits", ok: true }, { kind: "facts", subject: "tiv", ok: true }] },
+    ] }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    expect(f).toMatchObject({ count: 0, checksRun: 2, verification: "all_passed" });
+    // The distinction the live run needed: same count, different answer.
+    expect(f.verification).not.toBe("none_ran");
+  });
+
+  it("counts every check that ran, not only the ones that failed", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", judgments: [
+        { kind: "policy", subject: "limits", ok: true },
+        { kind: "facts", subject: "tiv", ok: false, severity: "high" },
+        { kind: "appetite", subject: "coastal", ok: true },
+      ] },
+    ] }] };
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.rationale.flagged).toMatchObject({ count: 1, checksRun: 3, verification: "flagged" });
+    expect(rec.patternsFlagged).toHaveLength(1);
+  });
+});
+
+describe("coverage: how much of the run was checked", () => {
+  /**
+   * A live E&S run reported all_passed off ONE judgment across seven steps.
+   * True, and far more reassuring than it should be. "1 check across 7 steps"
+   * and "7 checks across 7 steps" both read all_passed and are not the same
+   * assurance, so the record carries the coverage too.
+   */
+  const nodeConfig = { n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" } };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound" };
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+  beforeEach(() => { decisionRecords = []; upsertDecisionRecord.mockClear(); policyBundle = null; approvals = []; });
+
+  it("shows one check covering a seven-step run as exactly that", async () => {
+    // The live shape that prompted this.
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", judgments: [{ kind: "policy", subject: "limits", ok: true }] },
+      ...Array.from({ length: 6 }, (_, i) => ({ nodeId: `x${i}` })),
+    ] }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    expect(f).toMatchObject({ verification: "all_passed", checksRun: 1, stepsWithChecks: 1, steps: 7 });
+  });
+
+  it("distinguishes that from a run where every step was checked", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results:
+      Array.from({ length: 7 }, (_, i) => ({ nodeId: `n${i}`, judgments: [{ kind: "policy", subject: `s${i}`, ok: true }] })),
+    }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    // Same verification, very different coverage -- which is the point.
+    expect(f).toMatchObject({ verification: "all_passed", checksRun: 7, stepsWithChecks: 7, steps: 7 });
+  });
+
+  it("counts steps even when none of them checked anything", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: Array.from({ length: 4 }, (_, i) => ({ nodeId: `n${i}` })) }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    expect(f).toMatchObject({ verification: "none_ran", checksRun: 0, stepsWithChecks: 0, steps: 4 });
+  });
+});
+
+describe("P4.4: what followed, as a link and never a verdict", () => {
+  /**
+   * The last of the NAIC bulletin's five rows, and the one where the obvious
+   * design is wrong. `outcome: {kpiId, wasCorrect, measuredAt}` has no state
+   * for "we cannot tell", which is the honest answer for most decisions -- the
+   * same defect as pass_rate defaulting to 0, but inside a compliance record.
+   *
+   * kpi_readings are AGGREGATE and time-windowed. They can say what a measure
+   * did after a decision took effect; they cannot say whether one decision
+   * about one submission was right.
+   */
+  const DAY = 86_400_000;
+  const base = new Date("2026-10-01T00:00:00Z").getTime();
+  beforeEach(() => { agentsById = {}; kpisByOutcome = {}; readingsByOutcome = {}; });
+
+  it("never reports a verdict, only the measurements and their attribution", async () => {
+    agentsById["teamA"] = { id: "teamA", outcomeId: "o1" };
+    kpisByOutcome["o1"] = [{ id: "k1", name: "Treaty breach detection rate", unit: "percent", target: 99 }];
+    readingsByOutcome["o1"] = [
+      { id: "r0", kpiId: "k1", takenAt: new Date(base - 2 * DAY), value: 91, source: "agent_runs", statistic: "pass_rate", windowDays: 7 },
+      { id: "r1", kpiId: "k1", takenAt: new Date(base + 2 * DAY), value: 96, source: "agent_runs", statistic: "pass_rate", windowDays: 7 },
+    ];
+    const o: any = await resolveOutcomeFor({ teamAgentId: "teamA", effectiveFrom: new Date(base), organizationId: "org1" });
+    expect(o.status).toBe("measured");
+    expect(o.attribution).toBe("aggregate");
+    expect(o.note).toMatch(/do not attribute the movement to this decision/);
+    // The refusal, pinned: nothing anywhere claims the decision was right.
+    expect(JSON.stringify(o)).not.toMatch(/wasCorrect|correct|verdict/i);
+  });
+
+  it("reads from when the decision APPLIED, not when it was written", async () => {
+    // A decision dated to take effect later must not claim the readings from
+    // before it did.
+    agentsById["teamA"] = { id: "teamA", outcomeId: "o1" };
+    kpisByOutcome["o1"] = [{ id: "k1", name: "K", unit: "percent", target: 99 }];
+    readingsByOutcome["o1"] = [
+      { id: "early", kpiId: "k1", takenAt: new Date(base + 1 * DAY), value: 50, source: "manual" },
+      { id: "late", kpiId: "k1", takenAt: new Date(base + 9 * DAY), value: 70, source: "manual" },
+    ];
+    const o: any = await resolveOutcomeFor({
+      teamAgentId: "teamA", decidedAt: new Date(base), effectiveFrom: new Date(base + 5 * DAY), organizationId: "org1",
+    });
+    expect(o.kpis[0].readingsAfter.map((r: any) => r.readingId)).toEqual(["late"]);
+    // And the one before is kept, because "what it did after" needs something
+    // to read it against.
+    expect(o.kpis[0].before.readingId).toBe("early");
+  });
+
+  it("separates the three absences instead of returning an empty list for all", async () => {
+    // No outcome bound to the team.
+    agentsById["teamA"] = { id: "teamA", outcomeId: null };
+    expect((await resolveOutcomeFor({ teamAgentId: "teamA" }) as any).status).toBe("no_outcome_bound");
+
+    // An outcome, but nothing measures it.
+    agentsById["teamA"] = { id: "teamA", outcomeId: "o1" };
+    kpisByOutcome["o1"] = [];
+    expect((await resolveOutcomeFor({ teamAgentId: "teamA" }) as any).status).toBe("no_kpis");
+
+    // KPIs exist, nothing measured since -- the only one that means
+    // "too early to tell".
+    kpisByOutcome["o1"] = [{ id: "k1", name: "K", unit: "percent", target: 99 }];
+    readingsByOutcome["o1"] = [{ id: "old", kpiId: "k1", takenAt: new Date(base - DAY), value: 10, source: "manual" }];
+    const o: any = await resolveOutcomeFor({ teamAgentId: "teamA", effectiveFrom: new Date(base) });
+    expect(o.status).toBe("no_readings_since");
+    expect(o.kpis[0].before.readingId).toBe("old");
+  });
+
+  it("says 'unavailable' when it could not look, which is not 'nothing found'", async () => {
+    agentsById["explode"] = "throw";
+    expect((await resolveOutcomeFor({ teamAgentId: "explode" }) as any).status).toBe("unavailable");
+  });
+
+  it("counts how many KPIs actually moved, so one reading does not read as full coverage", async () => {
+    agentsById["teamA"] = { id: "teamA", outcomeId: "o1" };
+    kpisByOutcome["o1"] = [
+      { id: "k1", name: "Measured", unit: "percent", target: 99 },
+      { id: "k2", name: "Never measured", unit: "percent", target: 99 },
+    ];
+    readingsByOutcome["o1"] = [{ id: "r1", kpiId: "k1", takenAt: new Date(base + DAY), value: 96, source: "manual" }];
+    const o: any = await resolveOutcomeFor({ teamAgentId: "teamA", effectiveFrom: new Date(base) });
+    expect(o).toMatchObject({ status: "measured", kpisMeasuredSince: 1, kpisTotal: 2 });
+  });
+});
+
+describe("actionsTaken: what the run DID, not only what it concluded", () => {
+  /**
+   * The other half of the NAIC row "which system or person acted". Until
+   * tool_invocations existed the platform kept only a COUNT -- the DAG engine
+   * carries toolCallCount and discards the identities -- so nothing persisted
+   * said which tools a run used. Verified on the live app: no tool name
+   * appeared anywhere in a persisted run.
+   *
+   * Recorded by the DISPATCHER, not the engine, so it covers every execution
+   * path rather than DAG runs only.
+   */
+  const nodeConfig = { n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" } };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound" };
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear(); policyBundle = null; approvals = [];
+    toolInvocations = []; dagRun = { id: "run-1", waveResults: [] };
+  });
+
+  it("names the tools, not just a count", async () => {
+    toolInvocations = [
+      { serverName: "salesforce", toolName: "get_account", outcome: "success", durationMs: 120, createdAt: new Date("2026-10-09T09:00:00Z") },
+      { serverName: "treaty_api", toolName: "fetch_limits", outcome: "success", durationMs: 300, createdAt: new Date("2026-10-09T09:01:00Z") },
+    ];
+    await write();
+    const a = upsertDecisionRecord.mock.calls[0][0].actionsTaken;
+    expect(a.map((x: any) => `${x.server}.${x.tool}`)).toEqual(["salesforce.get_account", "treaty_api.fetch_limits"]);
+    expect(a[0]).toMatchObject({ outcome: "success", calls: 1 });
+  });
+
+  it("keeps refusals, because 'tried and was blocked' is not 'never tried'", async () => {
+    toolInvocations = [
+      { serverName: "teams", toolName: "post_message", outcome: "gate_blocked_policy", durationMs: 2, createdAt: new Date() },
+    ];
+    await write();
+    const a = upsertDecisionRecord.mock.calls[0][0].actionsTaken;
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ tool: "post_message", outcome: "gate_blocked_policy" });
+  });
+
+  it("collapses a loop into one action called many times", async () => {
+    // Nine calls to the same tool is one action taken nine times, not nine
+    // actions -- the inflation that made contextUsed read as 9 precedents.
+    toolInvocations = Array.from({ length: 9 }, () => ({
+      serverName: "treaty_api", toolName: "fetch_limits", outcome: "success", durationMs: 10, createdAt: new Date(),
+    }));
+    await write();
+    const a = upsertDecisionRecord.mock.calls[0][0].actionsTaken;
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ calls: 9, totalMs: 90 });
+  });
+
+  it("separates the same tool succeeding and failing", async () => {
+    toolInvocations = [
+      { serverName: "treaty_api", toolName: "fetch_limits", outcome: "success", durationMs: 10, createdAt: new Date() },
+      { serverName: "treaty_api", toolName: "fetch_limits", outcome: "tool_error", durationMs: 5, createdAt: new Date() },
+    ];
+    await write();
+    const a = upsertDecisionRecord.mock.calls[0][0].actionsTaken;
+    expect(a.map((x: any) => x.outcome).sort()).toEqual(["success", "tool_error"]);
+  });
+
+  it("distinguishes 'used no tools' from 'could not look'", async () => {
+    toolInvocations = [];
+    await write();
+    expect(upsertDecisionRecord.mock.calls[0][0].actionsTaken).toEqual([]);
+
+    upsertDecisionRecord.mockClear();
+    toolInvocations = "throw";
+    await write();
+    expect(upsertDecisionRecord.mock.calls[0][0].actionsTaken).toBeNull();
   });
 });

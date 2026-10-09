@@ -2,6 +2,7 @@
 // Phase 0 hardening: fail fast on misconfiguration; gate demo surfaces off in prod.
 import { getSecurityMode } from "./auth";
 import { describeOutboundPolicy, validateOutboundPolicyEnv } from "./url-safety";
+import { describeLockdown, validateLockdownEnv } from "./lockdown";
 
 /** True when demo & mock surfaces (/demo-api, /api/mock, mock-MCP, demo seeders) should be active. */
 export function demosEnabled(): boolean {
@@ -34,6 +35,8 @@ export function validateEnv(): void {
 
   // A malformed allowlist must stop the server: ignoring it would silently change what the app can reach.
   errors.push(...validateOutboundPolicyEnv());
+  // A lockdown that cannot be read must stop the server too: running without it would be running unrestricted.
+  errors.push(...validateLockdownEnv());
 
   if (errors.length > 0) {
     console.error(
@@ -45,5 +48,5 @@ export function validateEnv(): void {
   console.log(
     `[config] security_mode=${getSecurityMode()} demos_enabled=${demosEnabled()} node_env=${process.env.NODE_ENV ?? "unset"}`,
   );
-  console.log(`[config] ${describeOutboundPolicy()}`);
+  console.log(`[config] ${describeOutboundPolicy()} ${describeLockdown()}`);
 }

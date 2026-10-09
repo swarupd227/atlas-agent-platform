@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { db } from "./db";
+import { agentApiKeysAllowed } from "./lockdown";
 import { users, agentApiKeys, agents } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 
@@ -201,7 +202,9 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   const pathIsGatewayInvoke = /^\/gateway\/v1\/invoke\/[^/]+$/.test(req.path);
   const pathAllowsBearer = req.path === "/eval" || req.path.startsWith("/eval/") || pathIsMcp || pathIsGatewayInvoke;
   const authHeader = req.headers["authorization"];
-  if (pathAllowsBearer && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+  // A deployment that has turned agent API keys off (server/lockdown.ts) accepts none: a Bearer
+  // request falls through to cookie auth and is refused like any other request without a session.
+  if (agentApiKeysAllowed() && pathAllowsBearer && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     const rawKey = authHeader.slice(7).trim();
     if (rawKey) {
       try {
