@@ -118,6 +118,18 @@ import { packIndustryOptions, packIndustryLabels } from "@shared/industry-packs"
 import { suitePassPercent, suitePassFraction } from "@shared/eval-threshold";
 import { measuredRate } from "@/lib/measured";
 
+type RunTestResponse =
+  | { accepted: true; runId: string; status: "running" }
+  | { success: boolean; summary: unknown; steps: unknown[] };
+
+interface RunTestRuntimeRun {
+  status: "pending" | "running" | "completed" | "failed";
+  errorMessage?: string | null;
+  resultSummary?: {
+    analysis?: { summary?: string; analysis?: string };
+  } | null;
+}
+
 
 class AgentDetailErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
@@ -854,10 +866,26 @@ function AgentDetailInner() {
   // it for simple agents or type the real task for anything else.
   const [runTestDialogOpen, setRunTestDialogOpen] = useState(false);
   const [runTestPrompt, setRunTestPrompt] = useState("");
-  const runTestMutation = useMutation({
-    mutationFn: (prompt: string) =>
-      apiRequest("POST", `/api/agents/${agentId}/run-test`, { prompt }),
-    onSuccess: () => {
+  const [runTestRunId, setRunTestRunId] = useState<string | null>(null);
+  const { data: runTestRun, isError: runTestQueryError, error: runTestError, refetch: refetchRunTest } = useQuery<RunTestRuntimeRun>({
+    queryKey: ["/api/agent-runtime/runs", runTestRunId],
+    enabled: !!runTestRunId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "running" || status === "pending" ? 2000 : false;
+    },
+  });
+  const runTestMutation = useMutation<RunTestResponse, Error, string>({
+    mutationFn: async (prompt: string) => {
+      const response = await apiRequest("POST", `/api/agents/${agentId}/run-test`, { prompt });
+      return response.json() as Promise<RunTestResponse>;
+    },
+    onSuccess: (data) => {
+      if ("accepted" in data && data.accepted) {
+        setRunTestRunId(data.runId);
+        toast({ title: "Team test started", description: "The result will appear here when the run finishes." });
+        return;
+      }
       setRunTestDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "traces"] });
       toast({ title: "Test run completed", description: "The agent executed a one-time test run. Check the Runs & Traces tab for results." });
@@ -866,6 +894,11 @@ function AgentDetailInner() {
       toast({ title: "Test run failed", description: err.message, variant: "destructive" });
     },
   });
+
+  useEffect(() => {
+    if (!runTestRunId || !runTestRun || (runTestRun.status !== "completed" && runTestRun.status !== "failed")) return;
+    queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "traces"] });
+  }, [agentId, runTestRunId, runTestRun?.status]);
 
   // Flow lifecycle for teams created from a Process Flow: run, watch, and
   // promote all live HERE, so users never have to discover that "run" hides
@@ -2113,14 +2146,44 @@ JSON) — the platform never needs to be trusted, only the bytes in this archive
             className="min-h-[100px] text-sm"
             data-testid="input-run-test-prompt"
           />
+          {runTestRunId && (
+            <div className="rounded-md border p-3 text-sm" data-testid="status-run-test">
+              {runTestQueryError ? (
+                <div className="space-y-2 text-destructive">
+                  <div className="flex items-start gap-2">
+                    <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{runTestError instanceof Error ? runTestError.message : "The team test status could not be loaded."}</span>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" onClick={() => refetchRunTest()}>Retry status</Button>
+                </div>
+              ) : !runTestRun || runTestRun.status === "running" || runTestRun.status === "pending" ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Team test is running. You can close this dialog and view the result later under Runs & Traces.
+                </div>
+              ) : runTestRun.status === "failed" ? (
+                <div className="flex items-start gap-2 text-destructive">
+                  <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{runTestRun.errorMessage || "The team test failed. Review Runs & Traces for details."}</span>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 text-green-700 dark:text-green-400">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{runTestRun.resultSummary?.analysis?.summary || runTestRun.resultSummary?.analysis?.analysis || "Team test completed. See Runs & Traces for full details."}</span>
+                </div>
+              )}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setRunTestDialogOpen(false)} data-testid="button-cancel-run-test">Cancel</Button>
             <Button
-              onClick={() => runTestMutation.mutate(runTestPrompt)}
-              disabled={runTestPrompt.trim().length < 5 || runTestMutation.isPending}
+              onClick={() => {
+                setRunTestRunId(null);
+                runTestMutation.mutate(runTestPrompt);
+              }}
+              disabled={runTestPrompt.trim().length < 5 || runTestMutation.isPending || runTestRun?.status === "running" || runTestRun?.status === "pending"}
               data-testid="button-confirm-run-test"
             >
-              {runTestMutation.isPending ? (
+              {runTestMutation.isPending || runTestRun?.status === "running" || runTestRun?.status === "pending" ? (
                 <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Running…</>
               ) : (
                 <><Play className="w-3.5 h-3.5 mr-1.5" /> Run Test</>
