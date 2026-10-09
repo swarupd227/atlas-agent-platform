@@ -2073,6 +2073,16 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_decision_records_live ON decision_records (subject, superseded_at, expires_at);
     `);
 
+    // Phase 4 (design section 6e): what the decision was made ON, and under
+    // which controls. Deliberately nullable with no default -- NULL means not
+    // captured, an empty structure means captured and there was nothing. A
+    // default would destroy that distinction, which is the defect that made
+    // 630 eval suites read "0% passed" when nobody had run them.
+    await client.query(`
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS context_used JSONB;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS controls_applied JSONB;
+    `);
+
     // eval_suites.pass_rate: give the column a state for "never measured".
     //
     // It carried DEFAULT 0, so a suite nobody had run was stored as 0% rather

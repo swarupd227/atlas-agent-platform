@@ -466,6 +466,126 @@ export async function resolveContext(input: ResolveContextInput): Promise<Resolv
  * does not become enterprise record. Never throws: the run has already
  * finished, and recording it for the future must not retrospectively fail it.
  */
+/**
+ * P4.1 -- what this run's steps were SHOWN, by reference.
+ *
+ * The layer already computes this: `priorContext` is attached to each node's
+ * result and persisted in the run's waveResults. It was then thrown away,
+ * which meant the record could say what was decided and never what it was
+ * decided ON. That is the first of the NAIC bulletin's five questions and the
+ * one we scored worst on.
+ *
+ * Citations only -- subject, tier, which run, when. NEVER the rendered prompt
+ * text: a copied prompt block is a second, diverging account of a decision
+ * that already has an authoritative one.
+ *
+ * Returns null, not an empty object, when the run could not be read. "Not
+ * captured" and "captured, nothing was shown" are different facts.
+ */
+async function collectContextUsed(runId: string): Promise<Record<string, unknown> | null> {
+  try {
+    const run = await (storage as { getDagExecutionRun?: (id: string) => Promise<any> }).getDagExecutionRun?.(runId);
+    if (!run) return null;
+    const waves = Array.isArray(run.waveResults) ? run.waveResults : [];
+    const items: Array<Record<string, unknown>> = [];
+    const conflicts: Array<Record<string, unknown>> = [];
+    const omissions: Array<Record<string, unknown>> = [];
+    const subjects = new Set<string>();
+    let stepsShown = 0;
+
+    // waveResults is an array of waves, each holding node results; older runs
+    // store them under different keys, so read whichever is present rather than
+    // assuming one shape and silently collecting nothing.
+    const nodes: any[] = [];
+    for (const wave of waves) {
+      if (Array.isArray(wave)) nodes.push(...wave);
+      else if (wave && typeof wave === "object") {
+        for (const k of ["results", "nodeResults", "nodes"]) {
+          if (Array.isArray((wave as any)[k])) nodes.push(...(wave as any)[k]);
+        }
+        if ((wave as any).priorContext) nodes.push(wave);
+      }
+    }
+    // Deduplicated across steps, and this is not cosmetic.
+    //
+    // Every step in a run is shown the SAME prior decisions, so collecting them
+    // per step multiplied them by the number of steps: the first live record
+    // carried 9 items describing 3 prior decisions, 3 conflicts describing 1,
+    // and 3 omissions describing 1. A reader of that record would conclude the
+    // decision was taken with nine precedents in view. It was three. In a
+    // record whose purpose is to say truthfully what a decision was made on,
+    // an inflated count is a false statement, not untidiness.
+    //
+    // `stepsShown` keeps the other fact -- how many steps saw context -- so
+    // nothing is lost by counting each prior decision once.
+    const seenItem = new Set<string>();
+    const seenConflict = new Set<string>();
+    const seenOmission = new Set<string>();
+    for (const n of nodes) {
+      const pc = n?.priorContext;
+      if (!pc) continue;
+      stepsShown++;
+      for (const s of (pc.subjects ?? [])) subjects.add(String(s));
+      for (const it of (pc.items ?? [])) {
+        // A prior decision is identified by the run that made it and the object
+        // it was about; the same pair twice is one decision shown twice.
+        const k = `${it.runId}|${it.subject}`;
+        if (seenItem.has(k)) continue;
+        seenItem.add(k);
+        items.push({ subject: it.subject, tier: it.tier, matchAxis: it.matchAxis ?? null, runId: it.runId, decidedAt: it.decidedAt ?? null });
+      }
+      for (const c of (pc.conflicts ?? [])) {
+        const k = `${c.subject}|${c.field}`;
+        if (seenConflict.has(k)) continue;
+        seenConflict.add(k);
+        conflicts.push({ subject: c.subject, field: c.field });
+      }
+      for (const o of (pc.omissions ?? [])) {
+        const k = `${o.reason}|${o.detail}`;
+        if (seenOmission.has(k)) continue;
+        seenOmission.add(k);
+        omissions.push({ reason: o.reason, detail: o.detail });
+      }
+    }
+    // Captured, even when nothing was shown: a run where no step saw prior
+    // context is a fact worth recording, and it is NOT the same as a run whose
+    // provenance we failed to read.
+    return { stepsShown, subjects: [...subjects], items, conflicts, omissions };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * P4.3 -- which controls were in force when this decision was taken.
+ *
+ * resolvePolicyBundle already runs for every tool dispatch; the record simply
+ * never referenced the result. Its appliedPolicies carry a version, which is
+ * the part that matters: a policy edited next month must not make this
+ * decision look as though it was taken under the newer rules.
+ *
+ * Imported lazily so this module does not pull the route helpers (and the data
+ * layer behind them) into every importer of the context layer.
+ */
+async function collectControlsApplied(teamAgentId: string, orgId?: string | null): Promise<Record<string, unknown> | null> {
+  try {
+    const { resolvePolicyBundle } = await import("./routes/helpers");
+    const bundle: any = await resolvePolicyBundle(teamAgentId, orgId ?? undefined);
+    if (!bundle) return null;
+    return {
+      policies: (bundle.appliedPolicies ?? []).map((p: any) => ({
+        id: p.id, name: p.name, version: p.version ?? 1,
+        enforcement: p.enforcement, scope: p.scope, domain: p.domain,
+      })),
+      guardrails: bundle.guardrails ?? [],
+      blockedTools: bundle.blockedTools ?? [],
+      resolvedAt: new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function recordRunDecisions(input: {
   runId: string;
   teamAgentId: string;
@@ -507,6 +627,18 @@ export async function recordRunDecisions(input: {
   const passedAGate = Object.keys(byRole.approval).length > 0;
   const reviewState = passedAGate ? "reviewed" : "unreviewed";
 
+  // Phase 4 (design section 6e). Both are gathered HERE rather than passed in
+  // from the engine, on purpose: server/dag-execution-engine.ts carries another
+  // session's uncommitted work, and a change of mine interleaved there is a
+  // change one of us commits on the other's behalf. The write path already
+  // takes a runId and can fetch what it needs.
+  //
+  // Neither may fail the write. recordRunDecisions is called un-awaited after a
+  // run has finished; a decision must still be indexed if its provenance could
+  // not be read, and a missing field says "not captured" rather than lying.
+  const contextUsed = await collectContextUsed(input.runId);
+  const controlsApplied = await collectControlsApplied(input.teamAgentId, input.orgId);
+
   let written = 0;
   for (const subject of subjects) {
     try {
@@ -523,6 +655,8 @@ export async function recordRunDecisions(input: {
         reviewState,
         decidedBy: input.teamName || input.teamAgentId,
         effectiveFrom: input.decidedAt,
+        contextUsed,
+        controlsApplied,
       });
       written++;
     } catch (err: any) {

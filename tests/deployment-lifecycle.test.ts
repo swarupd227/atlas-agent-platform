@@ -164,6 +164,32 @@ describe("taking a deployment live through routing", () => {
     expect(await changeRoutingAction(ctx, "dep-x", { action: "canary_start" })).toMatchObject({ status: 409, body: { reason: "approval_not_granted" } });
   });
 
+  it("an approval that expired, or was sent back for changes, is still waiting for a decision, not refused", async () => {
+    // Both can still be decided on the approval pages, so the answer points at that approval.
+    for (const status of ["expired", "changes_requested"]) {
+      db.approvals.length = 0;
+      dep({ environment: "pilot" });
+      const a = approval({ type: "deployment_review", status });
+      const r = await changeRoutingAction(ctx, "dep-x", { action: "canary_start" });
+      expect(r, status).toMatchObject({ status: 409, body: { reason: "awaiting_approval", approvalId: a.id, approvalStatus: status } });
+      expect(db.approvals, status).toHaveLength(1);       // nothing new was filed
+    }
+  });
+
+  it("a production deployment whose approval expired is held, and no second one is filed over it", async () => {
+    dep({ environment: "production" });
+    approval({ type: "launch_readiness", status: "expired" });
+    expect(await changeRoutingAction(ctx, "dep-x", { action: "full_rollout" })).toMatchObject({ status: 409, body: { reason: "awaiting_approval", approvalStatus: "expired" } });
+    expect(db.approvals).toHaveLength(1);
+  });
+
+  it("the open statuses are the platform's own", async () => {
+    const { OPEN_APPROVAL_STATUSES } = await import("../server/deployment-lifecycle");
+    const source = readFileSync("server/approval-decision.ts", "utf8");
+    const declared = /OPEN_APPROVAL_STATUSES = new Set\(\[([^\]]*)\]\)/.exec(source)?.[1] ?? "";
+    expect([...OPEN_APPROVAL_STATUSES].sort()).toEqual([...declared.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort());
+  });
+
   it("goes ahead once the newest approval is granted, even if an older one was declined", async () => {
     dep({ environment: "pilot" });
     approval({ type: "deployment_review", status: "rejected" });

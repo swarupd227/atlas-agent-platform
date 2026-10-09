@@ -28,6 +28,11 @@ const getTeamBlueprintNodes = vi.fn(async () => blueprintNodes);
 // resolver silently falls back to the recency scan and every assertion
 // below would cover the WRONG path.
 let decisionRecords: any[] = [];
+// Phase 4 fixtures: the run whose waveResults carry priorContext, and the
+// policy bundle. "throw" makes resolvePolicyBundle fail, which is how the
+// fail-soft path is exercised rather than assumed.
+let dagRun: any = null;
+let policyBundle: any = null;
 const getDecisionRecordsBySubjects = vi.fn(async (subjects: string[]) => decisionRecords.filter((r) => subjects.includes(r.subject)));
 const upsertDecisionRecord = vi.fn(async (rec: any) => { decisionRecords.push(rec); return rec; });
 // The flag now lives in platform_settings, as GUARDRAIL_REVIEW and
@@ -42,9 +47,18 @@ const getPlatformSetting = vi.fn(async (key: string) => {
   if (key === "INTELLIGENCE_CONTEXT") return settingValue === null ? undefined : { value: settingValue };
   return undefined;
 });
+// The collector imports this lazily, so the module is mocked rather than the
+// bundle being injected.
+vi.mock("../server/routes/helpers", () => ({
+  resolvePolicyBundle: vi.fn(async () => {
+    if (policyBundle === "throw") throw new Error("policies unavailable");
+    return policyBundle;
+  }),
+}));
 vi.mock("../server/storage", () => ({
   storage: {
     listDagExecutionRunsByOrg: vi.fn(async () => runs),
+    getDagExecutionRun: vi.fn(async () => dagRun),
     getAgent: vi.fn(async (id: string) => ({ id, name: "E&S Property Binding Orchestrator", blueprintId: "bp1" })),
     getTeamBlueprintNodes,
     getPlatformSetting,
@@ -1000,5 +1014,189 @@ describe("recallVerdict: the gate, as the review queue sees it", () => {
 
   it("treats an unjudged confidence as unjudged, not as low", () => {
     expect(recallVerdict(rec({ confidence: null }), { requireReview: true }).recallable).toBe(true);
+  });
+});
+
+/**
+ * Phase 4 (design section 6e): what the decision was made ON, and under which
+ * controls. The two NAIC rows we scored worst on.
+ *
+ * Both are gathered inside recordRunDecisions rather than passed from the
+ * engine, because server/dag-execution-engine.ts carried another session's
+ * uncommitted work and a change interleaved there is a change one of us
+ * commits on the other's behalf.
+ */
+describe("recordRunDecisions records its provenance (phase 4)", () => {
+  // The shape the phase 1 tests above already prove produces a record: a
+  // decision step's output plus a tool step's evidence. Inventing a new one
+  // here wrote nothing and made four tests fail on an empty mock rather than
+  // on what they were about.
+  const nodeConfig = {
+    n1: { stateKey: "bind_policy", nodeType: "decision" },
+    n2: { stateKey: "fetch_treaty_terms", nodeType: "tool_call" },
+  };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound", fetch_treaty_terms: { limit: 50 } };
+
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear();
+    dagRun = null; policyBundle = null;
+  });
+
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-08T10:00:00Z"),
+  });
+
+  it("captures what the step was SHOWN, as citations rather than prompt text", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: [{ nodeId: "n1", priorContext: {
+      text: "## What was already decided ...the whole rendered block...",
+      subjects: ["submission:SUB-2026-8891"],
+      items: [{ subject: "submission:SUB-2026-8891", tier: "authoritative", runId: "oldrun1", decidedAt: "2026-10-03T00:00:00Z" }],
+      conflicts: [{ subject: "submission:SUB-2026-8891", field: "status" }],
+      omissions: [{ reason: "unreviewed", detail: "A decision on binder:CP-1 exists but no one has reviewed it" }],
+    } }] }] };
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.contextUsed.stepsShown).toBe(1);
+    expect(rec.contextUsed.items[0]).toEqual({
+      subject: "submission:SUB-2026-8891", tier: "authoritative", matchAxis: null,
+      runId: "oldrun1", decidedAt: "2026-10-03T00:00:00Z",
+    });
+    expect(rec.contextUsed.conflicts[0].field).toBe("status");
+    expect(rec.contextUsed.omissions[0].reason).toBe("unreviewed");
+    // Pointer, never copy: the rendered block must NOT be duplicated here.
+    expect(JSON.stringify(rec.contextUsed)).not.toContain("What was already decided");
+  });
+
+  it("distinguishes 'nothing was shown' from 'we could not read it'", async () => {
+    // A run that exists and showed nothing: captured, empty.
+    dagRun = { id: "run-1", waveResults: [{ results: [{ nodeId: "n1" }] }] };
+    await write();
+    const shown = upsertDecisionRecord.mock.calls[0][0].contextUsed;
+    expect(shown).not.toBeNull();
+    expect(shown.stepsShown).toBe(0);
+    expect(shown.items).toEqual([]);
+
+    // A run that cannot be read: null, not an empty object pretending to be a
+    // measurement. This is the pass_rate DEFAULT 0 lesson, one layer over.
+    upsertDecisionRecord.mockClear();
+    dagRun = null;
+    await write();
+    expect(upsertDecisionRecord.mock.calls[0][0].contextUsed).toBeNull();
+  });
+
+  it("records which controls applied, with their versions", async () => {
+    policyBundle = {
+      appliedPolicies: [{ id: "p1", name: "Treaty limit check", version: 3, enforcement: "strict", scope: "agent", domain: "underwriting" }],
+      guardrails: ["no_pii_in_output"], blockedTools: ["send_email"],
+    };
+    dagRun = { id: "run-1", waveResults: [] };
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.controlsApplied.policies[0]).toMatchObject({ id: "p1", version: 3, enforcement: "strict" });
+    expect(rec.controlsApplied.guardrails).toEqual(["no_pii_in_output"]);
+    // The version is the point: a policy edited later must not make this
+    // decision look as though it was taken under the newer rules.
+    expect(rec.controlsApplied.policies[0].version).toBe(3);
+  });
+
+  it("still indexes the decision when provenance cannot be gathered", async () => {
+    // recordRunDecisions runs un-awaited after a finished run. Losing the
+    // decision because its provenance could not be read would be a worse
+    // failure than recording it without.
+    dagRun = null; policyBundle = "throw";
+    await expect(write()).resolves.toBeTruthy();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.subject).toBe("submission:SUB-2026-8891");
+    expect(rec.contextUsed).toBeNull();
+    expect(rec.controlsApplied).toBeNull();
+  });
+});
+
+describe("contextUsed counts each prior decision once, not once per step", () => {
+  /**
+   * Found in production, not here. The first live record carried 9 items
+   * describing 3 prior decisions, 3 conflicts describing 1, and 3 omissions
+   * describing 1, because every step in a run is shown the SAME prior context
+   * and it was collected per step.
+   *
+   * Every fixture above had a single step, so the multiplication could not
+   * appear. That is the same blind spot as the drift-signals loop: a fixture
+   * that cannot reach the condition reports a clean green.
+   *
+   * It matters because this record exists to say what a decision was made on.
+   * "Nine precedents were in view" when three were is a false statement in a
+   * compliance artefact, not a tidiness problem.
+   */
+  const nodeConfig = {
+    n1: { stateKey: "bind_policy", nodeType: "decision" },
+    n2: { stateKey: "fetch_treaty_terms", nodeType: "tool_call" },
+  };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound", fetch_treaty_terms: { limit: 50 } };
+
+  // What the engine actually persists: the same block attached to each step.
+  const shown = {
+    subjects: ["submission:SUB-2026-8891"],
+    items: [
+      { subject: "submission:SUB-2026-8891", tier: "authoritative", runId: "runAAA", decidedAt: "2026-10-08T09:00:00Z" },
+      { subject: "submission:SUB-2026-8891", tier: "authoritative", runId: "runBBB", decidedAt: "2026-10-08T10:00:00Z" },
+    ],
+    conflicts: [{ subject: "submission:SUB-2026-8891", field: "status" }],
+    omissions: [{ reason: "unclassified_keys", detail: "3 state keys could not be classified" }],
+  };
+
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear();
+    policyBundle = null;
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", priorContext: shown },
+      { nodeId: "n2", priorContext: shown },
+      { nodeId: "n3", priorContext: shown },
+    ] }] };
+  });
+
+  it("reports 3 steps and 2 prior decisions, not 6", async () => {
+    await recordRunDecisions({
+      runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+      state, nodeConfig, decidedAt: new Date("2026-10-08T12:00:00Z"),
+    });
+    const cu = upsertDecisionRecord.mock.calls[0][0].contextUsed;
+    expect(cu.stepsShown).toBe(3);
+    expect(cu.items).toHaveLength(2);
+    expect(cu.items.map((i: any) => i.runId).sort()).toEqual(["runAAA", "runBBB"]);
+    expect(cu.conflicts).toHaveLength(1);
+    expect(cu.omissions).toHaveLength(1);
+  });
+
+  it("keeps two decisions that differ only by the run that made them", async () => {
+    // Dedupe must not collapse genuinely different precedents. Same object,
+    // two runs, is two decisions -- that is corroboration and it is real.
+    await recordRunDecisions({
+      runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+      state, nodeConfig, decidedAt: new Date("2026-10-08T12:00:00Z"),
+    });
+    const cu = upsertDecisionRecord.mock.calls[0][0].contextUsed;
+    expect(new Set(cu.items.map((i: any) => i.runId)).size).toBe(2);
+  });
+
+  it("keeps the same run's decisions about DIFFERENT objects", async () => {
+    const twoSubjects = {
+      ...shown,
+      items: [
+        { subject: "submission:SUB-2026-8891", tier: "authoritative", runId: "runAAA", decidedAt: "2026-10-08T09:00:00Z" },
+        { subject: "binder:CP-2026-17", tier: "authoritative", runId: "runAAA", decidedAt: "2026-10-08T09:00:00Z" },
+      ],
+    };
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", priorContext: twoSubjects },
+      { nodeId: "n2", priorContext: twoSubjects },
+    ] }] };
+    await recordRunDecisions({
+      runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+      state, nodeConfig, decidedAt: new Date("2026-10-08T12:00:00Z"),
+    });
+    const cu = upsertDecisionRecord.mock.calls[0][0].contextUsed;
+    expect(cu.items).toHaveLength(2);
+    expect(cu.items.map((i: any) => i.subject).sort()).toEqual(["binder:CP-2026-17", "submission:SUB-2026-8891"]);
   });
 });

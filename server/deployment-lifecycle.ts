@@ -41,6 +41,14 @@ export const FINISHED_STATUSES = new Set(["rolled_back", "promoted", "superseded
 /** Has not been live yet, so whatever approval it needs has not been given by going live before. */
 const NEVER_LIVE_STATUSES = new Set(["pending", "awaiting_approval", "pipeline_failed"]);
 
+/**
+ * Approval statuses that are still waiting on a decision: the same set as OPEN_APPROVAL_STATUSES in
+ * approval-decision.ts (a test holds them equal; it is not imported so this module stays light).
+ * An approval that expired, or was sent back for changes, can still be decided on the approval
+ * pages, so a deployment holding one is awaiting a decision, not refused.
+ */
+export const OPEN_APPROVAL_STATUSES = new Set(["pending", "changes_requested", "expired"]);
+
 /** Routing actions that put a deployment in front of traffic. The others (shadow off, rollback) take it out. */
 export const GOES_LIVE_ACTIONS = new Set(["shadow_on", "canary_start", "canary_increase", "full_rollout"]);
 
@@ -99,11 +107,12 @@ export async function checkMayGoLive(deployment: { id: string; agentId: string; 
 
   if (NEVER_LIVE_STATUSES.has(deployment.status)) {
     const approval = await latestApprovalFor(deployment.id, ctx.orgId);
-    if (approval && approval.status === "pending") {
-      return refuse(409, "awaiting_approval", `This deployment is waiting on its ${String(approval.type).replace(/_/g, " ")} approval; it goes live when that is approved.`, { approvalId: approval.id });
+    if (approval && OPEN_APPROVAL_STATUSES.has(approval.status)) {
+      const state = approval.status === "pending" ? "is waiting for a decision" : approval.status === "expired" ? "expired without a decision (it can still be decided)" : "was sent back for changes";
+      return refuse(409, "awaiting_approval", `This deployment's ${String(approval.type).replace(/_/g, " ")} approval ${state}; it goes live when that is approved.`, { approvalId: approval.id, approvalStatus: approval.status });
     }
     if (approval && approval.status !== "approved") {
-      return refuse(409, "approval_not_granted", `This deployment's ${String(approval.type).replace(/_/g, " ")} approval was ${approval.status}; it cannot go live until a new one is approved.`, { approvalId: approval.id });
+      return refuse(409, "approval_not_granted", `This deployment's ${String(approval.type).replace(/_/g, " ")} approval was ${approval.status}; create a new deployment to ask again.`, { approvalId: approval.id, approvalStatus: approval.status });
     }
     if (prod && !approval) {
       const agent = await storage.getAgent(deployment.agentId, ctx.orgId);
@@ -127,6 +136,46 @@ export async function checkMayGoLive(deployment: { id: string; agentId: string; 
   }
 
   return { ok: true };
+}
+
+/**
+ * A request to skip a gate (the eval pass rate, ontology alignment) is a decision to ship something
+ * the gate would have stopped, so it needs deploy_prod, and it is recorded against the signed-in
+ * person: a name in the request body is not evidence of who asked.
+ */
+export function bypassRefusal(ctx: LifecycleContext, gate: string): { status: number; body: Record<string, unknown> } | null {
+  if (ctx.canDeployProd === false) {
+    return { status: 403, body: { blocked: true, reason: "deploy_prod_required", message: `Bypassing the ${gate} needs deploy_prod.` } };
+  }
+  return null;
+}
+
+/** The person to record a decision against. */
+export const actorOf = (ctx: LifecycleContext, fallback = "unknown"): string => ctx.actor || fallback;
+
+export type FreezeRequest =
+  | { ok: true; action: "freeze" | "unfreeze"; scope: "org" | "agent"; targetId: string; reason: string }
+  | { ok: false; status: number; message: string };
+
+/**
+ * A freeze or unfreeze request, read strictly. The endpoint used to treat any action that was not
+ * "freeze" as an unfreeze, and recorded an org-wide freeze under whatever target id came with it,
+ * where the freeze check never looked for it. An org freeze is recorded as "org".
+ */
+export function parseFreezeRequest(body: Record<string, unknown> | undefined): FreezeRequest {
+  const { action, scope, targetId, reason } = body ?? {};
+  if (action !== "freeze" && action !== "unfreeze") return { ok: false, status: 400, message: 'action must be "freeze" or "unfreeze".' };
+  if (scope !== "org" && scope !== "agent") return { ok: false, status: 400, message: 'scope must be "org" or "agent".' };
+  if (scope === "agent" && (typeof targetId !== "string" || targetId.trim() === "")) {
+    return { ok: false, status: 400, message: "An agent freeze needs the agent's id as targetId." };
+  }
+  return {
+    ok: true,
+    action,
+    scope,
+    targetId: scope === "org" ? "org" : String(targetId).trim(),
+    reason: typeof reason === "string" ? reason.slice(0, 500) : "",
+  };
 }
 
 /** One audit event for a lifecycle change, naming the signed-in person. */

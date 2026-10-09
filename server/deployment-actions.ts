@@ -19,7 +19,7 @@ import { ensureAarConfig } from "./routes/aar";
 import { buildBlastRadius } from "./blast-radius";
 import { checkBlueprintInvariants } from "./blueprint-invariants";
 import { stopAgentRuntime } from "./agent-runtime";
-import { GOES_LIVE_ACTIONS, checkDeploymentFreeze, checkMayGoLive, isProdEnv, recordLifecycleEvent, sanitizeCreateBody, type LifecycleContext } from "./deployment-lifecycle";
+import { GOES_LIVE_ACTIONS, actorOf, bypassRefusal, checkDeploymentFreeze, checkMayGoLive, isProdEnv, recordLifecycleEvent, sanitizeCreateBody, type LifecycleContext } from "./deployment-lifecycle";
 
 export { checkDeploymentFreeze };
 
@@ -33,6 +33,10 @@ export interface ActionResult {
 
 export async function createDeploymentAction(ctx: DeploymentActionContext, body: any): Promise<ActionResult> {
     const bypassOntologyCheck = body.bypassOntologyCheck === true;
+    if (bypassOntologyCheck) {
+      const refusal = bypassRefusal(ctx, "ontology alignment check");
+      if (refusal) return refusal;
+    }
     // The client says which agent, where and how; the server owns the status (always pending: a
     // deployment goes live through its approval or a rollout change) and everything about who
     // approved it and when.
@@ -95,7 +99,7 @@ export async function createDeploymentAction(ctx: DeploymentActionContext, body:
 
           await storage.createAuditEvent({
             actorType: "user",
-            actorId: "deployment-service",
+            actorId: actorOf(ctx, "deployment-service"),
             action: "ontology_alignment_bypass",
             objectType: "deployment",
             objectId: data.agentId,
@@ -223,6 +227,14 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
     const nextEnv = envOrder[currentIdx + 1];
 
     const bypassEvalGate = body.bypassEvalGate === true;
+    if (bypassEvalGate) {
+      const refusal = bypassRefusal(ctx, "eval gate");
+      if (refusal) return refusal;
+    }
+    if (body.bypassOntologyCheck === true) {
+      const refusal = bypassRefusal(ctx, "ontology alignment check");
+      if (refusal) return refusal;
+    }
 
     const promoteAgent = await storage.getAgent(source.agentId, ctx.orgId);
     const promoteRtConfig = (promoteAgent?.runtimeConfig as Record<string, any>) || {};
@@ -331,7 +343,7 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
 
       await storage.createAuditEvent({
         actorType: "user",
-        actorId: body.approvedBy || "unknown",
+        actorId: actorOf(ctx),
         action: "eval_gate_bypassed",
         objectType: "deployment",
         objectId: source.id,
@@ -374,7 +386,7 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
 
           await storage.createAuditEvent({
             actorType: "user",
-            actorId: body.approvedBy || "unknown",
+            actorId: actorOf(ctx),
             action: "ontology_alignment_bypass",
             objectType: "deployment",
             objectId: source.id,
@@ -563,7 +575,9 @@ export async function promoteDeploymentAction(ctx: DeploymentActionContext, id: 
       status: "pending",
       canaryPercent: source.canaryConfig ? (source.canaryConfig as any).startPercent || 0 : 0,
       rolloutStrategy: source.rolloutStrategy,
-      approvedBy: body.approvedBy || source.approvedBy,
+      // Who approved is whoever decides the approval this promotion files, recorded then; a name in
+      // the request body is not an approval.
+      approvedBy: source.approvedBy,
       organizationId: source.organizationId ?? undefined,
       signatureHash: source.signatureHash,
       promotedFrom: source.id,

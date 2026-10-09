@@ -1632,6 +1632,30 @@ export const decisionRecords = pgTable("decision_records", {
   supersededByUserId: varchar("superseded_by_user_id"),
   supersededReason: text("superseded_reason"),
 
+  // --- phase 4: provenance and accountability (design section 6e) ---------
+  /**
+   * What this run's steps were SHOWN, by reference: the citations of the prior
+   * decisions injected, the conflicts surfaced and the omissions reported.
+   * Never the rendered prompt text -- "pointer, never copy" (section 1): a
+   * copied prompt block is a second, diverging account of a decision that
+   * already has an authoritative one.
+   *
+   * NULL means not captured (a run from before this existed, or a read that
+   * failed). An object with empty arrays means captured, and nothing was shown.
+   * Those are different facts and the column has a state for each.
+   */
+  contextUsed: jsonb("context_used"),
+  /**
+   * Which controls applied when this decision was taken: the policies resolved
+   * for the agent WITH THEIR VERSIONS, and the guardrails in force. Versions
+   * matter -- a policy edited later must not make a past decision look as
+   * though it was taken under today's rules.
+   *
+   * NULL means not captured; `{ policies: [] }` means captured, and none
+   * applied.
+   */
+  controlsApplied: jsonb("controls_applied"),
+
   createdAt: timestamp("created_at").defaultNow(),
 });
 
