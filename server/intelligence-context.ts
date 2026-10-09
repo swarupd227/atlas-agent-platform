@@ -605,11 +605,17 @@ async function collectContextUsed(runId: string): Promise<Record<string, unknown
  * the same judgment reaching the record once per step reads as several
  * findings when it is one.
  */
-function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): Array<Record<string, unknown>> {
+function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): { flagged: Array<Record<string, unknown>>; checksRun: number } {
   const out: Array<Record<string, unknown>> = [];
   const seen = new Set<string>();
+  // Counted alongside the failures, because "nothing was flagged" and "nothing
+  // was checked" are different facts and `count: 0` alone cannot tell them
+  // apart. Measured on a live E&S run: ONE judgment across seven steps, so for
+  // six of them a zero meant "unchecked" while reading as "clean".
+  let checksRun = 0;
   for (const n of nodeResultsOf(run)) {
     const js = Array.isArray(n?.judgments) ? n.judgments : [];
+    checksRun += js.length;
     for (const j of js) {
       if (j?.ok !== false) continue;
       const step = labelOf(String(n?.nodeId ?? ""));
@@ -623,7 +629,7 @@ function collectPatternsFlagged(run: any, labelOf: (nodeId: string) => string): 
       });
     }
   }
-  return out;
+  return { flagged: out, checksRun };
 }
 
 /**
@@ -649,6 +655,7 @@ function buildRationale(input: {
   state: Record<string, unknown> | null | undefined;
   contextUsed: Record<string, unknown> | null;
   patternsFlagged: Array<Record<string, unknown>>;
+  checksRun: number;
   narrative?: string | null;
   approver?: { userId: string | null; decidedAt: string | null } | null;
 }): Record<string, unknown> {
@@ -667,7 +674,16 @@ function buildRationale(input: {
       source: cu === null ? "not_captured" : "prior_decisions",
     },
     verifiedFacts: { stateKeys: verified, count: verified.length, source: "tool_output" },
-    flagged: { count: input.patternsFlagged.length, kinds: [...new Set(input.patternsFlagged.map(p => String(p.kind)))] },
+    flagged: {
+      count: input.patternsFlagged.length,
+      // How many checks ran at all. Without it, `count: 0` is the same text
+      // for "every check passed" and "nothing was checked", and on a live E&S
+      // run six of seven steps ran no check -- so the reassuring reading was
+      // the wrong one for most of it.
+      checksRun: input.checksRun,
+      kinds: [...new Set(input.patternsFlagged.map(p => String(p.kind)))],
+      verification: input.checksRun === 0 ? "none_ran" : input.patternsFlagged.length === 0 ? "all_passed" : "flagged",
+    },
     gate: input.approver?.userId
       ? { passed: true, by: input.approver.userId, at: input.approver.decidedAt, source: "approval_record" }
       : { passed: false, source: "approval_record" },
@@ -784,11 +800,13 @@ export async function recordRunDecisions(input: {
     approver = await collectApprover(input.runId, input.orgId);
     if (run) {
       const labelOf = (nodeId: string) => input.nodeConfig?.[nodeId]?.label || input.nodeConfig?.[nodeId]?.stateKey || nodeId;
-      patternsFlagged = collectPatternsFlagged(run, labelOf);
+      const pf = collectPatternsFlagged(run, labelOf);
+      patternsFlagged = pf.flagged;
       rationale = buildRationale({
         state: input.state,
         contextUsed,
-        patternsFlagged,
+        patternsFlagged: pf.flagged,
+        checksRun: pf.checksRun,
         // The team's own answer, if the trace carries one. Labelled as the
         // model's words inside buildRationale, never as the reason.
         narrative: typeof (input.state as any)?.[teamStateKeyFor(input.teamName)] === "string"

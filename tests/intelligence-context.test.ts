@@ -1323,3 +1323,53 @@ describe("P4.2: why, what was flagged, and which person settled it", () => {
     expect(rec.patternsFlagged).toBeNull();
   });
 });
+
+describe("'nothing flagged' and 'nothing checked' are different answers", () => {
+  /**
+   * Found on a live E&S run: ONE judgment across seven steps. For six of them
+   * `flagged: 0` meant "no check ran", while reading exactly like "every check
+   * passed" -- the reassuring interpretation, and the wrong one.
+   *
+   * This is the same defect as a pass rate defaulting to 0, at a third layer.
+   */
+  const nodeConfig = { n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" } };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound" };
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+
+  beforeEach(() => { decisionRecords = []; upsertDecisionRecord.mockClear(); policyBundle = null; approvals = []; });
+
+  it("says none_ran when no step checked anything", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: [{ nodeId: "n1" }] }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    expect(f).toMatchObject({ count: 0, checksRun: 0, verification: "none_ran" });
+  });
+
+  it("says all_passed when checks ran and none failed", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", judgments: [{ kind: "policy", subject: "limits", ok: true }, { kind: "facts", subject: "tiv", ok: true }] },
+    ] }] };
+    await write();
+    const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
+    expect(f).toMatchObject({ count: 0, checksRun: 2, verification: "all_passed" });
+    // The distinction the live run needed: same count, different answer.
+    expect(f.verification).not.toBe("none_ran");
+  });
+
+  it("counts every check that ran, not only the ones that failed", async () => {
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", judgments: [
+        { kind: "policy", subject: "limits", ok: true },
+        { kind: "facts", subject: "tiv", ok: false, severity: "high" },
+        { kind: "appetite", subject: "coastal", ok: true },
+      ] },
+    ] }] };
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.rationale.flagged).toMatchObject({ count: 1, checksRun: 3, verification: "flagged" });
+    expect(rec.patternsFlagged).toHaveLength(1);
+  });
+});
