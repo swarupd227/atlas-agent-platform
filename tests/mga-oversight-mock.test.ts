@@ -76,6 +76,11 @@ describe("scope", () => {
     const { body } = await get(`/data/review-scope?${H}&agreement_id=CP-2026-31&period=2026-02&evidence_cutoff=2026-02-28`);
     expect(body).toMatchObject({ ok: true, errors: [], agreementId: "CP-2026-31" });
   });
+
+  it("returns the contact on file, so a follow-up is addressed from the record and not from a model", async () => {
+    const { body } = await get(`/data/review-scope?${H}&agreement_id=CP-2026-31&period=2026-02&evidence_cutoff=2026-02-28`);
+    expect(body.mga.contact).toBe("t.okafor@harborline.example");
+  });
 });
 
 describe("context", () => {

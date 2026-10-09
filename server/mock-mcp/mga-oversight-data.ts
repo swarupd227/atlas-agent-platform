@@ -71,7 +71,7 @@ router.get("/review-scope", (req: Request, res: Response) => {
   else if (agreementId !== mga.agreementId) errors.push(`${agreementId} is not an agreement of ${mga.id}; its agreement is ${mga.agreementId}`);
   if (!/^20\d\d-(0[1-9]|1[0-2])$/.test(period)) errors.push("period must look like 2026-02");
   if (!/^20\d\d-\d\d-\d\d$/.test(cutoff)) errors.push("evidence_cutoff must be a date like 2026-02-28");
-  res.json({ ok: errors.length === 0, errors, reviewer: s.reviewer.id, mga: { id: mga.id, name: mga.name, line: mga.line }, agreementId, period, evidenceCutoff: cutoff });
+  res.json({ ok: errors.length === 0, errors, reviewer: s.reviewer.id, mga: { id: mga.id, name: mga.name, line: mga.line, contact: mga.contact }, agreementId, period, evidenceCutoff: cutoff });
 });
 
 /** The sources a review may rely on: metadata only. Each carries whether it was available at the cutoff. */
