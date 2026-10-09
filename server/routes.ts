@@ -50,6 +50,7 @@ import { ensureOnespanAgents } from "./onespan-live-run";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import watchlistScreeningRouter from "./mock-mcp/watchlist-screening";
 import accountAdministrationRouter from "./mock-mcp/account-administration";
+import accountPolicyRegisterRouter from "./mock-mcp/account-policy-register";
 import bridgeSpecialtyIntakeRouter from "./mock-mcp/bridge-specialty-intake";
 import insurityRatingRouter from "./mock-mcp/insurity-rating";
 import insurityPolicySorRouter from "./mock-mcp/insurity-policy-sor";
@@ -344,6 +345,7 @@ export async function registerRoutes(
   registerKnowledgeBaseRoutes(app);
   app.use("/api/mock/watchlist-screening", watchlistScreeningRouter);
   app.use("/api/mock/account-administration", accountAdministrationRouter);
+  app.use("/api/mock/account-policy-register", accountPolicyRegisterRouter);
   app.use("/api/mock/bridge-specialty-intake", bridgeSpecialtyIntakeRouter);
   app.use("/api/mock/insurity-rating", insurityRatingRouter);
   app.use("/api/mock/insurity-policy-sor", insurityPolicySorRouter);
