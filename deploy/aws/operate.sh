@@ -202,6 +202,7 @@ bootstrap_ci() {
             "ecr:PutImage",
             "ecr:UploadLayerPart",
             "ecr:BatchGetImage",
+            "ecr:DescribeRepositories",
             "ecr:DescribeImages"
           ],
           Resource: $repositories

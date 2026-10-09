@@ -71,6 +71,8 @@ fi
 if jq -e '
   ([.Statement[].Action] | flatten | all(startswith("ecr:"))) and
   any(.Statement[]; .Action == "ecr:GetAuthorizationToken" and .Resource == "*") and
+  any(.Statement[]; (.Action | type) == "array" and
+    (.Action | index("ecr:DescribeRepositories")) != null) and
   any(.Statement[]; .Resource as $resource |
     ($resource | type == "string") and
     ($resource | endswith(":repository/astra-agents-*-app")))
