@@ -22,6 +22,9 @@ case "$1 $2" in
   'iam get-role') exit 254 ;;
   'iam create-role') printf 'arn:aws:iam::964604400233:role/astra-agents-github-ecr-push\n' ;;
   'iam put-role-policy') exit 0 ;;
+  'ecr describe-repositories') exit 254 ;;
+  'ecr create-repository') printf '964604400233.dkr.ecr.us-east-1.amazonaws.com/astra-agents-demo-app\n' ;;
+  'ecr put-image-tag-mutability'|'ecr put-image-scanning-configuration'|'ecr put-lifecycle-policy') exit 0 ;;
   *) printf 'Unexpected fake AWS call: %s\n' "$*" >&2; exit 64 ;;
 esac
 FAKE_AWS
@@ -68,6 +71,16 @@ if grep -Eq 'ssm:|secretsmanager:|ec2:|cloudfront:|wafv2:|rds:' "$policy"; then
   fail 'CI policy excludes deployment and secret services'
 else
   pass 'CI policy excludes deployment and secret services'
+fi
+
+: >"$FAKE_AWS_LOG"
+if "$AWS_DIR/operate.sh" bootstrap-repository --deployment-id demo >/dev/null &&
+   grep -Fq 'ecr create-repository' "$FAKE_AWS_LOG" &&
+   grep -Fq -- '--image-tag-mutability IMMUTABLE' "$FAKE_AWS_LOG" &&
+   grep -Fq -- 'scanOnPush=true' "$FAKE_AWS_LOG"; then
+  pass 'repository bootstrap creates an immutable scan-on-push ECR repository'
+else
+  fail 'repository bootstrap creates an immutable scan-on-push ECR repository'
 fi
 
 workflow="$REPO_ROOT/.github/workflows/build-aws-image.yml"

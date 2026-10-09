@@ -20,6 +20,8 @@ Usage: deploy/aws/operate.sh <command> --deployment-id <id> [options]
 
 Commands:
   bootstrap-ci   Create or update the GitHub OIDC ECR-push role.
+  bootstrap-repository
+                 Create or normalize the deployment ECR repository.
   deploy-image   Deploy an existing ECR image digest through SSM.
   verify         Verify the exact digest and local application health.
   harden-runtime-role
@@ -160,6 +162,49 @@ bootstrap_ci() {
     --policy-document "file://$policy_file"
 
   printf 'GitHub role ready: %s\n' "$role_arn"
+}
+
+bootstrap_repository() {
+  local state_dir lifecycle_file repository_uri
+  require_commands "$AWS_BIN" jq
+  require_expected_account
+  state_dir=$(init_state_dir "$DEPLOYMENT_ID")
+  lifecycle_file="$state_dir/ecr-lifecycle.json"
+
+  if ! repository_uri=$(aws_cli ecr describe-repositories \
+    --region "$AWS_REGION" \
+    --repository-names "$ECR_REPOSITORY" \
+    --query 'repositories[0].repositoryUri' \
+    --output text 2>/dev/null); then
+    repository_uri=$(aws_cli ecr create-repository \
+      --region "$AWS_REGION" \
+      --repository-name "$ECR_REPOSITORY" \
+      --image-tag-mutability IMMUTABLE \
+      --image-scanning-configuration scanOnPush=true \
+      --encryption-configuration encryptionType=AES256 \
+      --tags Key=Application,Value=astra-agents Key=Environment,Value="$ENVIRONMENT" \
+      --query 'repository.repositoryUri' \
+      --output text)
+  fi
+  aws_cli ecr put-image-tag-mutability \
+    --region "$AWS_REGION" \
+    --repository-name "$ECR_REPOSITORY" \
+    --image-tag-mutability IMMUTABLE >/dev/null
+  aws_cli ecr put-image-scanning-configuration \
+    --region "$AWS_REGION" \
+    --repository-name "$ECR_REPOSITORY" \
+    --image-scanning-configuration scanOnPush=true >/dev/null
+  jq -n '{rules:[{
+    rulePriority: 1,
+    description: "Retain the newest 20 immutable application images",
+    selection: {tagStatus:"any", countType:"imageCountMoreThan", countNumber:20},
+    action: {type:"expire"}
+  }]}' >"$lifecycle_file"
+  aws_cli ecr put-lifecycle-policy \
+    --region "$AWS_REGION" \
+    --repository-name "$ECR_REPOSITORY" \
+    --lifecycle-policy-text "file://$lifecycle_file" >/dev/null
+  printf 'ECR repository ready: %s\n' "$repository_uri"
 }
 
 harden_runtime_role() {
@@ -454,9 +499,9 @@ ensure_cloudfront_waf() {
     --scope CLOUDFRONT \
     --output json)
   waf_id=$(jq -r --arg name "$WAF_NAME" \
-    '.WebACLs[]? | select(.Name == $name) | .Id' <<<"$list_json" | head -n1)
+    'first(.WebACLs[]? | select(.Name == $name) | .Id) // empty' <<<"$list_json")
   waf_arn=$(jq -r --arg name "$WAF_NAME" \
-    '.WebACLs[]? | select(.Name == $name) | .ARN' <<<"$list_json" | head -n1)
+    'first(.WebACLs[]? | select(.Name == $name) | .ARN) // empty' <<<"$list_json")
 
   if [[ -z "$waf_id" || "$waf_id" == null ]]; then
     create_json=$(aws_cli wafv2 create-web-acl \
@@ -916,6 +961,7 @@ main() {
 
   case "$command_name" in
     bootstrap-ci) bootstrap_ci ;;
+    bootstrap-repository) bootstrap_repository ;;
     deploy-image) deploy_image ;;
     verify) verify_runtime ;;
     harden-runtime-role) harden_runtime_role ;;
