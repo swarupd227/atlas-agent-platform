@@ -34,6 +34,10 @@ let decisionRecords: any[] = [];
 let dagRun: any = null;
 let policyBundle: any = null;
 let approvals: any[] = [];
+// P4.4 fixtures: the agent -> outcome -> kpis -> readings chain.
+let agentsById: Record<string, any> = {};
+let kpisByOutcome: Record<string, any[]> = {};
+let readingsByOutcome: Record<string, any[]> = {};
 const getDecisionRecordsBySubjects = vi.fn(async (subjects: string[]) => decisionRecords.filter((r) => subjects.includes(r.subject)));
 const upsertDecisionRecord = vi.fn(async (rec: any) => { decisionRecords.push(rec); return rec; });
 // The flag now lives in platform_settings, as GUARDRAIL_REVIEW and
@@ -61,14 +65,20 @@ vi.mock("../server/storage", () => ({
     listDagExecutionRunsByOrg: vi.fn(async () => runs),
     getDagExecutionRun: vi.fn(async () => dagRun),
     getApprovals: vi.fn(async () => approvals),
-    getAgent: vi.fn(async (id: string) => ({ id, name: "E&S Property Binding Orchestrator", blueprintId: "bp1" })),
+    getKpisByOutcome: vi.fn(async (o: string) => kpisByOutcome[o] ?? []),
+    getKpiReadingsByOutcome: vi.fn(async (o: string) => readingsByOutcome[o] ?? []),
+    getAgent: vi.fn(async (id: string) => {
+      if (agentsById[id] === "throw") throw new Error("agent lookup failed");
+      if (agentsById[id]) return agentsById[id];
+      return { id, name: "E&S Property Binding Orchestrator", blueprintId: "bp1" };
+    }),
     getTeamBlueprintNodes,
     getPlatformSetting,
     getDecisionRecordsBySubjects,
     upsertDecisionRecord,
   },
 }));
-const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions, recallVerdict } = await import("../server/intelligence-context");
+const { resolveContext, renderContextForPrompt, priorDecisionsForPrompt, intelligenceContextEnabled, recordRunDecisions, recallVerdict, resolveOutcomeFor } = await import("../server/intelligence-context");
 
 // Verbatim shape from the live run.
 const LIVE_STATE = {
@@ -1415,5 +1425,89 @@ describe("coverage: how much of the run was checked", () => {
     await write();
     const f = upsertDecisionRecord.mock.calls[0][0].rationale.flagged;
     expect(f).toMatchObject({ verification: "none_ran", checksRun: 0, stepsWithChecks: 0, steps: 4 });
+  });
+});
+
+describe("P4.4: what followed, as a link and never a verdict", () => {
+  /**
+   * The last of the NAIC bulletin's five rows, and the one where the obvious
+   * design is wrong. `outcome: {kpiId, wasCorrect, measuredAt}` has no state
+   * for "we cannot tell", which is the honest answer for most decisions -- the
+   * same defect as pass_rate defaulting to 0, but inside a compliance record.
+   *
+   * kpi_readings are AGGREGATE and time-windowed. They can say what a measure
+   * did after a decision took effect; they cannot say whether one decision
+   * about one submission was right.
+   */
+  const DAY = 86_400_000;
+  const base = new Date("2026-10-01T00:00:00Z").getTime();
+  beforeEach(() => { agentsById = {}; kpisByOutcome = {}; readingsByOutcome = {}; });
+
+  it("never reports a verdict, only the measurements and their attribution", async () => {
+    agentsById["teamA"] = { id: "teamA", outcomeId: "o1" };
+    kpisByOutcome["o1"] = [{ id: "k1", name: "Treaty breach detection rate", unit: "percent", target: 99 }];
+    readingsByOutcome["o1"] = [
+      { id: "r0", kpiId: "k1", takenAt: new Date(base - 2 * DAY), value: 91, source: "agent_runs", statistic: "pass_rate", windowDays: 7 },
+      { id: "r1", kpiId: "k1", takenAt: new Date(base + 2 * DAY), value: 96, source: "agent_runs", statistic: "pass_rate", windowDays: 7 },
+    ];
+    const o: any = await resolveOutcomeFor({ teamAgentId: "teamA", effectiveFrom: new Date(base), organizationId: "org1" });
+    expect(o.status).toBe("measured");
+    expect(o.attribution).toBe("aggregate");
+    expect(o.note).toMatch(/do not attribute the movement to this decision/);
+    // The refusal, pinned: nothing anywhere claims the decision was right.
+    expect(JSON.stringify(o)).not.toMatch(/wasCorrect|correct|verdict/i);
+  });
+
+  it("reads from when the decision APPLIED, not when it was written", async () => {
+    // A decision dated to take effect later must not claim the readings from
+    // before it did.
+    agentsById["teamA"] = { id: "teamA", outcomeId: "o1" };
+    kpisByOutcome["o1"] = [{ id: "k1", name: "K", unit: "percent", target: 99 }];
+    readingsByOutcome["o1"] = [
+      { id: "early", kpiId: "k1", takenAt: new Date(base + 1 * DAY), value: 50, source: "manual" },
+      { id: "late", kpiId: "k1", takenAt: new Date(base + 9 * DAY), value: 70, source: "manual" },
+    ];
+    const o: any = await resolveOutcomeFor({
+      teamAgentId: "teamA", decidedAt: new Date(base), effectiveFrom: new Date(base + 5 * DAY), organizationId: "org1",
+    });
+    expect(o.kpis[0].readingsAfter.map((r: any) => r.readingId)).toEqual(["late"]);
+    // And the one before is kept, because "what it did after" needs something
+    // to read it against.
+    expect(o.kpis[0].before.readingId).toBe("early");
+  });
+
+  it("separates the three absences instead of returning an empty list for all", async () => {
+    // No outcome bound to the team.
+    agentsById["teamA"] = { id: "teamA", outcomeId: null };
+    expect((await resolveOutcomeFor({ teamAgentId: "teamA" }) as any).status).toBe("no_outcome_bound");
+
+    // An outcome, but nothing measures it.
+    agentsById["teamA"] = { id: "teamA", outcomeId: "o1" };
+    kpisByOutcome["o1"] = [];
+    expect((await resolveOutcomeFor({ teamAgentId: "teamA" }) as any).status).toBe("no_kpis");
+
+    // KPIs exist, nothing measured since -- the only one that means
+    // "too early to tell".
+    kpisByOutcome["o1"] = [{ id: "k1", name: "K", unit: "percent", target: 99 }];
+    readingsByOutcome["o1"] = [{ id: "old", kpiId: "k1", takenAt: new Date(base - DAY), value: 10, source: "manual" }];
+    const o: any = await resolveOutcomeFor({ teamAgentId: "teamA", effectiveFrom: new Date(base) });
+    expect(o.status).toBe("no_readings_since");
+    expect(o.kpis[0].before.readingId).toBe("old");
+  });
+
+  it("says 'unavailable' when it could not look, which is not 'nothing found'", async () => {
+    agentsById["explode"] = "throw";
+    expect((await resolveOutcomeFor({ teamAgentId: "explode" }) as any).status).toBe("unavailable");
+  });
+
+  it("counts how many KPIs actually moved, so one reading does not read as full coverage", async () => {
+    agentsById["teamA"] = { id: "teamA", outcomeId: "o1" };
+    kpisByOutcome["o1"] = [
+      { id: "k1", name: "Measured", unit: "percent", target: 99 },
+      { id: "k2", name: "Never measured", unit: "percent", target: 99 },
+    ];
+    readingsByOutcome["o1"] = [{ id: "r1", kpiId: "k1", takenAt: new Date(base + DAY), value: 96, source: "manual" }];
+    const o: any = await resolveOutcomeFor({ teamAgentId: "teamA", effectiveFrom: new Date(base) });
+    expect(o).toMatchObject({ status: "measured", kpisMeasuredSince: 1, kpisTotal: 2 });
   });
 });

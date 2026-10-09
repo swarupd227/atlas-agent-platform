@@ -749,6 +749,87 @@ async function collectControlsApplied(teamAgentId: string, orgId?: string | null
   }
 }
 
+/**
+ * P4.4 -- what followed a decision, as a LINK and never a verdict.
+ *
+ * Resolved at read time, not stored. The readings that matter arrive after the
+ * decision is written, so a stored column would be stale from the moment it
+ * was filled and would need a job to chase it. A decision record is read far
+ * less often than it is written; computing this on the way out is both cheaper
+ * and incapable of going stale.
+ *
+ * The shape is the design's (section 6e), and the refusal in it is the point:
+ * there is no `wasCorrect`. `kpi_readings` are AGGREGATE, time-windowed
+ * measurements (`statistic`, `windowDays`). They can say what a measure did
+ * over the window after a decision took effect. They cannot say whether one
+ * decision about one submission was right, and a boolean claiming otherwise
+ * would be the `pass_rate DEFAULT 0` defect with a worse blast radius -- a
+ * fabricated verdict inside a compliance record.
+ *
+ * A judgement that a specific decision WAS right belongs in `reviewState`,
+ * where a person signs it.
+ *
+ * `status` separates the three absences, which otherwise all render as an
+ * empty list: no outcome is bound to the team, the outcome has no KPIs, or
+ * nothing has been measured since. Only the third is "too early to tell".
+ */
+export async function resolveOutcomeFor(record: {
+  teamAgentId?: string | null;
+  effectiveFrom?: Date | string | null;
+  decidedAt?: Date | string | null;
+  organizationId?: string | null;
+}): Promise<Record<string, unknown>> {
+  const NOTE = "Aggregate and correlational. These are the outcome's measurements over the window after this decision took effect; they do not attribute the movement to this decision.";
+  try {
+    const st = storage as any;
+    if (!record.teamAgentId) return { status: "no_outcome_bound", attribution: "aggregate", note: NOTE };
+    const agent = await st.getAgent?.(record.teamAgentId, record.organizationId ?? undefined);
+    const outcomeId: string | undefined = agent?.outcomeId ?? undefined;
+    if (!outcomeId) return { status: "no_outcome_bound", attribution: "aggregate", note: NOTE };
+
+    const kpis = (await st.getKpisByOutcome?.(outcomeId)) ?? [];
+    if (!kpis.length) return { status: "no_kpis", outcomeId, attribution: "aggregate", note: NOTE };
+
+    const readings = (await st.getKpiReadingsByOutcome?.(outcomeId)) ?? [];
+    // From when the decision APPLIED, not when it was written: a decision
+    // dated to take effect later should not claim the readings before it did.
+    const from = new Date(record.effectiveFrom ?? record.decidedAt ?? 0).getTime();
+
+    const byKpi = kpis.map((k: any) => {
+      const mine = readings.filter((r: any) => r.kpiId === k.id);
+      const after = mine.filter((r: any) => new Date(r.takenAt ?? 0).getTime() >= from)
+        .sort((a: any, b: any) => new Date(a.takenAt ?? 0).getTime() - new Date(b.takenAt ?? 0).getTime());
+      // The last reading BEFORE, because "what the measure did after" is not
+      // interpretable without something to read it against. Absent is absent,
+      // not zero.
+      const before = mine.filter((r: any) => new Date(r.takenAt ?? 0).getTime() < from)
+        .sort((a: any, b: any) => new Date(b.takenAt ?? 0).getTime() - new Date(a.takenAt ?? 0).getTime())[0];
+      return {
+        kpiId: k.id, name: k.name, unit: k.unit, target: k.target,
+        before: before ? { readingId: before.id, takenAt: before.takenAt, value: before.value } : null,
+        readingsAfter: after.map((r: any) => ({
+          readingId: r.id, takenAt: r.takenAt, value: r.value,
+          source: r.source, statistic: r.statistic ?? null, windowDays: r.windowDays ?? null,
+        })),
+      };
+    });
+
+    const measured = byKpi.filter((k: { readingsAfter: unknown[] }) => k.readingsAfter.length > 0);
+    return {
+      status: measured.length ? "measured" : "no_readings_since",
+      outcomeId,
+      kpis: byKpi,
+      kpisMeasuredSince: measured.length,
+      kpisTotal: byKpi.length,
+      attribution: "aggregate",
+      note: NOTE,
+    };
+  } catch {
+    // Distinct from every "nothing found" above: we could not look.
+    return { status: "unavailable", attribution: "aggregate", note: NOTE };
+  }
+}
+
 export async function recordRunDecisions(input: {
   runId: string;
   teamAgentId: string;
