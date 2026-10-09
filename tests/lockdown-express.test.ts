@@ -101,6 +101,6 @@ describe("LLM keys env-only", () => {
 describe("the endpoint the app reads", () => {
   it("reports what is closed", async () => {
     process.env.ASTRA_LOCKDOWN = '{"marketplace":"off","llmKeys":"env-only"}';
-    expect((await call("GET", "/api/platform/lockdown")).body).toEqual({ active: true, marketplace: "off", apiKeys: { agent: "on", publicApi: "on" }, llmKeys: "env-only" });
+    expect((await call("GET", "/api/platform/lockdown")).body).toEqual({ active: true, marketplace: "off", apiKeys: { agent: "on", publicApi: "on" }, llmKeys: "env-only", connectors: { allow: null } });
   });
 });

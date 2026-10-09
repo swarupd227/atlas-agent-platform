@@ -38,8 +38,22 @@ const lockdownSchema = z
       .optional(),
     /** "env-only": LLM provider keys come from the environment; an admin cannot enter one, and a stored one is ignored. */
     llmKeys: z.enum(["vault-and-env", "env-only"]).optional(),
+    connectors: z
+      .object({
+        /**
+         * The connector types this deployment allows, and no others: an integration id from the registry
+         * ("jira", "msgraph", "salesforce", ...), "mcp" for any external MCP server, "openapi" for an
+         * imported REST API. An empty list allows none. Absent means every type is allowed.
+         */
+        allow: z.array(z.string().min(1)),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
+
+/** The two connector types that are not an integration in the registry. */
+export const GENERIC_CONNECTOR_KINDS: readonly string[] = ["mcp", "openapi"];
 
 export interface Lockdown {
   /** True when any restriction is set. */
@@ -47,6 +61,8 @@ export interface Lockdown {
   marketplace: "on" | "off";
   apiKeys: { agent: "on" | "off"; publicApi: "on" | "off" };
   llmKeys: "vault-and-env" | "env-only";
+  /** The connector types allowed, or null when every type is. */
+  connectors: { allow: readonly string[] | null };
 }
 
 export class LockdownError extends Error {
@@ -90,9 +106,12 @@ export function parseLockdown(raw: string | undefined): Lockdown {
     marketplace: parsed.marketplace ?? "on",
     apiKeys: { agent: parsed.apiKeys?.agent ?? "on", publicApi: parsed.apiKeys?.publicApi ?? "on" },
     llmKeys: parsed.llmKeys ?? "vault-and-env",
+    connectors: { allow: parsed.connectors ? Object.freeze(Array.from(new Set(parsed.connectors.allow))) : null },
   };
-  lockdown.active = lockdown.marketplace === "off" || lockdown.apiKeys.agent === "off" || lockdown.apiKeys.publicApi === "off" || lockdown.llmKeys === "env-only";
-  return Object.freeze({ ...lockdown, apiKeys: Object.freeze({ ...lockdown.apiKeys }) });
+  lockdown.active =
+    lockdown.marketplace === "off" || lockdown.apiKeys.agent === "off" || lockdown.apiKeys.publicApi === "off" ||
+    lockdown.llmKeys === "env-only" || lockdown.connectors.allow !== null;
+  return Object.freeze({ ...lockdown, apiKeys: Object.freeze({ ...lockdown.apiKeys }), connectors: Object.freeze({ ...lockdown.connectors }) });
 }
 
 let cachedKey: string | undefined | null = null;
@@ -107,10 +126,21 @@ export function getLockdown(): Lockdown {
   return cached;
 }
 
-/** Problems with the lockdown in the environment, for the boot-time check. */
-export function validateLockdownEnv(): string[] {
+/**
+ * Problems with the lockdown in the environment, for the boot-time check. `knownConnectorIds` are
+ * the integration ids in the registry: a connector type the allow-list names that is neither one of
+ * those nor "mcp"/"openapi" is a typo, and a typo must stop the server, not quietly allow nothing.
+ */
+export function validateLockdownEnv(knownConnectorIds?: Iterable<string>): string[] {
   try {
-    getLockdown();
+    const l = getLockdown();
+    if (knownConnectorIds && l.connectors.allow) {
+      const known = new Set<string>(Array.from(knownConnectorIds).concat(GENERIC_CONNECTOR_KINDS as string[]));
+      const unknown = l.connectors.allow.filter((id) => !known.has(id));
+      if (unknown.length > 0) {
+        return [`ASTRA_LOCKDOWN is invalid: connectors.allow names unknown connector type(s): ${unknown.join(", ")}. Known: ${Array.from(known).sort().join(", ")}`];
+      }
+    }
     return [];
   } catch (e: any) {
     return [`ASTRA_LOCKDOWN is invalid: ${e.message}`];
@@ -121,14 +151,36 @@ export function validateLockdownEnv(): string[] {
 export function describeLockdown(): string {
   const l = getLockdown();
   if (!l.active) return "lockdown=none";
-  const off = [l.marketplace === "off" && "marketplace", l.apiKeys.agent === "off" && "agent-api-keys", l.apiKeys.publicApi === "off" && "public-api-key", l.llmKeys === "env-only" && "llm-keys:env-only"].filter(Boolean);
+  const off = [
+    l.marketplace === "off" && "marketplace", l.apiKeys.agent === "off" && "agent-api-keys", l.apiKeys.publicApi === "off" && "public-api-key",
+    l.llmKeys === "env-only" && "llm-keys:env-only", l.connectors.allow && `connectors:${l.connectors.allow.length === 0 ? "none" : l.connectors.allow.join("+")}`,
+  ].filter(Boolean);
   return `lockdown=${off.join(",")}`;
 }
 
 /** What the app may show a signed-in user: which surfaces are closed on this deployment. */
 export function lockdownPublicView() {
   const l = getLockdown();
-  return { active: l.active, marketplace: l.marketplace, apiKeys: { ...l.apiKeys }, llmKeys: l.llmKeys };
+  return { active: l.active, marketplace: l.marketplace, apiKeys: { ...l.apiKeys }, llmKeys: l.llmKeys, connectors: { allow: l.connectors.allow ? [...l.connectors.allow] : null } };
+}
+
+/**
+ * The connector type of an mcp_servers row: the integration it is, or the generic kind of its
+ * transport. A rest-proxy row is an imported REST API ("openapi"); every other transport is an MCP
+ * server ("mcp").
+ */
+export function connectorKindOf(server: { integrationId?: string | null; transportType?: string | null }): string {
+  if (server.integrationId) return server.integrationId;
+  return String(server.transportType ?? "").toLowerCase() === "rest-proxy" ? "openapi" : "mcp";
+}
+
+/** Whether connectors are restricted on this deployment at all. */
+export const connectorsRestricted = (): boolean => getLockdown().connectors.allow !== null;
+
+/** Whether this deployment allows a connector of this type. */
+export function connectorAllowed(kind: string): boolean {
+  const allow = getLockdown().connectors.allow;
+  return allow === null || allow.includes(kind);
 }
 
 export type GatedSurface = "marketplace" | "agentApiKeys" | "publicApi";

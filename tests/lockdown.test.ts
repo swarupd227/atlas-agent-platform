@@ -36,7 +36,8 @@ vi.mock("../server/storage", () => ({
 vi.mock("../server/credential-vault", () => ({ encryptCredential: (s: string) => `enc:${s}`, decryptCredential: (s: string) => s.replace(/^enc:/, "") }));
 
 import {
-  LockdownError, agentApiKeysAllowed, describeLockdown, getLockdown, llmKeyEntryGate, lockdownGate, lockdownPublicView, parseLockdown, validateLockdownEnv,
+  LockdownError, agentApiKeysAllowed, connectorAllowed, connectorKindOf, connectorsRestricted, describeLockdown, getLockdown, llmKeyEntryGate, lockdownGate,
+  lockdownPublicView, parseLockdown, validateLockdownEnv,
 } from "../server/lockdown";
 import { authMiddleware } from "../server/auth";
 import { listProviderKeyStatuses, resolveProviderKey, saveProviderKey, invalidateProviderKeyCache, clearProviderKey } from "../server/llm-provider-keys";
@@ -86,7 +87,12 @@ describe("the config", () => {
       ["null", "null"],
       ["a misspelt switch, which would otherwise mean no restriction", '{"marketplce":"off"}'],
       ["a misspelt nested switch", '{"apiKeys":{"agents":"off"}}'],
-      ["a switch this version does not have", '{"connectors":{"allow":["jira"]}}'],
+      ["a switch this version does not have", '{"nativeTools":{"webSearch":"off"}}'],
+      ["a connector list that is not a list", '{"connectors":{"allow":"jira"}}'],
+      ["a connector type that is not text", '{"connectors":{"allow":[7]}}'],
+      ["an empty connector type", '{"connectors":{"allow":[""]}}'],
+      ["a connectors key this version does not know", '{"connectors":{"allow":[],"deny":["jira"]}}'],
+      ["connectors with no allow list", '{"connectors":{}}'],
       ["a value that is not on or off", '{"marketplace":"OFF"}'],
       ["a boolean where on/off is expected", '{"marketplace":false}'],
       ["a mode that does not exist", '{"llmKeys":"vault-only"}'],
@@ -127,7 +133,82 @@ describe("the config", () => {
     expect(describeLockdown()).toBe("lockdown=none");
     lock({ marketplace: "off", apiKeys: { agent: "off", publicApi: "off" }, llmKeys: "env-only" });
     expect(describeLockdown()).toBe("lockdown=marketplace,agent-api-keys,public-api-key,llm-keys:env-only");
-    expect(lockdownPublicView()).toEqual({ active: true, marketplace: "off", apiKeys: { agent: "off", publicApi: "off" }, llmKeys: "env-only" });
+    expect(lockdownPublicView()).toEqual({ active: true, marketplace: "off", apiKeys: { agent: "off", publicApi: "off" }, llmKeys: "env-only", connectors: { allow: null } });
+  });
+});
+
+describe("connector types in the config", () => {
+  it("allows every type unless a list is given", () => {
+    expect(getLockdown().connectors.allow).toBeNull();
+    expect(connectorsRestricted()).toBe(false);
+    for (const kind of ["jira", "mcp", "openapi", "anything"]) expect(connectorAllowed(kind)).toBe(true);
+  });
+
+  it("allows exactly the types listed, and is then active", () => {
+    lock({ connectors: { allow: ["msgraph", "mcp"] } });
+    expect(getLockdown()).toMatchObject({ active: true, connectors: { allow: ["msgraph", "mcp"] } });
+    expect(connectorsRestricted()).toBe(true);
+    expect(connectorAllowed("msgraph")).toBe(true);
+    expect(connectorAllowed("mcp")).toBe(true);
+    for (const kind of ["jira", "openapi", "salesforce", "MSGRAPH", "msgraph "]) expect(connectorAllowed(kind), kind).toBe(false);
+  });
+
+  it("an empty list allows no connector at all", () => {
+    lock({ connectors: { allow: [] } });
+    expect(getLockdown().active).toBe(true);
+    for (const kind of ["jira", "mcp", "openapi"]) expect(connectorAllowed(kind)).toBe(false);
+  });
+
+  it("drops duplicates, and the list cannot be changed afterwards", () => {
+    const l = parseLockdown('{"connectors":{"allow":["jira","jira","mcp"]}}');
+    expect(l.connectors.allow).toEqual(["jira", "mcp"]);
+    expect(Object.isFrozen(l.connectors)).toBe(true);
+    expect(Object.isFrozen(l.connectors.allow)).toBe(true);
+    expect(() => (l.connectors.allow as string[]).push("salesforce")).toThrow(TypeError);
+  });
+
+  it("is described for the log and for the app", () => {
+    lock({ connectors: { allow: ["jira", "mcp"] } });
+    expect(describeLockdown()).toBe("lockdown=connectors:jira+mcp");
+    expect(lockdownPublicView().connectors).toEqual({ allow: ["jira", "mcp"] });
+    lock({ connectors: { allow: [] } });
+    expect(describeLockdown()).toBe("lockdown=connectors:none");
+  });
+
+  describe("a type the registry does not know stops the server at boot", () => {
+    const known = ["jira", "msgraph", "salesforce"];
+    it("accepts the registry's ids and the two generic kinds", () => {
+      lock({ connectors: { allow: ["jira", "msgraph", "mcp", "openapi"] } });
+      expect(validateLockdownEnv(known)).toEqual([]);
+    });
+    it("names what it does not know, and what it does", () => {
+      lock({ connectors: { allow: ["jira", "jirra", "Salesforce"] } });
+      const problems = validateLockdownEnv(known);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toMatch(/unknown connector type\(s\): jirra, Salesforce/);
+      expect(problems[0]).toMatch(/Known: .*jira.*mcp.*openapi/);
+    });
+    it("does not check ids when it is not told which exist", () => {
+      lock({ connectors: { allow: ["whatever"] } });
+      expect(validateLockdownEnv()).toEqual([]);
+    });
+    it("is checked by the server's own boot code, against the registry", () => {
+      const cfg = readFileSync("server/config.ts", "utf8");
+      expect(cfg).toContain("validateLockdownEnv(INTEGRATION_REGISTRY.map((def) => def.id))");
+    });
+  });
+
+  describe("what kind of connector a row is", () => {
+    it("is the integration it is, when it has one", () => {
+      expect(connectorKindOf({ integrationId: "jira", transportType: "streamable-http" })).toBe("jira");
+      expect(connectorKindOf({ integrationId: "msgraph", transportType: "rest-proxy" })).toBe("msgraph");
+    });
+    it("is openapi for an imported REST API, and mcp for every other transport", () => {
+      expect(connectorKindOf({ transportType: "rest-proxy" })).toBe("openapi");
+      expect(connectorKindOf({ transportType: "REST-PROXY" })).toBe("openapi");
+      for (const t of ["streamable-http", "sse", "http", "enterprise", "stdio", "", null, undefined]) expect(connectorKindOf({ transportType: t as any }), String(t)).toBe("mcp");
+      expect(connectorKindOf({})).toBe("mcp");
+    });
   });
 });
 
@@ -302,8 +383,8 @@ describe("where the lockdown is applied", () => {
 
   it("an unreadable lockdown stops the server at boot, and the app says what is closed", () => {
     const src = read("server/config.ts");
-    expect(src).toContain("errors.push(...validateLockdownEnv());");
-    expect(src.indexOf("validateLockdownEnv()")).toBeLessThan(src.indexOf("if (errors.length > 0)"));
+    expect(src).toContain("errors.push(...validateLockdownEnv(INTEGRATION_REGISTRY.map((def) => def.id)));");
+    expect(src.indexOf("validateLockdownEnv(")).toBeLessThan(src.indexOf("if (errors.length > 0)"));
     expect(src).toContain("describeLockdown()");
   });
 });

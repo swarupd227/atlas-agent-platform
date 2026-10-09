@@ -28,6 +28,8 @@ import { shadowApprovalRisk } from "./approval-risk-shadow";
 import { storage } from "./storage";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool, buildMcpAuthHeaders } from "./mcp-client";
 import { credentialsForStatusUrl, policyFetch } from "./url-safety";
+import { LockdownError, connectorAllowed, connectorKindOf } from "./lockdown";
+import { blockedConnectorKind } from "./connector-lockdown";
 import { resolvePolicyBundle } from "./routes/helpers";
 import type { RunSpanCollector } from "./run-spans";
 import { coerceToolArgsToSchema } from "./tool-arg-coercion";
@@ -64,6 +66,8 @@ export async function gatherAvailableTools(mcpServerIds: string[]): Promise<Avai
   for (const serverId of mcpServerIds) {
     const server = await storage.getMcpServer(serverId);
     if (!server || !server.url) continue;
+    // A connector type this deployment does not allow (server/lockdown.ts) is never offered to a model.
+    if (!connectorAllowed(connectorKindOf(server))) continue;
 
     const realServer = isRealMcpServer(server);
 
@@ -113,6 +117,7 @@ export type DispatchOutcome =
   | "success"
   | "deduplicated"
   | "gate_blocked_skill"
+  | "gate_blocked_lockdown"
   | "gate_blocked_policy"
   | "gate_blocked_aar"
   | "gate_blocked_warrant"
@@ -683,6 +688,10 @@ async function captureFileBasedScreenshot(result: unknown, tool: AvailableTool, 
 }
 
 export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
+  // The dispatcher refuses a disallowed connector first (with its own outcome); this is for the
+  // callers that execute a tool without going through it.
+  const blockedKind = await blockedConnectorKind(tool.serverId);
+  if (blockedKind) throw new LockdownError(`The "${blockedKind}" connector type`);
   const result = await executeToolUnwrapped(tool, args, orgId, agentId);
   // A document an external tool built comes back as bytes in its result: store
   // it as a run file so it can be downloaded and inspected (see
@@ -1033,6 +1042,23 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
       durationMs,
     };
   };
+
+  // 0. Platform lockdown — a connector of a type this deployment does not allow
+  //    (server/lockdown.ts, connectors.allow) cannot be called, whatever else would
+  //    permit it. The row stays; the call is refused and recorded.
+  const lockedKind = await blockedConnectorKind(tool.serverId);
+  if (lockedKind) {
+    const reason = `The "${lockedKind}" connector type is disabled by this deployment's platform policy`;
+    storage.createAuditEvent({
+      actorType: "system",
+      actorId: "platform_lockdown",
+      action: "tool_blocked_lockdown",
+      objectType: "agent",
+      objectId: agentId,
+      details: JSON.stringify({ toolName: tool.toolName, serverName: tool.serverName, connectorKind: lockedKind, reason, iteration: req.iteration, traceId: req.traceId }),
+    }).catch(() => {});
+    return finish({ outcome: "gate_blocked_lockdown", ok: false, result: null, error: reason, reason });
+  }
 
   // 1. Skill allowlist gate — skills grant tool capabilities; a declared
   //    allowlist that omits this tool refuses dispatch.

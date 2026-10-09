@@ -10,6 +10,7 @@ import { callN8nWorkflow } from "../integrations/n8n";
 import { getDefaultOrgId, getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
 import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
+import { connectorAllowed } from "../lockdown";
 import { db } from "../db";
 import { mcpServers, auditEvents, integrationConnections, agentMcpServers } from "@shared/schema";
 import { eq, and, gte, like, isNull } from "drizzle-orm";
@@ -53,7 +54,8 @@ router.get("/api/enterprise-integrations", async (req: Request, res: Response) =
     });
 
     // Optional ?industryId= narrows the catalogue; integrations not tagged to an industry are always included.
-    const defs = filterByIndustries(INTEGRATION_REGISTRY, industryQuery(req.query.industryId), (def) => def.industries);
+    // A connector type this deployment does not allow (server/lockdown.ts) is not offered.
+    const defs = filterByIndustries(INTEGRATION_REGISTRY.filter((def) => connectorAllowed(def.id)), industryQuery(req.query.industryId), (def) => def.industries);
     const result = defs.map((def) => {
       const conns = (connsByType.get(def.id) ?? [])
         .slice()
@@ -1526,7 +1528,7 @@ router.get("/api/integrations", async (req: Request, res: Response) => {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const connections = await storage.listIntegrationConnections(orgId);
     const connMap = new Map(connections.map((c) => [c.integrationId, c]));
-    const result = INTEGRATION_REGISTRY.map((def) => {
+    const result = INTEGRATION_REGISTRY.filter((def) => connectorAllowed(def.id)).map((def) => {
       const conn = connMap.get(def.id);
       return {
         ...def,
@@ -1669,7 +1671,7 @@ router.get("/api/connectors/overview", async (req: Request, res: Response) => {
 
     const connections = orgId ? await storage.listIntegrationConnections(orgId) : [];
     const connMap = new Map(connections.map((c) => [c.integrationId, c]));
-    const platforms = INTEGRATION_REGISTRY.map((def) => ({
+    const platforms = INTEGRATION_REGISTRY.filter((def) => connectorAllowed(def.id)).map((def) => ({
       id: def.id,
       name: def.name,
       category: def.category,

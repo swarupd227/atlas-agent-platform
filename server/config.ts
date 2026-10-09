@@ -3,6 +3,7 @@
 import { getSecurityMode } from "./auth";
 import { describeOutboundPolicy, validateOutboundPolicyEnv } from "./url-safety";
 import { describeLockdown, validateLockdownEnv } from "./lockdown";
+import { INTEGRATION_REGISTRY } from "./integrations/registry";
 
 /** True when demo & mock surfaces (/demo-api, /api/mock, mock-MCP, demo seeders) should be active. */
 export function demosEnabled(): boolean {
@@ -36,7 +37,7 @@ export function validateEnv(): void {
   // A malformed allowlist must stop the server: ignoring it would silently change what the app can reach.
   errors.push(...validateOutboundPolicyEnv());
   // A lockdown that cannot be read must stop the server too: running without it would be running unrestricted.
-  errors.push(...validateLockdownEnv());
+  errors.push(...validateLockdownEnv(INTEGRATION_REGISTRY.map((def) => def.id)));
 
   if (errors.length > 0) {
     console.error(

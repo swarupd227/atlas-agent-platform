@@ -143,6 +143,7 @@ import { registerEnterpriseIntegrations } from "./integrations/register";
 import { ensureMarketplaceSeedData } from "./marketplace-seed-data";
 import { getLockdown, llmKeyEntryGate, lockdownGate, lockdownPublicView } from "./lockdown";
 import { storage } from "./storage";
+import { connectorCreateGate, exactly, marketplaceInstallGate, mcpServerMutationGate, registerServerGate } from "./connector-lockdown";
 import { createSalesforceRouter } from "./integrations/salesforce/mcp-server";
 import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
 import { createServiceNowRouter } from "./integrations/servicenow/mcp-server";
@@ -296,11 +297,21 @@ export async function registerRoutes(
   app.use("/api/admin/llm-provider-keys", llmKeyEntryGate);
   app.get("/api/platform/lockdown", (_req, res) => res.json(lockdownPublicView()));
 
+  // Connector types (connectors.allow): creating a connector of a type this deployment does not
+  // allow is refused here; calling or editing an existing one is refused where that happens.
+  app.use("/api/integrations/:id/connect", exactly("POST", connectorCreateGate((req) => String(req.params.id))));
+  app.use("/api/openapi-import/create", exactly("POST", connectorCreateGate(() => "openapi")));
+  app.use("/api/mcp-servers", exactly("POST", registerServerGate));
+  app.use("/api/marketplace/servers/:id/install", exactly("POST", marketplaceInstallGate));
+  app.use("/api/marketplace/install-requests/:id/approve", exactly("PATCH", connectorCreateGate(() => "mcp")));
+
   // ── Tenant scoping (server/tenant-scope.ts) ──────────────────
   // Registered before every feature router so no per-id route for a connector,
   // its tools/resources/prompts, a blueprint or a blueprint's graph can act on
   // another organization's row, whichever router ends up handling it.
   app.use("/api/mcp-servers/:id", mcpServerScope);
+  // After the tenant check, so another tenant's connector is a 404, never a policy answer about it.
+  app.use("/api/mcp-servers/:id", mcpServerMutationGate);
   app.use("/api/mcp-tools/:id", mcpServerChildScope("tool", ["by-risk"]));
   app.use("/api/tool-catalog/:id", mcpServerChildScope("tool"));
   app.use("/api/mcp-resources/:id", mcpServerChildScope("resource"));
