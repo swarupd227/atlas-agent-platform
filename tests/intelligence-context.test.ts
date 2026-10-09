@@ -33,6 +33,7 @@ let decisionRecords: any[] = [];
 // fail-soft path is exercised rather than assumed.
 let dagRun: any = null;
 let policyBundle: any = null;
+let approvals: any[] = [];
 const getDecisionRecordsBySubjects = vi.fn(async (subjects: string[]) => decisionRecords.filter((r) => subjects.includes(r.subject)));
 const upsertDecisionRecord = vi.fn(async (rec: any) => { decisionRecords.push(rec); return rec; });
 // The flag now lives in platform_settings, as GUARDRAIL_REVIEW and
@@ -59,6 +60,7 @@ vi.mock("../server/storage", () => ({
   storage: {
     listDagExecutionRunsByOrg: vi.fn(async () => runs),
     getDagExecutionRun: vi.fn(async () => dagRun),
+    getApprovals: vi.fn(async () => approvals),
     getAgent: vi.fn(async (id: string) => ({ id, name: "E&S Property Binding Orchestrator", blueprintId: "bp1" })),
     getTeamBlueprintNodes,
     getPlatformSetting,
@@ -1198,5 +1200,126 @@ describe("contextUsed counts each prior decision once, not once per step", () =>
     const cu = upsertDecisionRecord.mock.calls[0][0].contextUsed;
     expect(cu.items).toHaveLength(2);
     expect(cu.items.map((i: any) => i.subject).sort()).toEqual(["binder:CP-2026-17", "submission:SUB-2026-8891"]);
+  });
+});
+
+describe("P4.2: why, what was flagged, and which person settled it", () => {
+  /**
+   * The two NAIC rows the record scored worst on after P4.1: "what rationale
+   * was recorded" and the half of "which system or person acted" that names a
+   * person.
+   *
+   * The trap the rationale avoids is asking the model. An agent asked "why did
+   * you decide that?" produces a justification, and this platform has already
+   * caught one asserting a figure it had not read. So every part of the
+   * rationale is something that HAPPENED and says where it came from, and the
+   * model's own words are labelled as the model's words.
+   */
+  const nodeConfig = {
+    n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" },
+    n2: { stateKey: "fetch_treaty_terms", nodeType: "tool_call", label: "Treaty Lookup" },
+  };
+  const state = {
+    submissionId: "SUB-2026-8891",
+    bind_policy: "bound",
+    fetch_treaty_terms: { limit: 50 },
+    fetch_treaty_terms_verified: [{ fact: "treaty limit 50M", source: "treaty_api" }],
+    fetch_treaty_terms_sources: ["treaty_api"],
+  };
+
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear();
+    policyBundle = null; approvals = [];
+    dagRun = { id: "run-1", waveResults: [{ results: [
+      { nodeId: "n1", judgments: [
+        { kind: "facts", subject: "treaty limit", ok: false, severity: "high", evidence: "stated 50M, tool returned 50M for a different treaty" },
+        { kind: "appetite", subject: "coastal TIV", ok: true },
+      ] },
+      { nodeId: "n2", judgments: [{ kind: "facts", subject: "treaty limit", ok: false, severity: "high" }] },
+    ] }] };
+  });
+
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+
+  it("records only the checks that FAILED, named by step", async () => {
+    await write();
+    const pf = upsertDecisionRecord.mock.calls[0][0].patternsFlagged;
+    // The passing judgment is the absence of a flag; recording it would bury
+    // the ones that matter.
+    expect(pf.map((p: any) => p.subject)).toEqual(["treaty limit", "treaty limit"]);
+    expect(pf[0]).toMatchObject({ step: "Binding Decision", kind: "facts", severity: "high" });
+    expect(pf[1].step).toBe("Treaty Lookup");
+    expect(pf.some((p: any) => p.subject === "coastal TIV")).toBe(false);
+  });
+
+  it("does not report the same judgment once per step as several findings", async () => {
+    // Two steps, same kind and subject, different steps: two entries, because
+    // they ARE different checks. The same step twice would be one.
+    dagRun.waveResults[0].results.push({ nodeId: "n1", judgments: [{ kind: "facts", subject: "treaty limit", ok: false }] });
+    await write();
+    const pf = upsertDecisionRecord.mock.calls[0][0].patternsFlagged;
+    expect(pf).toHaveLength(2);
+  });
+
+  it("builds the rationale from what happened, each part saying where it came from", async () => {
+    await write();
+    const r = upsertDecisionRecord.mock.calls[0][0].rationale;
+    // Facts a tool actually returned, found by the engine's evidence suffixes.
+    expect(r.verifiedFacts.stateKeys.sort()).toEqual(["fetch_treaty_terms_sources", "fetch_treaty_terms_verified"]);
+    expect(r.verifiedFacts.source).toBe("tool_output");
+    expect(r.flagged.count).toBe(2);
+    expect(r.flagged.kinds).toEqual(["facts"]);
+    expect(r.gate.source).toBe("approval_record");
+  });
+
+  it("labels the model's own words as the model's words", async () => {
+    // Kept because it is often the clearest summary; labelled because it is
+    // not evidence of anything.
+    // teamStateKeyFor("E&S") is "e_s" -- lowercased, non-alphanumerics to
+    // underscores. The first version of this test wrote "E_S", so the key
+    // never matched, narrative was undefined, and both assertions sat behind
+    // an `if` that never ran. A test that cannot fail is not a test.
+    (state as any).e_s = "Bound at 50M because the treaty permits it.";
+    await write();
+    const r = upsertDecisionRecord.mock.calls[0][0].rationale;
+    expect(r.narrative, "the narrative was not captured at all").toBeTruthy();
+    expect(r.narrative.text).toContain("Bound at 50M");
+    expect(r.narrative.source).toBe("model_output");
+    // Nothing else: the model's words carry their label and no implied status.
+    expect(Object.keys(r.narrative).sort()).toEqual(["source", "text"]);
+    delete (state as any).e_s;
+  });
+
+  it("names the person who settled the gate, not just the team", async () => {
+    approvals = [
+      { objectId: "run-1", decidedBy: "u-priya", decidedAt: new Date("2026-10-09T09:30:00Z") },
+      { objectId: "another-run", decidedBy: "u-someone-else", decidedAt: new Date() },
+    ];
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.decidedByUserId).toBe("u-priya");
+    expect(rec.rationale.gate).toMatchObject({ passed: true, by: "u-priya" });
+    // decidedBy still answers "which system".
+    expect(rec.decidedBy).toBe("E&S");
+  });
+
+  it("says a gate was NOT passed rather than leaving it ambiguous", async () => {
+    approvals = [];
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.decidedByUserId).toBeNull();
+    expect(rec.rationale.gate).toEqual({ passed: false, source: "approval_record" });
+  });
+
+  it("still indexes the decision when the rationale cannot be assembled", async () => {
+    dagRun = null;
+    await expect(write()).resolves.toBeTruthy();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.subject).toBe("submission:SUB-2026-8891");
+    expect(rec.rationale).toBeNull();
+    expect(rec.patternsFlagged).toBeNull();
   });
 });

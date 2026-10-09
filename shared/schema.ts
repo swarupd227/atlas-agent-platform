@@ -1655,6 +1655,30 @@ export const decisionRecords = pgTable("decision_records", {
    * applied.
    */
   controlsApplied: jsonb("controls_applied"),
+  /**
+   * Why, assembled from what the run DID rather than by asking the model
+   * afterwards (design section 6e). An agent asked "why did you decide that?"
+   * produces a justification, and this platform has already caught one
+   * asserting a figure it had not read. Where the model's own words are kept
+   * they are labelled as the model's words, never as the reason.
+   *
+   * NULL means not captured.
+   */
+  rationale: jsonb("rationale"),
+  /**
+   * What the run flagged: the judgments that came back `ok: false`, with their
+   * kind, subject, severity and step. These are the checks the platform ran
+   * and failed, so they belong to the decision as much as its conclusion does.
+   *
+   * NULL means not captured; an empty array means captured, nothing flagged.
+   */
+  patternsFlagged: jsonb("patterns_flagged"),
+  /**
+   * The PERSON who settled the gate, when one did. `decidedBy` answers "which
+   * system" (the team) and could never answer "which person", which is half of
+   * one NAIC row on its own.
+   */
+  decidedByUserId: varchar("decided_by_user_id"),
 
   createdAt: timestamp("created_at").defaultNow(),
 });

@@ -2081,6 +2081,10 @@ export async function runStartupMigrations() {
     await client.query(`
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS context_used JSONB;
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS controls_applied JSONB;
+      -- Phase 4.2: why, what the run flagged, and which person settled the gate.
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS rationale JSONB;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS patterns_flagged JSONB;
+      ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS decided_by_user_id VARCHAR;
     `);
 
     // Design section 6f: a retrieval representation must say what content, and
