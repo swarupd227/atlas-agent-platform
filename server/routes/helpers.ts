@@ -1421,6 +1421,21 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
       domain: p.domain,
       version: p.version ?? 1,
       enforcement: (p as any)._enforcementOverride || (p.policyJson as any)?.enforcement || "monitor",
+      /**
+       * Was this policy chosen for this agent, or does it apply to everything?
+       *
+       * An org policy with no policyJson.industry reaches every agent in the
+       * organisation. Measured 2026-10-09: 71 of 75 active org policies carry
+       * no industry, so an insurance decision records 7 editorial-oversight
+       * and 5 marketing-governance policies among its "controls applied".
+       *
+       * Enforcement is right to keep applying them -- the fail-open rule above
+       * is deliberate and measured. But a compliance record that lists 73
+       * controls without saying 71 are org-wide defaults overstates what was
+       * actually brought to bear on the decision, so the distinction travels
+       * with the policy rather than being inferred downstream.
+       */
+      targeted: p.scopeType !== "org" || typeof (p.policyJson as any)?.industry === "string",
     })),
     toolAllowlist: Array.from(new Set(toolAllowlist)),
     blockedTools: Array.from(new Set(blockedTools)),

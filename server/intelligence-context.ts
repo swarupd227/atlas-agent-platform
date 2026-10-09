@@ -786,11 +786,26 @@ async function collectControlsApplied(teamAgentId: string, orgId?: string | null
     const { resolvePolicyBundle } = await import("./routes/helpers");
     const bundle: any = await resolvePolicyBundle(teamAgentId, orgId ?? undefined);
     if (!bundle) return null;
+    const policies = (bundle.appliedPolicies ?? []).map((p: any) => ({
+      id: p.id, name: p.name, version: p.version ?? 1,
+      enforcement: p.enforcement, scope: p.scope, domain: p.domain,
+      targeted: p.targeted === true,
+    }));
+    const targeted = policies.filter((p: any) => p.targeted).length;
+    const orgWide = policies.length - targeted;
     return {
-      policies: (bundle.appliedPolicies ?? []).map((p: any) => ({
-        id: p.id, name: p.name, version: p.version ?? 1,
-        enforcement: p.enforcement, scope: p.scope, domain: p.domain,
-      })),
+      policies,
+      // The counts, because the list alone overstates. Measured on the live
+      // platform: an insurance decision recorded 73 policies of which 71 were
+      // org-wide defaults -- 7 editorial-oversight, 5 marketing-governance,
+      // 4 production-governance -- that reach every agent in the organisation
+      // regardless of what it does. Saying "73 controls applied" without that
+      // split is the same overstatement as "all checks passed" from one check.
+      targetedCount: targeted,
+      orgWideCount: orgWide,
+      note: orgWide > 0
+        ? `${targeted} of ${policies.length} policies were selected for this agent; the other ${orgWide} are organisation-wide defaults that apply to every agent.`
+        : `All ${policies.length} policies were selected for this agent.`,
       guardrails: bundle.guardrails ?? [],
       blockedTools: bundle.blockedTools ?? [],
       resolvedAt: new Date().toISOString(),

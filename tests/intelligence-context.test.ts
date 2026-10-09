@@ -1651,3 +1651,71 @@ describe("the approver lookup, after the link was moved out of prose", () => {
     expect(upsertDecisionRecord.mock.calls[0][0].decidedByUserId).toBe("last");
   });
 });
+
+describe("controlsApplied says which policies were actually for this agent", () => {
+  /**
+   * Measured on the live platform 2026-10-09: 75 active org-scoped policies,
+   * and only 4 carry the policyJson.industry that scopes them. So 71 reach
+   * every agent, and an insurance account-establishment decision recorded 73
+   * policies -- including 7 editorial_oversight, 5 marketing_governance and
+   * 4 production_governance -- as its "controls applied".
+   *
+   * Enforcement is NOT the thing to change: resolvePolicyBundle fails open on
+   * purpose, because 485 of 586 agents carry no ontology tags and a
+   * fail-closed rule would strip governance from 83% of the fleet. The record
+   * is what overstated -- listing 73 controls without saying 71 of them apply
+   * to everything.
+   */
+  const nodeConfig = { n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" } };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound" };
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear();
+    approvals = []; toolInvocations = []; dagRun = { id: "run-1", waveResults: [] };
+  });
+
+  it("splits targeted controls from organisation-wide defaults", async () => {
+    policyBundle = { appliedPolicies: [
+      { id: "a1", name: "Treaty limit check", scope: "agent", domain: "underwriting", version: 2, enforcement: "strict", targeted: true },
+      { id: "o1", name: "Editorial Oversight", scope: "org", domain: "editorial_oversight", version: 1, enforcement: "monitor", targeted: false },
+      { id: "o2", name: "Marketing Governance", scope: "org", domain: "marketing_governance", version: 1, enforcement: "monitor", targeted: false },
+    ], guardrails: [], blockedTools: [] };
+    await write();
+    const c = upsertDecisionRecord.mock.calls[0][0].controlsApplied;
+    expect(c.policies).toHaveLength(3);
+    expect(c.targetedCount).toBe(1);
+    expect(c.orgWideCount).toBe(2);
+    expect(c.note).toMatch(/1 of 3 policies were selected for this agent/);
+    expect(c.note).toMatch(/other 2 are organisation-wide defaults/);
+  });
+
+  it("counts an industry-scoped org policy as targeted", async () => {
+    // The 4 of 75 that adopted the opt-in DID narrow themselves to an
+    // industry, so they are not catch-alls.
+    policyBundle = { appliedPolicies: [
+      { id: "o1", name: "Insurance conduct", scope: "org", domain: "compliance", version: 1, enforcement: "strict", targeted: true },
+    ], guardrails: [], blockedTools: [] };
+    await write();
+    const c = upsertDecisionRecord.mock.calls[0][0].controlsApplied;
+    expect(c).toMatchObject({ targetedCount: 1, orgWideCount: 0 });
+    expect(c.note).toMatch(/All 1 policies were selected/);
+  });
+
+  it("still records every policy, because enforcement did apply them", async () => {
+    // The split is about honesty, not about hiding governance: all three are
+    // still listed, with their versions.
+    policyBundle = { appliedPolicies: [
+      { id: "o1", name: "A", scope: "org", domain: "x", version: 3, enforcement: "monitor", targeted: false },
+      { id: "o2", name: "B", scope: "org", domain: "y", version: 1, enforcement: "monitor", targeted: false },
+    ], guardrails: ["no_pii"], blockedTools: ["send_email"] };
+    await write();
+    const c = upsertDecisionRecord.mock.calls[0][0].controlsApplied;
+    expect(c.policies.map((p: any) => p.id)).toEqual(["o1", "o2"]);
+    expect(c.policies[0].version).toBe(3);
+    expect(c.guardrails).toEqual(["no_pii"]);
+    expect(c.orgWideCount).toBe(2);
+  });
+});
