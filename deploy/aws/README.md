@@ -9,6 +9,18 @@ This directory is the authoritative AWS deployment runbook. It creates or update
 3. **Harden:** `operate.sh` restricts the EC2 role, authenticates CloudFront-to-ALB requests, limits ALB ingress to the CloudFront managed prefix list, attaches WAF, and rotates only the AWS JWT secret when requested.
 4. **Verify or remove:** Runtime verification checks the exact digest and local health through SSM. `cleanup.sh` deletes only the deployment recorded in its state directory.
 
+## Security review status for the current demo
+
+Verified on 9 October 2026:
+
+- **Direct ALB access — complete:** ALB port 80 accepts only the CloudFront origin-facing managed prefix list. Direct internet requests time out, and the listener also requires the deployment-specific CloudFront origin header.
+- **WAF — complete; custom TLS — deferred:** WAF and WAF logging are active. The default CloudFront hostname and certificate remain in use; custom DNS, ACM, and a stronger viewer TLS minimum are not configured.
+- **CI image build and pull-only EC2 — complete:** GitHub Actions pushes immutable ECR images, deployments use full digests, and the EC2 role is denied ECR push operations.
+- **AWS-specific secrets — partial:** the AWS JWT secret is independently generated and rotated. The bootstrap admin password is unchanged and SSO is not enabled.
+- **AI data residency — deferred:** OpenAI and Anthropic routing is unchanged. Hilti approval or a separate Bedrock migration is still required; an embedding-model change requires re-embedding existing documents.
+
+In plain language: the public back door is closed, WAF is active, and production no longer builds or publishes software. The remaining decisions are the custom hostname/TLS policy, optional admin-password and SSO work, and AI-provider data residency.
+
 ## Prerequisites
 
 - Bash, AWS CLI v2, Azure CLI, Git, GitHub CLI, `jq`, `curl`, and `openssl`.
