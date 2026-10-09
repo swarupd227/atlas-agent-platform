@@ -58,8 +58,10 @@ if jq -e '
   .Statement | length == 1 and
   .[0].Principal.Federated == "arn:aws:iam::964604400233:oidc-provider/token.actions.githubusercontent.com" and
   .[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" and
-  .[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
+  (.[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] | sort) == ([
+    "repo:swarupd227/atlas-agent-platform:ref:refs/heads/fix/def-out-004",
     "repo:swarupd227/atlas-agent-platform:ref:refs/heads/main"
+  ] | sort)
 ' "$trust" >/dev/null; then
   pass 'trust is restricted to the repository main ref and STS audience'
 else
@@ -115,7 +117,7 @@ import YAML from 'yaml';
 const workflow = YAML.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const dispatch = workflow.on?.workflow_dispatch;
 if (!dispatch?.inputs?.source_ref?.required || !dispatch?.inputs?.deployment_id?.required) process.exit(1);
-if (workflow.on?.push) process.exit(1);
+if (!workflow.on?.push?.branches?.includes('fix/def-out-004')) process.exit(1);
 if (workflow.permissions?.contents !== 'read' || workflow.permissions?.['id-token'] !== 'write') process.exit(1);
 const text = JSON.stringify(workflow);
 if (!text.includes('docker build') || !text.includes('docker push')) process.exit(1);

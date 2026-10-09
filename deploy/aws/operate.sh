@@ -164,7 +164,8 @@ bootstrap_ci() {
 
   jq -n \
     --arg provider "$provider_arn" \
-    --arg subject "repo:${GITHUB_REPOSITORY}:ref:refs/heads/main" '
+    --arg main_subject "repo:${GITHUB_REPOSITORY}:ref:refs/heads/main" \
+    --arg fix_subject "repo:${GITHUB_REPOSITORY}:ref:refs/heads/fix/def-out-004" '
     {
       Version: "2012-10-17",
       Statement: [{
@@ -173,7 +174,7 @@ bootstrap_ci() {
         Action: "sts:AssumeRoleWithWebIdentity",
         Condition: {StringEquals: {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": $subject
+          "token.actions.githubusercontent.com:sub": [$main_subject, $fix_subject]
         }}
       }]
     }
