@@ -81,3 +81,20 @@ init_state_dir() {
   chmod 0700 "$ASTRA_STATE_ROOT" "$state_dir"
   printf '%s\n' "$state_dir"
 }
+
+replace_json_secret_field() {
+  local source_file=$1 target_file=$2 field_name=$3 field_value=$4
+  local temporary_file="${target_file}.tmp.$$"
+
+  jq -e --arg field "$field_name" --arg value "$field_value" '
+    if (has($field) and (.[$field] | type == "string"))
+    then .[$field] = $value
+    else error("required string field is missing: " + $field)
+    end
+  ' "$source_file" >"$temporary_file" || {
+    rm -f -- "$temporary_file"
+    return 1
+  }
+  chmod 0600 "$temporary_file"
+  mv -f -- "$temporary_file" "$target_file"
+}

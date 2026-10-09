@@ -11,6 +11,8 @@ EXPECTED_ACCOUNT_ID=${EXPECTED_ACCOUNT_ID:-964604400233}
 GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-swarupd227/atlas-agent-platform}
 GITHUB_DEPLOY_ROLE=${GITHUB_DEPLOY_ROLE:-astra-agents-github-ecr-push}
 GITHUB_OIDC_PROVIDER=${GITHUB_OIDC_PROVIDER:-token.actions.githubusercontent.com}
+CURL_BIN=${CURL_BIN:-curl}
+OPENSSL_BIN=${OPENSSL_BIN:-openssl}
 
 usage() {
   cat <<'USAGE'
@@ -22,12 +24,17 @@ Commands:
   verify         Verify the exact digest and local application health.
   harden-runtime-role
                  Restrict the EC2 role to runtime pull/read access.
+  harden-edge    Add origin authentication, WAF, and CloudFront-only ALB access.
+  rollback-edge  Restore the captured pre-hardening edge configuration.
+  rotate-jwt     Rotate only the AWS JWT secret and redeploy an exact digest.
+  rollback-jwt   Restore the prior JWT secret version and redeploy.
 USAGE
 }
 
 parse_options() {
   DEPLOYMENT_ID=${DEPLOYMENT_ID:-}
   IMAGE_DIGEST=${IMAGE_DIGEST:-}
+  CLOUDFRONT_DISTRIBUTION_ID=${CLOUDFRONT_DISTRIBUTION_ID:-}
   while (( $# )); do
     case "$1" in
       --deployment-id)
@@ -38,6 +45,11 @@ parse_options() {
       --digest)
         (( $# >= 2 )) || { printf 'ERROR: --digest requires a value.\n' >&2; return 2; }
         IMAGE_DIGEST=$2
+        shift 2
+        ;;
+      --distribution-id)
+        (( $# >= 2 )) || { printf 'ERROR: --distribution-id requires a value.\n' >&2; return 2; }
+        CLOUDFRONT_DISTRIBUTION_ID=$2
         shift 2
         ;;
       *) printf 'ERROR: unknown option: %s\n' "$1" >&2; return 2 ;;
@@ -423,10 +435,483 @@ VERIFY_SCRIPT
   printf 'Runtime verified: %s@%s on %s\n' "$repository_uri" "$IMAGE_DIGEST" "$instance_id"
 }
 
+ensure_cloudfront_waf() {
+  local state_dir=$1 rules_file list_json waf_id waf_arn create_json current_json lock_token
+  local default_action_file visibility_file logging_file log_group_arn
+  rules_file="$SCRIPT_DIR/waf-rules.json"
+  default_action_file="$state_dir/waf-default-action.json"
+  visibility_file="$state_dir/waf-visibility.json"
+  logging_file="$state_dir/waf-logging.json"
+  printf '{"Allow":{}}\n' >"$default_action_file"
+  jq -n --arg metric "${RESOURCE_PREFIX}-cloudfront" '{
+    SampledRequestsEnabled: true,
+    CloudWatchMetricsEnabled: true,
+    MetricName: $metric
+  }' >"$visibility_file"
+
+  list_json=$(aws_cli wafv2 list-web-acls \
+    --region us-east-1 \
+    --scope CLOUDFRONT \
+    --output json)
+  waf_id=$(jq -r --arg name "$WAF_NAME" \
+    '.WebACLs[]? | select(.Name == $name) | .Id' <<<"$list_json" | head -n1)
+  waf_arn=$(jq -r --arg name "$WAF_NAME" \
+    '.WebACLs[]? | select(.Name == $name) | .ARN' <<<"$list_json" | head -n1)
+
+  if [[ -z "$waf_id" || "$waf_id" == null ]]; then
+    create_json=$(aws_cli wafv2 create-web-acl \
+      --region us-east-1 \
+      --name "$WAF_NAME" \
+      --scope CLOUDFRONT \
+      --description "Staged protection for ${RESOURCE_PREFIX}" \
+      --default-action "file://$default_action_file" \
+      --rules "file://$rules_file" \
+      --visibility-config "file://$visibility_file" \
+      --tags Key=Application,Value=astra-agents Key=Environment,Value="$ENVIRONMENT" \
+      --output json)
+    waf_id=$(jq -r '.Summary.Id' <<<"$create_json")
+    waf_arn=$(jq -r '.Summary.ARN' <<<"$create_json")
+  else
+    current_json=$(aws_cli wafv2 get-web-acl \
+      --region us-east-1 \
+      --name "$WAF_NAME" \
+      --scope CLOUDFRONT \
+      --id "$waf_id" \
+      --output json)
+    lock_token=$(jq -r '.LockToken' <<<"$current_json")
+    aws_cli wafv2 update-web-acl \
+      --region us-east-1 \
+      --name "$WAF_NAME" \
+      --scope CLOUDFRONT \
+      --id "$waf_id" \
+      --lock-token "$lock_token" \
+      --description "Staged protection for ${RESOURCE_PREFIX}" \
+      --default-action "file://$default_action_file" \
+      --rules "file://$rules_file" \
+      --visibility-config "file://$visibility_file" >/dev/null
+  fi
+
+  if ! aws_cli logs describe-log-groups \
+    --region us-east-1 \
+    --log-group-name-prefix "$WAF_LOG_GROUP" \
+    --query "logGroups[?logGroupName=='${WAF_LOG_GROUP}'].logGroupName | [0]" \
+    --output text | grep -Fxq "$WAF_LOG_GROUP"; then
+    aws_cli logs create-log-group \
+      --region us-east-1 \
+      --log-group-name "$WAF_LOG_GROUP" \
+      --tags Application=astra-agents,Environment="$ENVIRONMENT"
+  fi
+  aws_cli logs put-retention-policy \
+    --region us-east-1 \
+    --log-group-name "$WAF_LOG_GROUP" \
+    --retention-in-days 30
+  log_group_arn="arn:aws:logs:us-east-1:${ACCOUNT_ID}:log-group:${WAF_LOG_GROUP}"
+  jq -n --arg resource "$waf_arn" --arg destination "$log_group_arn" '{
+    ResourceArn: $resource,
+    LogDestinationConfigs: [$destination],
+    RedactedFields: [
+      {SingleHeader: {Name: "authorization"}},
+      {SingleHeader: {Name: "cookie"}}
+    ]
+  }' >"$logging_file"
+  aws_cli wafv2 put-logging-configuration \
+    --region us-east-1 \
+    --logging-configuration "file://$logging_file" >/dev/null
+  printf '%s\n' "$waf_arn"
+}
+
+harden_edge() {
+  local state_dir alb_json alb_arn alb_dns alb_sg listener_json listener_arn target_group_arn
+  local distribution_json distribution_domain distribution_etag origin_matches origin_secret_value
+  local origin_secret_file updated_distribution waf_arn rule_priority priorities candidate rule_arn
+  local prefix_list_id sg_rules public_rule_id direct_status edge_state
+  require_commands "$AWS_BIN" jq "$CURL_BIN" "$OPENSSL_BIN"
+  require_expected_account
+  [[ "$CLOUDFRONT_DISTRIBUTION_ID" =~ ^E[A-Z0-9]+$ ]] || {
+    printf 'ERROR: harden-edge requires --distribution-id.\n' >&2
+    return 2
+  }
+  state_dir=$(init_state_dir "$DEPLOYMENT_ID")
+  edge_state="$state_dir/edge-state.env"
+  if [[ -f "$edge_state" ]] && grep -Fq 'export EDGE_STAGE=complete' "$edge_state"; then
+    printf 'ERROR: edge hardening is already recorded as complete; verify or roll it back first.\n' >&2
+    return 1
+  fi
+
+  alb_json=$(aws_cli elbv2 describe-load-balancers \
+    --region "$AWS_REGION" \
+    --names "${RESOURCE_PREFIX}-alb" \
+    --output json)
+  alb_arn=$(jq -r '.LoadBalancers[0].LoadBalancerArn' <<<"$alb_json")
+  alb_dns=$(jq -r '.LoadBalancers[0].DNSName' <<<"$alb_json")
+  alb_sg=$(jq -r '.LoadBalancers[0].SecurityGroups[0]' <<<"$alb_json")
+  [[ "$alb_arn" != null && "$alb_dns" != null && "$alb_sg" != null ]] || {
+    printf 'ERROR: could not resolve one ALB for %s.\n' "$DEPLOYMENT_ID" >&2
+    return 1
+  }
+  listener_json=$(aws_cli elbv2 describe-listeners \
+    --region "$AWS_REGION" \
+    --load-balancer-arn "$alb_arn" \
+    --output json)
+  [[ $(jq '[.Listeners[] | select(.Port == 80)] | length' <<<"$listener_json") -eq 1 ]] || {
+    printf 'ERROR: expected exactly one HTTP listener on %s.\n' "$alb_arn" >&2
+    return 1
+  }
+  listener_arn=$(jq -r '.Listeners[] | select(.Port == 80) | .ListenerArn' <<<"$listener_json")
+  target_group_arn=$(aws_cli elbv2 describe-target-groups \
+    --region "$AWS_REGION" \
+    --names "${RESOURCE_PREFIX}-tg" \
+    --query 'TargetGroups[0].TargetGroupArn' \
+    --output text)
+
+  distribution_json=$(aws_cli cloudfront get-distribution-config \
+    --id "$CLOUDFRONT_DISTRIBUTION_ID" \
+    --output json)
+  distribution_domain=$(aws_cli cloudfront get-distribution \
+    --id "$CLOUDFRONT_DISTRIBUTION_ID" \
+    --query 'Distribution.DomainName' \
+    --output text)
+  distribution_etag=$(jq -r '.ETag' <<<"$distribution_json")
+  origin_matches=$(jq --arg domain "$alb_dns" \
+    '[.DistributionConfig.Origins.Items[] | select(.DomainName == $domain)] | length' \
+    <<<"$distribution_json")
+  [[ "$origin_matches" -eq 1 ]] || {
+    printf 'ERROR: CloudFront distribution does not contain exactly one expected ALB origin.\n' >&2
+    return 1
+  }
+  printf '%s\n' "$distribution_json" >"$state_dir/distribution-before.json"
+  printf '%s\n' "$listener_json" >"$state_dir/listener-before.json"
+  sg_rules=$(aws_cli ec2 describe-security-group-rules \
+    --region "$AWS_REGION" \
+    --filters "Name=group-id,Values=$alb_sg" \
+    --output json)
+  printf '%s\n' "$sg_rules" >"$state_dir/security-group-before.json"
+  {
+    printf 'export EDGE_STAGE=state-captured\n'
+    printf 'export CLOUDFRONT_DISTRIBUTION_ID=%q\n' "$CLOUDFRONT_DISTRIBUTION_ID"
+    printf 'export ALB_ARN=%q\n' "$alb_arn"
+    printf 'export ALB_DNS=%q\n' "$alb_dns"
+    printf 'export ALB_SECURITY_GROUP_ID=%q\n' "$alb_sg"
+    printf 'export HTTP_LISTENER_ARN=%q\n' "$listener_arn"
+    printf 'export ORIGIN_RULE_ARN=%q\n' ''
+    printf 'export CLOUDFRONT_PREFIX_LIST_ID=%q\n' ''
+    printf 'export WAF_ARN=%q\n' ''
+  } >"$edge_state"
+  chmod 0600 "$edge_state"
+
+  origin_secret_file="$state_dir/origin-secret.txt"
+  if origin_secret_value=$(aws_cli secretsmanager get-secret-value \
+    --region "$AWS_REGION" \
+    --secret-id "$ORIGIN_SECRET_NAME" \
+    --query SecretString \
+    --output text 2>/dev/null); then
+    [[ "$origin_secret_value" =~ ^[0-9a-f]{64}$ ]] || {
+      printf 'ERROR: existing origin secret has an unexpected format.\n' >&2
+      return 1
+    }
+  else
+    origin_secret_value=$($OPENSSL_BIN rand -hex 32)
+    printf '%s' "$origin_secret_value" >"$origin_secret_file"
+    aws_cli secretsmanager create-secret \
+      --region "$AWS_REGION" \
+      --name "$ORIGIN_SECRET_NAME" \
+      --description "CloudFront origin authentication for ${RESOURCE_PREFIX}" \
+      --secret-string "file://$origin_secret_file" \
+      --tags Key=Application,Value=astra-agents Key=Environment,Value="$ENVIRONMENT" >/dev/null
+  fi
+  printf '%s' "$origin_secret_value" >"$origin_secret_file"
+  chmod 0600 "$origin_secret_file"
+
+  waf_arn=$(ensure_cloudfront_waf "$state_dir")
+  updated_distribution="$state_dir/distribution-hardened.json"
+  jq --arg domain "$alb_dns" \
+     --arg header 'X-Astra-Origin-Verify' \
+     --arg value "$origin_secret_value" \
+     --arg waf "$waf_arn" '
+    .DistributionConfig
+    | .WebACLId = $waf
+    | (.Origins.Items[] | select(.DomainName == $domain) | .CustomHeaders) |=
+        (((.Items // [])
+          | map(select((.HeaderName | ascii_downcase) != ($header | ascii_downcase)))
+          | . + [{HeaderName: $header, HeaderValue: $value}]) as $items
+         | {Quantity: ($items | length), Items: $items})
+  ' <<<"$distribution_json" >"$updated_distribution"
+  aws_cli cloudfront update-distribution \
+    --id "$CLOUDFRONT_DISTRIBUTION_ID" \
+    --if-match "$distribution_etag" \
+    --distribution-config "file://$updated_distribution" >/dev/null
+  aws_cli cloudfront wait distribution-deployed \
+    --id "$CLOUDFRONT_DISTRIBUTION_ID"
+  if ! "$CURL_BIN" --fail --silent --show-error \
+    --retry 6 --retry-all-errors --retry-delay 5 \
+    "https://${distribution_domain}/health" >/dev/null; then
+    printf 'ERROR: CloudFront health verification failed; ALB access remains unchanged.\n' >&2
+    return 1
+  fi
+
+  priorities=$(aws_cli elbv2 describe-rules \
+    --region "$AWS_REGION" \
+    --listener-arn "$listener_arn" \
+    --query 'Rules[?Priority!=`default`].Priority' \
+    --output text)
+  rule_priority=''
+  for (( candidate=1; candidate<=50000; candidate++ )); do
+    if ! grep -Eq "(^|[[:space:]])${candidate}([[:space:]]|$)" <<<"$priorities"; then
+      rule_priority=$candidate
+      break
+    fi
+  done
+  [[ -n "$rule_priority" ]] || { printf 'ERROR: no ALB listener rule priority is available.\n' >&2; return 1; }
+  jq -n --arg target "$target_group_arn" '[{Type:"forward",TargetGroupArn:$target}]' \
+    >"$state_dir/listener-origin-actions.json"
+  jq -n --arg value "$origin_secret_value" '[{
+    Field: "http-header",
+    HttpHeaderConfig: {HttpHeaderName: "X-Astra-Origin-Verify", Values: [$value]}
+  }]' >"$state_dir/listener-origin-conditions.json"
+  rule_arn=$(aws_cli elbv2 create-rule \
+    --region "$AWS_REGION" \
+    --listener-arn "$listener_arn" \
+    --priority "$rule_priority" \
+    --conditions "file://$state_dir/listener-origin-conditions.json" \
+    --actions "file://$state_dir/listener-origin-actions.json" \
+    --query 'Rules[0].RuleArn' \
+    --output text)
+  printf '[{"Type":"fixed-response","FixedResponseConfig":{"StatusCode":"403","ContentType":"text/plain","MessageBody":"Forbidden"}}]\n' \
+    >"$state_dir/listener-default-403.json"
+  aws_cli elbv2 modify-listener \
+    --region "$AWS_REGION" \
+    --listener-arn "$listener_arn" \
+    --default-actions "file://$state_dir/listener-default-403.json" >/dev/null
+
+  direct_status=$($CURL_BIN --silent --output /dev/null --write-out '%{http_code}' \
+    --connect-timeout 10 "http://${alb_dns}/health" || true)
+  [[ "$direct_status" == 403 ]] || {
+    printf 'ERROR: direct ALB request returned %s instead of 403.\n' "$direct_status" >&2
+    return 1
+  }
+  "$CURL_BIN" --fail --silent --show-error \
+    "https://${distribution_domain}/health" >/dev/null
+
+  prefix_list_id=$(aws_cli ec2 describe-managed-prefix-lists \
+    --region "$AWS_REGION" \
+    --filters 'Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing' \
+    --query 'PrefixLists[0].PrefixListId' \
+    --output text)
+  [[ "$prefix_list_id" == pl-* ]] || { printf 'ERROR: CloudFront origin prefix list was not found.\n' >&2; return 1; }
+  jq -n --arg prefix "$prefix_list_id" '[{
+    IpProtocol: "tcp", FromPort: 80, ToPort: 80,
+    PrefixListIds: [{PrefixListId: $prefix, Description: "CloudFront origin-facing only"}]
+  }]' >"$state_dir/cloudfront-ingress.json"
+  if ! jq -e --arg prefix "$prefix_list_id" '
+    any(.SecurityGroupRules[]?; .IsEgress == false and .FromPort == 80 and
+      .ToPort == 80 and .PrefixListId == $prefix)
+  ' <<<"$sg_rules" >/dev/null; then
+    aws_cli ec2 authorize-security-group-ingress \
+      --region "$AWS_REGION" \
+      --group-id "$alb_sg" \
+      --ip-permissions "file://$state_dir/cloudfront-ingress.json" >/dev/null
+  fi
+  while IFS= read -r public_rule_id; do
+    [[ -n "$public_rule_id" ]] || continue
+    aws_cli ec2 revoke-security-group-ingress \
+      --region "$AWS_REGION" \
+      --group-id "$alb_sg" \
+      --security-group-rule-ids "$public_rule_id" >/dev/null
+  done < <(jq -r '.SecurityGroupRules[]? |
+    select(.IsEgress == false and .IpProtocol == "tcp" and .FromPort == 80 and
+      .ToPort == 80 and .CidrIpv4 == "0.0.0.0/0") | .SecurityGroupRuleId' <<<"$sg_rules")
+
+  "$CURL_BIN" --fail --silent --show-error \
+    --retry 6 --retry-all-errors --retry-delay 5 \
+    "https://${distribution_domain}/health" >/dev/null
+  {
+    printf 'export EDGE_STAGE=complete\n'
+    printf 'export CLOUDFRONT_DISTRIBUTION_ID=%q\n' "$CLOUDFRONT_DISTRIBUTION_ID"
+    printf 'export ALB_ARN=%q\n' "$alb_arn"
+    printf 'export ALB_DNS=%q\n' "$alb_dns"
+    printf 'export ALB_SECURITY_GROUP_ID=%q\n' "$alb_sg"
+    printf 'export HTTP_LISTENER_ARN=%q\n' "$listener_arn"
+    printf 'export ORIGIN_RULE_ARN=%q\n' "$rule_arn"
+    printf 'export CLOUDFRONT_PREFIX_LIST_ID=%q\n' "$prefix_list_id"
+    printf 'export WAF_ARN=%q\n' "$waf_arn"
+  } >"$edge_state"
+  chmod 0600 "$edge_state"
+  rm -f -- "$origin_secret_file" "$state_dir/listener-origin-conditions.json"
+  unset origin_secret_value
+  printf 'Edge hardened: https://%s\n' "$distribution_domain"
+}
+
+rollback_edge() {
+  local state_dir edge_state public_ingress listener_actions current_distribution current_etag
+  local restore_distribution distribution_domain sg_rules prefix_rule_id
+  require_commands "$AWS_BIN" jq "$CURL_BIN"
+  require_expected_account
+  state_dir=$(init_state_dir "$DEPLOYMENT_ID")
+  edge_state="$state_dir/edge-state.env"
+  [[ -f "$edge_state" && -f "$state_dir/distribution-before.json" &&
+     -f "$state_dir/listener-before.json" ]] || {
+    printf 'ERROR: complete edge rollback state was not found.\n' >&2
+    return 1
+  }
+  # shellcheck disable=SC1090
+  source "$edge_state"
+  [[ "${CLOUDFRONT_DISTRIBUTION_ID:-}" =~ ^E[A-Z0-9]+$ &&
+     "${ALB_SECURITY_GROUP_ID:-}" == sg-* &&
+     "${HTTP_LISTENER_ARN:-}" == arn:aws:elasticloadbalancing:* ]] || {
+    printf 'ERROR: edge rollback state is invalid.\n' >&2
+    return 1
+  }
+
+  public_ingress="$state_dir/public-http-ingress.json"
+  printf '[{"IpProtocol":"tcp","FromPort":80,"ToPort":80,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"Temporary rollback HTTP access"}]}]\n' \
+    >"$public_ingress"
+  sg_rules=$(aws_cli ec2 describe-security-group-rules \
+    --region "$AWS_REGION" \
+    --filters "Name=group-id,Values=$ALB_SECURITY_GROUP_ID" \
+    --output json)
+  if ! jq -e 'any(.SecurityGroupRules[]?; .IsEgress == false and
+    .IpProtocol == "tcp" and .FromPort == 80 and .ToPort == 80 and
+    .CidrIpv4 == "0.0.0.0/0")' <<<"$sg_rules" >/dev/null; then
+    aws_cli ec2 authorize-security-group-ingress \
+      --region "$AWS_REGION" \
+      --group-id "$ALB_SECURITY_GROUP_ID" \
+      --ip-permissions "file://$public_ingress" >/dev/null
+  fi
+
+  listener_actions="$state_dir/listener-restore-actions.json"
+  jq --arg listener "$HTTP_LISTENER_ARN" \
+    '[.Listeners[] | select(.ListenerArn == $listener) | .DefaultActions[]]' \
+    "$state_dir/listener-before.json" >"$listener_actions"
+  [[ $(jq 'length' "$listener_actions") -gt 0 ]] || {
+    printf 'ERROR: prior listener action is missing from rollback state.\n' >&2
+    return 1
+  }
+  aws_cli elbv2 modify-listener \
+    --region "$AWS_REGION" \
+    --listener-arn "$HTTP_LISTENER_ARN" \
+    --default-actions "file://$listener_actions" >/dev/null
+  if [[ "${ORIGIN_RULE_ARN:-}" == arn:aws:elasticloadbalancing:* ]]; then
+    aws_cli elbv2 delete-rule \
+      --region "$AWS_REGION" \
+      --rule-arn "$ORIGIN_RULE_ARN" >/dev/null 2>&1 || true
+  fi
+
+  current_distribution=$(aws_cli cloudfront get-distribution-config \
+    --id "$CLOUDFRONT_DISTRIBUTION_ID" \
+    --output json)
+  current_etag=$(jq -r '.ETag' <<<"$current_distribution")
+  restore_distribution="$state_dir/distribution-restore.json"
+  jq '.DistributionConfig' "$state_dir/distribution-before.json" >"$restore_distribution"
+  aws_cli cloudfront update-distribution \
+    --id "$CLOUDFRONT_DISTRIBUTION_ID" \
+    --if-match "$current_etag" \
+    --distribution-config "file://$restore_distribution" >/dev/null
+  aws_cli cloudfront wait distribution-deployed \
+    --id "$CLOUDFRONT_DISTRIBUTION_ID"
+  distribution_domain=$(aws_cli cloudfront get-distribution \
+    --id "$CLOUDFRONT_DISTRIBUTION_ID" \
+    --query 'Distribution.DomainName' \
+    --output text)
+  "$CURL_BIN" --fail --silent --show-error \
+    --retry 6 --retry-all-errors --retry-delay 5 \
+    "https://${distribution_domain}/health" >/dev/null
+
+  sg_rules=$(aws_cli ec2 describe-security-group-rules \
+    --region "$AWS_REGION" \
+    --filters "Name=group-id,Values=$ALB_SECURITY_GROUP_ID" \
+    --output json)
+  while IFS= read -r prefix_rule_id; do
+    [[ -n "$prefix_rule_id" ]] || continue
+    aws_cli ec2 revoke-security-group-ingress \
+      --region "$AWS_REGION" \
+      --group-id "$ALB_SECURITY_GROUP_ID" \
+      --security-group-rule-ids "$prefix_rule_id" >/dev/null
+  done < <(jq -r --arg prefix "${CLOUDFRONT_PREFIX_LIST_ID:-}" '.SecurityGroupRules[]? |
+    select(.IsEgress == false and .FromPort == 80 and .ToPort == 80 and
+      .PrefixListId == $prefix) | .SecurityGroupRuleId' <<<"$sg_rules")
+  printf 'Edge rollback complete: https://%s\n' "$distribution_domain"
+}
+
+rotate_jwt() {
+  local state_dir secret_response old_secret new_secret rotation_state old_version new_version new_jwt
+  require_image_digest
+  require_commands "$AWS_BIN" jq "$OPENSSL_BIN"
+  require_expected_account
+  state_dir=$(init_state_dir "$DEPLOYMENT_ID")
+  secret_response="$state_dir/app-secret-current.json"
+  old_secret="$state_dir/app-secret-old.json"
+  new_secret="$state_dir/app-secret-new.json"
+  rotation_state="$state_dir/jwt-rotation.env"
+  aws_cli secretsmanager get-secret-value \
+    --region "$AWS_REGION" \
+    --secret-id "$APP_SECRET_NAME" \
+    --version-stage AWSCURRENT \
+    --output json >"$secret_response"
+  old_version=$(jq -r '.VersionId' "$secret_response")
+  jq -er '.SecretString | fromjson' "$secret_response" >"$old_secret"
+  new_jwt=$($OPENSSL_BIN rand -hex 48)
+  replace_json_secret_field "$old_secret" "$new_secret" JWT_SECRET "$new_jwt"
+  jq -e --slurp '(.[0] | del(.JWT_SECRET)) == (.[1] | del(.JWT_SECRET))' \
+    "$old_secret" "$new_secret" >/dev/null
+  new_version=$(aws_cli secretsmanager put-secret-value \
+    --region "$AWS_REGION" \
+    --secret-id "$APP_SECRET_NAME" \
+    --secret-string "file://$new_secret" \
+    --query VersionId \
+    --output text)
+  {
+    printf 'export OLD_SECRET_VERSION=%q\n' "$old_version"
+    printf 'export NEW_SECRET_VERSION=%q\n' "$new_version"
+  } >"$rotation_state"
+  chmod 0600 "$rotation_state"
+  rm -f -- "$secret_response" "$old_secret" "$new_secret"
+  unset new_jwt
+
+  if ! deploy_image; then
+    aws_cli secretsmanager update-secret-version-stage \
+      --region "$AWS_REGION" \
+      --secret-id "$APP_SECRET_NAME" \
+      --version-stage AWSCURRENT \
+      --move-to-version-id "$old_version" \
+      --remove-from-version-id "$new_version" >/dev/null
+    printf 'ERROR: deployment failed; AWSCURRENT was restored to the prior JWT version.\n' >&2
+    return 1
+  fi
+  printf 'JWT_SECRET rotated for AWS; existing sessions must sign in again.\n'
+}
+
+rollback_jwt() {
+  local state_dir rotation_state
+  require_image_digest
+  require_commands "$AWS_BIN" jq
+  require_expected_account
+  state_dir=$(init_state_dir "$DEPLOYMENT_ID")
+  rotation_state="$state_dir/jwt-rotation.env"
+  [[ -f "$rotation_state" ]] || { printf 'ERROR: no JWT rotation state exists.\n' >&2; return 1; }
+  # shellcheck disable=SC1090
+  source "$rotation_state"
+  [[ "${OLD_SECRET_VERSION:-}" =~ ^[A-Za-z0-9-]{16,}$ &&
+     "${NEW_SECRET_VERSION:-}" =~ ^[A-Za-z0-9-]{16,}$ ]] || {
+    printf 'ERROR: JWT rotation state is invalid.\n' >&2
+    return 1
+  }
+  aws_cli secretsmanager update-secret-version-stage \
+    --region "$AWS_REGION" \
+    --secret-id "$APP_SECRET_NAME" \
+    --version-stage AWSCURRENT \
+    --move-to-version-id "$OLD_SECRET_VERSION" \
+    --remove-from-version-id "$NEW_SECRET_VERSION" >/dev/null
+  deploy_image
+  printf 'Prior JWT secret version restored.\n'
+}
+
 main() {
   local command_name=${1:-}
   [[ -n "$command_name" ]] || { usage >&2; return 2; }
   shift
+  case "$command_name" in
+    -h|--help|help) usage; return 0 ;;
+  esac
   parse_options "$@"
 
   case "$command_name" in
@@ -434,7 +919,10 @@ main() {
     deploy-image) deploy_image ;;
     verify) verify_runtime ;;
     harden-runtime-role) harden_runtime_role ;;
-    -h|--help|help) usage ;;
+    harden-edge) harden_edge ;;
+    rollback-edge) rollback_edge ;;
+    rotate-jwt) rotate_jwt ;;
+    rollback-jwt) rollback_jwt ;;
     *) printf 'ERROR: unknown command: %s\n' "$command_name" >&2; usage >&2; return 2 ;;
   esac
 }

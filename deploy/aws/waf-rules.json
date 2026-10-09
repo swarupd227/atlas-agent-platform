@@ -1,0 +1,67 @@
+[
+  {
+    "Name": "AWSManagedRulesAmazonIpReputationList",
+    "Priority": 0,
+    "Statement": {
+      "ManagedRuleGroupStatement": {
+        "VendorName": "AWS",
+        "Name": "AWSManagedRulesAmazonIpReputationList"
+      }
+    },
+    "OverrideAction": {"None": {}},
+    "VisibilityConfig": {
+      "SampledRequestsEnabled": true,
+      "CloudWatchMetricsEnabled": true,
+      "MetricName": "astra-ip-reputation"
+    }
+  },
+  {
+    "Name": "AWSManagedRulesCommonRuleSet",
+    "Priority": 10,
+    "Statement": {
+      "ManagedRuleGroupStatement": {
+        "VendorName": "AWS",
+        "Name": "AWSManagedRulesCommonRuleSet"
+      }
+    },
+    "OverrideAction": {"Count": {}},
+    "VisibilityConfig": {
+      "SampledRequestsEnabled": true,
+      "CloudWatchMetricsEnabled": true,
+      "MetricName": "astra-common-count"
+    }
+  },
+  {
+    "Name": "AWSManagedRulesKnownBadInputsRuleSet",
+    "Priority": 20,
+    "Statement": {
+      "ManagedRuleGroupStatement": {
+        "VendorName": "AWS",
+        "Name": "AWSManagedRulesKnownBadInputsRuleSet"
+      }
+    },
+    "OverrideAction": {"Count": {}},
+    "VisibilityConfig": {
+      "SampledRequestsEnabled": true,
+      "CloudWatchMetricsEnabled": true,
+      "MetricName": "astra-known-bad-count"
+    }
+  },
+  {
+    "Name": "AstraRateLimit",
+    "Priority": 30,
+    "Statement": {
+      "RateBasedStatement": {
+        "Limit": 1000,
+        "EvaluationWindowSec": 300,
+        "AggregateKeyType": "IP"
+      }
+    },
+    "Action": {"Count": {}},
+    "VisibilityConfig": {
+      "SampledRequestsEnabled": true,
+      "CloudWatchMetricsEnabled": true,
+      "MetricName": "astra-rate-limit-count"
+    }
+  }
+]
