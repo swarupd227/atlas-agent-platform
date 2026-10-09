@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
@@ -137,18 +137,20 @@ export default function ObservabilityPage() {
   const { toast } = useToast();
   const [sortKey, setSortKey] = useState<SortKey>("successRate7d");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [activeTab, setActiveTab] = useState("agents");
+  const fleetTabsRef = useRef<HTMLDivElement>(null);
 
-  const { data: fleetData, isLoading: fleetLoading, refetch: refetchFleet } = useQuery<FleetData>({
+  const { data: fleetData, isLoading: fleetLoading, isFetching: fleetFetching, refetch: refetchFleet } = useQuery<FleetData>({
     queryKey: ["/api/observability/fleet"],
     refetchInterval: 120000,
   });
 
-  const { data: alerts, isLoading: alertsLoading, refetch: refetchAlerts } = useQuery<AgentAlert[]>({
+  const { data: alerts, isLoading: alertsLoading, isFetching: alertsFetching, refetch: refetchAlerts } = useQuery<AgentAlert[]>({
     queryKey: ["/api/observability/alerts"],
     refetchInterval: 60000,
   });
 
-  const { data: smokeTestData, isLoading: smokeTestLoading, refetch: refetchSmokeTests } = useQuery<SmokeTestData>({
+  const { data: smokeTestData, isLoading: smokeTestLoading, isFetching: smokeTestFetching, refetch: refetchSmokeTests } = useQuery<SmokeTestData>({
     queryKey: ["/api/observability/smoke-tests"],
     refetchInterval: 120000,
   });
@@ -162,6 +164,21 @@ export default function ObservabilityPage() {
   });
 
   const unacknowledgedAlerts = (alerts ?? []).filter(a => !a.acknowledgedAt);
+  const refreshing = fleetFetching || alertsFetching || smokeTestFetching;
+
+  async function handleRefresh() {
+    const results = await Promise.all([refetchFleet(), refetchAlerts(), refetchSmokeTests()]);
+    if (results.some(result => result.isError)) {
+      toast({ title: "Refresh failed", description: "Some Fleet Health data could not be refreshed.", variant: "destructive" });
+      return;
+    }
+    toast({ title: "Fleet Health refreshed" });
+  }
+
+  function handleViewAlerts() {
+    setActiveTab("alerts");
+    requestAnimationFrame(() => fleetTabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -215,11 +232,12 @@ export default function ObservabilityPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { refetchFleet(); refetchAlerts(); refetchSmokeTests(); }}
+            onClick={handleRefresh}
+            disabled={refreshing}
             data-testid="button-refresh"
           >
-            <RefreshCcw className="w-4 h-4 mr-1" />
-            Refresh
+            <RefreshCcw className={`w-4 h-4 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing..." : "Refresh"}
           </Button>
           <Button variant="outline" size="sm" asChild data-testid="button-prometheus-link">
             <a href="/api/prometheus/metrics" target="_blank" rel="noopener noreferrer">
@@ -249,7 +267,7 @@ export default function ObservabilityPage() {
             size="sm"
             variant="outline"
             className="border-red-300 text-red-700 hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/40 flex-shrink-0"
-            onClick={() => document.querySelector<HTMLButtonElement>('[data-testid="tab-alerts"]')?.click()}
+            onClick={handleViewAlerts}
             data-testid="button-view-alerts"
           >
             View Alerts
@@ -507,7 +525,7 @@ export default function ObservabilityPage() {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="agents" className="space-y-4">
+      <Tabs ref={fleetTabsRef} value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="agents" data-testid="tab-agents">All Agents</TabsTrigger>
           <TabsTrigger value="offenders" data-testid="tab-offenders">

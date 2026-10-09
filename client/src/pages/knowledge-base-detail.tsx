@@ -144,6 +144,7 @@ export default function KnowledgeBaseDetail() {
   const [configForm, setConfigForm] = useState<any>(null);
   const [linkAgentOpen, setLinkAgentOpen] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [agentSearch, setAgentSearch] = useState("");
   const [stalenessResult, setStalenessResult] = useState<{ sourcesChecked: number; fresh: number; stale: number; critical: number } | null>(null);
   const [sensitivityWarnings, setSensitivityWarnings] = useState<Array<{
     sensitivityClass: string;
@@ -537,6 +538,9 @@ export default function KnowledgeBaseDetail() {
 
   const linkedAgentIds = agentLinks.map((l: any) => l.agentId);
   const availableAgents = allAgents.filter((a) => !linkedAgentIds.includes(a.id));
+  const filteredAvailableAgents = availableAgents.filter((agent) =>
+    agent.name.toLowerCase().includes(agentSearch.trim().toLowerCase()),
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -1504,7 +1508,13 @@ export default function KnowledgeBaseDetail() {
         <TabsContent value="agents" className="mt-4 space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">Agents linked to this knowledge base will use it for RAG grounding.</p>
-            <Dialog open={linkAgentOpen} onOpenChange={setLinkAgentOpen}>
+            <Dialog open={linkAgentOpen} onOpenChange={(open) => {
+              setLinkAgentOpen(open);
+              if (!open) {
+                setAgentSearch("");
+                setSelectedAgentId("");
+              }
+            }}>
               <DialogTrigger asChild>
                 <Button size="sm" data-testid="button-link-agent">
                   <Link2 className="w-4 h-4 mr-2" /> Link Agent
@@ -1513,13 +1523,27 @@ export default function KnowledgeBaseDetail() {
               <DialogContent>
                 <DialogHeader><DialogTitle>Link an Agent</DialogTitle></DialogHeader>
                 <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="agent-search">Search agents</Label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="agent-search"
+                        value={agentSearch}
+                        onChange={(event) => setAgentSearch(event.target.value)}
+                        placeholder="Search by agent name..."
+                        className="pl-9"
+                        data-testid="input-agent-search"
+                      />
+                    </div>
+                  </div>
                   <Label>Select Agent</Label>
                   <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
                     <SelectTrigger data-testid="select-link-agent">
                       <SelectValue placeholder="Choose an agent..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {availableAgents.map((agent) => (
+                      {filteredAvailableAgents.map((agent) => (
                         <SelectItem key={agent.id} value={agent.id}>{agent.name}</SelectItem>
                       ))}
                     </SelectContent>

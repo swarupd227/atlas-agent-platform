@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { QueryBoundary } from "@/components/ui-vocab";
 import { useIndustry } from "@/components/industry-provider";
 import { useQuery } from "@tanstack/react-query";
@@ -133,6 +133,7 @@ export default function SkillCatalog() {
   const [collapsedIndustries, setCollapsedIndustries] = useState<Set<string>>(new Set());
   const [compareList, setCompareList] = useState<string[]>([]);
   const [showCompare, setShowCompare] = useState(false);
+  const comparePanelRef = useRef<HTMLDivElement>(null);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
 
   const [aiEnhancingSkill, setAiEnhancingSkill] = useState<string | null>(null);
@@ -143,6 +144,11 @@ export default function SkillCatalog() {
   const [generateName, setGenerateName] = useState("");
   const [generateDescription, setGenerateDescription] = useState("");
   const [showGeneratePanel, setShowGeneratePanel] = useState(false);
+
+  useEffect(() => {
+    if (!showCompare) return;
+    requestAnimationFrame(() => comparePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [showCompare]);
 
   const { data: skills = [], isLoading, isError, error, refetch } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
@@ -744,11 +750,13 @@ export default function SkillCatalog() {
         />
 
         {showCompare && compareSkills.length >= 2 && (
-          <ComparePanel
-            skills={compareSkills}
-            onClose={() => setShowCompare(false)}
-            onRemove={(id) => toggleCompare(id)}
-          />
+          <div ref={comparePanelRef}>
+            <ComparePanel
+              skills={compareSkills}
+              onClose={() => setShowCompare(false)}
+              onRemove={(id) => toggleCompare(id)}
+            />
+          </div>
         )}
       </div>
     </ScrollArea>

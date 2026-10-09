@@ -410,7 +410,7 @@ describe("a flow that sends work back", () => {
     const reviewer = state.nodes.find((n) => n.label === "Review Copy");
     const writer = state.nodes.find((n) => n.label === "Write Copy");
     expect(reviewer.config.revision).toMatchObject({ targetNodeId: writer.id, maxRounds: 1 });
-    expect(reviewer.config.revision.when.conditions[0]).toMatchObject({ field: "output", operator: "contains" });
+    expect(reviewer.config.revision.when.conditions[0]).toMatchObject({ field: "verdict", operator: "==", value: "FAIL" });
     expect(reviewer.config.role).toBe("worker");
   });
 });

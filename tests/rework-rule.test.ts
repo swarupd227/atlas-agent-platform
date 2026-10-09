@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { REWORK_REQUESTED_RULE } from "../server/team-build";
-import { isCurrentReworkRule } from "../shared/rework-rule";
+import { isCurrentReworkRule, verdictFrom } from "../shared/rework-rule";
 import { evaluateRule } from "../server/rule-evaluator";
 
 /**
@@ -10,7 +10,10 @@ import { evaluateRule } from "../server/rule-evaluator";
  * reviewer's structured output merged with { output: <raw text> }, so these
  * facts are shaped the same way.
  */
-const facts = (structured: Record<string, unknown>, output = "review complete") => ({ ...structured, output });
+const facts = (structured: Record<string, unknown>, output = "review complete") => {
+  const verdict = verdictFrom(output);
+  return { ...structured, output, ...(verdict ? { verdict } : {}) };
+};
 
 describe("REWORK_REQUESTED_RULE", () => {
   it("fires on the shapes a reviewer actually uses to ask for a redraft", () => {
@@ -22,8 +25,8 @@ describe("REWORK_REQUESTED_RULE", () => {
     expect(evaluateRule(REWORK_REQUESTED_RULE, facts({ approved: false })).result).toBe(true);
     expect(evaluateRule(REWORK_REQUESTED_RULE, facts({ rejected: true })).result).toBe(true);
     expect(evaluateRule(REWORK_REQUESTED_RULE, facts({ requiresRevision: true })).result).toBe(true);
-    // Still matches the original text signal.
-    expect(evaluateRule(REWORK_REQUESTED_RULE, facts({}, "clause check failed on two clauses")).result).toBe(true);
+    // A pronounced failure verdict in raw text is normalized before rule evaluation.
+    expect(evaluateRule(REWORK_REQUESTED_RULE, facts({}, "FAIL - clause check found two defects")).result).toBe(true);
   });
 
   it("does not fire when the reviewer is content", () => {

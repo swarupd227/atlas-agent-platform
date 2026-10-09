@@ -97,6 +97,32 @@ describe("the panel", () => {
   });
 });
 
+describe("editing a KPI definition", () => {
+  const editState = detail.slice(
+    detail.indexOf("const startEditKpi"),
+    detail.indexOf("const saveEditKpi"),
+  );
+  const save = detail.slice(
+    detail.indexOf("const saveEditKpi"),
+    detail.indexOf("if (isLoading)"),
+  );
+  const patch = routes.slice(
+    routes.indexOf('router.patch("/api/kpis/:id"'),
+    routes.indexOf('router.get("/api/kpis/:id/measurement"'),
+  );
+
+  it("lets a person rename an existing KPI without deleting it", () => {
+    expect(editState).toContain("name: kpi.name");
+    expect(detail).toContain('data-testid={`input-edit-name-${kpi.id}`}');
+    expect(save).toContain("const name = String(editKpiData.name ?? \"\").trim();");
+    expect(save).toMatch(/data:\s*\{[\s\S]*?\bname,/);
+  });
+
+  it("records a KPI rename in the parent outcome version", () => {
+    expect(patch).toContain('const VERSION_WORTHY_KPI_FIELDS = ["name", "target", "slaThreshold", "weight"] as const;');
+  });
+});
+
 describe("the evidence chart", () => {
   it("plots readings, not a statistic guessed from the KPI's name", () => {
     expect(evidence).toContain("await storage.getKpiReadingsByOutcome(outcomeId)");

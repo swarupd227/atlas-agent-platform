@@ -823,6 +823,7 @@ export default function OutcomeDetail() {
   const startEditKpi = (kpi: KpiDefinition) => {
     setEditingKpiId(kpi.id);
     setEditKpiData({
+      name: kpi.name,
       baseline: kpi.baseline ?? 0,
       target: kpi.target,
       weight: kpi.weight ?? 1,
@@ -833,9 +834,15 @@ export default function OutcomeDetail() {
   };
 
   const saveEditKpi = (id: string) => {
+    const name = String(editKpiData.name ?? "").trim();
+    if (!name) {
+      toast({ title: "KPI name is required", variant: "destructive" });
+      return;
+    }
     updateKpiMutation.mutate({
       id,
       data: {
+        name,
         baseline: parseFloat(editKpiData.baseline) || 0,
         target: parseFloat(editKpiData.target) || 0,
         weight: parseFloat(editKpiData.weight) || 1,
@@ -2292,6 +2299,10 @@ export default function OutcomeDetail() {
 
                       {editingKpiId === kpi.id && (
                         <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+                        <div className="flex flex-col gap-1 col-span-2 sm:col-span-2">
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Name</span>
+                          <Input value={editKpiData.name ?? ""} onChange={(e) => setEditKpiData({ ...editKpiData, name: e.target.value })} aria-label="KPI name" data-testid={`input-edit-name-${kpi.id}`} />
+                        </div>
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Baseline</span>
                             <Input type="number" step="any" value={editKpiData.baseline} onChange={(e) => setEditKpiData({ ...editKpiData, baseline: e.target.value })} data-testid={`input-edit-baseline-${kpi.id}`} />

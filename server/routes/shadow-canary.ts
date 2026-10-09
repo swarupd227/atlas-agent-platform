@@ -20,8 +20,11 @@ import {
   type RuntimeAgent,
 } from "../agent-runtime";
 import { callClaude, stripJsonFences } from "../claude";
+import type { AgentRuntimeRun } from "@shared/schema";
 
 const router = Router();
+const activeTeamTestRunIds = new Set<string>();
+const creatingTeamTestAgentIds = new Set<string>();
 
   router.get("/api/shadow-traces", async (req, res) => {
     try {
@@ -568,10 +571,26 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
-  router.get("/api/agent-runtime/active", async (_req, res) => {
+  const teamTestTimeoutMs = Math.max(60_000, Number(process.env.TEAM_TEST_TIMEOUT_MS) || 35 * 60_000);
+
+  const expireStaleTestRun = async (run: AgentRuntimeRun) => {
+    const startedAt = run.startedAt ? new Date(run.startedAt).getTime() : 0;
+    if (run.status !== "running" || run.triggerType !== "test" || activeTeamTestRunIds.has(run.id) || !startedAt || Date.now() - startedAt <= teamTestTimeoutMs) {
+      return run;
+    }
+    return await storage.updateAgentRuntimeRun(run.id, {
+      status: "failed",
+      errorMessage: "Team test run timed out or the server restarted before it completed.",
+      completedAt: new Date(),
+    }) || run;
+  };
+
+  router.get("/api/agent-runtime/active", async (req, res) => {
     try {
       const runtimes = await getActiveRuntimes();
-      res.json(runtimes);
+      const orgAgents = await storage.getAgents(getOrgId(req));
+      const allowedAgentIds = new Set(orgAgents.map(agent => agent.id));
+      res.json(runtimes.filter(runtime => allowedAgentIds.has(runtime.agentId)));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -580,8 +599,12 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
   router.get("/api/agent-runtime/runs", async (req, res) => {
     try {
       const agentId = req.query.agentId as string | undefined;
+      const orgAgents = await storage.getAgents(getOrgId(req));
+      const allowedAgentIds = new Set(orgAgents.map(agent => agent.id));
+      if (agentId && !allowedAgentIds.has(agentId)) return res.json([]);
       const runs = await storage.getAgentRuntimeRuns(agentId);
-      const sorted = runs.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()).slice(0, 50);
+      const visibleRuns = await Promise.all(runs.filter(run => allowedAgentIds.has(run.agentId)).map(expireStaleTestRun));
+      const sorted = visibleRuns.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()).slice(0, 50);
       res.json(sorted);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -592,7 +615,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     try {
       const run = await storage.getAgentRuntimeRun(req.params.id);
       if (!run) return res.status(404).json({ error: "Run not found" });
-      res.json(run);
+      const agent = await storage.getAgent(run.agentId, getOrgId(req));
+      if (!agent) return res.status(404).json({ error: "Run not found" });
+      res.json(await expireStaleTestRun(run));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -799,7 +824,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.post("/api/agents/:id/run-test", llmInvokeRateLimiter, async (req: Request<{ id: string }>, res: Response) => {
     try {
-      const agent = await storage.getAgent(req.params.id, getOrgId(req));
+      const orgId = getOrgId(req);
+      const requestRole = getRequestRole(req);
+      const agent = await storage.getAgent(req.params.id, orgId);
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
@@ -813,93 +840,156 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         return res.status(400).json({ error: "Agent has no task prompt configured. Set a prompt in runtime config or provide one in the request." });
       }
 
-      const richSystemPrompt = await buildAgentSystemPromptWithGovernance(agent, getOrgId(req));
+      const richSystemPrompt = await buildAgentSystemPromptWithGovernance(agent, orgId);
+      const industry = (await resolveAgentIndustry(agent as any)) ?? undefined;
 
-      let result: { steps: any[]; success: boolean; summary: any; promptInputs?: any };
+      const executeTest = async () => {
+        let result: { steps: any[]; success: boolean; summary: any; promptInputs?: any };
+
+        if (isTeamAgent) {
+          const teamRuntimeAgent: RuntimeAgent = {
+            deploymentId: "test-run",
+            agentId: req.params.id,
+            agentName: agent.name,
+            blueprintId: rtConfig.orchestration?.blueprintId || undefined,
+            mcpServerIds,
+            intervalMs: 0,
+            industry,
+            prompt,
+            agentSystemPrompt: richSystemPrompt,
+            outcomeId: (agent as any).outcomeId || undefined,
+            agentType: "team",
+            runtimeConfig: rtConfig,
+            ontologyTags: Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [],
+          };
+          result = await executeTeamPipeline(teamRuntimeAgent);
+        } else {
+          const agentOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
+          // The same options a DAG worker node gets (executeWorkerAgent): a test
+          // run used to omit the agent's runtimeConfig and model, so it ignored
+          // its required tool calls, output mode and schema, and ran on the
+          // default model -- live, an agent whose real runs are forced to call
+          // its screening tool "tested" fine by inventing the screening result.
+          result = await executePromptWithMcp(
+            req.params.id,
+            "test-run",
+            undefined,
+            mcpServerIds,
+            prompt,
+            industry,
+            richSystemPrompt,
+            {
+              ontologyLabels: agentOntologyTags.map(t => t.conceptLabel),
+              maxToolIterations: agent.maxToolIterations ?? 5,
+              runtimeConfig: rtConfig,
+              modelProvider: agent.modelProvider ?? undefined,
+              modelName: agent.modelName ?? undefined,
+              conversational: rtConfig.conversational === true,
+            },
+            undefined,
+            undefined,
+            requestRole,
+          );
+        }
+
+        const toolCalls = result.steps
+          .filter((s: any) => s.type === "api_call" && s.mcpResolved)
+          .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, output: s.output, status: s.status, error: s.error }));
+
+        const testAnalysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
+        const orchestrationSummary = result.steps.find((s: any) => s.type === "orchestration_summary")?.output?.finalOutput;
+        const testAnalysisText = testAnalysisStep?.output?.summary || testAnalysisStep?.output?.analysis || orchestrationSummary || result.summary?.analysis?.summary || result.summary?.analysis?.analysis || "";
+
+        const trace = await storage.createTrace({
+          agentId: req.params.id,
+          environment: "test",
+          status: result.success ? "completed" : "failed",
+          latencyMs: result.summary?.latencyMs || 0,
+          inputSummary: isTeamAgent
+            ? `Team Pipeline Test: ${agent.name} (${rtConfig.orchestration?.workerIds?.length || 0} workers)`
+            : `Test Run: ${prompt.length > 120 ? prompt.substring(0, 117) + "..." : prompt}`,
+          outputSummary: typeof testAnalysisText === "string" && testAnalysisText.length > 0 ? testAnalysisText : `${toolCalls.length} tools called | ${result.summary?.passedSteps}/${result.summary?.totalSteps} steps`,
+          stepsJson: result.steps,
+          modelId: agent.modelName || "gpt-4.1",
+          promptInputs: result.promptInputs || {
+            systemPrompt: richSystemPrompt || prompt,
+            userMessage: prompt,
+            contextVariables: {
+              industry: industry || "general",
+              testRun: true,
+              ...(isTeamAgent ? { teamExecution: true, workerCount: rtConfig.orchestration?.workerIds?.length || 0, pattern: rtConfig.orchestration?.pattern || "supervisor" } : {}),
+            },
+          },
+          toolCalls: toolCalls.length > 0 ? toolCalls : null,
+        });
+
+        return { result, trace };
+      };
 
       if (isTeamAgent) {
-        const teamRuntimeAgent: RuntimeAgent = {
-          deploymentId: "test-run",
-          agentId: req.params.id,
-          agentName: agent.name,
-          blueprintId: rtConfig.orchestration?.blueprintId || undefined,
-          mcpServerIds,
-          intervalMs: 0,
-          industry: (await resolveAgentIndustry(agent as any)) ?? undefined,
-          prompt,
-          agentSystemPrompt: richSystemPrompt,
-          outcomeId: (agent as any).outcomeId || undefined,
-          agentType: "team",
-          runtimeConfig: rtConfig,
-          ontologyTags: Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [],
-        };
-        result = await executeTeamPipeline(teamRuntimeAgent);
-      } else {
-        const agentOntologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
-        // The same options a DAG worker node gets (executeWorkerAgent): a test
-        // run used to omit the agent's runtimeConfig and model, so it ignored
-        // its required tool calls, output mode and schema, and ran on the
-        // default model -- live, an agent whose real runs are forced to call
-        // its screening tool "tested" fine by inventing the screening result.
-        result = await executePromptWithMcp(
-          req.params.id,
-          "test-run",
-          undefined,
-          mcpServerIds,
-          prompt,
-          (await resolveAgentIndustry(agent as any)) ?? undefined,
-          richSystemPrompt,
-          {
-            ontologyLabels: agentOntologyTags.map(t => t.conceptLabel),
-            maxToolIterations: agent.maxToolIterations ?? 5,
-            runtimeConfig: rtConfig,
-            modelProvider: agent.modelProvider ?? undefined,
-            modelName: agent.modelName ?? undefined,
-            conversational: rtConfig.conversational === true,
-          },
-          undefined,
-          undefined,
-          getRequestRole(req),
-        );
+        if (creatingTeamTestAgentIds.has(req.params.id)) {
+          return res.status(409).json({ error: "A team test is already being started for this agent." });
+        }
+        creatingTeamTestAgentIds.add(req.params.id);
+
+        let runtimeRun: AgentRuntimeRun | undefined;
+        try {
+          const priorRuns = await storage.getAgentRuntimeRuns(req.params.id);
+          const activePriorRun = priorRuns.find(run => run.triggerType === "test" && run.status === "running");
+          if (activePriorRun) {
+            const recoveredRun = await expireStaleTestRun(activePriorRun);
+            if (recoveredRun.status === "running") {
+              return res.status(409).json({ error: "A team test is already running for this agent.", runId: recoveredRun.id });
+            }
+          }
+
+          runtimeRun = await storage.createAgentRuntimeRun({
+            agentId: req.params.id,
+            deploymentId: "test-run",
+            status: "running",
+            triggerType: "test",
+            blueprintId: rtConfig.orchestration?.blueprintId || null,
+            mcpServerId: mcpServerIds[0] || null,
+            inputConfig: { prompt },
+          });
+        } finally {
+          creatingTeamTestAgentIds.delete(req.params.id);
+        }
+        if (!runtimeRun) return;
+
+        activeTeamTestRunIds.add(runtimeRun.id);
+        res.status(202).json({ accepted: true, runId: runtimeRun.id, status: "running" });
+        void executeTest()
+          .then(async ({ result, trace }) => {
+            await storage.updateAgentRuntimeRun(runtimeRun.id, {
+              status: result.success ? "completed" : "failed",
+              stepsJson: result.steps,
+              resultSummary: result.summary,
+              errorMessage: result.success ? null : "Team test run failed. Review the run details for the failed step.",
+              latencyMs: result.summary?.latencyMs || 0,
+              traceId: trace.id,
+              completedAt: new Date(),
+            });
+          })
+          .catch(async (error: unknown) => {
+            const message = error instanceof Error ? error.message : "Team test run failed";
+            console.error(`[run-test] Team test ${runtimeRun.id} failed:`, error);
+            try {
+              await storage.updateAgentRuntimeRun(runtimeRun.id, {
+                status: "failed",
+                errorMessage: message,
+                completedAt: new Date(),
+              });
+            } catch (updateError) {
+              console.error(`[run-test] Could not record failure for ${runtimeRun.id}:`, updateError);
+            }
+          })
+          .finally(() => activeTeamTestRunIds.delete(runtimeRun.id));
+        return;
       }
 
-      const toolCalls = result.steps
-        .filter((s: any) => s.type === "api_call" && s.mcpResolved)
-        .map((s: any) => ({ tool: s.mcpTool, server: s.mcpServer, input: s.input, output: s.output, status: s.status, error: s.error }));
-
-      const testAnalysisStep = result.steps.find((s: any) => s.type === "ai_analysis" && s.status === "completed");
-      const orchestrationSummary = result.steps.find((s: any) => s.type === "orchestration_summary")?.output?.finalOutput;
-      const testAnalysisText = testAnalysisStep?.output?.summary || testAnalysisStep?.output?.analysis || orchestrationSummary || result.summary?.analysis?.summary || result.summary?.analysis?.analysis || "";
-
-      await storage.createTrace({
-        agentId: req.params.id,
-        environment: "test",
-        status: result.success ? "completed" : "failed",
-        latencyMs: result.summary?.latencyMs || 0,
-        inputSummary: isTeamAgent
-          ? `Team Pipeline Test: ${agent.name} (${rtConfig.orchestration?.workerIds?.length || 0} workers)`
-          : `Test Run: ${prompt.length > 120 ? prompt.substring(0, 117) + "..." : prompt}`,
-        outputSummary: typeof testAnalysisText === "string" && testAnalysisText.length > 0 ? testAnalysisText : `${toolCalls.length} tools called | ${result.summary?.passedSteps}/${result.summary?.totalSteps} steps`,
-        stepsJson: result.steps,
-        modelId: agent.modelName || "gpt-4.1",
-        promptInputs: result.promptInputs || {
-          systemPrompt: richSystemPrompt || prompt,
-          userMessage: prompt,
-          contextVariables: {
-            industry: (await resolveAgentIndustry(agent as any)) || "general",
-            testRun: true,
-            ...(isTeamAgent ? { teamExecution: true, workerCount: rtConfig.orchestration?.workerIds?.length || 0, pattern: rtConfig.orchestration?.pattern || "supervisor" } : {}),
-          },
-        },
-        toolCalls: toolCalls.length > 0 ? toolCalls : null,
-      });
-
-      res.json({
-        success: result.success,
-        summary: result.summary,
-        steps: result.steps,
-        ...(isTeamAgent ? { teamExecution: true, workersExecuted: result.summary?.workersExecuted || 0 } : {}),
-      });
+      const { result } = await executeTest();
+      res.json({ success: result.success, summary: result.summary, steps: result.steps });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

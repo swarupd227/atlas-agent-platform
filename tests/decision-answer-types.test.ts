@@ -59,8 +59,8 @@ describe("classifyStep — answer types", () => {
   });
 
   it("explains each answer type in its own words", () => {
-    expect(explainKind(step(classifyCfg))).toContain("chosen label is written to state");
-    expect(explainKind(step(scoreCfg))).toContain("level is written to state");
+    expect(explainKind(step(classifyCfg))).toContain("picks one of the answers and saves it on the file");
+    expect(explainKind(step(scoreCfg))).toContain("picks a level on the scale and saves it on the file");
   });
 });
 

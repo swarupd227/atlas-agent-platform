@@ -1884,7 +1884,7 @@ async function createOutcomeVersion(
       // actually CHANGED (compare old vs new values, not just field presence).
       // Uses the shared createOutcomeVersion helper so audit format and downstream-
       // impact analysis are identical to POST /api/outcomes/:id/versions.
-      const VERSION_WORTHY_KPI_FIELDS = ["target", "slaThreshold", "weight"] as const;
+      const VERSION_WORTHY_KPI_FIELDS = ["name", "target", "slaThreshold", "weight"] as const;
       const kpiVersionWorthyChanged = existingKpi !== undefined && VERSION_WORTHY_KPI_FIELDS.some(f => {
         if (data[f] === undefined) return false;
         return JSON.stringify(existingKpi[f]) !== JSON.stringify(data[f]);
