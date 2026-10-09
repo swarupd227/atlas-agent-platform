@@ -66,6 +66,7 @@ vi.mock("../server/storage", () => ({
     listDagExecutionRunsByOrg: vi.fn(async () => runs),
     getDagExecutionRun: vi.fn(async () => dagRun),
     getApprovals: vi.fn(async () => approvals),
+    getApprovalsByObjectId: vi.fn(async (id: string) => approvals.filter((a: any) => a.objectId === id)),
     getToolInvocationsByRun: vi.fn(async () => {
       if (toolInvocations === "throw") throw new Error("tool invocation lookup failed");
       return toolInvocations;
@@ -1591,5 +1592,62 @@ describe("actionsTaken: what the run DID, not only what it concluded", () => {
     toolInvocations = "throw";
     await write();
     expect(upsertDecisionRecord.mock.calls[0][0].actionsTaken).toBeNull();
+  });
+});
+
+describe("the approver lookup, after the link was moved out of prose", () => {
+  /**
+   * Found live: four gates on one run were approved by "admin", reviewState
+   * correctly read "reviewed", and decidedByUserId was still null. The cause
+   * was not the lookup but the data -- a hitl_gate approval carried
+   * objectId: null, and the run id existed only inside the description text
+   * as "Run: a22b22ee-...".
+   *
+   * Fixed at the source (agent-runtime.ts now sets objectId to the dag run
+   * id) rather than by parsing the description, because a compliance field
+   * populated from free text is a field that asserts what it inferred.
+   */
+  const nodeConfig = { n1: { stateKey: "bind_policy", nodeType: "decision", label: "Binding Decision" } };
+  const state = { submissionId: "SUB-2026-8891", bind_policy: "bound" };
+  const write = () => recordRunDecisions({
+    runId: "run-1", teamAgentId: "teamA", teamName: "E&S", orgId: "org1",
+    state, nodeConfig, decidedAt: new Date("2026-10-09T10:00:00Z"),
+  });
+  beforeEach(() => {
+    decisionRecords = []; upsertDecisionRecord.mockClear();
+    policyBundle = null; toolInvocations = []; dagRun = { id: "run-1", waveResults: [] };
+  });
+
+  it("names the approver when the gate carries the run as objectId", async () => {
+    approvals = [{ objectId: "run-1", decidedBy: "admin", decidedAt: new Date("2026-10-09T09:30:00Z") }];
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.decidedByUserId).toBe("admin");
+    expect(rec.rationale.gate).toMatchObject({ passed: true, by: "admin" });
+  });
+
+  it("does not claim an approver for a gate from before the link existed", async () => {
+    // The live shape: decided by a person, but no structured tie to the run.
+    approvals = [{ objectId: null, decidedBy: "admin", decidedAt: new Date(), description: "Run: run-1" }];
+    await write();
+    const rec = upsertDecisionRecord.mock.calls[0][0];
+    expect(rec.decidedByUserId).toBeNull();
+    expect(rec.rationale.gate).toEqual({ passed: false, source: "approval_record" });
+  });
+
+  it("does not pick up another run's approver", async () => {
+    approvals = [{ objectId: "some-other-run", decidedBy: "someone-else", decidedAt: new Date() }];
+    await write();
+    expect(upsertDecisionRecord.mock.calls[0][0].decidedByUserId).toBeNull();
+  });
+
+  it("takes the most recent decision when a run had several gates", async () => {
+    // The live run had four. The last one settled is the one that released it.
+    approvals = [
+      { objectId: "run-1", decidedBy: "first", decidedAt: new Date("2026-10-09T09:00:00Z") },
+      { objectId: "run-1", decidedBy: "last", decidedAt: new Date("2026-10-09T09:45:00Z") },
+    ];
+    await write();
+    expect(upsertDecisionRecord.mock.calls[0][0].decidedByUserId).toBe("last");
   });
 });

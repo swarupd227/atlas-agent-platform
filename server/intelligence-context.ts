@@ -763,8 +763,16 @@ function buildRationale(input: {
  */
 async function collectApprover(runId: string, orgId?: string | null): Promise<{ userId: string | null; decidedAt: string | null } | null> {
   try {
-    const all = await (storage as { getApprovals?: (o?: string) => Promise<any[]> }).getApprovals?.(orgId ?? undefined);
-    const forRun = (all ?? []).filter(a => a.objectId === runId && a.decidedBy);
+    // Scoped to this run rather than filtering every approval the org has
+    // made. Gate approvals carry the run as objectId since the fix in
+    // agent-runtime.ts; before that it existed only in the description's
+    // prose, and parsing free text to populate a compliance field is how a
+    // provenance record ends up asserting something it inferred. Runs from
+    // before that fix simply cannot name their approver, which is the honest
+    // outcome rather than a guessed one.
+    const all = await (storage as { getApprovalsByObjectId?: (id: string, o?: string) => Promise<any[]> })
+      .getApprovalsByObjectId?.(runId, orgId ?? undefined);
+    const forRun = (all ?? []).filter(a => a.decidedBy);
     if (!forRun.length) return null;
     const latest = forRun.sort((a, b) => new Date(b.decidedAt ?? 0).getTime() - new Date(a.decidedAt ?? 0).getTime())[0];
     return { userId: String(latest.decidedBy), decidedAt: latest.decidedAt ? new Date(latest.decidedAt).toISOString() : null };

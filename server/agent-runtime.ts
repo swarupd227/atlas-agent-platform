@@ -3330,7 +3330,7 @@ export async function waitForApproval(
    * IDs"). Callers that know the run supply a distinguishing name and a
    * description that leads with the artifact actually being approved.
    */
-  approvalMeta?: { objectName?: string; description?: string; evidenceJson?: Record<string, unknown> },
+  approvalMeta?: { objectName?: string; description?: string; evidenceJson?: Record<string, unknown>; dagRunId?: string },
 ): Promise<{ approved: boolean; decidedBy?: string; reason?: string; approvalId?: string; expired?: boolean }> {
   // Resuming a DAG run re-runs the whole paused wave (see resumeTeamAgentDagRun
   // in dag-execution-engine.ts), including the gate node itself -- without
@@ -3359,6 +3359,13 @@ export async function waitForApproval(
       ...(owner?.organizationId ? { organizationId: owner.organizationId } : {}),
       type: "hitl_gate",
       objectType: "pipeline_gate",
+      // The run this gate belongs to, as DATA. It was only ever in the
+      // description's prose ("Run: a22b22ee-..."), so nothing could join a
+      // decision back to the person who approved its gate without parsing
+      // free text -- which is how a provenance field ends up asserting
+      // something it inferred. Matches how the engine's other approval kinds
+      // already key themselves (objectId: dagRunId).
+      ...(approvalMeta?.dagRunId ? { objectId: approvalMeta.dagRunId } : {}),
       objectName: approvalMeta?.objectName || gateName,
       status: "pending",
       requestedBy: agentId,

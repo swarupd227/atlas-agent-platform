@@ -322,6 +322,8 @@ export interface IStorage {
   deleteDecisionClassifier(id: string, orgId?: string): Promise<boolean>;
 
   getApprovals(orgId?: string): Promise<Approval[]>;
+  /** Approvals filed against one object -- a gate's objectId is its dag run id. */
+  getApprovalsByObjectId(objectId: string, orgId?: string): Promise<Approval[]>;
   /** Every approval, with evidence only on the ones still open. */
   getApprovalSummaries(orgId?: string): Promise<Approval[]>;
   getApproval(id: string, orgId?: string): Promise<Approval | undefined>;
@@ -1656,6 +1658,18 @@ export class DatabaseStorage implements IStorage {
       }
     }
     return changed;
+  }
+
+  async getApprovalsByObjectId(objectId: string, orgId?: string) {
+    // Scoped, not a full load. recordRunDecisions calls this once per record,
+    // and getApprovals() returns every approval the org has ever made --
+    // over a thousand on the live platform.
+    if (!objectId) return [];
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const where = scopedOrgId
+      ? and(eq(approvals.objectId, objectId), eq(approvals.organizationId, scopedOrgId))
+      : eq(approvals.objectId, objectId);
+    return db.select().from(approvals).where(where).orderBy(desc(approvals.decidedAt));
   }
 
   async getApprovals(orgId?: string) {

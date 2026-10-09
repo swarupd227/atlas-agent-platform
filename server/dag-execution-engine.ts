@@ -3284,7 +3284,9 @@ export class DAGExecutionEngine {
         config.onApprovalPending?.(nodeId, id);
       },
       config.resumePendingApprovalId,
-      { objectName, description, evidenceJson: gateEvidence },
+      // dagRunId is passed structurally as well as in the description, so a
+      // decision record can name the PERSON who cleared its gate.
+      { objectName, description, evidenceJson: gateEvidence, ...(config.dagRunId ? { dagRunId: config.dagRunId } : {}) },
     );
 
     // The decision is in. Before this strand carries the run forward it must
