@@ -830,7 +830,7 @@ harden_edge() {
     --listener-arn "$listener_arn" \
     --default-actions "file://$state_dir/listener-default-403.json" >/dev/null
 
-  direct_status=$($CURL_BIN --silent --output /dev/null --write-out '%{http_code}' \
+  direct_status=$($CURL_BIN --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' \
     --connect-timeout 10 "http://${alb_dns}/health" || true)
   [[ "$direct_status" == 403 ]] || {
     printf 'ERROR: direct ALB request returned %s instead of 403.\n' "$direct_status" >&2

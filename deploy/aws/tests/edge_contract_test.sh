@@ -86,6 +86,13 @@ else
   fail 'edge operation verifies direct rejection and captures rollback state'
 fi
 
+direct_probe_source=$(sed -n '/direct_status=/,+2p' "$operation_source")
+if grep -Fq -- "--noproxy '*'" <<<"$direct_probe_source"; then
+  pass 'direct ALB verification bypasses ambient HTTP proxies'
+else
+  fail 'direct ALB verification bypasses ambient HTTP proxies'
+fi
+
 if grep -Fq 'if [[ -e "$edge_state" ]]' "$operation_source" &&
    grep -Fq 'export EDGE_STAGE=listener-rule-created' "$operation_source" &&
    grep -Fq 'export ORIGIN_RULE_ARN=%q' "$operation_source" &&
