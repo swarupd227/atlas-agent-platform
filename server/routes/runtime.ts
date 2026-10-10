@@ -87,6 +87,7 @@ import {
 import { dispatchToolCall, gatherAvailableTools } from "../tool-dispatcher";
 import { RunSpanCollector } from "../run-spans";
 import { isRealMcpServer, mcpInitialize, mcpListTools, mcpListResources, mcpListPrompts } from "../mcp-client";
+import { CLIENT_CREDENTIALS, normalizeMcpAuthInput, storedExtraHeaders } from "../mcp-auth";
 import { getEnterpriseServerById } from "../integrations/register";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
 import {
@@ -13365,14 +13366,28 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
 
   router.put("/api/mcp-servers/:id/auth", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const data = insertMcpServerAuthSchema.parse({ ...req.body, serverId: req.params.id });
+      const parsed = insertMcpServerAuthSchema.parse({ ...req.body, serverId: req.params.id });
+      // Additional headers and client-credentials settings are checked and shaped here (server/mcp-auth.ts);
+      // a save without either goes through exactly as before.
+      const existingAuth = await storage.getMcpServerAuth(String(req.params.id));
+      // An omitted type is the column's default, "none".
+      const requestedType = parsed.authType ?? "none";
+      const normalized = normalizeMcpAuthInput(requestedType, parsed.config, existingAuth ? { authType: existingAuth.authType, config: (existingAuth.config as Record<string, unknown> | null) ?? null } : null);
+      if (!normalized.ok) return res.status(400).json({ message: "Invalid auth configuration", errors: normalized.errors });
+      if (requestedType === CLIENT_CREDENTIALS) {
+        // The token request leaves this server under the outbound policy like any other call.
+        const vetted = await vetMcpUrl(String((normalized.config as Record<string, unknown>).tokenUrl), "mcp-oauth");
+        if (!vetted.ok) return res.status(400).json({ message: "Invalid auth configuration", errors: [`That token URL is not allowed by this deployment's outbound policy: ${vetted.message}`] });
+      }
+      const data = { ...parsed, config: normalized.config };
       const auth = await storage.upsertMcpServerAuth(data);
       await storage.createAuditEvent({
         action: "mcp_server.auth_updated",
         objectType: "mcp_server",
         objectId: req.params.id as string,
         actorId: "system",
-        details: JSON.stringify({ authType: data.authType }),
+        // Names of what is configured, never a value.
+        details: JSON.stringify({ authType: data.authType, extraHeaders: Object.keys(storedExtraHeaders(data.config as Record<string, unknown> | null)) }),
       });
       res.json(sanitizeMcpServerAuth(auth, (data.config as Record<string, unknown> | null) ?? null));
     } catch (e: any) {

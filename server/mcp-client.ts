@@ -4,6 +4,7 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer, McpServerAuth } from "@shared/schema";
 import { findMcpOAuthProvider, getMcpOAuthClientCredentials } from "./mcp-oauth-providers";
 import { policyFetch } from "./url-safety";
+import { CLIENT_CREDENTIALS, getClientCredentialsToken, mergeExtraHeaders } from "./mcp-auth";
 
 export interface McpToolDef {
   name: string;
@@ -42,7 +43,7 @@ export function isRealMcpServer(server: Pick<McpServer, "url" | "transportType">
 }
 
 // ─── CredentialManager: build HTTP headers from a McpServerAuth record ────────
-// Supports: none | api_key | bearer | basic | oauth2
+// Supports: none | api_key | bearer | basic | oauth2 | oauth2_client_credentials
 // Config shapes (stored in mcpServerAuth.config jsonb):
 //   api_key:  { headerName?: string, value: string }        → X-API-Key (or custom header)
 //   bearer:   { token: string }                             → Authorization: Bearer <token>
@@ -118,7 +119,11 @@ export async function buildMcpAuthHeaders(
 ): Promise<Record<string, string>> {
   if (!auth || auth.authType === "none") return {};
   const cfg = (auth.config as Record<string, unknown> | null) ?? {};
+  // Additional headers (server/mcp-auth.ts) ride along with any auth type; a record without them is returned untouched.
+  return mergeExtraHeaders(await baseAuthHeaders(server, auth, cfg), cfg);
+}
 
+async function baseAuthHeaders(server: McpServer, auth: McpServerAuth, cfg: Record<string, unknown>): Promise<Record<string, string>> {
   switch (auth.authType) {
     case "api_key": {
       // `keyName`/`keyValue` is the shape the server detail page used to save, so
@@ -144,6 +149,11 @@ export async function buildMcpAuthHeaders(
       const accessToken = await getValidOAuthAccessToken(server, cfg);
       if (!accessToken) return {};
       return { Authorization: `Bearer ${accessToken}` };
+    }
+    case CLIENT_CREDENTIALS: {
+      // The platform gets and renews its own token; if it cannot, the call fails with the reason
+      // rather than going out without a credential.
+      return { Authorization: `Bearer ${await getClientCredentialsToken(server, cfg)}` };
     }
     default:
       return {};

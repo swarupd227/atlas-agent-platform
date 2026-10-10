@@ -173,6 +173,18 @@ export default function McpServerDetail() {
   const [authKeyName, setAuthKeyName] = useState("");
   const [authKeyValue, setAuthKeyValue] = useState("");
   const [authAccessToken, setAuthAccessToken] = useState("");
+  // OAuth client credentials: the platform gets and renews its own token (server/mcp-auth.ts).
+  const [ccTokenUrl, setCcTokenUrl] = useState("");
+  const [ccClientId, setCcClientId] = useState("");
+  const [ccClientSecret, setCcClientSecret] = useState("");
+  const [ccScope, setCcScope] = useState("");
+  const [ccAudience, setCcAudience] = useState("");
+  const [ccMethod, setCcMethod] = useState<"body" | "basic">("body");
+  // Additional headers sent with any auth type. Values are never read back, so they are only sent when edited.
+  const [extraHeaderRows, setExtraHeaderRows] = useState<Array<{ name: string; value: string }>>([]);
+  const [extraHeadersTouched, setExtraHeadersTouched] = useState(false);
+  const hasStoredExtraHeaders = ((auth as unknown as { configuredFields?: string[] } | undefined)?.configuredFields ?? []).includes("extraHeaders");
+  const editExtraHeaders = (rows: Array<{ name: string; value: string }>) => { setExtraHeaderRows(rows); setExtraHeadersTouched(true); };
 
   const { data: oauthProvider } = useQuery<{ provider: string | null; providerName?: string; configured?: boolean; scopes?: string[] }>({
     queryKey: ["/api/mcp-servers", id, "oauth", "provider"],
@@ -186,7 +198,19 @@ export default function McpServerDetail() {
       if (authType === "bearer") config = { token: authToken };
       else if (authType === "api_key") config = { headerName: authKeyName, value: authKeyValue };
       else if (authType === "oauth2") config = { accessToken: authAccessToken };
-      return apiRequest("PUT", `/api/mcp-servers/${id}/auth`, { authType, config });
+      else if (authType === "oauth2_client_credentials") {
+        config = { tokenUrl: ccTokenUrl, clientId: ccClientId, tokenAuthMethod: ccMethod };
+        // The secret is not shown back: leaving it empty keeps the stored one.
+        if (ccClientSecret) config.clientSecret = ccClientSecret;
+        if (ccScope) config.scope = ccScope;
+        if (ccAudience) config.audience = ccAudience;
+      }
+      // Left out unless edited, so saving a new token does not drop headers that are already stored.
+      const body: { authType: string; config: Record<string, unknown> } = { authType, config };
+      if (extraHeadersTouched && authType !== "none") {
+        body.config.extraHeaders = Object.fromEntries(extraHeaderRows.filter((r) => r.name.trim() && r.value).map((r) => [r.name.trim(), r.value]));
+      }
+      return apiRequest("PUT", `/api/mcp-servers/${id}/auth`, body);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers", id, "auth"] });
@@ -1446,6 +1470,7 @@ export default function McpServerDetail() {
                       <SelectItem value="bearer">bearer</SelectItem>
                       <SelectItem value="api_key">api_key</SelectItem>
                       <SelectItem value="oauth2">oauth2</SelectItem>
+                      <SelectItem value="oauth2_client_credentials">oauth2 client credentials</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1536,6 +1561,85 @@ export default function McpServerDetail() {
                     <p className="text-xs text-muted-foreground">
                       No known OAuth provider for this server's URL — paste an access token obtained out-of-band.
                     </p>
+                  </div>
+                )}
+
+                {authType === "oauth2_client_credentials" && (
+                  <div className="flex flex-col gap-3 rounded-md border p-3" data-testid="section-client-credentials">
+                    <p className="text-xs text-muted-foreground">
+                      Astra requests its own access token from the token URL with this client, keeps it until a minute before it expires,
+                      and requests a new one. {auth?.authType === "oauth2_client_credentials" && "A client secret is already stored; leave it empty to keep it."}
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="cc-token-url">Token URL</Label>
+                      <Input id="cc-token-url" value={ccTokenUrl} onChange={(e) => setCcTokenUrl(e.target.value)} placeholder="https://idp.example.com/oauth2/token" data-testid="input-cc-token-url" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="cc-client-id">Client ID</Label>
+                      <Input id="cc-client-id" value={ccClientId} onChange={(e) => setCcClientId(e.target.value)} data-testid="input-cc-client-id" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="cc-client-secret">Client secret</Label>
+                      <Input id="cc-client-secret" type="password" value={ccClientSecret} onChange={(e) => setCcClientSecret(e.target.value)} data-testid="input-cc-client-secret" />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="cc-scope">Scope (optional)</Label>
+                        <Input id="cc-scope" value={ccScope} onChange={(e) => setCcScope(e.target.value)} data-testid="input-cc-scope" />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="cc-audience">Audience (optional)</Label>
+                        <Input id="cc-audience" value={ccAudience} onChange={(e) => setCcAudience(e.target.value)} data-testid="input-cc-audience" />
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label>Send the client credentials</Label>
+                      <Select value={ccMethod} onValueChange={(v) => setCcMethod(v as "body" | "basic")}>
+                        <SelectTrigger data-testid="select-cc-method"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="body">in the request body</SelectItem>
+                          <SelectItem value="basic">as HTTP Basic authentication</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                {authType !== "none" && (
+                  <div className="flex flex-col gap-2 rounded-md border p-3" data-testid="section-extra-headers">
+                    <Label>Additional headers</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Sent with every request, alongside the credential above (for example an <code>x-api-key</code> that goes with a bearer token).
+                      {hasStoredExtraHeaders && !extraHeadersTouched && " Headers are already configured; their values are not shown. Leave this section alone to keep them."}
+                    </p>
+                    {extraHeaderRows.map((row, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <Input
+                          value={row.name}
+                          onChange={(e) => editExtraHeaders(extraHeaderRows.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))}
+                          placeholder="Header name"
+                          data-testid={`input-extra-header-name-${i}`}
+                        />
+                        <Input
+                          type="password"
+                          value={row.value}
+                          onChange={(e) => editExtraHeaders(extraHeaderRows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
+                          placeholder="Value"
+                          data-testid={`input-extra-header-value-${i}`}
+                        />
+                        <Button variant="ghost" size="icon" onClick={() => editExtraHeaders(extraHeaderRows.filter((_, j) => j !== i))} data-testid={`button-remove-extra-header-${i}`}>
+                          <XCircle className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => editExtraHeaders([...extraHeaderRows, { name: "", value: "" }])} data-testid="button-add-extra-header">
+                        <Plus className="w-3.5 h-3.5 mr-1" />Add header
+                      </Button>
+                      {hasStoredExtraHeaders && !extraHeadersTouched && (
+                        <Button variant="ghost" size="sm" onClick={() => editExtraHeaders([])} data-testid="button-clear-extra-headers">Remove stored headers</Button>
+                      )}
+                    </div>
                   </div>
                 )}
 
