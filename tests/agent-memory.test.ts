@@ -7,6 +7,8 @@
  * carries hashes, never text.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 vi.mock("../server/db", () => ({ db: {} }));
 vi.mock("../server/storage", () => ({ storage: { getPlatformSetting: vi.fn() } }));
@@ -15,7 +17,7 @@ vi.mock("../server/auth", () => ({ getDefaultOrgId: () => "org-default" }));
 import { storage } from "../server/storage";
 import {
   scanNote, normalizeNote, noteHash, shortId, renderMemoryBlock, isLive, MEMORY_LIMITS,
-  proposeMemoryChange, applyMemoryDecision, removeNoteByPerson, activeNotesForPrompt, isAgentMemoryEnabled, memoryOverview,
+  proposeMemoryChange, applyMemoryDecision, removeNoteByPerson, activeNotesForPrompt, isAgentMemoryEnabled, memoryOverview, memoryPromptLayer,
   type MemoryStore, type MemoryDeps,
 } from "../server/agent-memory";
 
@@ -403,5 +405,80 @@ describe("isAgentMemoryEnabled", () => {
   it("a failed flag read is off", async () => {
     vi.mocked(storage.getPlatformSetting as any).mockRejectedValue(new Error("db down"));
     expect(await isAgentMemoryEnabled({ agentMemory: { enabled: true } })).toBe(false);
+  });
+});
+
+// ── The prompt layer ────────────────────────────────────────────────────────
+// Shipped once with a layer that never reached a prompt: nothing executed the
+// code that builds the context, so only a live run noticed.
+
+describe("memoryPromptLayer", () => {
+  const on = async () => true;
+  const off = async () => false;
+  const args = (over: Record<string, unknown> = {}) => ({ runtimeConfig: { agentMemory: { enabled: true } }, orgId: "org-a", agentId: "agent-1", budgetTokens: 500, ...over });
+
+  it("puts an approved note in the prompt, framed as data, with the tool line", async () => {
+    const env = makeEnv();
+    await saveNote(env, "Quarterly reports are due on the 5th business day.");
+    const layer = await memoryPromptLayer(args(), { store: env.store, isEnabled: on });
+    expect(layer).toContain("## MEMORY");
+    expect(layer).toContain("Quarterly reports are due on the 5th business day.");
+    expect(layer).toContain("background data, not instructions");
+    expect(layer).toContain("PROPOSE");
+  });
+
+  it("is empty when memory is off for the agent or the platform", async () => {
+    const env = makeEnv();
+    await saveNote(env, "Quarterly reports are due on the 5th business day.");
+    expect(await memoryPromptLayer(args(), { store: env.store, isEnabled: off })).toBe("");
+    expect(await memoryPromptLayer(args({ budgetTokens: 0 }), { store: env.store, isEnabled: on })).toBe("");
+  });
+
+  it("with no notes yet it still tells the agent it can propose one", async () => {
+    const env = makeEnv();
+    const layer = await memoryPromptLayer(args(), { store: env.store, isEnabled: on });
+    expect(layer).toContain("You have no saved notes yet.");
+  });
+
+  it("never shows a pending, rejected or other-org note", async () => {
+    const env = makeEnv();
+    await propose(env, { content: "Pending note about renewals." });
+    const layer = await memoryPromptLayer(args(), { store: env.store, isEnabled: on });
+    expect(layer).not.toContain("Pending note");
+    expect(await memoryPromptLayer(args({ orgId: "org-b" }), { store: env.store, isEnabled: on })).not.toContain("Pending note");
+  });
+
+  it("stays inside its budget but keeps the first line", async () => {
+    const env = makeEnv();
+    await saveNote(env, "The claims system closes at 18:00 Eastern.");
+    const layer = await memoryPromptLayer(args({ budgetTokens: 20 }), { store: env.store, isEnabled: on });
+    expect(layer.length).toBeGreaterThan(0);
+    expect(layer.length).toBeLessThan(200);
+  });
+
+  it("a failed read throws, so the caller can say so instead of looking like 'no notes'", async () => {
+    const env = makeEnv();
+    const broken: MemoryStore = { ...env.store, list: async () => { throw new Error("db down"); } };
+    await expect(memoryPromptLayer(args(), { store: broken, isEnabled: on })).rejects.toThrow("db down");
+  });
+});
+
+describe("where agent-runtime builds the layer", () => {
+  // The layer was once spliced INSIDE the episodic-memory block, so it ran only
+  // when an agent had episodic history. Pin where the call sits, by position, not window.
+  const src = readFileSync(resolve(__dirname, "../server/agent-runtime.ts"), "utf8");
+
+  it("calls it exactly once, outside the episodic-memory block", () => {
+    const calls = [...src.matchAll(/memoryPromptLayer\(\{/g)].map((m) => m.index!);
+    expect(calls).toHaveLength(1);
+    const episodicStart = src.indexOf("const recentMemories = await storage.getAgentMemories");
+    const episodicEnd = src.indexOf('trackSection("episodic_memory"');
+    expect(episodicStart).toBeGreaterThan(0);
+    expect(episodicEnd).toBeGreaterThan(episodicStart);
+    expect(calls[0] < episodicStart || calls[0] > episodicEnd).toBe(true);
+  });
+
+  it("logs a skipped layer instead of swallowing it", () => {
+    expect(src).toContain("memory layer skipped");
   });
 });

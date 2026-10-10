@@ -195,6 +195,32 @@ export async function activeNotesForPrompt(orgId: string | null | undefined, age
   return rows.filter((n) => isLive(n, now)).slice(0, MEMORY_LIMITS.maxNotes);
 }
 
+/**
+ * The memory section of an agent's prompt: "" when memory is off for this agent,
+ * otherwise the approved notes plus a line on the memory tool. Cut to a token
+ * budget (4 characters a token, at least one line kept) the way the other
+ * context layers are. Throws on a failed read -- the caller decides what that
+ * costs the run; it must not be silent, or a broken layer looks like "no notes".
+ */
+export async function memoryPromptLayer(
+  input: { runtimeConfig: Record<string, any> | null | undefined; orgId: string | null | undefined; agentId: string; budgetTokens: number },
+  deps: { store?: MemoryStore; isEnabled?: (runtimeConfig: Record<string, any> | null | undefined) => Promise<boolean>; now?: number } = {},
+): Promise<string> {
+  if (!(input.budgetTokens > 0)) return "";
+  if (!(await (deps.isEnabled ?? isAgentMemoryEnabled)(input.runtimeConfig))) return "";
+  const notes = await activeNotesForPrompt(input.orgId, input.agentId, deps.store, deps.now);
+  const lines = renderMemoryBlock(notes, { toolOffered: true }).split("\n");
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    const tokens = Math.ceil(line.length / 4);
+    if (kept.length > 0 && used + tokens > input.budgetTokens) break;
+    kept.push(line);
+    used += tokens;
+  }
+  return kept.join("\n");
+}
+
 /** On when the platform flag is on AND this agent has opted in. */
 export async function isAgentMemoryEnabled(runtimeConfig: Record<string, any> | null | undefined): Promise<boolean> {
   if (runtimeConfig?.agentMemory?.enabled !== true) return false;

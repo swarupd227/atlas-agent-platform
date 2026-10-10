@@ -18,7 +18,7 @@ import { currentLlmAbortSignal } from "./llm-abort-context";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
 import { resolveReadableSkillSets, planSkillContext, skillProceduresPrompt, skillToolsFor, skillCatalogPrompt, isBuiltinSkillTool, DEFAULT_SKILL_INLINE_BUDGET_TOKENS } from "./builtin-skill-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
-import { isAgentMemoryEnabled, activeNotesForPrompt, renderMemoryBlock } from "./agent-memory";
+import { isAgentMemoryEnabled, memoryPromptLayer } from "./agent-memory";
 import { memoryToolsFor } from "./builtin-memory-tools";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
@@ -635,21 +635,21 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     }
   } catch {}
 
+  // Governed memory: the notes a person approved for this agent, framed as data
+  // (server/agent-memory.ts). Only when the platform flag is on and the agent has
+  // opted in. A failed read adds nothing rather than failing the run, but it is
+  // logged: a silent failure here reads as "no notes" and hides a broken layer.
+  try {
+    const memoryLayer = await memoryPromptLayer({ runtimeConfig: agent.runtimeConfig, orgId: agent.orgId, agentId: agent.agentId, budgetTokens: layerBudgets.memory });
+    if (memoryLayer) trackSection("memory", memoryLayer);
+  } catch (err: any) {
+    console.warn(`[agent-runtime] ${agent.agentName}: memory layer skipped: ${err?.message ?? err}`);
+  }
+
   try {
     const recentMemories = await storage.getAgentMemories(agent.agentId, "episodic", 10);
     if (recentMemories.length > 0) {
       const memLines: string[] = [];
-  // Governed memory: the notes a person approved for this agent, framed as data
-  // (server/agent-memory.ts). Only when the platform flag is on and the agent has
-  // opted in; a failed read adds nothing rather than failing the run.
-  if (layerBudgets.memory > 0) try {
-    if (await isAgentMemoryEnabled(agent.runtimeConfig)) {
-      const notes = await activeNotesForPrompt(agent.orgId, agent.agentId);
-      const block = renderMemoryBlock(notes, { toolOffered: true });
-      if (block) trackSection("memory", truncateLinesToBudget(layerBudgets.memory, block.split("\n")).join("\n"));
-    }
-  } catch {}
-
       memLines.push(`\n## EPISODIC MEMORY (recent execution history)`);
       memLines.push(`You have executed ${recentMemories.length} previous run(s). Use this history to inform your decisions:`);
       recentMemories.forEach((mem, i) => {
