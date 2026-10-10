@@ -306,6 +306,21 @@ describe("extractSubjects", () => {
     expect(extractSubjects({ note: "ACCOUNTING-2026 and ACCT- alone" }).map(s => s.subject)).toEqual([]);
   });
 
+  it("does not let a trailing timestamp become a second account", () => {
+    // Seen live on a Shared Account Data Propagation run: state carried a cache
+    // key alongside the id, and the layer reported account:ACCT-100417 AND
+    // account:ACCT-100417-2026-05-28T06 as two business objects. A decision
+    // recorded against one can then never be found from the other.
+    expect(extractSubjects({ accountId: "ACCT-100417", cacheKey: "ACCT-100417-2026-05-28T06:12:00Z" }).map(s => s.subject))
+      .toEqual(["account:ACCT-100417"]);
+    // The same must hold for an id that is not purely numeric.
+    expect(extractSubjects({ cacheKey: "ACCT-REQ-VOSTOK-001-2026-05-28T06:12:00Z" }).map(s => s.subject))
+      .toEqual(["account:ACCT-REQ-VOSTOK-001"]);
+    // And for a broker code, whose pattern carried the identical flaw.
+    expect(extractSubjects({ brokerCode: "BRK-4471-2026-05-28" }).map(s => s.subject))
+      .toEqual(["broker:BRK-4471"]);
+  });
+
   it("does not turn a timestamp into an accounting period", () => {
     // "2026-11" appears in dates everywhere; anchoring on those would attach
     // decisions to the month they happened to run in.

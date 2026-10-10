@@ -241,7 +241,9 @@ const SUBJECT_PATTERNS: Array<{ type: string; re: RegExp }> = [
   { type: "submission", re: /\bSUB-\d{4}-\d+\b/g },
   { type: "policy", re: /\bPOL-[0-9A-Z-]{4,}\b/g },
   { type: "binder", re: /\bCP-\d{4}-\d+\b/g },
-  { type: "broker", re: /\bBRK-[0-9A-Z-]{2,}\b/g },
+  // Same shape as the account pattern below, and for the same reason: a hyphen
+  // inside the class let "BRK-4471-2026-05-28" match whole.
+  { type: "broker", re: /\bBRK-(?!\d{4}-\d{2}\b)[0-9A-Z]+(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
   { type: "agency", re: /\bAGY-[0-9A-Z-]{2,}\b/g },
   // An account is the anchor of the five Account journeys, and until this
   // pattern existed none of them could use this layer at all: every other
@@ -249,7 +251,18 @@ const SUBJECT_PATTERNS: Array<{ type: string; re: RegExp }> = [
   // an account run and the whole layer was a silent no-op for them. Measured
   // on the Account Establishment journey's own history -- 17 distinct ACCT-
   // ids across its last 50 runs, every one of them invisible.
-  { type: "account", re: /\bACCT-[0-9A-Z-]{3,}\b/g },
+  //
+  // The hyphen has to be INSIDE the id but must not swallow a trailing
+  // timestamp. `ACCT-[0-9A-Z-]{3,}` did both: a live run on ACCT-100417 carried
+  // a cache key "ACCT-100417-2026-05-28T06:12:00Z" and the layer extracted
+  // account:ACCT-100417 AND account:ACCT-100417-2026-05-28T06 as two different
+  // business objects -- so a prior decision recorded against one could never
+  // match the other, which is the whole point of the layer.
+  //
+  // Restricting the class to digits would be the obvious fix and is wrong:
+  // real ids include ACCT-REQ-VOSTOK-001. So the id is read as hyphen-joined
+  // segments, and a segment that begins a YYYY-MM date is not one of them.
+  { type: "account", re: /\bACCT-(?!\d{4}-\d{2}\b)[0-9A-Z]+(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
   // A period is only a period when a key says so: "2026-11" appears in
   // timestamps everywhere, and anchoring on those would attach decisions to
   // the month they happened to run in.
