@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "@shared/schema";
+import { ensureMcpServerAuthUnique } from "./mcp-auth-uniqueness";
 
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
@@ -2226,6 +2227,15 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_eval_suites_org ON eval_suites (organization_id);
       CREATE INDEX IF NOT EXISTS idx_eval_runs_org ON eval_runs (organization_id);
     `);
+
+    // One credential row per MCP server: remove duplicates that are provably the same credential, then make the
+    // database refuse a second row (server/mcp-auth-uniqueness.ts). A protection, not a prerequisite: if it cannot
+    // run, the server still starts, and saves are serialized per server regardless.
+    try {
+      await ensureMcpServerAuthUnique(client);
+    } catch (e: any) {
+      console.error("[db] could not make mcp_server_auth unique per server (continuing):", e?.message ?? e);
+    }
 
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

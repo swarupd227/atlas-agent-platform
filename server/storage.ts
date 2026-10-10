@@ -3279,7 +3279,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getMcpServerAuth(serverId: string) {
-    const [auth] = await db.select().from(mcpServerAuth).where(eq(mcpServerAuth.serverId, serverId));
+    return this.readMcpServerAuth(db, serverId);
+  }
+
+  /** The one reader of a server's auth row, on the pool or inside a transaction (a writer holding a lock must not wait for a second connection). */
+  private async readMcpServerAuth(exec: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0], serverId: string) {
+    const [auth] = await exec.select().from(mcpServerAuth).where(eq(mcpServerAuth.serverId, serverId));
     if (!auth) return auth;
 
     // Vault-backed read: if configEncrypted is present, decrypt and merge over legacy plaintext config.
@@ -3298,31 +3303,40 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertMcpServerAuth(auth: InsertMcpServerAuth) {
-    // Always encrypt config via vault — never persist plaintext secrets in the DB.
-    // If vault encryption fails (should not happen in any env), throw rather than silently
-    // falling back to plaintext, which would violate the secure-by-default policy.
-    let configEncrypted: string | undefined;
-    if (auth.config && typeof auth.config === "object" && !Array.isArray(auth.config)) {
-      const { encryptCredentialMap } = await import("./credential-vault");
-      const configMap = Object.fromEntries(
-        Object.entries(auth.config as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])
-      );
-      configEncrypted = encryptCredentialMap(configMap);
-    }
+    // One writer per server at a time. The read of the row that is there and the write that follows it were
+    // not atomic: ten saves of a new server's credentials at once each found no row and each inserted one (the
+    // table had no uniqueness on server_id), and which of them a connector then read was arbitrary. A
+    // transaction-scoped advisory lock, as createAuditEvent takes per organization, makes the second save see the
+    // first one's row; it is released on commit or rollback. Different servers do not wait for each other.
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`mcp_server_auth:${auth.serverId}`}))`);
 
-    // Write encrypted blob; set config to null to stop persisting plaintext secrets
-    const safeWrite = { ...auth, config: null, configEncrypted: configEncrypted, lastRotated: new Date() };
+      // Always encrypt config via vault — never persist plaintext secrets in the DB.
+      // If vault encryption fails (should not happen in any env), throw rather than silently
+      // falling back to plaintext, which would violate the secure-by-default policy.
+      let configEncrypted: string | undefined;
+      if (auth.config && typeof auth.config === "object" && !Array.isArray(auth.config)) {
+        const { encryptCredentialMap } = await import("./credential-vault");
+        const configMap = Object.fromEntries(
+          Object.entries(auth.config as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])
+        );
+        configEncrypted = encryptCredentialMap(configMap);
+      }
 
-    const existing = await this.getMcpServerAuth(auth.serverId);
-    if (existing) {
-      const [updated] = await db.update(mcpServerAuth)
-        .set(safeWrite)
-        .where(eq(mcpServerAuth.serverId, auth.serverId))
-        .returning();
-      return updated;
-    }
-    const [created] = await db.insert(mcpServerAuth).values(safeWrite).returning();
-    return created;
+      // Write encrypted blob; set config to null to stop persisting plaintext secrets
+      const safeWrite = { ...auth, config: null, configEncrypted: configEncrypted, lastRotated: new Date() };
+
+      const existing = await this.readMcpServerAuth(tx, auth.serverId);
+      if (existing) {
+        const [updated] = await tx.update(mcpServerAuth)
+          .set(safeWrite)
+          .where(eq(mcpServerAuth.serverId, auth.serverId))
+          .returning();
+        return updated;
+      }
+      const [created] = await tx.insert(mcpServerAuth).values(safeWrite).returning();
+      return created;
+    });
   }
 
   async getRemoteAgents() {
