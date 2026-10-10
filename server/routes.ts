@@ -134,6 +134,8 @@ import glSyncIntacctRouter       from "./mock-mcp/gl-sync-intacct";
 import glSyncReconciliationRouter from "./mock-mcp/gl-sync-reconciliation";
 import glSyncFileDeliveryRouter  from "./mock-mcp/gl-sync-file-delivery";
 import glSyncNotificationRouter  from "./mock-mcp/gl-sync-notification";
+import kearneyItsmRouter from "./mock-mcp/kearney-itsm";
+import kearneyEstateRouter from "./mock-mcp/kearney-estate";
 import { glSyncLiveRunHandler, resetGlSyncHandler, getGlSyncStatusHandler } from "./gl-sync-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
@@ -464,6 +466,12 @@ export async function registerRoutes(
   app.use("/api/mock/hnp-churn-model",     hnpChurnModelRouter);
   app.use("/api/mock/hnp-geo",             hnpGeoRouter);
   app.use("/api/mock/hnp-content-api",     hnpContentApiRouter);
+
+  // Kearney IT managed services (Attachments B.3 / B.4) -- the client's own ITSM
+  // records and application estate, behind connectors that answer across the set
+  // with counts and one record in full.
+  app.use("/api/mock/kearney-itsm",        kearneyItsmRouter);
+  app.use("/api/mock/kearney-estate",      kearneyEstateRouter);
   app.get("/demo-api/hnp-sub/live-run",    hnpSubLiveRunHandler);
   app.get("/demo-api/hnp-sub/agent-runs",  getHnpSubAgentRuns);
   app.post("/demo-api/hnp-sub/reset",      resetHnpSubDemo);

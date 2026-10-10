@@ -2207,6 +2207,676 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
       ],
     },
+    {
+      name: "Kearney ITSM (Volumes Extract)",
+      description: "Kearney's IT service management records -- 28,028 incidents, 63,349 user requests, 49 problem records and 3,195 service tasks from the engagement's own volumes extract, served in ServiceNow's shapes while REST access to the live instance is arranged. Reads are built so a question about the whole record set is answered with counts rather than rows: every count covers all of it, and every row read says how many it withheld. The record set carries its real defects rather than a tidied copy -- most incidents sit at priority \"5 - Planning\", some categories differ only by case, and 49 problem records explain 750 of the 28,028 incidents -- because those are what the journeys exist to address. Every write needs the id of an approval a person gave, records what the field held before, and returns an undo id.",
+      baseUrl: `${BASE_URL}/api/mock/kearney-itsm`,
+      tools: [
+              {
+                      name: "kearney_itsm_summary",
+                      description: "The shape of the record set in one call: how many incidents, requests, problem records and service tasks; the share of incidents left at priority \"5 - Planning\"; categories that differ only by case; and how much of the incident volume any problem record explains. Start here to size a problem before pulling any rows.",
+                      endpoint: "/summary",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {}
+                      }
+              },
+              {
+                      name: "kearney_incident_volume",
+                      description: "Exact counts grouped by one field, computed over every matching incident rather than a sample. Use this instead of reading rows whenever the question is \"how many\" or \"which is worst\" -- it answers across all 28,028 without putting any of them in the prompt.",
+                      endpoint: "/volume",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      groupBy: {
+                                              type: "string",
+                                              description: "One of: category, subcategory, priority, state, assignment_group, contact_type, month"
+                                      },
+                                      category: {
+                                              type: "string",
+                                              description: "Exact category, case-SENSITIVE: \"Software\" and \"software\" are two different values in this record set (7,168 and 915 incidents) and are not folded together."
+                                      },
+                                      subcategory: {
+                                              type: "string",
+                                              description: "Exact sub-category, e.g. \"Account Lock-Out\""
+                                      },
+                                      priority: {
+                                              type: "string",
+                                              description: "Priority as recorded, e.g. \"1 - Critical\", \"5 - Planning\""
+                                      },
+                                      state: {
+                                              type: "string",
+                                              description: "State as recorded, e.g. Closed, In Progress, New"
+                                      },
+                                      assignmentGroup: {
+                                              type: "string",
+                                              description: "Assignment group, e.g. WW_SRVCNOW_AG_GSCGHD_GG"
+                                      },
+                                      contactType: {
+                                              type: "string",
+                                              description: "How it arrived: Chat, Email, Event, Phone, Walk-Up, Self-service"
+                                      },
+                                      textContains: {
+                                              type: "string",
+                                              description: "Case-insensitive match on the short description"
+                                      },
+                                      createdSince: {
+                                              type: "string",
+                                              description: "ISO or \"YYYY-MM-DD HH:mm:ss\" lower bound on sys_created_on. The extract carries no update timestamp, so this is when the incident was RAISED, not when it last changed."
+                                      },
+                                      createdBefore: {
+                                              type: "string",
+                                              description: "Upper bound on sys_created_on, exclusive"
+                                      }
+                              },
+                              required: [
+                                      "groupBy"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_search_incidents",
+                      description: "Incident rows matching the filters, capped, and honest about the cap: the reply says how many matched and how many were withheld, so a count is never mistaken for the whole answer. Given createdSince the rows come back oldest-first, which is what lets a repeated read walk forward through the record set instead of skipping what did not fit.",
+                      endpoint: "/incidents",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      category: {
+                                              type: "string",
+                                              description: "Exact category, case-SENSITIVE: \"Software\" and \"software\" are two different values in this record set (7,168 and 915 incidents) and are not folded together."
+                                      },
+                                      subcategory: {
+                                              type: "string",
+                                              description: "Exact sub-category, e.g. \"Account Lock-Out\""
+                                      },
+                                      priority: {
+                                              type: "string",
+                                              description: "Priority as recorded, e.g. \"1 - Critical\", \"5 - Planning\""
+                                      },
+                                      state: {
+                                              type: "string",
+                                              description: "State as recorded, e.g. Closed, In Progress, New"
+                                      },
+                                      assignmentGroup: {
+                                              type: "string",
+                                              description: "Assignment group, e.g. WW_SRVCNOW_AG_GSCGHD_GG"
+                                      },
+                                      contactType: {
+                                              type: "string",
+                                              description: "How it arrived: Chat, Email, Event, Phone, Walk-Up, Self-service"
+                                      },
+                                      textContains: {
+                                              type: "string",
+                                              description: "Case-insensitive match on the short description"
+                                      },
+                                      createdSince: {
+                                              type: "string",
+                                              description: "ISO or \"YYYY-MM-DD HH:mm:ss\" lower bound on sys_created_on. The extract carries no update timestamp, so this is when the incident was RAISED, not when it last changed."
+                                      },
+                                      createdBefore: {
+                                              type: "string",
+                                              description: "Upper bound on sys_created_on, exclusive"
+                                      },
+                                      limit: {
+                                              type: "number",
+                                              description: "Rows to return, default 25, maximum 200"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_get_incident",
+                      description: "One incident in full, with any field a journey has corrected and any work notes added. This is the read a triage step makes -- it is not capped or summarised. Note the record set is thin per ticket: there is no long description, no work-note history and no resolution text in it, so enrichment has to come from the application inventory, the incident's own recurrence history and the knowledge base.",
+                      endpoint: "/incident",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      number: {
+                                              type: "string",
+                                              description: "Incident number, e.g. INC0143139"
+                                      }
+                              },
+                              required: [
+                                      "number"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_recurrence_candidates",
+                      description: "Sub-categories that recur above a threshold, each with the volume behind it, example incidents, and whether a problem record already covers it. This is the problem-management gap expressed as work rather than as a percentage -- the groups coming back with no existing problem are the candidates worth opening one for.",
+                      endpoint: "/recurrence",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      minIncidents: {
+                                              type: "number",
+                                              description: "Only groups with at least this many incidents, default 50"
+                                      },
+                                      limit: {
+                                              type: "number",
+                                              description: "Groups to return, default 20, maximum 200"
+                                      },
+                                      category: {
+                                              type: "string",
+                                              description: "Exact category, case-SENSITIVE: \"Software\" and \"software\" are two different values in this record set (7,168 and 915 incidents) and are not folded together."
+                                      },
+                                      subcategory: {
+                                              type: "string",
+                                              description: "Exact sub-category, e.g. \"Account Lock-Out\""
+                                      },
+                                      priority: {
+                                              type: "string",
+                                              description: "Priority as recorded, e.g. \"1 - Critical\", \"5 - Planning\""
+                                      },
+                                      state: {
+                                              type: "string",
+                                              description: "State as recorded, e.g. Closed, In Progress, New"
+                                      },
+                                      assignmentGroup: {
+                                              type: "string",
+                                              description: "Assignment group, e.g. WW_SRVCNOW_AG_GSCGHD_GG"
+                                      },
+                                      contactType: {
+                                              type: "string",
+                                              description: "How it arrived: Chat, Email, Event, Phone, Walk-Up, Self-service"
+                                      },
+                                      textContains: {
+                                              type: "string",
+                                              description: "Case-insensitive match on the short description"
+                                      },
+                                      createdSince: {
+                                              type: "string",
+                                              description: "ISO or \"YYYY-MM-DD HH:mm:ss\" lower bound on sys_created_on. The extract carries no update timestamp, so this is when the incident was RAISED, not when it last changed."
+                                      },
+                                      createdBefore: {
+                                              type: "string",
+                                              description: "Upper bound on sys_created_on, exclusive"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_list_problems",
+                      description: "The problem records that exist, optionally by category, plus any opened during this session. There are only 49 of them against 28,028 incidents, so absence here is the normal case and not evidence that nothing recurred.",
+                      endpoint: "/problems",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      category: {
+                                              type: "string",
+                                              description: "Filter to one category"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_get_problem",
+                      description: "One problem record in full, including the incidents it relates to.",
+                      endpoint: "/problem",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      number: {
+                                              type: "string",
+                                              description: "Problem number, e.g. PRB0040084"
+                                      }
+                              },
+                              required: [
+                                      "number"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_service_tasks",
+                      description: "Service tasks with how often each was handed between groups, plus the distribution and mean across all of them. reassignment_count is the routing-quality signal here: a task passed on repeatedly is one the first routing decision got wrong.",
+                      endpoint: "/tasks",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      minReassignments: {
+                                              type: "number",
+                                              description: "Only tasks reassigned at least this many times"
+                                      },
+                                      limit: {
+                                              type: "number",
+                                              description: "Rows to return, default 25, maximum 200"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_search_requests",
+                      description: "The user-request stream. Not a service line this engagement bids for, but the same applications and the same groups carry it, so it is context a journey can legitimately read.",
+                      endpoint: "/requests",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      textContains: {
+                                              type: "string",
+                                              description: "Case-insensitive match on the short description"
+                                      },
+                                      assignmentGroup: {
+                                              type: "string",
+                                              description: "Exact assignment group"
+                                      },
+                                      limit: {
+                                              type: "number",
+                                              description: "Rows to return, default 25, maximum 200"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_request_variants",
+                      description: "Request descriptions that are the same request written differently -- \"Duo activation\", \"Duo Activation\" and \"DUO Activation\" are three values for one thing. Returned rather than folded, because the folding is a remediation for a person to approve, not something a read should do quietly.",
+                      endpoint: "/request-variants",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      limit: {
+                                              type: "number",
+                                              description: "Collisions to return, default 20, maximum 200"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_update_incident",
+                      description: "Correct the categorisation, priority or assignment group on one incident. Needs the id of an approval a person actually gave; without it the call is refused rather than recorded unattributably. Returns what each field held before and an undo id.",
+                      endpoint: "/incident/update",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      number: {
+                                              type: "string",
+                                              description: "Incident number to correct"
+                                      },
+                                      fields: {
+                                              type: "object",
+                                              description: "Any of: category, subcategory, priority, assignment_group"
+                                      },
+                                      approvalRef: {
+                                              type: "string",
+                                              description: "The id of the approval authorising this change"
+                                      }
+                              },
+                              required: [
+                                      "number",
+                                      "fields",
+                                      "approvalRef"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_create_problem",
+                      description: "Open a problem record for a recurring group, citing the incidents behind it. Incident numbers are checked against the record set first: a problem record pointing at incidents that do not exist looks like evidence and cites nothing. Needs an approval id.",
+                      endpoint: "/problem/create",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      shortDescription: {
+                                              type: "string",
+                                              description: "What recurs, in one line"
+                                      },
+                                      category: {
+                                              type: "string",
+                                              description: "Category this problem sits under"
+                                      },
+                                      subcategory: {
+                                              type: "string",
+                                              description: "Sub-category, where there is one"
+                                      },
+                                      assignmentGroup: {
+                                              type: "string",
+                                              description: "Group that should own it"
+                                      },
+                                      relatedIncidents: {
+                                              type: "array",
+                                              items: {
+                                                      type: "string"
+                                              },
+                                              description: "Incident numbers this problem explains"
+                                      },
+                                      approvalRef: {
+                                              type: "string",
+                                              description: "The id of the approval authorising this record"
+                                      }
+                              },
+                              required: [
+                                      "shortDescription",
+                                      "category",
+                                      "approvalRef"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_add_work_note",
+                      description: "Add a work note to an incident -- the diagnosis, the workaround applied, or why it was routed where it was. Notes are additive and need no approval, because they record what happened rather than changing the record.",
+                      endpoint: "/worknote",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      number: {
+                                              type: "string",
+                                              description: "Incident number"
+                                      },
+                                      note: {
+                                              type: "string",
+                                              description: "The note to add"
+                                      },
+                                      by: {
+                                              type: "string",
+                                              description: "Who is adding it; defaults to \"agent\""
+                                      }
+                              },
+                              required: [
+                                      "number",
+                                      "note"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_rollback_write",
+                      description: "Put every field a write changed back as it was, by undo id. Use it when a correction turns out to be wrong -- it restores the previous values rather than writing a guess at them.",
+                      endpoint: "/rollback",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      undoId: {
+                                              type: "string",
+                                              description: "The undo id the write returned"
+                                      }
+                              },
+                              required: [
+                                      "undoId"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_write_audit",
+                      description: "Every change this connector has accepted, each with the approval behind it, what the fields held before and after, and whether it was rolled back. This is the evidence an audit asks for; reads are not listed here because the platform's own tool audit already records those.",
+                      endpoint: "/audit",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {}
+                      }
+              }
+      ],
+    },
+    {
+      name: "Kearney Application & Infrastructure Estate",
+      description: "Kearney's application and infrastructure estate -- 79 applications from Attachment C.4, with 508 servers, 65 databases and 9,815 end-user devices from Attachment C.3. This is the join the incident records cannot make for themselves: a ticket here carries nine fields and no application reference, so criticality, hosting model, user reach and functional area come from this connector or from nowhere. Resolution from ticket text is offered as ranked candidates with the matching term shown, never as an assertion: about 45% of incidents name no application and a further third name only a vendor family, which is itself the reason application-level service levels cannot be measured from the records as supplied. The inventory carries no integration or dependency relationships, no named owners and no release calendars -- /gaps reports those rather than this connector inventing them.",
+      baseUrl: `${BASE_URL}/api/mock/kearney-estate`,
+      tools: [
+              {
+                      name: "kearney_estate_summary",
+                      description: "The estate in one call: how many applications, servers, databases and end-user devices, and the application split by criticality, hosting model and functional area. It also lists plainly what this inventory does NOT contain -- integration relationships, named owners, release calendars -- so a journey does not go looking for them.",
+                      endpoint: "/summary",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {}
+                      }
+              },
+              {
+                      name: "kearney_resolve_application",
+                      description: "Which application a ticket is about. Incidents in this engagement carry no application field, so this matches the ticket's sub-category, category and short description against the inventory and returns ranked CANDIDATES -- each with the term it matched and which field that term was found in. Pass the sub-category whenever you have it: it is a controlled field and resolves far better than the description. A candidate marked weak_match means the term is shared by several applications or is an ordinary word, so it names a vendor family at best. This returns a suggestion to be confirmed, never a statement of which application the ticket concerns; roughly 45% of incidents name no application at all and the honest answer for those is unknown.",
+                      endpoint: "/resolve-application",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      subcategory: {
+                                              type: "string",
+                                              description: "The incident's Sub Category, e.g. \"M365 - OneDrive\". The most reliable signal here."
+                                      },
+                                      category: {
+                                              type: "string",
+                                              description: "The incident's Category, e.g. Security, Software"
+                                      },
+                                      text: {
+                                              type: "string",
+                                              description: "The incident's short description, or any wording to match"
+                                      },
+                                      limit: {
+                                              type: "number",
+                                              description: "Candidates to return, default 5, maximum 20"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_get_application",
+                      description: "One application in full: criticality, hosting model, user count, functional area, description, plus both incident figures -- the count the client declared in the inventory and the count attributed to it from ticket text. Use this once an application is identified, to get the criticality and reach a triage step cannot read from the ticket itself.",
+                      endpoint: "/application",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      name: {
+                                              type: "string",
+                                              description: "Application name, exact or a distinctive part of it"
+                                      }
+                              },
+                              required: [
+                                      "name"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_search_applications",
+                      description: "Applications matching the filters, capped and honest about the cap. Use it to scope work across a tier or a functional area -- for example every 1-Critical application, or everything hosted in-house.",
+                      endpoint: "/applications",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      criticality: {
+                                              type: "string",
+                                              description: "Exact criticality as the inventory records it: 1-Critical, 2-High, 3-Moderate, 4-Low"
+                                      },
+                                      hosting: {
+                                              type: "string",
+                                              description: "Partial match on hosting model, e.g. \"SaaS\" or \"in-house\""
+                                      },
+                                      functionalArea: {
+                                              type: "string",
+                                              description: "Exact functional area, e.g. IT, HR, Finance"
+                                      },
+                                      systemType: {
+                                              type: "string",
+                                              description: "Partial match on system type, e.g. \"Business Application\", \"Application Platform\", \"Data Store\""
+                                      },
+                                      textContains: {
+                                              type: "string",
+                                              description: "Case-insensitive match on application name or description"
+                                      },
+                                      limit: {
+                                              type: "number",
+                                              description: "Rows to return, default 25, maximum 200"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_application_incidents",
+                      description: "For every application, the annual incident count the client declared against the count attributed from ticket text, with the difference. Read the method note in the reply before quoting any of it: attribution is a text match, the two figures are not expected to agree, and an application whose name is made of ordinary words will be over-attributed.",
+                      endpoint: "/application-incidents",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      limit: {
+                                              type: "number",
+                                              description: "Applications to return, default 30, maximum 200"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_search_servers",
+                      description: "Servers from the infrastructure inventory, by location, criticality, operating system or type. Relevant to an application incident when the cause turns out to be the platform underneath rather than the application.",
+                      endpoint: "/servers",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      location: {
+                                              type: "string",
+                                              description: "Exact location, e.g. \"Chicago DC\""
+                                      },
+                                      criticality: {
+                                              type: "string",
+                                              description: "Exact criticality, e.g. \"Tier 1\""
+                                      },
+                                      os: {
+                                              type: "string",
+                                              description: "Partial match on operating system"
+                                      },
+                                      serverType: {
+                                              type: "string",
+                                              description: "Partial match on server type"
+                                      },
+                                      limit: {
+                                              type: "number",
+                                              description: "Rows to return, default 25, maximum 200"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_list_databases",
+                      description: "The database inventory -- product, platform, instance count, size and criticality. The starting point for anything in the data management scope that needs to know what the platform actually runs on.",
+                      endpoint: "/databases",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      platform: {
+                                              type: "string",
+                                              description: "Partial match on platform, e.g. Linux, Windows"
+                                      },
+                                      product: {
+                                              type: "string",
+                                              description: "Partial match on product, e.g. Oracle, SQL Server"
+                                      },
+                                      criticality: {
+                                              type: "string",
+                                              description: "Exact criticality, e.g. \"Tier 1\""
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_search_devices",
+                      description: "End-user hardware, with the distribution by state. Outside the service lines this engagement bids for, and here because an application incident sometimes turns out to be one person's device.",
+                      endpoint: "/devices",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      location: {
+                                              type: "string",
+                                              description: "Exact location"
+                                      },
+                                      state: {
+                                              type: "string",
+                                              description: "Exact state, e.g. \"In use\", \"In stock\""
+                                      },
+                                      os: {
+                                              type: "string",
+                                              description: "Partial match on operating system"
+                                      },
+                                      limit: {
+                                              type: "number",
+                                              description: "Rows to return, default 25, maximum 200"
+                                      }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_cmdb_gaps",
+                      description: "What this inventory cannot answer, with counts: applications missing criticality or functional area, declared incident counts that are not numbers, and the structural gaps -- no integration or dependency records, no named owner, no release calendar. Attachment B.3 makes keeping this current a supplier responsibility, so this is the baseline to improve from rather than a list of excuses.",
+                      endpoint: "/gaps",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {}
+                      }
+              },
+              {
+                      name: "kearney_annotate_application",
+                      description: "Correct an application's criticality, tier, functional area or notes. Needs the id of an approval a person gave, keeps the previous value, and returns an undo id -- reference data that changes quietly is worse than reference data that is wrong in a known way.",
+                      endpoint: "/application/annotate",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      name: {
+                                              type: "string",
+                                              description: "Application to correct"
+                                      },
+                                      fields: {
+                                              type: "object",
+                                              description: "Any of: criticality, tier, functional_area, notes"
+                                      },
+                                      approvalRef: {
+                                              type: "string",
+                                              description: "The id of the approval authorising this change"
+                                      }
+                              },
+                              required: [
+                                      "name",
+                                      "fields",
+                                      "approvalRef"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_rollback_estate_write",
+                      description: "Put an application's fields back as they were, by undo id.",
+                      endpoint: "/rollback",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      undoId: {
+                                              type: "string",
+                                              description: "The undo id the write returned"
+                                      }
+                              },
+                              required: [
+                                      "undoId"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_estate_write_audit",
+                      description: "Every change made to the inventory through this connector, each with the approval behind it and what the field held before.",
+                      endpoint: "/audit",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {}
+                      }
+              }
+      ],
+    },
   ];
 }
 

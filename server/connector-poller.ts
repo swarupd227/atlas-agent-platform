@@ -19,7 +19,13 @@ import {
   JIRA_PAGE_SIZE,
   SALESFORCE_PAGE_SIZE,
   resolveNextPollCursor,
+  parseGenericPollSpec,
+  buildGenericArgs,
+  extractGenericRecords,
+  type GenericPollSpec,
 } from "./connector-poll-query";
+import { gatherAvailableTools, dispatchToolCall } from "./tool-dispatcher";
+import { resolvePolicyBundle } from "./routes/helpers";
 
 export { MIN_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, isPollableIntegration };
 
@@ -43,12 +49,29 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
   if (!mcpServerId) return { triggerId: trigger.id, skipped: "missing config.mcpServerId" };
 
   const integrationId = await resolveIntegrationIdForMcpServer(mcpServerId);
-  if (!isPollableIntegration(integrationId)) {
-    return { triggerId: trigger.id, skipped: `integration '${integrationId ?? "unknown"}' does not support polling yet` };
+  // Two ways to be pollable. Jira and Salesforce have a known "changed since"
+  // query primitive, so the builders above speak for them. Any other connector --
+  // including an MCP server with no enterprise integration behind it at all --
+  // is pollable when the trigger carries a config.poll spec saying how to ask it.
+  // Without one it is still skipped and logged rather than guessed at.
+  const vendorPollable = isPollableIntegration(integrationId);
+  let genericSpec: GenericPollSpec | undefined;
+  if (!vendorPollable) {
+    if (config.poll === undefined) {
+      return {
+        triggerId: trigger.id,
+        skipped: `integration '${integrationId ?? "unknown"}' has no built-in poll query; give the trigger a config.poll spec saying which tool to call and which argument carries the changed-since bound`,
+      };
+    }
+    try {
+      genericSpec = parseGenericPollSpec(config.poll);
+    } catch (err: any) {
+      return { triggerId: trigger.id, error: err.message };
+    }
   }
 
-  const server = getEnterpriseServerById(integrationId!);
-  if (!server) return { triggerId: trigger.id, skipped: `no connector registered for '${integrationId}'` };
+  const server = vendorPollable ? getEnterpriseServerById(integrationId!) : null;
+  if (vendorPollable && !server) return { triggerId: trigger.id, skipped: `no connector registered for '${integrationId}'` };
 
   // Worker-initiated, not a request — no authenticated caller to scope by, so this
   // intentionally reads the agent's own org without an orgId filter (system context),
@@ -63,7 +86,10 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
   let toolName: string;
   let args: Record<string, unknown>;
   try {
-    if (integrationId === "jira") {
+    if (genericSpec) {
+      toolName = genericSpec.tool;
+      args = buildGenericArgs(genericSpec, cursorIso);
+    } else if (integrationId === "jira") {
       toolName = "jira_search";
       args = buildJiraArgs(baseQuery, cursorIso);
     } else {
@@ -78,12 +104,34 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
   // trigger watching the "Support DB" keeps polling that one rather than the
   // org's default connection for the type.
   const mcpServer = await storage.getMcpServer(mcpServerId);
-  const result = await server.callTool(toolName, args, orgId, undefined, mcpServer?.connectionId || undefined);
 
-  if (result.isError) {
-    const message = result.content[0]?.text ?? "poll failed";
-    console.error(`[connector-poller] Trigger ${trigger.id} (${integrationId}) poll failed: ${message}`);
-    return { triggerId: trigger.id, error: message };
+  // Both paths reduce to "did it fail, and what text came back", so everything
+  // below this point is shared. The generic path goes through the ordinary tool
+  // dispatcher rather than a second call route of its own: a poll is a tool call
+  // made on the agent's behalf, and it should be audited, policy-checked and
+  // rate-limited exactly like one the agent makes itself.
+  let isError: boolean;
+  let text: string;
+  if (genericSpec) {
+    const tools = await gatherAvailableTools([mcpServerId]);
+    const tool = tools.find((t) => t.toolName.toLowerCase() === toolName.toLowerCase());
+    if (!tool) {
+      return { triggerId: trigger.id, error: `connector has no tool named "${toolName}"; config.poll.tool must name one of: ${tools.map((t) => t.toolName).join(", ") || "(none)"}` };
+    }
+    const bundle = await resolvePolicyBundle(trigger.agentId, orgId ?? undefined).catch(() => null);
+    const dispatched = await dispatchToolCall({ agentId: trigger.agentId, orgId, tool, args: args as Record<string, any>, policyBundle: bundle });
+    isError = !dispatched.ok;
+    text = typeof dispatched.result === "string" ? dispatched.result : JSON.stringify(dispatched.result ?? {});
+    if (isError) text = dispatched.error ?? dispatched.reason ?? "poll failed";
+  } else {
+    const result = await server!.callTool(toolName, args, orgId, undefined, mcpServer?.connectionId || undefined);
+    isError = !!result.isError;
+    text = result.content[0]?.text ?? "poll failed";
+  }
+
+  if (isError) {
+    console.error(`[connector-poller] Trigger ${trigger.id} (${integrationId ?? "generic"}) poll failed: ${text}`);
+    return { triggerId: trigger.id, error: text };
   }
 
   let recordCount = 0;
@@ -97,8 +145,18 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
   // do not).
   let lastRecordTimestampIso: string | null = null;
   try {
-    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
-    if (integrationId === "jira") {
+    const parsed = JSON.parse(text || "{}");
+    if (genericSpec) {
+      const extracted = extractGenericRecords(parsed, genericSpec);
+      // A reply whose records cannot be located is an error, not a quiet zero:
+      // zero would advance the cursor past a window nobody ever read.
+      if (extracted.error) {
+        console.error(`[connector-poller] Trigger ${trigger.id} poll unreadable: ${extracted.error}`);
+        return { triggerId: trigger.id, error: extracted.error };
+      }
+      recordCount = extracted.recordCount;
+      lastRecordTimestampIso = extracted.lastRecordTimestampIso;
+    } else if (integrationId === "jira") {
       recordCount = parsed.count ?? parsed.issues?.length ?? 0;
       const issues: any[] = Array.isArray(parsed.issues) ? parsed.issues : [];
       for (const issue of issues) {
@@ -123,7 +181,11 @@ export async function pollOneResourceChangeTrigger(trigger: AgentTrigger): Promi
   }
 
   const nowIso = new Date().toISOString();
-  const pageSize = integrationId === "jira" ? JIRA_PAGE_SIZE : SALESFORCE_PAGE_SIZE;
+  // The generic path's cap is whatever the spec asked for. When the spec names no
+  // page-size argument the connector decides its own, and a page that happens to
+  // equal this number freezes the cursor for one cycle rather than skipping
+  // records -- the safe direction of that uncertainty.
+  const pageSize = genericSpec ? genericSpec.pageSize : integrationId === "jira" ? JIRA_PAGE_SIZE : SALESFORCE_PAGE_SIZE;
   const isBaseline = !cursorIso;
 
   if (isBaseline) {
