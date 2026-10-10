@@ -413,4 +413,31 @@ describe("eval suites are scoped to the caller's tenant", () => {
     expect(db).toContain("s.organization_id IS NULL");
     expect(db).toContain("UPDATE eval_runs r SET organization_id = s.organization_id");
   });
+
+  it("deleting a suite is scoped stricter than reading one", () => {
+    // The read lets a tenant SEE a platform-level (null org) suite, because
+    // hiding a row nobody can claim is the worse failure. Deleting is not
+    // symmetric: if it inherited that fallback, any tenant could clear the 832
+    // unattributed suites on Azure. So a scoped caller must match the org
+    // exactly and only a platform caller can remove an unattributed row.
+    const body = methodBody(storageSrc, "async deleteEvalSuite(");
+    expect(body, "deleteEvalSuite not found").not.toBe("");
+    expect(body).toContain("eq(evalSuites.organizationId, scopedOrgId)");
+    // The read's fallback must NOT appear here. This is the whole point of the
+    // method being separate from getEvalSuites.
+    expect(body).not.toContain("isNull(evalSuites.organizationId)");
+  });
+
+  it("deleting a suite takes its runs' case results, not just the runs", () => {
+    // eval_case_results is keyed by eval_runs.id (worker.ts writes
+    // `runId: evalRun.id`), so deleting the runs alone recreates the orphan
+    // class this whole change exists to remove.
+    const body = methodBody(storageSrc, "async deleteEvalSuite(");
+    expect(body).toContain("db.delete(evalCaseResults)");
+    expect(body).toContain("db.delete(evalRuns)");
+    expect(body).toContain("db.delete(evalTestCases)");
+    expect(body).toContain("db.delete(evalSuites)");
+    // The golden dataset is shared and outlives any one suite.
+    expect(body).not.toContain("evalDatasets");
+  });
 });

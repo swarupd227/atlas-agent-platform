@@ -78,12 +78,99 @@ export async function retireDeploymentsFor(orgId: string | undefined, agentIds: 
   return live;
 }
 
+export interface StrandedEvalSuite {
+  id: string;
+  agentId: string;
+  name: string;
+  totalCases: number;
+  /** Null when the suite was never run — nothing was ever measured with it. */
+  lastRunAt: string | null;
+  /** Null means nothing can attribute it to a tenant once the agent is gone. */
+  organizationId: string | null;
+}
+
+/**
+ * The eval suites of these agents, read while the agents still exist.
+ *
+ * A suite names its agent and, in practice, nothing else: measured on Azure
+ * 2026-10-09, 0 of 832 stranded suites carried a golden dataset or a skill. So
+ * when the agent row goes, the suite cannot be re-attributed to an owner, cannot
+ * be re-run, and cannot be removed — there is no delete route or storage method
+ * for an eval suite, the same gap deployments had before `ec51f5d`. 832 such
+ * rows on Azure, one per deleted agent, mostly auto-generated suites from test
+ * agents (`[E2E] Direct Wizard Agent … - Auto-Generated Suite`).
+ *
+ * This is residue, not a tenant leak: every agent carries an organization and
+ * `createEvalSuite` derives the suite's from it, so a suite created today is
+ * attributed before anyone can delete anything. The 832 predate that.
+ */
+export async function evalSuitesFor(agentIds: string[]): Promise<StrandedEvalSuite[]> {
+  if (agentIds.length === 0) return [];
+  const out: StrandedEvalSuite[] = [];
+  for (const agentId of agentIds) {
+    // Called inside the try, not `.catch()`-ed: a storage without the method
+    // throws on `undefined(...)` before there is a promise to catch on, which
+    // would turn "could not list suites" into a failed delete.
+    let suites: any[] = [];
+    try {
+      suites = (await (storage as { getEvalsByAgent?: (id: string) => Promise<unknown[]> }).getEvalsByAgent?.(agentId)) as any[] ?? [];
+    } catch { suites = []; }
+    for (const s of suites) {
+      out.push({
+        id: String(s.id),
+        agentId,
+        name: String(s.name ?? ""),
+        totalCases: Number(s.totalCases ?? 0),
+        lastRunAt: s.lastRunAt ? new Date(s.lastRunAt).toISOString() : null,
+        organizationId: s.organizationId ?? null,
+      });
+    }
+  }
+  return out;
+}
+
+export interface DeletedEvalSuite extends StrandedEvalSuite {
+  testCases: number;
+  runs: number;
+  caseResults: number;
+}
+
+/**
+ * Delete these agents' eval suites, with their test cases, runs and results.
+ *
+ * Called while the agents still exist, for the same reason the deployments are
+ * retired there: a suite names only its agent, so afterwards nothing can reach
+ * it. Retiring was the other option and was rejected — it needs a column every
+ * reader has to honour, and a retired suite nobody filters out is a row that
+ * looks handled and is not.
+ *
+ * Each suite is deleted through the agent that owns it, which the caller has
+ * already resolved inside its own organization. Nothing here takes a suite id
+ * from a request.
+ */
+export async function deleteEvalSuitesFor(orgId: string | undefined, agentIds: string[]): Promise<DeletedEvalSuite[]> {
+  const suites = await evalSuitesFor(agentIds);
+  const deleted: DeletedEvalSuite[] = [];
+  for (const s of suites) {
+    try {
+      const counts = await (storage as { deleteEvalSuite?: (id: string, orgId?: string) => Promise<{ testCases: number; runs: number; caseResults: number } | undefined> })
+        .deleteEvalSuite?.(s.id, orgId);
+      // A suite the delete could not claim is reported undeleted rather than
+      // reported gone: the audit event has to say what actually happened.
+      if (counts) deleted.push({ ...s, testCases: counts.testCases, runs: counts.runs, caseResults: counts.caseResults });
+    } catch { /* leaving a suite behind must never fail the agent delete */ }
+  }
+  return deleted;
+}
+
 export interface TeamRemovalPlan {
   teamId: string;
   teamName: string;
   workers: WorkerPlan[];
   /** Deployments that would be retired with these agents, by agent. */
   liveDeployments: LiveDeployment[];
+  /** Eval suites that would be left behind, unreachable, by these agents. */
+  strandedEvalSuites: StrandedEvalSuite[];
   /** Names of the agents that would be deleted, orchestrator first. */
   deletes: string[];
   /** Workers that stay, each with the team that keeps it. */
@@ -131,6 +218,7 @@ export async function planTeamRemoval(orgId: string | undefined, teamAgentId: st
     teamName: orchestrator.name,
     workers,
     liveDeployments: await liveDeploymentsFor(orgId, goingIds),
+    strandedEvalSuites: await evalSuitesFor(goingIds),
     deletes: [orchestrator.name, ...workers.filter((w) => w.alsoUsedBy.length === 0).map((w) => w.name)],
     keeps: workers.filter((w) => w.alsoUsedBy.length > 0).map((w) => `${w.name} (also used by ${w.alsoUsedBy.join(", ")})`),
     runCount: runs.total ?? 0,
@@ -148,14 +236,18 @@ export async function planTeamRemoval(orgId: string | undefined, teamAgentId: st
  * link from a conversation (automate_process_flow), so the dangling id would
  * have gone from rare to ordinary.
  */
-export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise<{ deleted: string[]; kept: string[]; runCount: number; deploymentsRetired: LiveDeployment[] }> {
+export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise<{ deleted: string[]; kept: string[]; runCount: number; deploymentsRetired: LiveDeployment[]; evalSuitesDeleted: DeletedEvalSuite[] }> {
   const plan = await planTeamRemoval(actor.orgId, teamAgentId);
   const deleted: string[] = [];
 
   // Before the agents go, so the rows can still be matched to them. A deployment
   // whose agent is deleted is unreachable and untouchable -- there is no delete
   // route for one -- so it has to be closed here or not at all.
-  const deploymentsRetired = await retireDeploymentsFor(actor.orgId, [plan.teamId, ...plan.workers.filter((w) => w.alsoUsedBy.length === 0).map((w) => w.id)]);
+  const goingIds = [plan.teamId, ...plan.workers.filter((w) => w.alsoUsedBy.length === 0).map((w) => w.id)];
+  const deploymentsRetired = await retireDeploymentsFor(actor.orgId, goingIds);
+  // Only the agents actually going: a worker another team keeps still has an
+  // agent to own its suite, so that suite is not stranded and not ours to take.
+  const evalSuitesDeleted = await deleteEvalSuitesFor(actor.orgId, goingIds);
 
   for (const worker of plan.workers) {
     if (worker.alsoUsedBy.length > 0) continue;
@@ -184,6 +276,12 @@ export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise
       kept: plan.keeps,
       runsKept: plan.runCount,
       deploymentsRetired: deploymentsRetired.map((d) => `${d.agentName ?? d.agentId} ${d.environment} (was ${d.status})`),
+      // What the suites took with them, recorded because nothing else can:
+      // after this there is no row left to ask.
+      evalSuitesDeleted: evalSuitesDeleted.map((s) => `${s.name} (${s.testCases} cases, ${s.runs} runs, ${s.caseResults} results)`),
+      // A suite the delete could not claim. Should be empty; if it is not, the
+      // suite is still there and nothing can reach it.
+      evalSuitesLeft: plan.strandedEvalSuites.filter((s) => !evalSuitesDeleted.some((d) => d.id === s.id)).map((s) => s.name),
       processFlowKept: plan.processFlowName,
       processFlowUnlinked: !!plan.processFlowId,
       fromLibrary: plan.inLibrary,
@@ -191,5 +289,5 @@ export async function deleteTeam(actor: TeamActor, teamAgentId: string): Promise
     }),
   });
 
-  return { deleted, kept: plan.keeps, runCount: plan.runCount, deploymentsRetired };
+  return { deleted, kept: plan.keeps, runCount: plan.runCount, deploymentsRetired, evalSuitesDeleted };
 }

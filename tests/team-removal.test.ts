@@ -26,6 +26,7 @@ const audits: any[] = [];
 const deleted: string[] = [];
 const flowUpdates: Array<{ id: string; patch: any }> = [];
 let deployments: any[] = [];
+let evalSuites: any[] = [];
 
 vi.mock("../server/storage", () => ({
   storage: {
@@ -55,6 +56,17 @@ vi.mock("../server/storage", () => ({
       return row;
     }),
     createAuditEvent: vi.fn(async (e: any) => { audits.push(e); return e; }),
+    // An eval suite names only its agent, so it is reachable exactly once:
+    // while that agent still exists.
+    getEvalsByAgent: vi.fn(async (agentId: string) => evalSuites.filter((s) => s.agentId === agentId)),
+    // Stricter than the read on purpose -- a suite this caller's org does not
+    // own is not deletable by it, even when it is visible to it.
+    deleteEvalSuite: vi.fn(async (id: string, orgId?: string) => {
+      const i = evalSuites.findIndex((s) => s.id === id && (!orgId || s.organizationId === orgId));
+      if (i < 0) return undefined;
+      const [s] = evalSuites.splice(i, 1);
+      return { id: s.id, name: s.name, testCases: s.testCases ?? 0, runs: s.runs ?? 0, caseResults: s.caseResults ?? 0 };
+    }),
   },
 }));
 
@@ -68,6 +80,12 @@ beforeEach(() => {
   audits.length = 0;
   deleted.length = 0;
   flowUpdates.length = 0;
+  evalSuites = [
+    { id: "es-team", organizationId: ORG, agentId: "team-1", name: "Claims intake team - Auto-Generated Suite", totalCases: 8, lastRunAt: new Date("2026-09-01"), testCases: 8, runs: 3, caseResults: 24 },
+    { id: "es-worker", organizationId: ORG, agentId: "w-1", name: "Intake worker - Baseline Suite", totalCases: 4, lastRunAt: null, testCases: 4, runs: 0, caseResults: 0 },
+    { id: "es-shared", organizationId: ORG, agentId: "w-2", name: "Shared assessor - Baseline Suite", totalCases: 2, lastRunAt: null, testCases: 2, runs: 0, caseResults: 0 },
+    { id: "es-other-org", organizationId: "org-b", agentId: "team-1", name: "Another tenant's suite on the same agent", totalCases: 1, lastRunAt: null, testCases: 1, runs: 0, caseResults: 0 },
+  ];
   deployments = [
     { id: "dep-team-live", organizationId: ORG, agentId: "team-1", agentName: "Claims intake team", environment: "pilot", status: "active" },
     { id: "dep-team-old", organizationId: ORG, agentId: "team-1", agentName: "Claims intake team", environment: "staging", status: "promoted" },
@@ -172,6 +190,69 @@ describe("the deployments of a team being deleted", () => {
     const deleteAt = source.indexOf("await storage.deleteAgent(worker.id");
     expect(retireAt).toBeGreaterThan(0);
     expect(retireAt).toBeLessThan(deleteAt);
+  });
+});
+
+/**
+ * Eval suites, added 2026-10-09 for the same gap the deployments had: nothing
+ * cleaned them up, so an agent's suite outlived it. Measured on Azure that day:
+ * 832 suites naming agents that no longer exist, 831 distinct dead agents, and
+ * 0 of the 832 carrying a golden dataset or a skill — so a stranded suite can
+ * never be re-attributed, re-run, or removed. Deleted with the agent rather
+ * than retired, because a retired suite that no reader filters out is a row
+ * that looks handled and is not.
+ */
+describe("the eval suites of the agents going", () => {
+  it("go with them, carrying their test cases, runs and results", async () => {
+    const result = await deleteTeam(actor, "team-1");
+    expect(result.evalSuitesDeleted.map((s) => s.id).sort()).toEqual(["es-team", "es-worker"]);
+    expect(evalSuites.map((s) => s.id).sort()).toEqual(["es-other-org", "es-shared"]);
+    // The counts are what the audit event reports; a suite reported deleted
+    // with no numbers would read as "nothing was lost".
+    const team = result.evalSuitesDeleted.find((s) => s.id === "es-team")!;
+    expect(team).toMatchObject({ testCases: 8, runs: 3, caseResults: 24 });
+  });
+
+  it("spares a shared worker's, because that worker still exists to own it", async () => {
+    await deleteTeam(actor, "team-1");
+    expect(evalSuites.some((s) => s.id === "es-shared")).toBe(true);
+  });
+
+  it("spares another organization's suite on the same agent", async () => {
+    // Visible to this tenant is not deletable by it: the suite row carries its
+    // own organization, and the delete has to match it, not merely see it.
+    await deleteTeam(actor, "team-1");
+    expect(evalSuites.some((s) => s.id === "es-other-org")).toBe(true);
+  });
+
+  it("reports a suite it could not claim as left behind, not as deleted", async () => {
+    const result = await deleteTeam(actor, "team-1");
+    const details = JSON.parse(audits[0].details);
+    expect(details.evalSuitesDeleted).toEqual([
+      "Claims intake team - Auto-Generated Suite (8 cases, 3 runs, 24 results)",
+      "Intake worker - Baseline Suite (4 cases, 0 runs, 0 results)",
+    ]);
+    // es-other-org is on a going agent but is not ours to delete, so it has to
+    // appear here rather than silently nowhere.
+    expect(details.evalSuitesLeft).toEqual(["Another tenant's suite on the same agent"]);
+    expect(result.evalSuitesDeleted).toHaveLength(2);
+  });
+
+  it("deletes them while the agents still exist, or they could never be found again", () => {
+    const source = read("server", "team-removal.ts");
+    const deleteSuitesAt = source.indexOf("deleteEvalSuitesFor(actor.orgId");
+    const deleteAgentAt = source.indexOf("await storage.deleteAgent(worker.id");
+    expect(deleteSuitesAt).toBeGreaterThan(0);
+    expect(deleteSuitesAt).toBeLessThan(deleteAgentAt);
+  });
+
+  it("never fails the agent delete when a suite cannot be removed", async () => {
+    const { storage } = await import("../server/storage");
+    (storage.deleteEvalSuite as any).mockImplementationOnce(async () => { throw new Error("db down"); });
+    const result = await deleteTeam(actor, "team-1");
+    // The agent still goes; only that one suite is reported undeleted.
+    expect(deleted.sort()).toEqual(["team-1", "w-1"]);
+    expect(result.evalSuitesDeleted.map((s) => s.id)).not.toContain("es-team");
   });
 });
 

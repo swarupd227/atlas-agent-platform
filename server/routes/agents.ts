@@ -32,7 +32,7 @@ import {
   redactWithOntologyKeys,
 } from "../permissions";
 import { RemovalPlanError, planAgentRemoval } from "../removal-plans";
-import { TeamRemovalError, deleteTeam, retireDeploymentsFor } from "../team-removal";
+import { TeamRemovalError, deleteEvalSuitesFor, deleteTeam, retireDeploymentsFor } from "../team-removal";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveRequestOrgId, filterEvalSuitesForOrg, filterEvalRunsForOrg } from "../tenant-scope";
 import { buildBlastRadius } from "../blast-radius";
@@ -867,6 +867,10 @@ const router = Router();
       // agent still exists to match them to (402 stranded rows on Azure,
       // 2026-09-27). The same happens for a whole team in deleteTeam.
       const deploymentsRetired = await retireDeploymentsFor(getOrgId(req), [agent.id]);
+      // Before the delete, while the agent still exists to reach them by: a
+      // suite names only its agent, so a suite left here can never be found,
+      // re-run or removed again (832 such rows on Azure, 2026-10-09).
+      const evalSuitesDeleted = await deleteEvalSuitesFor(getOrgId(req), [agent.id]);
       await storage.deleteAgent(req.params.id as string, getOrgId(req));
       const delTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
       await storage.createAuditEvent({
@@ -875,10 +879,10 @@ const router = Router();
         action: "delete_agent",
         objectType: "agent",
         objectId: agent.id,
-        details: `Agent "${agent.name}" deleted${deploymentsRetired.length ? `; ${deploymentsRetired.length} deployment(s) retired: ${deploymentsRetired.map((d) => d.environment).join(", ")}` : ""}`,
+        details: `Agent "${agent.name}" deleted${deploymentsRetired.length ? `; ${deploymentsRetired.length} deployment(s) retired: ${deploymentsRetired.map((d) => d.environment).join(", ")}` : ""}${evalSuitesDeleted.length ? `; ${evalSuitesDeleted.length} eval suite(s) deleted with it (${evalSuitesDeleted.reduce((n, s) => n + s.testCases, 0)} cases, ${evalSuitesDeleted.reduce((n, s) => n + s.runs, 0)} runs): ${evalSuitesDeleted.map((s) => s.name).join(", ")}` : ""}`,
         ontologyTags: resolveOntologyTags("agent", "delete_agent", { agentOntologyTags: delTags }),
       });
-      res.json({ success: true, deploymentsRetired });
+      res.json({ success: true, deploymentsRetired, evalSuitesDeleted });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to delete agent" });
     }

@@ -13,7 +13,7 @@
  * staying, because that is the part people are afraid of.
  */
 import { storage } from "./storage";
-import { liveDeploymentsFor, planTeamRemoval, type TeamRemovalPlan } from "./team-removal";
+import { evalSuitesFor, liveDeploymentsFor, planTeamRemoval, type TeamRemovalPlan } from "./team-removal";
 
 export interface RemovalPlan {
   id: string;
@@ -95,6 +95,17 @@ export async function planAgentRemoval(orgId: string | undefined, agentId: strin
   const live = await liveDeploymentsFor(orgId, [agent.id]);
   if (live.length) {
     goes.push(`${plural(live.length, "deployment")} (${namedList(live.map((d) => `${d.environment}, now ${d.status}`))}) — retired, not deleted, so the record that it ran stays`);
+  }
+  // An eval suite names only its agent, so it cannot outlive it usefully: left
+  // behind it can never be found, re-run or removed again, which is how 832 of
+  // them accumulated on Azure. Said here with what goes with them, because the
+  // measurements are the part worth hesitating over.
+  const evalSuites = await evalSuitesFor([agent.id]);
+  if (evalSuites.length) {
+    const runs = evalSuites.reduce((n, s) => n + (s.lastRunAt ? 1 : 0), 0);
+    goes.push(
+      `${plural(evalSuites.length, "eval suite")}, with its test cases and recorded runs: ${namedList(evalSuites.map((s) => s.name))}${runs ? ` — ${runs} of them ${runs === 1 ? "has" : "have"} been run, and those recorded results go too` : " — none of them has ever been run"}`,
+    );
   }
   if (kbLinks.length) goes.push(`${plural(kbLinks.length, "knowledge base link")} (the knowledge bases themselves stay)`);
   if (mcpLinks.length) goes.push(`${plural(mcpLinks.length, "connector link")} (the connectors themselves stay)`);

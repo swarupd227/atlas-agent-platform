@@ -33,6 +33,7 @@ const state = {
   kbLinks: [] as any[],
   mcpLinks: [] as any[],
   deployments: [] as any[],
+  evalSuites: [] as any[],
 };
 
 vi.mock("../server/storage", () => ({
@@ -57,6 +58,10 @@ vi.mock("../server/storage", () => ({
       if (row) Object.assign(row, patch);
       return row;
     }),
+    // An eval suite names only its agent, so this link can only be followed
+    // while the agent exists -- and afterwards there is no route or storage
+    // method that reaches the suite at all.
+    getEvalsByAgent: vi.fn(async (agentId: string) => state.evalSuites.filter((s) => s.agentId === agentId)),
   },
 }));
 
@@ -75,6 +80,7 @@ beforeEach(() => {
   state.kbLinks = [{ id: "kb-1", agentId: "a-1" }];
   state.mcpLinks = [];
   state.deployments = [];
+  state.evalSuites = [];
 });
 
 describe("deleting an outcome", () => {
@@ -142,6 +148,47 @@ describe("deleting an agent", () => {
   it("says nothing about deployments when the agent has none in a live state", async () => {
     const plan = await planAgentRemoval(ORG, "a-1");
     expect(plan.goes.some((g) => g.includes("deployment"))).toBe(false);
+  });
+
+  it("names the eval suites that go with it, and says the recorded runs go too", async () => {
+    state.evalSuites = [
+      { id: "s-1", agentId: "a-1", name: "Fleet orchestrator - Auto-Generated Suite", organizationId: ORG, totalCases: 10, lastRunAt: new Date("2026-09-01") },
+      { id: "s-2", agentId: "a-1", name: "Fleet orchestrator - Baseline Suite", organizationId: ORG, totalCases: 4, lastRunAt: null },
+    ];
+    const plan = await planAgentRemoval(ORG, "a-1");
+    const line = plan.goes.find((s) => s.includes("eval suite"));
+    expect(line, "the plan never mentioned the suites").toBeTruthy();
+    expect(line).toContain("2 eval suites");
+    expect(line).toContain("Fleet orchestrator - Auto-Generated Suite");
+    expect(line).toContain("Fleet orchestrator - Baseline Suite");
+    // The measurements are the part worth hesitating over, so the count of
+    // suites that were actually run has to be in the sentence.
+    expect(line).toContain("1 of them has been run");
+    expect(line).toContain("recorded results go too");
+    // Deleted, not kept: if anyone makes these survive again, this is what says
+    // the copy has to change with it.
+    expect(plan.stays.join(" ")).not.toContain("eval suite");
+  });
+
+  it("does not claim results go when no suite was ever run", async () => {
+    state.evalSuites = [{ id: "s-2", agentId: "a-1", name: "Fleet orchestrator - Baseline Suite", organizationId: ORG, totalCases: 4, lastRunAt: null }];
+    const line = (await planAgentRemoval(ORG, "a-1")).goes.find((s) => s.includes("eval suite"));
+    expect(line).toContain("none of them has ever been run");
+    expect(line).not.toContain("results go too");
+  });
+
+  it("says nothing about eval suites when the agent has none", async () => {
+    const plan = await planAgentRemoval(ORG, "a-1");
+    expect(plan.goes.join(" ")).not.toContain("eval suite");
+    expect(plan.stays.join(" ")).not.toContain("eval suite");
+  });
+
+  it("counts a suite that only one of the team's agents owns", async () => {
+    // a-2 is a worker a-1 keeps; the team plan covers both, so a worker's own
+    // suite has to appear there too or deleting the team under-reports.
+    state.evalSuites = [{ id: "s-3", agentId: "a-2", name: "Idle scanner - Auto-Generated Suite", organizationId: ORG, totalCases: 3, lastRunAt: null }];
+    const plan = await planAgentRemoval(ORG, "a-1");
+    expect(plan.team?.strandedEvalSuites.map((s) => s.id)).toEqual(["s-3"]);
   });
 
   it("tells a worker which teams it worked in", async () => {

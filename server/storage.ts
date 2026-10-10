@@ -367,6 +367,8 @@ export interface IStorage {
 
   getEvalSuite(id: string): Promise<EvalSuite | undefined>;
   updateEvalSuite(id: string, data: Partial<EvalSuite>): Promise<EvalSuite | undefined>;
+  /** Delete a suite with its test cases, runs and their case results. Scoped stricter than the read: see the implementation. */
+  deleteEvalSuite(id: string, orgId?: string): Promise<{ id: string; name: string; testCases: number; runs: number; caseResults: number } | undefined>;
 
   getEvalTestCases(suiteId: string): Promise<EvalTestCase[]>;
   getEvalTestCase(id: string): Promise<EvalTestCase | undefined>;
@@ -1575,6 +1577,48 @@ export class DatabaseStorage implements IStorage {
 
   async getEvalsByAgent(agentId: string) {
     return db.select().from(evalSuites).where(eq(evalSuites.agentId, agentId));
+  }
+
+  /**
+   * Delete one eval suite and everything keyed to it.
+   *
+   * There was no way to delete a suite at all -- no storage method, no route --
+   * which is how 832 suites naming deleted agents accumulated on Azure, one per
+   * removed test agent. A suite names only its agent, so once that agent is
+   * gone nothing can reach, re-run, or remove the suite.
+   *
+   * Cascade: eval_test_cases and eval_runs are keyed by suite_id, and
+   * eval_case_results by eval_runs.id (worker.ts writes `runId: evalRun.id`),
+   * so the results go with the runs or this creates the same orphans it exists
+   * to prevent. eval_traces and eval_redteam_results are NOT included -- their
+   * run_id is an eval_test_runs id, the Eval Studio lineage, not a suite's.
+   * The golden dataset is not touched: it is shared and outlives any one suite.
+   *
+   * Scoping is deliberately STRICTER than getEvalSuites. That read lets a
+   * tenant SEE a platform-level (NULL org) suite, because hiding a row nobody
+   * can claim is the worse failure. Deleting is not symmetric: visible to
+   * everyone must not mean deletable by everyone, or any tenant could clear the
+   * 832. So a scoped caller must match the org exactly, and only a platform
+   * caller (no orgId, no default org) can remove an unattributed row.
+   */
+  async deleteEvalSuite(id: string, orgId?: string) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    const [suite] = await db.select().from(evalSuites).where(
+      scopedOrgId ? and(eq(evalSuites.id, id), eq(evalSuites.organizationId, scopedOrgId)) : eq(evalSuites.id, id),
+    );
+    if (!suite) return undefined;
+
+    const runs = await db.select({ id: evalRuns.id }).from(evalRuns).where(eq(evalRuns.suiteId, id));
+    let caseResults = 0;
+    for (const run of runs) {
+      const removed = await db.delete(evalCaseResults).where(eq(evalCaseResults.runId, run.id)).returning({ id: evalCaseResults.id });
+      caseResults += removed.length;
+    }
+    const removedRuns = await db.delete(evalRuns).where(eq(evalRuns.suiteId, id)).returning({ id: evalRuns.id });
+    const removedCases = await db.delete(evalTestCases).where(eq(evalTestCases.suiteId, id)).returning({ id: evalTestCases.id });
+    await db.delete(evalSuites).where(eq(evalSuites.id, id));
+
+    return { id, name: suite.name, testCases: removedCases.length, runs: removedRuns.length, caseResults };
   }
 
   async createEvalSuite(suite: InsertEvalSuite) {
