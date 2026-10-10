@@ -353,6 +353,9 @@ export async function runStartupMigrations() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source TEXT NOT NULL DEFAULT 'local';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id TEXT;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id ON users (external_id) WHERE external_id IS NOT NULL;
+      -- Deprovisioning by the identity provider (SCIM, server/scim.ts). Every existing person stays active, none revoked.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS sessions_valid_after TIMESTAMP;
       -- Keys for a system outside the platform that reads an organization's audit log
       -- (server/audit-read-keys.ts). Only the SHA-256 of a key is stored.
       CREATE TABLE IF NOT EXISTS org_api_keys (

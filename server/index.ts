@@ -18,6 +18,7 @@ import { authMiddleware, seedDefaultAdmin, getSecurityMode, setDefaultOrgId, isL
 import { storage } from "./storage";
 import { otlpIngestRouter } from "./routes/observability";
 import { auditPullRouter } from "./routes/audit-read";
+import scimRouter from "./routes/scim";
 import { pool } from "./db";
 import { flushOtlp } from "./otlp-export";
 import { validateEnv, demosEnabled } from "./config";
@@ -138,6 +139,8 @@ app.get("/ready", async (_req, res) => {
 app.use(otlpIngestRouter);
 // An external system reading the audit log has no session: its key is its credential (server/routes/audit-read.ts).
 app.use(auditPullRouter);
+// The identity provider provisioning people has no session either: its bearer token is its credential (server/scim.ts).
+app.use(scimRouter);
 app.use("/api", authMiddleware);
 
 export function log(message: string, source = "express") {

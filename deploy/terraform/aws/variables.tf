@@ -173,3 +173,10 @@ variable "sso_client_secret" {
   sensitive   = true
   default     = ""
 }
+
+variable "scim_token" {
+  description = "ASTRA_SCIM_TOKEN: the bearer token Entra uses to provision and deactivate the people who sign in with Microsoft (at least 32 characters; needs `sso`; see docs/ENTRA_SCIM.md). A secret: set via TF_VAR_scim_token. Empty leaves SCIM off."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

@@ -360,7 +360,9 @@ describe("signing in", () => {
     const token = jwt.decode(j.session!.split("=")[1]) as any;
     expect(token).toMatchObject({ userId: "sso-1", username: "ana@hilti.example", role: "admin", email: "ana@hilti.example", organizationId: "org-default" });
     expect(token.exp - token.iat).toBe(8 * 3600);
-    expect(Object.keys(token).sort()).toEqual(["email", "exp", "iat", "organizationId", "role", "userId", "username"]);
+    // Exactly a password session's claims, plus the one that marks it as revocable (server/session-revocation.ts).
+    expect(Object.keys(token).sort()).toEqual(["email", "exp", "iat", "organizationId", "role", "src", "userId", "username"]);
+    expect(token.src).toBe("sso");
     const flags = flagsOf(j.callback, "auth_token");
     expect(flags).toMatch(/HttpOnly/i); expect(flags).toMatch(/SameSite=Lax/i); expect(flags).toMatch(/Path=\//); expect(flags).toMatch(/Max-Age=28800/);
     expect(flagsOf(j.callback, "sso_txn")).toMatch(/sso_txn=;/);

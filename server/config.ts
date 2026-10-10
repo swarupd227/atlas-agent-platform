@@ -5,6 +5,7 @@ import { describeOutboundPolicy, validateOutboundPolicyEnv } from "./url-safety"
 import { describeLockdown, validateLockdownEnv } from "./lockdown";
 import { describeOtlp, validateOtlpEnv } from "./otlp-export";
 import { describeSso, validateSsoEnv } from "./sso";
+import { describeScim, validateScimEnv } from "./scim";
 import { INTEGRATION_REGISTRY } from "./integrations/registry";
 
 /** True when demo & mock surfaces (/demo-api, /api/mock, mock-MCP, demo seeders) should be active. */
@@ -44,6 +45,8 @@ export function validateEnv(): void {
   errors.push(...validateOtlpEnv());
   // Single sign-on that is set up wrongly would leave the sign-in page offering a button that cannot work.
   errors.push(...validateSsoEnv());
+  // A SCIM token without single sign-on would provision people who can never be tied to a sign-in.
+  errors.push(...validateScimEnv());
 
   if (errors.length > 0) {
     console.error(
@@ -55,5 +58,5 @@ export function validateEnv(): void {
   console.log(
     `[config] security_mode=${getSecurityMode()} demos_enabled=${demosEnabled()} node_env=${process.env.NODE_ENV ?? "unset"}`,
   );
-  console.log(`[config] ${describeOutboundPolicy()} ${describeLockdown()} ${describeOtlp()} ${describeSso()}`);
+  console.log(`[config] ${describeOutboundPolicy()} ${describeLockdown()} ${describeOtlp()} ${describeSso()} ${describeScim()}`);
 }

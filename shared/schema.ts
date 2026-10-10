@@ -34,6 +34,10 @@ export const users = pgTable("users", {
   authSource: text("auth_source").notNull().default("local"),
   /** Who they are at their identity provider ("<tenant id>:<object id>"); null for a local account. Unique when set. */
   externalId: text("external_id"),
+  /** False once the identity provider has deprovisioned the person (SCIM). Nothing but SCIM ever sets it. */
+  active: boolean("active").notNull().default(true),
+  /** Sessions issued before this moment are not honoured (SCIM deprovisioning). Null = none revoked. */
+  sessionsValidAfter: timestamp("sessions_valid_after"),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true }).extend({ organizationId: z.string().optional() });

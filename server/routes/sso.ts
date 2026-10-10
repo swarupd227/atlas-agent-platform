@@ -38,7 +38,7 @@ const limit = (req: Request, res: Response, next: () => void) => ssoLimiter(req,
 // ─── The people table ────────────────────────────────────────────────────────
 
 const asUser = (r: typeof users.$inferSelect): SsoUser => ({
-  id: r.id, username: r.username, role: r.role, email: r.email, organizationId: r.organizationId, externalId: r.externalId, authSource: r.authSource,
+  id: r.id, username: r.username, role: r.role, email: r.email, organizationId: r.organizationId, externalId: r.externalId, authSource: r.authSource, active: r.active,
 });
 
 const drizzleStore: SsoUserStore = {
@@ -107,7 +107,7 @@ router.get("/api/auth/sso/callback", limit, async (req, res) => {
     if (!resolved.ok) return refuse(res, resolved.code, resolved.detail);
     const { user, created } = resolved;
     const token = generateToken(
-      { userId: user.id, username: user.username, role: user.role || "agent_engineer", email: user.email, organizationId: user.organizationId ?? undefined },
+      { userId: user.id, username: user.username, role: user.role || "agent_engineer", email: user.email, organizationId: user.organizationId ?? undefined, src: "sso" },
       `${cfg.sessionHours}h`,
     );
     setAuthCookie(res, token, cfg.sessionHours * 60 * 60 * 1000);

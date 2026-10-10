@@ -102,7 +102,7 @@ export interface SsoConfig {
   buttonLabel: string;
 }
 
-function readText(env: NodeJS.ProcessEnv, name: string): string | undefined {
+export function readText(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const inline = env[name];
   const file = env[`${name}_FILE`];
   if (inline && file) throw new Error(`set ${name} or ${name}_FILE, not both`);
@@ -266,7 +266,7 @@ export function beginSignIn(cfg: SsoConfig, returnTo: unknown): { url: string; t
 
 export type SsoErrorCode =
   | "not_enabled" | "invalid_state" | "idp_error" | "token_exchange_failed" | "invalid_token" | "mfa_required"
-  | "no_role" | "domain_not_allowed" | "provisioning_failed";
+  | "no_role" | "domain_not_allowed" | "provisioning_failed" | "account_disabled";
 
 export interface SsoClaims {
   tenantId: string;
@@ -397,7 +397,7 @@ export function emailAllowed(cfg: SsoConfig, claims: SsoClaims): boolean {
   return !!domain && cfg.allowedEmailDomains.includes(domain);
 }
 
-export interface SsoUser { id: string; username: string; role: string | null; email: string | null; organizationId: string | null; externalId: string | null; authSource: string | null }
+export interface SsoUser { id: string; username: string; role: string | null; email: string | null; organizationId: string | null; externalId: string | null; authSource: string | null; active?: boolean }
 
 /** The few things single sign-on needs from the database, so it can be exercised without one. */
 export interface SsoUserStore {
@@ -415,11 +415,14 @@ export async function resolveUser(cfg: SsoConfig, claims: SsoClaims, store: SsoU
   if (!emailAllowed(cfg, claims)) return { ok: false, code: "domain_not_allowed" };
   const role = roleFor(cfg, claims.roles);
   if (!role) return { ok: false, code: "no_role" };
-  const externalId = `${claims.tenantId}:${claims.oid}`;
+  // Lower case, so the key is the same whichever way the object id was written (SCIM provisions by the same key).
+  const externalId = `${claims.tenantId}:${claims.oid.toLowerCase()}`;
   const email = claims.email ?? (claims.upn && claims.upn.includes("@") ? claims.upn : null);
 
   const existing = await store.findByExternalId(externalId);
   if (existing) {
+    // Deprovisioned by the identity provider (SCIM): proving who they are is no longer enough.
+    if (existing.active === false) return { ok: false, code: "account_disabled" };
     // The role is Entra's to decide, every time.
     const patch: { role?: string; email?: string | null } = {};
     if (existing.role !== role) patch.role = role;

@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { db } from "./db";
 import { agentApiKeysAllowed } from "./lockdown";
+import { checkSession } from "./session-revocation";
 import { users, agentApiKeys, agents } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 
@@ -59,6 +60,10 @@ export interface TokenPayload {
    *  agent that key belongs to. Used by real-mcp-transport.ts's
    *  agent_mcp_servers authorization check and per-agent credential lookup. */
   apiKeyAgentId?: string;
+  /** "sso" on a session issued by single sign-on (the only kind whose session can be revoked, see session-revocation.ts). */
+  src?: "sso";
+  /** When the token was issued (seconds); added by jsonwebtoken when it signs. */
+  iat?: number;
 }
 
 declare global {
@@ -190,7 +195,9 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     const token = req.cookies?.[COOKIE_NAME];
     if (token) {
       const payload = verifyToken(token);
-      if (payload?.organizationId) {
+      // A session that has been revoked is no more a session here than anywhere else: this branch would
+      // otherwise let a deprovisioned administrator go on adding people through /auth/register.
+      if (payload?.organizationId && (await checkSession(payload)) === "ok") {
         req.authUser = payload;
       }
     }
@@ -280,6 +287,11 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   if (!payload.organizationId) {
     return res.status(403).json({ message: "User is not assigned to an organization" });
   }
+
+  // Only a session issued by single sign-on is ever looked up (session-revocation.ts); any other costs nothing here.
+  const verdict = await checkSession(payload);
+  if (verdict === "revoked") return res.status(401).json({ message: "Session ended" });
+  if (verdict === "unavailable") return res.status(503).json({ message: "Could not confirm the session. Try again." });
 
   req.authUser = payload;
   next();

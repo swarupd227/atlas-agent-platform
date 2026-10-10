@@ -14,6 +14,7 @@ const SSO_ERRORS: Record<string, string> = {
   mfa_required: "Your organisation requires multi-factor authentication for Astra. Sign in again and complete the verification prompt.",
   no_role: "You are signed in to Microsoft, but you have not been given access to Astra. Ask your administrator to assign you a role.",
   domain_not_allowed: "Your e-mail domain is not allowed to sign in to this Astra.",
+  account_disabled: "Your access to Astra has been removed by your organisation. Contact your administrator if this is a mistake.",
   not_enabled: "Single sign-on is not enabled.",
 };
 const SSO_ERROR_FALLBACK = "Signing in with Microsoft could not be completed. Please try again, and contact your administrator if it keeps happening.";
