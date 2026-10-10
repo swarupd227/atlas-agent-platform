@@ -1,7 +1,8 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { inputFields, validateRunInput, type RunInputField } from "@shared/run-input";
+import { inputFields, validateRunInput, FILE_INPUT_TYPE, type RunInputField } from "@shared/run-input";
+import { FileAttach, type AttachedFile } from "@/components/file-attach";
 import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema, Skill, KnowledgeBase, RuleLeaf, RuleGroup, RuleOperator, DagExecutionRun } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1096,8 +1097,34 @@ function RunDagDialog({ teamAgentId, open, onClose }: { teamAgentId: string; ope
 }
 
 /** One input field's control, by its type: a choice, yes/no, a number, JSON for an object or a list, or text. */
+/**
+ * A document input. The form holds the uploaded file's id -- the same string
+ * the run route expects -- while the picker keeps the file's name and size for
+ * display. One file: a field is one document, so two documents means two
+ * fields (see FILE_INPUT_TYPE in shared/run-input.ts).
+ */
+function RunInputFileControl({ field, onChange, disabled }: { field: RunInputField; onChange: (v: string) => void; disabled: boolean }) {
+  const [attached, setAttached] = useState<AttachedFile[]>([]);
+  return (
+    <FileAttach
+      context="run_input"
+      value={attached}
+      maxFiles={1}
+      disabled={disabled}
+      label={`Attach the ${field.name.replace(/_/g, " ")}`}
+      onChange={(files) => {
+        setAttached(files);
+        onChange(files[0]?.id ?? "");
+      }}
+    />
+  );
+}
+
 function RunInputControl({ field, value, onChange, disabled }: { field: RunInputField; value: string; onChange: (v: string) => void; disabled: boolean }) {
   const id = `run-input-${field.name}`;
+  if (field.type === FILE_INPUT_TYPE) {
+    return <RunInputFileControl field={field} onChange={onChange} disabled={disabled} />;
+  }
   if (field.enum) {
     return (
       <select id={id} className="h-8 w-full rounded-md border bg-background px-2 text-xs" value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} data-testid={`select-run-input-${field.name}`}>
@@ -2498,7 +2525,7 @@ function EdgeConfigPanel({
 type SchemaField = {
   rowKey: string;
   fieldName: string;
-  type: "string" | "object" | "array" | "number" | "boolean";
+  type: "string" | "object" | "array" | "number" | "boolean" | "file";
   writableBy: string;
   reducer: "last_wins" | "append" | "merge_object" | "sum";
   /** Given to the run at the start (shared/run-input.ts), with the words the Run form shows for it. */
@@ -2734,6 +2761,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
                   <option value="array">arr</option>
                   <option value="number">num</option>
                   <option value="boolean">bool</option>
+                  <option value="file">file</option>
                 </select>
               </div>
               <div className="px-1 py-1 flex items-center">

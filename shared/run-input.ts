@@ -11,11 +11,23 @@
  */
 export interface RunInputField {
   name: string;
-  /** string | number | boolean | object | array; anything else is treated as string. */
+  /** string | number | boolean | object | array | file; anything else is treated as string. */
   type: string;
   enum?: string[];
   description?: string;
 }
+
+/**
+ * A field the run is given as an uploaded document rather than as typed text.
+ * The form collects a file and hands back the id it was stored under; the run
+ * setup turns that id into a descriptor (see server/run-documents.ts) before
+ * any step reads it.
+ *
+ * One document per field. A step that needs two declares two fields -- which
+ * keeps the value's shape fixed, and keeps `the_field.readable == false` a
+ * rule the engine can settle without a model.
+ */
+export const FILE_INPUT_TYPE = "file";
 
 type FieldDefLike = { type?: string; input?: boolean; enum?: unknown; description?: unknown };
 
@@ -61,6 +73,8 @@ export function validateRunInput(
       continue;
     }
     if (isBlank(raw)) continue;
+    // An empty picker is a field left blank, not a file that failed to attach.
+    if (field.type === FILE_INPUT_TYPE && Array.isArray(raw) && raw.length === 0) continue;
     const coerced = coerce(field, raw);
     if (coerced.error) errors.push(`${name}: ${coerced.error}`);
     else value[name] = coerced.value;
@@ -79,6 +93,17 @@ function coerce(field: RunInputField, raw: unknown): { value?: unknown; error?: 
       if (raw === "true") return { value: true };
       if (raw === "false") return { value: false };
       return { error: "must be true or false" };
+    }
+    case FILE_INPUT_TYPE: {
+      // The form hands back what its picker holds -- a list, even when it is
+      // allowed only one file. Both shapes are accepted here so a caller using
+      // the API directly can pass the id plainly.
+      const one = Array.isArray(raw) ? (raw.length === 1 ? raw[0] : raw.length === 0 ? null : undefined) : raw;
+      if (one === undefined) return { error: "one document per field; attach a single file" };
+      if (one === null) return { error: "must be an uploaded file" };
+      const id = typeof one === "string" ? one.trim() : "";
+      if (!id || /\s/.test(id)) return { error: "must be an uploaded file" };
+      return { value: id };
     }
     case "object":
     case "array": {

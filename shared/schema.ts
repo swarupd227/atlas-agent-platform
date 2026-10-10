@@ -2415,7 +2415,7 @@ export const uploadedFiles = pgTable("uploaded_files", {
   extractedText: text("extracted_text"),
   /** Sheet names, slide count, truncation flag — surfaced in the UI chip. */
   extractMeta: jsonb("extract_meta"),
-  /** Where it was uploaded: workspace | wizard | process_flow | eval | cowork. */
+  /** Where it was uploaded: workspace | wizard | process_flow | eval | run_input | cowork. */
   context: text("context"),
   /**
    * The Cowork conversation this was attached to, stamped when the message is

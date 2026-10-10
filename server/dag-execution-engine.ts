@@ -13,6 +13,7 @@ import { PRICE_TABLE_VERSION } from "./llm-provider";
 import { decide } from "./decision-provider";
 import { resolveDecisionRoute, DEFAULT_THRESHOLDS } from "./decision-settings";
 import { validateRunInput, RunInputError } from "@shared/run-input";
+import { fileInputFieldNames, resolveRunDocuments, runDocumentsInState, buildRunDocumentContext } from "./run-documents";
 import { runWithLlmAbortSignal } from "./llm-abort-context";
 import jsonata from "jsonata";
 import { citePassages, CITATION_RULE, type CitedSource } from "@shared/retrieval-citations";
@@ -277,6 +278,10 @@ export interface StateFieldDef {
   type: string;
   writable_by: string[];
   reducer: "last_wins" | "append" | "merge_object" | "sum";
+  /** Given to the run at the start, off the Run form, instead of written by a step. */
+  input?: boolean;
+  /** Shown under the field's label on the Run form. */
+  description?: string;
   sanitize?: boolean;
   ephemeral?: boolean;
   enum?: string[];
@@ -2321,6 +2326,7 @@ export class DAGExecutionEngine {
     }
 
     const handoffTargets = getHandoffTargetLabels(nodeId, config.executionPlan);
+    const stateScope = visibleStateKeys(nodeId, config.executionPlan, currentState);
     const agentInput = buildAgentInput(
       nodeId,
       currentState,
@@ -2332,9 +2338,21 @@ export class DAGExecutionEngine {
       upstreamTruncationNotice(nodeId, config.executionPlan, nodeOutcomes),
       getRoutingFieldSpecs(nodeId, config.executionPlan),
       getLaterStepLabels(nodeId, config.executionPlan),
-      visibleStateKeys(nodeId, config.executionPlan, currentState),
+      stateScope,
       upstreamGuardrailNotice(nodeId, config.executionPlan, nodeJudgments),
     );
+
+    // The documents this step can see. State carries only the descriptor, so
+    // the text is appended here -- and only for a step the field is visible
+    // to, which is the same scoping every other state key already gets. A step
+    // the document was never routed to does not pay for it.
+    const visibleDocuments = runDocumentsInState(config.stateSchema, currentState, stateScope.visible);
+    const documentContext = visibleDocuments.length
+      ? await buildRunDocumentContext(visibleDocuments.map((d) => d.document), config.organizationId ?? undefined)
+      : "";
+    const agentInputWithDocuments = documentContext
+      ? `${agentInput}\n\n## DOCUMENTS THIS RUN WAS GIVEN\n${documentContext}\n`
+      : agentInput;
 
     // A Tool Set node directly upstream of this agent node scopes which MCP
     // tools it may call -- resolved to tool names (not ids) so it can be
@@ -2363,7 +2381,7 @@ export class DAGExecutionEngine {
       orgId: config.organizationId ?? null,
       purpose: "draft",
     });
-    const agentInputWithPrior = priorDecisions.text ? `${agentInput}\n\n${priorDecisions.text}` : agentInput;
+    const agentInputWithPrior = priorDecisions.text ? `${agentInputWithDocuments}\n\n${priorDecisions.text}` : agentInputWithDocuments;
 
     const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInputWithPrior, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds);
 
@@ -3759,6 +3777,29 @@ async function setupTeamAgentDagRun(teamAgentId: string, blueprintId: string, re
   // does not fit is a 400 to the caller, not a run that starts and reads nothing.
   const given = validateRunInput(stateSchema, input);
   if (given.errors.length) throw new RunInputError(given.errors);
+
+  // A `file` input arrives as the id the upload was stored under. It is turned
+  // into a descriptor HERE, once, so that every step reads the same settled
+  // facts about the document -- and so that an id naming no file in this
+  // team's organization is a 400 now rather than a step that reads a dangling
+  // reference twenty minutes into a run.
+  const documentFields = fileInputFieldNames(stateSchema).filter((f) => typeof given.value[f] === "string");
+  if (documentFields.length) {
+    const { documents, missing } = await resolveRunDocuments(
+      documentFields.map((f) => given.value[f] as string),
+      teamAgent?.organizationId ?? undefined,
+    );
+    if (missing.length) {
+      throw new RunInputError(
+        documentFields
+          .filter((f) => missing.includes(given.value[f] as string))
+          .map((f) => `${f}: no uploaded file with that id is available to this team`),
+      );
+    }
+    const byId = new Map(documents.map((d) => [d.fileId, d]));
+    for (const field of documentFields) given.value[field] = byId.get(given.value[field] as string);
+  }
+
   const initialState: Record<string, any> = { ...given.value, request };
 
   const dagRun = await storage.createDagExecutionRun({

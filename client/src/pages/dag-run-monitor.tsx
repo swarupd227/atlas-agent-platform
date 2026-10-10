@@ -278,6 +278,42 @@ const RUN_STATUS: Record<string, { label: string; dot: StepState | "live" | "ok"
   pending: { label: "Starting", dot: "live" },
 };
 
+/** The value a `file` input holds in state -- a descriptor, not the text
+ *  (server/run-documents.ts). */
+type GivenDocumentValue = { fileId: string; filename: string; kind?: string | null; chars?: number; readable?: boolean; truncated?: boolean };
+
+const isRunDocumentValue = (v: unknown): v is GivenDocumentValue =>
+  !!v && typeof v === "object" && !Array.isArray(v)
+  && typeof (v as GivenDocumentValue).fileId === "string"
+  && typeof (v as GivenDocumentValue).filename === "string";
+
+/**
+ * A document the run was given. Says plainly when nothing could be read out of
+ * it: a run over an unreadable scan otherwise looks exactly like a run over an
+ * empty document, and the steps' own output will not distinguish them either.
+ */
+function GivenDocument({ doc }: { doc: GivenDocumentValue }) {
+  return (
+    <span className="flex flex-col gap-0.5" data-testid={`text-run-document-${doc.fileId}`}>
+      <span className="flex items-center gap-1.5">
+        <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <span className="break-all">{doc.filename}</span>
+        {doc.kind && <span className="font-mono text-[10px] uppercase text-muted-foreground">{doc.kind}</span>}
+      </span>
+      {doc.readable === false ? (
+        <span className="text-xs text-destructive" data-testid={`text-run-document-unreadable-${doc.fileId}`}>
+          Nothing could be read from this file. The steps were told so, and told not to infer its contents.
+        </span>
+      ) : (
+        <span className="text-xs text-muted-foreground">
+          {(doc.chars ?? 0).toLocaleString()} characters read
+          {doc.truncated ? " · partial — the reader stopped early" : ""}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function DagRunMonitor() {
   const [, params] = useRoute("/dag-runs/:runId");
   const runId = params?.runId;
@@ -768,7 +804,11 @@ export default function DagRunMonitor() {
                 {given.map((g) => (
                   <div key={g.name} className="contents" data-testid={`text-run-input-${g.name}`}>
                     <dt className="font-mono text-xs text-muted-foreground pt-0.5" title={g.description}>{g.name}</dt>
-                    <dd className="whitespace-pre-wrap break-words">{typeof g.value === "string" ? g.value : JSON.stringify(g.value)}</dd>
+                    <dd className="whitespace-pre-wrap break-words">
+                      {isRunDocumentValue(g.value)
+                        ? <GivenDocument doc={g.value} />
+                        : typeof g.value === "string" ? g.value : JSON.stringify(g.value)}
+                    </dd>
                   </div>
                 ))}
               </dl>
