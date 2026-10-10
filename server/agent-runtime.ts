@@ -18,6 +18,8 @@ import { currentLlmAbortSignal } from "./llm-abort-context";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
 import { resolveReadableSkillSets, planSkillContext, skillProceduresPrompt, skillToolsFor, skillCatalogPrompt, isBuiltinSkillTool, DEFAULT_SKILL_INLINE_BUDGET_TOKENS } from "./builtin-skill-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
+import { isAgentMemoryEnabled, activeNotesForPrompt, renderMemoryBlock } from "./agent-memory";
+import { memoryToolsFor } from "./builtin-memory-tools";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -172,6 +174,8 @@ const DEFAULT_LAYER_BUDGETS: Record<string, number> = {
 
 /** Resolve active context-profile budgets for an agent.
  *  Priority: agent-specific active profile → industry-fallback active profile → DEFAULT_LAYER_BUDGETS.
+  // Approved notes the agent keeps between runs (server/agent-memory.ts).
+  memory: 500,
  *  Returns a merged budgets map; callers can reference DEFAULT_LAYER_BUDGETS as the fallback for any unset key.
  */
 async function resolveLayerBudgets(agentId: string, industry?: string): Promise<Record<string, number>> {
@@ -635,6 +639,17 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     const recentMemories = await storage.getAgentMemories(agent.agentId, "episodic", 10);
     if (recentMemories.length > 0) {
       const memLines: string[] = [];
+  // Governed memory: the notes a person approved for this agent, framed as data
+  // (server/agent-memory.ts). Only when the platform flag is on and the agent has
+  // opted in; a failed read adds nothing rather than failing the run.
+  if (layerBudgets.memory > 0) try {
+    if (await isAgentMemoryEnabled(agent.runtimeConfig)) {
+      const notes = await activeNotesForPrompt(agent.orgId, agent.agentId);
+      const block = renderMemoryBlock(notes, { toolOffered: true });
+      if (block) trackSection("memory", truncateLinesToBudget(layerBudgets.memory, block.split("\n")).join("\n"));
+    }
+  } catch {}
+
       memLines.push(`\n## EPISODIC MEMORY (recent execution history)`);
       memLines.push(`You have executed ${recentMemories.length} previous run(s). Use this history to inform your decisions:`);
       recentMemories.forEach((mem, i) => {
@@ -1630,6 +1645,16 @@ export async function executePromptWithMcp(
   const llmProvider = getProvider(providerName);
   const fallbackProviderName = llmProvider.providerName === "openai" ? "anthropic" : "openai";
   const fallbackLlmProvider = getProvider(fallbackProviderName);
+  // The memory tool (server/builtin-memory-tools.ts): proposes a change to the
+  // agent's own notes, which a person must approve. Offered with the other
+  // built-ins, after every filter, and only when the platform flag is on and
+  // this agent has opted in.
+  try {
+    if (await isAgentMemoryEnabled(options?.runtimeConfig)) availableTools.push(...memoryToolsFor());
+  } catch (memErr: any) {
+    console.warn(`[memory] memory tool unavailable (non-fatal): ${memErr.message}`);
+  }
+
   const canonicalTools = buildCanonicalTools(availableTools);
   if (canonicalTools.length > 0 && options?.conversational !== true && resolveOutputMode(options?.runtimeConfig) === "analysis") {
     finalAnswerBlock = finalAnswerInstructions(options?.runtimeConfig?.outputSchema);

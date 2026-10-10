@@ -2136,6 +2136,11 @@ export class DatabaseStorage implements IStorage {
     await db.execute(sql`DELETE FROM aar_action_decisions WHERE agent_id = ${id}`);
     await db.execute(sql`DELETE FROM aar_agent_state_reports WHERE agent_id = ${id}`);
     await db.execute(sql`DELETE FROM aar_configs WHERE agent_id = ${id}`);
+    // An agent's memory goes with it. Neither table references agents(id), so
+    // nothing forced this and the notes were left behind: personal-data erasure
+    // has to be able to say "deleting the agent deleted what it remembered".
+    await db.execute(sql`DELETE FROM agent_memory_notes WHERE agent_id = ${id}`);
+    await db.execute(sql`DELETE FROM agent_memories WHERE agent_id = ${id}`);
     // The mandate/warrant primitive tables hard-reference agents(id) and were
     // added after this cleanup was written, so any agent carrying a mandate
     // could never be deleted (FK violation -> 500) -- and every agent built by

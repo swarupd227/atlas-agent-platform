@@ -30,6 +30,10 @@ export const users = pgTable("users", {
   email: text("email"),
   role: text("role").default("agent_engineer"),
   organizationId: varchar("organization_id").references(() => organizations.id),
+  /** How this person signs in: "local" (user name and password) or "sso" (Microsoft Entra ID). */
+  authSource: text("auth_source").notNull().default("local"),
+  /** Who they are at their identity provider ("<tenant id>:<object id>"); null for a local account. Unique when set. */
+  externalId: text("external_id"),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true }).extend({ organizationId: z.string().optional() });
@@ -2603,6 +2607,53 @@ export const agentMemories = pgTable("agent_memories", {
 export const insertAgentMemorySchema = createInsertSchema(agentMemories).omit({ id: true, createdAt: true });
 export type InsertAgentMemory = z.infer<typeof insertAgentMemorySchema>;
 export type AgentMemory = typeof agentMemories.$inferSelect;
+
+/**
+ * Notes an agent keeps between runs, and the proposals to change them.
+ *
+ * Not agent_memories: that table is the platform's own after-run summary, has no
+ * organization and no index, and nothing reviews what goes into it. A note here
+ * is written ONLY by a person's decision. An agent asks (a "pending" row naming
+ * the change); approving the request is what makes the note live, so nothing an
+ * agent writes reaches a prompt until someone has read it.
+ *
+ * A row is a note OR a proposal about a note. `proposedAction` says which change
+ * it asks for; `targetNoteId` names the note a replace or remove refers to.
+ *   status "pending"    asked for, not yet decided
+ *   status "active"     an approved note, injected into the agent's prompt
+ *   status "rejected"   declined, kept as a record
+ *   status "superseded" replaced by a newer approved note
+ *   status "removed"    taken out by an approved removal or by a person
+ *   status "applied"    an approved removal request, whose work is done
+ * `scope`/`scopeId` are ready for per-user notes; only "agent" is written today.
+ */
+export const agentMemoryNotes = pgTable("agent_memory_notes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  scope: varchar("scope").notNull().default("agent"),
+  scopeId: varchar("scope_id"),
+  content: text("content").notNull(),
+  contentHash: varchar("content_hash").notNull(),
+  status: varchar("status").notNull().default("pending"),
+  /** "agent" (via the memory tool) or "user" (a person wrote it). */
+  source: varchar("source").notNull().default("agent"),
+  proposedAction: varchar("proposed_action").notNull().default("add"),
+  targetNoteId: varchar("target_note_id"),
+  /** The run the proposal came from, so a reviewer can see what the agent was doing. */
+  runId: varchar("run_id"),
+  approvalId: varchar("approval_id"),
+  decidedBy: varchar("decided_by"),
+  decidedAt: timestamp("decided_at"),
+  /** Null means no expiry has been set. */
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAgentMemoryNoteSchema = createInsertSchema(agentMemoryNotes).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAgentMemoryNote = z.infer<typeof insertAgentMemoryNoteSchema>;
+export type AgentMemoryNote = typeof agentMemoryNotes.$inferSelect;
 
 export const ragPipelines = pgTable("rag_pipelines", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

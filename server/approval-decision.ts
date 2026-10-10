@@ -14,6 +14,7 @@ import { resumeWorkspaceRun } from "./workspace-run";
 import { promoteToBaseline } from "./services/screenshot-baseline";
 import { canDecideApproval, type RoleId } from "./permissions";
 import { workspaceRuns, type Approval } from "@shared/schema";
+import { applyMemoryDecision } from "./agent-memory";
 
 export type ApprovalDecision = "approved" | "rejected";
 
@@ -115,6 +116,11 @@ export function describeApprovalEffect(
       ? `Code execution is enabled for the skill ${what}, for every agent that uses it.`
       : "Code execution stays off for this skill.";
   }
+  if (a.type === "memory_write") {
+    return approve
+      ? "The change is made to the agent's notes. Its later runs will be shown the note and may rely on it; a person can remove it at any time."
+      : "The agent's notes stay as they are. The request is kept as a record.";
+  }
   if (a.objectType === "ui_baseline_diff") {
     return approve
       ? "The new screenshot becomes the baseline that later runs are compared with."
@@ -159,6 +165,14 @@ export async function applyApprovalEffects(approval: Approval, status: string | 
   // skill benefits once approved.
   if (approval.type === "code_execution_enablement" && approval.objectId && status === "approved") {
     await storage.updateSkill(approval.objectId, { codeExecutionApproved: true } as any);
+  }
+
+  // A memory_write approval is a person deciding whether an agent's proposed note
+  // change takes effect (server/agent-memory.ts). Nothing an agent proposes
+  // reaches a prompt until this runs with "approved".
+  if (approval.type === "memory_write" && approval.objectId && (status === "approved" || status === "rejected")) {
+    // The approval's own organization is the authority: it is the one the note was filed under.
+    await applyMemoryDecision({ orgId: approval.organizationId ?? ctx.orgId, noteId: approval.objectId, decision: status, decidedBy });
   }
 
   // Fast path for a DAG approval-gate decision: resume the paused run right

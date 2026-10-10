@@ -108,6 +108,13 @@ function translateApprovalType(
       context: "Your Digital Worker spotted an issue and prepared a fix. Approve it to apply automatically.",
     };
   }
+  if (t === "memory_write") {
+    return {
+      category: "approval",
+      title: `A Digital Worker wants to remember: "${name}"`,
+      context: "It asked to save, change or remove a note it will be shown in later runs. Approve only if the note is true and useful and reads as a fact, not an instruction.",
+    };
+  }
   if (t === "model_upgrade") {
     return {
       category: "approval",

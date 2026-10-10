@@ -348,6 +348,11 @@ export async function runStartupMigrations() {
         created_at TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_process_flow_versions_flow ON process_flow_versions (flow_id, created_at DESC);
+      -- How a person signs in, and who they are at their identity provider (single sign-on, server/sso.ts).
+      -- Every existing person is "local" with no external id, which is exactly what they were.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source TEXT NOT NULL DEFAULT 'local';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id ON users (external_id) WHERE external_id IS NOT NULL;
       -- Keys for a system outside the platform that reads an organization's audit log
       -- (server/audit-read-keys.ts). Only the SHA-256 of a key is stored.
       CREATE TABLE IF NOT EXISTS org_api_keys (
@@ -2107,6 +2112,36 @@ export async function runStartupMigrations() {
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS patterns_flagged JSONB;
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS decided_by_user_id VARCHAR;
       ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS actions_taken JSONB;
+    `);
+
+    // Governed agent memory: notes an agent keeps between runs, and the
+    // proposals to change them. Written only by a person's approval (see
+    // server/agent-memory.ts). Its own table because agent_memories has no
+    // organization, no index and no review. Additive only.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agent_memory_notes (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        agent_id VARCHAR NOT NULL,
+        scope VARCHAR NOT NULL DEFAULT 'agent',
+        scope_id VARCHAR,
+        content TEXT NOT NULL,
+        content_hash VARCHAR NOT NULL,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        source VARCHAR NOT NULL DEFAULT 'agent',
+        proposed_action VARCHAR NOT NULL DEFAULT 'add',
+        target_note_id VARCHAR,
+        run_id VARCHAR,
+        approval_id VARCHAR,
+        decided_by VARCHAR,
+        decided_at TIMESTAMP,
+        expires_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      -- The prompt read: an agent's live notes.
+      CREATE INDEX IF NOT EXISTS idx_agent_memory_notes_agent ON agent_memory_notes (organization_id, agent_id, status);
+      CREATE INDEX IF NOT EXISTS idx_agent_memory_notes_approval ON agent_memory_notes (approval_id);
     `);
 
     // What the gated dispatcher actually ran. Not audit_events: that write

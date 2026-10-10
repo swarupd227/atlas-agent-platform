@@ -35,12 +35,13 @@ import type { Agent, Deployment, EvalSuite, OutcomeContract, Policy, PolicyExcep
 
 // ── Pure helpers (tests/agent-overview.test.ts) ─────────────────────────────
 
-export type Section = "overview" | "runs" | "setup" | "rules" | "releases";
+export type Section = "overview" | "runs" | "setup" | "memory" | "rules" | "releases";
 
 export const SECTIONS: Array<{ id: Section; label: string; hint: string }> = [
   { id: "overview", label: "Overview", hint: "What it is and what it's for" },
   { id: "runs", label: "Runs & tests", hint: "What it has done, and how it's tested" },
   { id: "setup", label: "Setup", hint: "Connectors, skills and knowledge it can use" },
+  { id: "memory", label: "Memory", hint: "What it keeps between runs, and what is waiting for a person" },
   { id: "rules", label: "Rules", hint: "Policies it's held to, and what they block" },
   { id: "releases", label: "Releases", hint: "Where it runs, and its versions" },
 ];
@@ -113,6 +114,25 @@ export function policiesByScope(resolved: ResolvedPolicies | undefined): Array<{
     if (!seen.has(p.id)) seen.set(p.id, { policy: p, scopes: scopes.get(p.id) ?? [] });
   }
   return Array.from(seen.values());
+}
+
+/** An agent keeps notes only when it has opted in (the platform flag is the other half; see server/agent-memory.ts). */
+export function memoryEnabledOf(agent: Pick<Agent, "runtimeConfig">): boolean {
+  return (agent.runtimeConfig as Record<string, any> | null | undefined)?.agentMemory?.enabled === true;
+}
+
+/** The runtime config with memory switched on or off, leaving everything else in it alone. */
+export function withMemoryEnabled(runtimeConfig: unknown, enabled: boolean): Record<string, unknown> {
+  const rc = (runtimeConfig && typeof runtimeConfig === "object" ? runtimeConfig : {}) as Record<string, any>;
+  return { ...rc, agentMemory: { ...(rc.agentMemory ?? {}), enabled } };
+}
+
+interface MemoryNoteRow { id: string; content: string; status: string; proposedAction: string; approvalId: string | null; decidedBy: string | null; decidedAt: string | null; createdAt: string | null; runId: string | null }
+interface MemoryOverview { notes: MemoryNoteRow[]; pending: MemoryNoteRow[]; recent: MemoryNoteRow[]; limits: { maxNoteChars: number; maxTotalChars: number; maxNotes: number; maxPending: number } }
+
+/** What a request asks for, in words. */
+export function memoryRequestLabel(n: Pick<MemoryNoteRow, "proposedAction">): string {
+  return n.proposedAction === "remove" ? "Remove a note" : n.proposedAction === "replace" ? "Replace a note" : "Save a note";
 }
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -223,6 +243,7 @@ export default function AgentOverview() {
                 {section === "overview" && <Overview agent={agent} canEdit={canEdit} toast={toast} />}
                 {section === "runs" && <RunsAndTests agent={agent} traces={tracesQ.data ?? []} loading={tracesQ.isLoading} />}
                 {section === "setup" && <Setup agent={agent} />}
+                {section === "memory" && <Memory agent={agent} canEdit={canEdit} toast={toast} />}
                 {section === "rules" && <Rules agent={agent} />}
                 {section === "releases" && <Releases agent={agent} />}
               </div>
@@ -423,6 +444,104 @@ function Setup({ agent }: { agent: Agent }) {
           <ul className="flex flex-wrap gap-1.5">{tags.map((t, i) => <li key={i}><Badge variant="outline" className="text-[11px]">{t.conceptLabel ?? "tag"}</Badge></li>)}</ul>
         )}
       </Block>
+    </div>
+  );
+}
+
+/**
+ * What the agent may remember. It never writes a note: it asks, and a person's
+ * approval (in the ordinary approvals queue) is what makes the note live, so
+ * what the agent is told later is always a decision somebody made.
+ */
+function Memory({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toast: ReturnType<typeof useToast>["toast"] }) {
+  const on = memoryEnabledOf(agent);
+  const memoryQ = useQuery<MemoryOverview>({ queryKey: [`/api/agents/${agent.id}/memory`] });
+  const data = memoryQ.data;
+  const used = (data?.notes ?? []).reduce((s, n) => s + n.content.length, 0);
+
+  const toggle = useMutation({
+    mutationFn: async () => (await apiRequest("PATCH", `/api/agents/${agent.id}`, { runtimeConfig: withMemoryEnabled(agent.runtimeConfig, !on) })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      toast({ title: on ? "Memory turned off" : "Memory turned on", description: "The change is recorded in the audit trail." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't change it", description: e?.message, variant: "destructive" }),
+  });
+  const remove = useMutation({
+    mutationFn: async (noteId: string) => (await apiRequest("DELETE", `/api/agents/${agent.id}/memory/${noteId}`)).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/agents/${agent.id}/memory`] });
+      toast({ title: "Note removed", description: "Its later runs will no longer be shown it." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't remove it", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex flex-col gap-6" data-testid="memory-section">
+      <section>
+        <SectionHeading>Memory</SectionHeading>
+        <div className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${on ? "bg-emerald-500" : "bg-muted-foreground/40"}`} aria-hidden />
+          <span className="min-w-0 flex-1">{on ? "On. It can propose notes to keep between runs." : "Off. It keeps nothing between runs."}</span>
+          {canEdit && <Button size="sm" variant="outline" disabled={toggle.isPending} onClick={() => toggle.mutate()} data-testid="button-toggle-memory">{on ? "Turn off" : "Turn on"}</Button>}
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">It never writes a note itself. It asks, and a person approves each one in Approvals, so what it is told in later runs is always somebody's decision. This also needs the AGENT_MEMORY flag on under Admin → Platform flags.</p>
+      </section>
+
+      <section>
+        <SectionHeading>Notes it keeps</SectionHeading>
+        {memoryQ.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (data?.notes ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">No approved notes.</p>
+        ) : (
+          <ul className="flex flex-col divide-y rounded border" data-testid="memory-notes">
+            {(data?.notes ?? []).map((n) => (
+              <li key={n.id} className="flex items-start gap-2 p-2.5 text-sm" data-testid={`memory-note-${n.id}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="whitespace-pre-wrap break-words">{n.content}</div>
+                  <div className="font-mono text-[10px] text-muted-foreground">{[n.decidedBy ? `approved by ${n.decidedBy}` : null, n.decidedAt ? formatDateTime(n.decidedAt) : null].filter(Boolean).join(" · ")}</div>
+                </div>
+                {canEdit && <Button size="sm" variant="ghost" className="h-7 shrink-0 text-xs" disabled={remove.isPending} onClick={() => remove.mutate(n.id)} data-testid={`button-remove-note-${n.id}`}>Remove</Button>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {data && <p className="mt-1 text-[11px] text-muted-foreground">{used} of {data.limits.maxTotalChars} characters in use; at most {data.limits.maxNotes} notes of {data.limits.maxNoteChars} characters.</p>}
+      </section>
+
+      <section>
+        <SectionHeading>Waiting for a decision</SectionHeading>
+        {(data?.pending ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing is waiting.</p>
+        ) : (
+          <ul className="flex flex-col divide-y rounded border" data-testid="memory-pending">
+            {(data?.pending ?? []).map((n) => (
+              <li key={n.id} className="flex items-start gap-2 p-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{memoryRequestLabel(n)}</div>
+                  <div className="whitespace-pre-wrap break-words">{n.content}</div>
+                </div>
+                {n.approvalId && <Link href={`/approvals/${n.approvalId}/classic`} className="shrink-0 text-xs text-muted-foreground hover:text-foreground">decide</Link>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {(data?.recent ?? []).length > 0 && (
+        <section>
+          <SectionHeading>Recently decided</SectionHeading>
+          <ul className="flex flex-col divide-y rounded border" data-testid="memory-recent">
+            {(data?.recent ?? []).map((n) => (
+              <li key={n.id} className="flex items-start gap-2 p-2.5 text-sm">
+                <div className="min-w-0 flex-1 truncate">{n.content}</div>
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{n.status === "applied" ? "removed" : n.status}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

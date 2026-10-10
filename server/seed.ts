@@ -1785,6 +1785,12 @@ export async function seedDatabase() {
         description: "on = a recorded decision is offered to a later step only once someone has reviewed it, and one a reviewer judged below 50% confident is withheld; each refusal is stated as its own reason, never as \"no decision exists\". off = reviewed and unreviewed records are both offered. Superseded, expired and not-yet-effective records are withheld either way. Turn this on once there is a way to work through the review backlog — review_state defaults to unreviewed, so with it on, records written before a review existed are withheld.",
         category: "decisions",
       },
+      {
+        key: "AGENT_MEMORY",
+        value: "off",
+        description: "on = an agent that has opted in (its Memory section) is shown the notes a person approved for it, and may PROPOSE saving, replacing or removing one with the memory tool. A proposal is filed as an approval and changes nothing until a person approves it; an injected, sensitive or oversized note is refused before anyone is asked. off = no agent sees or proposes notes, whatever its own setting.",
+        category: "decisions",
+      },
     ];
     const missingSettings = seedRowsMissing(existingSettings, defaultSettings, "key");
     if (missingSettings.length > 0) {

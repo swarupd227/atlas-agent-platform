@@ -68,6 +68,7 @@ const TYPE_META: Record<string, { label: string; icon: any; color: string }> = {
   retirement_review:     { label: "Retirement Review",      icon: FileText, color: "text-slate-500" },
   handover_review:       { label: "Handover Review",        icon: FileText, color: "text-slate-500" },
   code_execution_enablement: { label: "Code Execution",     icon: Shield, color: "text-amber-500" },
+  memory_write:          { label: "Agent Memory",           icon: FileText, color: "text-teal-500" },
   follow_up_task:        { label: "Follow-up",              icon: MessageSquare, color: "text-slate-500" },
   export_package:        { label: "Export Package",         icon: FileText, color: "text-violet-500" },
 };
@@ -732,6 +733,50 @@ export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }
     return (
       <SectionBlock icon={CheckCircle} title="What's being decided">
         <GateEvidenceCard evidence={ev as GateEvidence} testIdPrefix={`gate-${approval.id}`} />
+      </SectionBlock>
+    );
+  }
+
+  // An agent asking to change a note it will see in later runs (server/agent-memory.ts).
+  // The reviewer decides whether it is true, useful, and a fact rather than an instruction.
+  if (approval.type === "memory_write") {
+    const action = String(ev.action ?? "add");
+    const noteBox = (text: string, testId: string) => (
+      <div className="rounded-md bg-muted/20 p-2.5 text-sm whitespace-pre-wrap break-words" data-testid={testId}>{text}</div>
+    );
+    return (
+      <SectionBlock icon={FileText} title="What the agent wants to remember">
+        <div className="flex flex-col gap-3 pt-1" data-testid={`memory-evidence-${approval.id}`}>
+          <div className="text-xs text-muted-foreground">
+            {action === "add" && "Save a new note. Every later run of this agent will be shown it."}
+            {action === "replace" && "Replace a saved note with new wording."}
+            {action === "remove" && "Remove a saved note. Later runs will no longer be shown it."}
+          </div>
+          {ev.proposed && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{action === "replace" ? "New note" : "Proposed note"}</span>
+              {noteBox(String(ev.proposed), `memory-proposed-${approval.id}`)}
+            </div>
+          )}
+          {ev.replaces?.content && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{action === "remove" ? "Note to remove" : "Note it replaces"}</span>
+              {noteBox(String(ev.replaces.content), `memory-replaces-${approval.id}`)}
+            </div>
+          )}
+          {ev.reason && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Why the agent says it helps</span>
+              <span className="text-xs">{String(ev.reason)}</span>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+            {ev.agentName && <span>Agent: {String(ev.agentName)}</span>}
+            {typeof ev.memoryUsedChars === "number" && typeof ev.memoryMaxChars === "number" && <span>Memory in use: {ev.memoryUsedChars} of {ev.memoryMaxChars} characters</span>}
+            {ev.runId && <span>Proposed during run {String(ev.runId).slice(0, 8)}</span>}
+          </div>
+          <div className="text-[11px] text-muted-foreground">Approve only if the note is true, will help a later run, and reads as a fact. A note that tells the agent what to do, or that holds a secret or personal data, should be rejected.</div>
+        </div>
       </SectionBlock>
     );
   }

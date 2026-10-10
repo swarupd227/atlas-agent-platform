@@ -36,6 +36,7 @@ import { coerceToolArgsToSchema } from "./tool-arg-coercion";
 import { captureReturnedFile } from "./returned-file-capture";
 import { currentLlmAbortSignal } from "./llm-abort-context";
 import { BUILTIN_SKILL_SERVER_ID } from "./builtin-skill-tools";
+import { BUILTIN_MEMORY_SERVER_ID } from "./builtin-memory-tools";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
 export type PolicyBundle = Awaited<ReturnType<typeof resolvePolicyBundle>>;
@@ -687,12 +688,12 @@ async function captureFileBasedScreenshot(result: unknown, tool: AvailableTool, 
   }
 }
 
-export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
+export async function executeTool(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string, runId?: string | null): Promise<any> {
   // The dispatcher refuses a disallowed connector first (with its own outcome); this is for the
   // callers that execute a tool without going through it.
   const blockedKind = await blockedConnectorKind(tool.serverId);
   if (blockedKind) throw new LockdownError(`The "${blockedKind}" connector type`);
-  const result = await executeToolUnwrapped(tool, args, orgId, agentId);
+  const result = await executeToolUnwrapped(tool, args, orgId, agentId, runId);
   // A document an external tool built comes back as bytes in its result: store
   // it as a run file so it can be downloaded and inspected (see
   // returned-file-capture.ts). Results without a file pass through unchanged.
@@ -715,7 +716,7 @@ export async function executeTool(tool: AvailableTool, args: Record<string, any>
   });
 }
 
-async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string): Promise<any> {
+async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, any>, orgId?: string | null, agentId?: string, runId?: string | null): Promise<any> {
   // A list or object the model sent as JSON text is parsed back into the type
   // the tool's schema declares, for every kind of tool below.
   args = coerceToolArgsToSchema(args, tool.toolInputSchema);
@@ -733,6 +734,13 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
   const { isBuiltinSkillTool, executeBuiltinSkillTool } = await import("./builtin-skill-tools");
   if (isBuiltinSkillTool(tool)) {
     return executeBuiltinSkillTool(tool.toolName, args, { orgId, agentId });
+  }
+
+  // Built-in memory proposals (server/builtin-memory-tools.ts): files a request a
+  // person must approve; changes no note by itself.
+  const { isBuiltinMemoryTool, executeBuiltinMemoryTool } = await import("./builtin-memory-tools");
+  if (isBuiltinMemoryTool(tool)) {
+    return executeBuiltinMemoryTool(tool.toolName, args, { orgId, agentId, runId });
   }
 
   // Enterprise connectors (GitHub, Slack, Salesforce, the SQL family, …) are
@@ -1002,6 +1010,12 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // block naming the tool still refuses it; rate limiting, spans and the audit
   // trail still apply.
   const skillRead = tool.serverId === BUILTIN_SKILL_SERVER_ID;
+  // The memory tool (server/builtin-memory-tools.ts) only FILES A REQUEST that a
+  // person must approve, so it is exempt from the same allow-lists for the same
+  // reason. It is deliberately not exempt from the shadow gate below: a shadow
+  // run must not file requests.
+  const memoryPropose = tool.serverId === BUILTIN_MEMORY_SERVER_ID;
+  const exemptFromAllowLists = skillRead || memoryPropose;
 
   const finish = (partial: Omit<DispatchResult, "redactedArgs" | "startedAt" | "completedAt" | "durationMs">): DispatchResult => {
     const durationMs = Date.now() - startMs;
@@ -1067,7 +1081,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
 
   // 1. Skill allowlist gate — skills grant tool capabilities; a declared
   //    allowlist that omits this tool refuses dispatch.
-  if (!skillRead && req.skillAllowlist && !req.skillAllowlist.has(toolNameLower)) {
+  if (!exemptFromAllowLists && req.skillAllowlist && !req.skillAllowlist.has(toolNameLower)) {
     const reason = `Tool "${tool.toolName}" is not granted by any active skill (skill allowlist enforcement)`;
     storage.createAuditEvent({
       actorType: "system",
@@ -1086,7 +1100,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   if (policyBundle) {
     const isHardBlocked = policyBundle.blockedTools.some(b => b.toLowerCase() === toolNameLower);
     const allowlistActive = policyBundle.toolAllowlist.length > 0;
-    const isAllowed = skillRead || !allowlistActive || policyBundle.toolAllowlist.some(a => a.toLowerCase() === toolNameLower);
+    const isAllowed = exemptFromAllowLists || !allowlistActive || policyBundle.toolAllowlist.some(a => a.toLowerCase() === toolNameLower);
     if (isHardBlocked || (!isAllowed && allowlistActive)) {
       const reason = isHardBlocked
         ? `Tool "${tool.toolName}" is blocked by a strict/block-enforcement policy`
@@ -1142,7 +1156,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // A skill read honours an AAR deny that names it explicitly -- the same
   // "explicit block wins" rule as the policy gate above -- but not the allow or
   // require-approval lists, which were written before the tool existed.
-  const aar = skillRead
+  const aar = exemptFromAllowLists
     ? await skillReadAarDecision(agentId, tool.toolName)
     : await evaluateActionPolicy(agentId, tool);
   if (aar.decision === "BLOCK") {
@@ -1171,8 +1185,8 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // existing fleet) -- see evaluateWarrantCondition for why that's provable,
   // not assumed. Only ever ADDS restriction on top of what AAR already
   // decided; it can never loosen an AAR block or approval requirement above.
-  const warrant = (skillRead
-    ? { decision: "ALLOW", reason: "Built-in skill read -- warrant gate not engaged" }
+  const warrant = (exemptFromAllowLists
+    ? { decision: "ALLOW", reason: "Built-in skill read or memory proposal -- warrant gate not engaged" }
     : await evaluateWarrantCondition(agentId, tool)) as Awaited<ReturnType<typeof evaluateWarrantCondition>>;
   if (warrant.decision === "BLOCK") {
     return finish({ outcome: "gate_blocked_warrant", ok: false, result: null, error: warrant.reason, reason: warrant.reason, warrantDecision: warrant.decision, monitorFlagged });
@@ -1196,7 +1210,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // declared an upfront tool scope, a call outside it is blocked as drift —
   // even though skill/policy/AAR already allowed it — because the agent
   // itself never planned to make this call.
-  if (!skillRead && req.declaredScope && req.declaredScope.size > 0 && !req.declaredScope.has(toolNameLower)) {
+  if (!exemptFromAllowLists && req.declaredScope && req.declaredScope.size > 0 && !req.declaredScope.has(toolNameLower)) {
     const reason = `Tool "${tool.toolName}" was not in the scope this run declared at the start (intent-based authorization: blocking scope drift)`;
     storage.createAuditEvent({
       actorType: "system",
@@ -1274,7 +1288,7 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   const execStartMs = Date.now();
   const wireKind = tool.enterpriseIntegration ? "connector" : tool.isRealMcp ? "mcp" : "http";
   try {
-    const result = await executeTool(tool, req.args, req.orgId, agentId);
+    const result = await executeTool(tool, req.args, req.orgId, agentId, req.traceId);
     const executionMs = Date.now() - execStartMs;
     if (idemKey) {
       pruneIdempotencyCache();

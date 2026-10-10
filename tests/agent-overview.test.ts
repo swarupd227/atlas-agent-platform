@@ -13,14 +13,19 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { SECTIONS, policiesByScope, policyEffect, runOutcome, runStats, sectionFromSearch } from "../client/src/pages/agent-overview";
+import { SECTIONS, memoryEnabledOf, memoryRequestLabel, policiesByScope, policyEffect, runOutcome, runStats, sectionFromSearch, withMemoryEnabled } from "../client/src/pages/agent-overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "agent-overview.tsx");
 
 describe("the sections", () => {
-  it("are the five agreed, in order", () => {
-    expect(SECTIONS.map((s) => s.id)).toEqual(["overview", "runs", "setup", "rules", "releases"]);
+  it("are the six agreed, in order", () => {
+    expect(SECTIONS.map((s) => s.id)).toEqual(["overview", "runs", "setup", "memory", "rules", "releases"]);
+  });
+
+  it("memory loads its own data only when opened", () => {
+    expect(page).toMatch(/function Memory\(/);
+    expect(page).toContain("/api/agents/${agent.id}/memory");
   });
 
   it("each load their own data, not everything on mount", () => {
@@ -53,6 +58,29 @@ describe("a link into a section", () => {
     for (const m of registry.matchAll(/\?section=([a-z-]+)/g)) {
       expect(SECTIONS.map((s) => s.id)).toContain(m[1]);
     }
+  });
+});
+
+describe("memory", () => {
+  it("is on only when the agent has opted in", () => {
+    expect(memoryEnabledOf({ runtimeConfig: { agentMemory: { enabled: true } } } as any)).toBe(true);
+    expect(memoryEnabledOf({ runtimeConfig: { agentMemory: { enabled: false } } } as any)).toBe(false);
+    expect(memoryEnabledOf({ runtimeConfig: {} } as any)).toBe(false);
+    expect(memoryEnabledOf({ runtimeConfig: null } as any)).toBe(false);
+  });
+
+  it("switching it on or off leaves the rest of the runtime config alone", () => {
+    const rc = { maxCostPerRunUsd: 2, agentMemory: { note: "kept", enabled: false }, skillInlineBudgetTokens: 4000 };
+    expect(withMemoryEnabled(rc, true)).toEqual({ maxCostPerRunUsd: 2, agentMemory: { note: "kept", enabled: true }, skillInlineBudgetTokens: 4000 });
+    expect(withMemoryEnabled(null, true)).toEqual({ agentMemory: { enabled: true } });
+    expect(withMemoryEnabled(undefined, false)).toEqual({ agentMemory: { enabled: false } });
+    expect(rc.agentMemory.enabled).toBe(false); // the original is not mutated
+  });
+
+  it("says what a request asks for", () => {
+    expect(memoryRequestLabel({ proposedAction: "add" })).toBe("Save a note");
+    expect(memoryRequestLabel({ proposedAction: "replace" })).toBe("Replace a note");
+    expect(memoryRequestLabel({ proposedAction: "remove" })).toBe("Remove a note");
   });
 });
 
