@@ -91,6 +91,7 @@ services:
       ASTRA_SSO_CLIENT_SECRET: ${ASTRA_SSO_CLIENT_SECRET:-}
       ASTRA_SCIM_TOKEN: ${ASTRA_SCIM_TOKEN:-}
       ASTRA_AUDIT_KMS_KEY_ID: ${ASTRA_AUDIT_KMS_KEY_ID:-}
+      ASTRA_SECRETS_MANAGER_PREFIX: ${ASTRA_SECRETS_MANAGER_PREFIX:-}
       # Seeds a `admin` user on first boot with this password (username is fixed to `admin`).
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in .env}
       # Optional model/integration keys — pass through when set.

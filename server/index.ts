@@ -20,6 +20,7 @@ import { otlpIngestRouter } from "./routes/observability";
 import { auditPullRouter } from "./routes/audit-read";
 import scimRouter from "./routes/scim";
 import { initAuditSigning } from "./audit-signing";
+import { initSecretStore } from "./secret-store";
 import { pool } from "./db";
 import { flushOtlp } from "./otlp-export";
 import { validateEnv, demosEnabled } from "./config";
@@ -215,6 +216,14 @@ app.use((req, res, next) => {
     await initAuditSigning();
   } catch (e: any) {
     console.error(`[FATAL] The audit signing key cannot be used; refusing to start: ${e?.message ?? e}`);
+    process.exit(1);
+  }
+  // The same for an external secret store: try it end to end now, so a missing permission stops the server here
+  // and not at the first connector call. (With none configured this does nothing.)
+  try {
+    await initSecretStore();
+  } catch (e: any) {
+    console.error(`[FATAL] The external secret store cannot be used; refusing to start: ${e?.message ?? e}`);
     process.exit(1);
   }
   await registerRoutes(httpServer, app);

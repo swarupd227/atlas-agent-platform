@@ -212,6 +212,28 @@ resource "aws_iam_role_policy" "audit_kms" {
   })
 }
 
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+# Credentials kept in Secrets Manager (docs/EXTERNAL_SECRET_STORE.md): the role may manage secrets under the
+# chosen prefix and nothing else. Created only when a prefix is given.
+resource "aws_iam_role_policy" "secrets_manager" {
+  count = var.secrets_manager_prefix == "" ? 0 : 1
+  name  = "${var.app_name}-connector-secrets"
+  role  = aws_iam_role.eb_ec2.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "secretsmanager:CreateSecret", "secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue",
+        "secretsmanager:DeleteSecret", "secretsmanager:TagResource",
+      ]
+      Resource = "arn:${data.aws_partition.current.partition}:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.secrets_manager_prefix}*"
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "eb_ec2" {
   name = "${var.app_name}-eb-ec2-profile"
   role = aws_iam_role.eb_ec2.name
@@ -313,6 +335,16 @@ resource "aws_elastic_beanstalk_environment" "main" {
     namespace = "aws:elasticbeanstalk:application:environment"
     name      = "ASTRA_AUDIT_KMS_KEY_ID"
     value     = var.audit_kms_key_arn
+  }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "ASTRA_SECRETS_MANAGER_PREFIX"
+    value     = var.secrets_manager_prefix
+  }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "ASTRA_SECRETS_MANAGER_REGION"
+    value     = var.aws_region
   }
 
   # EB's Node proxy listens on 80 and forwards to the app's PORT (8080 above).

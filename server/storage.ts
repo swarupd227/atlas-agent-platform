@@ -3291,6 +3291,10 @@ export class DatabaseStorage implements IStorage {
     // This provides a backward-compatible migration path — legacy rows still have plaintext config
     // until they are re-written through upsertMcpServerAuth, at which point they will be re-encrypted.
     if (auth.configEncrypted) {
+      // A reference to a secret kept outside the database (server/credential-store.ts): read it from there. An
+      // unreadable one is an error, not a fall back to the plaintext column: that column is empty for these rows.
+      const { isReferenceBlob, openCredentialMap } = await import("./credential-store");
+      if (isReferenceBlob(auth.configEncrypted)) return { ...auth, config: await openCredentialMap(auth.configEncrypted) };
       try {
         const { decryptCredentialMap } = await import("./credential-vault");
         const decrypted = decryptCredentialMap(auth.configEncrypted);
@@ -3314,19 +3318,22 @@ export class DatabaseStorage implements IStorage {
       // Always encrypt config via vault — never persist plaintext secrets in the DB.
       // If vault encryption fails (should not happen in any env), throw rather than silently
       // falling back to plaintext, which would violate the secure-by-default policy.
+      // The row as it is now comes first: if its credentials already live in an external secret store
+      // (server/credential-store.ts) they are updated in place there, not copied somewhere else.
+      const existing = await this.readMcpServerAuth(tx, auth.serverId);
       let configEncrypted: string | undefined;
       if (auth.config && typeof auth.config === "object" && !Array.isArray(auth.config)) {
-        const { encryptCredentialMap } = await import("./credential-vault");
+        // With no external store configured this is the same vault encryption as before, byte for byte.
+        const { sealCredentialMap } = await import("./credential-store");
         const configMap = Object.fromEntries(
           Object.entries(auth.config as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])
         );
-        configEncrypted = encryptCredentialMap(configMap);
+        configEncrypted = await sealCredentialMap(configMap, { kind: "mcp-auth", existing: existing?.configEncrypted });
       }
 
       // Write encrypted blob; set config to null to stop persisting plaintext secrets
       const safeWrite = { ...auth, config: null, configEncrypted: configEncrypted, lastRotated: new Date() };
 
-      const existing = await this.readMcpServerAuth(tx, auth.serverId);
       if (existing) {
         const [updated] = await tx.update(mcpServerAuth)
           .set(safeWrite)

@@ -184,6 +184,16 @@ variable "audit_kms_key_arn" {
   }
 }
 
+variable "secrets_manager_prefix" {
+  description = "ASTRA_SECRETS_MANAGER_PREFIX: keeps MCP-server credentials in AWS Secrets Manager under this path (for example astra/prod/) instead of the database; the database then holds only a reference. Ends in a slash. Terraform adds a policy letting the instance role create, read, update and delete secrets under exactly this prefix, and nothing else. See docs/EXTERNAL_SECRET_STORE.md. Empty keeps credentials in the database, exactly as before."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.secrets_manager_prefix == "" || can(regex("^[A-Za-z0-9][A-Za-z0-9_+=.@-]*(/[A-Za-z0-9][A-Za-z0-9_+=.@-]*)*/$", var.secrets_manager_prefix))
+    error_message = "secrets_manager_prefix must be a path ending in a slash, such as astra/prod/."
+  }
+}
+
 variable "scim_token" {
   description = "ASTRA_SCIM_TOKEN: the bearer token Entra uses to provision and deactivate the people who sign in with Microsoft (at least 32 characters; needs `sso`; see docs/ENTRA_SCIM.md). A secret: set via TF_VAR_scim_token. Empty leaves SCIM off."
   type        = string
