@@ -2,7 +2,8 @@ import { Router, type Request, type Response } from "express";
 import { randomBytes, createHash } from "crypto";
 import { z } from "zod";
 import { storage } from "../storage";
-import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault";
+import { isReferenceBlob, openCredentialMap } from "../credential-store";
+import { patchConnectionCredentials, saveConnectionCredentials, saveOAuthApp, saveRefreshedConnectionCredentials } from "../connection-credentials";
 import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registry";
 import { resolveOAuthApp, withTenant } from "../integrations/oauth-app";
 import { customToolInputSchema, validateCustomDef, toDef, buildInputSchema, riskFor, readDef } from "../integrations/custom-rest";
@@ -114,13 +115,10 @@ router.post("/api/enterprise-integrations/:id/connect", checkPermission("manage_
     const vetted = await vetConnectorCredentials(integrationId, parsed.data.credentials);
     if (!vetted.ok) return res.status(400).json({ error: vetted.message, problems: vetted.problems });
 
-    const credentialBlob = encryptCredentialMap(parsed.data.credentials);
-
     const connectionData = {
       organizationId: orgId,
       integrationId,
       name: parsed.data.name,
-      credentialBlob,
       oauthScopes: parsed.data.oauthScopes ?? def.oauthConfig?.defaultScopes ?? [],
       status: "connected",
       lastTestResult: null,
@@ -128,15 +126,18 @@ router.post("/api/enterprise-integrations/:id/connect", checkPermission("manage_
     };
 
     // `createNew` always inserts a sibling; anything else keeps the historical
-    // behaviour of upserting the org's default connection for this type.
-    const conn = parsed.data.createNew
-      ? await storage.createIntegrationConnection(connectionData)
-      : await storage.upsertIntegrationConnection(connectionData, parsed.data.connectionId);
+    // behaviour of upserting the org's default connection for this type (or the one `connectionId` names).
+    // The credentials are written by server/connection-credentials.ts, which keeps them in the database or in the
+    // external secret store as configured, and does so one writer at a time per connection type.
+    const conn = await saveConnectionCredentials(connectionData, parsed.data.credentials, {
+      connectionId: parsed.data.connectionId,
+      createNew: parsed.data.createNew,
+    });
 
     // Auto-test immediately after connecting
     let testResult: { ok: boolean; status?: string; latencyMs?: number; error?: string } | null = null;
     try {
-      const credentials = decryptCredentialMap(credentialBlob);
+      const credentials = parsed.data.credentials;
       testResult = await testConnectionHealth(integrationId, credentials, def, orgId);
       // Only persist test result for verifiable connectors — not_verifiable should not mark as error
       if ((testResult as any).status !== "not_verifiable") {
@@ -256,7 +257,7 @@ router.get("/api/enterprise-integrations/connections/:connectionId/config", asyn
 
     const def = getIntegrationDef(conn.integrationId);
     const nonSecretKeys = new Set((def?.credentialFields ?? []).filter((f) => f.type !== "password").map((f) => f.key));
-    const creds = conn.credentialBlob ? decryptCredentialMap(conn.credentialBlob) : {};
+    const creds = conn.credentialBlob ? await openCredentialMap(conn.credentialBlob) : {};
 
     const values: Record<string, string> = {};
     for (const key of Object.keys(creds)) {
@@ -290,16 +291,15 @@ router.patch("/api/enterprise-integrations/connections/:connectionId/config", ch
       return res.status(400).json({ error: `Unknown field(s) for integration '${conn.integrationId}': ${unknownKeys.join(", ")}` });
     }
 
-    const existingCreds = conn.credentialBlob ? decryptCredentialMap(conn.credentialBlob) : {};
+    const existingCreds = conn.credentialBlob ? await openCredentialMap(conn.credentialBlob) : {};
     const mergedCreds = { ...existingCreds, ...parsed.data.credentials };
     // Only the fields being changed are judged, so an old value elsewhere does not block this edit.
     const vetted = await vetConnectorCredentials(conn.integrationId, mergedCreds, Object.keys(parsed.data.credentials));
     if (!vetted.ok) return res.status(400).json({ error: vetted.message, problems: vetted.problems });
-    const credentialBlob = encryptCredentialMap(mergedCreds);
-
-    await db.update(integrationConnections)
-      .set({ credentialBlob, updatedAt: new Date() })
-      .where(eq(integrationConnections.id, conn.id));
+    // Written by server/connection-credentials.ts, which merges against the credentials as they are at that moment.
+    const saved = await patchConnectionCredentials(orgId, conn.id, parsed.data.credentials);
+    if (!saved) return res.status(404).json({ error: "Connection not found" });
+    const savedCreds = saved.credentials;
 
     // Config changes like a table allowlist can make an already-connected
     // integration newly fail (or newly succeed) against the same credentials
@@ -307,7 +307,7 @@ router.patch("/api/enterprise-integrations/connections/:connectionId/config", ch
     // showing stale "connected" until the next unrelated test.
     let testResult: { ok: boolean; error?: string } | null = null;
     try {
-      testResult = await testConnectionHealth(conn.integrationId, mergedCreds, def, orgId);
+      testResult = await testConnectionHealth(conn.integrationId, savedCreds, def, orgId);
       if ((testResult as any)?.status !== "not_verifiable") {
         await storage.recordIntegrationTestResult(conn.id, testResult!.ok, testResult!.error ?? null);
       }
@@ -554,9 +554,9 @@ router.post("/api/enterprise-integrations/:id/test", checkPermission("manage_mcp
 
     let credentials: Record<string, string>;
     try {
-      credentials = decryptCredentialMap(conn.credentialBlob);
+      credentials = await openCredentialMap(conn.credentialBlob);
     } catch {
-      return res.status(500).json({ error: "Failed to decrypt credentials" });
+      return res.status(500).json({ error: isReferenceBlob(conn.credentialBlob) ? "Failed to read credentials from the secret store" : "Failed to decrypt credentials" });
     }
 
     const def = getIntegrationDef(integrationId);
@@ -599,7 +599,7 @@ router.get("/api/enterprise-integrations/:id/credentials-hint", checkPermission(
     if (!conn || !conn.credentialBlob) {
       return res.json({ keys: [] });
     }
-    const creds = decryptCredentialMap(conn.credentialBlob);
+    const creds = await openCredentialMap(conn.credentialBlob);
     const keys = Object.keys(creds).map((k) => ({
       key: k,
       hint: maskValue(creds[k]),
@@ -932,12 +932,12 @@ router.put("/api/enterprise-integrations/:id/oauth-app", checkPermission("manage
       return res.status(400).json({ error: "Client secret is required the first time" });
     }
 
-    await storage.upsertIntegrationOAuthApp(orgId, def.id, {
+    // A secret kept in the external secret store (server/credential-store.ts) is replaced there; see server/connection-credentials.ts.
+    await saveOAuthApp(orgId, def.id, {
       clientId,
-      clientSecretEncrypted: clientSecret ? encryptCredentialMap({ client_secret: clientSecret }) : undefined,
       tenantId: tenantId || null,
       updatedBy: (req as any).authUser?.username ?? null,
-    });
+    }, clientSecret || undefined);
 
     storage.createAuditEvent({
       organizationId: orgId,
@@ -1099,7 +1099,7 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
       return res.redirect(`/integrations?oauth_error=${encodeURIComponent(msg)}`);
     }
 
-    const credentialBlob = encryptCredentialMap({
+    const tokenCredentials: Record<string, string> = {
       access_token: tokenData.access_token ?? "",
       refresh_token: tokenData.refresh_token ?? "",
       token_type: tokenData.token_type ?? "Bearer",
@@ -1107,26 +1107,26 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
       ...(tokenData.instance_url ? { instance_url: tokenData.instance_url } : {}),
       // Salesforce sandbox flag: sourced from pending state set at OAuth start
       ...(pending.sandbox ? { sandbox: "true" } : {}),
-    });
+    };
 
     const expiresAt = tokenData.expires_in
       ? new Date(Date.now() + tokenData.expires_in * 1000)
       : undefined;
 
-    const conn = await storage.upsertIntegrationConnection({
+    // Replaces the org's default connection for this type (or makes it); see server/connection-credentials.ts.
+    const conn = await saveConnectionCredentials({
       organizationId: pending.orgId,
       integrationId: pending.integrationId,
-      credentialBlob,
       oauthScopes: def.oauthConfig.defaultScopes,
       status: "connected",
       tokenExpiresAt: expiresAt,
       lastTestResult: null,
       lastError: null,
-    });
+    }, tokenCredentials);
 
     // Auto-test after OAuth callback
     try {
-      const credentials = decryptCredentialMap(credentialBlob);
+      const credentials = tokenCredentials;
       const testResult = await testConnectionHealth(pending.integrationId, credentials, def, conn.organizationId);
       await storage.recordIntegrationTestResult(conn.id, testResult.ok, testResult.error ?? null);
     } catch { /* non-fatal */ }
@@ -1159,6 +1159,14 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
 // Runs every 4 minutes; refreshes OAuth tokens expiring in the next 5 minutes.
 
 let _refreshDaemonStarted = false;
+
+const _unreadableWarned = new Set<string>();
+function warnUnreadableOnce(key: string, line: string): void {
+  if (_unreadableWarned.has(key)) return;
+  if (_unreadableWarned.size > 500) _unreadableWarned.clear();
+  _unreadableWarned.add(key);
+  console.warn(line);
+}
 
 export function startTokenRefreshDaemon(): void {
   if (_refreshDaemonStarted) return;
@@ -1202,8 +1210,12 @@ async function refreshExpiringTokens(aheadMs: number): Promise<void> {
 
     let creds: Record<string, string>;
     try {
-      creds = decryptCredentialMap(conn.credentialBlob!);
-    } catch { continue; }
+      creds = await openCredentialMap(conn.credentialBlob!);
+    } catch (e: any) {
+      // Said once per connection, not every four minutes: the row is skipped until it can be read again.
+      warnUnreadableOnce(conn.id, `[token-refresh] cannot read the credentials of ${conn.integrationId} (org: ${conn.organizationId}), so its token is not refreshed: ${String(e?.message ?? e).slice(0, 200)}`);
+      continue;
+    }
 
     if (!creds.refresh_token) continue;
 
@@ -1245,12 +1257,8 @@ async function refreshExpiringTokens(aheadMs: number): Promise<void> {
       // non-default sibling refreshing its token would overwrite a different
       // connection's credentials and leave its own stale. Same bug as the one
       // fixed in RealMcpBase.refreshOAuthToken.
-      await storage.upsertIntegrationConnection({
-        ...conn,
-        credentialBlob: encryptCredentialMap(updated),
-        tokenExpiresAt: expiresAt ?? conn.tokenExpiresAt,
-        oauthScopes: conn.oauthScopes ?? [],
-      }, conn.id);
+      // (server/connection-credentials.ts; false when the connection was deleted or disconnected meanwhile.)
+      if (!(await saveRefreshedConnectionCredentials(conn.id, updated, expiresAt ?? conn.tokenExpiresAt))) continue;
 
       // Credential rotation is a credential change — audit it (was a blind spot).
       storage.createAuditEvent({
@@ -1593,7 +1601,7 @@ router.post("/api/integrations/:id/test", checkPermission("manage_mcp_servers"),
   const conn = await storage.getIntegrationConnection(orgId, integrationId).catch(() => null);
   if (!conn || !conn.credentialBlob) return res.status(404).json({ error: "No connection found" });
   try {
-    const credentials = decryptCredentialMap(conn.credentialBlob);
+    const credentials = await openCredentialMap(conn.credentialBlob);
     const def = getIntegrationDef(integrationId);
     const result = await testConnectionHealth(integrationId, credentials, def, orgId);
     await storage.recordIntegrationTestResult(conn.id, result.ok, (result as any).error ?? null);
@@ -1612,7 +1620,7 @@ router.post("/api/integrations/n8n/call", checkPermission("manage_mcp_servers"),
     if (!conn || !conn.credentialBlob) {
       return res.status(404).json({ error: "n8n not connected — configure credentials first in Enterprise Connectors" });
     }
-    const credentials = decryptCredentialMap(conn.credentialBlob);
+    const credentials = await openCredentialMap(conn.credentialBlob);
     const baseUrl = credentials.baseUrl?.replace(/\/$/, "");
     if (!baseUrl) {
       return res.status(400).json({ error: "n8n baseUrl missing from stored credentials" });

@@ -388,9 +388,12 @@ describe("no connector reaches the network around the policy", () => {
     // ...and acts on the answer: each call is followed by a 400 when the address is refused.
     expect([...src.matchAll(/if \(!vetted\.ok\) return res\.status\(400\)\.json\(\{ error: vetted\.message, problems: vetted\.problems \}\);/g)]).toHaveLength(2);
     const connect = src.slice(src.indexOf('"/api/enterprise-integrations/:id/connect"'));
-    expect(connect.indexOf("vetConnectorCredentials(")).toBeLessThan(connect.indexOf("encryptCredentialMap("));
+    // (Saving is where the credentials are first written, to the database or the external secret store.)
+    expect(connect.indexOf("saveConnectionCredentials(")).toBeGreaterThan(0);
+    expect(connect.indexOf("vetConnectorCredentials(")).toBeLessThan(connect.indexOf("saveConnectionCredentials("));
     const edit = src.slice(src.indexOf('"/api/enterprise-integrations/connections/:connectionId/config"', src.indexOf("router.patch")));
-    expect(edit.indexOf("vetConnectorCredentials(")).toBeLessThan(edit.indexOf("encryptCredentialMap("));
+    expect(edit.indexOf("patchConnectionCredentials(")).toBeGreaterThan(0);
+    expect(edit.indexOf("vetConnectorCredentials(")).toBeLessThan(edit.indexOf("patchConnectionCredentials("));
   });
 
   it("SAP's own connection test goes through the policy", () => {

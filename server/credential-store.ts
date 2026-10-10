@@ -64,11 +64,38 @@ export async function openCredentialMap(blob: string): Promise<Record<string, st
   return store.get(ref.name);
 }
 
-/** Let go of what a blob refers to, when the row that held it is removed or its credentials are replaced. */
-export async function releaseCredentials(blob: string | null | undefined): Promise<void> {
+/**
+ * Let go of what a blob refers to, when the row that held it is removed or its credentials are replaced. The
+ * secret stays restorable for DELETE_RECOVERY_DAYS; `immediately` is for one that nothing ever referred to
+ * (a secret made for a row whose write then failed), which no one could want back.
+ */
+export async function releaseCredentials(blob: string | null | undefined, opts: { immediately?: boolean } = {}): Promise<void> {
   const ref = parseReference(blob);
   if (!ref) return;
   const store = await getSecretStore();
   if (!store) throw notConfigured();
-  await store.remove(ref.name);
+  await store.remove(ref.name, opts.immediately ? { forceNow: true } : undefined);
+}
+
+/**
+ * releaseCredentials for several blobs after the row change that made them unreachable has already happened:
+ * a failure is logged and not thrown, since undoing the change is worse than a secret left behind (it is
+ * recoverable, and shows in the migration status as one nothing refers to).
+ */
+export async function releaseCredentialsQuietly(blobs: Array<string | null | undefined>, opts: { immediately?: boolean } = {}): Promise<void> {
+  for (const blob of blobs) {
+    if (!isReferenceBlob(blob)) continue;
+    try { await releaseCredentials(blob, opts); } catch (e: any) {
+      console.warn(`[credential-store] could not release a secret nothing refers to any more (${e?.code ?? "error"}): ${String(e?.message ?? e).slice(0, 200)}`);
+    }
+  }
+}
+
+/**
+ * After a failed write of a row: remove the secret made for it, if this write made one. A blob that is the same
+ * reference the row already had (an update in place) is not new and is left alone.
+ */
+export async function discardNewCredentials(written: string | null | undefined, previous: string | null | undefined): Promise<void> {
+  if (!written || written === previous) return;
+  await releaseCredentialsQuietly([written], { immediately: true });
 }

@@ -11,7 +11,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { storage } from "../storage";
 import { callN8nWorkflow } from "../integrations/n8n";
 import { getOrgId, getDefaultOrgId } from "../auth";
-import { decryptCredentialMap } from "../credential-vault";
+import { openCredentialMap } from "../credential-store";
 import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
 import { getLockdown } from "../lockdown";
 
@@ -174,7 +174,7 @@ router.post("/api/v1/integrations/n8n/call", requireApiKey, async (req: Request,
       const conn = orgId ? await storage.getIntegrationConnection(orgId, "n8n") : null;
       if (conn?.credentialBlob) {
         try {
-          const creds = decryptCredentialMap(conn.credentialBlob);
+          const creds = await openCredentialMap(conn.credentialBlob);
           const base = String(creds.baseUrl || "").replace(/\/$/, "");
           if (base) webhookUrl = `${base}/${String(path).replace(/^\//, "")}`;
           if (!apiKey && creds.apiKey) apiKey = creds.apiKey;

@@ -8,7 +8,7 @@
  * exactly as before, so connectors configured that way keep working.
  */
 import { storage } from "../storage";
-import { decryptCredentialMap } from "../credential-vault";
+import { isReferenceBlob, openCredentialMap } from "../credential-store";
 
 export interface ResolvedOAuthApp {
   clientId: string;
@@ -22,16 +22,23 @@ export async function resolveOAuthApp(
   integrationId: string,
 ): Promise<ResolvedOAuthApp> {
   if (orgId) {
+    let row: Awaited<ReturnType<typeof storage.getIntegrationOAuthApp>> | null = null;
     try {
-      const row = await storage.getIntegrationOAuthApp(orgId, integrationId);
-      if (row?.clientId) {
-        let clientSecret = "";
-        if (row.clientSecretEncrypted) {
-          try { clientSecret = decryptCredentialMap(row.clientSecretEncrypted).client_secret ?? ""; } catch { /* unreadable secret: treated as unset */ }
-        }
-        return { clientId: row.clientId, clientSecret, tenantId: row.tenantId ?? undefined, source: "organization" };
-      }
+      row = await storage.getIntegrationOAuthApp(orgId, integrationId);
     } catch { /* fall through to the environment */ }
+    if (row?.clientId) {
+      let clientSecret = "";
+      if (row.clientSecretEncrypted) {
+        if (isReferenceBlob(row.clientSecretEncrypted)) {
+          // Kept in the external secret store (server/credential-store.ts). If it cannot be read this is an error:
+          // neither an empty secret nor the platform's own app may stand in for the organization's.
+          clientSecret = (await openCredentialMap(row.clientSecretEncrypted)).client_secret ?? "";
+        } else {
+          try { clientSecret = (await openCredentialMap(row.clientSecretEncrypted)).client_secret ?? ""; } catch { /* unreadable secret: treated as unset */ }
+        }
+      }
+      return { clientId: row.clientId, clientSecret, tenantId: row.tenantId ?? undefined, source: "organization" };
+    }
   }
   const envKey = integrationId.toUpperCase();
   const clientId = process.env[`OAUTH_${envKey}_CLIENT_ID`] ?? "";

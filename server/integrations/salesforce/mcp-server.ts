@@ -51,7 +51,6 @@ export class SalesforceMcpServer extends RealMcpBase {
       const data = await res.json() as any;
       if (data.error) return null;
 
-      const { encryptCredentialMap } = await import("../../credential-vault");
       const { storage: stor } = await import("../../storage");
       const updated: Record<string, string> = {
         ...credentials,
@@ -62,15 +61,17 @@ export class SalesforceMcpServer extends RealMcpBase {
         ...(data.instance_url ? { instance_url: data.instance_url } : {}),
       };
 
-      const credentialBlob = encryptCredentialMap(updated);
       const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null;
       const conn = await stor.getIntegrationConnection(orgId, this.integrationId);
       if (conn) {
-        await stor.upsertIntegrationConnection({
-          ...conn,
-          credentialBlob,
-          tokenExpiresAt: expiresAt ?? conn.tokenExpiresAt,
-        });
+        try {
+          // Kept in the database or the external secret store as configured (server/connection-credentials.ts).
+          const { saveRefreshedConnectionCredentials } = await import("../../connection-credentials");
+          await saveRefreshedConnectionCredentials(conn.id, updated, expiresAt ?? conn.tokenExpiresAt);
+        } catch (e: any) {
+          // The provider has already issued this token, so the call that needs it gets it even though it could not be saved.
+          console.warn(`[oauth-refresh] refreshed the token of salesforce but could not save it: ${String(e?.message ?? e).slice(0, 200)}`);
+        }
       }
       return updated;
     } catch {

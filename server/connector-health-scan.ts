@@ -14,7 +14,7 @@ import { agentAlerts, agentMcpServers, agents, integrationConnections, mcpServer
 import { db } from "./db";
 import { storage } from "./storage";
 import { buildMcpAuthHeaders, mcpListTools } from "./mcp-client";
-import { decryptCredentialMap } from "./credential-vault";
+import { openCredentialMap } from "./credential-store";
 import { isMcpProtocolMounted } from "./real-mcp-transport";
 import { isPathHandled, pathnameOf } from "./app-mounts";
 import { testConnectionHealth } from "./connector-connection-test";
@@ -157,7 +157,7 @@ export async function vendorConnectionTest(integrationId: string, orgId: string,
   }
   let credentials: Record<string, string>;
   try {
-    credentials = decryptCredentialMap(conn.credentialBlob);
+    credentials = await openCredentialMap(conn.credentialBlob);
   } catch {
     return { healthy: false, detail: "Its stored credentials cannot be read, so every call it makes will fail", method: "vendor_connection_test", probed: true };
   }

@@ -36,13 +36,15 @@ export interface MockSecretsManager {
   /** Refuse every request of these operations. */
   deny: Set<string>;
   hang: boolean;
+  /** Answer reads with a value that is not what was written (a store that returns the wrong thing). */
+  corruptReads: boolean;
   close(): Promise<void>;
 }
 
 export async function startMockSecretsManager(opts: { region?: string; account?: string; delayMs?: number } = {}): Promise<MockSecretsManager> {
   const region = opts.region ?? "eu-central-1";
   const account = opts.account ?? "111122223333";
-  const mock = { region, calls: [], secrets: new Map(), delayMs: opts.delayMs ?? 0, failNext: [], createThenReport: [], deny: new Set<string>(), hang: false } as unknown as MockSecretsManager;
+  const mock = { region, calls: [], secrets: new Map(), delayMs: opts.delayMs ?? 0, failNext: [], createThenReport: [], deny: new Set<string>(), hang: false, corruptReads: false } as unknown as MockSecretsManager;
   const tokens = new Map<string, string>();
 
   const find = (id: unknown): StoredSecret | undefined => {
@@ -95,7 +97,7 @@ export async function startMockSecretsManager(opts: { region?: string; account?:
     }
     if (op === "RestoreSecret") { s.deletedAt = undefined; return send(200, { ARN: s.arn, Name: s.name }); }
     if (s.deletedAt) return refuse(400, "InvalidRequestException", "You can't perform this operation on the secret because it was marked for deletion.");
-    if (op === "GetSecretValue") return send(200, { ARN: s.arn, Name: s.name, SecretString: s.value, VersionId: `v${s.versions}`, VersionStages: ["AWSCURRENT"], CreatedDate: Date.now() / 1000 });
+    if (op === "GetSecretValue") return send(200, { ARN: s.arn, Name: s.name, SecretString: mock.corruptReads ? JSON.stringify({ ...JSON.parse(s.value), tampered: "x" }) : s.value, VersionId: `v${s.versions}`, VersionStages: ["AWSCURRENT"], CreatedDate: Date.now() / 1000 });
     if (op === "PutSecretValue") {
       if (typeof body.SecretString !== "string") return refuse(400, "InvalidParameterException", "SecretString is required");
       if (Buffer.byteLength(body.SecretString) > 65_536) return refuse(400, "InvalidParameterException", "The secret value is too large");

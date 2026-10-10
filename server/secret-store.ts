@@ -17,10 +17,11 @@ import crypto from "node:crypto";
 export const CREDENTIAL_KINDS = ["mcp-auth", "connection", "agent-connection", "oauth-app"] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
 /**
- * The kinds that are actually read and written through the store in this version: the rest are named so a
- * setting written today keeps its meaning, but do nothing until their code moves over (docs/EXTERNAL_SECRET_STORE.md).
+ * The kinds that are read and written through the store, all of which are switched on when a store is configured
+ * unless ASTRA_SECRETS_MANAGER_KINDS narrows them (docs/EXTERNAL_SECRET_STORE.md). A kind added to CREDENTIAL_KINDS
+ * before its code moves over stays out of this list, and so out of the default.
  */
-export const WIRED_KINDS: readonly CredentialKind[] = ["mcp-auth"];
+export const WIRED_KINDS: readonly CredentialKind[] = ["mcp-auth", "connection", "agent-connection", "oauth-app"];
 
 /** Secrets Manager allows 65,536 bytes; leave room for the JSON around the values. */
 export const MAX_SECRET_BYTES = 60_000;
@@ -273,13 +274,18 @@ export async function getSecretStore(): Promise<SecretStore | null> {
   return _store;
 }
 
+/** Kinds a setting names that this version does not read or write through the store (none, until one is added to CREDENTIAL_KINDS ahead of its code). */
+export function kindsNotYetWired(kinds: readonly CredentialKind[], wired: readonly CredentialKind[] = WIRED_KINDS): CredentialKind[] {
+  return kinds.filter((k) => !wired.includes(k));
+}
+
 /** At start-up: open the store and try it. Does nothing when none is configured. Throws if it cannot be used. */
 export async function initSecretStore(): Promise<void> {
   const store = await getSecretStore();
   if (!store) return;
   await probeSecretStore(store);
   console.log(`[secret-store] Credentials of kind ${store.config.kinds.join(", ")} are kept in AWS Secrets Manager under ${store.config.prefix} (${store.config.region}).`);
-  const unwired = store.config.kinds.filter((k) => !WIRED_KINDS.includes(k));
+  const unwired = kindsNotYetWired(store.config.kinds);
   if (unwired.length > 0) console.warn(`[secret-store] ${unwired.join(", ")} ${unwired.length > 1 ? "are" : "is"} listed in ASTRA_SECRETS_MANAGER_KINDS but not yet stored there by this version: those credentials stay in the database.`);
 }
 

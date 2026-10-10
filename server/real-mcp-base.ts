@@ -1,4 +1,4 @@
-import { decryptCredentialMap } from "./credential-vault";
+import { isReferenceBlob, openCredentialMap } from "./credential-store";
 import { storage } from "./storage";
 import { UnsafeUrlError, outboundPolicyMode, policyFetch } from "./url-safety";
 import { checkConnectorTargets } from "./connector-targets";
@@ -59,13 +59,22 @@ export abstract class RealMcpBase {
   // already uses it -- and that table is keyed by (agentId, integrationId), so
   // it has no notion of which connection it belongs to anyway.
   async getCredentials(orgId: string, agentId?: string, connectionId?: string): Promise<Record<string, string> | null> {
+    return (await this.lookupCredentials(orgId, agentId, connectionId)).credentials;
+  }
+
+  // getCredentials, with the reason there are none when that is "the external secret store could not be read"
+  // (server/credential-store.ts): callTool says so, instead of reporting an integration that is connected as not.
+  protected async lookupCredentials(orgId: string, agentId?: string, connectionId?: string): Promise<{ credentials: Record<string, string> | null; unreadable?: string }> {
     if (agentId) {
       const agentConn = await storage.getAgentIntegrationCredential(agentId, this.integrationId);
       if (agentConn && agentConn.credentialBlob && agentConn.status !== "disconnected") {
         try {
-          return decryptCredentialMap(agentConn.credentialBlob);
-        } catch {
-          // Fall through to the org-level connection on a decrypt failure.
+          return { credentials: await openCredentialMap(agentConn.credentialBlob) };
+        } catch (e) {
+          // A vault blob that cannot be decrypted falls through to the org-level connection, as it always has. A
+          // credential kept in the secret store that cannot be read does not: the agent has an identity of its
+          // own, and the store being down is no reason to quietly act as the organization instead.
+          if (isReferenceBlob(agentConn.credentialBlob)) return this.unreadable(e);
         }
       }
     }
@@ -76,13 +85,19 @@ export abstract class RealMcpBase {
     // integration type resolves to nothing -- it must NOT fall back to the org
     // default. Falling back would run the call against a different database than
     // the one the tool was bound to, which is worse than failing the call.
-    if (connectionId && conn && conn.integrationId !== this.integrationId) return null;
-    if (!conn || !conn.credentialBlob || conn.status === "disconnected") return null;
+    if (connectionId && conn && conn.integrationId !== this.integrationId) return { credentials: null };
+    if (!conn || !conn.credentialBlob || conn.status === "disconnected") return { credentials: null };
     try {
-      return decryptCredentialMap(conn.credentialBlob);
-    } catch {
-      return null;
+      return { credentials: await openCredentialMap(conn.credentialBlob) };
+    } catch (e) {
+      return isReferenceBlob(conn.credentialBlob) ? this.unreadable(e) : { credentials: null };
     }
+  }
+
+  private unreadable(e: any): { credentials: null; unreadable: string } {
+    const code = typeof e?.code === "string" ? e.code : "unavailable";
+    warnOnce(`unreadable|${this.integrationId}|${code}`, `[credential-store] the credentials of ${this.integrationId} could not be read from the secret store (${code}): ${String(e?.message ?? e).slice(0, 200)}`);
+    return { credentials: null, unreadable: code };
   }
 
   // ── Refresh OAuth access token using stored refresh_token ─────────────────
@@ -114,14 +129,12 @@ export abstract class RealMcpBase {
       const data = await res.json() as any;
       if (data.error) return null;
 
-      const { encryptCredentialMap } = await import("./credential-vault");
       const updated: Record<string, string> = {
         ...credentials,
         access_token: data.access_token ?? credentials.access_token,
         refresh_token: data.refresh_token ?? credentials.refresh_token,
         token_type: data.token_type ?? "Bearer",
       };
-      const credentialBlob = encryptCredentialMap(updated);
       const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null;
 
       const conn = connectionId
@@ -132,11 +145,16 @@ export abstract class RealMcpBase {
       // onto it -- corrupting a sibling connection's credentials whenever a
       // non-default connection refreshed.
       if (conn) {
-        await storage.upsertIntegrationConnection({
-          ...conn,
-          credentialBlob,
-          tokenExpiresAt: expiresAt ?? conn.tokenExpiresAt,
-        }, conn.id);
+        try {
+          // server/connection-credentials.ts keeps it in the database or the external secret store as configured (in
+          // place, if it is already there), one writer at a time per connection type.
+          const { saveRefreshedConnectionCredentials } = await import("./connection-credentials");
+          await saveRefreshedConnectionCredentials(conn.id, updated, expiresAt ?? conn.tokenExpiresAt);
+        } catch (e: any) {
+          // The provider has already issued this token (and may have retired the old refresh token), so it is
+          // handed to the call that needs it even though it could not be saved; the next refresh tries again.
+          console.warn(`[oauth-refresh] refreshed the token of ${this.integrationId} but could not save it: ${String(e?.message ?? e).slice(0, 200)}`);
+        }
       }
       return updated;
     } catch {
@@ -153,8 +171,12 @@ export abstract class RealMcpBase {
     agentId?: string,
     connectionId?: string
   ): Promise<McpToolResult> {
-    const credentials = await this.getCredentials(orgId, agentId, connectionId);
+    const found = await this.lookupCredentials(orgId, agentId, connectionId);
+    const credentials = found.credentials;
     if (!credentials) {
+      if (found.unreadable) {
+        return this.err(`Integration '${this.integrationId}' keeps its credentials in the external secret store, which could not be read just now (${found.unreadable}). Try again shortly; if it keeps failing, an administrator should check the secret store.`);
+      }
       // Distinguish the two failures: a pinned connection that resolves to
       // nothing is a broken binding (deleted or disconnected instance), not an
       // integration the org never connected -- and the fixes differ.

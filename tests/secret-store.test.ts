@@ -134,15 +134,15 @@ describe("configuration", () => {
 
   it("chooses which kinds go to the store: all of them unless listed, and only known ones", async () => {
     const m = await secretModule();
-    expect(m.WIRED_KINDS).toEqual(["mcp-auth"]);
-    expect((await read(ok))!.kinds).toEqual(["mcp-auth"]); // what this version moves over
+    expect(m.WIRED_KINDS).toEqual(["mcp-auth", "connection", "agent-connection", "oauth-app"]);
+    expect((await read(ok))!.kinds).toEqual(["mcp-auth", "connection", "agent-connection", "oauth-app"]); // what this version moves over
     expect((await read({ ...ok, ASTRA_SECRETS_MANAGER_KINDS: " mcp-auth , mcp-auth,connection " }))!.kinds).toEqual(["mcp-auth", "connection"]);
     for (const bad of ["mcp-auth,llm-keys", "nonsense", ",", "MCP-AUTH"]) await expect(read({ ...ok, ASTRA_SECRETS_MANAGER_KINDS: bad }), bad).rejects.toThrow(/ASTRA_SECRETS_MANAGER_KINDS must be a list of/);
   });
 
   it("reports itself, and a wrong setting as an error that stops the server", async () => {
     const m = await secretModule();
-    expect(m.describeSecretStore(ok as any)).toBe("secrets=aws-sm(mcp-auth)");
+    expect(m.describeSecretStore(ok as any)).toBe("secrets=aws-sm(mcp-auth+connection+agent-connection+oauth-app)");
     expect(m.describeSecretStore({ ...ok, ASTRA_SECRETS_MANAGER_KINDS: "mcp-auth,connection" } as any)).toBe("secrets=aws-sm(mcp-auth+connection)");
     expect(m.describeSecretStore({ ASTRA_SECRETS_MANAGER_PREFIX: "bad" } as any)).toBe("secrets=invalid");
     expect(m.validateSecretStoreEnv({ ASTRA_SECRETS_MANAGER_PREFIX: "bad" } as any)[0]).toMatch(/external secret store is misconfigured/);
@@ -344,22 +344,25 @@ describe("trying the store at start-up", () => {
   });
 });
 
-describe("a kind that this version does not move over yet", () => {
-  it("is accepted in the setting, does nothing, and the start-up says so", async () => {
-    storeOn({ ASTRA_SECRETS_MANAGER_KINDS: "mcp-auth,connection,oauth-app" });
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await (await secretModule()).initSecretStore();
-    expect(log.mock.calls.some((c) => String(c[0]).includes("mcp-auth, connection, oauth-app are kept in AWS Secrets Manager") || String(c[0]).includes("kind mcp-auth, connection, oauth-app"))).toBe(true);
-    expect(warn.mock.calls.some((c) => String(c[0]).includes("connection, oauth-app are listed in ASTRA_SECRETS_MANAGER_KINDS but not yet stored there"))).toBe(true);
+describe("kinds that this version moves over", () => {
+  it("names every kind in the start-up line and warns about none, whether all are switched on or some", async () => {
+    for (const kinds of [undefined, "mcp-auth,connection,oauth-app"]) {
+      vi.resetModules();
+      storeOn(kinds ? { ASTRA_SECRETS_MANAGER_KINDS: kinds } : {});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await (await secretModule()).initSecretStore();
+      const expected = kinds ? "mcp-auth, connection, oauth-app" : "mcp-auth, connection, agent-connection, oauth-app";
+      expect(log.mock.calls.some((c) => String(c[0]).includes(`Credentials of kind ${expected} are kept in AWS Secrets Manager`)), String(kinds)).toBe(true);
+      expect(warn.mock.calls.length).toBe(0);
+      log.mockRestore(); warn.mockRestore();
+    }
   });
 
-  it("says nothing when every listed kind is one that is moved", async () => {
-    storeOn();
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await (await secretModule()).initSecretStore();
-    expect(warn.mock.calls.length).toBe(0);
+  it("a kind added to CREDENTIAL_KINDS ahead of its code is reported as not yet moved", async () => {
+    const m = await secretModule();
+    expect(m.kindsNotYetWired(["mcp-auth", "connection", "oauth-app"], ["mcp-auth"])).toEqual(["connection", "oauth-app"]);
+    expect(m.kindsNotYetWired([...m.CREDENTIAL_KINDS])).toEqual([]);
   });
 });
 

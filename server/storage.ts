@@ -6574,6 +6574,11 @@ export class DatabaseStorage implements IStorage {
         })
         .where(eq(integrationOAuthApps.id, existing.id))
         .returning();
+      // A secret kept in the external secret store that this save no longer refers to is let go.
+      if (data.clientSecretEncrypted !== undefined && data.clientSecretEncrypted !== existing.clientSecretEncrypted) {
+        const { releaseCredentialsQuietly } = await import("./credential-store");
+        await releaseCredentialsQuietly([existing.clientSecretEncrypted]);
+      }
       return row;
     }
     const [row] = await db.insert(integrationOAuthApps).values({
@@ -6593,7 +6598,10 @@ export class DatabaseStorage implements IStorage {
         eq(integrationOAuthApps.organizationId, orgId),
         eq(integrationOAuthApps.integrationId, integrationId),
       ))
-      .returning({ id: integrationOAuthApps.id });
+      .returning({ id: integrationOAuthApps.id, clientSecretEncrypted: integrationOAuthApps.clientSecretEncrypted });
+    // The secret kept in the external secret store, if it was, goes with the row.
+    const { releaseCredentialsQuietly } = await import("./credential-store");
+    await releaseCredentialsQuietly(rows.map((r) => r.clientSecretEncrypted));
     return rows.length > 0;
   }
 
@@ -6657,6 +6665,11 @@ export class DatabaseStorage implements IStorage {
         })
         .where(eq(integrationConnections.id, existing.id))
         .returning();
+      // A secret kept in the external secret store that this save no longer refers to is let go.
+      if (data.credentialBlob !== undefined && data.credentialBlob !== existing.credentialBlob) {
+        const { releaseCredentialsQuietly } = await import("./credential-store");
+        await releaseCredentialsQuietly([existing.credentialBlob]);
+      }
       return row;
     }
     return this.createIntegrationConnection(data);
@@ -6739,7 +6752,10 @@ export class DatabaseStorage implements IStorage {
         eq(integrationConnections.organizationId, orgId),
         eq(integrationConnections.id, connectionId),
       ))
-      .returning({ id: integrationConnections.id });
+      .returning({ id: integrationConnections.id, credentialBlob: integrationConnections.credentialBlob });
+    // The secret kept in the external secret store, if it was, goes with the row.
+    const { releaseCredentialsQuietly } = await import("./credential-store");
+    await releaseCredentialsQuietly(deleted.map((r) => r.credentialBlob));
     return deleted.length > 0;
   }
 
@@ -6748,17 +6764,22 @@ export class DatabaseStorage implements IStorage {
   // sibling connections once an org has more than one, so callers that know
   // which instance they mean must pass it.
   async disconnectIntegration(orgId: string, integrationId: string, connectionId?: string): Promise<void> {
+    const which = connectionId
+      ? and(
+          eq(integrationConnections.organizationId, orgId),
+          eq(integrationConnections.id, connectionId),
+        )
+      : and(
+          eq(integrationConnections.organizationId, orgId),
+          eq(integrationConnections.integrationId, integrationId),
+        );
+    // What the rows hold now, so a secret kept in the external secret store can be let go once they no longer do.
+    const before = await db.select({ credentialBlob: integrationConnections.credentialBlob }).from(integrationConnections).where(which);
     await db.update(integrationConnections)
       .set({ status: "disconnected", credentialBlob: null, updatedAt: new Date() })
-      .where(connectionId
-        ? and(
-            eq(integrationConnections.organizationId, orgId),
-            eq(integrationConnections.id, connectionId),
-          )
-        : and(
-            eq(integrationConnections.organizationId, orgId),
-            eq(integrationConnections.integrationId, integrationId),
-          ));
+      .where(which);
+    const { releaseCredentialsQuietly } = await import("./credential-store");
+    await releaseCredentialsQuietly(before.map((r) => r.credentialBlob));
   }
 
   // ── Per-agent outbound identity ──────────────────────────────────────────────
@@ -6793,6 +6814,11 @@ export class DatabaseStorage implements IStorage {
         })
         .where(eq(agentIntegrationCredentials.id, existing.id))
         .returning();
+      // A secret kept in the external secret store that this save no longer refers to is let go.
+      if (data.credentialBlob !== undefined && data.credentialBlob !== existing.credentialBlob) {
+        const { releaseCredentialsQuietly } = await import("./credential-store");
+        await releaseCredentialsQuietly([existing.credentialBlob]);
+      }
       return row;
     }
     const [row] = await db.insert(agentIntegrationCredentials).values(data).returning();
@@ -6800,11 +6826,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteAgentIntegrationCredential(agentId: string, integrationId: string): Promise<void> {
-    await db.delete(agentIntegrationCredentials)
+    const deleted = await db.delete(agentIntegrationCredentials)
       .where(and(
         eq(agentIntegrationCredentials.agentId, agentId),
         eq(agentIntegrationCredentials.integrationId, integrationId),
-      ));
+      ))
+      .returning({ credentialBlob: agentIntegrationCredentials.credentialBlob });
+    // The secret kept in the external secret store, if it was, goes with the row.
+    const { releaseCredentialsQuietly } = await import("./credential-store");
+    await releaseCredentialsQuietly(deleted.map((r) => r.credentialBlob));
   }
 
   async recordIntegrationTestResult(connectionId: string, ok: boolean, error: string | null): Promise<void> {
