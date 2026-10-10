@@ -1,0 +1,50 @@
+[
+  {
+    "id": "CVE-2026-53615",
+    "owner": "Astra platform team",
+    "expires": "2026-11-09",
+    "reason": "No Debian Bookworm fix was available on 2026-10-09."
+  },
+  {
+    "id": "CVE-2026-76642",
+    "owner": "Astra platform team",
+    "expires": "2026-11-09",
+    "reason": "No Debian Bookworm fix was available on 2026-10-09."
+  },
+  {
+    "id": "CVE-2026-78408",
+    "owner": "Astra platform team",
+    "expires": "2026-11-09",
+    "reason": "No Debian Bookworm fix was available on 2026-10-09."
+  },
+  {
+    "id": "CVE-2026-78409",
+    "owner": "Astra platform team",
+    "expires": "2026-11-09",
+    "reason": "No Debian Bookworm fix was available on 2026-10-09."
+  },
+  {
+    "id": "CVE-2026-78410",
+    "owner": "Astra platform team",
+    "expires": "2026-11-09",
+    "reason": "No Debian Bookworm fix was available on 2026-10-09."
+  },
+  {
+    "id": "CVE-2026-82560",
+    "owner": "Astra platform team",
+    "expires": "2026-11-09",
+    "reason": "No Debian Bookworm fix was available on 2026-10-09."
+  },
+  {
+    "id": "CVE-2026-85091",
+    "owner": "Astra platform team",
+    "expires": "2026-11-09",
+    "reason": "No Debian Bookworm fix was available on 2026-10-09."
+  },
+  {
+    "id": "CVE-2026-95619",
+    "owner": "Astra platform team",
+    "expires": "2026-11-09",
+    "reason": "No Debian Bookworm fix was available on 2026-10-09."
+  }
+]

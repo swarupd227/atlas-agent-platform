@@ -41,6 +41,13 @@ FROM ${NODE_IMAGE} AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=5000
+
+# Apply current Debian security updates even when the upstream Node tag has
+# not yet been rebuilt after a security repository publication.
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/*
+
 # Production dependencies + the built app only — no source, no devDeps.
 # `--chown` sets ownership as the layers are written, avoiding a slow, image-
 # bloating `RUN chown -R` over the whole node_modules tree.
