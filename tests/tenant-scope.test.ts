@@ -452,4 +452,32 @@ describe("eval suites are scoped to the caller's tenant", () => {
     expect(handler).toContain("storage.getEvalSuites(getOrgId(req))");
     expect(handler).not.toContain("getEvalSuites()");
   });
+
+  it("pruning orphans is admin-gated, derives its own set, and defaults to a dry run", () => {
+    const routes = readFileSync(join(__dirname, "..", "server", "routes", "agents.ts"), "utf8");
+    const at = routes.indexOf('router.post("/api/eval-suites/prune-orphans"');
+    expect(at, "prune-orphans route not found").toBeGreaterThan(-1);
+    const handler = routes.slice(at, routes.indexOf("router.", at + 10));
+    expect(handler).toContain('checkPermission("manage_platform_settings")');
+    // Destructive only when asked for: a missing field must not delete.
+    expect(handler).toContain("req.body?.apply !== true");
+    // It must not accept ids from the caller, or it becomes a by-id delete
+    // route for any suite.
+    expect(handler).not.toMatch(/req\.body\??\.(suiteIds|ids)/);
+
+    const storageSrc = readFileSync(join(__dirname, "..", "server", "storage.ts"), "utf8");
+    const body = methodBody(storageSrc, "async pruneOrphanedEvalSuites(");
+    expect(body, "pruneOrphanedEvalSuites not found").not.toBe("");
+    // Both halves of "orphan", and the sentinel that is NOT one.
+    expect(body).toContain("isNull(evalSuites.organizationId)");
+    expect(body).toContain('s.agentId === "system"');
+    expect(body).toContain("if (!owner) candidates.push(s)");
+    // Same cascade as the single delete, case results included.
+    expect(body).toContain("db.delete(evalCaseResults)");
+    expect(body).toContain("db.delete(evalRuns)");
+    expect(body).toContain("db.delete(evalTestCases)");
+    expect(body).toContain("db.delete(evalSuites)");
+    // A truncated sweep must not read as a finished one.
+    expect(body).toContain("more: unowned.length === limit");
+  });
 });

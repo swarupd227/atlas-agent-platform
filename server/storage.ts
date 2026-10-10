@@ -370,6 +370,8 @@ export interface IStorage {
   /** Delete a suite with its test cases, runs and their case results. Scoped stricter than the read: see the implementation. */
   deleteEvalSuite(id: string, orgId?: string): Promise<{ id: string; name: string; testCases: number; runs: number; caseResults: number } | undefined>;
 
+  /** Remove suites with no organization AND no agent row. Takes no ids; derives the set. See the implementation. */
+  pruneOrphanedEvalSuites(opts?: { dryRun?: boolean; limit?: number }): Promise<{ dryRun: boolean; scanned: number; scanLimit: number; more: boolean; suites: number; testCases: number; runs: number; caseResults: number; detail: Array<{ id: string; name: string; agentId: string | null; testCases: number; runs: number; caseResults: number }> }>;
   getEvalTestCases(suiteId: string): Promise<EvalTestCase[]>;
   getEvalTestCase(id: string): Promise<EvalTestCase | undefined>;
   createEvalTestCase(testCase: InsertEvalTestCase): Promise<EvalTestCase>;
@@ -2012,6 +2014,72 @@ export class DatabaseStorage implements IStorage {
   async deleteAgentTemplate(id: string) {
     const result = await db.delete(agentTemplates).where(eq(agentTemplates.id, id));
     return true;
+  }
+
+  /**
+   * Remove the eval suites that belong to nobody, with everything keyed to them.
+   *
+   * A suite is a candidate only when its organization_id is NULL *and* its
+   * agent_id names no agent row. Both halves matter. The f0f12390 migration
+   * joined agent_id -> agents.organization_id over every row platform-wide and
+   * createEvalSuite has derived the org at creation ever since, so a NULL here
+   * means the platform itself could not attribute the suite; and a missing
+   * agent row means nothing can ever reach, re-run or re-own it. Measured on
+   * Azure 2026-10-10: 832 such suites, 831 distinct dead agents, 4,407 test
+   * case rows, and zero runs or recorded results between them.
+   *
+   * The caller passes no ids. The set is derived here, so this cannot be aimed
+   * at a suite that still has an owner -- which is why it does not reuse
+   * deleteEvalSuite's per-row org check, whose whole point is to refuse exactly
+   * the rows this is for.
+   *
+   * dryRun reports the same set without deleting, so the census a person
+   * approves is the census that runs.
+   */
+  async pruneOrphanedEvalSuites(opts: { dryRun?: boolean; limit?: number } = {}) {
+    const limit = Math.max(1, Math.min(5000, opts.limit ?? 2000));
+    const unowned = await db.select().from(evalSuites).where(isNull(evalSuites.organizationId)).limit(limit);
+
+    const candidates: typeof unowned = [];
+    for (const s of unowned) {
+      // The "system" sentinel is platform-level BY DESIGN, not orphaned: it has
+      // no agent because it never had one. Counting it here is how 832 becomes
+      // 838 and a deliberate row gets deleted as residue.
+      if (!s.agentId || s.agentId === "system") continue;
+      const [owner] = await db.select({ id: agents.id }).from(agents).where(eq(agents.id, s.agentId));
+      if (!owner) candidates.push(s);
+    }
+
+    const report: Array<{ id: string; name: string; agentId: string | null; testCases: number; runs: number; caseResults: number }> = [];
+    for (const s of candidates) {
+      const runs = await db.select({ id: evalRuns.id }).from(evalRuns).where(eq(evalRuns.suiteId, s.id));
+      const cases = await db.select({ id: evalTestCases.id }).from(evalTestCases).where(eq(evalTestCases.suiteId, s.id));
+      let caseResults = 0;
+      for (const run of runs) {
+        const rows = await db.select({ id: evalCaseResults.id }).from(evalCaseResults).where(eq(evalCaseResults.runId, run.id));
+        caseResults += rows.length;
+      }
+      if (!opts.dryRun) {
+        for (const run of runs) await db.delete(evalCaseResults).where(eq(evalCaseResults.runId, run.id));
+        await db.delete(evalRuns).where(eq(evalRuns.suiteId, s.id));
+        await db.delete(evalTestCases).where(eq(evalTestCases.suiteId, s.id));
+        await db.delete(evalSuites).where(eq(evalSuites.id, s.id));
+      }
+      report.push({ id: s.id, name: s.name, agentId: s.agentId ?? null, testCases: cases.length, runs: runs.length, caseResults });
+    }
+
+    return {
+      dryRun: !!opts.dryRun,
+      // Reported separately so a truncated sweep cannot read as a finished one.
+      scanned: unowned.length,
+      scanLimit: limit,
+      more: unowned.length === limit,
+      suites: report.length,
+      testCases: report.reduce((n, r) => n + r.testCases, 0),
+      runs: report.reduce((n, r) => n + r.runs, 0),
+      caseResults: report.reduce((n, r) => n + r.caseResults, 0),
+      detail: report,
+    };
   }
 
   async getEvalSuite(id: string) {

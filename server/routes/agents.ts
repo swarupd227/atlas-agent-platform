@@ -1664,6 +1664,42 @@ const router = Router();
     res.json(suites);
   });
 
+  /**
+   * Remove the eval suites that belong to nobody.
+   *
+   * Every agent creation auto-scaffolds a suite, and until 19268437 nothing
+   * deleted one, so each removed agent left its suite behind: 832 on Azure,
+   * naming 831 agents that no longer exist. They cannot be re-attributed (none
+   * carries a golden dataset or a skill), cannot be re-run, and no other route
+   * reaches them.
+   *
+   * Takes no ids. The set is derived in storage from "no organization AND no
+   * agent row", so this cannot be aimed at a suite that still has an owner,
+   * and dryRun returns the same census without deleting. Admin-gated, because
+   * it is the one destructive operation on this table.
+   */
+  router.post("/api/eval-suites/prune-orphans", checkPermission("manage_platform_settings"), async (req, res) => {
+    try {
+      // Default to a dry run: the destructive reading of this route has to be
+      // asked for, never arrived at by leaving a field out.
+      const dryRun = req.body?.apply !== true;
+      const result = await storage.pruneOrphanedEvalSuites({ dryRun, limit: Number(req.body?.limit) || undefined });
+      if (!dryRun) {
+        await storage.createAuditEvent({
+          actorType: "user",
+          actorId: (req as any).authUser?.id ?? "admin",
+          action: "prune_orphaned_eval_suites",
+          objectType: "eval_suite",
+          objectId: "platform",
+          details: `${result.suites} orphaned eval suite(s) deleted with ${result.testCases} test case(s), ${result.runs} run(s) and ${result.caseResults} case result(s); scanned ${result.scanned}${result.more ? " (more remain, re-run)" : ""}`,
+        });
+      }
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to prune orphaned eval suites" });
+    }
+  });
+
   router.get("/api/traces", checkPermission("view_traces"), async (req, res) => {
     const role = getRequestRole(req);
     const level = getRedactionLevel(role);
