@@ -50,6 +50,7 @@ import {
   Download,
   ChevronDown,
   MoreHorizontal,
+  ArrowLeft,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -1437,11 +1438,19 @@ export default function OntologyExplorer() {
                     onClick={() => setDomainFilter(d)}
                     aria-pressed={active}
                     title={d ?? "All domains"}
-                    className={`relative grid grid-cols-[10px_1fr_auto] items-center gap-x-2 overflow-hidden rounded-[7px] border px-2 py-1 text-left text-[13px] transition-colors ${active ? "border-border bg-card font-medium" : "border-transparent hover:bg-accent"}`}
+                    // minmax(0,…) on the name, or the track refuses to shrink below the
+                    // longest domain name, every row in the column stretches to match, and
+                    // the count on the right is pushed past the sidebar and clipped away by
+                    // overflow-hidden -- "103/417" reading as "103/4". truncate alone cannot
+                    // fix it: the track was already forced wide before the text was cut.
+                    className={`relative grid w-full grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-2 overflow-hidden rounded-[7px] border px-2 py-1 text-left text-[13px] transition-colors ${active ? "border-border bg-card font-medium" : "border-transparent hover:bg-accent"}`}
                     data-testid={`button-domain-${d ? d.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "all"}`}
                   >
                     <i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: d ? domainColorMap[d] : "hsl(var(--foreground))" }} />
-                    <span className="truncate">{d ?? "All domains"}</span>
+                    {/* Wraps to a second line rather than truncating: the full name was
+                        reachable only by hovering for a title tooltip, which is nothing at
+                        all on a touch device. */}
+                    <span className="line-clamp-2 break-words leading-snug">{d ?? "All domains"}</span>
                     <span className="font-mono text-[11px] text-muted-foreground">{coverage ? `${used}/` : ""}{inD.length}</span>
                     {coverage && (
                       <span className="absolute bottom-0 left-2 right-2 h-[2px] overflow-hidden rounded bg-muted">
@@ -1519,7 +1528,11 @@ export default function OntologyExplorer() {
             </div>
           )}
           {viewMode === "list" && selectedConcept && (
-            <Button size="sm" variant="ghost" className="ml-auto shrink-0" onClick={() => setSelectedConceptId(null)} data-testid="button-back-to-overview">
+            /* Outlined, with the arrow: as a bare ghost button in the top-right corner
+               this read as a section heading, and it is the only way back out of a
+               concept. */
+            <Button size="sm" variant="outline" className="ml-auto shrink-0" onClick={() => setSelectedConceptId(null)} data-testid="button-back-to-overview">
+              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
               Overview
             </Button>
           )}
@@ -1619,7 +1632,16 @@ export default function OntologyExplorer() {
               </div>
             </div>
           ) : (
-            <div className="max-w-4xl space-y-7 p-6">
+            // max-w-6xl to match the overview branch above: a concept used to be capped
+            // 256px narrower than the page you clicked it from, so the content visibly
+            // shrank on selection.
+            <div className="max-w-6xl space-y-7 p-6">
+              {/* The description holds a 68ch measure because prose the width of a wide
+                  monitor is unreadable. That left a dead band down the right of the page,
+                  with a full-width card directly beneath making the ragged edge read as a
+                  bug. The usage card moves up into that band once there is room for it;
+                  below xl this stacks exactly as before. */}
+              <div className="grid gap-x-6 gap-y-7 xl:grid-cols-[minmax(0,68ch)_minmax(300px,1fr)] xl:items-start">
               <div className="space-y-2">
                 <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: domainColorMap[selectedConcept.domain] }}>
                   {selectedConcept.domain} · <span data-testid="badge-concept-category">{nice(selectedConcept.category)}</span>
@@ -1703,6 +1725,7 @@ export default function OntologyExplorer() {
                   )}
                 </div>
               </section>
+              </div>
 
               {/* Links: the picture and the full list, together. */}
               <section data-testid="card-relationships">
