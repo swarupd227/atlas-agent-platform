@@ -74,6 +74,58 @@ function getServerDefinitions(): MockMcpServerDef[] {
       ],
     },
     {
+      name: "Account Enrichment Service",
+      description: "Simulated third-party business-data provider for an account -- the D&B stand-in. Holds one enriched profile per account with the date it was retrieved and which provider answered, reports its age, and charges for a refresh. A cache read is free; a refresh inside the configured window is refused unless forced with a reason; enrichment is never sold per policy or per location. Keyed on the same account ids as the Commercial Account Administration System. Deterministic seeded cache.",
+      baseUrl: `${BASE_URL}/api/mock/account-enrichment`,
+      tools: [
+        {
+          name: "get_account_enrichment",
+          description: "The enriched profile held for an account, with which provider answered, when it was retrieved, how old it is in days and whether it is past the refresh window. A cache read costs nothing. enrichment is null with neverFetched true when the account has never been enriched: no baseline exists, which is NOT the same as stale data and is not a finding about the business.",
+          endpoint: "/enrichment",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { accountId: { type: "string", description: "Account id" } },
+            required: ["accountId"],
+          },
+        },
+        {
+          name: "get_enrichment_refresh_policy",
+          description: "The refresh window in days, the cost of a refresh, and the rule the service enforces. The window is real: a refresh inside it is refused unless forced.",
+          endpoint: "/refresh-policy",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "refresh_account_enrichment",
+          description: "Buy a new record from the provider. Costs money, so a reason is required and the charge is recorded against an actor. A refresh inside the window is REFUSED with refreshed:false and the cost it avoided, unless force is true and an actor is named. The response reports which fields actually changed: 'refreshed' is not 'changed', and a first fetch is a baseline rather than an update.",
+          endpoint: "/enrichment/refresh",
+          method: "POST",
+          inputSchema: {
+            type: "object",
+            properties: {
+              accountId: { type: "string", description: "Account id" },
+              reason: { type: "string", description: "Why this refresh is worth its cost -- required" },
+              actor: { type: "string", description: "Who owns the charge. Required when forcing inside the window." },
+              force: { type: "boolean", description: "Refresh inside the window anyway. Use when something about the risk changed, not to be sure." },
+            },
+            required: ["accountId", "reason"],
+          },
+        },
+        {
+          name: "get_enrichment_cost_ledger",
+          description: "What enrichment has actually cost this account: every charge with who caused it and why, plus how many times the held record was reused instead. A refresh with no entry here never happened, whatever a narrative says.",
+          endpoint: "/cost-ledger",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: { accountId: { type: "string", description: "Account id" } },
+            required: ["accountId"],
+          },
+        },
+      ],
+    },
+    {
       name: "Account Policy Register",
       description: "Simulated policy-administration view of a commercial account: the policies written for it with premium and term, the location schedule those policies share, the account's total insurable value counted once per site, billing and claims as they stand, and the credits applied with the basis for each. Keyed on the same account and policy ids as the Commercial Account Administration System. Deterministic seeded book.",
       baseUrl: `${BASE_URL}/api/mock/account-policy-register`,
