@@ -53,6 +53,45 @@ const REGEX_PATTERNS: Record<string, RegExp[]> = {
   URL:            [/https?:\/\/[^\s<>"{}|\\^`[\]]+/g],
 };
 
+/**
+ * A card-number match must also be a plausible card number. The pattern alone
+ * accepts any sixteen digits with optional separators, which is also what the
+ * tail of a UUID looks like: on 2026-10-10 a team run masked the approval id
+ * "ea5b3566-b329-494c-8396-396576690528" to "ea5b3566-b329-494c-[CREDIT_CARD]"
+ * in an agent's answer. Two checks, both needed: the digits must pass the
+ * Luhn check every card number satisfies, and the match must not sit inside a
+ * UUID, since one in ten random sixteen-digit strings passes Luhn by chance.
+ */
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+export function luhnValid(digits: string): boolean {
+  if (digits.length < 12 || digits.length > 19) return false;
+  let sum = 0;
+  let double = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits.charCodeAt(i) - 48;
+    if (d < 0 || d > 9) return false;
+    if (double) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+    double = !double;
+  }
+  return sum % 10 === 0;
+}
+
+function insideUuid(text: string, start: number, end: number): boolean {
+  UUID_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = UUID_RE.exec(text)) !== null) {
+    if (start >= m.index && end <= m.index + m[0].length) return true;
+  }
+  return false;
+}
+
+/** Entity types whose regex match needs a second look before it counts. */
+const ENTITY_VALIDATORS: Record<string, (text: string, start: number, end: number) => boolean> = {
+  CREDIT_CARD: (text, start, end) => luhnValid(text.slice(start, end).replace(/[-\s]/g, "")) && !insideUuid(text, start, end),
+};
+
 export class PIIMaskingEngine {
   private config: PIIMaskingConfig;
 
@@ -170,7 +209,10 @@ export class PIIMaskingEngine {
         regex.lastIndex = 0;
         let match: RegExpExecArray | null;
         while ((match = regex.exec(text)) !== null) {
-          entities.push({ type, start: match.index, end: match.index + match[0].length, score: 0.85 });
+          const start = match.index, end = match.index + match[0].length;
+          const validate = ENTITY_VALIDATORS[type];
+          if (validate && !validate(text, start, end)) continue;
+          entities.push({ type, start, end, score: 0.85 });
         }
       }
     }
