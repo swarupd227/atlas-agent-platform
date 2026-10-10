@@ -87,6 +87,8 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
       OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
+      ASTRA_SSO: ${ASTRA_SSO:-}
+      ASTRA_SSO_CLIENT_SECRET: ${ASTRA_SSO_CLIENT_SECRET:-}
       # Seeds a `admin` user on first boot with this password (username is fixed to `admin`).
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in .env}
       # Optional model/integration keys — pass through when set.

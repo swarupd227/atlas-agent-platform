@@ -4,6 +4,7 @@ import { getSecurityMode } from "./auth";
 import { describeOutboundPolicy, validateOutboundPolicyEnv } from "./url-safety";
 import { describeLockdown, validateLockdownEnv } from "./lockdown";
 import { describeOtlp, validateOtlpEnv } from "./otlp-export";
+import { describeSso, validateSsoEnv } from "./sso";
 import { INTEGRATION_REGISTRY } from "./integrations/registry";
 
 /** True when demo & mock surfaces (/demo-api, /api/mock, mock-MCP, demo seeders) should be active. */
@@ -41,6 +42,8 @@ export function validateEnv(): void {
   errors.push(...validateLockdownEnv(INTEGRATION_REGISTRY.map((def) => def.id)));
   // So does an export that is set up wrongly: it would otherwise look configured and send nothing.
   errors.push(...validateOtlpEnv());
+  // Single sign-on that is set up wrongly would leave the sign-in page offering a button that cannot work.
+  errors.push(...validateSsoEnv());
 
   if (errors.length > 0) {
     console.error(
@@ -52,5 +55,5 @@ export function validateEnv(): void {
   console.log(
     `[config] security_mode=${getSecurityMode()} demos_enabled=${demosEnabled()} node_env=${process.env.NODE_ENV ?? "unset"}`,
   );
-  console.log(`[config] ${describeOutboundPolicy()} ${describeLockdown()} ${describeOtlp()}`);
+  console.log(`[config] ${describeOutboundPolicy()} ${describeLockdown()} ${describeOtlp()} ${describeSso()}`);
 }

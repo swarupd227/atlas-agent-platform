@@ -278,6 +278,16 @@ resource "aws_elastic_beanstalk_environment" "main" {
     name      = "OTEL_EXPORTER_OTLP_HEADERS"
     value     = var.otlp_headers
   }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "ASTRA_SSO"
+    value     = var.sso
+  }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "ASTRA_SSO_CLIENT_SECRET"
+    value     = var.sso_client_secret
+  }
 
   # EB's Node proxy listens on 80 and forwards to the app's PORT (8080 above).
   setting {

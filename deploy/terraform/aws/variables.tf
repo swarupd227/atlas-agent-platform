@@ -160,3 +160,16 @@ variable "otlp_headers" {
   sensitive   = true
   default     = ""
 }
+
+variable "sso" {
+  description = "ASTRA_SSO: JSON that turns on Sign in with Microsoft Entra ID beside the password form (tenantId, clientId, redirectUri, roles.map, optional localLogin/sessionHours/requireMfa; see docs/ENTRA_SSO.md). Empty leaves single sign-on off. An unusable value stops the server at start-up."
+  type        = string
+  default     = ""
+}
+
+variable "sso_client_secret" {
+  description = "ASTRA_SSO_CLIENT_SECRET: the Entra app registration's client secret. A secret: set via TF_VAR_sso_client_secret."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

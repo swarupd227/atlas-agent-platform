@@ -9,8 +9,17 @@ interface AuthUser {
   email: string | null;
 }
 
+/** Offered by the server only when single sign-on is configured (server/sso.ts). */
+export interface SsoInfo {
+  enabled: true;
+  loginUrl: string;
+  label: string;
+  localLogin: "on" | "admins-only";
+}
+
 interface AuthContextType {
   securityMode: "demo" | "production" | null;
+  sso: SsoInfo | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   user: AuthUser | null;
@@ -23,6 +32,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [securityMode, setSecurityMode] = useState<"demo" | "production" | null>(null);
+  const [sso, setSso] = useState<SsoInfo | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -35,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const mode = modeData.mode as "demo" | "production";
         setSecurityMode(mode);
         syncSecurityMode(mode);
+        if (modeData.sso?.enabled === true && typeof modeData.sso.loginUrl === "string") setSso(modeData.sso as SsoInfo);
 
         if (mode === "demo") {
           setIsAuthenticated(true);
@@ -126,7 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ securityMode, isAuthenticated, isLoading, user, login, logout, register }}>
+    <AuthContext.Provider value={{ securityMode, sso, isAuthenticated, isLoading, user, login, logout, register }}>
       {children}
     </AuthContext.Provider>
   );

@@ -12,6 +12,7 @@ import {
 } from "../auth";
 import { storage } from "../storage";
 import { authRateLimiter } from "../rate-limits";
+import { ssoOrNull, ssoPublicView } from "../sso";
 
 const router = Router();
 
@@ -27,7 +28,9 @@ router.get("/api/openapi.json", (_req, res) => {
 });
 
 router.get("/api/auth/mode", (_req, res) => {
-  res.json({ mode: getSecurityMode() });
+  // `sso` is there only when single sign-on is configured, so the sign-in page can offer the button.
+  const sso = getSecurityMode() === "demo" ? null : ssoPublicView();
+  res.json(sso ? { mode: getSecurityMode(), sso } : { mode: getSecurityMode() });
 });
 
 router.post("/api/auth/login", authRateLimiter, async (req, res) => {
@@ -46,6 +49,11 @@ router.post("/api/auth/login", authRateLimiter, async (req, res) => {
     const valid = await comparePassword(password, user.password);
     if (!valid) {
       return res.status(401).json({ message: "Invalid credentials" });
+    }
+    // A deployment that signs people in through Microsoft can leave the form to administrators only
+    // (a break-glass account). Checked after the password so it says nothing about who exists.
+    if (ssoOrNull()?.localLogin === "admins-only" && (user.role || "agent_engineer") !== "admin") {
+      return res.status(403).json({ message: "Sign-in with a password is limited to administrators on this deployment. Use Sign in with Microsoft." });
     }
     const token = generateToken({ userId: user.id, username: user.username, role: user.role || "agent_engineer", email: user.email, organizationId: user.organizationId ?? undefined });
     setAuthCookie(res, token);

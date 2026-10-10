@@ -194,6 +194,8 @@ resource "azurerm_linux_web_app" "main" {
     ASTRA_LOCKDOWN                 = var.lockdown
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = var.otlp_traces_endpoint
     OTEL_EXPORTER_OTLP_HEADERS     = var.otlp_headers
+    ASTRA_SSO                      = var.sso
+    ASTRA_SSO_CLIENT_SECRET        = var.sso_client_secret
     SCM_DO_BUILD_DURING_DEPLOYMENT = "false" # code is shipped pre-built by deploy.sh
     WEBSITE_NODE_DEFAULT_VERSION   = "~22"
     WEBSITE_RUN_FROM_PACKAGE       = "0"

@@ -7,13 +7,25 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Shield, LogIn, UserPlus, AlertCircle } from "lucide-react";
 
+/** What the person is told when single sign-on sends them back with a reason (server/routes/sso.ts). */
+const SSO_ERRORS: Record<string, string> = {
+  invalid_state: "Your sign-in was interrupted or took too long. Please try again.",
+  idp_error: "Microsoft did not complete the sign-in. If you were refused, ask your administrator whether you have been given access to Astra.",
+  mfa_required: "Your organisation requires multi-factor authentication for Astra. Sign in again and complete the verification prompt.",
+  no_role: "You are signed in to Microsoft, but you have not been given access to Astra. Ask your administrator to assign you a role.",
+  domain_not_allowed: "Your e-mail domain is not allowed to sign in to this Astra.",
+  not_enabled: "Single sign-on is not enabled.",
+};
+const SSO_ERROR_FALLBACK = "Signing in with Microsoft could not be completed. Please try again, and contact your administrator if it keeps happening.";
+
 export default function LoginPage() {
-  const { login, register } = useAuth();
+  const { login, register, sso } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
-  const [error, setError] = useState("");
+  const ssoErrorCode = new URLSearchParams(window.location.search).get("sso_error");
+  const [error, setError] = useState(ssoErrorCode ? (SSO_ERRORS[ssoErrorCode] ?? SSO_ERROR_FALLBACK) : "");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -52,6 +64,24 @@ export default function LoginPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {sso && (
+              <div className="space-y-4 mb-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => { window.location.href = `${sso.loginUrl}?returnTo=${encodeURIComponent(window.location.pathname === "/login" ? "/" : window.location.pathname + window.location.search)}`; }}
+                  data-testid="button-sso-login"
+                >
+                  <Shield className="h-4 w-4 mr-2" /> {sso.label}
+                </Button>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <div className="h-px flex-1 bg-border" />
+                  {sso.localLogin === "admins-only" ? "administrators can also use a password" : "or use a password"}
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
                 <Alert variant="destructive" data-testid="alert-login-error">

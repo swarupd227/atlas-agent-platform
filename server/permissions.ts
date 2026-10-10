@@ -180,6 +180,8 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
 };
 
 const VALID_ROLES = new Set<string>(Object.keys(PERMISSION_MATRIX));
+/** Every role a person can hold, for anything that must check a role name it is given (single sign-on's role map). */
+export const ROLE_IDS: readonly string[] = Array.from(VALID_ROLES);
 
 // Human label for a role id, for anywhere the platform records or displays WHO acted (approval decisions, audit
 // entries) -- mirrors client/src/components/role-provider.tsx's ROLES labels. Kept here, not derived from the

@@ -6,6 +6,7 @@ import { createServer, type Server } from "http";
 import { startWorker, enqueueAuditChainCheck, enqueueAuditChainCheckpoint, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan, enqueueScheduleTriggerScan, enqueueDagResumeScan, enqueueConnectorHealthScan } from "./worker";
 import { runStartupMigrations } from "./db";
 import authRouter from "./routes/auth";
+import ssoRouter from "./routes/sso";
 import toolConnectorsRouter from "./routes/tool-connectors";
 import governanceProxyRouter from "./routes/governance-proxy";
 import workspaceRouter from "./routes/workspace";
@@ -287,6 +288,8 @@ export async function registerRoutes(
 
   // ── Auth & OpenAPI router ─────────────────────────────────────
   app.use(authRouter);
+  // Sign in with Microsoft Entra ID; 404 unless SSO is configured (server/sso.ts).
+  app.use(ssoRouter);
 
   // ── Platform lockdown (server/lockdown.ts) ────────────────────
   // What this deployment does not allow at all, closed here for a whole route group at once and

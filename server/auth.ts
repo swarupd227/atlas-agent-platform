@@ -87,8 +87,17 @@ export function getOrgId(req: Request): string | undefined {
   return req.authUser?.organizationId;
 }
 
-export function generateToken(payload: TokenPayload): string {
-  return jwt.sign(payload, getJwtSecret(), { expiresIn: TOKEN_EXPIRY });
+/** `expiresIn` is for a sign-in that should not last the default day (single sign-on sets its own). */
+export function generateToken(payload: TokenPayload, expiresIn: jwt.SignOptions["expiresIn"] = TOKEN_EXPIRY): string {
+  return jwt.sign(payload, getJwtSecret(), { expiresIn });
+}
+
+/**
+ * A secret for one purpose, derived from the signing secret so it can never be mistaken for it:
+ * a value signed with it is not a session token, and a session token is not a value signed with it.
+ */
+export function deriveSecret(purpose: string): string {
+  return crypto.createHmac("sha256", getJwtSecret()).update(`astra:${purpose}`).digest("hex");
 }
 
 export function verifyToken(token: string): TokenPayload | null {
@@ -99,12 +108,12 @@ export function verifyToken(token: string): TokenPayload | null {
   }
 }
 
-export function setAuthCookie(res: Response, token: string) {
+export function setAuthCookie(res: Response, token: string, maxAgeMs: number = 24 * 60 * 60 * 1000) {
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge: maxAgeMs,
     path: "/",
   });
 }
@@ -142,6 +151,10 @@ const AUTH_EXEMPT_PATHS = [
   "/auth/login",
   "/auth/register",
   "/auth/mode",
+  // Single sign-on (server/routes/sso.ts): the person has no session yet; their identity provider is
+  // what they are about to prove themselves to. Both answer 404 unless SSO is configured.
+  "/auth/sso/login",
+  "/auth/sso/callback",
 ];
 
 // Loopback per the actual TCP source address -- unlike req.ip this ignores
