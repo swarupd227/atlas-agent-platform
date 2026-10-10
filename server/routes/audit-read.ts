@@ -14,7 +14,7 @@ import { storage } from "../storage";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { checkPermission } from "../permissions";
 import { getLockdown } from "../lockdown";
-import { getPublicKeyInfo } from "../audit-signing";
+import { getPublicKeyById, getPublicKeyInfo } from "../audit-signing";
 import {
   KeyLimitError, auditEventView, describeKey, fetchAuditEventsAfter, listAuditReadKeys, mintAuditReadKey, parsePaging, requireAuditReadKey, revokeAuditReadKey,
 } from "../audit-read-keys";
@@ -53,10 +53,20 @@ auditPullRouter.get("/api/v1/audit-events", requireAuditReadKey, async (req: Req
   }
 });
 
-/** The public key the events are signed with, for the reader to verify them offline. */
-auditPullRouter.get("/api/v1/audit-chain/public-key", requireAuditReadKey, async (_req: Request, res: Response) => {
+/**
+ * The public key the events are signed with, for the reader to verify them offline. With ?keyId=<an event's
+ * signerKeyId> it is the key that event names, which is how events signed before a key was replaced stay
+ * verifiable: the keys are recorded when they are replaced, not thrown away.
+ */
+auditPullRouter.get("/api/v1/audit-chain/public-key", requireAuditReadKey, async (req: Request, res: Response) => {
   try {
     res.setHeader("Cache-Control", "no-store");
+    const wanted = req.query.keyId;
+    if (wanted !== undefined) {
+      if (typeof wanted !== "string" || !/^[0-9a-f]{16}$/.test(wanted)) return res.status(400).json({ error: "keyId must be the 16 hex characters an event records as signerKeyId" });
+      const found = await getPublicKeyById(wanted);
+      return found ? res.json(found) : res.status(404).json({ error: "No such signing key is known" });
+    }
     res.json(await getPublicKeyInfo());
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "Could not read the signing key" });

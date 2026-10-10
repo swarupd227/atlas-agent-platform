@@ -174,6 +174,16 @@ variable "sso_client_secret" {
   default     = ""
 }
 
+variable "audit_kms_key_arn" {
+  description = "ASTRA_AUDIT_KMS_KEY_ID: the ARN of an existing AWS KMS key (key spec ECC_NIST_EDWARDS25519, usage SIGN_VERIFY) that holds the audit signing key, so the key never enters the application. Terraform creates nothing: it passes the ARN to the app and lets the instance role call kms:Sign and kms:GetPublicKey on exactly that key. Use the KEY arn, not an alias. See docs/AUDIT_SIGNING_KMS.md. Empty keeps the key in AUDIT_SIGNING_PRIVATE_KEY."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.audit_kms_key_arn == "" || can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/(mrk-)?[0-9a-f-]+$", var.audit_kms_key_arn))
+    error_message = "audit_kms_key_arn must be a KMS KEY ARN (arn:aws:kms:<region>:<account>:key/<id>), not an alias."
+  }
+}
+
 variable "scim_token" {
   description = "ASTRA_SCIM_TOKEN: the bearer token Entra uses to provision and deactivate the people who sign in with Microsoft (at least 32 characters; needs `sso`; see docs/ENTRA_SCIM.md). A secret: set via TF_VAR_scim_token. Empty leaves SCIM off."
   type        = string

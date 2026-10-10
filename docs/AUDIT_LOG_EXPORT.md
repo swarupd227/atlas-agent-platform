@@ -94,5 +94,11 @@ For each event, in sequence order:
 
 A break in any of the three means an event was altered, removed or inserted.
 
+**Events signed by an earlier key.** When the signing key is replaced (for example when it moves into AWS
+KMS, see [AUDIT_SIGNING_KMS.md](AUDIT_SIGNING_KMS.md)), older events keep the `signerKeyId` of the key that
+signed them. `GET /api/v1/audit-chain/public-key?keyId=<signerKeyId>` returns that key's public half (404 if
+it is not known), so the same three steps verify them. The signature is the same whether the key is held in
+this application or in KMS: plain Ed25519 over the text of `eventHash`, and verifying never involves AWS.
+
 Astra's own checks use the same rules: `GET /api/audit-events/verify-chain` (signed in) verifies the chain
 server-side.

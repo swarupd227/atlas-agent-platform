@@ -19,6 +19,7 @@ import { storage } from "./storage";
 import { otlpIngestRouter } from "./routes/observability";
 import { auditPullRouter } from "./routes/audit-read";
 import scimRouter from "./routes/scim";
+import { initAuditSigning } from "./audit-signing";
 import { pool } from "./db";
 import { flushOtlp } from "./otlp-export";
 import { validateEnv, demosEnabled } from "./config";
@@ -208,6 +209,14 @@ app.use((req, res, next) => {
   app.use("/demo-api", demoRouter);
 
   log(`Security mode: ${getSecurityMode()}`);
+  // A signing key held in KMS is opened and tried now: a key that cannot sign must stop the server here, not
+  // show up later as audit events that quietly fail to be written. (With the key in the environment this does nothing.)
+  try {
+    await initAuditSigning();
+  } catch (e: any) {
+    console.error(`[FATAL] The audit signing key cannot be used; refusing to start: ${e?.message ?? e}`);
+    process.exit(1);
+  }
   await registerRoutes(httpServer, app);
 
   // Anything left under /api or /demo-api is a 404, not the app shell. This

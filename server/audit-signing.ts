@@ -20,6 +20,7 @@
  */
 import { createHash, generateKeyPairSync, sign as edSign, verify as edVerify, createPublicKey, createPrivateKey, type KeyObject } from "crypto";
 import { getSecurityMode } from "./auth";
+import { openKmsSigner, readAuditKmsConfig, type KmsStats } from "./audit-kms";
 
 // db + schema are imported lazily (only the DEV-key path needs them) so this
 // module — and its signing/verification — can run without a database, e.g. in
@@ -92,12 +93,18 @@ export function computeMerkleRoot(leafHashes: string[]): string {
 
 interface SigningKey {
   keyId: string;
-  privateKey: KeyObject;
+  /** Signs the bytes with the private key, wherever it is held (this process, or KMS). */
+  sign(message: Buffer): Promise<Buffer>;
   publicKeyPem: string;
-  source: "env" | "generated";
+  source: "env" | "generated" | "kms";
 }
 
+/** A key held in this process signs locally. */
+const localSigner = (privateKey: KeyObject) => async (message: Buffer): Promise<Buffer> => edSign(null, message, privateKey);
+
 let _cache: SigningKey | null = null;
+let _pending: Promise<SigningKey> | null = null;
+let _kmsStats: (() => KmsStats) | null = null;
 // Public keys by keyId, for verifying events signed by rotated/env keys.
 const _publicKeyCache = new Map<string, string>();
 
@@ -113,17 +120,61 @@ function keyIdForPublicKey(publicKeyPem: string): string {
  */
 export async function getSigningKey(): Promise<SigningKey> {
   if (_cache) return _cache;
+  // Several callers can ask at once while the key is being opened (KMS is a network call): they share one open.
+  // A failure is not remembered, so the next caller tries again.
+  if (!_pending) {
+    _pending = resolveSigningKey().then(
+      (k) => { _cache = k; _pending = null; return k; },
+      (e) => { _pending = null; throw e; },
+    );
+  }
+  return _pending;
+}
 
+/** Remember the public half of a key we do not sign with, so events it signed stay verifiable after it is gone. */
+async function rememberPublicKey(purpose: string, keyId: string, publicKeyPem: string): Promise<void> {
+  try {
+    const { db, cryptoKeys, eq } = await loadDb();
+    const [existing] = await db.select().from(cryptoKeys).where(eq(cryptoKeys.keyId, keyId)).limit(1);
+    if (!existing) await db.insert(cryptoKeys).values({ purpose, keyId, privateKeyPem: "", publicKeyPem });
+  } catch (e: any) {
+    console.warn(`[audit-signing] could not record the public key ${keyId} (${String(e?.message ?? e).slice(0, 120)}): events it signed stay verifiable only while this process holds it`);
+  }
+}
+
+async function resolveSigningKey(): Promise<SigningKey> {
   const envKey = process.env.AUDIT_SIGNING_PRIVATE_KEY;
-  if (envKey) {
-    const pem = envKey.includes("BEGIN") ? envKey : Buffer.from(envKey, "base64").toString("utf-8");
+  const envPair = () => {
+    const pem = envKey!.includes("BEGIN") ? envKey! : Buffer.from(envKey!, "base64").toString("utf-8");
     const privateKey = createPrivateKey(pem);
     const publicKeyPem = createPublicKey(privateKey).export({ type: "spki", format: "pem" }).toString();
-    const keyId = keyIdForPublicKey(publicKeyPem);
+    return { privateKey, publicKeyPem, keyId: keyIdForPublicKey(publicKeyPem) };
+  };
+
+  // A key in KMS signs; an environment key beside it is kept only to VERIFY what it signed before the switch.
+  const kmsConfig = readAuditKmsConfig();
+  if (kmsConfig) {
+    const signer = await openKmsSigner(kmsConfig);
+    const keyId = keyIdForPublicKey(signer.publicKeyPem);
+    _publicKeyCache.set(keyId, signer.publicKeyPem);
+    await rememberPublicKey("audit_signing_kms", keyId, signer.publicKeyPem);
+    if (envKey) {
+      const legacy = envPair();
+      if (legacy.keyId === keyId) throw new Error("[audit-signing] AUDIT_SIGNING_PRIVATE_KEY is the same key as the one in KMS");
+      _publicKeyCache.set(legacy.keyId, legacy.publicKeyPem);
+      await rememberPublicKey("audit_signing_retired", legacy.keyId, legacy.publicKeyPem);
+      console.warn(`[audit-signing] AUDIT_SIGNING_PRIVATE_KEY (keyId=${legacy.keyId}) is still set. It no longer signs anything; its public key is recorded, so it can be removed.`);
+    }
+    _kmsStats = signer.stats;
+    console.log(`[audit-signing] Signing with an Ed25519 key held in AWS KMS (keyId=${keyId}, ${signer.keyArn}).`);
+    return { keyId, publicKeyPem: signer.publicKeyPem, source: "kms", sign: signer.sign };
+  }
+
+  if (envKey) {
+    const { privateKey, publicKeyPem, keyId } = envPair();
     _publicKeyCache.set(keyId, publicKeyPem);
-    _cache = { keyId, privateKey, publicKeyPem, source: "env" };
     console.log(`[audit-signing] Using AUDIT_SIGNING_PRIVATE_KEY from env (keyId=${keyId}).`);
-    return _cache;
+    return { keyId, sign: localSigner(privateKey), publicKeyPem, source: "env" };
   }
 
   if (getSecurityMode() === "production") {
@@ -136,9 +187,8 @@ export async function getSigningKey(): Promise<SigningKey> {
   if (existing) {
     const privateKey = createPrivateKey(existing.privateKeyPem);
     _publicKeyCache.set(existing.keyId, existing.publicKeyPem);
-    _cache = { keyId: existing.keyId, privateKey, publicKeyPem: existing.publicKeyPem, source: "generated" };
     console.warn(`[audit-signing] DEV keypair loaded from crypto_keys (keyId=${existing.keyId}). Set AUDIT_SIGNING_PRIVATE_KEY for production.`);
-    return _cache;
+    return { keyId: existing.keyId, sign: localSigner(privateKey), publicKeyPem: existing.publicKeyPem, source: "generated" };
   }
 
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -152,21 +202,55 @@ export async function getSigningKey(): Promise<SigningKey> {
     const [row] = await db.select().from(cryptoKeys).where(eq(cryptoKeys.purpose, PURPOSE)).limit(1);
     if (row) {
       _publicKeyCache.set(row.keyId, row.publicKeyPem);
-      _cache = { keyId: row.keyId, privateKey: createPrivateKey(row.privateKeyPem), publicKeyPem: row.publicKeyPem, source: "generated" };
-      return _cache;
+      return { keyId: row.keyId, sign: localSigner(createPrivateKey(row.privateKeyPem)), publicKeyPem: row.publicKeyPem, source: "generated" };
     }
   }
   _publicKeyCache.set(keyId, publicKeyPem);
-  _cache = { keyId, privateKey, publicKeyPem, source: "generated" };
   console.warn(`[audit-signing] Generated a new DEV audit keypair (keyId=${keyId}). Set AUDIT_SIGNING_PRIVATE_KEY for production.`);
-  return _cache;
+  return { keyId, sign: localSigner(privateKey), publicKeyPem, source: "generated" };
 }
+
+let _lastSignFailureLog = 0;
+let _suppressedSignFailures = 0;
 
 /** Sign a canonical string. Returns { signature (base64), signerKeyId }. */
 export async function signAuditPayload(canonical: string): Promise<{ signature: string; signerKeyId: string }> {
   const key = await getSigningKey();
-  const signature = edSign(null, Buffer.from(canonical, "utf-8"), key.privateKey).toString("base64");
-  return { signature, signerKeyId: key.keyId };
+  try {
+    const signature = (await key.sign(Buffer.from(canonical, "utf-8"))).toString("base64");
+    return { signature, signerKeyId: key.keyId };
+  } catch (e: any) {
+    // The caller sees the error (the event is not written); an operator must see it too, once in a while if it repeats.
+    const now = Date.now();
+    if (now - _lastSignFailureLog > 10_000) {
+      console.error(`[audit-signing] could not sign an audit event, so it was not written${_suppressedSignFailures ? ` (${_suppressedSignFailures} more since the last report)` : ""}: ${String(e?.message ?? e)}`);
+      _lastSignFailureLog = now; _suppressedSignFailures = 0;
+    } else {
+      _suppressedSignFailures++;
+    }
+    throw e;
+  }
+}
+
+/**
+ * Open the signing key now, at start-up, when it is held in KMS: a key that cannot sign must stop the server
+ * here, not surface as audit events that quietly fail to be written. With the key in the environment nothing
+ * is done (it is read when first used, as it always was).
+ */
+export async function initAuditSigning(): Promise<void> {
+  if (!readAuditKmsConfig()) return;
+  await getSigningKey();
+}
+
+/** What the signer is, for an operator: where the key is held and, for KMS, how signing has been going. */
+export async function getAuditSignerStatus(): Promise<{ source: string; keyId: string; kms: KmsStats | null }> {
+  const key = await getSigningKey();
+  return { source: key.source, keyId: key.keyId, kms: key.source === "kms" && _kmsStats ? _kmsStats() : null };
+}
+
+/** Forget the resolved key and what was learned about others (tests, and nothing else). */
+export function resetAuditSigningForTests(): void {
+  _cache = null; _pending = null; _kmsStats = null; _publicKeyCache.clear(); _lastSignFailureLog = 0; _suppressedSignFailures = 0;
 }
 
 /** Resolve a public key PEM for a keyId (active key, cache, or DB). */
@@ -197,6 +281,12 @@ export async function verifyAuditSignature(canonical: string, signature: string 
   } catch {
     return false;
   }
+}
+
+/** The public key a past event names as its signer, which may be a key since replaced; null if it is not known. */
+export async function getPublicKeyById(signerKeyId: string): Promise<{ keyId: string; publicKeyPem: string; algorithm: string } | null> {
+  const pem = await getPublicKeyPem(signerKeyId);
+  return pem ? { keyId: signerKeyId, publicKeyPem: pem, algorithm: "Ed25519" } : null;
 }
 
 /** Active public key + id, for the /public-key endpoint (external verification). */

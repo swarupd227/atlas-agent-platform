@@ -196,6 +196,22 @@ resource "aws_iam_role_policy_attachment" "eb_web" {
   policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier"
 }
 
+# The audit signing key in KMS: the role may sign with it and read its public half, and nothing else, on
+# nothing else. Created only when a key ARN is given.
+resource "aws_iam_role_policy" "audit_kms" {
+  count = var.audit_kms_key_arn == "" ? 0 : 1
+  name  = "${var.app_name}-audit-signing-key"
+  role  = aws_iam_role.eb_ec2.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["kms:Sign", "kms:GetPublicKey"]
+      Resource = var.audit_kms_key_arn
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "eb_ec2" {
   name = "${var.app_name}-eb-ec2-profile"
   role = aws_iam_role.eb_ec2.name
@@ -292,6 +308,11 @@ resource "aws_elastic_beanstalk_environment" "main" {
     namespace = "aws:elasticbeanstalk:application:environment"
     name      = "ASTRA_SCIM_TOKEN"
     value     = var.scim_token
+  }
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name      = "ASTRA_AUDIT_KMS_KEY_ID"
+    value     = var.audit_kms_key_arn
   }
 
   # EB's Node proxy listens on 80 and forwards to the app's PORT (8080 above).

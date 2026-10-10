@@ -18,7 +18,11 @@ import type { AddressInfo } from "node:net";
 const h = vi.hoisted(() => ({ audit: [] as any[] }));
 vi.mock("../server/db", () => ({ db: {}, pool: {} }));
 vi.mock("../server/storage", () => ({ storage: { createAuditEvent: vi.fn(async (e: any) => { h.audit.push(e); return e; }) } }));
-vi.mock("../server/audit-signing", () => ({ getPublicKeyInfo: vi.fn(async () => ({ keyId: "key-1", publicKeyPem: "-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----", algorithm: "Ed25519", source: "env" })) }));
+vi.mock("../server/audit-signing", () => ({
+  getPublicKeyInfo: vi.fn(async () => ({ keyId: "key-1", publicKeyPem: "-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----", algorithm: "Ed25519", source: "env" })),
+  // A key since replaced: known by its id only.
+  getPublicKeyById: vi.fn(async (id: string) => id === "0123456789abcdef" ? { keyId: id, publicKeyPem: "-----BEGIN PUBLIC KEY-----\nold\n-----END PUBLIC KEY-----", algorithm: "Ed25519" } : null),
+}));
 
 import { auditPullRouter, auditReadKeysRouter } from "../server/routes/audit-read";
 import { AUDIT_KEY_PREFIX, MAX_ACTIVE_KEYS_PER_ORG, hashAuditReadKey, parsePaging, setAuditReadStoreForTests, type AuditReadStore } from "../server/audit-read-keys";
@@ -368,6 +372,21 @@ describe("what a pull returns", () => {
     expect(r.body).toMatchObject({ keyId: "key-1", algorithm: "Ed25519" });
     expect(r.body.publicKeyPem).toContain("PUBLIC KEY");
     expect((await api("GET", "/api/v1/audit-chain/public-key")).status).toBe(401);
+  });
+
+  it("serves the key an earlier event names, so events signed before a key was replaced stay verifiable", async () => {
+    const k = await mint("verifier");
+    const auth = { headers: { Authorization: `Bearer ${k.raw}` } };
+    const old = await api("GET", "/api/v1/audit-chain/public-key?keyId=0123456789abcdef", auth);
+    expect(old.status).toBe(200);
+    expect(old.body).toEqual({ keyId: "0123456789abcdef", publicKeyPem: "-----BEGIN PUBLIC KEY-----\nold\n-----END PUBLIC KEY-----", algorithm: "Ed25519" });
+    expect((await api("GET", "/api/v1/audit-chain/public-key?keyId=ffffffffffffffff", auth)).status).toBe(404);
+    for (const bad of ["abc", "0123456789ABCDEF", "0123456789abcdef0", "../etc", ""]) {
+      expect((await api("GET", `/api/v1/audit-chain/public-key?keyId=${encodeURIComponent(bad)}`, auth)).status, bad).toBe(400);
+    }
+    // Without keyId the answer is the active key, as it always was; and the key is still needed to ask.
+    expect((await api("GET", "/api/v1/audit-chain/public-key", auth)).body.keyId).toBe("key-1");
+    expect((await api("GET", "/api/v1/audit-chain/public-key?keyId=0123456789abcdef")).status).toBe(401);
   });
 });
 
