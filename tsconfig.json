@@ -6,6 +6,10 @@
     "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",
     "noEmit": true,
     "module": "ESNext",
+    // Typechecking only (noEmit above): vite and esbuild set their own targets
+    // for what actually ships. Without this, tsc defaults to ES5 and reports
+    // every `for...of` over a Set or Map as an error -- 49 of them, none real.
+    "target": "ES2022",
     "strict": true,
     "lib": ["esnext", "dom", "dom.iterable"],
     "jsx": "preserve",
