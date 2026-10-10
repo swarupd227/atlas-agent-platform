@@ -70,8 +70,13 @@ jobs:
           CONTRACT_JIRA_TOKEN: ${{ secrets.CONTRACT_JIRA_TOKEN }}
         run: npx vitest run -c vitest.integration.config.ts tests/connector-contracts.test.ts
 
-      # Non-blocking for now: ~254 pre-existing type errors are tracked debt to
-      # be driven to zero in Phase 1, after which this becomes a blocking gate.
+      # Non-blocking: 210 pre-existing type errors as of 2026-10-10, down from
+      # the ~254 this step was added with -- a missing "target" in tsconfig.json
+      # accounted for 72 of them, which were never about the code. The rest
+      # shrink as files are touched rather than in a cleanup phase, so this stays
+      # advisory; making it a gate is worth revisiting once a failure here would
+      # mean something. Measuring the count: tsconfig sets "incremental", so
+      # delete node_modules/typescript/tsbuildinfo first or you read a stale one.
       - name: Typecheck (non-blocking — known debt)
         run: npx tsc --noEmit
         continue-on-error: true
