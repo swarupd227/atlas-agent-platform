@@ -1659,8 +1659,8 @@ const router = Router();
     }
   });
 
-  router.get("/api/eval-suites", async (_req, res) => {
-    const suites = await storage.getEvalSuites();
+  router.get("/api/eval-suites", async (req, res) => {
+    const suites = await storage.getEvalSuites(getOrgId(req));
     res.json(suites);
   });
 

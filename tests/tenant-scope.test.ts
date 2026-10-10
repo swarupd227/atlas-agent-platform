@@ -440,4 +440,16 @@ describe("eval suites are scoped to the caller's tenant", () => {
     // The golden dataset is shared and outlives any one suite.
     expect(body).not.toContain("evalDatasets");
   });
+
+  it("the suite list route passes the caller's organization", () => {
+    // It took `_req` and called getEvalSuites() with no argument, so it served
+    // every tenant's suites while the storage filter it bypassed was tested and
+    // green. The leak was on the route, not in the query.
+    const routes = readFileSync(join(__dirname, "..", "server", "routes", "agents.ts"), "utf8");
+    const at = routes.indexOf('router.get("/api/eval-suites"');
+    expect(at, "/api/eval-suites not found").toBeGreaterThan(-1);
+    const handler = routes.slice(at, routes.indexOf("router.", at + 10));
+    expect(handler).toContain("storage.getEvalSuites(getOrgId(req))");
+    expect(handler).not.toContain("getEvalSuites()");
+  });
 });
