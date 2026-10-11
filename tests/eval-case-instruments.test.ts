@@ -162,6 +162,79 @@ describe("extractJsonObject", () => {
     expect(extractJsonObject("")).toBeNull();
     expect(extractJsonObject("{not json at all")).toBeNull();
   });
+
+  /**
+   * The two shapes that scored right answers as missing.
+   *
+   * The brace span runs from the first `{` in the whole answer to the last
+   * `}`, so anything brace-shaped elsewhere makes it span prose and fail to
+   * parse -- and the case was then reported as "no parseable JSON verdict",
+   * a missing answer rather than a wrong one. Measured on two J4 eval answers
+   * (2026-10-11), each ending in a clean block with the correct value; the
+   * same cause failed 2 of 3 structured cases in J1's suite.
+   */
+  it("finds the verdict when prose after the block contains a brace", () => {
+    const answer = [
+      "## Legal Hold Assessment",
+      "I searched 28 requests. None names this subject.",
+      "```json",
+      '{"holdPosition": "may_apply", "systemOfRecord": "Peoplesoft HCM"}',
+      "```",
+      "Note: the hold registry uses the form {matter}/{year}, which this estate does not populate.",
+    ].join("\n");
+    expect(extractJsonObject(answer)).toEqual({ holdPosition: "may_apply", systemOfRecord: "Peoplesoft HCM" });
+  });
+
+  it("finds the verdict when the answer emitted another fenced object first", () => {
+    const answer = [
+      "Assessment follows.",
+      "```risk_assessment",
+      '{"title": "Employee Erasure Request", "score": 7}',
+      "```",
+      "And the verdict:",
+      "```json",
+      '{"holdPosition": "may_apply"}',
+      "```",
+    ].join("\n");
+    // The LAST json block is the verdict; the earlier object must not win.
+    expect(extractJsonObject(answer)).toEqual({ holdPosition: "may_apply" });
+  });
+
+  it("prefers the agent's answer over an example of the shape in the prompt echo", () => {
+    const answer = [
+      "You asked me to end with:",
+      "```json",
+      '{"holdPosition": "cleared | may_apply | plainly_applies"}',
+      "```",
+      "Here is my actual verdict:",
+      "```json",
+      '{"holdPosition": "plainly_applies"}',
+      "```",
+    ].join("\n");
+    expect(extractJsonObject(answer)).toEqual({ holdPosition: "plainly_applies" });
+  });
+
+  it("still reads a bare object, and a bare fence with no language", () => {
+    expect(extractJsonObject('Verdict: {"slaBreached": true} -- done.')).toEqual({ slaBreached: true });
+    expect(extractJsonObject('```\n{"slaBreached": false}\n```')).toEqual({ slaBreached: false });
+  });
+
+  it("scores the measured answer as a comparison rather than a missing answer", () => {
+    // End to end through the scorer, which is where the symptom appeared.
+    const answer = [
+      "The records do not associate a hold with a subject.",
+      "```risk_assessment",
+      '{"score": 7}',
+      "```",
+      "```json",
+      '{"holdPosition": "may_apply"}',
+      "```",
+    ].join("\n");
+    const r = scoreStructuredCase({ holdPosition: "may_apply" }, ["holdPosition"], answer);
+    expect(r.noVerdict).toBe(false);
+    expect(r.passed).toBe(true);
+    expect(r.met).toEqual(['holdPosition = "may_apply"']);
+  });
 });
 
 describe("valueSatisfies", () => {

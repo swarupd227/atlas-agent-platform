@@ -179,18 +179,63 @@ export function classifyEvalCase(tc: { expectedOutput?: any }): CaseInstrument {
   return { kind: "none" };
 }
 
-/** The first JSON object in a model answer, fences and prose tolerated. */
+/**
+ * The agent's JSON verdict in a model answer, fences and prose tolerated.
+ *
+ * A fenced ```json block is tried FIRST, last block first, because that is
+ * where an agent asked to end with a verdict puts it. The brace span below is
+ * the fallback, and on its own it was scoring right answers as missing: it
+ * slices from the first `{` in the whole answer to the last `}`, so anything
+ * brace-shaped elsewhere makes the slice span prose and fail to parse.
+ *
+ * Measured on two J4 eval answers (2026-10-11), both of which ended in a clean
+ * ```json block carrying the correct value: one had a `}` in the prose after
+ * the block, the other emitted its own ```risk_assessment block first, so the
+ * span covered two objects and the text between them. Both scored 0 with "the
+ * agent returned no parseable JSON verdict" -- reported as a missing answer
+ * when the answer was present and right. The same cause sat behind J1's suite
+ * failing 2 of 3 structured cases.
+ *
+ * Last block first, because a prompt that shows the required shape as an
+ * example puts that example BEFORE the real answer.
+ */
 export function extractJsonObject(text: string): Record<string, any> | null {
   if (!text) return null;
+  const asObject = (raw: string): Record<string, any> | null => {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch { return null; }
+  };
+
+  // 1. Fenced blocks, last first. ```json is preferred over a bare fence.
+  const fenced = [...text.matchAll(/```[ \t]*(\w+)?[ \t]*\r?\n([\s\S]*?)```/g)]
+    .map((m) => ({ lang: (m[1] ?? "").toLowerCase(), body: m[2] }));
+  for (const list of [fenced.filter((f) => f.lang === "json"), fenced]) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const found = asObject(list[i].body.trim());
+      if (found) return found;
+    }
+  }
+
+  // 2. The brace span, as before, for an answer that fenced nothing.
   const stripped = stripJsonFences(text).trim();
   for (const candidate of [stripped, text]) {
     const start = candidate.indexOf("{");
     const end = candidate.lastIndexOf("}");
     if (start < 0 || end <= start) continue;
-    try {
-      const parsed = JSON.parse(candidate.slice(start, end + 1));
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-    } catch { /* fall through to the next candidate */ }
+    const found = asObject(candidate.slice(start, end + 1));
+    if (found) return found;
+  }
+
+  // 3. A span that over-reached: walk the last `{` back through each earlier
+  //    one until something parses, so a second object in the answer no longer
+  //    hides the verdict.
+  for (let start = text.lastIndexOf("{"); start >= 0; start = text.lastIndexOf("{", start - 1)) {
+    const end = text.indexOf("}", start) < 0 ? -1 : text.lastIndexOf("}");
+    if (end <= start) continue;
+    const found = asObject(text.slice(start, end + 1));
+    if (found) return found;
   }
   return null;
 }
