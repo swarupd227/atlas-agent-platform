@@ -2954,7 +2954,7 @@ const router = Router();
   router.post("/api/skills/:id/eval/run", async (req, res) => {
     try {
       const skillId = req.params.id;
-      const skill = await storage.getSkill(skillId);
+      const skill = await storage.getSkill(skillId, getOrgId(req));
       if (!skill) return res.status(404).json({ error: "Skill not found" });
 
       let suites = await storage.getEvalSuitesBySkill(skillId);

@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementScope, mcpAppScope, mcpElicitationScope, outcomeScope, kpiScope, teamAgentScope, dagRunScope, knowledgeBaseScope, agentKnowledgeLinkScope, skillVersionScope, policyScope, policyExceptionScope, evalSuiteScope, evalRunScope, deploymentScope } from "./tenant-scope";
+import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementScope, mcpAppScope, mcpElicitationScope, outcomeScope, kpiScope, teamAgentScope, dagRunScope, knowledgeBaseScope, agentKnowledgeLinkScope, skillVersionScope, policyScope, policyExceptionScope, evalSuiteScope, evalRunScope, deploymentScope, agentScope, skillScope } from "./tenant-scope";
 import { aiAssistRateLimiter } from "./rate-limits";
 import { checkPermission } from "./permissions";
 import { createServer, type Server } from "http";
@@ -321,6 +321,9 @@ export async function registerRoutes(
   // its tools/resources/prompts, a blueprint or a blueprint's graph can act on
   // another organization's row, whichever router ends up handling it.
   app.use("/api/mcp-servers/:id", mcpServerScope);
+  // An agent's sub-resources (playground sessions, channels, triggers, evals, versions, ...) and a skill's, whichever router serves them.
+  app.use("/api/agents/:id", agentScope);
+  app.use("/api/skills/:id", skillScope);
   // After the tenant check, so another tenant's connector is a 404, never a policy answer about it.
   app.use("/api/mcp-servers/:id", mcpServerMutationGate);
   app.use("/api/mcp-tools/:id", mcpServerChildScope("tool", ["by-risk"]));

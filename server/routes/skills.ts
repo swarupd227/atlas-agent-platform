@@ -1160,7 +1160,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
 
   router.post("/api/skills/:id/validate-ontology-tags", async (req, res) => {
     try {
-      const skill = await storage.getSkill(req.params.id as string);
+      const skill = await storage.getSkill(req.params.id as string, getOrgId(req));
       if (!skill) return res.status(404).json({ error: "Skill not found" });
 
       const tagsToValidate: string[] = req.body.tags || (skill.tags as string[] | null) || [];
@@ -1203,6 +1203,8 @@ Return ONLY a valid JSON object with a "skills" array.`,
     try {
       const skillId = req.params.id as string;
       const force = req.query.force === "true";
+      // A skill that is not this organization's is not here to delete (and its absence is not a success).
+      if (!(await storage.getSkill(skillId, getOrgId(req)))) return res.status(404).json({ error: "Skill not found" });
       // Referential integrity: agents may preload this skill; deleting it
       // silently orphans those references and the runtime then drops the skill
       // with no signal. Block unless the caller explicitly cascades.

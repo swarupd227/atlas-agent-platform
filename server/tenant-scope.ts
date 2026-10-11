@@ -159,6 +159,47 @@ export function mcpServerChildScope(kind: ChildKind, reserved: string[] = []) {
   };
 }
 
+/**
+ * Agents. Owner = organizationId, or the default org for a legacy NULL row (as blueprints). Mounted at /api/agents/:id, so it covers
+ * every route below an agent whatever that route calls its parameter, and a route added later is covered without remembering to be.
+ * An id that is not an agent falls through, so a literal second segment ("wizard") and a missing agent answer as they always did.
+ */
+export async function agentScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id) return next();
+    const agent = await storage.getAgent(id);
+    if (!agent) return next();
+    const owner = agent.organizationId ?? getDefaultOrgId() ?? null;
+    // No owner and no default org at all: a database that never seeded an organization, so there is nothing to separate.
+    if (owner === null || resolveRequestOrgId(req) === owner) return next();
+    return notFound(res, "Agent");
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Skills. Owner = organizationId. A skill with none is the platform's: anyone may read it, but changing it changes it for every
+ * organization, so only the platform's own organization may. Mounted at /api/skills/:id.
+ */
+export async function skillScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    if (!id) return next();
+    const skill = await storage.getSkill(id);
+    if (!skill) return next();
+    if (!skill.organizationId) {
+      if (READ_METHODS.has(req.method) || isPlatformOperatorOrg(req)) return next();
+      return res.status(403).json({ message: "This skill belongs to the platform and is shared by every organization, so it can only be changed from the platform's own organization." });
+    }
+    if (resolveRequestOrgId(req) === skill.organizationId) return next();
+    return notFound(res, "Skill");
+  } catch (err) {
+    next(err);
+  }
+}
+
 const BLUEPRINT_RESERVED = new Set(["validate"]);
 
 async function authorizeBlueprintId(req: Request, res: Response, blueprintId: string | undefined): Promise<boolean> {
