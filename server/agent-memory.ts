@@ -196,39 +196,77 @@ export async function activeNotesForPrompt(orgId: string | null | undefined, age
 }
 
 /**
- * The memory section of an agent's prompt: "" when memory is off for this agent,
- * otherwise the approved notes plus a line on the memory tool. Cut to a token
- * budget (4 characters a token, at least one line kept) the way the other
- * context layers are. Throws on a failed read -- the caller decides what that
- * costs the run; it must not be silent, or a broken layer looks like "no notes".
+ * Why memory is on or off for one run, so a trace can say it instead of the
+ * absence of a section having to be explained afterwards.
+ *   on               -- the flag is on and the agent opted in
+ *   agent-not-opted-in -- runtimeConfig.agentMemory.enabled is not true
+ *   flag-off         -- the platform flag is not "on" (or has no row)
+ *   flag-unreadable  -- reading the flag threw; treated as off
  */
-export async function memoryPromptLayer(
-  input: { runtimeConfig: Record<string, any> | null | undefined; orgId: string | null | undefined; agentId: string; budgetTokens: number },
-  deps: { store?: MemoryStore; isEnabled?: (runtimeConfig: Record<string, any> | null | undefined) => Promise<boolean>; now?: number } = {},
-): Promise<string> {
-  if (!(input.budgetTokens > 0)) return "";
-  if (!(await (deps.isEnabled ?? isAgentMemoryEnabled)(input.runtimeConfig))) return "";
-  const notes = await activeNotesForPrompt(input.orgId, input.agentId, deps.store, deps.now);
-  const lines = renderMemoryBlock(notes, { toolOffered: true }).split("\n");
-  const kept: string[] = [];
-  let used = 0;
-  for (const line of lines) {
-    const tokens = Math.ceil(line.length / 4);
-    if (kept.length > 0 && used + tokens > input.budgetTokens) break;
-    kept.push(line);
-    used += tokens;
+export type MemoryGateReason = "on" | "agent-not-opted-in" | "flag-off" | "flag-unreadable";
+
+export async function memoryGate(runtimeConfig: Record<string, any> | null | undefined): Promise<{ enabled: boolean; reason: MemoryGateReason; flagValue?: string; error?: string }> {
+  if (runtimeConfig?.agentMemory?.enabled !== true) return { enabled: false, reason: "agent-not-opted-in" };
+  try {
+    const row = await (storage as { getPlatformSetting?: (k: string) => Promise<{ value?: string | null } | undefined> }).getPlatformSetting?.(AGENT_MEMORY_SETTING);
+    const flagValue = String(row?.value ?? "").trim().toLowerCase();
+    return flagValue === "on" ? { enabled: true, reason: "on", flagValue } : { enabled: false, reason: "flag-off", flagValue };
+  } catch (err: any) {
+    return { enabled: false, reason: "flag-unreadable", error: String(err?.message ?? err).slice(0, 200) };
   }
-  return kept.join("\n");
 }
 
 /** On when the platform flag is on AND this agent has opted in. */
 export async function isAgentMemoryEnabled(runtimeConfig: Record<string, any> | null | undefined): Promise<boolean> {
-  if (runtimeConfig?.agentMemory?.enabled !== true) return false;
+  return (await memoryGate(runtimeConfig)).enabled;
+}
+
+/** What the memory layer did for one run. Recorded on the trace's provenance. */
+export interface MemoryLayerReport {
+  /** added: a section went into the prompt. off: gate closed. no-budget: budget <= 0. failed: the read threw. */
+  state: "added" | "off" | "no-budget" | "failed";
+  gate?: MemoryGateReason;
+  flagValue?: string;
+  budgetTokens: number;
+  orgPresent: boolean;
+  notes: number;
+  chars: number;
+  error?: string;
+}
+
+/**
+ * The memory section of an agent's prompt, with a report of what happened.
+ * text is "" when memory is off for this agent, otherwise the approved notes plus
+ * a line on the memory tool, cut to a token budget (4 characters a token, at
+ * least one line kept) the way the other context layers are. A failed read does
+ * not throw: it returns state "failed" with the message, so a broken layer is
+ * recorded as broken instead of looking like "no notes".
+ */
+export async function memoryPromptLayer(
+  input: { runtimeConfig: Record<string, any> | null | undefined; orgId: string | null | undefined; agentId: string; budgetTokens: number },
+  deps: { store?: MemoryStore; gate?: typeof memoryGate; now?: number } = {},
+): Promise<{ text: string; report: MemoryLayerReport }> {
+  const report: MemoryLayerReport = { state: "off", budgetTokens: input.budgetTokens, orgPresent: !!input.orgId, notes: 0, chars: 0 };
   try {
-    const row = await (storage as { getPlatformSetting?: (k: string) => Promise<{ value?: string | null } | undefined> }).getPlatformSetting?.(AGENT_MEMORY_SETTING);
-    return String(row?.value ?? "").trim().toLowerCase() === "on";
-  } catch {
-    return false;
+    if (!(input.budgetTokens > 0)) return { text: "", report: { ...report, state: "no-budget" } };
+    const gate = await (deps.gate ?? memoryGate)(input.runtimeConfig);
+    report.gate = gate.reason;
+    if (gate.flagValue !== undefined) report.flagValue = gate.flagValue;
+    if (!gate.enabled) return { text: "", report: { ...report, ...(gate.error ? { state: "failed" as const, error: gate.error } : {}) } };
+    const notes = await activeNotesForPrompt(input.orgId, input.agentId, deps.store, deps.now);
+    const lines = renderMemoryBlock(notes, { toolOffered: true }).split("\n");
+    const kept: string[] = [];
+    let used = 0;
+    for (const line of lines) {
+      const tokens = Math.ceil(line.length / 4);
+      if (kept.length > 0 && used + tokens > input.budgetTokens) break;
+      kept.push(line);
+      used += tokens;
+    }
+    const text = kept.join("\n");
+    return { text, report: { ...report, state: "added", notes: notes.length, chars: text.length } };
+  } catch (err: any) {
+    return { text: "", report: { ...report, state: "failed", error: String(err?.message ?? err).slice(0, 200) } };
   }
 }
 

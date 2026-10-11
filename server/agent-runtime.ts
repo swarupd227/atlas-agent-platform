@@ -18,7 +18,7 @@ import { currentLlmAbortSignal } from "./llm-abort-context";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
 import { resolveReadableSkillSets, planSkillContext, skillProceduresPrompt, skillToolsFor, skillCatalogPrompt, isBuiltinSkillTool, DEFAULT_SKILL_INLINE_BUDGET_TOKENS } from "./builtin-skill-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
-import { isAgentMemoryEnabled, memoryPromptLayer } from "./agent-memory";
+import { isAgentMemoryEnabled, memoryPromptLayer, type MemoryLayerReport } from "./agent-memory";
 import { memoryToolsFor } from "./builtin-memory-tools";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
@@ -157,6 +157,8 @@ export interface RuntimeProgressEvent {
 export interface BuildRuntimeContextResult {
   context: string;
   sectionMetrics: ContextSectionMetric[];
+  /** What the governed-memory layer did for this run (server/agent-memory.ts). */
+  memoryLayer?: MemoryLayerReport;
 }
 
 export function estimateTokenCount(text: string): number {
@@ -637,13 +639,18 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
 
   // Governed memory: the notes a person approved for this agent, framed as data
   // (server/agent-memory.ts). Only when the platform flag is on and the agent has
-  // opted in. A failed read adds nothing rather than failing the run, but it is
-  // logged: a silent failure here reads as "no notes" and hides a broken layer.
+  // opted in. A failed read adds nothing rather than failing the run, but what
+  // happened is returned and recorded on the trace's provenance: a silent
+  // failure here reads as "no notes" and hides a broken layer.
+  let memoryLayerReport: MemoryLayerReport | undefined;
   try {
     const memoryLayer = await memoryPromptLayer({ runtimeConfig: agent.runtimeConfig, orgId: agent.orgId, agentId: agent.agentId, budgetTokens: layerBudgets.memory });
-    if (memoryLayer) trackSection("memory", memoryLayer);
+    memoryLayerReport = memoryLayer.report;
+    if (memoryLayer.text) trackSection("memory", memoryLayer.text);
+    if (memoryLayer.report.state === "failed") console.warn(`[agent-runtime] ${agent.agentName}: memory layer skipped: ${memoryLayer.report.error}`);
   } catch (err: any) {
     console.warn(`[agent-runtime] ${agent.agentName}: memory layer skipped: ${err?.message ?? err}`);
+    memoryLayerReport = { state: "failed", budgetTokens: layerBudgets.memory, orgPresent: !!agent.orgId, notes: 0, chars: 0, error: String(err?.message ?? err).slice(0, 200) };
   }
 
   try {
@@ -713,7 +720,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     trackSection("blueprint_workflow", bpLines.join("\n"));
   }
 
-  return { context: sections.join("\n"), sectionMetrics };
+  return { context: sections.join("\n"), sectionMetrics, memoryLayer: memoryLayerReport };
 }
 
 const activeAgents = new Map<string, { agent: RuntimeAgent }>();
@@ -4913,6 +4920,8 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
     fullProvenanceSnapshot = {
       ...fullProvenanceSnapshot,
       memoryIdsLoaded,
+      // Whether the governed-memory section reached the prompt, and if not why.
+      ...(contextResult?.memoryLayer ? { memoryLayer: contextResult.memoryLayer } : {}),
       memorySummaryHash,
       contextProfileId,
       contextProfileVersion,
