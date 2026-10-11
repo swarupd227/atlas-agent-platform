@@ -30,7 +30,15 @@ interface RunView {
   error: string | null;
   costUsd: number;
   toolCalls: number;
-  steps: Array<{ nodeId: string; wave: number; revision: number; label: string; status: string; error: string | null; durationMs: number | null; html: boolean }>;
+  // `summary` is what the step concluded (services.ts stepSummary). It was
+  // omitted here while the service computed it, so the field existed in the
+  // payload and was invisible to this tool: asked what a journey proposed,
+  // Astra could only answer "I don't have visibility into that at this level",
+  // which is true of its input and reads as evasion. Live 2026-10-11 on a J1
+  // run that exited on its "immaterial" branch -- the branch where the final
+  // answer is a skipped step, so `answer` carries nothing and the conclusion
+  // lives only in these summaries.
+  steps: Array<{ nodeId: string; wave: number; revision: number; label: string; status: string; error: string | null; durationMs: number | null; html: boolean; summary: string | null }>;
   pending: { approvalId: string; label: string | null; description: string | null } | null;
   answer: string | null;
 }
@@ -82,6 +90,21 @@ export function runProof(run: RunView, decided: string[] = []): Partial<ProofEnv
   };
 }
 
+/**
+ * What each step that ran actually concluded, in run order.
+ *
+ * Only steps carrying a summary: a step that ran without producing one has
+ * nothing to say here and listing it would pad the payload with its own label.
+ * Skipped and failed steps are reported separately and by name, so leaving
+ * them out of this list never hides one -- `skippedSteps` and `failedSteps`
+ * still name every one of them.
+ */
+function stepResults(run: RunView): Array<{ step: string; status: string; concluded: string }> {
+  return run.steps
+    .filter((s) => s.summary && s.summary.trim().length > 0)
+    .map((s) => ({ step: s.label, status: s.status, concluded: s.summary!.trim() }));
+}
+
 async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResult, notes: string[], decided: string[]): Promise<ToolRunResult> {
   const run: RunView | null = await ctx.services.getTeamRun(ctx.orgId, ctx.role, dagRunId);
   if (!run) throw new Error("That team run is no longer available in this organization.");
@@ -121,6 +144,7 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
     };
   }
 
+  const concluded = stepResults(run);
   return {
     payload: {
       runId: run.id,
@@ -139,6 +163,13 @@ async function report(ctx: AstraToolContext, dagRunId: string, watch: WatchResul
       failedSteps: run.steps.filter((s) => s.status === "failed" || s.status === "timeout").map((s) => `${s.label}${s.error ? `: ${s.error}` : ""}`),
       skippedSteps: run.steps.filter((s) => s.status === "skipped").map((s) => s.label),
       ...(run.error ? { error: run.error } : {}),
+      // What each step concluded, not just whether it ran. `answer` is drawn
+      // from the run's TERMINAL steps, so a run that exits on an early branch
+      // -- judged immaterial, declined, no candidate found -- has no answer at
+      // all, and the work it did do is only here. Without this a journey that
+      // behaved correctly reports as "13 steps, 3 skipped, no answer", and the
+      // proposal it actually made cannot be told to the person who asked for it.
+      ...(concluded.length ? { stepResults: concluded } : {}),
       answer: run.answer ? (run.answer.length > 4000 ? `${run.answer.slice(0, 4000)}… (more in the run view)` : run.answer) : null,
       costUsd: run.costUsd,
     },
@@ -253,7 +284,15 @@ export const getTeamRunTool: AstraTool<{ runId: string }> = {
         team: run.team.name,
         status: run.status,
         stage: `${run.currentWave} of ${run.totalWaves}`,
-        steps: run.steps.map((s) => `${s.label}: ${s.status}${s.error ? ` (${s.error.slice(0, 120)})` : ""}`),
+        // Label, status, and what the step concluded. The summary was dropped
+        // here, so looking a run up again could only repeat its step list back
+        // -- the one question a person asks about a finished run, "what did it
+        // find?", was the one this answer could not reach.
+        steps: run.steps.map((s) => {
+          const err = s.error ? ` (${s.error.slice(0, 120)})` : "";
+          const said = s.summary && s.summary.trim().length > 0 ? ` — ${s.summary.trim()}` : "";
+          return `${s.label}: ${s.status}${err}${said}`;
+        }),
         ...(run.pending ? { waitingOn: run.pending.label, approvalId: run.pending.approvalId } : {}),
         ...(run.error ? { error: run.error } : {}),
         answer: run.answer ? (run.answer.length > 4000 ? `${run.answer.slice(0, 4000)}…` : run.answer) : null,

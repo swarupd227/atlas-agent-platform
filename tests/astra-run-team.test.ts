@@ -216,6 +216,88 @@ describe("get_team_run", () => {
  * The harness emits one of each kind, so this exercises the tool's own
  * narration rather than a copy of it.
  */
+/**
+ * What the run concluded, on the branch where there is no answer.
+ *
+ * `answer` is drawn from the run's TERMINAL steps. A journey that exits early
+ * -- judged immaterial, declined, no candidate found -- skips those, so the
+ * answer is null and the work it did do lives only in each step's summary.
+ * The service computed those summaries all along; this tool's own RunView type
+ * omitted the field, so they never reached the model. Asked what a J1 run had
+ * proposed, Astra could only say "I don't have visibility into that at this
+ * level" -- true of its input, and indistinguishable from evasion (live
+ * 2026-10-11, INC0143139).
+ */
+describe("a run that ends on an early branch", () => {
+  function immaterial() {
+    const steps = [
+      { nodeId: "n1", wave: 1, revision: 0, label: "Read incident", status: "completed", error: null, durationMs: 5, html: false,
+        summary: "INC0143139 is recorded as Security / Duo SSO at priority 5 - Planning, owned by WW_SRVCNOW_AG_GSCGHD_GG." },
+      { nodeId: "n2", wave: 2, revision: 0, label: "Propose correction", status: "completed", error: null, durationMs: 5, html: false,
+        summary: "Proposes priority 2 - High and assignment group WW_SRVCNOW_AG_SECURITY_GG, with Cisco Duo as the affected application." },
+      { nodeId: "n3", wave: 3, revision: 0, label: "Decide if material", status: "completed", error: null, durationMs: 5, html: false,
+        summary: "Immaterial: the record already carries the categorisation and routing the evidence supports." },
+      // The steps the branch didn't reach. These are what `answer` would have
+      // come from, which is why it is null here.
+      { nodeId: "n4", wave: 4, revision: 0, label: "Apply correction", status: "skipped", error: null, durationMs: null, html: false, summary: null },
+      { nodeId: "n5", wave: 5, revision: 0, label: "Note the diagnosis", status: "skipped", error: null, durationMs: null, html: false, summary: null },
+    ];
+    const view = () => ({
+      id: "run-1", team: { id: "team-1", name: "Fleet Team" }, status: "completed", currentWave: 5, totalWaves: 5,
+      error: null, costUsd: 0.17, toolCalls: 7, steps, answer: null, pending: null,
+    });
+    return {
+      run: { id: "run-1" }, decisions: [],
+      services: {
+        listTeams: vi.fn(async () => [{ id: "team-1", name: "Fleet Team", status: "active", riskTier: "MEDIUM", blueprintId: "bp-1" }]),
+        verifyTeamWiring: vi.fn(async () => ({
+          team: { id: "team-1", name: "Fleet Team" }, steps: ["Read incident", "Propose correction"], connectors: [],
+          report: { ready: true, blockers: 0, warnings: 0, gates: 0, agentsChecked: 5, totalWaves: 5, issues: [] },
+        })),
+        startTeamRun: vi.fn(async () => ({ dagRunId: "run-1", totalWaves: 5, request: "x" })),
+        followTeamRun: vi.fn(async () => ({ state: "finished", status: "completed" })),
+        getTeamRun: vi.fn(async (org: string, _r: string, id: string) => (org === ORG && id === "run-1" ? view() : null)),
+        getApprovalForDecision: vi.fn(async () => null),
+        getUserDisplayName: vi.fn(async () => "admin"),
+        decideApprovalAs: vi.fn(async () => ({ approval: {}, outcomeStatus: null })),
+      },
+    };
+  }
+
+  it("reports what each step concluded, so the proposal survives a null answer", async () => {
+    let seen: any = null;
+    const t = setup([runIt, (m) => { seen = lastTool(m).result; return done("Reported."); }], immaterial() as any);
+    await runTurn(t.deps, as("admin"), t.threadId, "Run it", t.onEvent);
+    await resolveAction(t.deps, as("admin"), t.threadId, (await pending(t)).id, "confirm", t.onEvent);
+
+    // The gap this closes: there is no answer to fall back on.
+    expect(seen.answer).toBeNull();
+    const concluded = seen.stepResults.map((s: any) => `${s.step}: ${s.concluded}`).join(" | ");
+    expect(concluded).toContain("Propose correction: Proposes priority 2 - High");
+    expect(concluded).toContain("WW_SRVCNOW_AG_SECURITY_GG");
+    expect(concluded).toContain("Immaterial: the record already carries");
+    // A step with nothing to say is left out here, and still named as skipped,
+    // so leaving it out of this list never hides one.
+    expect(seen.stepResults.map((s: any) => s.step)).not.toContain("Apply correction");
+    expect(seen.skippedSteps).toEqual(["Apply correction", "Note the diagnosis"]);
+  });
+
+  it("get_team_run carries the conclusion too, not just the step's status", async () => {
+    let seen: any = null;
+    const t = setup([
+      { toolCalls: [{ name: "get_team_run", arguments: { runId: "run-1" } }] },
+      (m) => { seen = lastTool(m).result; return done("Done."); },
+    ], immaterial() as any);
+    await runTurn(t.deps, as("admin"), t.threadId, "What did run-1 find?", t.onEvent);
+
+    expect(seen.found).toBe(true);
+    const line = seen.steps.find((s: string) => s.startsWith("Propose correction"));
+    expect(line).toContain("Proposes priority 2 - High");
+    // A step that concluded nothing still reads as its status alone.
+    expect(seen.steps).toContain("Apply correction: skipped");
+  });
+});
+
 describe("scaffolding steps", () => {
   it("are left out of the narration while the real step is kept", async () => {
     const t = setup([runIt, (m) => done("Ran it.")]);
