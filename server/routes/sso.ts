@@ -8,6 +8,7 @@
 // The user name and password routes (routes/auth.ts) are not touched by any of this.
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
+import { clientAddress } from "../client-address";
 import { eq } from "drizzle-orm";
 import { users } from "@shared/schema";
 import { db } from "../db";
@@ -32,6 +33,7 @@ const ssoLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many sign-in attempts. Try again in a few minutes." },
+  keyGenerator: (req) => clientAddress(req),
 });
 const limit = (req: Request, res: Response, next: () => void) => ssoLimiter(req, res, next);
 

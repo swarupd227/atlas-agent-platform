@@ -12,6 +12,7 @@ import { resolveAgentIndustry } from "../agent-industry";
 import { db } from "../db";
 import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
 import { llmInvokeRateLimiter } from "../rate-limits";
+import { clientAddress } from "../client-address";
 import { computeWaves, DAGExecutionEngine, startTeamAgentDagRun, runTeamAgentDag, extractFinalOutputText, deriveRunStatus, inferOrchestrationPattern, cancelTeamAgentDagRun, rerunTeamAgentDagRunFrom, RerunRefusedError } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
 import { RunInputError } from "@shared/run-input";
@@ -1488,7 +1489,7 @@ function hashCode(str: string): number {
         return res.status(422).json({ error: "agent_not_deployed", message: "Agent is not deployed" });
       }
 
-      const rateLimitKey = token + ":" + (req.ip || "unknown");
+      const rateLimitKey = token + ":" + clientAddress(req);
       if (!checkWidgetRateLimit(rateLimitKey)) {
         return res.status(429).json({ error: "rate_limited", message: "Too many messages. Please wait a moment before sending another." });
       }

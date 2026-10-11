@@ -24,6 +24,7 @@ import { initSecretStore } from "./secret-store";
 import { pool } from "./db";
 import { flushOtlp } from "./otlp-export";
 import { validateEnv, demosEnabled } from "./config";
+import { trustProxyHops } from "./client-address";
 
 // Fail fast on misconfiguration before anything else starts.
 validateEnv();
@@ -42,6 +43,10 @@ process.on("unhandledRejection", (reason) => {
 });
 
 const app = express();
+// How many proxies sit in front of this server (ASTRA_TRUST_PROXY): the client's real address, for the rate limits, is then read
+// from X-Forwarded-For. Unset trusts nothing, so a caller cannot make up an address.
+const trustHops = trustProxyHops(process.env);
+if (trustHops !== null) app.set("trust proxy", trustHops);
 const httpServer = createServer(app);
 
 // Graceful shutdown: stop accepting traffic, drain, close DB pool, exit.

@@ -14,9 +14,18 @@
  * generous enough not to trip during normal E2E test runs (which fire a
  * modest, non-bursty number of requests per suite) while still bounding a
  * genuine abuse loop.
+ *
+ * What each is counted against matters as much as the limit:
+ *   - never a header the caller sets (a limit keyed on one is dodged by changing it on every request);
+ *   - an address only through clientAddress() (server/client-address.ts), because behind a proxy every client has the proxy's
+ *     address unless ASTRA_TRUST_PROXY says how many proxies there are;
+ *   - sign-in per (address, user name), so guessing one person's password cannot lock everybody else out, with a higher cap
+ *     per address against trying many names.
  */
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit from "express-rate-limit";
 import type { Request, Response, NextFunction } from "express";
+import { getSecurityMode } from "./auth";
+import { clientAddress } from "./client-address";
 
 // express-rate-limit's rateLimit() returns RequestHandler & {extra methods},
 // an intersection type that (unlike a plain arrow middleware such as
@@ -29,14 +38,52 @@ function asMiddleware(limiter: ReturnType<typeof rateLimit>) {
   return (req: Request, res: Response, next: NextFunction) => limiter(req, res, next);
 }
 
-const authLimiter = rateLimit({
+/** The signed-in caller as a counting key, or null when there is none (demo mode, or a route that runs before sign-in). */
+function callerKey(req: Request): string | null {
+  const who = req.authUser;
+  if (!who) return null;
+  // An API key counts as the agent it belongs to, so minting more keys for one agent buys no extra budget.
+  if (who.apiKeyAgentId) return `agent:${who.apiKeyAgentId}`;
+  return who.userId ? `user:${who.userId}` : null;
+}
+
+/**
+ * Agent runs and AI assist: the signed-in caller; failing that, the address. Demo mode has no signed-in user, so there the demo
+ * role header also splits the budget (one noisy role must not starve another in the same demo); outside demo mode that header is
+ * the caller's to set and is never part of a key.
+ */
+export function spendKey(req: Request): string {
+  const caller = callerKey(req);
+  if (caller) return caller;
+  const address = clientAddress(req);
+  return getSecurityMode() === "demo" ? `${address}:${(req.headers["x-role"] as string) || "anon"}` : address;
+}
+
+// Sign-in: a user name is the same user whatever its case or spacing.
+const signInName = (req: Request): string => {
+  const raw = (req.body as { username?: unknown } | undefined)?.username;
+  return (typeof raw === "string" ? raw : "").trim().toLowerCase().slice(0, 100);
+};
+
+const authPerUserLimiter = rateLimit({
   windowMs: 15 * 60_000,
   limit: 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many authentication attempts. Try again in a few minutes." },
+  keyGenerator: (req) => `${clientAddress(req)}|${signInName(req)}`,
 });
-export const authRateLimiter = asMiddleware(authLimiter);
+// Trying many different names from one address: not the same budget as guessing one person's password, but not unlimited either.
+const authPerAddressLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many authentication attempts. Try again in a few minutes." },
+  keyGenerator: (req) => clientAddress(req),
+});
+export const authRateLimiter = (req: Request, res: Response, next: NextFunction) =>
+  authPerUserLimiter(req, res, (err?: unknown) => (err ? next(err) : authPerAddressLimiter(req, res, next)));
 
 const llmInvokeLimiter = rateLimit({
   windowMs: 10 * 60_000,
@@ -44,12 +91,7 @@ const llmInvokeLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many agent-run requests from this client. Try again shortly." },
-  // Demo mode has no per-user session — key on IP + the demo role header so
-  // one noisy role doesn't starve the rate budget for another in the same demo.
-  // ipKeyGenerator normalizes IPv6 addresses to a /56 subnet so a single
-  // client can't rotate suffixes to dodge the limit (and satisfies the
-  // library's own validation against raw req.ip use).
-  keyGenerator: (req) => `${ipKeyGenerator(req.ip || "")}:${(req.headers["x-role"] as string) || "anon"}`,
+  keyGenerator: spendKey,
 });
 export const llmInvokeRateLimiter = asMiddleware(llmInvokeLimiter);
 
@@ -64,12 +106,12 @@ const aiAssistLimiter = rateLimit({
   legacyHeaders: false,
   message: { message: "Too many AI assist requests. Try again shortly." },
   skip: (req) => req.method === "GET",
-  keyGenerator: (req) => {
-    const userId = (req as any).authUser?.userId as string | undefined;
-    return userId ? `user:${userId}` : `${ipKeyGenerator(req.ip || "")}:${(req.headers["x-role"] as string) || "anon"}`;
-  },
+  keyGenerator: spendKey,
 });
 export const aiAssistRateLimiter = asMiddleware(aiAssistLimiter);
+
+/** MCP tool calls: the agent behind the key, else the cleaned address. */
+export const mcpToolCallKey = (req: Request): string => (req as any).authUser?.apiKeyAgentId || clientAddress(req);
 
 const mcpToolCallLimiter = rateLimit({
   windowMs: 5 * 60_000,
@@ -80,8 +122,8 @@ const mcpToolCallLimiter = rateLimit({
   // Keyed by the authenticated agent/key id (set by authMiddleware's bearer
   // branch before this runs), not IP -- callers can share IPs/proxies, and
   // the thing being protected is DB load per agent, not a per-network budget.
-  // Falls back to IP only in the case this ever ran before auth (shouldn't
+  // Falls back to the address only in the case this ever ran before auth (shouldn't
   // happen given mount order, but avoids a keyGenerator crash if it did).
-  keyGenerator: (req) => (req as any).authUser?.apiKeyAgentId || ipKeyGenerator(req.ip || ""),
+  keyGenerator: mcpToolCallKey,
 });
 export const mcpToolCallRateLimiter = asMiddleware(mcpToolCallLimiter);

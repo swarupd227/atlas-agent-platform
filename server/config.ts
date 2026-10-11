@@ -8,6 +8,7 @@ import { describeSso, validateSsoEnv } from "./sso";
 import { describeScim, validateScimEnv } from "./scim";
 import { describeAuditKms, validateAuditKmsEnv } from "./audit-kms";
 import { describeSecretStore, validateSecretStoreEnv } from "./secret-store";
+import { describeTrustProxy, validateTrustProxyEnv } from "./client-address";
 import { INTEGRATION_REGISTRY } from "./integrations/registry";
 
 /** True when demo & mock surfaces (/demo-api, /api/mock, mock-MCP, demo seeders) should be active. */
@@ -53,6 +54,8 @@ export function validateEnv(): void {
   errors.push(...validateAuditKmsEnv());
   // A secret store set up wrongly would send credentials nowhere (or fail at the first connector): stop here instead.
   errors.push(...validateSecretStoreEnv());
+  // A wrong proxy count would count every client as one (or believe a forged address): stop here instead.
+  errors.push(...validateTrustProxyEnv());
 
   if (errors.length > 0) {
     console.error(
@@ -64,5 +67,5 @@ export function validateEnv(): void {
   console.log(
     `[config] security_mode=${getSecurityMode()} demos_enabled=${demosEnabled()} node_env=${process.env.NODE_ENV ?? "unset"}`,
   );
-  console.log(`[config] ${describeOutboundPolicy()} ${describeLockdown()} ${describeOtlp()} ${describeSso()} ${describeScim()} ${describeAuditKms()} ${describeSecretStore()}`);
+  console.log(`[config] ${describeOutboundPolicy()} ${describeLockdown()} ${describeOtlp()} ${describeSso()} ${describeScim()} ${describeAuditKms()} ${describeSecretStore()} ${describeTrustProxy()}`);
 }
