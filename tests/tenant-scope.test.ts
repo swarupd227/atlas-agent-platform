@@ -479,8 +479,8 @@ describe("eval suites are scoped to the caller's tenant", () => {
     expect(body, "pruneOrphanedEvalSuites not found").not.toBe("");
     // Both halves of "orphan", and the sentinel that is NOT one.
     expect(body).toContain("isNull(evalSuites.organizationId)");
-    expect(body).toContain('s.agentId === "system"');
-    expect(body).toContain("if (!owner) candidates.push(s)");
+    expect(body).toContain('s.agentId !== "system"');
+    expect(body).toContain("named.filter((s) => !stillThere.has(s.agentId as string))");
     // Same cascade as the single delete, case results included.
     expect(body).toContain("db.delete(evalCaseResults)");
     expect(body).toContain("db.delete(evalRuns)");
@@ -488,5 +488,49 @@ describe("eval suites are scoped to the caller's tenant", () => {
     expect(body).toContain("db.delete(evalSuites)");
     // A truncated sweep must not read as a finished one.
     expect(body).toContain("more: unowned.length === limit");
+  });
+
+  it("spares an orphan that recorded something, and says it spared it", () => {
+    // 43 of the 832 hold 117 case results and 29 never-terminated runs. The
+    // first dry run reported zero for all of them, because it read
+    // /api/eval-runs, which drops runs whose agent is gone. Scaffolding is
+    // residue; a suite holding measurements is evidence.
+    const storageSrc = readFileSync(join(__dirname, "..", "server", "storage.ts"), "utf8");
+    const body = methodBody(storageSrc, "async pruneOrphanedEvalSuites(");
+    expect(body).toContain("row.runs > 0 || row.caseResults > 0");
+    expect(body).toContain("opts.includeMeasured");
+    // Spared must be reported, not merely omitted: a caller cannot otherwise
+    // tell "left alone" from "never found".
+    expect(body).toContain("spared: spared.length");
+    expect(body).toContain("sparedDetail: spared");
+  });
+
+  it("pages the scan, so a dry run can cover the whole set", () => {
+    // Without an offset every dry run returns the same first N, and the census
+    // a person approves can never be the whole census.
+    const storageSrc = readFileSync(join(__dirname, "..", "server", "storage.ts"), "utf8");
+    const body = methodBody(storageSrc, "async pruneOrphanedEvalSuites(");
+    expect(body).toContain(".offset(offset)");
+    // Stable order, or two pages can overlap and miss rows between them.
+    expect(body).toContain("orderBy(asc(evalSuites.id))");
+
+    const routes = readFileSync(join(__dirname, "..", "server", "routes", "agents.ts"), "utf8");
+    const at = routes.indexOf('router.post("/api/eval-suites/prune-orphans"');
+    const handler = routes.slice(at, routes.indexOf("router.", at + 10));
+    expect(handler).toContain("offset: Number(req.body?.offset)");
+  });
+
+  it("counts its rows in set queries, not one suite at a time", () => {
+    // The per-suite version cost 196-544ms each, so the full sweep passed
+    // Azure's request timeout and the route only answered for small limits.
+    const storageSrc = readFileSync(join(__dirname, "..", "server", "storage.ts"), "utf8");
+    const body = methodBody(storageSrc, "async pruneOrphanedEvalSuites(");
+    for (const q of ["inArray(agents.id, agentIds)", "inArray(evalRuns.suiteId, suiteIds)",
+                     "inArray(evalTestCases.suiteId, suiteIds)", "inArray(evalCaseResults.runId, runIds)"]) {
+      expect(body, `expected a set query: ${q}`).toContain(q);
+    }
+    // No per-row lookup left in the scan.
+    expect(body).not.toContain("where(eq(agents.id, s.agentId))");
+    expect(body).not.toContain("where(eq(evalRuns.suiteId, s.id))");
   });
 });

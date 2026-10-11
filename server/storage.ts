@@ -369,9 +369,9 @@ export interface IStorage {
   updateEvalSuite(id: string, data: Partial<EvalSuite>): Promise<EvalSuite | undefined>;
   /** Delete a suite with its test cases, runs and their case results. Scoped stricter than the read: see the implementation. */
   deleteEvalSuite(id: string, orgId?: string): Promise<{ id: string; name: string; testCases: number; runs: number; caseResults: number } | undefined>;
-
   /** Remove suites with no organization AND no agent row. Takes no ids; derives the set. See the implementation. */
-  pruneOrphanedEvalSuites(opts?: { dryRun?: boolean; limit?: number }): Promise<{ dryRun: boolean; scanned: number; scanLimit: number; more: boolean; suites: number; testCases: number; runs: number; caseResults: number; detail: Array<{ id: string; name: string; agentId: string | null; testCases: number; runs: number; caseResults: number }> }>;
+  pruneOrphanedEvalSuites(opts?: { dryRun?: boolean; limit?: number; offset?: number; includeMeasured?: boolean }): Promise<{ dryRun: boolean; scanned: number; scanLimit: number; offset: number; more: boolean; suites: number; testCases: number; runs: number; caseResults: number; spared: number; detail: Array<{ id: string; name: string; agentId: string | null; testCases: number; runs: number; caseResults: number }>; sparedDetail: Array<{ id: string; name: string; agentId: string | null; testCases: number; runs: number; caseResults: number }> }>;
+
   getEvalTestCases(suiteId: string): Promise<EvalTestCase[]>;
   getEvalTestCase(id: string): Promise<EvalTestCase | undefined>;
   createEvalTestCase(testCase: InsertEvalTestCase): Promise<EvalTestCase>;
@@ -2026,47 +2026,94 @@ export class DatabaseStorage implements IStorage {
    * createEvalSuite has derived the org at creation ever since, so a NULL here
    * means the platform itself could not attribute the suite; and a missing
    * agent row means nothing can ever reach, re-run or re-own it. Measured on
-   * Azure 2026-10-10: 832 such suites, 831 distinct dead agents, 4,407 test
-   * case rows, and zero runs or recorded results between them.
+   * Azure: 832 such suites across 831 distinct dead agents, carrying 4,407 test
+   * case rows, 72 eval runs and 117 recorded case results.
+   *
+   * **A suite that recorded something is spared by default.** 43 of those 832
+   * hold the 117 case results, and 29 of their runs never terminated. The first
+   * version of this reported zero runs for all 832, because the dry run behind
+   * it read GET /api/eval-runs -- which drops runs whose agent no longer exists
+   * (tenant-scope.ts, `owner !== undefined`), so every run of an orphaned suite
+   * is invisible there. Scaffolding with nothing recorded is residue; a suite
+   * holding measurements is evidence, and deleting it needs to be asked for.
    *
    * The caller passes no ids. The set is derived here, so this cannot be aimed
    * at a suite that still has an owner -- which is why it does not reuse
    * deleteEvalSuite's per-row org check, whose whole point is to refuse exactly
    * the rows this is for.
    *
-   * dryRun reports the same set without deleting, so the census a person
-   * approves is the census that runs.
+   * offset pages the scan, so a dry run can cover the whole set rather than
+   * returning the same first N every time; without it the census a person
+   * approves could never be the whole census. Ordered by id so the pages are
+   * stable across calls.
+   *
+   * Set-based on purpose: the per-suite version cost 196-544ms each, so the
+   * full sweep passed Azure's request timeout and the route only ever answered
+   * for small limits.
    */
-  async pruneOrphanedEvalSuites(opts: { dryRun?: boolean; limit?: number } = {}) {
+  async pruneOrphanedEvalSuites(opts: { dryRun?: boolean; limit?: number; offset?: number; includeMeasured?: boolean } = {}) {
     const limit = Math.max(1, Math.min(5000, opts.limit ?? 2000));
-    const unowned = await db.select().from(evalSuites).where(isNull(evalSuites.organizationId)).limit(limit);
-
-    const candidates: typeof unowned = [];
-    for (const s of unowned) {
-      // The "system" sentinel is platform-level BY DESIGN, not orphaned: it has
-      // no agent because it never had one. Counting it here is how 832 becomes
-      // 838 and a deliberate row gets deleted as residue.
-      if (!s.agentId || s.agentId === "system") continue;
-      const [owner] = await db.select({ id: agents.id }).from(agents).where(eq(agents.id, s.agentId));
-      if (!owner) candidates.push(s);
+    const offset = Math.max(0, opts.offset ?? 0);
+    const unowned = await db.select().from(evalSuites)
+      .where(isNull(evalSuites.organizationId)).orderBy(asc(evalSuites.id)).limit(limit).offset(offset);
+    if (unowned.length === 0) {
+      return { dryRun: !!opts.dryRun, scanned: 0, scanLimit: limit, offset, more: false, suites: 0, testCases: 0, runs: 0, caseResults: 0, spared: 0, detail: [], sparedDetail: [] };
     }
 
-    const report: Array<{ id: string; name: string; agentId: string | null; testCases: number; runs: number; caseResults: number }> = [];
+    // The "system" sentinel is platform-level BY DESIGN, not orphaned: it has no
+    // agent because it never had one. Counting it is how 832 becomes 838 and a
+    // deliberate row gets deleted as residue.
+    const named = unowned.filter((s) => s.agentId && s.agentId !== "system");
+    const agentIds = [...new Set(named.map((s) => s.agentId as string))];
+    const stillThere = new Set(
+      (agentIds.length ? await db.select({ id: agents.id }).from(agents).where(inArray(agents.id, agentIds)) : []).map((a) => a.id),
+    );
+    const candidates = named.filter((s) => !stillThere.has(s.agentId as string));
+    if (candidates.length === 0) {
+      return { dryRun: !!opts.dryRun, scanned: unowned.length, scanLimit: limit, offset, more: unowned.length === limit, suites: 0, testCases: 0, runs: 0, caseResults: 0, spared: 0, detail: [], sparedDetail: [] };
+    }
+
+    const suiteIds = candidates.map((s) => s.id);
+    const runRows = await db.select({ id: evalRuns.id, suiteId: evalRuns.suiteId }).from(evalRuns).where(inArray(evalRuns.suiteId, suiteIds));
+    const caseRows = await db.select({ id: evalTestCases.id, suiteId: evalTestCases.suiteId }).from(evalTestCases).where(inArray(evalTestCases.suiteId, suiteIds));
+    const runIds = runRows.map((r) => r.id);
+    const resultRows = runIds.length
+      ? await db.select({ id: evalCaseResults.id, runId: evalCaseResults.runId }).from(evalCaseResults).where(inArray(evalCaseResults.runId, runIds))
+      : [];
+
+    const bySuite = <T extends { suiteId: string | null }>(rows: T[]) => {
+      const m = new Map<string, T[]>();
+      for (const r of rows) if (r.suiteId) m.set(r.suiteId, [...(m.get(r.suiteId) ?? []), r]);
+      return m;
+    };
+    const runsOf = bySuite(runRows), casesOf = bySuite(caseRows);
+    const resultsByRun = new Map<string, number>();
+    for (const r of resultRows) resultsByRun.set(r.runId, (resultsByRun.get(r.runId) ?? 0) + 1);
+
+    type Row = { id: string; name: string; agentId: string | null; testCases: number; runs: number; caseResults: number };
+    const doomed: Row[] = [], spared: Row[] = [];
     for (const s of candidates) {
-      const runs = await db.select({ id: evalRuns.id }).from(evalRuns).where(eq(evalRuns.suiteId, s.id));
-      const cases = await db.select({ id: evalTestCases.id }).from(evalTestCases).where(eq(evalTestCases.suiteId, s.id));
-      let caseResults = 0;
-      for (const run of runs) {
-        const rows = await db.select({ id: evalCaseResults.id }).from(evalCaseResults).where(eq(evalCaseResults.runId, run.id));
-        caseResults += rows.length;
-      }
-      if (!opts.dryRun) {
-        for (const run of runs) await db.delete(evalCaseResults).where(eq(evalCaseResults.runId, run.id));
-        await db.delete(evalRuns).where(eq(evalRuns.suiteId, s.id));
-        await db.delete(evalTestCases).where(eq(evalTestCases.suiteId, s.id));
-        await db.delete(evalSuites).where(eq(evalSuites.id, s.id));
-      }
-      report.push({ id: s.id, name: s.name, agentId: s.agentId ?? null, testCases: cases.length, runs: runs.length, caseResults });
+      const runs = runsOf.get(s.id) ?? [];
+      const row: Row = {
+        id: s.id, name: s.name, agentId: s.agentId ?? null,
+        testCases: (casesOf.get(s.id) ?? []).length,
+        runs: runs.length,
+        caseResults: runs.reduce((n, r) => n + (resultsByRun.get(r.id) ?? 0), 0),
+      };
+      // Anything recorded spares it: a run that never finished is still a record
+      // that it was attempted, which is the stuck-run finding, not residue.
+      (!opts.includeMeasured && (row.runs > 0 || row.caseResults > 0) ? spared : doomed).push(row);
+    }
+
+    if (!opts.dryRun && doomed.length) {
+      const ids = doomed.map((r) => r.id);
+      const theirRuns = runRows.filter((r) => r.suiteId && ids.includes(r.suiteId)).map((r) => r.id);
+      // eval_case_results is keyed by eval_runs.id, so it goes first or the
+      // results outlive the runs -- the orphan class this exists to remove.
+      if (theirRuns.length) await db.delete(evalCaseResults).where(inArray(evalCaseResults.runId, theirRuns));
+      await db.delete(evalRuns).where(inArray(evalRuns.suiteId, ids));
+      await db.delete(evalTestCases).where(inArray(evalTestCases.suiteId, ids));
+      await db.delete(evalSuites).where(inArray(evalSuites.id, ids));
     }
 
     return {
@@ -2074,12 +2121,17 @@ export class DatabaseStorage implements IStorage {
       // Reported separately so a truncated sweep cannot read as a finished one.
       scanned: unowned.length,
       scanLimit: limit,
+      offset,
       more: unowned.length === limit,
-      suites: report.length,
-      testCases: report.reduce((n, r) => n + r.testCases, 0),
-      runs: report.reduce((n, r) => n + r.runs, 0),
-      caseResults: report.reduce((n, r) => n + r.caseResults, 0),
-      detail: report,
+      suites: doomed.length,
+      testCases: doomed.reduce((n, r) => n + r.testCases, 0),
+      runs: doomed.reduce((n, r) => n + r.runs, 0),
+      caseResults: doomed.reduce((n, r) => n + r.caseResults, 0),
+      // Spared is not the same as not found: these were orphans and were left
+      // alone, and the caller has to be able to tell those two apart.
+      spared: spared.length,
+      detail: doomed,
+      sparedDetail: spared,
     };
   }
 

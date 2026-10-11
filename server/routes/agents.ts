@@ -1683,7 +1683,14 @@ const router = Router();
       // Default to a dry run: the destructive reading of this route has to be
       // asked for, never arrived at by leaving a field out.
       const dryRun = req.body?.apply !== true;
-      const result = await storage.pruneOrphanedEvalSuites({ dryRun, limit: Number(req.body?.limit) || undefined });
+      const result = await storage.pruneOrphanedEvalSuites({
+        dryRun,
+        limit: Number(req.body?.limit) || undefined,
+        offset: Number(req.body?.offset) || undefined,
+        // Suites holding runs or recorded results are spared unless asked for
+        // explicitly, and reported as spared rather than omitted.
+        includeMeasured: req.body?.includeMeasured === true,
+      });
       if (!dryRun) {
         await storage.createAuditEvent({
           actorType: "user",
@@ -1691,7 +1698,7 @@ const router = Router();
           action: "prune_orphaned_eval_suites",
           objectType: "eval_suite",
           objectId: "platform",
-          details: `${result.suites} orphaned eval suite(s) deleted with ${result.testCases} test case(s), ${result.runs} run(s) and ${result.caseResults} case result(s); scanned ${result.scanned}${result.more ? " (more remain, re-run)" : ""}`,
+          details: `${result.suites} orphaned eval suite(s) deleted with ${result.testCases} test case(s), ${result.runs} run(s) and ${result.caseResults} case result(s); ${result.spared} spared for holding measurements; scanned ${result.scanned} from offset ${result.offset}${result.more ? " (more remain, re-run)" : ""}`,
         });
       }
       res.json(result);
