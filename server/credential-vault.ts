@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from "crypt
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
+const TAG_LENGTH = 16;
 
 /**
  * Derives the 32-byte vault key from the INTEGRATION_VAULT_KEY env var.
@@ -66,7 +67,11 @@ export function decryptCredential(blobJson: string): string {
   const iv = Buffer.from(blob.iv, "hex");
   const tag = Buffer.from(blob.tag, "hex");
   const ciphertext = Buffer.from(blob.ciphertext, "hex");
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
+  // Exactly the shape encryptCredential writes. Node would otherwise accept a tag of 4 to 16 bytes, and a blob whose stored tag
+  // was shortened would then be forgeable with a chance of 1 in 2^32 per try instead of 1 in 2^128.
+  if (iv.length !== IV_LENGTH) throw new Error("Invalid vault blob: the IV is the wrong length");
+  if (tag.length !== TAG_LENGTH) throw new Error("Invalid vault blob: the authentication tag is the wrong length");
+  const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
   decipher.setAuthTag(tag);
   return decipher.update(ciphertext).toString("utf8") + decipher.final("utf8");
 }

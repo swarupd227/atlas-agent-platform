@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { formatDate } from "@/lib/format";
+import { buildReportHtml } from "@/lib/report-html";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
@@ -147,52 +148,7 @@ interface ReportSchedule {
   createdAt: string;
 }
 
-// ── PDF HTML builder ─────────────────────────────────────────────────────────
-
-function buildReportHtml(report: GeneratedReport): string {
-  const statusColor: Record<string, string> = { pass: "#16a34a", fail: "#dc2626", warning: "#ca8a04", info: "#2563eb" };
-  const sectionsHtml = report.sections.map(s => `
-    <div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin-bottom:8px;">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span style="color:${statusColor[s.status]};font-weight:700;font-size:11px;text-transform:uppercase;">${s.status}</span>
-        <span style="font-weight:600;font-size:14px;">${s.title}</span>
-        ${s.score !== null ? `<span style="margin-left:auto;font-weight:700;color:${s.score >= 90 ? "#16a34a" : s.score >= 70 ? "#ca8a04" : "#dc2626"};">${s.score}%</span>` : ""}
-      </div>
-      <p style="color:#6b7280;font-size:12px;margin:6px 0 4px;">${s.content}</p>
-      <ul style="margin:0;padding-left:16px;color:#374151;font-size:11px;">
-        ${s.evidence.map(e => `<li>${e}</li>`).join("")}
-      </ul>
-    </div>
-  `).join("");
-  const gapsHtml = report.gaps.length > 0
-    ? `<h3 style="font-size:14px;font-weight:600;margin:20px 0 8px;">Identified Gaps</h3>
-       <ul style="color:#dc2626;font-size:12px;padding-left:16px;">${report.gaps.map(g => `<li>${g}</li>`).join("")}</ul>`
-    : "";
-  const recsHtml = report.recommendations.length > 0
-    ? `<h3 style="font-size:14px;font-weight:600;margin:20px 0 8px;">Recommendations</h3>
-       <ul style="color:#2563eb;font-size:12px;padding-left:16px;">${report.recommendations.map(r => `<li>${r}</li>`).join("")}</ul>`
-    : "";
-
-  return `<!DOCTYPE html><html><head><title>${report.templateName}</title>
-<style>body{font-family:system-ui,sans-serif;max-width:860px;margin:40px auto;color:#111827;}
-@media print{body{margin:0;}}</style></head><body>
-<div style="border-bottom:2px solid #111827;padding-bottom:16px;margin-bottom:24px;">
-  <h1 style="font-size:22px;font-weight:700;margin:0 0 4px;">${report.templateName}</h1>
-  <p style="color:#6b7280;font-size:12px;margin:0;">Generated ${new Date(report.generatedAt).toLocaleString()} · ${report.dateFrom && report.dateTo ? `${report.dateFrom} – ${report.dateTo}` : `${report.timeWindowDays}-day window`} · ${report.agentIds.length || "All"} agent(s)</p>
-</div>
-<div style="display:flex;gap:24px;margin-bottom:24px;">
-  <div style="text-align:center;border:1px solid #e5e7eb;border-radius:8px;padding:16px 24px;">
-    <div style="font-size:36px;font-weight:700;color:${(report.overallScore ?? 0) >= 90 ? "#16a34a" : (report.overallScore ?? 0) >= 70 ? "#ca8a04" : "#dc2626"};">${report.overallScore ?? "—"}</div>
-    <div style="font-size:11px;color:#6b7280;">Overall Score</div>
-  </div>
-  <div style="flex:1;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">
-    <p style="font-size:13px;line-height:1.6;margin:0;">${report.executiveSummary}</p>
-  </div>
-</div>
-<h3 style="font-size:14px;font-weight:600;margin:0 0 10px;">Controls & Findings</h3>
-${sectionsHtml}${gapsHtml}${recsHtml}
-</body></html>`;
-}
+// The print/PDF window's HTML is built in lib/report-html.ts, which escapes every string it writes.
 
 // ── Status chip ───────────────────────────────────────────────────────────────
 
@@ -894,7 +850,7 @@ export default function EvalReports() {
                   {/* Time window */}
                   <div className="space-y-2">
                     <Label className="text-xs block">Analysis Window</Label>
-                    <Select value={windowMode} onValueChange={setWindowMode}>
+                    <Select value={windowMode} onValueChange={(v) => setWindowMode(v === "custom" ? "custom" : "preset")}>
                       <SelectTrigger data-testid="generate-window-mode-select" className="h-9">
                         <SelectValue />
                       </SelectTrigger>

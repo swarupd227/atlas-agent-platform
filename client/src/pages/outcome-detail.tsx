@@ -121,6 +121,7 @@ import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Pol
 import { normalizeToGraph, flattenGraphToSteps, PROCESS_FLOW_VERSION } from "@shared/process-flow";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 import { AgentPlanGraph } from "@/components/agent-plan-graph";
+import { splitBold } from "@/lib/inline-bold";
 
 // Industry benchmarks were a hardcoded table attributed to Gartner, ACSI,
 // McKinsey and others, with no source behind the numbers, and each KPI was
@@ -3437,17 +3438,16 @@ export default function OutcomeDetail() {
                   if (line.startsWith("# ")) return <h2 key={i} className="text-lg font-semibold mt-4 mb-2">{line.slice(2)}</h2>;
                   if (line.startsWith("## ")) return <h3 key={i} className="text-base font-semibold mt-3 mb-1">{line.slice(3)}</h3>;
                   if (line.startsWith("### ")) return <h4 key={i} className="text-sm font-semibold mt-2 mb-1">{line.slice(4)}</h4>;
+                  // The report is model-written text: each run goes in as TEXT, never as markup (lib/inline-bold.ts).
+                  const runs = (text: string) => splitBold(text).map((r, k) => (r.bold ? <strong key={k}>{r.text}</strong> : <span key={k}>{r.text}</span>));
                   if (line.startsWith("- ")) {
-                    const rendered = line.slice(2).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-                    return <li key={i} className="text-sm text-muted-foreground ml-4" dangerouslySetInnerHTML={{ __html: rendered }} />;
+                    return <li key={i} className="text-sm text-muted-foreground ml-4">{runs(line.slice(2))}</li>;
                   }
                   if (/^\d+\.\s/.test(line)) {
-                    const rendered = line.replace(/^\d+\.\s/, "").replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-                    return <li key={i} className="text-sm text-muted-foreground ml-4 list-decimal" dangerouslySetInnerHTML={{ __html: rendered }} />;
+                    return <li key={i} className="text-sm text-muted-foreground ml-4 list-decimal">{runs(line.replace(/^\d+\.\s/, ""))}</li>;
                   }
                   if (line.trim() === "") return <div key={i} className="h-2" />;
-                  const rendered = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-                  return <p key={i} className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: rendered }} />;
+                  return <p key={i} className="text-sm text-muted-foreground">{runs(line)}</p>;
                 })}
               </div>
               <div className="flex items-center gap-2 flex-wrap border-t pt-4">
