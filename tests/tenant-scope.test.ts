@@ -192,9 +192,18 @@ describe("mcpServerScope (/api/mcp-servers/:id/*)", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("allows a security admin to change a platform catalog connector", async () => {
-    const { next } = await run(mcpServerScope, fakeReq({ org: ORG_B, role: "admin", method: "PATCH", params: { id: "srv-catalog" } }));
+  it("allows a security admin of the platform's own organization to change a platform catalog connector", async () => {
+    const { next } = await run(mcpServerScope, fakeReq({ org: DEFAULT_ORG, role: "admin", method: "PATCH", params: { id: "srv-catalog" } }));
     expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("refuses an admin of any other organization: the catalog row is shared, so changing it changes it for everyone", async () => {
+    // (This used to be allowed: every organization's admin holds manage_security.)
+    for (const method of ["PATCH", "PUT", "DELETE", "POST"]) {
+      const { res, next } = await run(mcpServerScope, fakeReq({ org: ORG_B, role: "admin", method, params: { id: "srv-catalog" } }));
+      expect(next, method).not.toHaveBeenCalled();
+      expect(res.statusCode, method).toBe(403);
+    }
   });
 
   it("hides legacy unowned connectors from tenants other than the default org", async () => {

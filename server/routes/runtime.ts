@@ -67,6 +67,7 @@ import {
   checkPermission,
   hasPermission,
   getRequestRole,
+  platformOnly,
   getTraceRedactionLevel,
   getRedactionLevel,
   redactPayload,
@@ -15222,7 +15223,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     res.json(source);
   });
 
-  router.post("/api/marketplace/registry-sources", checkPermission("manage_mcp_servers"), async (req, res) => {
+  router.post("/api/marketplace/registry-sources", platformOnly(checkPermission("manage_security")), async (req, res) => {
     try {
       const data = insertRegistrySourceSchema.parse(req.body);
       const created = await storage.createRegistrySource(data);
@@ -15232,10 +15233,10 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     }
   });
 
-  router.patch("/api/marketplace/registry-sources/:id", async (req, res) => {
+  router.patch("/api/marketplace/registry-sources/:id", platformOnly(checkPermission("manage_security")), async (req, res) => {
     try {
       const data = insertRegistrySourceSchema.partial().parse(req.body);
-      const updated = await storage.updateRegistrySource(req.params.id, data);
+      const updated = await storage.updateRegistrySource((req.params.id as string), data);
       if (!updated) return res.status(404).json({ message: "Not found" });
       res.json(updated);
     } catch (e) {
@@ -15243,8 +15244,8 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     }
   });
 
-  router.delete("/api/marketplace/registry-sources/:id", async (req, res) => {
-    const deleted = await storage.deleteRegistrySource(req.params.id);
+  router.delete("/api/marketplace/registry-sources/:id", platformOnly(checkPermission("manage_security")), async (req, res) => {
+    const deleted = await storage.deleteRegistrySource((req.params.id as string));
     if (!deleted) return res.status(404).json({ message: "Not found" });
     res.status(204).send();
   });
@@ -15345,8 +15346,8 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     return { created, updated };
   }
 
-  router.post("/api/marketplace/registry-sources/:id/sync", async (req, res) => {
-    const source = await storage.getRegistrySource(req.params.id);
+  router.post("/api/marketplace/registry-sources/:id/sync", platformOnly(checkPermission("manage_security")), async (req, res) => {
+    const source = await storage.getRegistrySource((req.params.id as string));
     if (!source) return res.status(404).json({ message: "Not found" });
     if (!source.enabled) return res.status(400).json({ message: "This registry source is disabled." });
 
@@ -15366,21 +15367,21 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
 
       const allServers = await storage.getMarketplaceServers();
       const serverCount = allServers.filter((s) => s.registrySourceId === source.id).length;
-      const updated_ = await storage.updateRegistrySource(req.params.id, {
+      const updated_ = await storage.updateRegistrySource((req.params.id as string), {
         lastSyncAt: new Date(),
         lastSyncStatus: "success",
         serverCount,
       });
       await storage.createAuditEvent({
         objectType: "registry_source",
-        objectId: req.params.id,
+        objectId: (req.params.id as string),
         action: "marketplace.registry_synced",
         actorId: "system",
         details: JSON.stringify({ sourceId: req.params.id, sourceName: source.name, created, updated }),
       });
       res.json(updated_);
     } catch (e: any) {
-      await storage.updateRegistrySource(req.params.id, { lastSyncAt: new Date(), lastSyncStatus: "failed" });
+      await storage.updateRegistrySource((req.params.id as string), { lastSyncAt: new Date(), lastSyncStatus: "failed" });
       res.status(502).json({ message: `Sync failed: ${e.message}` });
     }
   });
@@ -15417,8 +15418,8 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
   // Same permission as creating/installing a connector (POST /api/marketplace/registry-sources,
   // POST /api/openapi-import/create): removing one is part of managing the catalog, not a
   // read-only action, so it carries the same guard rather than being left unguarded.
-  router.delete("/api/marketplace/servers/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
-    const deleted = await storage.deleteMarketplaceServer(req.params.id);
+  router.delete("/api/marketplace/servers/:id", platformOnly(checkPermission("manage_security")), async (req, res) => {
+    const deleted = await storage.deleteMarketplaceServer((req.params.id as string));
     if (!deleted) return res.status(404).json({ message: "Not found" });
     res.status(204).send();
   });
@@ -15435,7 +15436,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     res.json(publisher);
   });
 
-  router.post("/api/marketplace/trusted-publishers", checkPermission("manage_security"), async (req, res) => {
+  router.post("/api/marketplace/trusted-publishers", platformOnly(checkPermission("manage_security")), async (req, res) => {
     try {
       const data = insertTrustedPublisherSchema.parse(req.body);
       const created = await storage.createTrustedPublisher(data);
@@ -15445,10 +15446,10 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     }
   });
 
-  router.patch("/api/marketplace/trusted-publishers/:id", async (req, res) => {
+  router.patch("/api/marketplace/trusted-publishers/:id", platformOnly(checkPermission("manage_security")), async (req, res) => {
     try {
       const data = insertTrustedPublisherSchema.partial().parse(req.body);
-      const updated = await storage.updateTrustedPublisher(req.params.id, data);
+      const updated = await storage.updateTrustedPublisher((req.params.id as string), data);
       if (!updated) return res.status(404).json({ message: "Not found" });
       res.json(updated);
     } catch (e) {
@@ -15456,8 +15457,8 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     }
   });
 
-  router.delete("/api/marketplace/trusted-publishers/:id", async (req, res) => {
-    const deleted = await storage.deleteTrustedPublisher(req.params.id);
+  router.delete("/api/marketplace/trusted-publishers/:id", platformOnly(checkPermission("manage_security")), async (req, res) => {
+    const deleted = await storage.deleteTrustedPublisher((req.params.id as string));
     if (!deleted) return res.status(404).json({ message: "Not found" });
     res.status(204).send();
   });
@@ -15493,9 +15494,9 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
   }
 
   // ── Marketplace: Install Flow ────────────────────────────
-  router.post("/api/marketplace/servers/:id/install", async (req, res) => {
+  router.post("/api/marketplace/servers/:id/install", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMarketplaceServer(req.params.id);
+      const server = await storage.getMarketplaceServer((req.params.id as string));
       if (!server) return res.status(404).json({ message: "Marketplace server not found" });
 
       if (server.installStatus !== "available") {
@@ -16164,7 +16165,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     } catch (e) { handleZodError(res, e); }
   });
 
-  router.patch("/api/regulations/:id", checkPermission("manage_platform_settings"), async (req, res) => {
+  router.patch("/api/regulations/:id", platformOnly(checkPermission("manage_platform_settings")), async (req, res) => {
     try {
       const id = req.params.id as string;
       const patchSchema = regulationBodySchema.partial();
@@ -16202,7 +16203,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
     } catch (e) { handleZodError(res, e); }
   });
 
-  router.patch("/api/regulatory-policies/:id", checkPermission("manage_platform_settings"), async (req, res) => {
+  router.patch("/api/regulatory-policies/:id", platformOnly(checkPermission("manage_platform_settings")), async (req, res) => {
     try {
       const data = insertRegulatoryPolicySchema.partial().parse(req.body);
       const updated = await storage.updateRegulatoryPolicy(req.params.id as string, data);

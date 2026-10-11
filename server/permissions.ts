@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-import { getSecurityMode } from "./auth";
+import { getDefaultOrgId, getOrgId, getSecurityMode } from "./auth";
 
 export type RoleId =
   | "admin"
@@ -234,6 +234,47 @@ export function checkPermission(action: PermissionAction) {
     (req as any).userRole = role;
     next();
   };
+}
+
+/**
+ * Whether the caller belongs to the platform's own organization (the default one).
+ *
+ * Some catalogues are shared by every organization and have no owner column: the marketplace's trusted publishers and registry
+ * sources, the regulation catalogue, agent templates, tool connectors, golden datasets, the platform's catalogue of MCP servers.
+ * Changing one changes it for all of them, and a role permission cannot guard that, because the `admin` of any organization holds
+ * every permission. So such a change also needs this. A deployment that never seeded an organization (nothing to tell apart) and
+ * demo mode (which has no organizations) are let through.
+ */
+export function isPlatformOperatorOrg(req: Request): boolean {
+  if (getSecurityMode() === "demo") return true;
+  const platformOrg = getDefaultOrgId();
+  if (!platformOrg) return true;
+  return getOrgId(req) === platformOrg;
+}
+
+/**
+ * A route that changes a shared catalogue: the permission for that kind of change, then the platform's own organization.
+ * Written `platformOnly(checkPermission("..."))` so that it is ONE middleware: two separate ones before a handler make TypeScript
+ * type that handler's `req.params` values as `string | string[]`.
+ */
+export function platformOnly(permissionCheck: (req: Request, res: Response, next: NextFunction) => unknown) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    permissionCheck(req, res, (err?: unknown) => {
+      if (err) return next(err);
+      requirePlatformOperatorOrg(req, res, next);
+    });
+  };
+}
+
+/** Middleware form of isPlatformOperatorOrg. */
+export function requirePlatformOperatorOrg(req: Request, res: Response, next: NextFunction): void {
+  if (isPlatformOperatorOrg(req)) {
+    next();
+    return;
+  }
+  res.status(403).json({
+    message: "This changes a catalogue shared by every organization, so it can only be done from the platform's own organization.",
+  });
 }
 
 export function hasPermission(role: RoleId, action: PermissionAction): boolean {

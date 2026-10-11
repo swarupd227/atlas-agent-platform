@@ -16,8 +16,8 @@
  *           the default org for any other unowned (legacy) row.
  *   visible  when owner is null or owner is the caller's org.
  *   mutable  when owner is the caller's org; a platform catalog row
- *            (owner null) also needs manage_security, because changing it
- *            changes it for every tenant.
+ *            (owner null) also needs manage_security and the platform's own
+ *            organization, because changing it changes it for every tenant.
  *
  * Blueprints
  *   owner = organizationId, or the default org for a legacy NULL row.
@@ -30,7 +30,7 @@ import type { Request, Response, NextFunction } from "express";
 import type { Blueprint, McpApp, McpElicitation, McpServer, McpServerAuth } from "@shared/schema";
 import { storage } from "./storage";
 import { getDefaultOrgId, getOrgId } from "./auth";
-import { getRequestRole, hasPermission } from "./permissions";
+import { getRequestRole, hasPermission, isPlatformOperatorOrg } from "./permissions";
 
 export function resolveRequestOrgId(req: Request): string | undefined {
   return getOrgId(req) ?? getDefaultOrgId();
@@ -98,7 +98,7 @@ function notFound(res: Response, what: string) {
 
 function catalogWriteDenied(res: Response) {
   return res.status(403).json({
-    message: "This is a platform catalog connector shared by every organization. Changing it requires the manage_security permission.",
+    message: "This is a platform catalog connector shared by every organization. Changing it requires the manage_security permission, from the platform's own organization.",
   });
 }
 
@@ -109,7 +109,7 @@ async function authorizeMcpServer(req: Request, res: Response, server: McpServer
     notFound(res, "MCP server");
     return false;
   }
-  if (!READ_METHODS.has(req.method) && mcpServerOwnerOrgId(server) === null && !hasPermission(getRequestRole(req), "manage_security")) {
+  if (!READ_METHODS.has(req.method) && mcpServerOwnerOrgId(server) === null && !(hasPermission(getRequestRole(req), "manage_security") && isPlatformOperatorOrg(req))) {
     catalogWriteDenied(res);
     return false;
   }

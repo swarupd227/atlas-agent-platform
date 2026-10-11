@@ -130,7 +130,12 @@ function scanRoutes(): RouteEntry[] {
 // 393 (was 401): the regulation catalogue is shared by every organization,
 // so its writes (regulations, regulatory policies, compliance controls,
 // regulatory changes, seed) need manage_platform_settings.
-const BASELINE_UNGUARDED = 393;
+//
+// 383 (was 393): changes to catalogues shared by every organization (marketplace
+// trusted publishers and registry sources, agent templates, tool connectors) and
+// installing from the marketplace now need a permission; see
+// tests/platform-operator-org.test.ts.
+const BASELINE_UNGUARDED = 383;
 
 describe("mutating-route authz conformance", () => {
   it("does not add new unguarded mutating routes beyond the tracked baseline", () => {

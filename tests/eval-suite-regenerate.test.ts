@@ -49,6 +49,7 @@ vi.mock("../server/storage", () => ({
 vi.mock("../server/auth", () => ({ getOrgId: () => "org1", getDefaultOrgId: () => "org1" }));
 vi.mock("../server/permissions", () => ({
   checkPermission: () => (_req: any, _res: any, next: any) => next(),
+  platformOnly: (check: any) => check,
   getRequestRole: () => "admin",
 }));
 vi.mock("../server/claude", () => ({

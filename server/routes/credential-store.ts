@@ -10,7 +10,7 @@
  */
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { checkPermission } from "../permissions";
+import { checkPermission, platformOnly } from "../permissions";
 import { storage } from "../storage";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { CREDENTIAL_KINDS } from "../secret-store";
@@ -18,7 +18,7 @@ import { MAX_MIGRATION_LIMIT, MigrationError, credentialStoreStatus, migrateCred
 
 const router = Router();
 
-router.get("/api/admin/credential-store/status", checkPermission("manage_platform_settings"), async (_req: Request, res: Response) => {
+router.get("/api/admin/credential-store/status", platformOnly(checkPermission("manage_platform_settings")), async (_req: Request, res: Response) => {
   try {
     res.json(await credentialStoreStatus());
   } catch (err: any) {
@@ -34,7 +34,7 @@ const migrateSchema = z.object({
   limit: z.number().int().min(1).max(MAX_MIGRATION_LIMIT).optional(),
 }).strict();
 
-router.post("/api/admin/credential-store/migrate", checkPermission("manage_platform_settings"), async (req: Request, res: Response) => {
+router.post("/api/admin/credential-store/migrate", platformOnly(checkPermission("manage_platform_settings")), async (req: Request, res: Response) => {
   const parsed = migrateSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid input", issues: parsed.error.flatten() });
   try {

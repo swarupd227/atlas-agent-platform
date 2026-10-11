@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z, ZodError } from "zod";
 import { SKILL_CONTEXT_MODES } from "../builtin-skill-tools";
 import { storage } from "../storage";
-import { checkPermission, getOntologySensitivityKeys, invalidateOntologySensitivityCache } from "../permissions";
+import { checkPermission, getOntologySensitivityKeys, invalidateOntologySensitivityCache, platformOnly } from "../permissions";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveOntologyTags, runParameterMatching } from "./helpers";
 import { ontologyCoverage } from "../ontology-coverage";
@@ -1697,7 +1697,7 @@ ${naturalLanguageInput}`,
     }
   });
 
-  router.patch("/api/golden-datasets/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+  router.patch("/api/golden-datasets/:id", platformOnly(checkPermission("create_modify_blueprints")), async (req, res) => {
     try {
       const updated = await storage.updateGoldenDataset(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Dataset not found" });
@@ -1705,7 +1705,7 @@ ${naturalLanguageInput}`,
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.delete("/api/golden-datasets/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+  router.delete("/api/golden-datasets/:id", platformOnly(checkPermission("create_modify_blueprints")), async (req, res) => {
     try {
       const deleted = await storage.deleteGoldenDataset(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Dataset not found" });

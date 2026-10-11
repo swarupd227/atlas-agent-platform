@@ -103,7 +103,9 @@ describe("MCP apps", () => {
     expect((await run(mcpAppScope, fakeReq({ org: ORG_B, method: "POST", body: { serverId: "srv-a" } }))).status).toBe(404);
     expect((await run(mcpAppScope, fakeReq({ org: ORG_A, method: "POST", body: { serverId: "srv-a" } }))).status).toBe("next");
     expect((await run(mcpAppScope, fakeReq({ org: ORG_A, method: "POST", body: { serverId: "srv-catalog" } }))).status).toBe(403);
-    expect((await run(mcpAppScope, fakeReq({ org: ORG_A, role: "admin", method: "POST", body: { serverId: "srv-catalog" } }))).status).toBe("next");
+    expect((await run(mcpAppScope, fakeReq({ org: DEFAULT_ORG, role: "admin", method: "POST", body: { serverId: "srv-catalog" } }))).status).toBe("next");
+    // A platform catalog server is shared by every organization: an admin of another organization may not attach an app to it.
+    expect((await run(mcpAppScope, fakeReq({ org: ORG_A, role: "admin", method: "POST", body: { serverId: "srv-catalog" } }))).status).toBe(403);
     expect((await run(mcpAppScope, fakeReq({ org: ORG_B, method: "PATCH", path: "/app-catalog" }))).status).toBe(403);
     expect((await run(mcpAppScope, fakeReq({ org: ORG_A, method: "PATCH", path: "/app-a", body: { serverId: "srv-b" } }))).status).toBe(404);
     expect((await run(mcpAppScope, fakeReq({ org: ORG_A, method: "DELETE", path: "/app-a" }))).status).toBe("next");

@@ -6,7 +6,7 @@ import { getOrgId } from "../auth";
 import { jobEvents } from "../worker";
 import { handleZodError } from "./helpers";
 import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "../url-safety";
-import { checkPermission } from "../permissions";
+import { checkPermission, platformOnly } from "../permissions";
 import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-requirements";
 
 const router = Router();
@@ -39,8 +39,8 @@ router.use("/api/admin", checkPermission("manage_security"));
     }
   });
 
-  router.patch("/api/tool-connectors/:id", async (req, res) => {
-    const updated = await storage.updateToolConnector(req.params.id, req.body);
+  router.patch("/api/tool-connectors/:id", platformOnly(checkPermission("create_modify_blueprints")), async (req, res) => {
+    const updated = await storage.updateToolConnector((req.params.id as string), req.body);
     if (!updated) return res.status(404).json({ message: "Connector not found" });
     res.json(updated);
   });
@@ -118,8 +118,8 @@ router.use("/api/admin", checkPermission("manage_security"));
     });
   });
 
-router.delete("/api/tool-connectors/:id", async (req, res) => {
-    await storage.deleteToolConnector(req.params.id);
+router.delete("/api/tool-connectors/:id", platformOnly(checkPermission("create_modify_blueprints")), async (req, res) => {
+    await storage.deleteToolConnector((req.params.id as string));
     res.json({ success: true });
   });
 

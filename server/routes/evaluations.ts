@@ -5,7 +5,7 @@ import { storage } from "../storage";
 import { gradedSuiteRuns } from "../eval-run-scope";
 import { recallVerdict, resolveOutcomeFor, RECALL_REQUIRE_REVIEW_SETTING } from "../intelligence-context";
 import { getOrgId, getDefaultOrgId } from "../auth";
-import { checkPermission, getRequestRole } from "../permissions";
+import { checkPermission, getRequestRole, platformOnly } from "../permissions";
 import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError, draftSingleAgent } from "./helpers";
 import { buildSourceDocuments } from "../attachment-context";
 import {
@@ -45,11 +45,11 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     }
   });
 
-  router.put("/api/agent-templates/:id", async (req, res) => {
+  router.put("/api/agent-templates/:id", platformOnly(checkPermission("create_modify_blueprints")), async (req, res) => {
     try {
-      const existing = await storage.getAgentTemplate(req.params.id);
+      const existing = await storage.getAgentTemplate((req.params.id as string));
       if (!existing) return res.status(404).json({ message: "Template not found" });
-      const updated = await storage.updateAgentTemplate(req.params.id, req.body);
+      const updated = await storage.updateAgentTemplate((req.params.id as string), req.body);
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Invalid template data" });
@@ -165,10 +165,10 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     }
   });
 
-  router.delete("/api/agent-templates/:id", async (req, res) => {
-    const existing = await storage.getAgentTemplate(req.params.id);
+  router.delete("/api/agent-templates/:id", platformOnly(checkPermission("create_modify_blueprints")), async (req, res) => {
+    const existing = await storage.getAgentTemplate((req.params.id as string));
     if (!existing) return res.status(404).json({ message: "Template not found" });
-    await storage.deleteAgentTemplate(req.params.id);
+    await storage.deleteAgentTemplate((req.params.id as string));
     res.json({ message: "Template deleted" });
   });
 
