@@ -348,6 +348,33 @@ describe("extractSubjects", () => {
     // several objects in one value
     ["Submission SUB-2026-8891 from AGY-HARB-01 via BRK-14 bound as CP-2026-17 for ACCT-100417.",
       ["submission:SUB-2026-8891", "agency:AGY-HARB-01", "broker:BRK-14", "binder:CP-2026-17", "account:ACCT-100417"]],
+
+    // ── the six phantoms that were actually running in production ──────────
+    //
+    // Taken from a scan of priorContext.subjects across 80 live runs, not from
+    // a hypothesis about how the patterns could go wrong. Three of them were
+    // cases the rest of this table did not contain, because the table was built
+    // from the two failure modes already known: a table derived from a theory
+    // can only confirm that theory. These rows are the data's answer.
+    ["ACCT-100417-2026-05-28T06:12:00Z", ["account:ACCT-100417"]],
+    ["AGY-HARB-01-2026-02", ["agency:AGY-HARB-01"]],
+    ["POL-2026-8891- then lowercase x", ["policy:POL-2026-8891"]],
+    // "BINDER" and "POLICY JACKET" are document names beside the id, and the
+    // segment pattern swallowed them -- the third failure mode.
+    ["POL-2026-8891-CP-BINDER", ["policy:POL-2026-8891-CP"]],
+    ["POL-2026-8891-CP-POLICY-JACKET", ["policy:POL-2026-8891-CP"]],
+    ["POL-2026-8891-CP-ME-2026-8891-COASTAL", ["policy:POL-2026-8891-CP"]],
+    // a document filename names its policy, not a different object
+    ["POL-2026-8891-CP-ME-004.pdf", ["policy:POL-2026-8891-CP"]],
+    // a governance policy ref is not an insurance policy
+    ["DEH-POL-CURT-AUTO-001", []],
+    ["DEH-POL-EMAIL-AUTH-001", []],
+    // other real policy shapes that must survive the tighter grammar
+    ["POL-2026-8891", ["policy:POL-2026-8891"]],
+    ["POL-2026-9203-CP", ["policy:POL-2026-9203-CP"]],
+    ["POL-2026-05", []],
+    ["Policy POL-2026-8891-CP bound under CP-2026-17 from SUB-2026-8891 via BRK-4471 at AGY-CEDR-02.",
+      ["policy:POL-2026-8891-CP", "binder:CP-2026-17", "submission:SUB-2026-8891", "broker:BRK-4471", "agency:AGY-CEDR-02"]],
   ])("subjects of %j", (text, want) => {
     it(`are exactly ${JSON.stringify(want)}`, () => {
       expect(extractSubjects({ value: text as string }).map(s => s.subject).sort())

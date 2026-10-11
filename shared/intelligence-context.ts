@@ -265,9 +265,27 @@ export type Subject = string;
 // the binder defect was found while fixing policy.
 const SUBJECT_PATTERNS: Array<{ type: string; re: RegExp }> = [
   { type: "submission", re: /\b(?<![0-9A-Z]-)SUB-\d{4}-\d+\b/g },
-  // POL-2026-8891-CP legitimately ends in letters, so this could never have
-  // been fixed by restricting the class to digits. {4,} is the original guard.
-  { type: "policy", re: /\b(?<![0-9A-Z]-)POL-(?!\d{4}-\d{2}\b)[0-9A-Z]{4,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
+  // Anchored on the id's actual SHAPE, not on "uppercase segments joined by
+  // hyphens" -- which is a third failure mode the other two fixes did nothing
+  // for. Scanning live run state found four distinct subjects for ONE policy:
+  // POL-2026-8891-, -CP, -CP-BINDER, -CP-POLICY-JACKET and
+  // -CP-ME-2026-8891-COASTAL. "BINDER" and "POLICY JACKET" are document names
+  // sitting beside the id, and a segment pattern cannot tell them from a real
+  // suffix because they are structurally identical.
+  //
+  // The real ids are POL-<4 digits>-<3+ digits> with an optional two or three
+  // letter line-of-business suffix: POL-2026-8891, POL-2026-8891-CP,
+  // POL-2026-9203-CP. POL-2026-8891-CP-ME-004.pdf is a document FILENAME whose
+  // policy is the -CP part, so stopping there is right rather than lossy.
+  // DEH-POL-CURT-AUTO-001 is a governance policy ref, not an insurance policy,
+  // and the mid-identifier guard already excludes it.
+  //
+  // No date lookahead is needed here: \d{3,} cannot cross a hyphen and the
+  // suffix is letters only, so a trailing timestamp cannot be absorbed.
+  //
+  // If a real policy ever carries a longer or multi-part suffix, this is the
+  // line to widen -- and widen it to that shape, not back to open segments.
+  { type: "policy", re: /\b(?<![0-9A-Z]-)POL-\d{4}-\d{3,}(?:-[A-Z]{2,3})?\b/g },
   // "CP" is two characters and also the last segment of a real policy id, which
   // is why this pattern in particular needed the mid-identifier guard.
   { type: "binder", re: /\b(?<![0-9A-Z]-)CP-\d{4}-\d+\b/g },
