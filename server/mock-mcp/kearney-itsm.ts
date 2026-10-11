@@ -414,11 +414,35 @@ router.get("/recurrence", (req: Request, res: Response) => {
   });
 });
 
+/**
+ * The problem records that exist, INCLUDING any opened in this process.
+ *
+ * A record opened by this journey used to be returned only under
+ * `created_this_session`, so a caller reading `problems` saw the 49 seeded rows
+ * and nothing else -- and the agent whose next step is "is this already
+ * covered?" would answer no about a record it had just opened, and open a
+ * duplicate. Live on the J2 run that created PRB900001 (2026-10-11): the tool's
+ * own description promised "plus any opened during this session" while the
+ * shape hid them one key away. `/problem` already merged the two, so a lookup
+ * by number was right while the list was wrong, which is the harder version to
+ * notice.
+ *
+ * `created_this_session` stays, because which records are seeded and which this
+ * process opened is worth knowing; it is no longer the only place they appear.
+ */
 router.get("/problems", (req: Request, res: Response) => {
   ensure();
   const category = str(req.query.category);
-  const rows = problems.filter((p) => !category || lower(p.category) === lower(category));
-  res.json({ matched: rows.length, of: problems.length, problems: rows, created_this_session: createdProblems });
+  const all = [...problems, ...(createdProblems as typeof problems)];
+  const keep = (p: { category?: string }) => !category || lower(p.category ?? "") === lower(category);
+  const rows = all.filter(keep);
+  res.json({
+    matched: rows.length,
+    of: all.length,
+    seeded: problems.length,
+    problems: rows,
+    created_this_session: (createdProblems as typeof problems).filter(keep),
+  });
 });
 
 router.get("/problem", (req: Request, res: Response) => {

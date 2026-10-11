@@ -235,6 +235,50 @@ describe("the ITSM connector will not write without an approval", () => {
     expect(res.body.problem.approvalRef).toBe("APR-7744");
     await post("/itsm/reset", {});
   });
+
+  /**
+   * The duplicate this journey would otherwise open on its next run.
+   *
+   * A record opened here came back only under `created_this_session`, so a
+   * caller reading `problems` saw the 49 seeded rows and nothing else -- and
+   * the step that asks "is this already covered?" would answer no about the
+   * record it had just opened. `/problem` already merged the two, so a lookup
+   * by number was correct while the list was wrong. Live on the J2 run that
+   * opened PRB900001 (2026-10-11).
+   */
+  it("lists a record it just opened, so the next run cannot duplicate it", async () => {
+    const before = await get("/itsm/problems");
+    expect(before.problems.some((p: { subcategory?: string }) => p.subcategory === "Account Lock-Out")).toBe(false);
+
+    const made = await post("/itsm/problem/create", {
+      shortDescription: "Recurring account lock-outs across the security domain",
+      category: "Security",
+      subcategory: "Account Lock-Out",
+      relatedIncidents: ["INC0074665"],
+      approvalRef: "APR-7745",
+    });
+    expect(made.status).toBe(200);
+    const number = made.body.problem.number;
+
+    const after = await get("/itsm/problems");
+    expect(after.problems.map((p: { number: string }) => p.number)).toContain(number);
+    expect(after.of).toBe(before.of + 1);
+    // Still distinguishable from the extract's own records, which is why the
+    // session list is kept rather than folded away.
+    expect(after.seeded).toBe(before.seeded);
+    expect(after.created_this_session.map((p: { number: string }) => p.number)).toEqual([number]);
+
+    // And the category filter applies to the new record the same way.
+    const security = await get("/itsm/problems?category=Security");
+    expect(security.problems.map((p: { number: string }) => p.number)).toContain(number);
+    const networking = await get("/itsm/problems?category=Networking");
+    expect(networking.problems.map((p: { number: string }) => p.number)).not.toContain(number);
+
+    await post("/itsm/reset", {});
+    const reset = await get("/itsm/problems");
+    expect(reset.of).toBe(before.of);
+    expect(reset.created_this_session).toEqual([]);
+  });
 });
 
 describe("the estate connector offers candidates, never an identification", () => {
