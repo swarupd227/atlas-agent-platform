@@ -200,3 +200,54 @@ describe("POST /api/evals/:id/execute", () => {
     expect(state.runs[0].resultsJson.source).toBe("eval_test_cases");
   });
 });
+
+/**
+ * What a prompt-level case is judged against.
+ *
+ * This existed as a bug for as long as the executor did: the composed prompt was
+ * built from the agent's name, description, risk tier and policies, and left out
+ * the agent's own systemPrompt -- the field the runtime hands to
+ * assembleAgentSystemMessage as the first thing the model reads.
+ *
+ * Measured on a triage agent whose instructions ran to 3,227 characters: its
+ * output contract and both of its "do not invent a value" rules lived in that
+ * field, so the suite scored a prompt production never runs, and three
+ * corrections to those rules moved the pass rate not at all. The deployment
+ * gate, the readiness check and the canary all read that number, so a score
+ * about nothing is worse than no score.
+ */
+describe("the prompt a case is judged against", () => {
+  it("puts the agent's own brief first, where the runtime puts it", async () => {
+    const { composeEvalSystemPrompt } = await import("../server/routes/golden-eval");
+    const out = composeEvalSystemPrompt({
+      agentBrief: "You triage incidents. Never invent an assignment group.",
+      governancePrompt: "<role>You are an agent</role>",
+      skillCatalog: "## SKILLS",
+    });
+    expect(out.indexOf("You triage incidents")).toBe(0);
+    expect(out.indexOf("You triage incidents")).toBeLessThan(out.indexOf("<role>"));
+    expect(out.indexOf("<role>")).toBeLessThan(out.indexOf("## SKILLS"));
+  });
+
+  it("carries the brief's instructions through, which is the whole point", async () => {
+    const { composeEvalSystemPrompt } = await import("../server/routes/golden-eval");
+    const brief = "Finish with a JSON object containing categoryProposed and assignmentGroupProposed.";
+    const out = composeEvalSystemPrompt({ agentBrief: brief, governancePrompt: "framing" });
+    expect(out).toContain("categoryProposed");
+    expect(out).toContain("assignmentGroupProposed");
+  });
+
+  it("omits an absent brief rather than opening with blank lines", async () => {
+    const { composeEvalSystemPrompt } = await import("../server/routes/golden-eval");
+    for (const brief of [undefined, null, "", "   "]) {
+      const out = composeEvalSystemPrompt({ agentBrief: brief as any, governancePrompt: "framing", skillCatalog: "" });
+      expect(out).toBe("framing");
+    }
+  });
+
+  it("keeps the governance framing, which the judge still reads policy text from", async () => {
+    const { composeEvalSystemPrompt } = await import("../server/routes/golden-eval");
+    const out = composeEvalSystemPrompt({ agentBrief: "brief", governancePrompt: "<governance_policies>no deletion</governance_policies>" });
+    expect(out).toContain("no deletion");
+  });
+});

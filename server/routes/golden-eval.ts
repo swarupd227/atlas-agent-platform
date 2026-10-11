@@ -399,6 +399,32 @@ interface RunInput {
 }
 
 /** The agent's prompt as the runtime assembles it, and the skills it may read on demand. */
+/**
+ * The system prompt a prompt-level case is judged against.
+ *
+ * The agent's OWN brief comes first, because that is where the runtime puts it:
+ * agent-runtime.ts hands workerAgent.systemPrompt to assembleAgentSystemMessage
+ * as the first thing the model reads, ahead of skills, retrieved context and the
+ * task framing.
+ *
+ * It was previously left out altogether, and that made a whole class of suite
+ * meaningless rather than merely approximate. Measured on a triage agent whose
+ * instructions ran to 3,227 characters: its output contract and both of its
+ * "do not invent a value" rules lived in that field, so the suite scored a prompt
+ * production never runs, and three corrections to those rules moved the pass rate
+ * not at all. A score about nothing is worse than no score, because the
+ * deployment gate, the readiness check and the canary all read this number.
+ *
+ * Pure and exported so the ordering can be asserted without standing up an
+ * agent, a suite and a model call to find out.
+ */
+export function composeEvalSystemPrompt(parts: { agentBrief?: string | null; governancePrompt: string; skillCatalog?: string | null }): string {
+  const brief = String(parts.agentBrief ?? "").trim();
+  const catalog = String(parts.skillCatalog ?? "").trim();
+  const sections = [brief, parts.governancePrompt, catalog].filter((s) => s && s.length > 0);
+  return sections.join("\n\n");
+}
+
 async function prepareEvalPrompt(agent: Agent, orgId: ReturnType<typeof getOrgId>) {
   // Judge against the policy text the runtime actually shows the agent, not
   // policy names alone -- see buildAgentSystemPromptWithGovernance.
@@ -407,7 +433,11 @@ async function prepareEvalPrompt(agent: Agent, orgId: ReturnType<typeof getOrgId
   // prompt and read_skill as the only tool (server/builtin-skill-tools.ts).
   const readableSkills = await resolveReadableSkills(agent.id, orgId).catch(() => [] as Skill[]);
   const skillCatalog = skillCatalogPrompt(readableSkills);
-  const evalSystemPrompt = skillCatalog ? `${systemPrompt}\n\n${skillCatalog}` : systemPrompt;
+  const evalSystemPrompt = composeEvalSystemPrompt({
+    agentBrief: (agent as { systemPrompt?: string | null }).systemPrompt,
+    governancePrompt: systemPrompt,
+    skillCatalog,
+  });
   return { evalSystemPrompt, readableSkills };
 }
 
