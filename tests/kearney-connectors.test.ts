@@ -153,6 +153,64 @@ describe("the ITSM connector will not write without an approval", () => {
     expect((await post("/itsm/rollback", { undoId: write.body.undoId })).status).toBe(409);
   });
 
+  /**
+   * The values a journey actually invented, live on run 7baf30f4: an assignment
+   * group with no match among the 45 in the estate, and a sub-category with no
+   * match among the 311. A person approved both and the connector wrote them.
+   * These are the regression.
+   */
+  it("refuses an assignment group that does not exist in the record set", async () => {
+    const res = await post("/itsm/incident/update", {
+      number: "INC0143139",
+      fields: { assignment_group: "WW_SRVCNOW_AG_DUO_GG" },
+      approvalRef: "APR-9001",
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.written).toBe(false);
+    expect(res.body.error).toMatch(/WW_SRVCNOW_AG_DUO_GG/);
+    expect(res.body.invalidFields[0]).toMatchObject({ field: "assignment_group", allowed: 45 });
+  });
+
+  it("refuses a sub-category that does not exist, and points at ones that do", async () => {
+    const res = await post("/itsm/incident/update", {
+      number: "INC0143139",
+      fields: { subcategory: "Authentication/Access Management" },
+      approvalRef: "APR-9002",
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.invalidFields[0].allowed).toBe(311);
+    // A refusal nobody can act on just produces the same invention again.
+    expect(res.body.invalidFields[0].didYouMean.length).toBeGreaterThan(0);
+  });
+
+  it("refuses the right word in the wrong case, and names the case that exists", async () => {
+    const res = await post("/itsm/incident/update", {
+      number: "INC0143139",
+      fields: { category: "SOFTWARE" },
+      approvalRef: "APR-9003",
+    });
+    expect(res.status).toBe(422);
+    // Both real cases are legal values, so the suggestion has to offer them.
+    expect(res.body.invalidFields[0].didYouMean).toContain("Software");
+    expect(res.body.invalidFields[0].didYouMean).toContain("software");
+  });
+
+  it("refuses a priority outside the five the record set uses", async () => {
+    const res = await post("/itsm/incident/update", { number: "INC0143139", fields: { priority: "P1" }, approvalRef: "APR-9004" });
+    expect(res.status).toBe(422);
+    expect(res.body.invalidFields[0]).toMatchObject({ field: "priority", allowed: 5 });
+  });
+
+  it("still writes values the record set does hold", async () => {
+    const res = await post("/itsm/incident/update", {
+      number: "INC0143139",
+      fields: { category: "Software", subcategory: "Duo SSO", priority: "2 - High", assignment_group: "WW_SRVCNOW_AG_SECURITY_GG" },
+      approvalRef: "APR-9005",
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.written).toBe(true);
+    await post("/itsm/rollback", { undoId: res.body.undoId });
+  });
   it("refuses a problem record that cites incidents which do not exist", async () => {
     const res = await post("/itsm/problem/create", {
       shortDescription: "Account lock-outs recurring after SSO change",

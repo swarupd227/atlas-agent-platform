@@ -108,6 +108,54 @@ const tasks = SERVICE_TASKS.map((r) => ({
  *  here because nothing in B.3 or B.4 asks an agent to rewrite it. */
 const WRITABLE_FIELDS = new Set(["category", "subcategory", "priority", "assignment_group"]);
 
+/**
+ * The values each writable field may hold, taken from the record set itself.
+ *
+ * Every one of these is a choice list in the source system, not free text, so a
+ * value outside it names something that does not exist. Checked here because
+ * this is the only party that knows the whole list: a prompt can ask an agent to
+ * stay inside it, and an approver can be expected to notice, but neither is a
+ * control. Both failed on run 7baf30f4, which wrote an assignment group and a
+ * sub-category that exist nowhere in the estate.
+ *
+ * Case-sensitive on purpose, as everywhere else here: "Software" and "software"
+ * are two real values and the caller has to mean one of them.
+ */
+const CHOICE_LISTS: Record<string, readonly string[]> = {
+  category: CATEGORIES,
+  subcategory: SUB_CATEGORIES,
+  priority: PRIORITIES,
+  assignment_group: ASSIGNMENT_GROUPS,
+};
+
+/**
+ * Values worth suggesting instead, best first. A refusal an agent cannot act on
+ * produces the same invention again, so this does the work of pointing at the
+ * real value: the same string in a different case first, since that is the
+ * commonest near miss in this record set, then whatever shares the most words.
+ */
+function nearest(field: string, value: string, limit = 5): string[] {
+  const list = CHOICE_LISTS[field] ?? [];
+  const want = value.trim().toLowerCase();
+  if (!want) return [];
+  const sameLetters = list.filter((v) => v.toLowerCase() === want);
+  const words = new Set(want.split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+  const scored = list
+    .filter((v) => v.toLowerCase() !== want)
+    .map((v) => {
+      const vw = v.toLowerCase();
+      let score = 0;
+      for (const w of words) if (vw.includes(w)) score += w.length;
+      if (vw.includes(want) || want.includes(vw)) score += 4;
+      return { v, score };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((s) => s.v);
+  return [...sameLetters, ...scored].slice(0, limit);
+}
+
+
 interface Write {
   undoId: string;
   table: "incident" | "problem";
@@ -446,6 +494,28 @@ router.post("/incident/update", (req: Request, res: Response) => {
     });
     return;
   }
+  // Every value has to be one this record set actually holds. Checked before the
+  // approval is consumed, so a refusal costs nothing and leaves nothing half done.
+  const invalid: Array<{ field: string; value: string; allowed: number; didYouMean: string[] }> = [];
+  for (const f of names) {
+    const value = str(fields[f]);
+    const list = CHOICE_LISTS[f];
+    if (!list || list.includes(value)) continue;
+    invalid.push({ field: f, value, allowed: list.length, didYouMean: nearest(f, value) });
+  }
+  if (invalid.length) {
+    res.status(422).json({
+      written: false,
+      error: invalid
+        .map((i) => `"${i.value}" is not a ${i.field.replace(/_/g, " ")} in this record set${i.didYouMean.length ? `. Did you mean: ${i.didYouMean.join(", ")}?` : " and nothing similar exists."}`)
+        .join(" "),
+      invalidFields: invalid,
+      guidance:
+        "These fields are choice lists, not free text. Write a value exactly as the record set holds it -- read one from an existing incident, or from the volume counts, rather than composing a plausible-looking one.",
+    });
+    return;
+  }
+
   const approvalRef = requireApproval(body, res);
   if (!approvalRef) return;
 
