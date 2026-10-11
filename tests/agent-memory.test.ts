@@ -502,6 +502,19 @@ describe("where agent-runtime builds the layer", () => {
     expect(calls[0] < episodicStart || calls[0] > episodicEnd).toBe(true);
   });
 
+  it("gives the memory layer a numeric default budget INSIDE DEFAULT_LAYER_BUDGETS", () => {
+    // Shipped once with `memory: 500` inside a doc comment above resolveLayerBudgets: the budget was
+    // undefined, the layer was skipped as "no-budget", and every line count still matched.
+    const open = src.indexOf("const DEFAULT_LAYER_BUDGETS");
+    expect(open).toBeGreaterThan(0);
+    const close = src.indexOf("};", open);
+    expect(close).toBeGreaterThan(open);
+    const body = src.slice(open, close);
+    expect(body).toMatch(/\n\s*memory:\s*[1-9]\d*,/);
+    // and the keys the other layers rely on are still there, so the object is the real one
+    for (const key of ["outcome", "governance", "knowledge", "history", "task"]) expect(body).toContain(`${key}:`);
+  });
+
   it("logs a skipped layer instead of swallowing it", () => {
     expect(src).toContain("memory layer skipped");
   });

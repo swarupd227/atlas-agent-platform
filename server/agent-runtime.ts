@@ -172,12 +172,12 @@ const DEFAULT_LAYER_BUDGETS: Record<string, number> = {
   knowledge: 800,
   history: 400,
   task: 1024,
+  // Approved notes the agent keeps between runs (server/agent-memory.ts).
+  memory: 500,
 };
 
 /** Resolve active context-profile budgets for an agent.
  *  Priority: agent-specific active profile → industry-fallback active profile → DEFAULT_LAYER_BUDGETS.
-  // Approved notes the agent keeps between runs (server/agent-memory.ts).
-  memory: 500,
  *  Returns a merged budgets map; callers can reference DEFAULT_LAYER_BUDGETS as the fallback for any unset key.
  */
 async function resolveLayerBudgets(agentId: string, industry?: string): Promise<Record<string, number>> {
