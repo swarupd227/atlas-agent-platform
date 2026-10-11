@@ -704,6 +704,7 @@ export interface IStorage {
 
   getOntologyEnhancement(conceptId: string): Promise<OntologyEnhancement | undefined>;
   getOntologyEnhancements(conceptIds: string[]): Promise<OntologyEnhancement[]>;
+  getOntologyEnhancementsByIndustry(industryId: string): Promise<OntologyEnhancement[]>;
   createOntologyEnhancement(enhancement: InsertOntologyEnhancement): Promise<OntologyEnhancement>;
   updateOntologyEnhancement(id: string, data: Partial<OntologyEnhancement>): Promise<OntologyEnhancement | undefined>;
 
@@ -3862,6 +3863,25 @@ export class DatabaseStorage implements IStorage {
   async getOntologyEnhancements(conceptIds: string[]) {
     if (conceptIds.length === 0) return [];
     return db.select().from(ontologyEnhancements).where(inArray(ontologyEnhancements.conceptId, conceptIds));
+  }
+
+  /**
+   * Every enhancement belonging to one industry's concepts, by joining through
+   * the concepts rather than being handed their ids.
+   *
+   * The caller used to enumerate them: the Ontology page put all 417 Insurance
+   * concept ids in a query string, 14KB of request line against a ~4KB ceiling,
+   * and got 431 every time. The list of ids was never the question being asked
+   * -- "this industry's enhancements" is -- and asking it that way has no size
+   * at which it stops working.
+   */
+  async getOntologyEnhancementsByIndustry(industryId: string) {
+    const rows = await db
+      .select({ e: getTableColumns(ontologyEnhancements) })
+      .from(ontologyEnhancements)
+      .innerJoin(ontologyConcepts, eq(ontologyEnhancements.conceptId, ontologyConcepts.id))
+      .where(eq(ontologyConcepts.industryId, industryId));
+    return rows.map((r) => r.e);
   }
   async createOntologyEnhancement(enhancement: InsertOntologyEnhancement) {
     const [created] = await db.insert(ontologyEnhancements).values(enhancement).returning();

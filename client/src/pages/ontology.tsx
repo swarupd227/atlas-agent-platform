@@ -440,16 +440,20 @@ export default function OntologyExplorer() {
   });
   const unusedConceptIds = useMemo(() => new Set((coverage?.unused || []).map((c) => c.id)), [coverage]);
 
-  const conceptIds = useMemo(() => concepts.map((c) => c.id), [concepts]);
+  // Asked for by industry, not by listing every concept id. Naming them all put
+  // 417 ids -- 14KB -- into a request line with a ~4KB ceiling, so this came back
+  // 431 on every load of this page and the enhancement badges below silently had
+  // nothing to show. The id list was never the question; "this industry's
+  // enhancements" is, and that one does not grow.
   const { data: enhancements = [] } = useQuery<OntologyEnhancement[]>({
-    queryKey: ["/api/ontology/enhancements", conceptIds.join(",")],
+    queryKey: ["/api/ontology/enhancements", industryId],
     queryFn: async () => {
-      if (conceptIds.length === 0) return [];
-      const res = await fetch(`/api/ontology/enhancements?conceptIds=${conceptIds.join(",")}`);
+      if (!industryId) return [];
+      const res = await fetch(`/api/ontology/enhancements?industryId=${industryId}`);
       if (!res.ok) throw new Error("Failed to load enhancements");
       return res.json();
     },
-    enabled: conceptIds.length > 0,
+    enabled: !!industryId,
   });
 
   const enhancementMap = useMemo(() => {

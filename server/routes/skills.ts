@@ -634,9 +634,19 @@ const router = Router();
   // Ontology Enhancements routes
   router.get("/api/ontology/enhancements", async (req, res) => {
     try {
+      // industryId is the scalable way to ask: the enhancements are found by
+      // joining through that industry's concepts. conceptIds still works for a
+      // caller that genuinely wants a handful, but a caller naming every
+      // concept it knows about builds a request line that grows without bound
+      // -- 417 Insurance concepts came to 14KB against a ~4KB ceiling, so the
+      // Ontology page got 431 Request Header Fields Too Large on every load.
+      const industryId = req.query.industryId as string | undefined;
+      if (industryId) {
+        return res.json(await storage.getOntologyEnhancementsByIndustry(industryId));
+      }
       const conceptIdsParam = req.query.conceptIds as string;
       if (!conceptIdsParam) {
-        return res.status(400).json({ message: "conceptIds query parameter is required" });
+        return res.status(400).json({ message: "industryId or conceptIds query parameter is required" });
       }
       const conceptIds = conceptIdsParam.split(",").filter(Boolean);
       const enhancements = await storage.getOntologyEnhancements(conceptIds);
