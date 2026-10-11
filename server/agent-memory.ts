@@ -23,8 +23,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { and, asc, eq, inArray } from "drizzle-orm";
-import { agentMemoryNotes, type AgentMemoryNote } from "@shared/schema";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { agentMemories, agentMemoryNotes, type AgentMemoryNote } from "@shared/schema";
 import { db } from "./db";
 import { storage } from "./storage";
 import { getDefaultOrgId } from "./auth";
@@ -156,9 +156,40 @@ export const dbMemoryStore: MemoryStore = {
   },
 };
 
+/**
+ * What a run's own after-run summary (agent_memories, "episodic") may have kept
+ * of a note: its short id, which the prompt prints beside it, and its text. A
+ * note that is taken out must take these with it, or the agent goes on answering
+ * from the summary that quoted it. The text is matched with whitespace
+ * collapsed, and only when it is long enough to be specific.
+ */
+export const MIN_PURGE_TEXT_CHARS = 12;
+export const noteNeedles = (n: Pick<AgentMemoryNote, "id" | "content">): string[] => {
+  const text = normalizeNote(n.content);
+  return [shortId(n.id), ...(text.length >= MIN_PURGE_TEXT_CHARS ? [text] : [])];
+};
+
+const likeEscape = (s: string): string => s.replace(/[\\%_]/g, "\\$&");
+
+/** Deletes an agent's episodic summaries that contain any needle (case-insensitive). Returns how many. */
+export async function dbPurgeEpisodic(agentId: string, needles: string[]): Promise<number> {
+  if (needles.length === 0) return 0;
+  const collapsed = sql`regexp_replace(${agentMemories.content}, '\\s+', ' ', 'g')`;
+  const gone = await db.delete(agentMemories)
+    .where(and(
+      eq(agentMemories.agentId, agentId),
+      eq(agentMemories.memoryType, "episodic"),
+      or(...needles.map((n) => sql`${collapsed} ILIKE ${"%" + likeEscape(n) + "%"}`)),
+    ))
+    .returning({ id: agentMemories.id });
+  return gone.length;
+}
+
 /** Everything the flows touch outside the store, injectable for tests. */
 export interface MemoryDeps {
   store: MemoryStore;
+  /** Removes the agent's episodic summaries that quote a note; resolves to how many went. */
+  purgeEpisodic(agentId: string, needles: string[]): Promise<number>;
   getAgent(agentId: string, orgId?: string | null): Promise<{ id: string; name: string; organizationId?: string | null } | undefined>;
   createApproval(a: Record<string, unknown>): Promise<{ id: string }>;
   audit(e: { orgId: string; action: string; objectId: string; actorType: string; actorId: string; details: Record<string, unknown> }): Promise<void>;
@@ -166,6 +197,7 @@ export interface MemoryDeps {
 
 export const defaultMemoryDeps: MemoryDeps = {
   store: dbMemoryStore,
+  purgeEpisodic: dbPurgeEpisodic,
   getAgent: (agentId, orgId) => storage.getAgent(agentId, orgId ?? undefined) as any,
   createApproval: (a) => storage.createApproval(a as any) as any,
   // Ids and hashes only: an audit chain is signed and permanent, and a note's
@@ -402,7 +434,22 @@ export async function proposeMemoryChange(input: ProposeInput, deps: MemoryDeps 
 
 // ── Deciding ────────────────────────────────────────────────────────────────
 
-export type DecisionResult = { applied: boolean; reason?: string };
+export type DecisionResult = { applied: boolean; reason?: string; /** Episodic summaries removed because they quoted a note that left memory. */ purgedEpisodic?: number };
+
+/**
+ * Takes out the agent's own after-run summaries that quote notes which just left
+ * memory (removed, replaced, or proposed and refused). Best effort: the note's
+ * state has already changed, so a failure here is reported, not raised.
+ */
+async function purgeQuoted(deps: MemoryDeps, agentId: string, notes: Array<Pick<AgentMemoryNote, "id" | "content">>): Promise<{ purged: number; failed: boolean }> {
+  const needles = [...new Set(notes.flatMap(noteNeedles))];
+  if (needles.length === 0) return { purged: 0, failed: false };
+  try {
+    return { purged: await deps.purgeEpisodic(agentId, needles), failed: false };
+  } catch {
+    return { purged: 0, failed: true };
+  }
+}
 
 /**
  * What a person's decision on a memory_write approval does to the note. Safe to
@@ -421,10 +468,18 @@ export async function applyMemoryDecision(
   const audit = (action: string, extra: Record<string, unknown> = {}) =>
     deps.audit({ orgId: org, action, objectId: row.id, actorType: "user", actorId: input.decidedBy, details: { agentId: row.agentId, proposedAction: row.proposedAction, contentHash: row.contentHash, approvalId: row.approvalId, targetNoteId: row.targetNoteId, ...extra } }).catch(() => {});
 
+  // A refused proposal never reached a prompt, but the run that made it may have
+  // summarised what it proposed; that summary goes too. A refused REMOVAL
+  // proposal quotes no note (its text is a reason), and the note stays.
+  const refuse = async (extra: Record<string, unknown>, decide: { decidedBy: string; decidedAt: Date }, result: DecisionResult): Promise<DecisionResult> => {
+    await deps.store.update(org, row.id, { status: "rejected", ...decide });
+    const p = row.proposedAction === "remove" ? { purged: 0, failed: false } : await purgeQuoted(deps, row.agentId, [row]);
+    await audit("agent_memory.rejected", { ...extra, episodicPurged: p.purged, ...(p.failed ? { episodicPurgeFailed: true } : {}) });
+    return { ...result, purgedEpisodic: p.purged };
+  };
+
   if (input.decision === "rejected") {
-    await deps.store.update(org, row.id, { status: "rejected", decidedBy: input.decidedBy, decidedAt: now });
-    await audit("agent_memory.rejected");
-    return { applied: true };
+    return refuse({}, { decidedBy: input.decidedBy, decidedAt: now }, { applied: true });
   }
 
   const decide = { decidedBy: input.decidedBy, decidedAt: now };
@@ -439,28 +494,27 @@ export async function applyMemoryDecision(
     }
     await deps.store.update(org, target.id, { status: "removed", ...decide });
     await deps.store.update(org, row.id, { status: "applied", ...decide });
-    await audit("agent_memory.approved");
-    return { applied: true };
+    const p = await purgeQuoted(deps, row.agentId, [target]);
+    await audit("agent_memory.approved", { episodicPurged: p.purged, ...(p.failed ? { episodicPurgeFailed: true } : {}) });
+    return { applied: true, purgedEpisodic: p.purged };
   }
 
   if (row.proposedAction === "replace" && !target) {
-    await deps.store.update(org, row.id, { status: "rejected", ...decide });
-    await audit("agent_memory.rejected", { why: "the note it replaces was already gone" });
-    return { applied: false, reason: "the note it replaces was already gone" };
+    return refuse({ why: "the note it replaces was already gone" }, decide, { applied: false, reason: "the note it replaces was already gone" });
   }
 
   // Capacity is checked again here: other proposals may have been approved since this one was filed.
   const used = active.reduce((s, n) => s + n.content.length, 0) - (target ? target.content.length : 0);
   if (used + row.content.length > MEMORY_LIMITS.maxTotalChars || (row.proposedAction === "add" && active.length >= MEMORY_LIMITS.maxNotes)) {
-    await deps.store.update(org, row.id, { status: "rejected", ...decide });
-    await audit("agent_memory.rejected", { why: "memory is full" });
-    return { applied: false, reason: "memory is full" };
+    return refuse({ why: "memory is full" }, decide, { applied: false, reason: "memory is full" });
   }
 
   if (target) await deps.store.update(org, target.id, { status: "superseded", ...decide });
   await deps.store.update(org, row.id, { status: "active", ...decide });
-  await audit("agent_memory.approved");
-  return { applied: true };
+  // The note it replaced is out of memory now; what the agent's own summaries kept of it goes too.
+  const p = target ? await purgeQuoted(deps, row.agentId, [target]) : { purged: 0, failed: false };
+  await audit("agent_memory.approved", target ? { episodicPurged: p.purged, ...(p.failed ? { episodicPurgeFailed: true } : {}) } : {});
+  return { applied: true, ...(target ? { purgedEpisodic: p.purged } : {}) };
 }
 
 // ── A person editing memory directly ───────────────────────────────────────
@@ -476,8 +530,9 @@ export async function removeNoteByPerson(
   if (!row || row.agentId !== input.agentId) return { applied: false, reason: "no such note" };
   if (row.status !== "active") return { applied: false, reason: `the note is ${row.status}` };
   await deps.store.update(org, row.id, { status: "removed", decidedBy: input.userId, decidedAt: new Date() });
-  await deps.audit({ orgId: org, action: "agent_memory.removed", objectId: row.id, actorType: "user", actorId: input.userId, details: { agentId: row.agentId, contentHash: row.contentHash } }).catch(() => {});
-  return { applied: true };
+  const p = await purgeQuoted(deps, row.agentId, [row]);
+  await deps.audit({ orgId: org, action: "agent_memory.removed", objectId: row.id, actorType: "user", actorId: input.userId, details: { agentId: row.agentId, contentHash: row.contentHash, episodicPurged: p.purged, ...(p.failed ? { episodicPurgeFailed: true } : {}) } }).catch(() => {});
+  return { applied: true, purgedEpisodic: p.purged };
 }
 
 /** Erasure: an agent's notes go with the agent. */

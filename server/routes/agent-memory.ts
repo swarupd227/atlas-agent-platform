@@ -29,7 +29,7 @@ router.delete("/api/agents/:id/memory/:noteId", checkPermission("manage_agents")
     if (!agent) return res.status(404).json({ message: "Agent not found" });
     const r = await removeNoteByPerson({ orgId: agent.organizationId, agentId: agent.id, noteId: String(req.params.noteId), userId: getRequestActorLabel(req) });
     if (!r.applied) return res.status(r.reason === "no such note" ? 404 : 409).json({ message: r.reason });
-    res.json({ removed: true });
+    res.json({ removed: true, purgedEpisodic: r.purgedEpisodic ?? 0 });
   } catch (e: any) {
     res.status(500).json({ message: e?.message ?? "Could not remove the note" });
   }

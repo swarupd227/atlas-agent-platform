@@ -7,17 +7,22 @@
  * carries hashes, never text.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-vi.mock("../server/db", () => ({ db: {} }));
+// The delete chain records the WHERE it is given, so the real SQL can be compiled and read.
+const captured = vi.hoisted(() => ({ where: undefined as unknown, rows: 2 }));
+vi.mock("../server/db", () => ({
+  db: { delete: () => ({ where: (w: unknown) => { captured.where = w; return { returning: async () => Array.from({ length: captured.rows }, (_, i) => ({ id: String(i) })) }; } }) },
+}));
 vi.mock("../server/storage", () => ({ storage: { getPlatformSetting: vi.fn() } }));
 vi.mock("../server/auth", () => ({ getDefaultOrgId: () => "org-default" }));
 
 import { storage } from "../server/storage";
 import {
   scanNote, normalizeNote, noteHash, shortId, renderMemoryBlock, isLive, MEMORY_LIMITS,
-  proposeMemoryChange, applyMemoryDecision, removeNoteByPerson, activeNotesForPrompt, isAgentMemoryEnabled, memoryOverview, memoryPromptLayer, memoryGate,
+  proposeMemoryChange, applyMemoryDecision, removeNoteByPerson, activeNotesForPrompt, isAgentMemoryEnabled, memoryOverview, memoryPromptLayer, memoryGate, noteNeedles, dbPurgeEpisodic,
   type MemoryStore, type MemoryDeps,
 } from "../server/agent-memory";
 
@@ -37,14 +42,26 @@ function makeEnv(agents: Array<{ id: string; name: string; organizationId: strin
   };
   const approvals: any[] = [];
   const audits: any[] = [];
+  // The agent's after-run summaries (agent_memories, "episodic"), by agent. Matching mirrors the SQL:
+  // whitespace collapsed, case-insensitive, any needle.
+  const episodic: Record<string, string[]> = {};
+  const purges: Array<{ agentId: string; needles: string[] }> = [];
+  let purgeFails = false;
   const deps: MemoryDeps = {
     store,
+    purgeEpisodic: async (agentId, needles) => {
+      purges.push({ agentId, needles });
+      if (purgeFails) throw new Error("db down");
+      const before = (episodic[agentId] ??= []).length;
+      episodic[agentId] = episodic[agentId].filter((s) => !needles.some((n) => s.replace(/\s+/g, " ").toLowerCase().includes(n.toLowerCase())));
+      return before - episodic[agentId].length;
+    },
     // Honors the org, like storage.getAgent(id, orgId): an agent is only found in its own org.
     getAgent: async (id, orgId) => agents.find((a) => a.id === id && (!orgId || a.organizationId === orgId)),
     createApproval: async (a) => { approvals.push(a); return { id: `appr-${approvals.length}` }; },
     audit: async (e) => { audits.push(e); },
   };
-  return { rows, store, deps, approvals, audits };
+  return { rows, store, deps, approvals, audits, episodic, purges, failPurge: () => { purgeFails = true; } };
 }
 
 /** Words, not one long run of letters: a long unbroken run is (correctly) refused as an encoded blob. */
@@ -383,6 +400,125 @@ describe("reading and removing", () => {
     await saveNote(env, "The claims system closes at 18:00 Eastern.");
     expect(await env.store.removeAllForAgent("org-a", "agent-1")).toBe(1);
     expect(env.rows).toHaveLength(0);
+  });
+});
+
+// ── What the agent's own summaries kept of a note ───────────────────────────
+// Found live: after a person removed a note, the agent still answered from it,
+// because the after-run summary of an earlier run had quoted it and is shown to
+// every later run. Taking a note out has to take those quotes out.
+
+describe("purging the summaries that quote a note", () => {
+  const NOTE = "Quarterly reports are due on the 5th business day; always name the source system.";
+  const approveRow = (env: ReturnType<typeof makeEnv>, row: any) => applyMemoryDecision({ orgId: "org-a", noteId: row.id, decision: "approved", decidedBy: "reviewer" }, env.deps);
+  const rejectRow = (env: ReturnType<typeof makeEnv>, row: any) => applyMemoryDecision({ orgId: "org-a", noteId: row.id, decision: "rejected", decidedBy: "reviewer" }, env.deps);
+
+  it("noteNeedles: the short id, plus the text when it is specific enough", () => {
+    expect(noteNeedles({ id: "9d5bafff-7314-4a66", content: NOTE })).toEqual(["9d5bafff", NOTE]);
+    expect(noteNeedles({ id: "9d5bafff-7314-4a66", content: "Use  SI   unit" })).toEqual(["9d5bafff"]);
+    expect(noteNeedles({ id: "9d5bafff-7314-4a66", content: "Use SI units in reports" })).toEqual(["9d5bafff", "Use SI units in reports"]);
+  });
+
+  it("a person removing a note removes the summaries that quote it, by text or by id, and leaves the rest", async () => {
+    const env = makeEnv();
+    const id = await saveNote(env, NOTE);
+    env.episodic["agent-1"] = [
+      `Execution succeeded. According to my approved memory note [${id.slice(0, 8)}], reports are due soon.`,
+      `The answer was: ${NOTE}`,
+      "Execution succeeded. Summarised the claims queue.",
+    ];
+    env.episodic["agent-2"] = [`Another agent also said: ${NOTE}`];
+    const r = await removeNoteByPerson({ orgId: "org-a", agentId: "agent-1", noteId: id, userId: "admin" }, env.deps);
+    expect(r).toMatchObject({ applied: true, purgedEpisodic: 2 });
+    expect(env.episodic["agent-1"]).toEqual(["Execution succeeded. Summarised the claims queue."]);
+    expect(env.episodic["agent-2"]).toHaveLength(1);
+    expect(env.purges.at(-1)!.agentId).toBe("agent-1");
+    const audit = env.audits.at(-1);
+    expect(audit).toMatchObject({ action: "agent_memory.removed", details: { episodicPurged: 2 } });
+    expect(JSON.stringify(audit)).not.toContain("source system");
+  });
+
+  it("matches across line breaks and case", async () => {
+    const env = makeEnv();
+    const id = await saveNote(env, NOTE);
+    env.episodic["agent-1"] = ["quarterly   REPORTS are due\n on the 5th business day; always name the SOURCE system."];
+    expect((await removeNoteByPerson({ orgId: "org-a", agentId: "agent-1", noteId: id, userId: "admin" }, env.deps)).purgedEpisodic).toBe(1);
+  });
+
+  it("approving a removal proposal purges the removed note's quotes", async () => {
+    const env = makeEnv();
+    const id = await saveNote(env, NOTE);
+    env.episodic["agent-1"] = [`It said ${NOTE}`, "Unrelated summary."];
+    const p = await propose(env, { action: "remove", noteId: id.slice(0, 8), reason: "No longer true" });
+    expect(p.ok).toBe(true);
+    const r = await approveRow(env, env.rows.find((x) => x.proposedAction === "remove")!);
+    expect(r).toMatchObject({ applied: true, purgedEpisodic: 1 });
+    expect(env.episodic["agent-1"]).toEqual(["Unrelated summary."]);
+  });
+
+  it("approving a replacement purges the OLD note's quotes and keeps the new note's", async () => {
+    const env = makeEnv();
+    const id = await saveNote(env, NOTE);
+    const NEWER = "Quarterly reports are due on the 3rd business day; always name the source system.";
+    env.episodic["agent-1"] = [`Old: ${NOTE}`, `New: ${NEWER}`];
+    await propose(env, { action: "replace", noteId: id.slice(0, 8), content: NEWER });
+    const r = await approveRow(env, env.rows.find((x) => x.proposedAction === "replace")!);
+    expect(r).toMatchObject({ applied: true, purgedEpisodic: 1 });
+    expect(env.episodic["agent-1"]).toEqual([`New: ${NEWER}`]);
+  });
+
+  it("rejecting a proposed note purges the summaries that quote what was proposed", async () => {
+    const env = makeEnv();
+    const p = await propose(env, { content: NOTE });
+    expect(p.ok).toBe(true);
+    env.episodic["agent-1"] = [`Proposed saving: ${NOTE}`, "Unrelated summary."];
+    const r = await rejectRow(env, env.rows[0]);
+    expect(r).toMatchObject({ applied: true, purgedEpisodic: 1 });
+    expect(env.episodic["agent-1"]).toEqual(["Unrelated summary."]);
+  });
+
+  it("rejecting a REMOVAL proposal purges nothing: the note it named stays", async () => {
+    const env = makeEnv();
+    const id = await saveNote(env, NOTE);
+    env.episodic["agent-1"] = [`It said ${NOTE}`];
+    await propose(env, { action: "remove", noteId: id.slice(0, 8), reason: "Looks stale to me" });
+    const r = await rejectRow(env, env.rows.find((x) => x.proposedAction === "remove")!);
+    expect(r.purgedEpisodic).toBe(0);
+    expect(env.episodic["agent-1"]).toHaveLength(1);
+    expect(env.rows.find((x) => x.id === id)!.status).toBe("active");
+  });
+
+  it("a short note is matched by its id only, so a common word is not purged from every summary", async () => {
+    const env = makeEnv();
+    const id = await saveNote(env, "Use SI.");
+    env.episodic["agent-1"] = ["Please use SI. Done.", `Per [${id.slice(0, 8)}] I used SI units.`];
+    const r = await removeNoteByPerson({ orgId: "org-a", agentId: "agent-1", noteId: id, userId: "admin" }, env.deps);
+    expect(r.purgedEpisodic).toBe(1);
+    expect(env.episodic["agent-1"]).toEqual(["Please use SI. Done."]);
+  });
+
+  it("the SQL: this agent's episodic rows only, whitespace collapsed, case-insensitive, wildcards escaped", async () => {
+    const n = await dbPurgeEpisodic("agent-1", ["9d5bafff", "100%_sure \\ done"]);
+    expect(n).toBe(2);
+    const q = new PgDialect().sqlToQuery(captured.where as any);
+    expect(q.sql).toContain("regexp_replace(");
+    expect(q.sql).toContain(`'\\s+'`);
+    expect(q.sql).toMatch(/ILIKE/i);
+    expect(q.sql).toContain('"agent_id" = $');
+    expect(q.sql).toContain('"memory_type" = $');
+    expect(q.params).toEqual(expect.arrayContaining(["agent-1", "episodic", "%9d5bafff%", "%100\\%\\_sure \\\\ done%"]));
+    captured.rows = 0;
+    expect(await dbPurgeEpisodic("agent-1", [])).toBe(0);
+  });
+
+  it("a failed purge does not undo the removal, and says so in the audit", async () => {
+    const env = makeEnv();
+    const id = await saveNote(env, NOTE);
+    env.failPurge();
+    const r = await removeNoteByPerson({ orgId: "org-a", agentId: "agent-1", noteId: id, userId: "admin" }, env.deps);
+    expect(r).toMatchObject({ applied: true, purgedEpisodic: 0 });
+    expect(env.rows.find((x) => x.id === id)!.status).toBe("removed");
+    expect(env.audits.at(-1)).toMatchObject({ details: { episodicPurged: 0, episodicPurgeFailed: true } });
   });
 });
 
