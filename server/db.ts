@@ -3,11 +3,30 @@ import pg from "pg";
 import * as schema from "@shared/schema";
 import { ensureMcpServerAuthUnique } from "./mcp-auth-uniqueness";
 
+/**
+ * `max` is bounded by the Postgres server, not by what we would like.
+ *
+ * Measured on the Azure server 2026-10-11: max_connections 50, of which
+ * superuser_reserved_connections 10, leaving 40. Azure's own azure_sys,
+ * azure_maintenance and background workers sit in that budget, and a deploy
+ * briefly runs the old process alongside the new one, so the arithmetic is
+ * `max * 2 + Azure's own + room for a migration or a psql session <= 40`.
+ * Twelve leaves about six spare; raising this without re-reading
+ * max_connections will make the server refuse connections to everything,
+ * which is a worse failure than a slow page.
+ *
+ * This is a mitigation, not the fix. Exhaustion shows up as a 500 carrying
+ * pg's own "timeout exceeded when trying to connect", and it happens because
+ * opening Astra Cowork fires seven concurrent requests that each hold a
+ * connection for seconds (/api/astra/home alone runs four aggregations, 4-18s
+ * by its own Server-Timing). Twelve connections buy a little headroom; what
+ * actually ends it is those routes costing less, or a larger database tier.
+ */
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
-  max: 10,
+  max: 12,
 });
 
 // An idle client whose TCP connection drops (server-side idle timeout, network
