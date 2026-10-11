@@ -40,7 +40,7 @@ import { parseConditionToRule } from "@shared/condition-to-rule";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
 import { resolveBrandAssetFileIds, describeBrandAssetsForPrompt } from "./brand-assets";
 import { resolveOutputMode, ownFinalAnswer, continuationMaxTokens, ANALYSIS_MAX_TOKENS } from "./output-mode";
-import { finalAnswerInstructions, analysisCallPrompt, finalAnswerFromTurn, hasRecordListSchema, RECONCILIATION_NOTE } from "./final-answer";
+import { finalAnswerInstructions, analysisCallPrompt, finalAnswerFromTurn, noToolsAnswerOutput, hasRecordListSchema, RECONCILIATION_NOTE } from "./final-answer";
 import { CONTINUE_CUT_OFF_REPLY } from "@shared/cut-off-reply";
 
 export function canonicalJsonStringify(obj: any): string {
@@ -2233,8 +2233,9 @@ After receiving tool results, provide a structured analysis with key findings, s
             contractValidationErrors = noToolsEnforced.validationErrors.length > 0 ? noToolsEnforced.validationErrors : undefined;
             contractQualityScore = noToolsEnforced.qualityScore;
           } else {
-            // No contract: parse best-effort and record planning metadata (one row, no duplication)
-            noToolsOutput = parseModelJsonObject(currentContent) ?? { analysis: currentContent };
+            // No contract: parse best-effort and record planning metadata (one row, no duplication).
+            // The reply's prose is kept beside any JSON block it ends with (see noToolsAnswerOutput).
+            noToolsOutput = noToolsAnswerOutput(currentContent, parseModelJsonObject);
             outputContractEnforcer.recordLlmCallMetadata({
               agentId,
               pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
@@ -2251,7 +2252,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         }
       } catch (noToolsErr: unknown) {
         if (noToolsErr instanceof StructuredOutputValidationError) throw noToolsErr;
-        noToolsOutput = parseModelJsonObject(currentContent) ?? { analysis: currentContent };
+        noToolsOutput = noToolsAnswerOutput(currentContent, parseModelJsonObject);
       }
 
       const maskedNoToolsOutput = policyRedact(maskPiiInOutputFields(noToolsOutput, runtimeConfig));

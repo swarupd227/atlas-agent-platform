@@ -95,6 +95,38 @@ export function analysisCallPrompt(outputSchema: unknown, hasRecordData: boolean
 }
 
 /**
+ * The recorded output of a reply that needed no tools, where the planning
+ * reply IS the answer.
+ *
+ * It used to be `parse(content) ?? { analysis: content }`: whenever the reply
+ * held a JSON object the parsed object became the whole output, and a parsed
+ * object without a `summary` or `analysis` key is stringified downstream
+ * (executeWorkerAgent). So an agent that did exactly what its skill asked --
+ * a treatment plan in prose, then a JSON block with the fields the next step
+ * reads -- was recorded as the block alone: live on 2026-10-10 and 11, a
+ * 700-word plan came through as 31 words of JSON, three runs in a row, and
+ * no prompt wording could change it because the prose never reached the
+ * run state.
+ *
+ * The reply's text is kept as `analysis` beside the parsed fields when the
+ * model wrote prose around its JSON. A reply that is only a JSON object, with
+ * or without a fence, is returned parsed as before; so is a parsed object
+ * that already carries its own text.
+ */
+export function noToolsAnswerOutput(
+  content: string,
+  parse: (text: string) => Record<string, unknown> | null,
+): Record<string, unknown> {
+  const parsed = parse(content);
+  if (!parsed) return { analysis: content };
+  const ownText = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+  if (ownText(parsed.summary) || ownText(parsed.analysis)) return parsed;
+  const unfenced = content.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, "$1").trim();
+  const replyIsOnlyJson = unfenced.startsWith("{") && unfenced.endsWith("}");
+  return replyIsOnlyJson ? parsed : { ...parsed, analysis: content };
+}
+
+/**
  * The loop's last turn as the result, when it is one: no tool call still
  * pending, and a JSON object carrying a summary. Returns the turn's text
  * (the contract enforcement and parsing downstream read it as they would the

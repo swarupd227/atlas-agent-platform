@@ -9,6 +9,7 @@ import {
   analysisCallPrompt,
   structuredOutputInstructions,
   finalAnswerFromTurn,
+  noToolsAnswerOutput,
   hasRecordListSchema,
   ANALYSIS_FIELDS,
 } from "../server/final-answer";
@@ -66,6 +67,40 @@ describe("finalAnswerFromTurn", () => {
     expect(finalAnswerFromTurn([], '{"summary": "  "}', parse)).toBeUndefined();
     expect(finalAnswerFromTurn([], "", parse)).toBeUndefined();
     expect(finalAnswerFromTurn([], null, parse)).toBeUndefined();
+  });
+});
+
+describe("noToolsAnswerOutput keeps the prose a no-tools reply wrote around its JSON", () => {
+  // The runtime's parser also finds a JSON object embedded in prose; this stand-in does the same.
+  const parseEmbedded = (text: string): Record<string, unknown> | null => {
+    const direct = parse(text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, "$1").trim());
+    if (direct) return direct;
+    const m = /```json\s*([\s\S]*?)```/.exec(text);
+    return m ? parse(m[1]) : null;
+  };
+  const plan = "## 1. Largest exposure and its cell\nFlood: slight frequency, severe severity, so reduce and prevent.\n\n## 3. Retention\n5% of $9,000,000 = $450,000.\n\n```json\n{\"technique\": \"Reduce and prevent\", \"retentionLevel\": 400000}\n```";
+
+  it("records the whole reply as the analysis text and keeps the block's fields beside it", () => {
+    const out = noToolsAnswerOutput(plan, parseEmbedded);
+    expect(out.analysis).toBe(plan);
+    expect(out.technique).toBe("Reduce and prevent");
+    expect(out.retentionLevel).toBe(400000);
+  });
+
+  it("returns a reply that is only JSON parsed, fenced or not, exactly as before", () => {
+    expect(noToolsAnswerOutput('{"technique": "Transfer", "retentionLevel": 1}', parseEmbedded)).toEqual({ technique: "Transfer", retentionLevel: 1 });
+    expect(noToolsAnswerOutput('```json\n{"technique": "Transfer"}\n```', parseEmbedded)).toEqual({ technique: "Transfer" });
+  });
+
+  it("leaves a parsed object alone when it already carries its own summary or analysis text", () => {
+    const withSummary = '{"summary": "Account cleared.", "severity": "low"}';
+    expect(noToolsAnswerOutput(withSummary, parseEmbedded)).toEqual({ summary: "Account cleared.", severity: "low" });
+    const prose = "Preamble.\n```json\n{\"summary\": \"Cleared.\"}\n```";
+    expect(noToolsAnswerOutput(prose, parseEmbedded)).toEqual({ summary: "Cleared." });
+  });
+
+  it("records plain prose as the analysis text", () => {
+    expect(noToolsAnswerOutput("No exposures were found.", parseEmbedded)).toEqual({ analysis: "No exposures were found." });
   });
 });
 
