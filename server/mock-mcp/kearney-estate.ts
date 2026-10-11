@@ -51,7 +51,21 @@ export interface Application {
   inventory: string;
 }
 
-const applications: Application[] = APPLICATIONS.map((r) => ({
+/**
+ * Decoded on FIRST USE, for the same reason as the ITSM connector: this work
+ * belongs to the first call that needs it, not to every boot. The term index
+ * below is built from the decoded applications, so it waits too.
+ */
+let built = false;
+let applications: Application[] = [];
+let servers: Array<Record<string, string>> = [];
+let databases: Array<Record<string, string>> = [];
+let devices: Array<Record<string, string>> = [];
+
+function ensure(): void {
+  if (built) return;
+  built = true;
+  applications = APPLICATIONS.map((r) => ({
   name: r[0],
   description: r[1],
   system_type: r[2],
@@ -62,23 +76,22 @@ const applications: Application[] = APPLICATIONS.map((r) => ({
   functional_area: r[7],
   criticality: r[8],
   notes: r[9],
-  inventory: r[10],
-}));
-
-const servers = SERVERS.map((r) => ({
+    inventory: r[10],
+  }));
+  servers = SERVERS.map((r) => ({
   host_name: r[0], location: r[1], location_type: r[2], server_type: r[3], virtualised: r[4],
   criticality: r[5], os_detail: r[6], os: r[7], os_version: r[8], high_availability: r[9],
-  cpus: r[10], memory_gb: r[11], disk_gb: r[12],
-}));
-
-const databases = DATABASES.map((r) => ({
-  reference: r[0], product: r[1], platform: r[2], instances: r[3], size: r[4], criticality: r[5], notes: r[6],
-}));
-
-const devices = END_USER_HARDWARE.map((r) => ({
-  model_category: r[0], serial_number: r[1], asset_tag: r[2], model: r[3], state: r[4],
-  location: r[5], configuration_item: r[6], owned: r[7], display_name: r[8], os: r[9],
-}));
+    cpus: r[10], memory_gb: r[11], disk_gb: r[12],
+  }));
+  databases = DATABASES.map((r) => ({
+    reference: r[0], product: r[1], platform: r[2], instances: r[3], size: r[4], criticality: r[5], notes: r[6],
+  }));
+  devices = END_USER_HARDWARE.map((r) => ({
+    model_category: r[0], serial_number: r[1], asset_tag: r[2], model: r[3], state: r[4],
+    location: r[5], configuration_item: r[6], owned: r[7], display_name: r[8], os: r[9],
+  }));
+  terms = buildTerms();
+}
 
 const pickCat = (i: number): string => CATEGORIES[i] ?? "";
 const pickSub = (i: number): string => SUB_CATEGORIES[i] ?? "";
@@ -110,8 +123,10 @@ const STOP = new Set(["the", "and", "for", "with", "inc", "ltd", "e3", "365", "p
 
 interface Term { term: string; appIndex: number; weak: boolean; re: RegExp }
 
+let terms: Term[] = [];
+
 /** One matchable term per application name plus its significant words. */
-const terms: Term[] = (() => {
+function buildTerms(): Term[] {
   const out: Term[] = [];
   applications.forEach((app, appIndex) => {
     const seen = new Set<string>();
@@ -147,7 +162,7 @@ const terms: Term[] = (() => {
   }
   // Longest first: a hit on "SAP S/4 HANA" should outrank a hit on "SAP".
   return out.sort((a, b) => b.term.length - a.term.length);
-})();
+}
 
 /** Terms the inventory itself shows are shared by several applications. */
 export function sharedAcrossApplications(): string[] {
@@ -277,6 +292,7 @@ const findApp = (name: string) => applications.find((a) => a.name.toLowerCase() 
 // ── reads ─────────────────────────────────────────────────────────────────────
 
 router.get("/summary", (_req: Request, res: Response) => {
+  ensure();
   const by = (key: keyof Application) => {
     const counts = new Map<string, number>();
     for (const a of applications.map(current)) counts.set(a[key] || "(blank)", (counts.get(a[key] || "(blank)") ?? 0) + 1);
@@ -299,6 +315,7 @@ router.get("/summary", (_req: Request, res: Response) => {
 });
 
 router.get("/applications", (req: Request, res: Response) => {
+  ensure();
   const q = req.query as Record<string, any>;
   const limit = clamp(q.limit, 25, 200);
   const text = lower(q.textContains ?? q.text);
@@ -312,6 +329,7 @@ router.get("/applications", (req: Request, res: Response) => {
 });
 
 router.get("/application", (req: Request, res: Response) => {
+  ensure();
   const app = findApp(str(req.query.name));
   if (!app) {
     res.status(404).json({ error: `No application named "${str(req.query.name)}" in this inventory.`, guidance: "Call /resolve-application with the ticket text to get candidate names." });
@@ -338,6 +356,7 @@ router.get("/application", (req: Request, res: Response) => {
  * inspectable, and weak matches are marked rather than hidden.
  */
 router.get("/resolve-application", (req: Request, res: Response) => {
+  ensure();
   const text = str(req.query.text ?? req.query.shortDescription);
   const subcategory = str(req.query.subcategory);
   const category = str(req.query.category);
@@ -365,6 +384,7 @@ router.get("/resolve-application", (req: Request, res: Response) => {
 
 /** Declared against attributed, for every application, plus what could not be attributed. */
 router.get("/application-incidents", (req: Request, res: Response) => {
+  ensure();
   const limit = clamp(req.query.limit, 30, 200);
   const a = attributions();
   const rows = applications.map(current).map((app) => {
@@ -392,6 +412,7 @@ router.get("/application-incidents", (req: Request, res: Response) => {
 });
 
 router.get("/servers", (req: Request, res: Response) => {
+  ensure();
   const q = req.query as Record<string, any>;
   const limit = clamp(q.limit, 25, 200);
   const rows = servers.filter((s) =>
@@ -403,6 +424,7 @@ router.get("/servers", (req: Request, res: Response) => {
 });
 
 router.get("/databases", (req: Request, res: Response) => {
+  ensure();
   const q = req.query as Record<string, any>;
   const rows = databases.filter((d) =>
     (!q.platform || lower(d.platform).includes(lower(q.platform))) &&
@@ -412,6 +434,7 @@ router.get("/databases", (req: Request, res: Response) => {
 });
 
 router.get("/devices", (req: Request, res: Response) => {
+  ensure();
   const q = req.query as Record<string, any>;
   const limit = clamp(q.limit, 25, 200);
   const rows = devices.filter((d) =>
@@ -439,6 +462,7 @@ router.get("/devices", (req: Request, res: Response) => {
  * and blank fields across the inventory.
  */
 router.get("/gaps", (_req: Request, res: Response) => {
+  ensure();
   const rows = applications.map(current);
   const blank = (key: keyof Application) => rows.filter((a) => !str(a[key])).map((a) => a.name);
   const nonNumericDeclared = rows.filter((a) => !Number.isFinite(Number(a.declared_annual_incidents)));
@@ -474,6 +498,7 @@ router.get("/gaps", (_req: Request, res: Response) => {
  * changes is worse than reference data that is wrong in a known way.
  */
 router.post("/application/annotate", (req: Request, res: Response) => {
+  ensure();
   const body = (req.body || {}) as Record<string, any>;
   const app = findApp(str(body.name));
   if (!app) {
@@ -510,6 +535,7 @@ router.post("/application/annotate", (req: Request, res: Response) => {
 });
 
 router.post("/rollback", (req: Request, res: Response) => {
+  ensure();
   const undoId = str((req.body || {}).undoId);
   const write = writes.find((w) => w.undoId === undoId);
   if (!write) {

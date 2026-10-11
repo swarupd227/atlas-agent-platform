@@ -48,9 +48,27 @@ export interface Incident {
 
 const pick = <T extends readonly string[]>(table: T, i: number): string => table[i] ?? "";
 
-// Decoded once at load. 28k + 63k rows is a few hundred milliseconds and the
-// alternative -- decoding per request -- would put the cost on every tool call.
-const incidents: Incident[] = INCIDENTS.map((r) => ({
+/**
+ * Decoded on FIRST USE, not at import.
+ *
+ * Measured: decoding at module scope cost 7.4s and 55.5MB on every boot, on the
+ * same CPU that was opening the database connections -- enough, on a small app
+ * plan, to make a run die mid-flight with "timeout exceeded when trying to
+ * connect". Nothing here is needed until a Kearney tool is actually called, and
+ * the cost is paid once when it is.
+ */
+let built = false;
+let incidents: Incident[] = [];
+let byNumber = new Map<string, Incident>();
+let chronological: Incident[] = [];
+let requests: Array<{ number: string; short_description: string; state: string; priority: string; opened_location: string; assignment_group: string; opened_at: string }> = [];
+let problems: Array<{ number: string; first_reported_by_task: string; state: string; short_description: string; opened_at: string; assignment_group: string; related_incidents: number; category: string; subcategory: string }> = [];
+let tasks: Array<{ number: string; short_description: string; state: string; priority: string; request_item: string; location: string; assignment_group: string; reassignment_count: number; catalogue_item: string }> = [];
+
+function ensure(): void {
+  if (built) return;
+  built = true;
+  incidents = INCIDENTS.map((r) => ({
   number: r[0],
   short_description: r[1],
   category: pick(CATEGORIES, r[2]),
@@ -59,26 +77,26 @@ const incidents: Incident[] = INCIDENTS.map((r) => ({
   state: pick(STATES, r[5]),
   priority: pick(PRIORITIES, r[6]),
   assignment_group: pick(ASSIGNMENT_GROUPS, r[7]),
-  sys_created_on: r[8],
-}));
-
-const byNumber = new Map(incidents.map((i) => [i.number.toUpperCase(), i]));
-// Ascending by creation, so a cursor-bound read replays the extract in the
-// order it happened. The poller's cursor only advances to the last row it was
-// given, so a capped page walks forward instead of skipping the remainder.
-const chronological = [...incidents].sort((a, b) => a.sys_created_on.localeCompare(b.sys_created_on));
-
-const requests = REQUESTS.map((r) => ({
+    sys_created_on: r[8],
+  }));
+  byNumber = new Map(incidents.map((i) => [i.number.toUpperCase(), i]));
+  // Ascending by creation, so a cursor-bound read replays the extract in the
+  // order it happened. The poller's cursor only advances to the last row it was
+  // given, so a capped page walks forward instead of skipping the remainder.
+  // Compared as plain strings: these are fixed-width "YYYY-MM-DD HH:mm:ss"
+  // timestamps, so ordering is lexicographic anyway, and localeCompare was the
+  // single most expensive thing this module did.
+  chronological = [...incidents].sort((a, b) => (a.sys_created_on < b.sys_created_on ? -1 : a.sys_created_on > b.sys_created_on ? 1 : 0));
+  requests = REQUESTS.map((r) => ({
   number: r[0],
   short_description: pick(REQUEST_DESCRIPTIONS, r[1]),
   state: pick(REQUEST_STATES, r[2]),
   priority: pick(REQUEST_PRIORITIES, r[3]),
   opened_location: pick(REQUEST_LOCATIONS, r[4]),
   assignment_group: pick(REQUEST_GROUPS, r[5]),
-  opened_at: r[6],
-}));
-
-const problems = PROBLEMS.map((r) => ({
+    opened_at: r[6],
+  }));
+  problems = PROBLEMS.map((r) => ({
   number: r[0],
   first_reported_by_task: r[1],
   state: r[2],
@@ -87,10 +105,9 @@ const problems = PROBLEMS.map((r) => ({
   assignment_group: r[6],
   related_incidents: Number(r[7]) || 0,
   category: r[8],
-  subcategory: r[9],
-}));
-
-const tasks = SERVICE_TASKS.map((r) => ({
+    subcategory: r[9],
+  }));
+  tasks = SERVICE_TASKS.map((r) => ({
   number: r[0],
   short_description: r[1],
   state: r[3],
@@ -99,8 +116,9 @@ const tasks = SERVICE_TASKS.map((r) => ({
   location: r[6],
   assignment_group: r[7],
   reassignment_count: Number(r[8]) || 0,
-  catalogue_item: r[9],
-}));
+    catalogue_item: r[9],
+  }));
+}
 
 // ── writes ────────────────────────────────────────────────────────────────────
 /** Fields a journey may correct on an incident. Priority and categorisation are
@@ -267,6 +285,7 @@ function tally(rows: Incident[], key: keyof typeof GROUPABLE) {
 
 /** The headline shape of the record set, so a journey can size a problem in one call. */
 router.get("/summary", (_req: Request, res: Response) => {
+  ensure();
   const planning = incidents.filter((i) => i.priority === "5 - Planning").length;
   const caseVariants = new Map<string, Set<string>>();
   for (const i of incidents) {
@@ -306,6 +325,7 @@ router.get("/summary", (_req: Request, res: Response) => {
 
 /** Exact counts by one field, over everything that matches the filters. */
 router.get("/volume", (req: Request, res: Response) => {
+  ensure();
   const key = str(req.query.groupBy) as keyof typeof GROUPABLE;
   if (!GROUPABLE[key]) {
     res.status(422).json({ error: `groupBy must be one of: ${Object.keys(GROUPABLE).join(", ")}`, got: key || "(missing)" });
@@ -325,6 +345,7 @@ router.get("/volume", (req: Request, res: Response) => {
  * jumping over the rows that did not fit.
  */
 router.get("/incidents", (req: Request, res: Response) => {
+  ensure();
   const f = readFilters(req.query as Record<string, any>);
   const limit = clamp(req.query.limit, 25, 200);
   const all = (f.createdSince ? chronological : incidents).map(current).filter((i) => matches(i, f));
@@ -341,6 +362,7 @@ router.get("/incidents", (req: Request, res: Response) => {
 });
 
 router.get("/incident", (req: Request, res: Response) => {
+  ensure();
   const found = byNumber.get(str(req.query.number).toUpperCase());
   if (!found) {
     res.status(404).json({ error: `No incident numbered "${str(req.query.number)}" in this record set.` });
@@ -363,6 +385,7 @@ router.get("/incident", (req: Request, res: Response) => {
  * problem record already covers that category and sub-category.
  */
 router.get("/recurrence", (req: Request, res: Response) => {
+  ensure();
   const threshold = clamp(req.query.minIncidents, 50, 100000);
   const limit = clamp(req.query.limit, 20, 200);
   const f = readFilters(req.query as Record<string, any>);
@@ -392,12 +415,14 @@ router.get("/recurrence", (req: Request, res: Response) => {
 });
 
 router.get("/problems", (req: Request, res: Response) => {
+  ensure();
   const category = str(req.query.category);
   const rows = problems.filter((p) => !category || lower(p.category) === lower(category));
   res.json({ matched: rows.length, of: problems.length, problems: rows, created_this_session: createdProblems });
 });
 
 router.get("/problem", (req: Request, res: Response) => {
+  ensure();
   const number = str(req.query.number).toUpperCase();
   const found = problems.find((p) => p.number.toUpperCase() === number)
     ?? (createdProblems.find((p) => String(p.number).toUpperCase() === number) as any);
@@ -415,6 +440,7 @@ router.get("/problem", (req: Request, res: Response) => {
  * passed between groups several times is one the original routing got wrong.
  */
 router.get("/tasks", (req: Request, res: Response) => {
+  ensure();
   const limit = clamp(req.query.limit, 25, 200);
   const minReassignments = Number(req.query.minReassignments) || 0;
   const rows = tasks.filter((t) => t.reassignment_count >= minReassignments);
@@ -433,6 +459,7 @@ router.get("/tasks", (req: Request, res: Response) => {
 /** The request stream. Out of B.3/B.4 scope as a service line, in scope as context:
  *  requests and incidents land on the same applications and the same groups. */
 router.get("/requests", (req: Request, res: Response) => {
+  ensure();
   const limit = clamp(req.query.limit, 25, 200);
   const text = lower(req.query.textContains ?? req.query.text);
   const group = str(req.query.assignmentGroup);
@@ -449,6 +476,7 @@ router.get("/requests", (req: Request, res: Response) => {
  * the remediation a data-quality journey proposes and a person approves.
  */
 router.get("/request-variants", (req: Request, res: Response) => {
+  ensure();
   const limit = clamp(req.query.limit, 20, 200);
   const groups = new Map<string, Map<string, number>>();
   for (const r of requests) {
@@ -477,6 +505,7 @@ router.get("/request-variants", (req: Request, res: Response) => {
 // ── writes ────────────────────────────────────────────────────────────────────
 
 router.post("/incident/update", (req: Request, res: Response) => {
+  ensure();
   const body = (req.body || {}) as Record<string, any>;
   const found = byNumber.get(str(body.number).toUpperCase());
   if (!found) {
@@ -541,6 +570,7 @@ router.post("/incident/update", (req: Request, res: Response) => {
 });
 
 router.post("/problem/create", (req: Request, res: Response) => {
+  ensure();
   const body = (req.body || {}) as Record<string, any>;
   const description = str(body.shortDescription);
   const category = str(body.category);
@@ -579,6 +609,7 @@ router.post("/problem/create", (req: Request, res: Response) => {
 });
 
 router.post("/worknote", (req: Request, res: Response) => {
+  ensure();
   const body = (req.body || {}) as Record<string, any>;
   const found = byNumber.get(str(body.number).toUpperCase());
   if (!found) {
@@ -596,6 +627,7 @@ router.post("/worknote", (req: Request, res: Response) => {
 });
 
 router.post("/rollback", (req: Request, res: Response) => {
+  ensure();
   const undoId = str((req.body || {}).undoId);
   const write = writes.find((w) => w.undoId === undoId);
   if (!write) {
