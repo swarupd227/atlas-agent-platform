@@ -239,12 +239,15 @@ export type Subject = string;
  */
 const SUBJECT_PATTERNS: Array<{ type: string; re: RegExp }> = [
   { type: "submission", re: /\bSUB-\d{4}-\d+\b/g },
-  { type: "policy", re: /\bPOL-[0-9A-Z-]{4,}\b/g },
+  // Same two problems as the account pattern below, same fix. The {4,} is kept
+  // on the FIRST segment so the date fix does not quietly relax the length
+  // guard: POL-2026-8891-CP survives (first segment "2026"), POL-AB does not.
+  { type: "policy", re: /\bPOL-(?!\d{4}-\d{2}\b)[0-9A-Z]{4,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
   { type: "binder", re: /\bCP-\d{4}-\d+\b/g },
   // Same shape as the account pattern below, and for the same reason: a hyphen
   // inside the class let "BRK-4471-2026-05-28" match whole.
-  { type: "broker", re: /\bBRK-(?!\d{4}-\d{2}\b)[0-9A-Z]+(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
-  { type: "agency", re: /\bAGY-[0-9A-Z-]{2,}\b/g },
+  { type: "broker", re: /\bBRK-(?!\d{4}-\d{2}\b)[0-9A-Z]{2,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
+  { type: "agency", re: /\bAGY-(?!\d{4}-\d{2}\b)[0-9A-Z]{2,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
   // An account is the anchor of the five Account journeys, and until this
   // pattern existed none of them could use this layer at all: every other
   // pattern here names an E&S object, so extractSubjects returned nothing on
@@ -262,7 +265,12 @@ const SUBJECT_PATTERNS: Array<{ type: string; re: RegExp }> = [
   // Restricting the class to digits would be the obvious fix and is wrong:
   // real ids include ACCT-REQ-VOSTOK-001. So the id is read as hyphen-joined
   // segments, and a segment that begins a YYYY-MM date is not one of them.
-  { type: "account", re: /\bACCT-(?!\d{4}-\d{2}\b)[0-9A-Z]+(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
+  //
+  // Every pattern here keeps its own original minimum on the FIRST segment
+  // ({3,} here, {2,} for broker and agency, {4,} for policy). The first version
+  // of this fix dropped them, which let ACCT-A match where the author had
+  // required three characters -- a date fix is not a licence to widen.
+  { type: "account", re: /\bACCT-(?!\d{4}-\d{2}\b)[0-9A-Z]{3,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
   // A period is only a period when a key says so: "2026-11" appears in
   // timestamps everywhere, and anchoring on those would attach decisions to
   // the month they happened to run in.

@@ -319,6 +319,30 @@ describe("extractSubjects", () => {
     // And for a broker code, whose pattern carried the identical flaw.
     expect(extractSubjects({ brokerCode: "BRK-4471-2026-05-28" }).map(s => s.subject))
       .toEqual(["broker:BRK-4471"]);
+    // Policy and agency carried it too. POL-2026-8891-CP legitimately ends in
+    // letters, so this could never have been fixed by restricting to digits.
+    //
+    // toContain, not toEqual: the same text ALSO yields a phantom
+    // binder:CP-2026-05, because /\bCP-\d{4}-\d+\b/ matches the "CP-2026-05"
+    // inside the policy id -- the hyphen before CP is a word boundary. That is
+    // a separate defect in the binder pattern, not this one, and asserting the
+    // phantom here would enshrine it. Raised separately.
+    expect(extractSubjects({ policyId: "POL-2026-8891-CP-2026-05-28T06:12:00Z" }).map(s => s.subject))
+      .toContain("policy:POL-2026-8891-CP");
+    expect(extractSubjects({ agencyCode: "AGY-4471-2026-05-28" }).map(s => s.subject))
+      .toEqual(["agency:AGY-4471"]);
+  });
+
+  it("keeps each pattern's own minimum length on the id", () => {
+    // The first version of the date fix dropped these guards, so ACCT-A and
+    // POL-AB began matching where the author had required 3 and 4 characters.
+    // A fix for one defect should not widen the pattern on its way past.
+    expect(extractSubjects({ a: "ACCT-A", b: "BRK-1", c: "POL-AB", d: "AGY-X" }).map(s => s.subject)).toEqual([]);
+    // The real ids at each of those boundaries still match.
+    expect(extractSubjects({ a: "ACCT-REQ-VOSTOK-001" }).map(s => s.subject)).toEqual(["account:ACCT-REQ-VOSTOK-001"]);
+    expect(extractSubjects({ b: "BRK-14" }).map(s => s.subject)).toEqual(["broker:BRK-14"]);
+    expect(extractSubjects({ c: "POL-2026-8891-CP" }).map(s => s.subject)).toEqual(["policy:POL-2026-8891-CP"]);
+    expect(extractSubjects({ d: "AGY-HARB-01" }).map(s => s.subject)).toEqual(["agency:AGY-HARB-01"]);
   });
 
   it("does not turn a timestamp into an accounting period", () => {
