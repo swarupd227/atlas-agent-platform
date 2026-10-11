@@ -306,43 +306,53 @@ describe("extractSubjects", () => {
     expect(extractSubjects({ note: "ACCOUNTING-2026 and ACCT- alone" }).map(s => s.subject)).toEqual([]);
   });
 
-  it("does not let a trailing timestamp become a second account", () => {
-    // Seen live on a Shared Account Data Propagation run: state carried a cache
-    // key alongside the id, and the layer reported account:ACCT-100417 AND
-    // account:ACCT-100417-2026-05-28T06 as two business objects. A decision
-    // recorded against one can then never be found from the other.
-    expect(extractSubjects({ accountId: "ACCT-100417", cacheKey: "ACCT-100417-2026-05-28T06:12:00Z" }).map(s => s.subject))
-      .toEqual(["account:ACCT-100417"]);
-    // The same must hold for an id that is not purely numeric.
-    expect(extractSubjects({ cacheKey: "ACCT-REQ-VOSTOK-001-2026-05-28T06:12:00Z" }).map(s => s.subject))
-      .toEqual(["account:ACCT-REQ-VOSTOK-001"]);
-    // And for a broker code, whose pattern carried the identical flaw.
-    expect(extractSubjects({ brokerCode: "BRK-4471-2026-05-28" }).map(s => s.subject))
-      .toEqual(["broker:BRK-4471"]);
-    // Policy and agency carried it too. POL-2026-8891-CP legitimately ends in
-    // letters, so this could never have been fixed by restricting to digits.
-    //
-    // toContain, not toEqual: the same text ALSO yields a phantom
-    // binder:CP-2026-05, because /\bCP-\d{4}-\d+\b/ matches the "CP-2026-05"
-    // inside the policy id -- the hyphen before CP is a word boundary. That is
-    // a separate defect in the binder pattern, not this one, and asserting the
-    // phantom here would enshrine it. Raised separately.
-    expect(extractSubjects({ policyId: "POL-2026-8891-CP-2026-05-28T06:12:00Z" }).map(s => s.subject))
-      .toContain("policy:POL-2026-8891-CP");
-    expect(extractSubjects({ agencyCode: "AGY-4471-2026-05-28" }).map(s => s.subject))
-      .toEqual(["agency:AGY-4471"]);
-  });
-
-  it("keeps each pattern's own minimum length on the id", () => {
-    // The first version of the date fix dropped these guards, so ACCT-A and
-    // POL-AB began matching where the author had required 3 and 4 characters.
-    // A fix for one defect should not widen the pattern on its way past.
-    expect(extractSubjects({ a: "ACCT-A", b: "BRK-1", c: "POL-AB", d: "AGY-X" }).map(s => s.subject)).toEqual([]);
-    // The real ids at each of those boundaries still match.
-    expect(extractSubjects({ a: "ACCT-REQ-VOSTOK-001" }).map(s => s.subject)).toEqual(["account:ACCT-REQ-VOSTOK-001"]);
-    expect(extractSubjects({ b: "BRK-14" }).map(s => s.subject)).toEqual(["broker:BRK-14"]);
-    expect(extractSubjects({ c: "POL-2026-8891-CP" }).map(s => s.subject)).toEqual(["policy:POL-2026-8891-CP"]);
-    expect(extractSubjects({ d: "AGY-HARB-01" }).map(s => s.subject)).toEqual(["agency:AGY-HARB-01"]);
+  // One table for ALL SIX subject patterns, against both ways this list has
+  // gone wrong: a trailing timestamp swallowed into the id, and a pattern
+  // matching inside another identifier.
+  //
+  // Asserted as the COMPLETE set of subjects for each text, never just the one
+  // under test. That is what catches a phantom produced by a different pattern:
+  // POL-2026-8891-CP-2026-05-28 was yielding binder:CP-2026-05 from the binder
+  // pattern, and a per-pattern assertion on `policy` would have passed.
+  describe.each([
+    // real ids, alone
+    ["SUB-2026-8891", ["submission:SUB-2026-8891"]],
+    ["POL-2026-8891-CP", ["policy:POL-2026-8891-CP"]],
+    ["CP-2026-17", ["binder:CP-2026-17"]],
+    ["BRK-14", ["broker:BRK-14"]],
+    ["AGY-HARB-01", ["agency:AGY-HARB-01"]],
+    ["ACCT-100417", ["account:ACCT-100417"]],
+    ["ACCT-REQ-VOSTOK-001", ["account:ACCT-REQ-VOSTOK-001"]],
+    // a trailing timestamp is not part of the id, and is not a second subject
+    ["ACCT-100417-2026-05-28T06:12:00Z", ["account:ACCT-100417"]],
+    ["ACCT-REQ-VOSTOK-001-2026-05-28T06:12:00Z", ["account:ACCT-REQ-VOSTOK-001"]],
+    ["BRK-4471-2026-05-28", ["broker:BRK-4471"]],
+    ["AGY-4471-2026-05-28", ["agency:AGY-4471"]],
+    ["SUB-2026-8891-2026-05-28", ["submission:SUB-2026-8891"]],
+    ["CP-2026-17-2026-05-28", ["binder:CP-2026-17"]],
+    // the phantom binder: "CP-2026-05" sits inside the policy id
+    ["POL-2026-8891-CP-2026-05-28T06:12:00Z", ["policy:POL-2026-8891-CP"]],
+    ["policy POL-2026-8891-CP under binder CP-2026-17", ["policy:POL-2026-8891-CP", "binder:CP-2026-17"]],
+    // a LOWERCASE prefix is not another identifier -- these really do reference
+    // the object, and a broader (?<![\w-]) guard discarded them
+    ["run-SUB-2026-8891", ["submission:SUB-2026-8891"]],
+    ["binder-CP-2026-17", ["binder:CP-2026-17"]],
+    ["cacheKey-ACCT-100417-2026-05-28", ["account:ACCT-100417"]],
+    // a word character directly before the prefix is not the id
+    ["XACCT-100417", []],
+    ["foo_ACCT-100417", []],
+    ["SUBACCT-100417", []],
+    // each pattern's own minimum length, which an earlier fix had dropped
+    ["ACCT-A", []], ["BRK-1", []], ["POL-AB", []], ["AGY-X", []],
+    ["ACCOUNTING-2026", []], ["POLICY-2026", []], ["ACCT- alone", []],
+    // several objects in one value
+    ["Submission SUB-2026-8891 from AGY-HARB-01 via BRK-14 bound as CP-2026-17 for ACCT-100417.",
+      ["submission:SUB-2026-8891", "agency:AGY-HARB-01", "broker:BRK-14", "binder:CP-2026-17", "account:ACCT-100417"]],
+  ])("subjects of %j", (text, want) => {
+    it(`are exactly ${JSON.stringify(want)}`, () => {
+      expect(extractSubjects({ value: text as string }).map(s => s.subject).sort())
+        .toEqual([...(want as string[])].sort());
+    });
   });
 
   it("does not turn a timestamp into an accounting period", () => {

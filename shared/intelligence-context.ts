@@ -237,17 +237,42 @@ export type Subject = string;
  * narrow: a false subject is worse than a missed one, because it would anchor
  * a decision to something that is not the thing it decided.
  */
+// Two failure modes bit this list, in three patterns each, and both are the
+// same mistake: part of one identifier read as a different business object.
+//
+//   1. A TRAILING TIMESTAMP swallowed into the id. A hyphen inside the
+//      character class meant ACCT-100417 and ACCT-100417-2026-05-28T06 were two
+//      subjects for one account. Fixed by reading the id as hyphen-joined
+//      segments where a segment beginning a YYYY-MM date is not one of them.
+//
+//   2. A MATCH INSIDE ANOTHER IDENTIFIER. `\b` is satisfied by a hyphen, so
+//      /\bCP-\d{4}-\d+\b/ found "CP-2026-05" inside the policy id
+//      POL-2026-8891-CP-2026-05-28 and reported a binder that does not exist.
+//      Fixed by `(?<![0-9A-Z]-)`: not preceded by an uppercase-or-digit and a
+//      hyphen, which is what being mid-identifier looks like here.
+//
+// The guard is deliberately narrower than (?<![\w-]). A LOWERCASE prefix is not
+// another identifier: "run-SUB-2026-8891" and "cacheKey-ACCT-100417" really do
+// reference those objects, and the broader guard discarded them. `\b` is kept
+// so a word character directly before the prefix still disqualifies it
+// (XACCT-100417, SUBACCT-100417).
+//
+// Each pattern also keeps its own minimum length on the FIRST segment. An
+// earlier version of fix (1) dropped them and let ACCT-A match.
+//
+// tests/intelligence-context.test.ts drives all six against one shared table of
+// both failure modes -- a phantom from ANY pattern fails the row, which is how
+// the binder defect was found while fixing policy.
 const SUBJECT_PATTERNS: Array<{ type: string; re: RegExp }> = [
-  { type: "submission", re: /\bSUB-\d{4}-\d+\b/g },
-  // Same two problems as the account pattern below, same fix. The {4,} is kept
-  // on the FIRST segment so the date fix does not quietly relax the length
-  // guard: POL-2026-8891-CP survives (first segment "2026"), POL-AB does not.
-  { type: "policy", re: /\bPOL-(?!\d{4}-\d{2}\b)[0-9A-Z]{4,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
-  { type: "binder", re: /\bCP-\d{4}-\d+\b/g },
-  // Same shape as the account pattern below, and for the same reason: a hyphen
-  // inside the class let "BRK-4471-2026-05-28" match whole.
-  { type: "broker", re: /\bBRK-(?!\d{4}-\d{2}\b)[0-9A-Z]{2,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
-  { type: "agency", re: /\bAGY-(?!\d{4}-\d{2}\b)[0-9A-Z]{2,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
+  { type: "submission", re: /\b(?<![0-9A-Z]-)SUB-\d{4}-\d+\b/g },
+  // POL-2026-8891-CP legitimately ends in letters, so this could never have
+  // been fixed by restricting the class to digits. {4,} is the original guard.
+  { type: "policy", re: /\b(?<![0-9A-Z]-)POL-(?!\d{4}-\d{2}\b)[0-9A-Z]{4,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
+  // "CP" is two characters and also the last segment of a real policy id, which
+  // is why this pattern in particular needed the mid-identifier guard.
+  { type: "binder", re: /\b(?<![0-9A-Z]-)CP-\d{4}-\d+\b/g },
+  { type: "broker", re: /\b(?<![0-9A-Z]-)BRK-(?!\d{4}-\d{2}\b)[0-9A-Z]{2,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
+  { type: "agency", re: /\b(?<![0-9A-Z]-)AGY-(?!\d{4}-\d{2}\b)[0-9A-Z]{2,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
   // An account is the anchor of the five Account journeys, and until this
   // pattern existed none of them could use this layer at all: every other
   // pattern here names an E&S object, so extractSubjects returned nothing on
@@ -255,22 +280,13 @@ const SUBJECT_PATTERNS: Array<{ type: string; re: RegExp }> = [
   // on the Account Establishment journey's own history -- 17 distinct ACCT-
   // ids across its last 50 runs, every one of them invisible.
   //
-  // The hyphen has to be INSIDE the id but must not swallow a trailing
-  // timestamp. `ACCT-[0-9A-Z-]{3,}` did both: a live run on ACCT-100417 carried
-  // a cache key "ACCT-100417-2026-05-28T06:12:00Z" and the layer extracted
+  // This is where failure mode (1) was first seen: a live run carried a cache
+  // key "ACCT-100417-2026-05-28T06:12:00Z" and the layer reported
   // account:ACCT-100417 AND account:ACCT-100417-2026-05-28T06 as two different
-  // business objects -- so a prior decision recorded against one could never
-  // match the other, which is the whole point of the layer.
-  //
-  // Restricting the class to digits would be the obvious fix and is wrong:
-  // real ids include ACCT-REQ-VOSTOK-001. So the id is read as hyphen-joined
-  // segments, and a segment that begins a YYYY-MM date is not one of them.
-  //
-  // Every pattern here keeps its own original minimum on the FIRST segment
-  // ({3,} here, {2,} for broker and agency, {4,} for policy). The first version
-  // of this fix dropped them, which let ACCT-A match where the author had
-  // required three characters -- a date fix is not a licence to widen.
-  { type: "account", re: /\bACCT-(?!\d{4}-\d{2}\b)[0-9A-Z]{3,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
+  // business objects, so a decision recorded against one could never be found
+  // from the other. Real ids include ACCT-REQ-VOSTOK-001, so the hyphen has to
+  // be allowed inside the id; {3,} is the original guard.
+  { type: "account", re: /\b(?<![0-9A-Z]-)ACCT-(?!\d{4}-\d{2}\b)[0-9A-Z]{3,}(?:-(?!\d{4}-\d{2}\b)[0-9A-Z]+)*\b/g },
   // A period is only a period when a key says so: "2026-11" appears in
   // timestamps everywhere, and anchoring on those would attach decisions to
   // the month they happened to run in.
