@@ -33,7 +33,7 @@ import { rewriteStateKeyReferences } from "@shared/rule-fields";
 import { effectiveStateKey, stateKeyForLabel } from "@shared/state-key";
 import { isCurrentReworkRule, REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
-import type { ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
+import type { ProcessEdge, ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
 import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, withClassifier } from "@shared/flow-execution-kind";
 import { getDecisionSettings } from "./decision-settings";
 
@@ -277,8 +277,53 @@ const labelOf = (node: any) => (node.config as any)?.sourceLabel || node.label;
  * a second copy of this decision is exactly how that drifts -- it is what let the
  * apply write a loop as an edge while the plan said "nothing to sync".
  */
+/**
+ * The flow's connections between the steps that run, with every Parallel marker
+ * walked through.
+ *
+ * A Parallel step is a fan-out marker and becomes no node (STRUCTURAL_NODE_TYPES),
+ * so a connection into it continues to whatever runs after it: X -> Parallel ->
+ * A, B is X -> A and X -> B, each carrying the label and condition the author
+ * put on the way in (the branch they named), or failing that the ones on the
+ * way out. A marker straight after the trigger leaves its successors with no
+ * incoming connection, which is exactly what makes them the steps the
+ * orchestrator dispatches to. Connections into the trigger or the end are
+ * dropped as they always were: a drawn "back to the start" is not a loop the
+ * engine should run.
+ */
+function edgesBetweenRunSteps(graph: ProcessFlowGraph, runNodeIds: Set<string>): ProcessEdge[] {
+  const typeOf = new Map(graph.nodes.map((n) => [n.id, n.type]));
+  const byFrom = new Map<string, ProcessEdge[]>();
+  for (const e of graph.edges) byFrom.set(e.from, [...(byFrom.get(e.from) ?? []), e]);
+  const out: ProcessEdge[] = [];
+  const seen = new Set<string>();
+  for (const e of graph.edges) {
+    if (!runNodeIds.has(e.from)) continue;
+    const pending: Array<{ to: string; label?: string; condition?: string; visited: Set<string> }> =
+      [{ to: e.to, label: e.label, condition: e.condition, visited: new Set<string>() }];
+    while (pending.length) {
+      const cur = pending.pop()!;
+      if (runNodeIds.has(cur.to)) {
+        const key = `${e.from}::${cur.to}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ ...e, to: cur.to, label: cur.label, condition: cur.condition });
+        continue;
+      }
+      // Only a Parallel marker is walked through; markers pointing at each
+      // other are left when the walk comes back round to one.
+      if (typeOf.get(cur.to) !== "parallel" || cur.visited.has(cur.to)) continue;
+      const visited = new Set(cur.visited).add(cur.to);
+      for (const next of byFrom.get(cur.to) ?? []) {
+        pending.push({ to: next.to, label: cur.label || next.label, condition: cur.condition || next.condition, visited });
+      }
+    }
+  }
+  return out;
+}
+
 function desiredConnections(graph: ProcessFlowGraph, runNodeIds: Set<string>, runNodes: ProcessNode[]) {
-  const runEdges = graph.edges.filter((e) => runNodeIds.has(e.from) && runNodeIds.has(e.to));
+  const runEdges = edgesBetweenRunSteps(graph, runNodeIds);
   const loopKeys = backEdgeKeys(runNodes.map((n) => n.id), runEdges.map((e) => ({ from: e.from, to: e.to })));
   const loops = new Map<string, { to: string; maxRounds: number }>();
   for (const e of runEdges) {

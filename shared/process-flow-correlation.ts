@@ -11,8 +11,19 @@
  * (server/process-flow-sync.ts) -- and neither should import the other.
  */
 
-/** Drawn to explain the flow, not to run: these become no blueprint node. */
-export const STRUCTURAL_NODE_TYPES = new Set(["trigger", "end"]);
+/**
+ * Drawn to explain the flow, not to run: these become no blueprint node.
+ *
+ * A Parallel step is a fan-out marker -- it says the steps after it run
+ * together, and nothing runs at it (shared/flow-execution-kind.ts calls it
+ * structural, and the sync card says "nothing runs here"). It was missing from
+ * this set, so the sync drafted an AGENT for every one of them: a model call per
+ * run, writing prose nobody reads, under a card that had promised it was free
+ * (live 2026-10-11: "Coverage & Carrier Intelligence Gatherer", drafted for the
+ * marker "Gather Information"). The sync walks through it instead; see
+ * edgesBetweenRunSteps in server/process-flow-sync.ts.
+ */
+export const STRUCTURAL_NODE_TYPES = new Set(["trigger", "end", "parallel"]);
 
 /**
  * Types that become a pause-and-wait gate node (a real human decision) instead

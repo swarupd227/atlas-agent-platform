@@ -190,6 +190,8 @@ describe("the correlation itself", () => {
   it("leaves the steps that are drawn but never run out of it", () => {
     expect(STRUCTURAL_NODE_TYPES.has("trigger")).toBe(true);
     expect(STRUCTURAL_NODE_TYPES.has("end")).toBe(true);
+    // A fan-out marker: the steps after it run together, nothing runs at it.
+    expect(STRUCTURAL_NODE_TYPES.has("parallel")).toBe(true);
     expect(HUMAN_CHECKPOINT_NODE_TYPES.has("expert_approval")).toBe(true);
   });
 });
@@ -494,6 +496,103 @@ describe("a step's result key is the step's own name", () => {
     const r = await applyFlowSync(ORG, target(graph()));
     expect((r as any).summary.stateKeyRenames).toEqual([]);
     expect(state.updatedNodes).toEqual([]);
+  });
+});
+
+/**
+ * A Parallel step is a fan-out marker, not work: the steps after it run
+ * together and nothing runs at it, which is what the sync card says of it.
+ *
+ * Live 2026-10-11: the sync drafted an agent for the marker "Gather Information"
+ * all the same ("Coverage & Carrier Intelligence Gatherer"), so a team whose
+ * card promised seven model calls a run made eight, the eighth writing a report
+ * nobody read. The structural set it filtered by held only the trigger and the
+ * end.
+ */
+describe("a Parallel step", () => {
+  /** trigger -> [gather] -> pull loss runs, pull values -> measure -> end */
+  const fanOutGraph = () => ({
+    version: 1,
+    name: "Loss exposure review",
+    nodes: [
+      { id: "s0", type: "trigger", label: "Review requested", description: "", actor: "Risk manager" },
+      { id: "p1", type: "parallel", label: "Gather information", description: "", actor: "System" },
+      { id: "s1", type: "get_info", label: "Pull the loss runs", description: "", actor: "System" },
+      { id: "s2", type: "get_info", label: "Pull the statement of values", description: "", actor: "System" },
+      { id: "s3", type: "ai_reasoning", label: "Measure the exposures", description: "", actor: "Analyst" },
+      { id: "s9", type: "end", label: "Measured", description: "", actor: "System" },
+    ],
+    edges: [
+      { id: "e0", from: "s0", to: "p1" },
+      { id: "e1", from: "p1", to: "s1" },
+      { id: "e2", from: "p1", to: "s2" },
+      { id: "e3", from: "s1", to: "s3" },
+      { id: "e4", from: "s2", to: "s3" },
+      { id: "e5", from: "s3", to: "s9" },
+    ],
+  }) as any;
+  const rowFor = (processNodeId: string) => state.nodes.find((n) => n.config?.sourceProcessNodeId === processNodeId);
+  const pair = (from: string, to: string) => state.edges.filter((e) => e.sourceNodeId === from && e.targetNodeId === to);
+
+  it("is not a step the plan would draft", async () => {
+    state.nodes = blueprintFromFlow({ nodes: [], edges: [] });
+    const plan = await planFlowSync(ORG, target(fanOutGraph()));
+    expect(plan.added).toEqual(["Pull the loss runs", "Pull the statement of values", "Measure the exposures"]);
+    expect(plan.drafts).toBe(3);
+  });
+
+  it("becomes no node, and the steps after it are dispatched together and joined", async () => {
+    state.nodes = blueprintFromFlow({ nodes: [], edges: [] });
+    await applyFlowSync(ORG, target(fanOutGraph()));
+    expect(rowFor("p1")).toBeUndefined();
+    expect(state.created.filter((n) => n.refAgentId)).toHaveLength(3);
+    // The orchestrator starts both gathering steps, and only those.
+    const dispatched = state.edges.filter((e) => e.sourceNodeId === "node-orch").map((e) => e.targetNodeId).sort();
+    expect(dispatched).toEqual([rowFor("s1").id, rowFor("s2").id].sort());
+    // Both join at the measuring step.
+    expect(pair(rowFor("s1").id, rowFor("s3").id)).toHaveLength(1);
+    expect(pair(rowFor("s2").id, rowFor("s3").id)).toHaveLength(1);
+    expect(hasCycle(state.nodes.map((n) => n.id), state.edges.map((e) => ({ from: e.sourceNodeId, to: e.targetNodeId })))).toBe(false);
+  });
+
+  it("carries the branch the author named into it on to each step after it", async () => {
+    // measure -> [if material] -> two treatments: the condition on the way into
+    // the marker is the branch, and each step after the marker is reached by it.
+    const g = fanOutGraph();
+    g.nodes.push({ id: "p2", type: "parallel", label: "Treat", description: "", actor: "System" });
+    g.nodes.push({ id: "s4", type: "take_action", label: "Price a transfer", description: "", actor: "Broker" });
+    g.nodes.push({ id: "s5", type: "take_action", label: "Design controls", description: "", actor: "Engineer" });
+    g.edges = g.edges.filter((e: any) => e.id !== "e5");
+    g.edges.push({ id: "e6", from: "s3", to: "p2", label: "Material", condition: "measure_the_exposures.material == true" });
+    g.edges.push({ id: "e7", from: "p2", to: "s4" }, { id: "e8", from: "p2", to: "s5" }, { id: "e9", from: "s4", to: "s9" }, { id: "e10", from: "s5", to: "s9" });
+    state.nodes = blueprintFromFlow({ nodes: [], edges: [] });
+    await applyFlowSync(ORG, target(g));
+    expect(rowFor("p2")).toBeUndefined();
+    for (const to of ["s4", "s5"]) {
+      const [edge] = pair(rowFor("s3").id, rowFor(to).id);
+      expect(edge).toMatchObject({ label: "Material", condition: "measure_the_exposures.material == true" });
+    }
+  });
+
+  it("removes the agent an earlier sync drafted for one, and supersedes it", async () => {
+    // The shape the live team had: a correlated agent node standing in for the marker.
+    const g = fanOutGraph();
+    state.nodes = blueprintFromFlow(g);
+    const marker = g.nodes.find((n: any) => n.id === "p1");
+    state.agents.set("agent-p1", { id: "agent-p1", name: "Coverage & Carrier Intelligence Gatherer" });
+    state.nodes.push({ id: "node-p1", label: "Coverage & Carrier Intelligence Gatherer", refAgentId: "agent-p1", config: { role: "worker", ...stepCorrelation(marker) } } as any);
+    state.members = [{ id: "m-1", teamAgentId: "team-1", memberAgentId: "agent-p1" }];
+
+    const plan = await planFlowSync(ORG, target(g));
+    expect(plan.removed).toEqual(["Gather information"]);
+    expect(plan.supersedes).toEqual([{ label: "Gather information", agentId: "agent-p1", agentName: "Coverage & Carrier Intelligence Gatherer" }]);
+    expect(plan.unchanged).toBe(3);
+
+    await applyFlowSync(ORG, target(g));
+    expect(state.deletedNodes).toEqual(["node-p1"]);
+    expect(state.members.map((m) => m.memberAgentId)).not.toContain("agent-p1");
+    // The steps it fanned out to are now the entry steps.
+    expect(state.edges.filter((e) => e.sourceNodeId === "node-orch").map((e) => e.targetNodeId).sort()).toEqual(["node-s1", "node-s2"]);
   });
 });
 
