@@ -2476,6 +2476,22 @@ function getServerDefinitions(): MockMcpServerDef[] {
                       }
               },
               {
+                      name: "kearney_get_request",
+                      description: "One user request by its number, carrying any decision already recorded against it. Read this before deciding a request, so a request another run has already settled is not decided twice.",
+                      endpoint: "/request",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      number: {
+                                              type: "string",
+                                              description: "The request number, for example UR0057744"
+                                      }
+                              },
+                              required: ["number"]
+                      }
+              },
+              {
                       name: "kearney_request_variants",
                       description: "Request descriptions that are the same request written differently -- \"Duo activation\", \"Duo Activation\" and \"DUO Activation\" are three values for one thing. Returned rather than folded, because the folding is a remediation for a person to approve, not something a read should do quietly.",
                       endpoint: "/request-variants",
@@ -2585,6 +2601,43 @@ function getServerDefinitions(): MockMcpServerDef[] {
                               required: [
                                       "number",
                                       "note"
+                              ]
+                      }
+              },
+              {
+                      name: "kearney_decide_request",
+                      description: "Record a decision on a user request: \"granted\" when the entitlement rules cover it, \"referred\" when they do not and a person decides. There is no \"denied\" -- a request the rules do not cover goes to a person, it is not refused on an agent's own reading. The rule that authorised the decision is required and is stored beside it, so the decision can be reviewed later. Needs the id of an approval a person gave, and returns an undo id.",
+                      endpoint: "/request/decide",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      number: {
+                                              type: "string",
+                                              description: "The request number, for example UR0057744"
+                                      },
+                                      decision: {
+                                              type: "string",
+                                              description: "\"granted\" or \"referred\". Anything else is refused."
+                                      },
+                                      rule: {
+                                              type: "string",
+                                              description: "The entitlement rule this was decided under, named as the policy states it"
+                                      },
+                                      note: {
+                                              type: "string",
+                                              description: "Why, in a sentence the requester would understand"
+                                      },
+                                      approvalRef: {
+                                              type: "string",
+                                              description: "The id of the approval a person gave for this decision"
+                                      }
+                              },
+                              required: [
+                                      "number",
+                                      "decision",
+                                      "rule",
+                                      "approvalRef"
                               ]
                       }
               },

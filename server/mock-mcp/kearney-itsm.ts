@@ -46,6 +46,17 @@ export interface Incident {
   sys_created_on: string;
 }
 
+/** One service request, with the interned columns resolved back to their values. */
+export interface ServiceRequest {
+  number: string;
+  short_description: string;
+  state: string;
+  priority: string;
+  opened_location: string;
+  assignment_group: string;
+  opened_at: string;
+}
+
 const pick = <T extends readonly string[]>(table: T, i: number): string => table[i] ?? "";
 
 /**
@@ -61,7 +72,8 @@ let built = false;
 let incidents: Incident[] = [];
 let byNumber = new Map<string, Incident>();
 let chronological: Incident[] = [];
-let requests: Array<{ number: string; short_description: string; state: string; priority: string; opened_location: string; assignment_group: string; opened_at: string }> = [];
+let requests: ServiceRequest[] = [];
+let requestByNumber = new Map<string, ServiceRequest>();
 let problems: Array<{ number: string; first_reported_by_task: string; state: string; short_description: string; opened_at: string; assignment_group: string; related_incidents: number; category: string; subcategory: string }> = [];
 let tasks: Array<{ number: string; short_description: string; state: string; priority: string; request_item: string; location: string; assignment_group: string; reassignment_count: number; catalogue_item: string }> = [];
 
@@ -96,6 +108,7 @@ function ensure(): void {
   assignment_group: pick(REQUEST_GROUPS, r[5]),
     opened_at: r[6],
   }));
+  requestByNumber = new Map(requests.map((r) => [r.number.toUpperCase(), r]));
   problems = PROBLEMS.map((r) => ({
   number: r[0],
   first_reported_by_task: r[1],
@@ -125,6 +138,27 @@ function ensure(): void {
  *  the two the extract gets wrong at scale; the rest of the record is read-only
  *  here because nothing in B.3 or B.4 asks an agent to rewrite it. */
 const WRITABLE_FIELDS = new Set(["category", "subcategory", "priority", "assignment_group"]);
+
+/**
+ * What a service request may be decided as, and the state each decision puts it
+ * into.
+ *
+ * B.1 obliges the supplier to "provide approval logic and entitlement-sensitive
+ * controls for access-related service requests aligned with Kearney policy and
+ * approval workflows", and B.5 makes request fulfilment client-approved. So an
+ * agent has exactly two outcomes open to it: the rules covered the request, or
+ * they did not and a person takes it. "Denied", "escalated" and "pending" are
+ * refused rather than invented -- an agent that can deny on its own reading is
+ * the thing an entitlement control exists to prevent.
+ *
+ * Both target states are values REQUEST_STATES already holds. A decision that
+ * left a request in a state the source system has never held would not survive
+ * contact with the real ServiceNow.
+ */
+const REQUEST_DECISIONS: Record<string, string> = {
+  granted: "Closed",
+  referred: "In Progress",
+};
 
 /**
  * The values each writable field may hold, taken from the record set itself.
@@ -176,7 +210,7 @@ function nearest(field: string, value: string, limit = 5): string[] {
 
 interface Write {
   undoId: string;
-  table: "incident" | "problem";
+  table: "incident" | "problem" | "request";
   key: string;
   before: Record<string, string>;
   after: Record<string, string>;
@@ -185,11 +219,16 @@ interface Write {
   undone: boolean;
 }
 const overlay = new Map<string, Partial<Incident>>();
+const requestOverlay = new Map<string, Record<string, string>>();
 const createdProblems: Array<Record<string, unknown>> = [];
 const writes: Write[] = [];
 const notes: Array<{ number: string; note: string; at: string; by: string }> = [];
 
 const current = (i: Incident): Incident => ({ ...i, ...(overlay.get(i.number.toUpperCase()) ?? {}) });
+
+/** A request as it stands now: the extract's row with any decision written over it. */
+const currentRequest = (r: ServiceRequest): ServiceRequest & Record<string, string> =>
+  ({ ...r, ...(requestOverlay.get(r.number.toUpperCase()) ?? {}) });
 
 /** Every write names the approval that authorised it. Without one the connector
  *  refuses rather than recording an unattributable change -- the audit trail is
@@ -487,9 +526,20 @@ router.get("/requests", (req: Request, res: Response) => {
   const limit = clamp(req.query.limit, 25, 200);
   const text = lower(req.query.textContains ?? req.query.text);
   const group = str(req.query.assignmentGroup);
-  const rows = requests.filter((r) =>
+  const rows = requests.map(currentRequest).filter((r) =>
     (!text || lower(r.short_description).includes(text)) && (!group || lower(r.assignment_group) === lower(group)));
   res.json({ matched: rows.length, of: requests.length, returned: Math.min(limit, rows.length), requests: rows.slice(0, limit) });
+});
+
+/** One request by number, carrying any decision already recorded against it. */
+router.get("/request", (req: Request, res: Response) => {
+  ensure();
+  const found = requestByNumber.get(str(req.query.number).toUpperCase());
+  if (!found) {
+    res.status(404).json({ error: `No request numbered "${str(req.query.number)}".` });
+    return;
+  }
+  res.json({ request: currentRequest(found) });
 });
 
 /**
@@ -650,6 +700,78 @@ router.post("/worknote", (req: Request, res: Response) => {
   res.json({ written: true, note: entry });
 });
 
+/**
+ * Record a decision on a service request.
+ *
+ * The licence traffic is the clearest case in this extract: 416 Alteryx licence
+ * requests arrive under 111 different spellings, and 390 of them land on one
+ * group. A journey that reads the entitlement rules and decides most of them is
+ * what B.1's "approval logic and entitlement-sensitive controls" asks for -- but
+ * only if the decision is written where the next person looks, under the rule
+ * that authorised it, with a way back.
+ */
+router.post("/request/decide", (req: Request, res: Response) => {
+  ensure();
+  const body = (req.body || {}) as Record<string, any>;
+  const found = requestByNumber.get(str(body.number).toUpperCase());
+  if (!found) {
+    res.status(404).json({ written: false, error: `No request numbered "${str(body.number)}".` });
+    return;
+  }
+  const decision = lower(body.decision);
+  if (!REQUEST_DECISIONS[decision]) {
+    res.status(422).json({
+      written: false,
+      error: `"${str(body.decision)}" is not a decision this connector records.`,
+      allowed: Object.keys(REQUEST_DECISIONS),
+      guidance:
+        "Two outcomes exist: granted, when the entitlement rules cover the request, and referred, when they do not and a person decides. A request you cannot decide is referred, never denied.",
+    });
+    return;
+  }
+  // A grant nobody can trace back to a rule is exactly what the entitlement
+  // control exists to prevent, so the rule is required and stored beside it.
+  const rule = str(body.rule);
+  if (!rule) {
+    res.status(422).json({
+      written: false,
+      error: "rule is required: the entitlement rule this request was decided under.",
+      guidance: "Name the rule that covers this request. A decision with no rule behind it cannot be reviewed afterwards.",
+    });
+    return;
+  }
+  const approvalRef = requireApproval(body, res);
+  if (!approvalRef) return;
+
+  const key = found.number.toUpperCase();
+  const record = currentRequest(found);
+  const before: Record<string, string> = {
+    decision: record.decision ?? "",
+    decided_under: record.decided_under ?? "",
+    decision_note: record.decision_note ?? "",
+    state: record.state,
+  };
+  const after: Record<string, string> = {
+    decision,
+    decided_under: rule,
+    decision_note: str(body.note),
+    state: REQUEST_DECISIONS[decision],
+  };
+  requestOverlay.set(key, { ...(requestOverlay.get(key) ?? {}), ...after });
+  const write: Write = { undoId: `undo-${writes.length + 1}`, table: "request", key: found.number, before, after, approvalRef, at: nowIso(), undone: false };
+  writes.push(write);
+  res.json({
+    written: true,
+    number: found.number,
+    short_description: found.short_description,
+    before,
+    after,
+    undoId: write.undoId,
+    approvalRef,
+    guidance: `Recorded against approval ${approvalRef}. Pass ${write.undoId} to /rollback to put the request back as it was.`,
+  });
+});
+
 router.post("/rollback", (req: Request, res: Response) => {
   ensure();
   const undoId = str((req.body || {}).undoId);
@@ -671,6 +793,15 @@ router.post("/rollback", (req: Request, res: Response) => {
     }
     if (Object.keys(edit).length) overlay.set(key, edit as Partial<Incident>);
     else overlay.delete(key);
+  } else if (write.table === "request") {
+    const key = write.key.toUpperCase();
+    const edit = { ...(requestOverlay.get(key) ?? {}) };
+    for (const [field, value] of Object.entries(write.before)) {
+      if (value === "") delete edit[field];
+      else edit[field] = value;
+    }
+    if (Object.keys(edit).length) requestOverlay.set(key, edit);
+    else requestOverlay.delete(key);
   } else {
     const i = createdProblems.findIndex((p) => p.number === write.key);
     if (i >= 0) createdProblems.splice(i, 1);
@@ -691,8 +822,9 @@ router.get("/audit", (_req: Request, res: Response) => {
 /** Drops everything written since the process started. The seed is untouched by
  *  writes, so this restores the extract exactly rather than approximately. */
 router.post("/reset", (_req: Request, res: Response) => {
-  const dropped = { writes: writes.length, problems: createdProblems.length, notes: notes.length };
+  const dropped = { writes: writes.length, problems: createdProblems.length, notes: notes.length, decided_requests: requestOverlay.size };
   overlay.clear();
+  requestOverlay.clear();
   createdProblems.length = 0;
   writes.length = 0;
   notes.length = 0;

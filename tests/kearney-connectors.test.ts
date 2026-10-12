@@ -349,3 +349,93 @@ describe("the estate connector offers candidates, never an identification", () =
     await post("/estate/reset", {});
   });
 });
+
+/**
+ * Deciding a service request.
+ *
+ * B.1 obliges the supplier to provide "approval logic and entitlement-sensitive
+ * controls for access-related service requests", and the licence traffic is
+ * where that bites: Alteryx licences arrive under scores of different spellings
+ * and nearly all land on one group. What matters is not that an agent can grant
+ * one, but what it cannot do -- grant without an approval, grant without naming
+ * the rule, or deny on its own reading. Those three refusals are the control,
+ * so they are what is pinned here.
+ */
+describe("the ITSM connector decides a request only within the rules it is given", () => {
+  // Taken from the extract rather than named from memory: a hard-coded number
+  // that later stops being a licence request would make this pass for the wrong
+  // reason, and the point is that this traffic is real.
+  const licenceRequest = async () => {
+    const found: any = await get("/itsm/requests?textContains=alteryx%20license&limit=1");
+    expect(found.matched).toBeGreaterThan(0);
+    return found.requests[0];
+  };
+
+  it("carries the Alteryx licence traffic the entitlement journey is built on", async () => {
+    const found: any = await get("/itsm/requests?textContains=alteryx&limit=1");
+    expect(found.matched).toBe(621);
+    const licences: any = await get("/itsm/requests?textContains=alteryx%20licen&limit=1");
+    expect(licences.matched).toBeGreaterThan(300);
+  });
+
+  it("refuses a decision with no approval behind it", async () => {
+    const r = await licenceRequest();
+    const res = await post("/itsm/request/decide", { number: r.number, decision: "granted", rule: "ENT-ALT-01" });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/approvalRef/);
+  });
+
+  it("refuses a grant that names no rule, because an untraceable grant cannot be reviewed", async () => {
+    const r = await licenceRequest();
+    const res = await post("/itsm/request/decide", { number: r.number, decision: "granted", approvalRef: "APR-1" });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/rule is required/);
+  });
+
+  it("will not let an agent deny: an uncovered request goes to a person", async () => {
+    const r = await licenceRequest();
+    const res = await post("/itsm/request/decide", { number: r.number, decision: "denied", rule: "ENT-ALT-01", approvalRef: "APR-1" });
+    expect(res.status).toBe(422);
+    expect(res.body.allowed).toEqual(["granted", "referred"]);
+  });
+
+  it("records a grant against the rule, in a state the extract holds, and puts it back on rollback", async () => {
+    const r = await licenceRequest();
+    const was = r.state;
+    expect(r.decision).toBeUndefined();
+
+    const write = await post("/itsm/request/decide", {
+      number: r.number, decision: "granted", rule: "ENT-ALT-01",
+      note: "Requester is in the group that already holds Designer seats.", approvalRef: "APR-9002",
+    });
+    expect(write.body.written).toBe(true);
+    expect(write.body.after.state).toBe("Closed");
+    expect(write.body.after.decided_under).toBe("ENT-ALT-01");
+    expect(write.body.before.state).toBe(was);
+
+    const after: any = await get(`/itsm/request?number=${r.number}`);
+    expect(after.request.decision).toBe("granted");
+
+    const audit: any = await get("/itsm/audit");
+    const entry = audit.writes.find((w: any) => w.undoId === write.body.undoId);
+    expect(entry.table).toBe("request");
+    expect(entry.approvalRef).toBe("APR-9002");
+
+    await post("/itsm/rollback", { undoId: write.body.undoId });
+    const back: any = await get(`/itsm/request?number=${r.number}`);
+    expect(back.request.state).toBe(was);
+    // Cleared, not blanked: a request left carrying decision:"" reads as decided
+    // by something that declined to say what.
+    expect(back.request.decision).toBeUndefined();
+    await post("/itsm/reset", {});
+  });
+
+  it("refers a request the rules do not cover instead of closing it", async () => {
+    const r = await licenceRequest();
+    const write = await post("/itsm/request/decide", {
+      number: r.number, decision: "referred", rule: "ENT-ALT-04 (no seat pool for this cost centre)", approvalRef: "APR-9003",
+    });
+    expect(write.body.after.state).toBe("In Progress");
+    await post("/itsm/reset", {});
+  });
+});
