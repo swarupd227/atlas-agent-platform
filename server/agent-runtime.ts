@@ -3404,8 +3404,10 @@ export async function waitForApproval(
       requestedBy: agentId,
       requesterType: "agent",
       agentId,
+      // The fallback when no richer description was built. Same reader as the
+      // DAG engine's gate, so the same words.
       description: approvalMeta?.description
-        || `Pipeline HITL checkpoint: ${gateName}\n\nContext:\n${context.slice(0, 2000)}`,
+        || `${gateName} — waiting for your decision\n\nWhat it has done so far:\n${context.slice(0, 2000)}`,
       riskScore: gateType === "approval" ? 0.7 : 0.4,
       ...(approvalMeta?.evidenceJson ? { evidenceJson: approvalMeta.evidenceJson } : {}),
     });

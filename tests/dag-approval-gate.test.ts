@@ -278,7 +278,9 @@ describe("DAGExecutionEngine — approval identity on the Approvals page", () =>
     (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
     (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "the outline" });
 
-    const producer = node({ id: "arch", refAgentId: "agent-arch", stateKey: "slide_outline" });
+    // A real label, because what this asserts is that the card names the step
+    // the way its author did and never shows the key it writes under.
+    const producer = node({ id: "arch", refAgentId: "agent-arch", stateKey: "slide_outline", label: "Draft the slide outline" });
     const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Manual Review", stateKey: "gate_result" });
     const edge = {
       id: "e1", blueprintId: "bp1", sourceNodeId: "arch", targetNodeId: "gate-1", label: null, contentPartTypes: [],
@@ -299,10 +301,22 @@ describe("DAGExecutionEngine — approval identity on the Approvals page", () =>
     const meta = (waitForApproval as any).mock.calls.at(-1)[7];
     expect(meta.objectName).toBe("Manual Review · Marcom Deck Team · Campaign brief — Operation Power Play. · run 9721c414");
     // The thing being decided comes first, before any other state.
-    expect(meta.description).toContain("--- FOR APPROVAL: slide_outline ---");
-    expect(meta.description.indexOf("FOR APPROVAL")).toBeLessThan(meta.description.indexOf("Other context") === -1 ? Infinity : meta.description.indexOf("Other context"));
+    expect(meta.description).toContain("--- For your decision: Draft the slide outline ---");
+    expect(meta.description.indexOf("For your decision")).toBeLessThan(meta.description.indexOf("Everything else from this run") === -1 ? Infinity : meta.description.indexOf("Everything else from this run"));
     expect(meta.description).toContain("the outline");
-    expect(meta.description).toContain("Run: 9721c414-d419-4d73-8c10-d88b9620638c");
+    expect(meta.description).toContain("Reference: run 9721c414-d419-4d73-8c10-d88b9620638c");
+
+    // And it is read by whoever has to decide, who may never have heard of this
+    // platform: no internal vocabulary, and the step's storage key stays out of
+    // the words even though its content is the subject of the card.
+    expect(meta.description).not.toContain("HITL");
+    expect(meta.description).not.toContain("Pipeline");
+    expect(meta.description.split("\n")[0]).toBe("Manual Review — waiting for your decision");
+    // Including the keys the engine derives beside a step's own. These are kept
+    // -- "connector calls were not recorded" is something an approver should
+    // weigh -- but named, not shown as slide_outline_verified.
+    expect(meta.description).not.toContain("slide_outline_verified");
+    expect(meta.description).toContain("Draft the slide outline — connector calls recorded");
 
     // Structured evidence (evidenceJson) alongside the text description, so the Approvals UI can render a real
     // run summary (client/src/components/gate-evidence.tsx) instead of only the flattened text blob above.
@@ -311,7 +325,7 @@ describe("DAGExecutionEngine — approval identity on the Approvals page", () =>
     expect(meta.evidenceJson.teamAgentName).toBe("Marcom Deck Team");
     expect(meta.evidenceJson.gateLabel).toBe("Manual Review");
     expect(meta.evidenceJson.upstreamSteps).toEqual([
-      { label: "Node", stateKey: "slide_outline", preview: "the outline" },
+      { label: "Draft the slide outline", stateKey: "slide_outline", preview: "the outline" },
     ]);
   });
 

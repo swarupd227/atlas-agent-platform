@@ -3231,15 +3231,49 @@ export class DAGExecutionEngine {
     // state, which starts with the FIRST thing the run produced -- so a
     // reviewer approving a slide outline saw only the strategy brief and had to
     // open the run page to find what they were approving.
+    // A step is named by the label its author gave it, not by the key it writes
+    // under. The two differ by more than formatting: a reviewer deciding on
+    // "decide_action" is reading our storage, while "Decide action" is the step
+    // they drew. Keys without a step behind them keep their key, which is
+    // better than inventing a name for them.
+    const labelOfStateKey = new Map<string, string>();
+    for (const cfg of Object.values(config.executionPlan.nodeConfig)) {
+      if (cfg?.stateKey && cfg.label) labelOfStateKey.set(cfg.stateKey, cfg.label);
+    }
+    // The engine also writes derived keys beside a step's own: `_sources` for
+    // what it retrieved, `_verified` for whether its connector calls were
+    // recorded, `_decision` for how a classification was reached, `_files` for
+    // what it produced. These have no node of their own, so they arrived on the
+    // card as "slide_outline_verified" -- our storage, in front of a reviewer.
+    // They are not dropped: "connector calls were not recorded" is something an
+    // approver should weigh. They are named.
+    const DERIVED: Array<[string, string]> = [
+      ["_sources", "what it read"],
+      ["_verified", "connector calls recorded"],
+      ["_decision", "how the decision was reached"],
+      ["_files", "files it produced"],
+      ["_retrieval_overlap", "overlap with what another step read"],
+    ];
+    const nameOf = (key: string) => {
+      const direct = labelOfStateKey.get(key);
+      if (direct) return direct;
+      for (const [suffix, meaning] of DERIVED) {
+        if (!key.endsWith(suffix)) continue;
+        const base = labelOfStateKey.get(key.slice(0, -suffix.length));
+        if (base) return `${base} — ${meaning}`;
+      }
+      return key;
+    };
+
     const upstreamKeys = (config.executionPlan.incomingEdges[nodeId] || [])
       .map((e) => config.executionPlan.nodeConfig[e.sourceNodeId]?.stateKey)
       .filter((k): k is string => !!k && currentState[k] !== undefined);
     const subject = upstreamKeys
-      .map((k) => `--- FOR APPROVAL: ${k} ---\n${asText(currentState[k]).slice(0, 12000)}`)
+      .map((k) => `--- For your decision: ${nameOf(k)} ---\n${asText(currentState[k]).slice(0, 12000)}`)
       .join("\n\n");
     const otherContext = Object.entries(currentState)
       .filter(([k]) => k !== "request" && !k.startsWith("__") && !upstreamKeys.includes(k))
-      .map(([k, v]) => `${k}: ${asText(v).slice(0, 1500)}`)
+      .map(([k, v]) => `${nameOf(k)}: ${asText(v).slice(0, 1500)}`)
       .join("\n");
 
     // Structured version of the same "what's up for decision" material, for the Approvals UI to render as a real
@@ -3280,14 +3314,17 @@ export class DAGExecutionEngine {
       config.dagRunId ? `run ${config.dagRunId.slice(0, 8)}` : undefined,
     ].filter(Boolean).join(" · ");
 
+    // The first line is read by whoever has to decide, often with no idea what
+    // this platform is. "Pipeline HITL checkpoint" told them the name of our
+    // mechanism; this tells them what is being asked of them, and by what.
     const description = [
-      `Pipeline HITL checkpoint: ${nc.label || "Approval Gate"}`,
-      config.teamAgentName ? `Team: ${config.teamAgentName}` : undefined,
-      config.dagRunId ? `Run: ${config.dagRunId}` : undefined,
-      requestLabel ? `Request: ${requestLabel}` : undefined,
+      `${nc.label || "Approval"} — waiting for your decision`,
+      config.teamAgentName ? `From: ${config.teamAgentName}` : undefined,
+      requestLabel ? `Asked for: ${requestLabel}` : undefined,
+      config.dagRunId ? `Reference: run ${config.dagRunId}` : undefined,
       "",
-      subject || `Context:\n${context.slice(0, 4000)}`,
-      otherContext ? `\n--- Other context ---\n${otherContext}` : undefined,
+      subject || `What it has done so far:\n${context.slice(0, 4000)}`,
+      otherContext ? `\n--- Everything else from this run ---\n${otherContext}` : undefined,
     ].filter((p) => p !== undefined).join("\n");
 
     let approvalId = "";
