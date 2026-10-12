@@ -15739,8 +15739,9 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
 
   // A platform setting applies to the whole deployment, every organization
   // included (feature flags such as ASTRA_WORKSPACE_ENABLED), so only an admin
-  // may change one, and every change is audited with its old and new value.
-  router.put("/api/platform-settings/:key", checkPermission("manage_platform_settings"), async (req, res) => {
+  // of the platform's own organization may change one, and every change is
+  // audited with its old and new value.
+  router.put("/api/platform-settings/:key", platformOnly(checkPermission("manage_platform_settings")), async (req, res) => {
     const role = getRequestRole(req);
     try {
       const data = insertPlatformSettingSchema.parse({

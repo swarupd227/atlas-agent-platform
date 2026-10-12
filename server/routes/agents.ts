@@ -1734,7 +1734,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId as string);
+      const trace = await storage.getTrace(req.params.traceId as string, getOrgId(req));
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       let integrityStatus: any = { valid: false, checks: {} };
@@ -1784,7 +1784,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/reconstruct", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId as string);
+      const trace = await storage.getTrace(req.params.traceId as string, getOrgId(req));
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const snapshot = (trace.provenanceSnapshot || {}) as any;
@@ -1929,7 +1929,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/diff", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId as string);
+      const trace = await storage.getTrace(req.params.traceId as string, getOrgId(req));
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const snapshot = (trace.provenanceSnapshot || {}) as any;
@@ -2029,7 +2029,7 @@ const router = Router();
       if (traceIds && Array.isArray(traceIds) && traceIds.length > 0) {
         traces = [];
         for (const tid of traceIds) {
-          const t = await storage.getTrace(tid);
+          const t = await storage.getTrace(tid, getOrgId(req));
           if (t) traces.push(t);
         }
       } else {
@@ -2085,7 +2085,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/export", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId as string);
+      const trace = await storage.getTrace(req.params.traceId as string, getOrgId(req));
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const format = (req.query.format as string) || "generic";
@@ -2225,7 +2225,7 @@ const router = Router();
       if (traceIds && Array.isArray(traceIds) && traceIds.length > 0) {
         traces = [];
         for (const tid of traceIds) {
-          const t = await storage.getTrace(tid);
+          const t = await storage.getTrace(tid, getOrgId(req));
           if (t) traces.push(t);
         }
       } else {

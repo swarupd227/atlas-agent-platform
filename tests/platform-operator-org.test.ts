@@ -141,6 +141,11 @@ const SHARED_WRITES: Array<[file: string, verb: string, route: string, permissio
   ["server/routes/skills.ts", "delete", "/api/golden-datasets/:id", "create_modify_blueprints"],
   ["server/routes/credential-store.ts", "get", "/api/admin/credential-store/status", "manage_platform_settings"],
   ["server/routes/credential-store.ts", "post", "/api/admin/credential-store/migrate", "manage_platform_settings"],
+  ["server/routes/llm-providers.ts", "get", "/api/admin/llm-provider-keys", "manage_security"],
+  ["server/routes/llm-providers.ts", "post", "/api/admin/llm-provider-keys/:provider", "manage_security"],
+  ["server/routes/llm-providers.ts", "delete", "/api/admin/llm-provider-keys/:provider", "manage_security"],
+  ["server/routes/llm-providers.ts", "post", "/api/admin/llm-provider-keys/:provider/test", "manage_security"],
+  ["server/routes/runtime.ts", "put", "/api/platform-settings/:key", "manage_platform_settings"],
 ];
 
 describe("changes to a shared catalogue need the permission AND the platform's own organization", () => {
@@ -150,6 +155,10 @@ describe("changes to a shared catalogue need the permission AND the platform's o
       expect(mw, "permission and operator organization, in one middleware").toContain(`platformOnly(checkPermission("${permission}"))`);
     });
   }
+
+  it("every /api/admin/* route of the admin console needs the platform's own organization: none of those tables has an owner column", () => {
+    expect(read("server/routes/tool-connectors.ts")).toContain('router.use("/api/admin", platformOnly(checkPermission("manage_security")));');
+  });
 
   it("installing from the marketplace needs manage_mcp_servers (it was open to every role)", () => {
     expect(middlewareOf("server/routes/runtime.ts", "post", "/api/marketplace/servers/:id/install")).toContain('checkPermission("manage_mcp_servers")');

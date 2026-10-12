@@ -57,10 +57,6 @@
     "GET /api/pipeline-runs/:id/workflow-state": "known, tracked outside the repository",
     "GET /api/pipelines/:id": "known, tracked outside the repository",
     "GET /api/pipelines/:id/workflow-state-schema": "known, tracked outside the repository",
-    "GET /api/provenance/:traceId": "known, tracked outside the repository",
-    "GET /api/provenance/:traceId/diff": "known, tracked outside the repository",
-    "GET /api/provenance/:traceId/export": "known, tracked outside the repository",
-    "GET /api/provenance/:traceId/reconstruct": "known, tracked outside the repository",
     "GET /api/rag-pipelines/:id": "known, tracked outside the repository",
     "GET /api/regulations/:id": "by design: shared catalogue (regulations) that every organization may read; changes to it are limited separately",
     "GET /api/regulations/:id/changes": "by design: shared catalogue (regulations) that every organization may read; changes to it are limited separately",
@@ -78,7 +74,6 @@
     "GET /api/tool-connectors/:id": "by design: shared catalogue (tool_connectors) that every organization may read; changes to it are limited separately"
   },
   "writeAccepted": {
-    "POST /api/admin/webhooks/:id/test": "known, tracked outside the repository",
     "POST /api/canary-deployments/:id/health-snapshot": "known, tracked outside the repository",
     "POST /api/context-profiles/:id/optimize": "known, tracked outside the repository",
     "POST /api/dag-execution-plans/:id/recompute": "known, tracked outside the repository",
@@ -94,9 +89,6 @@
     "POST /api/tool-connectors/:id/test": "known, tracked outside the repository"
   },
   "writeChanged": {
-    "DELETE /api/admin/secret-rotation/:id": "known, tracked outside the repository",
-    "DELETE /api/admin/users/:id": "known, tracked outside the repository",
-    "DELETE /api/admin/webhooks/:id": "known, tracked outside the repository",
     "DELETE /api/autonomy-profiles/:id": "known, tracked outside the repository",
     "DELETE /api/canary-deployments/:id": "known, tracked outside the repository",
     "DELETE /api/context-profiles/:id": "known, tracked outside the repository",
@@ -120,9 +112,6 @@
     "DELETE /api/shadow-traces/:id": "known, tracked outside the repository",
     "DELETE /api/skill-chains/:id": "known, tracked outside the repository",
     "DELETE /api/temporal-graph-entries/:id": "known, tracked outside the repository",
-    "PATCH /api/admin/environments/:id": "known, tracked outside the repository",
-    "PATCH /api/admin/users/:id": "known, tracked outside the repository",
-    "PATCH /api/admin/webhooks/:id": "known, tracked outside the repository",
     "PATCH /api/autonomy-profiles/:id": "known, tracked outside the repository",
     "PATCH /api/canary-deployments/:id": "known, tracked outside the repository",
     "PATCH /api/context-profiles/:id": "known, tracked outside the repository",

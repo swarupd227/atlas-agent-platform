@@ -3,7 +3,7 @@ import { storage } from "../storage";
 import { z, ZodError } from "zod";
 import { getProvider, getAvailableProviders, getPriceTable } from "../llm-provider";
 import { getOrgId } from "../auth";
-import { checkPermission } from "../permissions";
+import { checkPermission, platformOnly } from "../permissions";
 import { insertAgentTriggerSchema } from "@shared/schema";
 import { runtimeEvents } from "../agent-runtime";
 import { resolveIntegrationIdForMcpServer } from "../connector-poller";
@@ -80,9 +80,10 @@ const NOT_YET_WIRED_PROVIDERS = new Set<LlmProviderName>(["google", "azure_opena
   // Vault-backed, platform-global (not org-scoped, matching the process-wide
   // env vars these override) key management -- see llm-provider-keys.ts.
   // Real key values never round-trip back to the client after being saved;
-  // only a masked preview does.
+  // only a masked preview does. Platform-global, so changing or reading one also needs
+  // the platform's own organization (platformOnly), not just the permission.
 
-  router.get("/api/admin/llm-provider-keys", checkPermission("manage_security"), async (_req, res) => {
+  router.get("/api/admin/llm-provider-keys", platformOnly(checkPermission("manage_security")), async (_req, res) => {
     try {
       const statuses = await listProviderKeyStatuses();
       res.json(statuses);
@@ -91,7 +92,7 @@ const NOT_YET_WIRED_PROVIDERS = new Set<LlmProviderName>(["google", "azure_opena
     }
   });
 
-  router.post("/api/admin/llm-provider-keys/:provider", checkPermission("manage_security"), async (req, res) => {
+  router.post("/api/admin/llm-provider-keys/:provider", platformOnly(checkPermission("manage_security")), async (req, res) => {
     try {
       const provider = req.params.provider as LlmProviderName;
       if (!LLM_PROVIDER_NAMES.includes(provider)) {
@@ -126,7 +127,7 @@ const NOT_YET_WIRED_PROVIDERS = new Set<LlmProviderName>(["google", "azure_opena
     }
   });
 
-  router.delete("/api/admin/llm-provider-keys/:provider", checkPermission("manage_security"), async (req, res) => {
+  router.delete("/api/admin/llm-provider-keys/:provider", platformOnly(checkPermission("manage_security")), async (req, res) => {
     try {
       const provider = req.params.provider as LlmProviderName;
       if (!LLM_PROVIDER_NAMES.includes(provider)) {
@@ -148,7 +149,7 @@ const NOT_YET_WIRED_PROVIDERS = new Set<LlmProviderName>(["google", "azure_opena
     }
   });
 
-  router.post("/api/admin/llm-provider-keys/:provider/test", checkPermission("manage_security"), async (req, res) => {
+  router.post("/api/admin/llm-provider-keys/:provider/test", platformOnly(checkPermission("manage_security")), async (req, res) => {
     try {
       const provider = req.params.provider as LlmProviderName;
       if (!LLM_PROVIDER_NAMES.includes(provider)) {

@@ -12,10 +12,11 @@ import { checkPolicyRequirements, policyRequirementsFor } from "@shared/policy-r
 const router = Router();
 
 // Every /api/admin/* route below (org settings, admin users, environments,
-// secret-rotation policies, webhooks) had no role check at all, so any
-// signed-in user could change them. Same permission the LLM provider key admin
-// routes in llm-providers.ts already require.
-router.use("/api/admin", checkPermission("manage_security"));
+// secret-rotation policies, webhooks) needs the security permission AND the
+// platform's own organization: none of these tables has an owner column, so a
+// change by the admin of one organization is a change for every organization.
+// Same rule as the LLM provider key admin routes in llm-providers.ts.
+router.use("/api/admin", platformOnly(checkPermission("manage_security")));
 
   // Tool Connectors
   router.get("/api/tool-connectors", async (_req, res) => {
