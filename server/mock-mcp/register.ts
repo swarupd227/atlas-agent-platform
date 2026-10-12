@@ -2930,6 +2930,149 @@ function getServerDefinitions(): MockMcpServerDef[] {
               }
       ],
     },
+    {
+      name: "Kearney Data Platform (constructed lineage)",
+      description: "Kearney's data estate: the pipelines that load it, the datasets they produce, the reports that read them, and the figures computed from them. THE APPLICATIONS ARE REAL -- Azure Data Factory / R&A Hub, the Cloud hosted datamart, the Oracle datamart, SAP S/4 HANA, Workday, Salesforce, SAP Concur, Microsoft PowerBI, Anaplan, Alteryx and KNIME all appear in Attachment C.4 with the criticality and user counts the client stated. THE LINEAGE BETWEEN THEM IS CONSTRUCTED: the supplied extracts carry no integration or dependency records at all, which the estate connector reports as a structural gap. So this answers \"what does this figure depend on\" and \"what breaks if this fails tonight\" to show what the capability looks like once that data exists -- it is not a discovery about Kearney's estate, and every impact and trace answer carries that caveat in its own payload. Call kearney_data_provenance before quoting anything from here. The estate keeps real defects: two reports have no owner recorded, one dataset is consumed but produced by no pipeline, and one figure has never been verified.",
+      baseUrl: `${BASE_URL}/api/mock/kearney-data-platform`,
+      tools: [
+              {
+                      name: "kearney_data_provenance",
+                      description: "What in this connector is Kearney's own and what was constructed for this environment, and the sentence to say when quoting any figure from it. Read this before presenting anything from this connector as a finding about Kearney.",
+                      endpoint: "/provenance",
+                      method: "GET",
+                      inputSchema: { type: "object", properties: {} }
+              },
+              {
+                      name: "kearney_data_summary",
+                      description: "The shape of the data estate in one call: how many pipelines, datasets, reports and figures, which pipelines are failing right now, and the estate's own known gaps -- reports with no owner, datasets no pipeline produces, figures nobody has ever verified.",
+                      endpoint: "/summary",
+                      method: "GET",
+                      inputSchema: { type: "object", properties: {} }
+              },
+              {
+                      name: "kearney_list_pipelines",
+                      description: "The load pipelines, each with its schedule, the application it reads from, the datasets it produces, the group that owns it, and how its last run ended.",
+                      endpoint: "/pipelines",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      status: { type: "string", description: "Filter to pipelines whose last run ended this way: succeeded, failed or running" }
+                              }
+                      }
+              },
+              {
+                      name: "kearney_get_pipeline",
+                      description: "One pipeline with its recent run history: when each run started and finished, how long it took and how many rows it wrote, so a late or failed run can be judged against what is normal for it.",
+                      endpoint: "/pipeline",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      name: { type: "string", description: "The pipeline name, for example sap_finance_forecast_load" },
+                                      limit: { type: "number", description: "Runs to return, default 10, maximum 60" }
+                              },
+                              required: ["name"]
+                      }
+              },
+              {
+                      name: "kearney_list_datasets",
+                      description: "The datasets, where each is stored, which pipeline produces it, and whether it is fresh or stale right now. A dataset no pipeline produces is reported as unknown freshness rather than assumed fresh.",
+                      endpoint: "/datasets",
+                      method: "GET",
+                      inputSchema: { type: "object", properties: {} }
+              },
+              {
+                      name: "kearney_list_reports",
+                      description: "The reports and dashboards, the tool each is built in, the datasets it reads, who owns it and who reads it. Two reports have no owner recorded, which is returned as null rather than hidden.",
+                      endpoint: "/reports",
+                      method: "GET",
+                      inputSchema: { type: "object", properties: {} }
+              },
+              {
+                      name: "kearney_list_figures",
+                      description: "Every named figure with whether it is currently safe to quote, and why not where it is not: its pipeline failed, it has been quarantined, or nobody has ever verified it.",
+                      endpoint: "/figures",
+                      method: "GET",
+                      inputSchema: { type: "object", properties: {} }
+              },
+              {
+                      name: "kearney_trace_figure",
+                      description: "One figure and the whole chain behind it: the dataset it is computed from, where that is stored, the pipeline that produces it, the source application, and how that pipeline's last run ended. Says plainly whether the figure is safe to quote, and when it is not, gives the last value a person actually verified and when. Use this to answer \"where does this number come from\" and \"can I put it in front of a partner\".",
+                      endpoint: "/figure",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      name: { type: "string", description: 'The figure name, for example "Q3 revenue forecast"' }
+                              },
+                              required: ["name"]
+                      }
+              },
+              {
+                      name: "kearney_pipeline_impact",
+                      description: "What breaks if a pipeline fails: the datasets it produces, the reports that read them, the group that owns each of those reports and the audience that reads it, the figures that go unsafe, and any pipeline downstream. Reports with no owner recorded are listed separately, because \"who do I tell\" having no answer is the useful part.",
+                      endpoint: "/impact",
+                      method: "GET",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      pipeline: { type: "string", description: "The pipeline name, for example sap_finance_forecast_load" }
+                              },
+                              required: ["pipeline"]
+                      }
+              },
+              {
+                      name: "kearney_stage_pipeline_failure",
+                      description: "DEMONSTRATION CONTROL, not a model of anything: make a named pipeline's most recent run read as failed, so everything downstream goes stale and the figures computed from it stop being safe to quote. Recorded in the audit as a staged failure so it can never later be read as a failure the estate actually had. Undo it with kearney_rollback_data_write or clear everything with the connector's reset.",
+                      endpoint: "/inject-failure",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      pipeline: { type: "string", description: "The pipeline to fail" },
+                                      message: { type: "string", description: "The failure message to show; a sensible default is used if omitted" }
+                              },
+                              required: ["pipeline"]
+                      }
+              },
+              {
+                      name: "kearney_quarantine_figure",
+                      description: "Record that a figure must not be quoted, with the reason and the id of an approval a person gave. Refusing a bad number in conversation helps the person asking; recording the refusal against the figure helps the next person who asks. Needs a reason and an approval, and returns an undo id.",
+                      endpoint: "/figure/quarantine",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      figure: { type: "string", description: "The figure name" },
+                                      reason: { type: "string", description: "Why it must not be quoted, in a sentence the report's reader would understand" },
+                                      approvalRef: { type: "string", description: "The id of the approval a person gave" }
+                              },
+                              required: ["figure", "reason", "approvalRef"]
+                      }
+              },
+              {
+                      name: "kearney_rollback_data_write",
+                      description: "Undo a staged failure or lift a quarantine, by undo id.",
+                      endpoint: "/rollback",
+                      method: "POST",
+                      inputSchema: {
+                              type: "object",
+                              properties: {
+                                      undoId: { type: "string", description: "The undo id the write returned" }
+                              },
+                              required: ["undoId"]
+                      }
+              },
+              {
+                      name: "kearney_data_write_audit",
+                      description: "Every change made through this connector, each with the approval behind it, and every failure that was staged for a demonstration.",
+                      endpoint: "/audit",
+                      method: "GET",
+                      inputSchema: { type: "object", properties: {} }
+              }
+      ],
+    },
   ];
 }
 

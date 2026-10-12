@@ -27,6 +27,7 @@ import express from "express";
 import type { Server } from "http";
 import itsmRouter from "../server/mock-mcp/kearney-itsm";
 import estateRouter from "../server/mock-mcp/kearney-estate";
+import dataRouter from "../server/mock-mcp/kearney-data-platform";
 
 let server: Server;
 let base = "";
@@ -36,6 +37,7 @@ beforeAll(async () => {
   app.use(express.json());
   app.use("/itsm", itsmRouter);
   app.use("/estate", estateRouter);
+  app.use("/data", dataRouter);
   await new Promise<void>((resolve) => { server = app.listen(0, () => resolve()); });
   const addr = server.address();
   base = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
@@ -437,5 +439,129 @@ describe("the ITSM connector decides a request only within the rules it is given
     });
     expect(write.body.after.state).toBe("In Progress");
     await post("/itsm/reset", {});
+  });
+});
+
+/**
+ * The data platform.
+ *
+ * Its applications are Kearney's own and its lineage is not, and the single most
+ * important property is that the connector never lets those two be confused. The
+ * first test below is the one that matters: every application this estate names
+ * is cross-checked against the real C.4 inventory served by the estate connector,
+ * so a seed that drifted into inventing systems would fail here rather than in
+ * front of the client.
+ */
+describe("the data platform is built on real applications and says which parts are not", () => {
+  it("names no application that is absent from the C.4 inventory", async () => {
+    const inventory: any = await get("/estate/applications?limit=200");
+    const real = new Set(inventory.applications.map((a: any) => String(a.name).trim().toLowerCase()));
+    expect(real.size).toBe(79);
+
+    const prov: any = await get("/data/provenance");
+    expect(prov.applications_used.length).toBeGreaterThan(8);
+    const invented = prov.applications_used.filter((a: string) => !real.has(a.trim().toLowerCase()));
+    expect(invented).toEqual([]);
+  });
+
+  it("says in its own words that the lineage is constructed, not discovered", async () => {
+    const prov: any = await get("/data/provenance");
+    expect(prov.applications_are_real).toBe(true);
+    expect(prov.lineage_is_constructed).toBe(true);
+    expect(prov.why).toMatch(/no integration or dependency records/i);
+    // Every answer that rests on the constructed edges has to carry the caveat,
+    // because the payload is what a journey quotes from.
+    for (const path of ["/data/summary", "/data/figures", "/data/figure?name=Q3%20revenue%20forecast", "/data/impact?pipeline=sap_finance_forecast_load"]) {
+      const res: any = await get(path);
+      expect(res.provenance).toMatch(/constructed for this environment/i);
+    }
+  });
+
+  it("keeps its own defects rather than a tidy estate", async () => {
+    const s: any = await get("/data/summary");
+    expect(s.known_gaps.reports_with_no_owner.length).toBe(2);
+    expect(s.known_gaps.datasets_with_no_producer).toEqual(["ref_fx_rates"]);
+    expect(s.known_gaps.figures_never_verified).toEqual(["Modelled attrition risk"]);
+  });
+
+  it("will not call a figure safe to quote when nobody has ever verified it", async () => {
+    const f: any = await get("/data/figure?name=Modelled%20attrition%20risk");
+    expect(f.safe_to_quote).toBe(false);
+    expect(f.last_verified).toBeNull();
+    expect(f.why_not).toMatch(/never been verified/i);
+  });
+
+  it("reports a dataset no pipeline produces as unknown, not as fresh", async () => {
+    const d: any = await get("/data/datasets");
+    const fx = d.datasets.find((x: any) => x.name === "ref_fx_rates");
+    expect(fx.produced_by).toBeNull();
+    expect(fx.freshness.state).toBe("unknown");
+  });
+});
+
+describe("a staged failure makes the figures behind it unsafe, and is recorded as staged", () => {
+  it("turns a quotable figure into an unquotable one, and offers the last verified value instead", async () => {
+    const before: any = await get("/data/figure?name=Q3%20revenue%20forecast");
+    expect(before.safe_to_quote).toBe(true);
+    expect(before.chain.produced_by).toBe("sap_finance_forecast_load");
+
+    const staged = await post("/data/inject-failure", { pipeline: "sap_finance_forecast_load" });
+    expect(staged.body.injected).toBe(true);
+    expect(staged.body.figures_now_unsafe).toContain("Q3 revenue forecast");
+
+    const after: any = await get("/data/figure?name=Q3%20revenue%20forecast");
+    expect(after.safe_to_quote).toBe(false);
+    expect(after.why_not).toMatch(/failed/i);
+    // The point of the whole demonstration: there is something to fall back to.
+    expect(after.last_verified.value).toBe(408.2);
+    expect(after.last_verified.at).toBe("2026-10-09T06:12:00Z");
+
+    const audit: any = await get("/data/audit");
+    expect(audit.staged_failures.map((x: any) => x.pipeline)).toContain("sap_finance_forecast_load");
+
+    await post("/data/rollback", { undoId: staged.body.undoId });
+    const restored: any = await get("/data/figure?name=Q3%20revenue%20forecast");
+    expect(restored.safe_to_quote).toBe(true);
+    await post("/data/reset", {});
+  });
+
+  it("answers what breaks, and names the reports whose owner nobody recorded", async () => {
+    const impact: any = await get("/data/impact?pipeline=workday_headcount_daily");
+    expect(impact.datasets_it_produces).toContain("fct_headcount");
+    const names = impact.reports_affected.map((r: any) => r.report);
+    expect(names).toContain("Headcount and Attrition");
+    // "Who do I tell" having no answer is the finding, so it is reported rather
+    // than the unowned report being quietly dropped from the list.
+    expect(impact.reports_with_no_owner).toContain("Headcount and Attrition");
+    expect(impact.figures_affected.map((f: any) => f.figure)).toContain("Headcount");
+  });
+
+  it("refuses an unexplained or unapproved quarantine, and lifts one on rollback", async () => {
+    const noReason = await post("/data/figure/quarantine", { figure: "Q3 revenue forecast", approvalRef: "APR-1" });
+    expect(noReason.status).toBe(422);
+    expect(noReason.body.error).toMatch(/reason is required/);
+
+    const noAppr = await post("/data/figure/quarantine", { figure: "Q3 revenue forecast", reason: "Upstream load failed." });
+    expect(noAppr.status).toBe(422);
+    expect(noAppr.body.error).toMatch(/approvalRef/);
+
+    const w = await post("/data/figure/quarantine", { figure: "Q3 revenue forecast", reason: "Last night's load failed, so this is yesterday's number.", approvalRef: "APR-77" });
+    expect(w.body.written).toBe(true);
+    const held: any = await get("/data/figure?name=Q3%20revenue%20forecast");
+    expect(held.safe_to_quote).toBe(false);
+    expect(held.why_not).toMatch(/yesterday's number/);
+
+    await post("/data/rollback", { undoId: w.body.undoId });
+    const lifted: any = await get("/data/figure?name=Q3%20revenue%20forecast");
+    expect(lifted.safe_to_quote).toBe(true);
+    await post("/data/reset", {});
+  });
+
+  it("gives the same run history twice, so a demonstration does not move under the person watching", async () => {
+    const a: any = await get("/data/pipeline?name=sap_finance_forecast_load&limit=5");
+    const b: any = await get("/data/pipeline?name=sap_finance_forecast_load&limit=5");
+    expect(a.recent_runs.map((r: any) => `${r.started_at}|${r.minutes}|${r.rows_written}`))
+      .toEqual(b.recent_runs.map((r: any) => `${r.started_at}|${r.minutes}|${r.rows_written}`));
+    expect(a.recent_runs.length).toBe(5);
   });
 });
