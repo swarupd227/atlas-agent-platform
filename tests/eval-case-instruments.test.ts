@@ -214,6 +214,24 @@ describe("extractJsonObject", () => {
     expect(extractJsonObject(answer)).toEqual({ holdPosition: "plainly_applies" });
   });
 
+  /**
+   * The brace walk must terminate.
+   *
+   * String.lastIndexOf clamps a negative fromIndex to 0, so lastIndexOf("{", -1)
+   * returns 0 again for any text beginning with "{": the walk sat on index 0
+   * forever, blocking the event loop for every request on the instance and
+   * hanging this very file. It reached production in 098a014d and was found
+   * there by two peer sessions. The second input is deliberate -- a fix that
+   * only special-cases index 0 still has to walk "{a} {b" back correctly.
+   */
+  it("terminates on an unparseable answer that begins with a brace", () => {
+    expect(extractJsonObject("{ not json")).toBeNull();
+    expect(extractJsonObject("{a} {b")).toBeNull();
+    expect(extractJsonObject("{")).toBeNull();
+    // And still finds a real object when an earlier brace does not parse.
+    expect(extractJsonObject('{ not json\nbut then: {"holdPosition": "may_apply"}')).toEqual({ holdPosition: "may_apply" });
+  });
+
   it("still reads a bare object, and a bare fence with no language", () => {
     expect(extractJsonObject('Verdict: {"slaBreached": true} -- done.')).toEqual({ slaBreached: true });
     expect(extractJsonObject('```\n{"slaBreached": false}\n```')).toEqual({ slaBreached: false });

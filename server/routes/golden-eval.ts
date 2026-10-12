@@ -231,7 +231,13 @@ export function extractJsonObject(text: string): Record<string, any> | null {
   // 3. A span that over-reached: walk the last `{` back through each earlier
   //    one until something parses, so a second object in the answer no longer
   //    hides the verdict.
-  for (let start = text.lastIndexOf("{"); start >= 0; start = text.lastIndexOf("{", start - 1)) {
+  // `start === 0 ? -1` is load-bearing: String.lastIndexOf clamps a negative
+  // fromIndex to 0, so lastIndexOf("{", -1) returns 0 again for any text
+  // beginning with "{". Without it this loop never ends -- it blocked the
+  // event loop for every request on the instance whenever a model answer
+  // started with "{" and parsed nowhere, and hung this module's own test file.
+  // Found in production by two peer sessions, not by me.
+  for (let start = text.lastIndexOf("{"); start >= 0; start = start === 0 ? -1 : text.lastIndexOf("{", start - 1)) {
     const end = text.indexOf("}", start) < 0 ? -1 : text.lastIndexOf("}");
     if (end <= start) continue;
     const found = asObject(text.slice(start, end + 1));
