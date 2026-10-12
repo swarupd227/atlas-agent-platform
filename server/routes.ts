@@ -146,6 +146,7 @@ import generationMetadataRouter from "./routes/generation-metadata";
 import evalStudioRouter from "./routes/eval-studio";
 import enterpriseIntegrationsRouter, { startTokenRefreshDaemon } from "./routes/enterprise-integrations";
 import credentialStoreRouter from "./routes/credential-store";
+import bedrockRouter from "./routes/bedrock";
 import filesRouter from "./routes/files";
 import { registerEnterpriseIntegrations } from "./integrations/register";
 import { ensureMarketplaceSeedData } from "./marketplace-seed-data";
@@ -560,6 +561,7 @@ export async function registerRoutes(
   app.use(enterpriseIntegrationsRouter);
   // Where connector credentials are kept, and moving them to or from the external secret store (admin only).
   app.use(credentialStoreRouter);
+  app.use(bedrockRouter);
   app.use(filesRouter);
 
   // ── Enterprise Integration routers (Wave 1: CRM, Wave 2: ITSM + DevOps) ────

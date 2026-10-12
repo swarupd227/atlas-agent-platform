@@ -45,6 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { BedrockProviderCard } from "@/components/bedrock-settings";
 
 interface ProviderModel {
   id: string;
@@ -441,6 +442,7 @@ export default function ModelProviders() {
             );
           })
         )}
+        <BedrockProviderCard />
       </div>
 
       <Card>
