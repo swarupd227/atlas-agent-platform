@@ -14,7 +14,7 @@ type Input = { team: string };
 export const verifyWiringTool: AstraTool<Input> = {
   name: "verify_wiring",
   description:
-    "Check whether a team is wired to run AND whether its branches can ever be taken: blueprint graph (missing steps, loops, disconnected steps), agents in the right organization and runnable, connectors linked and connected, expected tools present, policies active, the approval gates where the run pauses, and branch conditions that can never be true — which do not stop a run but silently skip every step behind them. Blockers mean run_team won't start it. Reads only.",
+    "Check whether a team can actually run, and whether every path through it can ever be taken: its steps are all present and connected with no loops, its agents belong here and are runnable, the systems it needs are connected and have the tools it expects, its policies are active, where it will pause for a person, and branch conditions that can never be true — which do not stop a run but silently skip every step behind them. Anything in whatWouldStopIt means run_team won't start it. Reads only. Report the result in the user's terms: ready or not, what would stop it, and where it pauses for them.",
   input: z.object({ team: z.string().min(1).describe("The team's id or name.") }),
   permission: "view_agents",
   confirm: false,
@@ -39,11 +39,16 @@ export const verifyWiringTool: AstraTool<Input> = {
     const proof: Partial<ProofEnvelope> = {
       compliance: {
         status: "measured",
-        summary: `${report.agentsChecked} agents checked · ${report.blockers} ${report.blockers === 1 ? "blocker" : "blockers"} · ${report.warnings} ${report.warnings === 1 ? "warning" : "warnings"} · ${report.gates} approval ${report.gates === 1 ? "gate" : "gates"}`,
+        summary: [
+          report.blockers === 0 ? "Ready to run" : `${report.blockers} ${report.blockers === 1 ? "thing" : "things"} would stop it`,
+          `${report.agentsChecked} ${report.agentsChecked === 1 ? "agent" : "agents"} checked`,
+          ...(report.warnings > 0 ? [`${report.warnings} worth knowing`] : []),
+          `pauses for you ${report.gates} ${report.gates === 1 ? "time" : "times"}`,
+        ].join(" · "),
       },
       context: report.totalWaves != null
-        ? { status: "measured", summary: `${report.totalWaves} ${report.totalWaves === 1 ? "stage" : "stages"} in run order` }
-        : { status: "not_measured", reason: "The run order couldn't be worked out." },
+        ? { status: "measured", summary: `${report.totalWaves} ${report.totalWaves === 1 ? "stage" : "stages"}, in order` }
+        : { status: "not_measured", reason: "The order the steps would run in couldn't be worked out." },
     };
     return {
       payload: {
@@ -51,8 +56,13 @@ export const verifyWiringTool: AstraTool<Input> = {
         team: result.team.name,
         teamAgentId: result.team.id,
         ready: report.ready,
-        blockers: pick("blocker"),
-        warnings: pick("warning").slice(0, 12),
+        // Named for what they mean to the person asking, because these keys are
+        // what the model echoes: "blockers" and "warnings" came back as "wiring
+        // checks out" and "it flags two warnings", which are sentences about the
+        // platform. The severities they come from keep their own names in
+        // wiring-assess, where they are a classification rather than a reply.
+        whatWouldStopIt: pick("blocker"),
+        worthKnowing: pick("warning").slice(0, 12),
         approvalGates: report.gates,
         stages: report.totalWaves,
         ...(deadBranches.length > 0
@@ -65,7 +75,9 @@ export const verifyWiringTool: AstraTool<Input> = {
           ? { otherGraphFindings: invariants.findings.filter((f) => !deadBranches.includes(f)).map((f) => f.message) }
           : {}),
       },
-      artifact: { kind: "wiring", title: `Wiring · ${result.team.name}`, props: { team: result.team, report, steps: result.steps, invariants }, fullViewHref: `/agents/${result.team.id}` },
+      // The card's title is read by the user; its `kind` is read by the client,
+      // so only the title changes here.
+      artifact: { kind: "wiring", title: `${report.ready ? "Ready to run" : "Not ready to run"} · ${result.team.name}`, props: { team: result.team, report, steps: result.steps, invariants }, fullViewHref: `/agents/${result.team.id}` },
       proof,
     };
   },
