@@ -2659,6 +2659,40 @@ export const insertAgentMemoryNoteSchema = createInsertSchema(agentMemoryNotes).
 export type InsertAgentMemoryNote = z.infer<typeof insertAgentMemoryNoteSchema>;
 export type AgentMemoryNote = typeof agentMemoryNotes.$inferSelect;
 
+/**
+ * A skill an agent proposed, waiting for (or past) a person's decision.
+ *
+ * kind "new": skillId is a skills row created with status "proposed", which no
+ * runtime reader loads. kind "revision": skillId is the live skill, versionId a
+ * skill_versions row holding the proposed text, not promoted; baseVersion is the
+ * skill's version when the agent proposed, so an approval can refuse a revision
+ * of a skill that has changed since.
+ */
+export const agentSkillProposals = pgTable("agent_skill_proposals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  kind: varchar("kind").notNull().default("new"),
+  skillId: varchar("skill_id").notNull(),
+  versionId: varchar("version_id"),
+  baseVersion: varchar("base_version"),
+  name: text("name").notNull(),
+  contentHash: varchar("content_hash").notNull(),
+  /** pending | approved | rejected | stale (a revision whose skill changed meanwhile). */
+  status: varchar("status").notNull().default("pending"),
+  reason: text("reason"),
+  runId: varchar("run_id"),
+  approvalId: varchar("approval_id"),
+  decidedBy: varchar("decided_by"),
+  decidedAt: timestamp("decided_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAgentSkillProposalSchema = createInsertSchema(agentSkillProposals).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAgentSkillProposal = z.infer<typeof insertAgentSkillProposalSchema>;
+export type AgentSkillProposal = typeof agentSkillProposals.$inferSelect;
+
 export const ragPipelines = pgTable("rag_pipelines", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),

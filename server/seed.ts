@@ -1707,6 +1707,7 @@ export async function seedDatabase() {
     // relying on the hardcoded counts in the seed definitions.
     const allMarketplaceServers = await storage.getMarketplaceServers();
     for (const rs of registrySourceSeeds) {
+      if (!rs.id) continue; // every seed row carries an id; the insert type merely allows it to be absent
       const count = allMarketplaceServers.filter((m: any) => m.registrySourceId === rs.id).length;
       await storage.updateRegistrySource(rs.id, { serverCount: count });
     }
@@ -1789,6 +1790,12 @@ export async function seedDatabase() {
         key: "AGENT_MEMORY",
         value: "off",
         description: "on = an agent that has opted in (its Memory section) is shown the notes a person approved for it, and may PROPOSE saving, replacing or removing one with the memory tool. A proposal is filed as an approval and changes nothing until a person approves it; an injected, sensitive or oversized note is refused before anyone is asked. off = no agent sees or proposes notes, whatever its own setting.",
+        category: "decisions",
+      },
+      {
+        key: "AGENT_SKILL_PROPOSALS",
+        value: "off",
+        description: "on = an agent that has opted in (its Memory section) may PROPOSE a new skill, or a revision of a skill it uses, with the propose_skill tool. A proposal is filed as an approval and creates nothing any run can read until a person approves it; a proposed skill is prompt-only and cannot grant tools or access. off = no agent proposes skills, whatever its own setting.",
         category: "decisions",
       },
     ];

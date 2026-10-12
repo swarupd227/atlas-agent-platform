@@ -46,6 +46,8 @@ async function attachSkillAs(orgId: string, agentId: string, skillId: string, ac
   const [agent, skill] = await Promise.all([agentInOrg(orgId, agentId), storage.getSkill(skillId, orgId)]);
   if (!agent) throw new Error("No agent with that id in this organization.");
   if (!skill || (skill as any).organizationId !== orgId) throw new Error("No skill with that id in this organization.");
+  // An agent-proposed skill is attached by its approval, not before it.
+  if (skill.status === "proposed") throw new Error("That skill was proposed by an agent and has not been approved yet. Approve it in Approvals first.");
   const current = Array.isArray(agent.preloadedSkills) ? (agent.preloadedSkills as Array<{ skillId?: string }>) : [];
   if (current.some((p) => p.skillId === skill.id)) return { agent: { id: agent.id, name: agent.name }, skill: skillView(skill), alreadyAttached: true };
   await storage.updateAgent(agent.id, { preloadedSkills: [...current, { skillId: skill.id }] } as any);

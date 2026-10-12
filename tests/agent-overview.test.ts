@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { SECTIONS, memoryEnabledOf, memoryRequestLabel, policiesByScope, policyEffect, runOutcome, runStats, sectionFromSearch, withMemoryEnabled } from "../client/src/pages/agent-overview";
+import { SECTIONS, memoryEnabledOf, memoryRequestLabel, policiesByScope, policyEffect, runOutcome, runStats, sectionFromSearch, skillProposalLabel, skillProposalsEnabledOf, withMemoryEnabled, withSkillProposalsEnabled } from "../client/src/pages/agent-overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "agent-overview.tsx");
@@ -81,6 +81,27 @@ describe("memory", () => {
     expect(memoryRequestLabel({ proposedAction: "add" })).toBe("Save a note");
     expect(memoryRequestLabel({ proposedAction: "replace" })).toBe("Replace a note");
     expect(memoryRequestLabel({ proposedAction: "remove" })).toBe("Remove a note");
+  });
+});
+
+describe("skill proposals", () => {
+  it("are on only when the agent has opted in, separately from memory", () => {
+    expect(skillProposalsEnabledOf({ runtimeConfig: { agentSkillProposals: { enabled: true } } } as any)).toBe(true);
+    expect(skillProposalsEnabledOf({ runtimeConfig: { agentSkillProposals: { enabled: false } } } as any)).toBe(false);
+    expect(skillProposalsEnabledOf({ runtimeConfig: { agentMemory: { enabled: true } } } as any)).toBe(false);
+    expect(skillProposalsEnabledOf({ runtimeConfig: null } as any)).toBe(false);
+  });
+
+  it("switching them on or off leaves the rest of the runtime config alone, memory included", () => {
+    const rc = { maxCostPerRunUsd: 2, agentMemory: { enabled: true }, agentSkillProposals: { enabled: false, note: "kept" } };
+    expect(withSkillProposalsEnabled(rc, true)).toEqual({ maxCostPerRunUsd: 2, agentMemory: { enabled: true }, agentSkillProposals: { enabled: true, note: "kept" } });
+    expect(withSkillProposalsEnabled(null, true)).toEqual({ agentSkillProposals: { enabled: true } });
+    expect(rc.agentSkillProposals.enabled).toBe(false); // the original is not mutated
+  });
+
+  it("says what a proposal asks for", () => {
+    expect(skillProposalLabel({ kind: "new" })).toBe("Add a skill");
+    expect(skillProposalLabel({ kind: "revision" })).toBe("Change a skill");
   });
 });
 

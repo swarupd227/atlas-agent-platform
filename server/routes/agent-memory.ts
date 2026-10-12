@@ -7,6 +7,7 @@ import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { checkPermission, getRequestActorLabel } from "../permissions";
 import { memoryOverview, removeNoteByPerson } from "../agent-memory";
+import { skillProposalOverview } from "../agent-skill-proposals";
 
 const router = Router();
 
@@ -32,6 +33,19 @@ router.delete("/api/agents/:id/memory/:noteId", checkPermission("manage_agents")
     res.json({ removed: true, purgedEpisodic: r.purgedEpisodic ?? 0 });
   } catch (e: any) {
     res.status(500).json({ message: e?.message ?? "Could not remove the note" });
+  }
+});
+
+// The skills an agent has proposed: waiting for a person, and the recently decided.
+// Deciding one is the ordinary approval route (type "skill_proposal"). 404 for an
+// agent outside the caller's organization.
+router.get("/api/agents/:id/skill-proposals", async (req, res) => {
+  try {
+    const agent = await storage.getAgent(String(req.params.id), getOrgId(req));
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    res.json(await skillProposalOverview(agent.organizationId, agent.id));
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message ?? "Could not read the agent's skill proposals" });
   }
 });
 

@@ -53,7 +53,7 @@ export const noteHash = (text: string): string =>
 
 export const shortId = (id: string): string => String(id).slice(0, 8);
 
-type Rule = { re: RegExp; reason: string };
+type Rule = { re: RegExp; reason: string; /** A rule about links only: text that may legitimately carry a URL skips it. */ link?: true };
 
 // Text that reads like an instruction aimed at the model, or tries to move data
 // out, or is a credential or personal data. Each is something a note should
@@ -66,7 +66,7 @@ const REJECT_RULES: Rule[] = [
   { re: /<\s*\/?\s*(system|assistant|developer|tool|instructions?)\s*>|\[\s*(system|inst)\s*\]|^\s*#{2,}\s*(system|instructions?)\b/im, reason: "it contains prompt-structure markers" },
   { re: /\b(send|post|upload|forward|email|exfiltrate|leak|transmit)\b[^.]{0,80}(https?:\/\/|\bto\b[^.]{0,30}@)/i, reason: "it asks for data to be sent somewhere" },
   { re: /\b(curl|wget)\b[^|]{0,160}\|\s*(sh|bash)\b/i, reason: "it contains a download-and-run command" },
-  { re: /https?:\/\//i, reason: "it contains a link; links are not stored in memory" },
+  { re: /https?:\/\//i, reason: "it contains a link; links are not stored in memory", link: true },
   { re: /\b[A-Za-z0-9+/]{60,}={0,2}/, reason: "it contains a long encoded blob" },
   { re: /\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\./, reason: "it looks like a credential" },
   { re: /\b(password|passwd|secret|api[_ -]?key|token)\b\s*(is|[:=])\s*\S{6,}/i, reason: "it looks like a credential" },
@@ -85,6 +85,22 @@ export function scanNote(text: string): ScanResult {
   if (t.length > MEMORY_LIMITS.maxNoteChars) return { ok: false, reason: `it is ${t.length} characters; a note is at most ${MEMORY_LIMITS.maxNoteChars}. Keep the fact and drop the detail` };
   // The raw text is scanned too: normalising strips the characters some rules look for.
   for (const r of REJECT_RULES) if (r.re.test(String(text)) || r.re.test(t)) return { ok: false, reason: r.reason };
+  return { ok: true };
+}
+
+/**
+ * The same checks for longer text an agent wrote that a person will review and
+ * later runs will read as instructions (a proposed skill). Multi-line, so the
+ * text is scanned as written, and a link is allowed (a skill may point to a
+ * document) unless the caller says otherwise. Length is the caller's rule.
+ */
+export function scanUntrustedText(text: string, opts: { allowLinks?: boolean } = {}): ScanResult {
+  const raw = String(text ?? "");
+  if (!raw.trim()) return { ok: false, reason: "it is empty" };
+  for (const r of REJECT_RULES) {
+    if (r.link && opts.allowLinks) continue;
+    if (r.re.test(raw)) return { ok: false, reason: r.reason };
+  }
   return { ok: true };
 }
 

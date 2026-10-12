@@ -15,6 +15,7 @@ import { promoteToBaseline } from "./services/screenshot-baseline";
 import { canDecideApproval, type RoleId } from "./permissions";
 import { workspaceRuns, type Approval } from "@shared/schema";
 import { applyMemoryDecision } from "./agent-memory";
+import { applySkillDecision } from "./agent-skill-proposals";
 
 export type ApprovalDecision = "approved" | "rejected";
 
@@ -78,7 +79,7 @@ export function resumeTeamRunWaitingOn(approvalId: string): void {
  * described here, and every other kind says only the approval changes.
  */
 export function describeApprovalEffect(
-  a: { type: string; objectType: string; objectName: string | null },
+  a: { type: string; objectType: string; objectName: string | null; evidenceJson?: unknown },
   decision: "approve" | "reject",
   names: { outcomeName?: string | null } = {},
 ): string {
@@ -120,6 +121,14 @@ export function describeApprovalEffect(
     return approve
       ? "The change is made to the agent's notes. Its later runs will be shown the note and may rely on it; a person can remove it at any time."
       : "The agent's notes stay as they are. The request is kept as a record.";
+  }
+  if (a.type === "skill_proposal") {
+    const revision = (a.evidenceJson as { kind?: string } | null)?.kind === "revision";
+    return approve
+      ? (revision
+        ? "The skill's instructions are replaced with the proposed text, for every agent that uses it. The previous version is kept."
+        : "The skill becomes active and is attached to the agent that proposed it. It is prompt-only: it grants no tools or access.")
+      : "The proposed skill is discarded. The request is kept as a record.";
   }
   if (a.objectType === "ui_baseline_diff") {
     return approve
@@ -173,6 +182,12 @@ export async function applyApprovalEffects(approval: Approval, status: string | 
   if (approval.type === "memory_write" && approval.objectId && (status === "approved" || status === "rejected")) {
     // The approval's own organization is the authority: it is the one the note was filed under.
     await applyMemoryDecision({ orgId: approval.organizationId ?? ctx.orgId, noteId: approval.objectId, decision: status, decidedBy });
+  }
+
+  // A skill_proposal approval is a person deciding whether a skill an agent wrote
+  // exists for any run (server/agent-skill-proposals.ts).
+  if (approval.type === "skill_proposal" && approval.objectId && (status === "approved" || status === "rejected")) {
+    await applySkillDecision({ orgId: approval.organizationId ?? ctx.orgId, proposalId: approval.objectId, decision: status, decidedBy });
   }
 
   // Fast path for a DAG approval-gate decision: resume the paused run right

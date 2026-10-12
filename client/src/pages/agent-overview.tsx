@@ -135,6 +135,25 @@ export function memoryRequestLabel(n: Pick<MemoryNoteRow, "proposedAction">): st
   return n.proposedAction === "remove" ? "Remove a note" : n.proposedAction === "replace" ? "Replace a note" : "Save a note";
 }
 
+/** An agent may propose skills only when it has opted in (the AGENT_SKILL_PROPOSALS flag is the other half; see server/agent-skill-proposals.ts). */
+export function skillProposalsEnabledOf(agent: Pick<Agent, "runtimeConfig">): boolean {
+  return (agent.runtimeConfig as Record<string, any> | null | undefined)?.agentSkillProposals?.enabled === true;
+}
+
+/** The runtime config with skill proposals switched on or off, leaving everything else in it alone. */
+export function withSkillProposalsEnabled(runtimeConfig: unknown, enabled: boolean): Record<string, unknown> {
+  const rc = (runtimeConfig && typeof runtimeConfig === "object" ? runtimeConfig : {}) as Record<string, any>;
+  return { ...rc, agentSkillProposals: { ...(rc.agentSkillProposals ?? {}), enabled } };
+}
+
+interface SkillProposalRow { id: string; kind: string; skillId: string; name: string; status: string; reason: string | null; approvalId: string | null; decidedBy: string | null; decidedAt: string | null; createdAt: string | null }
+interface SkillProposalOverview { pending: SkillProposalRow[]; recent: SkillProposalRow[]; limits: { maxInstructionChars: number; maxPending: number } }
+
+/** What a proposal asks for, in words. */
+export function skillProposalLabel(p: Pick<SkillProposalRow, "kind">): string {
+  return p.kind === "revision" ? "Change a skill" : "Add a skill";
+}
+
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
     <div className="flex min-w-[8rem] flex-col gap-0.5 px-4 py-3" data-testid={`stat-${label.toLowerCase().replace(/\s+/g, "-")}`}>
@@ -537,6 +556,77 @@ function Memory({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toa
               <li key={n.id} className="flex items-start gap-2 p-2.5 text-sm">
                 <div className="min-w-0 flex-1 truncate">{n.content}</div>
                 <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{n.status === "applied" ? "removed" : n.status}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <SkillProposals agent={agent} canEdit={canEdit} toast={toast} />
+    </div>
+  );
+}
+
+/**
+ * The skills the agent proposes. It never changes a skill: it asks, and a
+ * person's approval in the ordinary approvals queue is what makes a proposed
+ * skill exist for any run. A proposed skill is prompt-only and grants no access.
+ */
+function SkillProposals({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toast: ReturnType<typeof useToast>["toast"] }) {
+  const on = skillProposalsEnabledOf(agent);
+  const q = useQuery<SkillProposalOverview>({ queryKey: [`/api/agents/${agent.id}/skill-proposals`] });
+  const data = q.data;
+  const toggle = useMutation({
+    mutationFn: async () => (await apiRequest("PATCH", `/api/agents/${agent.id}`, { runtimeConfig: withSkillProposalsEnabled(agent.runtimeConfig, !on) })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      toast({ title: on ? "Skill proposals turned off" : "Skill proposals turned on", description: "The change is recorded in the audit trail." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't change it", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex flex-col gap-6" data-testid="skill-proposals-section">
+      <section>
+        <SectionHeading>Skills it proposes</SectionHeading>
+        <div className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${on ? "bg-emerald-500" : "bg-muted-foreground/40"}`} aria-hidden />
+          <span className="min-w-0 flex-1">{on ? "On. It can propose a new skill, or a better version of one it uses." : "Off. It proposes no skills."}</span>
+          {canEdit && <Button size="sm" variant="outline" disabled={toggle.isPending} onClick={() => toggle.mutate()} data-testid="button-toggle-skill-proposals">{on ? "Turn off" : "Turn on"}</Button>}
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">It never changes a skill itself. It asks, and a person reads the whole procedure and approves it in Approvals. A proposed skill is prompt-only: it cannot grant tools or access. This also needs the AGENT_SKILL_PROPOSALS flag on under Admin → Platform flags.</p>
+      </section>
+
+      <section>
+        <SectionHeading>Waiting for a decision</SectionHeading>
+        {q.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (data?.pending ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing is waiting.</p>
+        ) : (
+          <ul className="flex flex-col divide-y rounded border" data-testid="skill-proposals-pending">
+            {(data?.pending ?? []).map((p) => (
+              <li key={p.id} className="flex items-start gap-2 p-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{skillProposalLabel(p)}</div>
+                  <div className="break-words">{p.name}</div>
+                  {p.reason && <div className="text-xs text-muted-foreground">{p.reason}</div>}
+                </div>
+                {p.approvalId && <Link href={`/approvals/${p.approvalId}/classic`} className="shrink-0 text-xs text-muted-foreground hover:text-foreground">decide</Link>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {(data?.recent ?? []).length > 0 && (
+        <section>
+          <SectionHeading>Recently decided</SectionHeading>
+          <ul className="flex flex-col divide-y rounded border" data-testid="skill-proposals-recent">
+            {(data?.recent ?? []).map((p) => (
+              <li key={p.id} className="flex items-start gap-2 p-2.5 text-sm">
+                <div className="min-w-0 flex-1 truncate">{p.name}</div>
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{p.status}</span>
               </li>
             ))}
           </ul>

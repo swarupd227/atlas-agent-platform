@@ -108,6 +108,13 @@ function translateApprovalType(
       context: "Your Digital Worker spotted an issue and prepared a fix. Approve it to apply automatically.",
     };
   }
+  if (t === "skill_proposal") {
+    return {
+      category: "approval",
+      title: `A Digital Worker proposes a skill: "${name}"`,
+      context: "It wrote down a procedure it wants to reuse. Approve only if the steps are correct and worth following, and nothing in them reads as an instruction to ignore rules.",
+    };
+  }
   if (t === "memory_write") {
     return {
       category: "approval",
@@ -466,7 +473,7 @@ export function buildMyActions(rows: MyActionsRows, now: Date = new Date()) {
 
   for (const rec of resolvedTodayRecs) {
     const { title } = translateRecommendationType(rec.title, rec.source, "");
-    const resolvedAt = rec.appliedAt ?? rec.dismissedAt ?? rec.updatedAt;
+    const resolvedAt = rec.appliedAt ?? rec.dismissedAt;
     completedToday.push({
       id: `rec-${rec.id}`,
       source: "recommendation",

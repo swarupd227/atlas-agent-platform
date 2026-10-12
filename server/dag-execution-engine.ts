@@ -2664,6 +2664,22 @@ export class DAGExecutionEngine {
       };
     }
 
+    // A skill an agent proposed is text no person has reviewed yet; it must not
+    // reach a prompt through a flow node either (server/agent-skill-proposals.ts).
+    if (skill.status === "proposed") {
+      return {
+        nodeId,
+        agentId: "",
+        status: "failed",
+        output: {},
+        error: `Skill "${skill.name}" was proposed by an agent and has not been approved yet`,
+        durationMs: Date.now() - start,
+        promptTokens: 0,
+        completionTokens: 0,
+        traceId: "",
+      };
+    }
+
     const toolsNote = skill.allowedTools?.length ? `\n\nAllowed tools: ${skill.allowedTools.join(", ")}` : "";
     const content = `# ${skill.name}\n${skill.description}${toolsNote}\n\n${skill.markdownBody || ""}`.trim();
 

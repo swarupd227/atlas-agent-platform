@@ -89,7 +89,13 @@ const TRUST_TIER_STYLES: Record<string, string> = {
   "platform-provided": "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
   "customer-created": "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
   marketplace: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
+  "agent-proposed": "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
 };
+
+/** The short word on a skill's trust badge. A skill an agent proposed says so, not "Market". */
+export function trustTierLabel(tier: string | null | undefined): string {
+  return tier === "platform-provided" ? "Platform" : tier === "customer-created" ? "Custom" : tier === "agent-proposed" ? "Agent" : "Market";
+}
 
 const COMPLEXITY_STYLES: Record<string, string> = {
   beginner: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
@@ -500,6 +506,7 @@ export default function SkillCatalog() {
                   <SelectItem value="all">All Statuses</SelectItem>
                   <SelectItem value="active">Active</SelectItem>
                   <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="proposed">Proposed by an agent</SelectItem>
                   <SelectItem value="deprecated">Deprecated</SelectItem>
                 </SelectContent>
               </Select>
@@ -809,7 +816,7 @@ function SkillCard({
               </Badge>
             )}
             <Badge className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${TRUST_TIER_STYLES[skill.trustTier] || ""}`}>
-              {skill.trustTier === "platform-provided" ? "Platform" : skill.trustTier === "customer-created" ? "Custom" : "Market"}
+              {trustTierLabel(skill.trustTier)}
             </Badge>
           </div>
         </div>
@@ -955,7 +962,7 @@ function SkillDetailSheet({
               <SheetTitle className="text-lg leading-tight" data-testid="text-sheet-skill-name">{skill.name}</SheetTitle>
               <div className="flex items-center gap-1.5 flex-wrap">
                 <Badge className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${TRUST_TIER_STYLES[skill.trustTier] || ""}`}>
-                  {skill.trustTier === "platform-provided" ? "Platform" : skill.trustTier === "customer-created" ? "Custom" : "Market"}
+                  {trustTierLabel(skill.trustTier)}
                 </Badge>
                 <Badge className={`text-[10px] no-default-hover-elevate no-default-active-elevate ${COMPLEXITY_STYLES[skill.complexity] || ""}`}>
                   {skill.complexity}

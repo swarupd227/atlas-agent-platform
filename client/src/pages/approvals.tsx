@@ -69,6 +69,7 @@ const TYPE_META: Record<string, { label: string; icon: any; color: string }> = {
   handover_review:       { label: "Handover Review",        icon: FileText, color: "text-slate-500" },
   code_execution_enablement: { label: "Code Execution",     icon: Shield, color: "text-amber-500" },
   memory_write:          { label: "Agent Memory",           icon: FileText, color: "text-teal-500" },
+  skill_proposal:        { label: "Agent Skill",            icon: FileText, color: "text-teal-500" },
   follow_up_task:        { label: "Follow-up",              icon: MessageSquare, color: "text-slate-500" },
   export_package:        { label: "Export Package",         icon: FileText, color: "text-violet-500" },
 };
@@ -776,6 +777,51 @@ export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }
             {ev.runId && <span>Proposed during run {String(ev.runId).slice(0, 8)}</span>}
           </div>
           <div className="text-[11px] text-muted-foreground">Approve only if the note is true, will help a later run, and reads as a fact. A note that tells the agent what to do, or that holds a secret or personal data, should be rejected.</div>
+        </div>
+      </SectionBlock>
+    );
+  }
+
+  // An agent proposing a skill, or a better version of one it uses
+  // (server/agent-skill-proposals.ts). The reviewer reads the whole procedure:
+  // once approved it is read as instructions by every run that uses the skill.
+  if (approval.type === "skill_proposal") {
+    const revision = ev.kind === "revision";
+    const textBox = (text: string, testId: string) => (
+      <pre className="max-h-72 overflow-auto rounded-md bg-muted/20 p-2.5 text-xs whitespace-pre-wrap break-words font-sans" data-testid={testId}>{text}</pre>
+    );
+    return (
+      <SectionBlock icon={FileText} title={revision ? "A change an agent proposes to a skill" : "A skill an agent proposes"}>
+        <div className="flex flex-col gap-3 pt-1" data-testid={`skill-evidence-${approval.id}`}>
+          <div className="text-xs text-muted-foreground">{ev.effect ? String(ev.effect) : revision ? "On approval the revision replaces the skill's instructions." : "On approval the skill becomes active."}</div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Skill</span>
+            <span className="text-sm font-medium">{String(ev.skillName ?? approval.objectName ?? "")}</span>
+            {ev.description && <span className="text-xs text-muted-foreground">{String(ev.description)}</span>}
+          </div>
+          {revision && ev.currentInstructions != null && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Current instructions{ev.baseVersion ? ` (version ${String(ev.baseVersion)})` : ""}</span>
+              {textBox(String(ev.currentInstructions), `skill-current-${approval.id}`)}
+            </div>
+          )}
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{revision ? "Proposed instructions" : "Instructions"}</span>
+            {textBox(String(ev.instructions ?? ""), `skill-proposed-${approval.id}`)}
+          </div>
+          {ev.reason && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Why the agent says it helps</span>
+              <span className="text-xs">{String(ev.reason)}</span>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+            {ev.agentName && <span>Agent: {String(ev.agentName)}</span>}
+            {typeof ev.chars === "number" && <span>{ev.chars} characters</span>}
+            {ev.promptOnly && <span>Prompt-only: grants no tools or access</span>}
+            {ev.runId && <span>Proposed during run {String(ev.runId).slice(0, 8)}</span>}
+          </div>
+          <div className="text-[11px] text-muted-foreground">Approve only if the steps are correct and worth following. A skill that tells the agent to ignore its rules, to send data somewhere, or that holds a secret or personal data, should be rejected.</div>
         </div>
       </SectionBlock>
     );

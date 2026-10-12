@@ -20,6 +20,8 @@ import { resolveReadableSkillSets, planSkillContext, skillProceduresPrompt, skil
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { isAgentMemoryEnabled, memoryPromptLayer, type MemoryLayerReport } from "./agent-memory";
 import { memoryToolsFor } from "./builtin-memory-tools";
+import { isSkillProposalEnabled } from "./agent-skill-proposals";
+import { skillProposalToolsFor } from "./builtin-skill-proposal-tools";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -1660,6 +1662,14 @@ export async function executePromptWithMcp(
     if (await isAgentMemoryEnabled(options?.runtimeConfig)) availableTools.push(...memoryToolsFor());
   } catch (memErr: any) {
     console.warn(`[memory] memory tool unavailable (non-fatal): ${memErr.message}`);
+  }
+
+  // The skill-proposal tool (server/builtin-skill-proposal-tools.ts): proposes a
+  // new skill or a revision, which a person must approve. Same gating as memory.
+  try {
+    if (await isSkillProposalEnabled(options?.runtimeConfig)) availableTools.push(...skillProposalToolsFor());
+  } catch (spErr: any) {
+    console.warn(`[skill-proposals] propose_skill unavailable (non-fatal): ${spErr.message}`);
   }
 
   const canonicalTools = buildCanonicalTools(availableTools);

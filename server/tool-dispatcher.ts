@@ -37,6 +37,7 @@ import { captureReturnedFile } from "./returned-file-capture";
 import { currentLlmAbortSignal } from "./llm-abort-context";
 import { BUILTIN_SKILL_SERVER_ID } from "./builtin-skill-tools";
 import { BUILTIN_MEMORY_SERVER_ID } from "./builtin-memory-tools";
+import { BUILTIN_SKILL_PROPOSAL_SERVER_ID } from "./skill-proposal-constants";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
 export type PolicyBundle = Awaited<ReturnType<typeof resolvePolicyBundle>>;
@@ -743,6 +744,13 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
     return executeBuiltinMemoryTool(tool.toolName, args, { orgId, agentId, runId });
   }
 
+  // Built-in skill proposals (server/builtin-skill-proposal-tools.ts): files a
+  // request a person must approve; creates no skill any run can read.
+  const { isBuiltinSkillProposalTool, executeBuiltinSkillProposalTool } = await import("./builtin-skill-proposal-tools");
+  if (isBuiltinSkillProposalTool(tool)) {
+    return executeBuiltinSkillProposalTool(tool.toolName, args, { orgId, agentId, runId });
+  }
+
   // Enterprise connectors (GitHub, Slack, Salesforce, the SQL family, …) are
   // OUR OWN code and must be dispatched in-process, so the agent's org context
   // and its connection pin select the right encrypted credentials.
@@ -1015,7 +1023,9 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // reason. It is deliberately not exempt from the shadow gate below: a shadow
   // run must not file requests.
   const memoryPropose = tool.serverId === BUILTIN_MEMORY_SERVER_ID;
-  const exemptFromAllowLists = skillRead || memoryPropose;
+  // Likewise the skill-proposal tool: it files a request, and a person decides.
+  const skillPropose = tool.serverId === BUILTIN_SKILL_PROPOSAL_SERVER_ID;
+  const exemptFromAllowLists = skillRead || memoryPropose || skillPropose;
 
   const finish = (partial: Omit<DispatchResult, "redactedArgs" | "startedAt" | "completedAt" | "durationMs">): DispatchResult => {
     const durationMs = Date.now() - startMs;

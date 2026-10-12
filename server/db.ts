@@ -41,7 +41,7 @@ pool.on("error", (err) => {
 
 export const db = drizzle(pool, { schema });
 
-type PoolClient = Awaited<ReturnType<typeof pool.connect>>;
+type PoolClient = pg.PoolClient;
 
 interface MetricSeed {
   name: string;
@@ -2165,6 +2165,33 @@ export async function runStartupMigrations() {
       -- The prompt read: an agent's live notes.
       CREATE INDEX IF NOT EXISTS idx_agent_memory_notes_agent ON agent_memory_notes (organization_id, agent_id, status);
       CREATE INDEX IF NOT EXISTS idx_agent_memory_notes_approval ON agent_memory_notes (approval_id);
+    `);
+
+    // Skills an agent proposed, and the person's decision on each (see
+    // server/agent-skill-proposals.ts). The skill itself lives in skills (status
+    // "proposed") or skill_versions; this table is the decision record. Additive.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agent_skill_proposals (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        agent_id VARCHAR NOT NULL,
+        kind VARCHAR NOT NULL DEFAULT 'new',
+        skill_id VARCHAR NOT NULL,
+        version_id VARCHAR,
+        base_version VARCHAR,
+        name TEXT NOT NULL,
+        content_hash VARCHAR NOT NULL,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        reason TEXT,
+        run_id VARCHAR,
+        approval_id VARCHAR,
+        decided_by VARCHAR,
+        decided_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_skill_proposals_agent ON agent_skill_proposals (organization_id, agent_id, status);
+      CREATE INDEX IF NOT EXISTS idx_agent_skill_proposals_approval ON agent_skill_proposals (approval_id);
     `);
 
     // What the gated dispatcher actually ran. Not audit_events: that write
