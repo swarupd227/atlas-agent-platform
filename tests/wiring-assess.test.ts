@@ -58,6 +58,48 @@ describe("assessTeamWiring", () => {
     expect(codes({ ...s, agents: [s.agents[0], { ...a1, status: "draft" }] }, "warning")).toEqual(["agent_not_runnable_status"]);
   });
 
+  /**
+   * A step that calls a connector directly.
+   *
+   * These nodes carry their connector on config.toolServerId and have no
+   * refAgentId at all, so the agent loop never reaches them. A team built
+   * entirely this way -- the licence-request journey is three such steps on one
+   * connector -- had zero agent links, and was reported as linked to nothing
+   * while every one of those calls was dispatching successfully.
+   */
+  const withToolStep = (cfg: Record<string, unknown>) => {
+    const s = snapshot();
+    return { ...s, nodes: [...s.nodes, node("n3", "Record decision", { nodeType: "tool_call", config: cfg })], edges: [...s.edges, edge("n2", "n3")] };
+  };
+
+  it("checks a tool_call step's own connector, which has no agent to be linked through", () => {
+    // The shape that was being misreported: bound, connected, and fine.
+    const ok = assessTeamWiring(withToolStep({ toolName: "get_open_ar", toolServerId: "c1" }));
+    expect(ok.blockers).toBe(0);
+    expect(ok.issues.filter((i) => i.code.startsWith("step_"))).toEqual([]);
+  });
+
+  it("blocks a step that names a tool with no system, or one whose system is disconnected", () => {
+    expect(codes(withToolStep({ toolName: "get_open_ar" }), "blocker")).toContain("step_tool_no_connector");
+    const s = withToolStep({ toolName: "get_open_ar", toolServerId: "c1" });
+    expect(codes({ ...s, connectors: [{ id: "c1", name: "Dealer Operations", connected: false }] }, "blocker")).toContain("step_connector_not_connected");
+  });
+
+  it("warns, rather than blocks, when the step's system is not among the organization's connectors", () => {
+    // Refusing to start a team over a reporting gap would turn it into an outage.
+    const s = withToolStep({ toolName: "get_open_ar", toolServerId: "c-unknown" });
+    expect(codes(s, "warning")).toContain("step_connector_unknown");
+    expect(codes(s, "blocker")).toEqual([]);
+  });
+
+  it("checks the step's tool name only where some link has discovered that connector's tools", () => {
+    expect(codes(withToolStep({ toolName: "post_cash", toolServerId: "c1" }), "warning")).toContain("step_tool_missing");
+    // No link covers c1, so the tools are unknown and the name is left unchecked
+    // rather than guessed at.
+    const blind = withToolStep({ toolName: "post_cash", toolServerId: "c1" });
+    expect(codes({ ...blind, links: {} }, "warning")).not.toContain("step_tool_missing");
+  });
+
   it("warns a high-risk team with no approval gate (the compile rule)", () => {
     const s = snapshot({ team: { ...snapshot().team, riskTier: "HIGH" } });
     expect(codes({ ...s, nodes: s.nodes.slice(0, 2), edges: s.edges.slice(0, 1) }, "warning")).toContain("graph_policy");

@@ -1359,6 +1359,21 @@ async function verifyTeamWiring(orgId: string, teamAgentId: string) {
   for (const rows of Object.values(snapshot.links)) {
     for (const l of rows) if (l.visible) connectors.set(l.serverId, { name: l.name, writeTools: l.writeToolCount ?? 0, connected: l.connected });
   }
+  // The systems the STEPS call, not only the ones its agents are linked to.
+  //
+  // A tool_call step dispatches from its own config.toolServerId and needs no
+  // agent link, so a team built entirely that way produced an empty list here --
+  // and an empty list is what the card shows and the model reads. It reported a
+  // team as linked to nothing while that team was calling the connector
+  // successfully on every run. Added after the links so a real link, which also
+  // carries a write-tool count, wins over the bare entry.
+  const connectorById = new Map(snapshot.connectors.map((c) => [c.id, c]));
+  for (const node of snapshot.nodes) {
+    const serverId = (node.config as { toolServerId?: unknown } | null)?.toolServerId;
+    if (typeof serverId !== "string" || !serverId || connectors.has(serverId)) continue;
+    const c = connectorById.get(serverId);
+    if (c) connectors.set(serverId, { name: c.name, writeTools: 0, connected: c.connected });
+  }
   // The graph invariants too, for a team that already exists.
   //
   // They were only ever evaluated when a team was BUILT, SYNCED or DEPLOYED, so

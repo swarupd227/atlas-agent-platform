@@ -151,6 +151,50 @@ export function assessTeamWiring(s: WiringSnapshot) {
     }
   }
 
+  // Steps that call a connector directly.
+  //
+  // A tool_call node carries its connector on config.toolServerId and dispatches
+  // from that; it has no refAgentId, so the agent loop above never reaches it and
+  // nothing here looked at it. A team whose every connector call is bound that
+  // way has no agent-level links at all, and was reported as linked to nothing --
+  // stated as a conclusion about the team while the runtime dispatched those same
+  // calls perfectly well. Measured on the licence-request team: three tool_call
+  // steps all bound to one connector, zero agent links.
+  const connectorsById = new Map(s.connectors.map((c) => [c.id, c]));
+  // Discovered tool names are only carried per agent link, so they are available
+  // here only when some agent happens to link the same connector. Where they are
+  // not, the tool name is left unchecked rather than guessed at.
+  const toolsByServer = new Map<string, string[]>();
+  for (const rows of Object.values(s.links)) {
+    for (const l of rows) if (l.toolNames.length) toolsByServer.set(l.serverId, l.toolNames);
+  }
+  for (const node of s.nodes) {
+    const cfg = (node.config ?? {}) as { toolName?: unknown; toolServerId?: unknown };
+    const toolName = typeof cfg.toolName === "string" ? cfg.toolName.trim() : "";
+    if (!toolName) continue;
+    const serverId = typeof cfg.toolServerId === "string" ? cfg.toolServerId.trim() : "";
+    if (!serverId) {
+      add("blocker", "step_tool_no_connector", `Step "${node.label}" calls "${toolName}" but names no system to call it on.`, { nodeId: node.id });
+      continue;
+    }
+    const connector = connectorsById.get(serverId);
+    if (!connector) {
+      // A warning rather than a blocker: this list is the connectors the
+      // organization can use, and refusing to start a team over a binding that
+      // may still dispatch would turn a reporting gap into an outage.
+      add("warning", "step_connector_unknown", `Step "${node.label}" calls "${toolName}" on a system that isn't among this organization's connectors.`, { nodeId: node.id });
+      continue;
+    }
+    if (connector.connected === false) {
+      add("blocker", "step_connector_not_connected", `${connector.name} isn't connected, so step "${node.label}" will fail when it calls "${toolName}".`, { nodeId: node.id });
+      continue;
+    }
+    const known = toolsByServer.get(serverId);
+    if (known && !known.some((t) => t.toLowerCase() === toolName.toLowerCase())) {
+      add("warning", "step_tool_missing", `Step "${node.label}" expects "${toolName}" on ${connector.name}, which it doesn't have.`, { nodeId: node.id });
+    }
+  }
+
   const count = (sev: WiringSeverity) => issues.filter((i) => i.severity === sev).length;
   return {
     ready: count("blocker") === 0,
