@@ -127,6 +127,17 @@ jobs:
       - name: Build
         run: npm run build
 
+      # In production mode an audit write needs a signing key. Without one every audit write fails quietly, and a route that
+      # audits before it acts answers with an error, so the sweep saw it as refusing when it would have succeeded. A throwaway key
+      # is made here for this run; nothing is stored.
+      - name: Make a throwaway audit signing key
+        run: |
+          {
+            echo "AUDIT_SIGNING_PRIVATE_KEY<<AUDIT_KEY_EOF"
+            node -e "process.stdout.write(require('crypto').generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }))"
+            echo "AUDIT_KEY_EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Start the app
         env:
           SECURITY_MODE: production
