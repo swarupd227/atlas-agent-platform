@@ -1114,12 +1114,13 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       // One query for the whole base, not one per chunk. The loop form was an
       // N+1 of the same shape that made /api/drift-signals take 72 seconds.
-      const vecRows = await db.execute(sql`
-        SELECT id, embedding IS NOT NULL AS has_emb
-          FROM knowledge_chunks WHERE knowledge_base_id = ${req.params.id as string}
-      `);
+      // Read from the ACTIVE model's store (server/embedding-backend.ts): the legacy column until an administrator switches
+      // document search to another model on the Model Providers page.
+      const { embeddingFacts } = await import("./embeddings");
+      const { target: activeTarget, facts } = await embeddingFacts(req.params.id as string);
       const hasVector = new Map<string, boolean>();
-      for (const r of (vecRows.rows ?? []) as any[]) hasVector.set(String(r.id), !!r.has_emb);
+      for (const [id, f] of facts) hasVector.set(id, f.hasVector);
+      const stateOf = (c: any) => chunkVectorState({ content: c.content, contentHash: facts.get(c.id)?.contentHash, embeddingModel: facts.get(c.id)?.embeddingModel }, hasVector.get(c.id) ?? false, activeTarget.stamp);
 
       /**
        * What to embed. The default is unchanged -- chunks with no vector --
@@ -1139,7 +1140,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       const missingChunks: typeof chunks = [];
       for (const chunk of chunks) {
-        const state = chunkVectorState(chunk as any, hasVector.get(chunk.id) ?? false);
+        const state = stateOf(chunk);
         if (state === "never_embedded") missingChunks.push(chunk);
         else if (wantStale && (state === "stale" || state === "model_changed")) missingChunks.push(chunk);
         else if (wantUnattributed && state === "unattributed") missingChunks.push(chunk);
@@ -1152,7 +1153,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       // misleading. Name what was skipped.
       if (missingChunks.length === 0) {
         const skipped = chunks.reduce((acc: Record<string, number>, c) => {
-          const s = chunkVectorState(c as any, hasVector.get(c.id) ?? false);
+          const s = stateOf(c);
           acc[s] = (acc[s] ?? 0) + 1;
           return acc;
         }, {});
@@ -1191,12 +1192,10 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       if (chunks.length === 0) return res.json({ total: 0, withEmbeddings: 0, withoutEmbeddings: 0, states: {} });
 
       try {
-        const result = await db.execute(sql`
-          SELECT id, embedding IS NOT NULL AS has_emb
-            FROM knowledge_chunks WHERE knowledge_base_id = ${req.params.id as string}
-        `);
+        const { embeddingFacts } = await import("./embeddings");
+        const { target: activeTarget, facts } = await embeddingFacts(req.params.id as string);
         const hasVector = new Map<string, boolean>();
-        for (const r of (result.rows ?? []) as any[]) hasVector.set(String(r.id), !!r.has_emb);
+        for (const [id, f] of facts) hasVector.set(id, f.hasVector);
         const total = chunks.length;
         const withEmb = chunks.filter(c => hasVector.get(c.id)).length;
 
@@ -1213,7 +1212,9 @@ export function registerKnowledgeBaseRoutes(app: Express) {
          */
         const { chunkVectorState } = await import("./embeddings");
         const states: Record<string, number> = { current: 0, stale: 0, model_changed: 0, never_embedded: 0, unattributed: 0 };
-        for (const c of chunks) states[chunkVectorState(c as any, hasVector.get(c.id) ?? false)]++;
+        for (const c of chunks) {
+          states[chunkVectorState({ content: c.content, contentHash: facts.get(c.id)?.contentHash, embeddingModel: facts.get(c.id)?.embeddingModel }, hasVector.get(c.id) ?? false, activeTarget.stamp)]++;
+        }
 
         res.json({
           total, withEmbeddings: withEmb, withoutEmbeddings: total - withEmb,

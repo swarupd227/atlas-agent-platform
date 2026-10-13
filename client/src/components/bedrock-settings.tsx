@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Cloud, CheckCircle2, XCircle, Loader2, KeyRound, ShieldCheck, Copy } from "lucide-react";
+import { Cloud, CheckCircle2, XCircle, Loader2, KeyRound, ShieldCheck, Copy, Search } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -311,6 +312,8 @@ function BedrockDialog({ open, onOpenChange, state }: { open: boolean; onOpenCha
             })}
           </div>
 
+          <SearchPanel />
+
           <div className="space-y-3 rounded-lg border p-4">
             <h4 className="font-medium text-sm">Limits</h4>
             <div className="grid gap-3 md:grid-cols-2">
@@ -350,5 +353,97 @@ function BedrockDialog({ open, onOpenChange, state }: { open: boolean; onOpenCha
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface Coverage { total: number; covered: number }
+interface SearchTarget { available: boolean; reason?: string; label?: string; active?: boolean; coverage?: Coverage | null; dimensions?: number | null }
+interface SearchState {
+  active: { provider: "openai" | "aws_bedrock"; label: string };
+  targets: { openai: SearchTarget; bedrock: SearchTarget };
+  migration: { state: "idle" | "running" | "stopping" | "stopped" | "done" | "failed" | "interrupted"; targetKey: string | null; targetLabel: string | null; total: number; covered: number; skipped: number; lastError: string | null; startedBy: string | null };
+}
+
+/** Which model document search uses, and the move to another: re-embed in the background, then switch (and switch back). */
+function SearchPanel() {
+  const { toast } = useToast();
+  const { data, isLoading, isError } = useQuery<SearchState>({
+    queryKey: ["/api/admin/bedrock/search"],
+    retry: false,
+    refetchInterval: (q) => { const s = (q.state.data as SearchState | undefined)?.migration.state; return s === "running" || s === "stopping" ? 3000 : false; },
+  });
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/admin/bedrock/search"] });
+  const act = (path: string, label: string, body?: unknown) => useMutation({
+    mutationFn: async (_: void) => (await apiRequest("POST", path, body)).json(),
+    onSuccess: () => { refresh(); toast({ title: label }); },
+    onError: (e) => toast({ title: "Could not do that", description: plainApiError(e), variant: "destructive" }),
+  });
+  const reembedBedrock = act("/api/admin/bedrock/search/reembed", "Re-embedding started", { to: "bedrock" });
+  const reembedOpenAi = act("/api/admin/bedrock/search/reembed", "Re-embedding started", { to: "openai" });
+  const stop = act("/api/admin/bedrock/search/stop", "Stopping after this batch");
+  const switchBedrock = act("/api/admin/bedrock/search/switch", "Document search now uses Amazon Bedrock", { to: "bedrock" });
+  const switchOpenAi = act("/api/admin/bedrock/search/switch", "Document search now uses OpenAI", { to: "openai" });
+  if (isLoading || isError || !data) return null;
+
+  const m = data.migration;
+  const running = m.state === "running" || m.state === "stopping";
+  const busy = reembedBedrock.isPending || reembedOpenAi.isPending || stop.isPending || switchBedrock.isPending || switchOpenAi.isPending;
+
+  function Row({ name, t, onReembed, onSwitch, which }: { name: string; t: SearchTarget; onReembed: () => void; onSwitch: () => void; which: "openai" | "bedrock" }) {
+    const cov = t.coverage;
+    const pct = cov && cov.total > 0 ? Math.round((cov.covered / cov.total) * 100) : cov ? 100 : 0;
+    const complete = !!cov && cov.covered >= cov.total;
+    const thisRun = running && m.targetKey && (m.targetLabel ?? "").length > 0 && ((which === "openai" && m.targetKey.startsWith("openai:")) || (which === "bedrock" && m.targetKey.startsWith("aws_bedrock:")));
+    return (
+      <div className="space-y-2 rounded-md border p-3" data-testid={`search-row-${which}`}>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="text-sm font-medium flex items-center gap-2">{name}{t.active && <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">In use for search</Badge>}</div>
+            <div className="text-xs text-muted-foreground">{t.available ? t.label : t.reason}</div>
+          </div>
+          {t.available && (!t.active || (!!cov && !complete)) && (
+            <div className="flex gap-2">
+              {thisRun
+                ? <Button variant="outline" size="sm" disabled={busy || m.state === "stopping"} onClick={() => stop.mutate()}>Stop</Button>
+                : <Button variant="outline" size="sm" disabled={busy || running || complete} onClick={onReembed} data-testid={`button-reembed-${which}`}>Re-embed</Button>}
+              {!t.active && <Button size="sm" disabled={busy || running || !complete} onClick={onSwitch} data-testid={`button-switch-${which}`}>Use for search</Button>}
+            </div>
+          )}
+        </div>
+        {t.available && cov && (
+          <div className="space-y-1">
+            <Progress value={pct} />
+            <div className="text-xs text-muted-foreground">
+              {cov.covered.toLocaleString()} of {cov.total.toLocaleString()} passages have a vector for this model
+              {thisRun ? " (working in the background)" : ""}
+              {t.active && !complete && !thisRun ? ". New passages are missing a vector (the model could not be reached when they were added): press Re-embed to fill them in." : ""}
+            </div>
+          </div>
+        )}
+        {t.available && !cov && which === "bedrock" && <div className="text-xs text-muted-foreground">The vector size is detected when the re-embedding starts.</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border p-4" data-testid="bedrock-search-panel">
+      <h4 className="font-medium text-sm flex items-center gap-2"><Search className="h-4 w-4" />Document search</h4>
+      <p className="text-xs text-muted-foreground">
+        Search uses <strong>{data.active.label}</strong>. To move to another model, re-embed every passage first (search keeps working on the current model meanwhile), then switch.
+        Switching back is possible at any time; the old vectors are kept. It uses the <em>saved</em> settings above.
+      </p>
+      <Row name="OpenAI" which="openai" t={data.targets.openai} onReembed={() => reembedOpenAi.mutate()} onSwitch={() => { if (window.confirm("Switch document search back to OpenAI?")) switchOpenAi.mutate(); }} />
+      <Row name="Amazon Bedrock" which="bedrock" t={data.targets.bedrock} onReembed={() => reembedBedrock.mutate()} onSwitch={() => { if (window.confirm("Switch document search to Amazon Bedrock? Questions will be matched against the Bedrock vectors from now on.")) switchBedrock.mutate(); }} />
+      {m.state !== "idle" && (
+        <div className={`text-xs rounded p-2 ${m.state === "failed" ? "bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-200" : "bg-muted/50 text-muted-foreground"}`} data-testid="search-migration-status">
+          {m.state === "running" && `Re-embedding for ${m.targetLabel}: ${m.covered.toLocaleString()} of ${m.total.toLocaleString()}…`}
+          {m.state === "stopping" && "Stopping after the current batch…"}
+          {m.state === "stopped" && "Stopped. Press Re-embed to carry on where it left off."}
+          {m.state === "done" && `Finished: every passage has a vector for ${m.targetLabel}.${m.skipped ? ` (${m.skipped} empty passages were skipped.)` : ""}`}
+          {m.state === "interrupted" && "The re-embedding was interrupted (the server restarted). Press Re-embed to carry on."}
+          {m.state === "failed" && <>The re-embedding stopped: {m.lastError}</>}
+        </div>
+      )}
+    </div>
   );
 }

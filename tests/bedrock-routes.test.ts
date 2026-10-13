@@ -16,6 +16,10 @@ const ROUTES: Array<[verb: string, route: string]> = [
   ["delete", "/api/admin/bedrock/credentials"],
   ["post", "/api/admin/bedrock/test"],
   ["get", "/api/admin/bedrock/policy"],
+  ["get", "/api/admin/bedrock/search"],
+  ["post", "/api/admin/bedrock/search/reembed"],
+  ["post", "/api/admin/bedrock/search/stop"],
+  ["post", "/api/admin/bedrock/search/switch"],
 ];
 
 describe("the Bedrock administration routes", () => {

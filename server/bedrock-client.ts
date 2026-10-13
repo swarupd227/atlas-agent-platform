@@ -182,6 +182,12 @@ export async function testBedrockModel(sender: BedrockSender, config: BedrockCon
   }
 }
 
+/** Whether an error came from the AWS client (it carries response metadata), as opposed to from OpenAI or from this code. */
+export function looksLikeAwsError(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: unknown } | undefined;
+  return !!e && typeof e === "object" && ("$metadata" in e || e.name === "CredentialsProviderError");
+}
+
 // ── what went wrong, in words ────────────────────────────────────────────────────────────────────────────────────
 
 export function explainBedrockError(err: unknown, ctx: { modelId: string; region: string }): BedrockProblem {

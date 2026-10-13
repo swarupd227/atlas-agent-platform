@@ -38,8 +38,10 @@ describe("chunkText uses it, and embeddings cap their input", () => {
     expect(read("server", "kb-routes.ts")).toContain("return chunks.flatMap((c) => splitOversizedChunk(c, chunkSize));");
   });
   it("never sends the embedding model an input over the cap", () => {
-    const src = read("server", "embeddings.ts");
+    // The cap and the cut live in server/embedding-backend.ts, which every provider's request goes through (embedWith).
+    const src = read("server", "embedding-backend.ts");
     expect(src).toContain("export const MAX_EMBEDDING_INPUT_CHARS = 20_000;");
     expect(src).toContain("t.length > MAX_EMBEDDING_INPUT_CHARS ? t.slice(0, MAX_EMBEDDING_INPUT_CHARS) : t");
+    expect(src).toContain("const clipped = texts.map(clip);");
   });
 });

@@ -1,30 +1,29 @@
-import OpenAI from "openai";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { getAllowedKbSensitivityLevels, type RoleId } from "./permissions";
 import { createHash } from "crypto";
+import {
+  MAX_EMBEDDING_INPUT_CHARS as BACKEND_MAX_INPUT_CHARS, OPENAI_EMBEDDING_MODEL, embedWith, embeddingAvailable, getActiveEmbedding, isOpenAiEmbeddingConfigured,
+  pgVectorStore, vectorFacts, ensureVectorTable, type EmbeddingTarget,
+} from "./embedding-backend";
+import type { EmbeddingKind } from "./bedrock-client";
 
 /**
- * The model every vector in knowledge_chunks is computed with.
+ * The model every vector in knowledge_chunks.embedding is computed with (the legacy store, which is what the platform used from the
+ * start). It is still what search uses until an administrator switches document search to another model on the Model Providers
+ * page; see server/embedding-backend.ts for the active model and where the other models' vectors live.
  *
- * Exported and stamped on each chunk rather than left as a literal inside the
- * request: a reader of a chunk could not otherwise tell which model produced
- * its vector, or whether two vectors sitting beside each other are even
- * comparable. Changing this constant without re-embedding leaves rows whose
- * stamp disagrees with the code -- which is the point. That disagreement is
+ * Exported and stamped on each chunk rather than left as a literal inside the request: a reader of a chunk could not otherwise
+ * tell which model produced its vector, or whether two vectors sitting beside each other are even comparable. Changing this
+ * constant without re-embedding leaves rows whose stamp disagrees with the code -- which is the point. That disagreement is
  * now visible instead of silent.
  */
-export const EMBEDDING_MODEL = "text-embedding-3-small";
+export const EMBEDDING_MODEL = OPENAI_EMBEDDING_MODEL;
 
-const embeddingsApiKey = process.env.OPENAI_API_KEY;
-const openai = embeddingsApiKey
-  ? new OpenAI({ apiKey: embeddingsApiKey })
-  : null;
-
-if (!openai) {
+if (!isOpenAiEmbeddingConfigured()) {
   console.warn(
-    "[embeddings] OPENAI_API_KEY not set; vector embeddings disabled. " +
-      "Set OPENAI_API_KEY to enable semantic search.",
+    "[embeddings] OPENAI_API_KEY not set; OpenAI vector embeddings disabled (document search can use Amazon Bedrock instead, " +
+      "if it is set up on the Model Providers page).",
   );
 }
 
@@ -66,32 +65,26 @@ export async function ensurePgVector(): Promise<boolean> {
   return (pgvectorState as string) === "available";
 }
 
-export const MAX_EMBEDDING_INPUT_CHARS = 20_000;
+export const MAX_EMBEDDING_INPUT_CHARS = BACKEND_MAX_INPUT_CHARS;
 
-export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
-  if (!openai) {
-    throw new Error(
-      "OPENAI_API_KEY not configured — embeddings unavailable. Set OPENAI_API_KEY to enable semantic search.",
-    );
-  }
+/**
+ * Vectors for the given texts with the ACTIVE model (OpenAI until an administrator switches to another). `kind` matters only to
+ * models that treat a stored passage and a question differently (Cohere): pass "query" for search text.
+ */
+export async function generateEmbeddings(texts: string[], kind: EmbeddingKind = "document"): Promise<number[][]> {
+  // The model rejects any input over its token limit, and one such input fails the whole batch. Chunks are split well below that
+  // (splitOversizedChunk in kb-routes.ts); the cap in embedWith only protects a batch from an older oversized chunk or an
+  // unusually long query. 20,000 characters stays under the limit even for dense text such as CSV or code.
+  return embedWith(await getActiveEmbedding(), texts, kind);
+}
 
-  const batchSize = 100;
-  const allEmbeddings: number[][] = [];
+/** Whether the active model can be called at all (OpenAI: the key is set; Bedrock: switched on with a region and a model). */
+export { embeddingAvailable };
 
-  for (let i = 0; i < texts.length; i += batchSize) {
-    // The model rejects any input over 8,192 tokens, and one such input fails
-    // the whole batch. Chunks are split well below that (splitOversizedChunk in
-    // kb-routes.ts); this cap only protects a batch from an older oversized chunk
-    // or an unusually long query. 20,000 characters stays under the limit even
-    // for dense text such as CSV or code.
-    const batch = texts.slice(i, i + batchSize).map((t) => (t.length > MAX_EMBEDDING_INPUT_CHARS ? t.slice(0, MAX_EMBEDDING_INPUT_CHARS) : t));
-    const response = await openai.embeddings.create({
-      model: EMBEDDING_MODEL,
-      input: batch,
-    });
-    allEmbeddings.push(...response.data.map((d) => d.embedding));
-  }
-  return allEmbeddings;
+/** What a person reads next to a vector or a retrieval: the active model's name. */
+export async function activeEmbeddingLabel(): Promise<string> {
+  const t = await getActiveEmbedding();
+  return t.provider === "openai" ? t.modelId : t.modelKey;
 }
 
 /**
@@ -109,7 +102,7 @@ export function chunkContentHash(text: string): string {
 }
 
 /**
- * Store a vector together with what it represents.
+ * Store a vector together with what it represents, in the active model's store.
  *
  * `text` is required, not optional, and that is the design: a caller cannot
  * store a vector without saying what it was computed from. Stamping at each
@@ -119,17 +112,14 @@ export function chunkContentHash(text: string): string {
 export async function storeChunkEmbedding(chunkId: string, embedding: number[], text: string): Promise<boolean> {
   const available = await ensurePgVector();
   if (!available) return false;
-  const embeddingStr = `[${embedding.join(",")}]`;
-  const hash = chunkContentHash(text);
-  await db.execute(
-    sql`UPDATE knowledge_chunks
-           SET embedding = ${embeddingStr}::vector,
-               content_hash = ${hash},
-               embedding_model = ${EMBEDDING_MODEL},
-               embedded_at = NOW()
-         WHERE id = ${chunkId}`
-  );
+  await pgVectorStore.save(await getActiveEmbedding(), chunkId, embedding, text);
   return true;
+}
+
+/** What each chunk of a base has in the active model's store: whether there is a vector, and what it was made from and with. */
+export async function embeddingFacts(kbId: string): Promise<{ target: EmbeddingTarget; facts: Awaited<ReturnType<typeof vectorFacts>> }> {
+  const target = await getActiveEmbedding();
+  return { target, facts: await vectorFacts(kbId, target) };
 }
 
 /**
@@ -145,6 +135,8 @@ export type ChunkVectorState = "current" | "stale" | "model_changed" | "never_em
 export function chunkVectorState(
   chunk: { content: string; contentHash?: string | null; embeddingModel?: string | null },
   hasVector: boolean,
+  /** What a vector's own record should say it was made with: the active model's stamp. */
+  activeStamp: string = EMBEDDING_MODEL,
 ): ChunkVectorState {
   if (!hasVector) return "never_embedded";
   // Stored before these columns existed. NOT "current": there is no evidence
@@ -152,7 +144,7 @@ export function chunkVectorState(
   // exists to stop.
   if (!chunk.contentHash) return "unattributed";
   if (chunk.contentHash !== chunkContentHash(chunk.content)) return "stale";
-  if (chunk.embeddingModel && chunk.embeddingModel !== EMBEDDING_MODEL) return "model_changed";
+  if (chunk.embeddingModel && chunk.embeddingModel !== activeStamp) return "model_changed";
   return "current";
 }
 
@@ -168,6 +160,8 @@ export function chunkVectorState(
  * hasn't been updated to pass it yet, but omitting it means "no requester
  * identity" and falls back to getAllowedKbSensitivityLevels(undefined) —
  * the safe "internal and below" default, never full access.
+ *
+ * The query is embedded with the ACTIVE model and compared only with vectors of that same model.
  */
 export async function searchKnowledgeBaseChunks(
   knowledgeBaseId: string,
@@ -207,9 +201,28 @@ export async function searchKnowledgeBaseChunks(
     return (fallback.rows || []) as any[];
   }
 
-  const embeddings = await generateEmbeddings([query]);
+  const active = await getActiveEmbedding();
+  const embeddings = await embedWith(active, [query], "query");
   const queryEmbedding = embeddings[0];
   const embeddingStr = `[${queryEmbedding.join(",")}]`;
+
+  if (active.store === "vectors") {
+    await ensureVectorTable();
+    const results = await db.execute(sql`
+      SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id,
+             s.name as source_name, s.url as source_url,
+             1 - (v.embedding <=> ${embeddingStr}::vector) as similarity
+      FROM knowledge_chunks c
+      JOIN knowledge_chunk_vectors v ON v.chunk_id = c.id AND v.model_key = ${active.modelKey}
+      LEFT JOIN knowledge_sources s ON s.id = c.source_id
+      WHERE c.knowledge_base_id = ${knowledgeBaseId}
+        AND 1 - (v.embedding <=> ${embeddingStr}::vector) > ${scoreThreshold}
+        AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
+      ORDER BY v.embedding <=> ${embeddingStr}::vector
+      LIMIT ${topK}
+    `);
+    return (results.rows || []) as any[];
+  }
 
   const results = await db.execute(sql`
     SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id,

@@ -6,7 +6,7 @@ import OpenAI from "openai";
 import { compileRedactPatterns, redactStringLeaves, redactText } from "./output-redaction";
 import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
-import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
+import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable, embeddingAvailable, activeEmbeddingLabel } from "./embeddings";
 import { citePassages, CITATION_RULE, type CitedSource } from "@shared/retrieval-citations";
 import { searchFailureReason, knowledgeFailureNote, type KnowledgeSearchFailure } from "@shared/knowledge-search-failure";
 import { rerankChunks } from "./retrieval-rerank";
@@ -768,7 +768,9 @@ export async function checkOntologyCompliance(
   ontologyTags: Array<{ conceptId: string; conceptLabel: string }>
 ): Promise<OntologyComplianceResult> {
   // Semantic mode: use embeddings when pgvector and OpenAI are both available
-  const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  // "Available" means the model document search uses can be called: OpenAI with its key, or Amazon Bedrock once it is the active model.
+  let hasOpenAI = !!process.env.OPENAI_API_KEY;
+  try { hasOpenAI = await embeddingAvailable(); } catch { /* keep the key check */ }
   if (isPgvectorAvailable() && hasOpenAI && ontologyTags.length > 0) {
     try {
       const concepts = await Promise.all(
@@ -1699,6 +1701,8 @@ export async function executePromptWithMcp(
       const effectiveKbBudget = kbLayerBudgets.knowledge;
 
       const kbChunks: string[] = [];
+      let embeddingLabel: string | undefined;
+      try { embeddingLabel = await activeEmbeddingLabel(); } catch { /* the base's own record is used */ }
       for (const link of linkedKbs.slice(0, 3)) {
         let kbMeta: any = null;
         try { kbMeta = await storage.getKnowledgeBase(link.knowledgeBaseId); } catch {}
@@ -1718,7 +1722,7 @@ export async function executePromptWithMcp(
             kbRetrievals.push({
               kbId: link.knowledgeBaseId,
               kbName: kbMeta?.name || link.knowledgeBaseId,
-              embeddingModel: kbMeta?.embeddingModel || "text-embedding-3-small",
+              embeddingModel: embeddingLabel || kbMeta?.embeddingModel || "text-embedding-3-small",
               chunks: chunks.map((c: any) => ({
                 chunkId: c.id,
                 sourceDocId: c.source_id || c.sourceId || "",

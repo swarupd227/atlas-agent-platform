@@ -109,10 +109,14 @@ describe("the write path cannot forget to attribute", () => {
     const src = readFileSync(join(__dirname, "..", "server", "embeddings.ts"), "utf8");
     expect(src).toContain("export async function storeChunkEmbedding(chunkId: string, embedding: number[], text: string)");
     // And it writes all three, not just the vector.
-    const fn = src.slice(src.indexOf("export async function storeChunkEmbedding"));
-    const body = fn.slice(0, fn.indexOf("\n}"));
-    for (const col of ["content_hash", "embedding_model", "embedded_at"]) {
-      expect(body, col).toContain(col);
+    // The vector is written by the store (server/embedding-backend.ts), which keeps the same facts beside it: for the legacy
+    // column the hash, the model and the time; for another model's table the hash, the model key and the time.
+    expect(src).toContain("pgVectorStore.save(");
+    const backend = readFileSync(join(__dirname, "..", "server", "embedding-backend.ts"), "utf8");
+    const save = backend.slice(backend.indexOf("async save(t, chunkId, vector, text)"));
+    const saveBody = save.slice(0, save.indexOf("\n  },"));
+    for (const col of ["content_hash", "embedding_model", "embedded_at", "model_key"]) {
+      expect(saveBody, col).toContain(col);
     }
   });
 
@@ -134,9 +138,13 @@ describe("the write path cannot forget to attribute", () => {
     const { join } = await import("path");
     const src = readFileSync(join(__dirname, "..", "server", "embeddings.ts"), "utf8");
     expect(src).toContain("export const EMBEDDING_MODEL");
-    expect(src).toContain("model: EMBEDDING_MODEL,");
+    // The request names a constant, defined once in server/embedding-backend.ts.
+    const backend = readFileSync(join(__dirname, "..", "server", "embedding-backend.ts"), "utf8");
+    expect(backend).toContain("export const OPENAI_EMBEDDING_MODEL");
+    expect(backend).toContain("model: OPENAI_EMBEDDING_MODEL,");
     // The literal may appear once, where the constant is defined, and nowhere else.
-    expect((src.match(/"text-embedding-3-small"/g) ?? []).length).toBe(1);
+    expect((backend.match(/"text-embedding-3-small"/g) ?? []).length).toBe(1);
+    expect((src.match(/"text-embedding-3-small"/g) ?? []).length).toBe(0);
   });
 });
 
@@ -168,7 +176,11 @@ describe("embedding-status reports what the vectors ARE", () => {
 
   it("counts vectors in ONE query, not one per chunk", () => {
     expect(body).not.toMatch(/for \(const chunk of chunks\)[\s\S]{0,200}db\.execute/);
-    expect(body).toContain("WHERE knowledge_base_id =");
+    // The one query lives in the store (vectorFacts), which reads the whole base at once.
+    expect(body).toContain("embeddingFacts(");
+    const backend = readFileSync(join(__dirname, "..", "server", "embedding-backend.ts"), "utf8");
+    const facts = backend.slice(backend.indexOf("export async function vectorFacts"));
+    expect(facts.slice(0, facts.indexOf("\n}"))).toMatch(/knowledge_base_id = \$\{kbId\}/);
   });
 });
 

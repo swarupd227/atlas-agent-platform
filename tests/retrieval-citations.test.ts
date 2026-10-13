@@ -98,10 +98,10 @@ describe("labelling retrieved passages", () => {
 describe("the query returns what a citation needs", () => {
   const embeddings = read("server", "embeddings.ts");
 
-  it("selects the source name and link on both paths, not just the vector one", () => {
-    // The fallback path runs when pgvector is unavailable. If only one path
-    // carried provenance, citations would silently depend on infrastructure.
-    expect(embeddings.match(/s\.name as source_name, s\.url as source_url/g) ?? []).toHaveLength(2);
+  it("selects the source name and link on every path, not just the vector one", () => {
+    // The fallback path runs when pgvector is unavailable; the other two are the vector searches (another model's table, and the
+    // original column). If any path carried no provenance, citations would silently depend on infrastructure or on the model.
+    expect(embeddings.match(/s\.name as source_name, s\.url as source_url/g) ?? []).toHaveLength(3);
   });
 
   it("declares the provenance columns it has always returned", () => {
