@@ -2,10 +2,13 @@ import { Express, Request, Response } from "express";
 import multer from "multer";
 import { storage } from "./storage";
 import { db } from "./db";
-import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnowledgeBaseSchema, knowledgeChunks, knowledgeSources, knowledgeBases, runTraces, contextEconomics, agentKnowledgeBases } from "@shared/schema";
+import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnowledgeBaseSchema, knowledgeChunks, knowledgeSources, knowledgeSourceFiles, knowledgeBases, runTraces, contextEconomics, agentKnowledgeBases } from "@shared/schema";
 import { sql, eq, desc, and, inArray } from "drizzle-orm";
 import OpenAI from "openai";
-import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
+import { createHash } from "crypto";
+import { generateEmbeddings, storeChunkEmbedding, ensurePgVector } from "./embeddings";
+import { splitTextSections, type ExtractedFile } from "./file-extract";
+import { chunkSections, chunksForSourceContent, describeIndexing, embedBatchWithRetry, isPermanentEmbeddingError, legacyTruncationGap, settleAfterEmbedding, storeAndEmbedChunks, SPREADSHEET_INDEXING, type ChunkAudit, type PreparedChunk } from "./kb-indexing";
 import { getOrgId, getDefaultOrgId } from "./auth";
 import { checkPermission, getRequestRole } from "./permissions";
 import { assertSafeOutboundUrl, safeFetch, UnsafeUrlError } from "./url-safety";
@@ -387,133 +390,10 @@ function jsonToStructuredText(data: any): string {
   return jsonRowToText(data);
 }
 
-function chunkText(text: string, chunkSize: number = 512, overlap: number = 50): string[] {
-  const chunks: string[] = [];
-  const lines = text.split("\n");
-
-  const segments: { type: "text" | "table"; content: string }[] = [];
-  let currentText: string[] = [];
-  let tableLines: string[] = [];
-  let inTable = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const isTableRow = line.startsWith("|") && line.endsWith("|");
-    const isSeparator = isTableRow && /^\|[\s\-:|]+\|$/.test(line);
-
-    if (!inTable && isTableRow) {
-      if (currentText.length > 0) {
-        const joined = currentText.join("\n").trim();
-        if (joined) segments.push({ type: "text", content: joined });
-        currentText = [];
-      }
-      inTable = true;
-      tableLines = [lines[i]];
-    } else if (inTable && (isTableRow || isSeparator)) {
-      tableLines.push(lines[i]);
-    } else if (inTable && !isTableRow) {
-      if (line === "" && i + 1 < lines.length) {
-        const nextLine = lines[i + 1]?.trim() || "";
-        if (nextLine.startsWith("|") && nextLine.endsWith("|")) {
-          continue;
-        }
-      }
-      segments.push({ type: "table", content: tableLines.join("\n") });
-      tableLines = [];
-      inTable = false;
-      currentText.push(lines[i]);
-    } else {
-      currentText.push(lines[i]);
-    }
-  }
-
-  if (inTable && tableLines.length > 0) {
-    segments.push({ type: "table", content: tableLines.join("\n") });
-  }
-  if (currentText.length > 0) {
-    const joined = currentText.join("\n").trim();
-    if (joined) segments.push({ type: "text", content: joined });
-  }
-
-  for (const seg of segments) {
-    if (seg.type === "table") {
-      const tLines = seg.content.split("\n").filter(l => l.trim());
-      if (tLines.length < 2) {
-        chunks.push(seg.content.trim());
-        continue;
-      }
-
-      const headerLine = tLines[0];
-      const sepIdx = tLines.findIndex(l => /^\|[\s\-:|]+\|$/.test(l.trim()));
-      const separatorLine = sepIdx >= 0 ? tLines[sepIdx] : "| " + headerLine.split("|").filter(c => c.trim()).map(() => "---").join(" | ") + " |";
-      const dataLines = tLines.filter((_, idx) => idx !== 0 && idx !== sepIdx);
-
-      if (seg.content.length <= chunkSize || dataLines.length === 0) {
-        chunks.push(seg.content.trim());
-      } else {
-        let currentChunkLines: string[] = [headerLine, separatorLine];
-        let currentLen = headerLine.length + separatorLine.length + 2;
-
-        for (const line of dataLines) {
-          if (currentLen + line.length + 1 > chunkSize && currentChunkLines.length > 2) {
-            chunks.push(currentChunkLines.join("\n"));
-            currentChunkLines = [headerLine, separatorLine, line];
-            currentLen = headerLine.length + separatorLine.length + line.length + 3;
-          } else {
-            currentChunkLines.push(line);
-            currentLen += line.length + 1;
-          }
-        }
-        if (currentChunkLines.length > 2) {
-          chunks.push(currentChunkLines.join("\n"));
-        }
-      }
-    } else {
-      const sentences = seg.content.split(/(?<=[.!?\n])\s+/);
-      let current = "";
-      for (const sentence of sentences) {
-        if ((current + " " + sentence).trim().length > chunkSize && current.length > 0) {
-          chunks.push(current.trim());
-          const words = current.split(" ");
-          const overlapWords = words.slice(-Math.floor(overlap / 5));
-          current = overlapWords.join(" ") + " " + sentence;
-        } else {
-          current = current ? current + " " + sentence : sentence;
-        }
-      }
-      if (current.trim()) chunks.push(current.trim());
-    }
-  }
-
-  return chunks.flatMap((c) => splitOversizedChunk(c, chunkSize));
-}
-
-/**
- * Sentence splitting only breaks on ". ", "! ", "? " or a newline followed by
- * whitespace, so text with none of those -- a CSV, one line per row -- came out
- * as a single chunk of the whole file, too long to embed (the embedding model
- * takes at most 8,192 tokens) and too long to be a useful passage. A chunk more
- * than twice the target size is split at line breaks, and a single overlong
- * line into target-size pieces; normal chunks are returned unchanged.
- */
-export function splitOversizedChunk(chunk: string, chunkSize: number): string[] {
-  const size = Math.max(chunkSize, 64);
-  if (chunk.length <= size * 2) return [chunk];
-  const pieces: string[] = [];
-  let current = "";
-  const flush = () => { if (current.trim()) pieces.push(current.trim()); current = ""; };
-  for (const line of chunk.split("\n")) {
-    if (line.length > size) {
-      flush();
-      for (let i = 0; i < line.length; i += size) pieces.push(line.slice(i, i + size));
-      continue;
-    }
-    if (current && current.length + line.length + 1 > size) flush();
-    current = current ? `${current}\n${line}` : line;
-  }
-  flush();
-  return pieces;
-}
+// Chunking, batched embedding and the source's indexing record live in
+// server/kb-indexing.ts; splitOversizedChunk and chunksForSourceContent are
+// re-exported for existing callers.
+export { splitOversizedChunk, chunksForSourceContent, SPREADSHEET_INDEXING } from "./kb-indexing";
 
 // Text extraction lives in server/file-extract.ts so every upload surface
 // (KB, workspace attachments, wizard, process flow) reads a file identically.
@@ -521,11 +401,59 @@ export function splitOversizedChunk(chunk: string, chunkSize: number): string[] 
 // read -- the version that used to live here ended in
 // `return buffer.toString("utf-8")`, so an uploaded spreadsheet or deck was
 // ingested as zip binary, chunked, and embedded into retrieval as garbage.
-async function extractTextFromFile(buffer: Buffer, mimeType: string, filename: string): Promise<string> {
+async function extractUploadedDocument(buffer: Buffer, mimeType: string, filename: string) {
   const { extractTextFromFile: extract } = await import("./file-extract");
-  const result = await extract(buffer, mimeType, filename);
-  return result.text;
+  return extract(buffer, mimeType, filename);
 }
+
+/**
+ * The uploaded file behind a document source, kept so reprocessing re-reads
+ * the document itself. Never fatal: a source whose file could not be kept is
+ * still indexed now, and later reprocessing falls back to its stored text.
+ */
+export async function saveSourceFile(sourceId: string, file: { buffer: Buffer; originalname: string; mimetype?: string; size?: number }): Promise<boolean> {
+  try {
+    const sha256 = createHash("sha256").update(file.buffer).digest("hex");
+    await db.insert(knowledgeSourceFiles).values({
+      sourceId,
+      filename: file.originalname,
+      mimeType: file.mimetype ?? null,
+      sizeBytes: file.size ?? file.buffer.length,
+      sha256,
+      content: file.buffer,
+    }).onConflictDoNothing();
+    return true;
+  } catch (err: any) {
+    console.warn(`[kb] Could not keep the original file for source ${sourceId}; reprocessing will use its stored text:`, err?.message ?? err);
+    return false;
+  }
+}
+
+async function loadSourceFile(sourceId: string): Promise<{ filename: string; mimeType: string | null; content: Buffer } | null> {
+  try {
+    const [row] = await db.select().from(knowledgeSourceFiles).where(eq(knowledgeSourceFiles.sourceId, sourceId));
+    return row ? { filename: row.filename, mimeType: row.mimeType ?? null, content: row.content } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A source as the list endpoints return it: the stored text cut to a
+ *  preview (a large workbook's is millions of characters), and without the
+ *  per-row records an earlier ingestion kept in its metadata. */
+export function sourceForList<T extends { content?: string | null; metadata?: unknown }>(source: T): T & { contentChars: number } {
+  const content = source.content ?? "";
+  const meta = source.metadata && typeof source.metadata === "object" ? { ...(source.metadata as Record<string, unknown>) } : source.metadata;
+  if (meta && typeof meta === "object") delete (meta as Record<string, unknown>).records;
+  return {
+    ...source,
+    content: content.length > SOURCE_PREVIEW_CHARS ? `${content.slice(0, SOURCE_PREVIEW_CHARS)}…` : content,
+    metadata: meta,
+    contentChars: content.length,
+  };
+}
+
+const SOURCE_PREVIEW_CHARS = 2_000;
 
 async function fetchWebContent(url: string): Promise<{ text: string; sourceDate?: string }> {
   const { text, sourceDate } = await fetchWebContentWithLinks(url);
@@ -673,7 +601,24 @@ async function crawlAndIngest(parentSourceId: string, kbId: string, rootUrl: str
   console.log(`[kb-crawl] Crawl complete for ${rootUrl}: ${pagesCreated} pages ingested from ${visited.size} discovered`);
 }
 
-async function processSourceInBackground(sourceId: string, kbId: string, rescan = false) {
+/** Insert one window of chunks in a single statement, ids back in order. */
+async function insertChunkRows(rows: Parameters<Parameters<typeof storeAndEmbedChunks>[2]["insertChunks"]>[0]) {
+  if (rows.length === 0) return [];
+  return db.insert(knowledgeChunks).values(rows).returning({ id: knowledgeChunks.id });
+}
+
+class EmbeddingUnavailableError extends Error {
+  code = "disabled";
+}
+
+/**
+ * Chunk, store and embed one source, then say on its row how much of it is
+ * searchable. `extracted` is the upload's own extraction, passed on the first
+ * run so the file is not read twice; reprocessing re-reads the stored
+ * original file, and falls back to the stored text for sources that have none.
+ */
+export async function processSourceInBackground(sourceId: string, kbId: string, rescan = false, extracted?: ExtractedFile) {
+  const startedAt = Date.now();
   try {
     const source = await storage.getKnowledgeSource(sourceId);
     const kb = await storage.getKnowledgeBase(kbId);
@@ -683,12 +628,30 @@ async function processSourceInBackground(sourceId: string, kbId: string, rescan 
 
     let text = source.content || "";
     let sourceDate: string | undefined;
+    let from: "original_file" | "fetched_page" | "stored_text" = "stored_text";
+    let dropLegacyRecords = false;
 
     if (source.sourceType === "url" && source.url) {
       const fetched = await fetchWebContent(source.url);
       text = fetched.text;
       sourceDate = fetched.sourceDate;
+      from = "fetched_page";
       await storage.updateKnowledgeSource(sourceId, { content: text });
+    } else if (source.sourceType === "document") {
+      if (!extracted) {
+        const original = await loadSourceFile(sourceId);
+        if (original) {
+          extracted = await extractUploadedDocument(original.content, original.mimeType ?? source.mimeType ?? "", original.filename);
+        }
+      }
+      if (extracted) {
+        from = "original_file";
+        dropLegacyRecords = true;
+        if (extracted.text !== text) {
+          text = extracted.text;
+          await storage.updateKnowledgeSource(sourceId, { content: text });
+        }
+      }
     }
 
     if (!text || text.trim().length === 0) {
@@ -707,30 +670,56 @@ async function processSourceInBackground(sourceId: string, kbId: string, rescan 
       }
     }
 
-    const chunks = chunkText(text, kb.chunkSize, kb.chunkOverlap);
-    let embeddings: number[][] | null = null;
-    try {
-      embeddings = await generateEmbeddings(chunks);
-    } catch (embErr: any) {
-      console.log("[kb] Embedding generation failed, storing chunks without embeddings:", embErr.message);
+    // A document read from its file is chunked section by section (page,
+    // heading, slide, row), each chunk carrying where it came from. A source
+    // with only stored text -- pasted text, a URL, a document uploaded before
+    // files were kept -- is chunked as one text, or from the per-row records
+    // an earlier workbook ingestion kept in its metadata.
+    let prepared: PreparedChunk[];
+    let audit: ChunkAudit | undefined;
+    if (extracted?.sections && extracted.sections.length > 0) {
+      ({ chunks: prepared, audit } = chunkSections(extracted.sections, kb.chunkSize, kb.chunkOverlap));
+    } else if (from === "original_file") {
+      ({ chunks: prepared, audit } = chunkSections(splitTextSections(text, 4_000), kb.chunkSize, kb.chunkOverlap));
+    } else {
+      prepared = chunksForSourceContent(text, source.metadata, kb.chunkSize, kb.chunkOverlap);
+    }
+    const gaps: string[] = [];
+    if (from === "stored_text" && source.sourceType === "document") {
+      const gap = legacyTruncationGap(text);
+      if (gap) gaps.push(gap);
     }
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = await storage.createKnowledgeChunk({
-        knowledgeBaseId: kbId,
-        sourceId,
-        content: chunks[i],
-        chunkIndex: i,
-        metadata: sourceDate ? { sourceDate } : {},
-        tokenCount: Math.ceil(chunks[i].length / 4),
-      });
+    // Reprocessing replaces the source's chunks; the first run has none.
+    await storage.deleteKnowledgeChunksBySource(sourceId);
 
-      if (embeddings && embeddings[i]) {
-        // The same text that was embedded, so the stored hash describes the
-        // vector rather than whatever the chunk row happens to say later.
-        await storeChunkEmbedding(chunk.id, embeddings[i], chunks[i]);
-      }
-    }
+    const vectorsAvailable = await ensurePgVector();
+    const report = await storeAndEmbedChunks({ knowledgeBaseId: kbId, sourceId }, prepared, {
+      insertChunks: insertChunkRows,
+      embed: async (texts) => {
+        if (!vectorsAvailable) throw new EmbeddingUnavailableError("The vector store (pgvector) is not available in this database.");
+        return generateEmbeddings(texts);
+      },
+      // The same text that was embedded, so the stored hash describes the
+      // vector rather than whatever the chunk row happens to say later.
+      storeEmbedding: (chunkId, embedding, chunkText) => storeChunkEmbedding(chunkId, embedding, chunkText),
+      progress: async (r) => {
+        if (r.chunksStored >= r.chunks) return;
+        const live = await storage.getKnowledgeSource(sourceId);
+        const meta = (live?.metadata && typeof live.metadata === "object") ? live.metadata as Record<string, any> : {};
+        await storage.updateKnowledgeSource(sourceId, {
+          chunkCount: r.chunksStored,
+          metadata: { ...meta, indexingProgress: { chunks: r.chunks, stored: r.chunksStored, embedded: r.embedded, failed: r.embeddingFailed } },
+        });
+      },
+    }, { chunkMetadata: sourceDate ? { sourceDate } : undefined });
+
+    const outcome = describeIndexing({ extraction: extracted?.meta.coverage, audit, report, from, gaps });
+    const logLine = `[kb-index] source=${sourceId} kb=${kbId} from=${from} status=${outcome.status} ` +
+      `sections=${audit?.sections ?? "-"} chunks=${report.chunks} embedded=${report.embedded} failed=${report.embeddingFailed} ` +
+      `ms=${Date.now() - startedAt}`;
+    if (outcome.status === "processed") console.log(logLine);
+    else console.warn(`${logLine} -- ${outcome.errorMessage}`);
 
     let ontologyMeta: any = {};
     try {
@@ -746,14 +735,31 @@ async function processSourceInBackground(sourceId: string, kbId: string, rescan 
     }
 
     const freshSource = await storage.getKnowledgeSource(sourceId);
-    const existingMeta = (freshSource?.metadata && typeof freshSource.metadata === "object") ? freshSource.metadata as Record<string, any> : {};
+    const existingMeta = (freshSource?.metadata && typeof freshSource.metadata === "object") ? { ...(freshSource.metadata as Record<string, any>) } : {};
+    delete existingMeta.indexingProgress;
+    if (dropLegacyRecords) {
+      // Read from the file now; the row copies an earlier ingestion kept are
+      // superseded and only weigh down every read of this row.
+      delete existingMeta.records;
+      if (existingMeta.indexing === SPREADSHEET_INDEXING) delete existingMeta.indexing;
+    }
+    const extractMeta = extracted?.meta;
     await storage.updateKnowledgeSource(sourceId, {
-      status: "processed",
-      chunkCount: chunks.length,
+      status: outcome.status,
+      errorMessage: outcome.errorMessage,
+      chunkCount: report.chunksStored,
       processedAt: new Date(),
       freshnessStatus: "fresh",
       lastFreshnessCheckAt: new Date(),
-      metadata: { ...existingMeta, ...ontologyMeta, ...(sourceDate ? { sourceDate } : {}) },
+      metadata: {
+        ...existingMeta,
+        ...ontologyMeta,
+        ...(sourceDate ? { sourceDate } : {}),
+        ...(extractMeta?.pages ? { pages: extractMeta.pages } : {}),
+        ...(extractMeta?.sheets ? { sheets: extractMeta.sheets } : {}),
+        ...(extractMeta?.slides ? { slides: extractMeta.slides } : {}),
+        indexingReport: outcome.record,
+      },
     });
 
     const allSources = await storage.getKnowledgeSources(kbId);
@@ -898,7 +904,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
     if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
     const sources = await storage.getKnowledgeSources(req.params.id as string);
-    res.json(sources);
+    res.json(sources.map(sourceForList));
   });
 
   app.post("/api/knowledge-bases/:id/sources/upload", checkPermission("create_modify_blueprints"), upload.single("file"), async (req, res) => {
@@ -953,7 +959,15 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         return res.status(201).json({ ...source, sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined });
       }
 
-      const text = await extractTextFromFile(file.buffer, file.mimetype, file.originalname);
+      const extracted = await extractUploadedDocument(file.buffer, file.mimetype, file.originalname);
+      const text = extracted.text;
+      const metadata: Record<string, unknown> = { originalName: file.originalname, extractedKind: extracted.kind };
+      if (extracted.meta.coverage) metadata.extraction = extracted.meta.coverage;
+      console.log(
+        `[file-extract] kb=${req.params.id} file="${file.originalname}" kind=${extracted.kind} bytes=${file.size} chars=${text.length} ` +
+        `sections=${extracted.sections?.length ?? 0}` +
+        (extracted.meta.coverage ? ` ${extracted.meta.coverage.unit}s=${extracted.meta.coverage.unitsKept}/${extracted.meta.coverage.unitsTotal} complete=${extracted.meta.coverage.complete}` : ""),
+      );
 
       const source = await storage.createKnowledgeSource({
         knowledgeBaseId: req.params.id as string,
@@ -961,7 +975,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         sourceType: "document",
         status: "pending",
         content: text,
-        metadata: { originalName: file.originalname },
+        metadata,
         fileSize: file.size,
         mimeType: file.mimetype,
       });
@@ -976,8 +990,14 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
       }
 
-      processSourceInBackground(source.id, req.params.id as string);
-      res.status(201).json({ ...source, sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined });
+      const originalKept = await saveSourceFile(source.id, file);
+      processSourceInBackground(source.id, req.params.id as string, false, extracted);
+      res.status(201).json({
+        ...sourceForList(source),
+        originalFileKept: originalKept,
+        extraction: extracted.meta.coverage,
+        sensitivityWarnings: sensitivityWarnings.length > 0 ? sensitivityWarnings : undefined,
+      });
     } catch (error: any) {
       // An unreadable file is the user's problem to fix (wrong format, a legacy
       // .xls), not a server fault -- 400 carrying the reader's own message,
@@ -1166,17 +1186,56 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         });
       }
 
-      const texts = missingChunks.map(c => c.content);
-      const embeddings = await generateEmbeddings(texts);
+      // In bounded requests with retry: one failing request leaves only its
+      // own chunks without vectors, and is reported, instead of failing the
+      // whole base.
       let embeddedCount = 0;
-      for (let i = 0; i < missingChunks.length; i++) {
-        if (embeddings[i]) {
-          await storeChunkEmbedding(missingChunks[i].id, embeddings[i], texts[i]);
-          embeddedCount++;
+      let failedCount = 0;
+      let lastError: string | undefined;
+      const EMBED_BATCH = 64;
+      for (let b = 0; b < missingChunks.length; b += EMBED_BATCH) {
+        const batch = missingChunks.slice(b, b + EMBED_BATCH);
+        const texts = batch.map((c) => c.content);
+        try {
+          const { vectors } = await embedBatchWithRetry(texts, (t) => generateEmbeddings(t));
+          for (let i = 0; i < batch.length; i++) {
+            await storeChunkEmbedding(batch[i].id, vectors[i], texts[i]);
+            hasVector.set(batch[i].id, true);
+          }
+          embeddedCount += batch.length;
+        } catch (err: any) {
+          failedCount += batch.length;
+          lastError = String(err?.message ?? err).slice(0, 300);
+          console.warn(`[kb-index] kb=${kb.id} embedding batch of ${batch.length} failed: ${lastError}`);
+          if (isPermanentEmbeddingError(err)) {
+            failedCount += missingChunks.length - (b + batch.length);
+            break;
+          }
         }
       }
 
-      res.json({ total: chunks.length, embedded: embeddedCount, alreadyEmbedded: chunks.length - missingChunks.length, message: `Generated embeddings for ${embeddedCount} chunks` });
+      // A source left "partial" only by missing vectors becomes "processed"
+      // once it has them all.
+      const touched = new Set(missingChunks.map((c) => c.sourceId).filter(Boolean) as string[]);
+      for (const sourceId of touched) {
+        const src = await storage.getKnowledgeSource(sourceId);
+        const meta = (src?.metadata && typeof src.metadata === "object") ? src.metadata as Record<string, any> : null;
+        const record = meta?.indexingReport;
+        if (!src || src.status !== "partial" || !record || typeof record.chunks !== "number") continue;
+        const stillMissing = chunks.filter((c) => c.sourceId === sourceId && !hasVector.get(c.id)).length;
+        const settled = settleAfterEmbedding(record, stillMissing, lastError);
+        await storage.updateKnowledgeSource(sourceId, { status: settled.status, errorMessage: settled.errorMessage, metadata: { ...meta, indexingReport: settled.record } });
+      }
+
+      res.json({
+        total: chunks.length,
+        embedded: embeddedCount,
+        failed: failedCount,
+        alreadyEmbedded: chunks.length - missingChunks.length,
+        message: failedCount > 0
+          ? `Generated embeddings for ${embeddedCount} chunks; ${failedCount} still have none${lastError ? ` (${lastError})` : ""}.`
+          : `Generated embeddings for ${embeddedCount} chunks`,
+      });
     } catch (error: any) {
       console.error("[kb] Embedding generation error:", error.message);
       res.status(500).json({ message: error.message });
@@ -1383,7 +1442,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       }
 
       const sources = await storage.getKnowledgeSources(req.params.id as string);
-      const processedSources = sources.filter((s) => s.status === "processed");
+      const processedSources = sources.filter((s) => s.status === "processed" || s.status === "partial");
 
       const gaps: Array<{ conceptId: string; label: string; category: string; description: string }> = [];
       const covered: Array<{ conceptId: string; label: string; category: string; sourceCount: number }> = [];
@@ -1709,7 +1768,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       const deadSources = sourceAnalytics.filter(s =>
         s.retrievalCount === 0 &&
-        s.status === "processed" &&
+        (s.status === "processed" || s.status === "partial") &&
         s.processedAt && new Date(s.processedAt) < thirtyDaysAgo
       );
 

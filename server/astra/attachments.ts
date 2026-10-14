@@ -32,7 +32,7 @@ export const MAX_PER_MESSAGE = 5;
  * skipped rather than refused: the message is worth sending either way, and
  * the answer will be about the files that did arrive.
  */
-export async function attachFilesToThread(fileIds: string[], orgId: string, threadId: string): Promise<TurnAttachments | undefined> {
+export async function attachFilesToThread(fileIds: string[], orgId: string, threadId: string, question?: string): Promise<TurnAttachments | undefined> {
   // Array.from, not a spread: this project targets ES5 for the server build.
   const ids = Array.from(new Set(fileIds)).slice(0, MAX_PER_MESSAGE);
   if (ids.length === 0) return undefined;
@@ -54,10 +54,12 @@ export async function attachFilesToThread(fileIds: string[], orgId: string, thre
   const kept = ids.filter((id) => mine.has(id));
   if (kept.length === 0) return undefined;
 
-  // The whole extracted text: for a file the person attached themselves, the
-  // text IS the evidence (see buildAttachmentContext's own note on capping).
-  const { context, names } = await buildAttachmentContext(kept, orgId);
-  return context ? { context, names } : undefined;
+  // The whole extracted text while it fits: for a file the person attached
+  // themselves, the text IS the evidence (see buildAttachmentContext). A file
+  // too large for that is shown as the sections relevant to the question, and
+  // the engine loads the attachments pack so the model can read the rest.
+  const { context, names, partial } = await buildAttachmentContext(kept, orgId, undefined, undefined, { query: question, toolsAvailable: true });
+  return context ? { context, names, partial } : undefined;
 }
 
 /** The files a conversation carries, for its removal plan and its delete. */

@@ -36,6 +36,7 @@ import { coerceToolArgsToSchema } from "./tool-arg-coercion";
 import { captureReturnedFile } from "./returned-file-capture";
 import { currentLlmAbortSignal } from "./llm-abort-context";
 import { BUILTIN_SKILL_SERVER_ID } from "./builtin-skill-tools";
+import { BUILTIN_ATTACHMENT_SERVER_ID } from "./attachment-tool-defs";
 import { BUILTIN_MEMORY_SERVER_ID } from "./builtin-memory-tools";
 import { BUILTIN_SKILL_PROPOSAL_SERVER_ID } from "./skill-proposal-constants";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
@@ -61,6 +62,8 @@ export interface AvailableTool {
    * whichever is marked default.
    */
   connectionId?: string;
+  /** Built-in attachment tools only: the run's files they may read. Set by the server that builds the tool, never from model input. */
+  attachedFileIds?: string[];
 }
 
 export async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTool[]> {
@@ -737,6 +740,13 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
     return executeBuiltinSkillTool(tool.toolName, args, { orgId, agentId });
   }
 
+  // Built-in attachment reading (server/builtin-attachment-tools.ts): sections
+  // of the run's own attached files, re-read through the org scope.
+  const { isBuiltinAttachmentTool, executeBuiltinAttachmentTool } = await import("./builtin-attachment-tools");
+  if (isBuiltinAttachmentTool(tool)) {
+    return executeBuiltinAttachmentTool(tool, args, { orgId });
+  }
+
   // Built-in memory proposals (server/builtin-memory-tools.ts): files a request a
   // person must approve; changes no note by itself.
   const { isBuiltinMemoryTool, executeBuiltinMemoryTool } = await import("./builtin-memory-tools");
@@ -1017,7 +1027,9 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   // shadow run would get "[DRY RUN]" instead of the procedure. An explicit policy
   // block naming the tool still refuses it; rate limiting, spans and the audit
   // trail still apply.
-  const skillRead = tool.serverId === BUILTIN_SKILL_SERVER_ID;
+  // Reading the run's own attached files (server/builtin-attachment-tools.ts)
+  // is the same kind of read: what the user handed the run, nothing external.
+  const skillRead = tool.serverId === BUILTIN_SKILL_SERVER_ID || tool.serverId === BUILTIN_ATTACHMENT_SERVER_ID;
   // The memory tool (server/builtin-memory-tools.ts) only FILES A REQUEST that a
   // person must approve, so it is exempt from the same allow-lists for the same
   // reason. It is deliberately not exempt from the shadow gate below: a shadow

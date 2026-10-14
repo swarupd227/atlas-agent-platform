@@ -38,6 +38,7 @@ import { canDecideApproval, type RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
 import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt } from "./builtin-skill-tools";
+import { attachmentToolsFor } from "./builtin-attachment-tools";
 import type { Agent, OutputContract, Skill } from "@shared/schema";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { buildAttachmentContext, BRAND_ASSET_PREVIEW_CHARS } from "./attachment-context";
@@ -128,6 +129,10 @@ interface Checkpoint {
    *  still put the files in the container -- the checkpoint is the only thing
    *  that survives an approval pause. */
   fileIds?: string[];
+  /** The attached files shown only in part, which search_attachment and
+   *  read_attachment_section are offered over (server/builtin-attachment-tools.ts). */
+  attachmentToolFileIds?: string[];
+  attachmentToolNames?: string[];
   /** What the run put in front of the model, measured once at start. Absent
    *  on runs started before this was recorded. */
   contextUsage?: ContextUsage;
@@ -414,15 +419,6 @@ export async function startWorkspaceRun(params: {
   const brandIds = await resolveBrandAssetIds(agent, orgId, fileIds);
   const allFileIds = [...fileIds, ...brandIds];
 
-  const { context: attachmentContext, names: attachedNames } = await buildAttachmentContext(fileIds, orgId);
-  const { context: brandContext } = await buildAttachmentContext(brandIds, orgId, [
-    "The organization keeps the following standing brand assets (logo, templates, approved imagery). Only a short text preview of each is shown here; the files themselves are available to you in full.",
-    "They are available to every document you generate in this run — apply them where appropriate (e.g. place the logo, match the template's style) unless the user says otherwise.",
-  ], BRAND_ASSET_PREVIEW_CHARS);
-  // What the model sees. `input` stays the user's own words everywhere else,
-  // so run history and the KB retrieval query aren't swamped by file contents.
-  const modelInput = [attachmentContext, brandContext, input].filter(Boolean).join("\n\n");
-
   const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
   // A team agent's real work is its compiled blueprint graph -- the same one
   // Blueprint Studio's "Run Team Graph" executes -- not this function's
@@ -439,6 +435,23 @@ export async function startWorkspaceRun(params: {
     Boolean((agent as any).blueprintId) ||
     (Array.isArray(rtConfig.orchestration?.workerIds) && rtConfig.orchestration.workerIds.length > 0)
   );
+
+  // A large attachment is shown as its most relevant sections for `input`;
+  // the single-agent loop below can then read the rest with the attachment
+  // tools. A team run has no such tools, so it is told plainly what it was
+  // not shown.
+  const { context: attachmentContext, names: attachedNames, partial: partialAttachments } = await buildAttachmentContext(fileIds, orgId, undefined, undefined, {
+    query: input,
+    toolsAvailable: !isTeamAgent,
+  });
+  const { context: brandContext } = await buildAttachmentContext(brandIds, orgId, [
+    "The organization keeps the following standing brand assets (logo, templates, approved imagery). Only a short text preview of each is shown here; the files themselves are available to you in full.",
+    "They are available to every document you generate in this run — apply them where appropriate (e.g. place the logo, match the template's style) unless the user says otherwise.",
+  ], BRAND_ASSET_PREVIEW_CHARS);
+  // What the model sees. `input` stays the user's own words everywhere else,
+  // so run history and the KB retrieval query aren't swamped by file contents.
+  const modelInput = [attachmentContext, brandContext, input].filter(Boolean).join("\n\n");
+
   if (isTeamAgent) {
     return runTeamWorkspaceRun(agent, rtConfig, modelInput, orgId, actorId, onEvent);
   }
@@ -481,6 +494,7 @@ export async function startWorkspaceRun(params: {
     skillAllowlist,
     toolAllowlist: params.toolAllowlist ?? null,
     fileIds: allFileIds,
+    ...(partialAttachments.length ? { attachmentToolFileIds: fileIds, attachmentToolNames: attachedNames } : {}),
     contextUsage: measureContextUsage({
       instructions: baseSystemMessage,
       knowledge: kbContext.section,
@@ -920,6 +934,9 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   // read_skill is appended last so every earlier tool keeps its canonical
   // (positional) name across a resume, whatever the skill set.
   availableTools.push(...skillToolsFor(await resolveReadableSkills(agentId, orgId).catch(() => [])));
+  // After read_skill, for the same reason; fixed by the checkpoint, so a
+  // resumed run is offered the same tools.
+  availableTools.push(...attachmentToolsFor(cp.attachmentToolFileIds ?? [], cp.attachmentToolNames ?? []));
   const canonicalTools = buildCanonicalTools(availableTools);
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
   const codeExecConfig = codeExecAccess.enabled

@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { uploadedFiles } from "@shared/schema";
 import { inArray, and, eq } from "drizzle-orm";
+import { ATTACHMENT_TOOL_GUIDE, DEFAULT_ATTACHMENT_BUDGET_CHARS, documentMap, loadSections, selectSections } from "./attachment-sections";
 
 /**
  * Turning uploaded_files rows into text an LLM can use. Every surface that
@@ -41,10 +42,12 @@ export async function readAttachedFiles(fileIds: string[], orgId?: string): Prom
  *  beyond its text. Declared to the model so it can qualify its own answer. */
 function describeFile(file: UploadedFileRow): string {
   const meta = (file.extractMeta as any) ?? {};
+  const omitted = typeof meta.coverage?.omitted === "string" ? meta.coverage.omitted : null;
   return [
     meta.sheets?.length ? `sheets: ${meta.sheets.join(", ")}` : null,
     typeof meta.slides === "number" ? `${meta.slides} slides` : null,
-    meta.truncated ? "TRUNCATED — this is a partial reading of a large file" : null,
+    typeof meta.pages === "number" ? `${meta.pages} pages` : null,
+    meta.truncated ? `TRUNCATED — this is a partial reading of a large file${omitted ? `: ${omitted}` : ""}` : null,
   ].filter(Boolean).join("; ");
 }
 
@@ -69,8 +72,10 @@ export async function buildAttachmentContext(
   orgId?: string,
   framing?: string[],
   /**
-   * Per-file cap on the inlined text. Unset = whole extraction, which is right
-   * for a user's own per-message attachment (the text IS the evidence). Set it
+   * Per-file cap on the inlined text. Unset = whole extraction while the turn's
+   * attachments fit `options.budgetChars`, which is right for a user's own
+   * per-message attachment (the text IS the evidence); past it, the relevant
+   * sections plus a statement of what was not shown. Set it
    * for files that ride along as resources -- brand assets in particular: the
    * bytes are already in the code-execution container, so the inlined text is
    * only orientation. Five assets can be anything up to the 25MB upload cap
@@ -78,15 +83,28 @@ export async function buildAttachmentContext(
    * text would otherwise ride along on every document-capable run unbounded.
    */
   maxCharsPerFile?: number,
-): Promise<{ context: string; names: string[] }> {
+  /**
+   * For a user's own attachments (no maxCharsPerFile): the question they came
+   * with, which sections of an oversized file are chosen for; the turn's
+   * budget; and whether the model has search_attachment and
+   * read_attachment_section to reach the rest.
+   */
+  options: AttachmentContextOptions = {},
+): Promise<{ context: string; names: string[]; partial: string[] }> {
   const ordered = await readAttachedFiles(fileIds, orgId);
-  if (!ordered.length) return { context: "", names: [] };
+  if (!ordered.length) return { context: "", names: [], partial: [] };
 
-  const bodyOf = (f: UploadedFileRow): string => {
-    const full = (f.extractedText ?? "").trim();
-    if (!maxCharsPerFile || full.length <= maxCharsPerFile) return full;
-    return `${full.slice(0, maxCharsPerFile)}\n[… preview only: ${maxCharsPerFile} of ${full.length} characters shown; the complete file is available to you as an uploaded file …]`;
-  };
+  const partial: string[] = [];
+  let bodies: string[];
+  if (maxCharsPerFile) {
+    bodies = ordered.map((f) => {
+      const full = (f.extractedText ?? "").trim();
+      if (full.length <= maxCharsPerFile) return full;
+      return `${full.slice(0, maxCharsPerFile)}\n[… preview only: ${maxCharsPerFile} of ${full.length} characters shown; the complete file is available to you as an uploaded file …]`;
+    });
+  } else {
+    bodies = await budgetedBodies(ordered, options, partial);
+  }
 
   return {
     context: [
@@ -95,10 +113,67 @@ export async function buildAttachmentContext(
         "Base your answer on them; if a file appears truncated or unreadable, say so rather than guessing at what it might contain.",
       ]),
       "",
-      ...ordered.map((f) => renderBlock(f, bodyOf(f))),
+      ...ordered.map((f, i) => renderBlock(f, bodies[i])),
     ].join("\n"),
     names: ordered.map((f) => f.filename),
+    partial,
   };
+}
+
+export interface AttachmentContextOptions {
+  query?: string;
+  budgetChars?: number;
+  toolsAvailable?: boolean;
+}
+
+/**
+ * Every file whole while the turn's attachments fit the budget -- what a
+ * small attachment has always been. Past it, the budget is shared (a short
+ * file keeps its whole text, the rest split what remains) and each file that
+ * still does not fit is shown as its map, opening and most relevant
+ * sections, with what was left out said in words.
+ */
+async function budgetedBodies(files: UploadedFileRow[], options: AttachmentContextOptions, partial: string[]): Promise<string[]> {
+  const budget = Math.max(4_000, options.budgetChars ?? DEFAULT_ATTACHMENT_BUDGET_CHARS);
+  const full = files.map((f) => (f.extractedText ?? "").trim());
+  const total = full.reduce((n, t) => n + t.length, 0);
+  if (total <= budget) return full;
+
+  const allowance = new Array<number>(files.length).fill(0);
+  let remaining = budget;
+  const bySize = files.map((_, i) => i).sort((a, b) => full[a].length - full[b].length);
+  bySize.forEach((i, k) => {
+    const share = Math.floor(remaining / (bySize.length - k));
+    allowance[i] = Math.min(full[i].length, share);
+    remaining -= allowance[i];
+  });
+
+  const out: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    if (full[i].length <= allowance[i]) {
+      out.push(full[i]);
+      continue;
+    }
+    const { sections } = await loadSections(f);
+    const sel = selectSections(sections, options.query ?? "", Math.max(2_000, allowance[i]));
+    partial.push(f.filename);
+    const reach = options.toolsAvailable
+      ? `${ATTACHMENT_TOOL_GUIDE} Search the file before concluding that something is not in it.`
+      : "The sections not shown were not given to you: if the answer may depend on them, say so rather than guessing.";
+    console.log(
+      `[attachments] file=${f.id} name="${f.filename}" sections=${sel.total} shown=${sel.shown.length} ` +
+      `chars=${sel.charsShown}/${sel.charsTotal} budget=${allowance[i]} tools=${options.toolsAvailable === true}`,
+    );
+    out.push([
+      `[Large file, shown in part: ${sel.shown.length} of its ${sel.total} sections (${sel.charsShown.toLocaleString("en-US")} of ${sel.charsTotal.toLocaleString("en-US")} characters) — ` +
+        `the opening and the sections that best match the question, in document order. ${reach}]`,
+      `Document map: ${documentMap(sections)}`,
+      "",
+      sel.text,
+    ].join("\n"));
+  }
+  return out;
 }
 
 /**

@@ -34,7 +34,7 @@ import { ToolRegistry } from "./registry";
 import { dispatchAstraTool, RateLimiter } from "./dispatch";
 import { buildAstraSystemPrompt, type PromptGrounding } from "./prompt";
 import { completeProof, mergeProof } from "./proof";
-import { LOAD_TOOLS, isPackId } from "./packs";
+import { ATTACHMENTS_PACK, LOAD_TOOLS, isPackId } from "./packs";
 
 export const FINISH_TURN = "finish_turn";
 
@@ -171,6 +171,8 @@ export interface TurnAttachments {
   /** The extracted text, framed, as buildAttachmentContext writes it. */
   context: string;
   names: string[];
+  /** Files too large to show whole: the attachments pack is loaded so the model can search and read the rest. */
+  partial?: string[];
 }
 
 /** Send a user message and run the turn until it finishes, fails or pauses for confirmation. */
@@ -204,6 +206,9 @@ export async function runTurn(
   cp.iterationsUsed = 0;
   // The model sees the attached text; the stored message names the files.
   cp.messages.push({ role: "user", content: attachments?.context ? `${userText}\n\n${attachments.context}` : userText });
+  if (attachments?.partial?.length && !(cp.loadedPacks ?? []).includes(ATTACHMENTS_PACK)) {
+    cp.loadedPacks = [...(cp.loadedPacks ?? []), ATTACHMENTS_PACK];
+  }
 
   await deps.store.appendMessage(ctx.orgId, {
     threadId,

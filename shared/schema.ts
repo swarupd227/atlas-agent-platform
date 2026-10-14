@@ -3238,6 +3238,25 @@ export const knowledgeSources = pgTable("knowledge_sources", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+/**
+ * The file a document source was uploaded as, so reprocessing re-reads the
+ * real document instead of re-chunking whatever text an older extractor kept.
+ * A table of its own rather than a column on knowledge_sources: every list and
+ * lookup of sources selects whole rows, and none of them should carry up to
+ * 50 MB of bytes each.
+ */
+export const knowledgeSourceFiles = pgTable("knowledge_source_files", {
+  sourceId: varchar("source_id").primaryKey().references(() => knowledgeSources.id, { onDelete: "cascade" }),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type"),
+  sizeBytes: integer("size_bytes"),
+  sha256: varchar("sha256"),
+  content: customType<{ data: Buffer; notNull: true; default: false }>({
+    dataType: () => "bytea",
+  })("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const insertKnowledgeSourceSchema = createInsertSchema(knowledgeSources).omit({ id: true, createdAt: true, processedAt: true, chunkCount: true, freshnessStatus: true, lastFreshnessCheckAt: true, retrievalCount: true, lastRetrievedAt: true });
 export type InsertKnowledgeSource = z.infer<typeof insertKnowledgeSourceSchema>;
 export type KnowledgeSource = typeof knowledgeSources.$inferSelect;

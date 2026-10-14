@@ -18,16 +18,78 @@
  * flattened transcription of it.
  */
 
+import { Readable } from "stream";
+import { StringDecoder } from "string_decoder";
+
 export type ExtractedKind = "text" | "csv" | "json" | "pdf" | "docx" | "xlsx" | "pptx" | "image" | "video";
+
+/** One non-empty data row from a workbook or CSV, ready to index on its own.
+ *  The header is repeated on the record so a cell keeps its column name
+ *  without depending on a neighbour row that may land in a different chunk. */
+export interface SpreadsheetRecord {
+  text: string;
+  sheet: string;
+  /** Value of the row's identifier column (see spreadsheetKeyColumn), or the
+   *  first column when no header names one. Kept under this name because
+   *  stored chunk metadata and the exact-match lookup already use it. */
+  productId: string;
+  /** 1-based worksheet row number when the file has one. */
+  rowNumber: number;
+}
+
+/** Where a section sits in its source document, carried onto every chunk cut
+ *  from it so a passage can be cited and a late page or row can be asked for. */
+export interface SectionLocator {
+  page?: number;
+  slide?: number;
+  sheet?: string;
+  rowNumber?: number;
+  heading?: string;
+  lineStart?: number;
+  lineEnd?: number;
+  /** The row's identifier value, for exact lookup. */
+  key?: string;
+}
+
+/** A self-contained piece of a document: one PDF page, one slide, one
+ *  spreadsheet/CSV row, one heading's worth of a Word document, or a run of
+ *  lines of plain text. Sections are never cut mid-way by the extractor. */
+export interface DocumentSection {
+  text: string;
+  locator: SectionLocator;
+}
+
+export type CoverageUnit = "page" | "slide" | "row" | "section";
+
+/** How much of the document the extractor kept, in the document's own units. */
+export interface ExtractionCoverage {
+  unit: CoverageUnit;
+  unitsTotal: number;
+  unitsKept: number;
+  charsKept: number;
+  complete: boolean;
+  /** Plain statement of what was left out. Absent when complete. */
+  omitted?: string;
+}
 
 export interface ExtractedFile {
   text: string;
   kind: ExtractedKind;
+  /** Set for workbooks and CSV/TSV: one record per data row. */
+  records?: SpreadsheetRecord[];
+  /** The document in located pieces, in reading order. Knowledge-base
+   *  indexing and large-attachment selection work from these rather than
+   *  from `text`. Absent for images and video. */
+  sections?: DocumentSection[];
   /** Per-format detail worth surfacing in the UI ("3 sheets", "12 slides"). */
   meta: {
     sheets?: string[];
     slides?: number;
+    pages?: number;
     truncated?: boolean;
+    /** Data rows omitted because the workbook hit the safety ceiling. */
+    rowsDropped?: number;
+    coverage?: ExtractionCoverage;
     /** Set when a format was read but genuinely contained no text. */
     empty?: boolean;
     /** Image/video pixel dimensions, when the header could be read. */
@@ -52,10 +114,35 @@ export class UnsupportedFileTypeError extends Error {
   }
 }
 
-/** Guards against a single pathological file exhausting context or the DB.
- *  Chunking downstream still applies; this is the hard ceiling. */
-const MAX_TEXT_CHARS = 500_000;
-const MAX_ROWS_PER_SHEET = 5_000;
+/**
+ * Safety ceiling on the text kept from one document, applied to whole
+ * sections (pages, slides, headings, line runs) in reading order -- never as
+ * a prefix cut through the middle of one. It bounds memory, storage and
+ * embedding cost for a pathological file; ordinary documents under the
+ * upload limits never reach it. Past it the extract says exactly which
+ * sections were left out.
+ */
+export const MAX_DOCUMENT_CHARS = 20_000_000;
+
+/** Target size of one plain-text section. Sections, not this, decide where a
+ *  document may be cut; the size only keeps each one small enough to show or
+ *  skip on its own. */
+const TEXT_SECTION_CHARS = 4_000;
+
+/** Safety ceiling for one workbook or CSV. Whole data rows are kept or
+ *  dropped — never a prefix of the joined sheet. Past either limit the
+ *  extract is marked truncated so a partial file is not presented as the
+ *  full table. */
+export const MAX_XLSX_DATA_ROWS = 100_000;
+export const MAX_XLSX_RECORD_CHARS = 12_000_000;
+
+/** True when another data row must not be stored. The first row is always
+ *  kept intact, even if it alone is larger than the character ceiling. */
+export function spreadsheetRowExceedsCeiling(keptRows: number, keptChars: number, nextChars: number): boolean {
+  if (keptRows >= MAX_XLSX_DATA_ROWS) return true;
+  if (keptRows > 0 && keptChars + nextChars > MAX_XLSX_RECORD_CHARS) return true;
+  return false;
+}
 
 const EXT = (filename: string) => {
   const m = /\.([A-Za-z0-9]+)$/.exec(filename.trim());
@@ -126,9 +213,102 @@ export const UPLOAD_ACCEPT_ATTR =
 export const SUPPORTED_TYPES_LABEL =
   "PDF, Word, Excel, PowerPoint, CSV, JSON, text, images (PNG, JPG, GIF, WebP), or MP4 video";
 
-function clamp(text: string): { text: string; truncated: boolean } {
-  if (text.length <= MAX_TEXT_CHARS) return { text, truncated: false };
-  return { text: text.slice(0, MAX_TEXT_CHARS) + "\n\n[truncated]", truncated: true };
+function describeLocator(loc: SectionLocator | undefined): string {
+  if (!loc) return "the rest of the document";
+  if (loc.page) return `page ${loc.page}`;
+  if (loc.slide) return `slide ${loc.slide}`;
+  if (loc.rowNumber) return `${loc.sheet ? `sheet ${loc.sheet} ` : ""}row ${loc.rowNumber}`;
+  if (loc.lineStart) return `line ${loc.lineStart}`;
+  if (loc.heading) return `the section "${loc.heading}"`;
+  return "the rest of the document";
+}
+
+/** Whole sections in order while they fit MAX_DOCUMENT_CHARS. The first is
+ *  always kept, so a document is never reduced to nothing. */
+export function keepSections(
+  sections: DocumentSection[],
+  unit: CoverageUnit,
+  maxChars: number = MAX_DOCUMENT_CHARS,
+): { kept: DocumentSection[]; coverage: ExtractionCoverage } {
+  const kept: DocumentSection[] = [];
+  let chars = 0;
+  for (const section of sections) {
+    if (kept.length > 0 && chars + section.text.length > maxChars) break;
+    kept.push(section);
+    chars += section.text.length;
+  }
+  const complete = kept.length === sections.length;
+  const plural = (n: number) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  return {
+    kept,
+    coverage: {
+      unit,
+      unitsTotal: sections.length,
+      unitsKept: kept.length,
+      charsKept: chars,
+      complete,
+      ...(complete ? {} : {
+        omitted: `${plural(sections.length - kept.length)} of ${sections.length}, from ${describeLocator(sections[kept.length]?.locator)} on, ` +
+          `were not read: the document is larger than the ${MAX_DOCUMENT_CHARS.toLocaleString("en-US")}-character safety limit.`,
+      }),
+    },
+  };
+}
+
+function truncationNotice(coverage: ExtractionCoverage): string {
+  return coverage.complete ? "" : `\n\n[truncated: ${coverage.omitted} This is not the full document.]`;
+}
+
+/**
+ * Plain text in sections of roughly TEXT_SECTION_CHARS, broken at blank lines
+ * (paragraphs) and at markdown headings, with the line range of each. A
+ * section only breaks mid-paragraph when a paragraph alone is far over size.
+ */
+export function splitTextSections(text: string, targetChars: number = TEXT_SECTION_CHARS): DocumentSection[] {
+  const sections: DocumentSection[] = [];
+  const lines = text.split("\n");
+  let buf: string[] = [];
+  let bufChars = 0;
+  let start = 1;
+  let heading: string | undefined;
+  const flush = (endLine: number) => {
+    const body = buf.join("\n");
+    if (body.trim()) {
+      sections.push({ text: body, locator: { lineStart: start, lineEnd: endLine, ...(heading ? { heading } : {}) } });
+    }
+    buf = [];
+    bufChars = 0;
+    start = endLine + 1;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const h = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
+    if (h && bufChars > 0) flush(lineNo - 1);
+    if (h) heading = h[1].trim();
+    if (bufChars === 0) start = lineNo;
+    buf.push(line);
+    bufChars += line.length + 1;
+    const atParagraphEnd = line.trim() === "";
+    if ((atParagraphEnd && bufChars >= targetChars) || bufChars >= targetChars * 2) flush(lineNo);
+  }
+  if (buf.length) flush(lines.length);
+  return sections;
+}
+
+function textResult(
+  raw: string,
+  kind: ExtractedKind,
+  extraMeta: ExtractedFile["meta"] = {},
+): ExtractedFile {
+  const { kept, coverage } = keepSections(splitTextSections(raw), "section");
+  const text = coverage.complete ? raw : kept.map((s) => s.text).join("\n") + truncationNotice(coverage);
+  return {
+    text,
+    kind,
+    sections: kept,
+    meta: { ...extraMeta, truncated: !coverage.complete, coverage, ...(raw.trim() ? {} : { empty: true }) },
+  };
 }
 
 /**
@@ -241,50 +421,96 @@ function textNodesUnder($: any, root: any): string[] {
 }
 
 // ── PDF ──────────────────────────────────────────────────────────────────────
-async function extractPdf(buffer: Buffer): Promise<string> {
+/** One section per page, numbered as the PDF numbers them. `text` is the
+ *  parser's own rendering, which marks each page boundary. */
+async function extractPdf(buffer: Buffer): Promise<{ text: string; pages: DocumentSection[]; total: number }> {
   const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: buffer });
   try {
-    return (await parser.getText()).text;
+    const result = await parser.getText();
+    const pages = (result.pages ?? []).map((p: { num: number; text: string }) => ({ text: p.text ?? "", locator: { page: p.num } }));
+    return { text: result.text, pages, total: result.total ?? pages.length };
   } finally {
     await parser.destroy();
   }
 }
 
 // ── DOCX ─────────────────────────────────────────────────────────────────────
-async function extractDocx(buffer: Buffer): Promise<string> {
+/** Past this a heading's section continues in a new section under the same
+ *  heading, so one long chapter can still be shown or skipped in parts. */
+const DOCX_SECTION_CHARS = 8_000;
+
+/**
+ * Word documents in reading order, one section per heading. Tables carry most
+ * of the meaning in the documents users actually upload (rate cards,
+ * matrices), so each becomes a markdown table instead of an unreadable run of
+ * cell values; headings and paragraphs keep their own lines.
+ */
+async function extractDocx(buffer: Buffer): Promise<{ text: string; sections: DocumentSection[] }> {
   const mammoth = await import("mammoth");
-  const html = await mammoth.convertToHtml({ buffer });
-  if (html.value?.includes("<table")) {
-    // Tables carry most of the meaning in the documents users actually upload
-    // (rate cards, matrices); raw text extraction collapses them into an
-    // unreadable run of cell values.
-    const cheerio = await import("cheerio");
-    const $ = cheerio.load(html.value);
-    $("table").each((_i: number, table: any) => {
+  const html = (await mammoth.convertToHtml({ buffer })).value ?? "";
+  if (!html.trim()) {
+    const raw = (await mammoth.extractRawText({ buffer })).value;
+    return { text: raw, sections: splitTextSections(raw) };
+  }
+  const cheerio = await import("cheerio");
+  const $ = cheerio.load(html);
+  $("br").replaceWith("\n");
+
+  const sections: DocumentSection[] = [];
+  let heading: string | undefined;
+  let blocks: string[] = [];
+  let chars = 0;
+  const flush = () => {
+    const body = blocks.join("\n\n").trim();
+    if (body) sections.push({ text: body, locator: heading ? { heading } : {} });
+    blocks = [];
+    chars = 0;
+  };
+  const push = (block: string) => {
+    if (!block.trim()) return;
+    if (chars > 0 && chars + block.length > DOCX_SECTION_CHARS) flush();
+    blocks.push(block);
+    chars += block.length + 2;
+  };
+
+  $("body").children().each((_i: number, el: any) => {
+    const tag = String(el.tagName ?? "").toLowerCase();
+    if (/^h[1-6]$/.test(tag)) {
+      flush();
+      heading = $(el).text().replace(/\s+/g, " ").trim() || heading;
+      push($(el).text().trim());
+      return;
+    }
+    if (tag === "table") {
       const rows: string[][] = [];
-      $(table).find("tr").each((_j: number, tr: any) => {
+      $(el).find("tr").each((_j: number, tr: any) => {
         const cells: string[] = [];
         $(tr).find("th, td").each((_k: number, cell: any) => {
           cells.push($(cell).text().replace(/\|/g, "\\|").replace(/\s+/g, " ").trim());
         });
         if (cells.length) rows.push(cells);
       });
-      if (rows.length) $(table).replaceWith(`\n\n${toMarkdownTable(rows)}\n\n`);
-    });
-    // .text() on HTML concatenates block elements with no separator, so every
-    // heading and paragraph of a document containing a table ran together
-    // ("...OPERATIONSLoan Servicing PolicyDocument..."). Keep the line breaks.
-    $("br").replaceWith("\n");
-    $("h1,h2,h3,h4,h5,h6,p,li").each((_i: number, el: any) => { $(el).append("\n"); });
-    return $.root().text().replace(/\n{3,}/g, "\n\n").trim();
-  }
-  return (await mammoth.extractRawText({ buffer })).value;
+      if (rows.length) push(toMarkdownTable(rows));
+      return;
+    }
+    if (tag === "ul" || tag === "ol") {
+      const items: string[] = [];
+      $(el).children("li").each((_j: number, li: any) => { items.push(`- ${$(li).text().trim()}`); });
+      push(items.join("\n"));
+      return;
+    }
+    push($(el).text().trim());
+  });
+  flush();
+
+  return { text: sections.map((s) => s.text).join("\n\n"), sections };
 }
 
 function toMarkdownTable(rows: string[][]): string {
   if (!rows.length) return "";
-  const width = Math.max(...rows.map((r) => r.length));
+  // A reduce, not Math.max(...rows): spreading a 100k-row sheet as arguments overflows the stack.
+  const width = rows.reduce((w, r) => Math.max(w, r.length), 0);
   const pad = (r: string[]) => [...r, ...Array(width - r.length).fill("")];
   const [header, ...body] = rows;
   return [
@@ -304,99 +530,235 @@ function colIndex(ref: string): number {
   return n - 1;
 }
 
-async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: string[]; truncated: boolean }> {
+function headerKey(header: string): string {
+  return header.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Headers that are an identifier on their own, compared after stripping
+ *  spaces, punctuation and case. */
+const IDENTIFIER_HEADERS = new Set(["id", "key", "code", "sku", "ref", "reference", "uuid", "guid"]);
+
+/** Headers that end in an identifier word: `Product ID`, `item_code`,
+ *  `Part No`, `Invoice Number`, `Account Ref`. */
+const IDENTIFIER_SUFFIX = /(id|code|sku|number|num|no|nr|ref|key)$/;
+
+function isIdentifierHeader(header: string): boolean {
+  const k = headerKey(header);
+  if (!k) return false;
+  return IDENTIFIER_HEADERS.has(k) || (k.length <= 24 && IDENTIFIER_SUFFIX.test(k));
+}
+
+/** Column that identifies a row: the first header that names an identifier,
+ *  or the first column when none does. */
+export function spreadsheetKeyColumn(headers: string[]): number {
+  for (let i = 0; i < headers.length; i++) {
+    if (isIdentifierHeader(headers[i] ?? "")) return i;
+  }
+  return 0;
+}
+
+/** Earlier name of spreadsheetKeyColumn, kept for existing callers. */
+export const spreadsheetProductColumn = spreadsheetKeyColumn;
+
+/** One data row with its header repeated, so the product id and every other
+ *  cell stay in the same searchable record. */
+export function formatSpreadsheetRecord(sheet: string, headers: string[], cells: string[]): string {
+  const width = Math.max(headers.length, cells.length);
+  const lines = [`Sheet: ${sheet}`];
+  for (let i = 0; i < width; i++) {
+    const named = (headers[i] ?? "").trim();
+    const header = named || `Column ${i + 1}`;
+    const value = (cells[i] ?? "").trim();
+    if (!value && !named) continue;
+    lines.push(`${header}: ${value}`);
+  }
+  return lines.join("\n");
+}
+
+const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+function decodeXml(s: string): string {
+  if (!s.includes("&")) return s;
+  return s.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (_m, e: string) => {
+    if (e[0] !== "#") return XML_ENTITIES[e];
+    const code = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : "";
+  });
+}
+
+function xmlAttrs(attrs: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(attrs))) out[m[1]] = decodeXml(m[2] ?? m[3] ?? "");
+  return out;
+}
+
+/** Concatenated text of the <t> runs in a fragment, leaving out phonetic
+ *  guides (<rPh>), which are a reading aid and not the cell's value. */
+function runText(xml: string): string {
+  const body = xml.includes("rPh") ? xml.replace(/<(?:\w+:)?rPh\b[\s\S]*?<\/(?:\w+:)?rPh>/g, "") : xml;
+  let out = "";
+  const re = /<(?:\w+:)?t(?:\s[^>]*)?>([\s\S]*?)<\/(?:\w+:)?t>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) out += decodeXml(m[1]);
+  return out;
+}
+
+/**
+ * Elements matching `re` from a zip entry, decoded incrementally. A worksheet
+ * or shared-string table can decompress to hundreds of megabytes, so it is
+ * never held as one string or one DOM: complete elements are taken from the
+ * front of a rolling buffer as the stream arrives.
+ */
+async function* streamElements(entry: any, re: RegExp): AsyncGenerator<RegExpExecArray> {
+  const decoder = new StringDecoder("utf8");
+  let buf = "";
+  const drain = function* (): Generator<RegExpExecArray> {
+    re.lastIndex = 0;
+    let consumed = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(buf))) {
+      consumed = re.lastIndex;
+      yield m;
+    }
+    if (consumed) buf = buf.slice(consumed);
+  };
+  // JSZip hands back an old-style stream; wrap() makes it async-iterable.
+  const stream = new Readable().wrap(entry.nodeStream("nodebuffer"));
+  for await (const chunk of stream as AsyncIterable<Buffer>) {
+    buf += decoder.write(chunk);
+    yield* drain();
+  }
+  buf += decoder.end();
+  yield* drain();
+}
+
+const ROW_RE = () => /<(?:\w+:)?row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?row>)/g;
+const CELL_RE = () => /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
+const SI_RE = () => /<(?:\w+:)?si\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?si>)/g;
+const V_RE = /<(?:\w+:)?v(?:\s[^>]*)?>([\s\S]*?)<\/(?:\w+:)?v>/;
+
+async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: string[]; records: SpreadsheetRecord[]; truncated: boolean; rowsDropped: number }> {
   const JSZip = (await import("jszip")).default;
   const zip = await JSZip.loadAsync(buffer);
 
   // Shared strings are stored once and referenced by index from every cell.
   const shared: string[] = [];
-  const $ss = await loadXml(zip, "xl/sharedStrings.xml");
-  if ($ss) {
-    $ss("*").each((_i: number, el: any) => {
-      if (el.tagName && localName(el.tagName) === "si") {
-        shared.push(textNodesUnder($ss, el).join(""));
-      }
-    });
+  const ssEntry = zip.file("xl/sharedStrings.xml");
+  if (ssEntry) {
+    for await (const m of streamElements(ssEntry, SI_RE())) shared.push(runText(m[1] ?? ""));
   }
 
   // Sheet display names live in workbook.xml; the file each maps to comes from
   // the rels file. Without the mapping, sheet order and names can disagree.
-  const $wb = await loadXml(zip, "xl/workbook.xml");
-  const $rels = await loadXml(zip, "xl/_rels/workbook.xml.rels");
+  const wbXml = (await zip.file("xl/workbook.xml")?.async("string")) ?? "";
+  const relsXml = (await zip.file("xl/_rels/workbook.xml.rels")?.async("string")) ?? "";
   const relTarget = new Map<string, string>();
-  if ($rels) {
-    $rels("*").each((_i: number, el: any) => {
-      if (el.tagName && localName(el.tagName) === "relationship") {
-        const id = $rels(el).attr("Id");
-        const target = $rels(el).attr("Target");
-        if (id && target) relTarget.set(id, target.replace(/^\/?xl\//, "").replace(/^\//, ""));
-      }
-    });
+  for (const m of Array.from(relsXml.matchAll(/<(?:\w+:)?Relationship\b([^>]*?)\/?>/g))) {
+    const a = xmlAttrs(m[1]);
+    if (a.Id && a.Target) relTarget.set(a.Id, a.Target.replace(/^\/?xl\//, "").replace(/^\//, ""));
   }
 
   const sheets: Array<{ name: string; path: string }> = [];
-  if ($wb) {
-    $wb("*").each((_i: number, el: any) => {
-      if (el.tagName && localName(el.tagName) === "sheet") {
-        const name = $wb(el).attr("name") ?? `Sheet${sheets.length + 1}`;
-        const rid = $wb(el).attr("r:id") ?? $wb(el).attr("id");
-        const target = rid ? relTarget.get(rid) : undefined;
-        sheets.push({ name, path: `xl/${target ?? `worksheets/sheet${sheets.length + 1}.xml`}` });
-      }
-    });
+  for (const m of Array.from(wbXml.matchAll(/<(?:\w+:)?sheet\b([^>]*?)\/?>/g))) {
+    const a = xmlAttrs(m[1]);
+    const name = a.name ?? `Sheet${sheets.length + 1}`;
+    const ridKey = Object.keys(a).find((k) => k === "id" || k.endsWith(":id"));
+    const target = ridKey ? relTarget.get(a[ridKey]) : undefined;
+    sheets.push({ name, path: `xl/${target ?? `worksheets/sheet${sheets.length + 1}.xml`}` });
   }
   if (!sheets.length) sheets.push({ name: "Sheet1", path: "xl/worksheets/sheet1.xml" });
 
   const parts: string[] = [];
   const names: string[] = [];
-  /** Set when any sheet hit the row cap, so the caller can say so. A silently
-   *  halved sheet is worse than a declared one: the agent answers confidently
-   *  from data it was never shown. */
-  let rowsDropped = false;
+  const records: SpreadsheetRecord[] = [];
+  /** Whole data rows left out by the safety ceiling. A prefix of the joined
+   *  sheet is never a substitute for them. */
+  let rowsDropped = 0;
+  let keptRows = 0;
+  let keptChars = 0;
+  let dropping = false;
 
   for (const sheet of sheets) {
-    const $s = await loadXml(zip, sheet.path);
-    if (!$s) continue;
+    const entry = zip.file(sheet.path);
+    if (!entry) continue;
     names.push(sheet.name);
 
     const rows: string[][] = [];
-    $s("*").each((_i: number, el: any) => {
-      if (!el.tagName || localName(el.tagName) !== "row") return;
-      if (rows.length >= MAX_ROWS_PER_SHEET) { rowsDropped = true; return; }
+    let header: string[] | null = null;
+    let keyCol = 0;
+    let ordinal = 0;
+    for await (const rowMatch of streamElements(entry, ROW_RE())) {
+      ordinal++;
       const cells: string[] = [];
-      $s(el).find("*").each((_j: number, c: any) => {
-        if (!c.tagName || localName(c.tagName) !== "c") return;
-        const type = $s(c).attr("t");
+      const cellRe = CELL_RE();
+      let c: RegExpExecArray | null;
+      while ((c = cellRe.exec(rowMatch[2] ?? ""))) {
+        const a = xmlAttrs(c[1]);
+        const body = c[2] ?? "";
         let value = "";
-        if (type === "s") {
+        if (a.t === "s") {
           // Shared-string cell: <v> holds an index into sharedStrings.
-          const idx = parseInt($s(c).find("*").filter((_k: number, v: any) => v.tagName && localName(v.tagName) === "v").first().text(), 10);
+          const idx = parseInt(V_RE.exec(body)?.[1] ?? "", 10);
           value = Number.isFinite(idx) ? (shared[idx] ?? "") : "";
-        } else if (type === "inlineStr") {
-          value = textNodesUnder($s, c).join("");
+        } else if (a.t === "inlineStr") {
+          value = runText(body);
         } else {
-          value = $s(c).find("*").filter((_k: number, v: any) => v.tagName && localName(v.tagName) === "v").first().text();
+          value = decodeXml(V_RE.exec(body)?.[1] ?? "");
         }
-        const at = colIndex($s(c).attr("r") ?? "A");
+        const at = colIndex(a.r ?? "A");
         while (cells.length < at) cells.push("");
         cells.push(value.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim());
+      }
+      if (!cells.some((v) => v !== "")) continue;
+
+      // The first non-empty row of the sheet is the header, not a data row.
+      if (!header) {
+        header = cells;
+        keyCol = spreadsheetKeyColumn(header);
+        rows.push(cells);
+        continue;
+      }
+
+      if (dropping || spreadsheetRowExceedsCeiling(keptRows, keptChars, 0)) {
+        dropping = true;
+        rowsDropped++;
+        continue;
+      }
+      const text = formatSpreadsheetRecord(sheet.name, header, cells);
+      if (spreadsheetRowExceedsCeiling(keptRows, keptChars, text.length)) {
+        dropping = true;
+        rowsDropped++;
+        continue;
+      }
+      const rowAttr = parseInt(xmlAttrs(rowMatch[1]).r ?? "", 10);
+      records.push({
+        text,
+        sheet: sheet.name,
+        productId: (cells[keyCol] ?? "").trim(),
+        rowNumber: Number.isFinite(rowAttr) ? rowAttr : ordinal,
       });
-      if (cells.some((c) => c !== "")) rows.push(cells);
-    });
+      keptRows++;
+      keptChars += text.length;
+      rows.push(cells);
+    }
 
     parts.push(rows.length
-      ? `## Sheet: ${sheet.name}\n\n${toMarkdownTable(rows)}${
-          rows.length >= MAX_ROWS_PER_SHEET
-            ? `\n\n[only the first ${MAX_ROWS_PER_SHEET} rows of this sheet are shown]`
-            : ""}`
+      ? `## Sheet: ${sheet.name}\n\n${toMarkdownTable(rows)}`
       : `## Sheet: ${sheet.name}\n\n(empty)`);
   }
 
-  return { text: parts.join("\n\n"), sheets: names, truncated: rowsDropped };
+  let text = parts.join("\n\n");
+  if (rowsDropped > 0) {
+    text += `\n\n[truncated: ${rowsDropped} data rows were not indexed. This is not the full workbook.]`;
+  }
+
+  return { text, sheets: names, records, truncated: rowsDropped > 0, rowsDropped };
 }
 
 // ── PPTX ─────────────────────────────────────────────────────────────────────
-async function extractPptx(buffer: Buffer): Promise<{ text: string; slides: number }> {
+async function extractPptx(buffer: Buffer): Promise<{ text: string; slides: number; sections: DocumentSection[] }> {
   const JSZip = (await import("jszip")).default;
   const zip = await JSZip.loadAsync(buffer);
 
@@ -441,7 +803,116 @@ async function extractPptx(buffer: Buffer): Promise<{ text: string; slides: numb
     ].filter(Boolean).join("\n"));
   }
 
-  return { text: parts.join("\n\n"), slides: slidePaths.length };
+  const sections = parts.map((text, i) => ({ text, locator: { slide: i + 1 } }));
+  return { text: parts.join("\n\n"), slides: slidePaths.length, sections };
+}
+
+// ── CSV / TSV ────────────────────────────────────────────────────────────────
+/**
+ * Rows of a delimited file, quoted fields included (a quoted field may hold
+ * the delimiter, a doubled quote, or a line break). `line` is the physical
+ * line each row starts on, which is what a person sees in an editor.
+ */
+export function parseDelimited(text: string, delimiter: string): Array<{ cells: string[]; line: number }> {
+  const rows: Array<{ cells: string[]; line: number }> = [];
+  let cells: string[] = [];
+  let field = "";
+  let quoted = false;
+  let line = 1;
+  let rowLine = 1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else quoted = false;
+      } else {
+        if (ch === "\n") line++;
+        field += ch;
+      }
+      continue;
+    }
+    if (ch === '"' && field === "") { quoted = true; continue; }
+    if (ch === delimiter) { cells.push(field); field = ""; continue; }
+    if (ch === "\r") continue;
+    if (ch === "\n") {
+      cells.push(field);
+      rows.push({ cells, line: rowLine });
+      cells = [];
+      field = "";
+      line++;
+      rowLine = line;
+      continue;
+    }
+    field += ch;
+  }
+  if (field !== "" || cells.length) {
+    cells.push(field);
+    rows.push({ cells, line: rowLine });
+  }
+  return rows;
+}
+
+/** One record per data row with the header repeated, the same shape a
+ *  workbook row gets, under the same row and character ceilings. */
+function csvRecords(text: string, filename: string, delimiter: string): { records: SpreadsheetRecord[]; rowsTotal: number; rowsDropped: number } {
+  const label = filename.replace(/^.*[\\/]/, "");
+  const records: SpreadsheetRecord[] = [];
+  let header: string[] | null = null;
+  let keyCol = 0;
+  let keptChars = 0;
+  let rowsTotal = 0;
+  let rowsDropped = 0;
+  for (const row of parseDelimited(text, delimiter)) {
+    const cells = row.cells.map((v) => v.replace(/\s+/g, " ").trim());
+    if (!cells.some((v) => v !== "")) continue;
+    if (!header) {
+      header = cells;
+      keyCol = spreadsheetKeyColumn(header);
+      continue;
+    }
+    rowsTotal++;
+    const recordText = formatSpreadsheetRecord(label, header, cells);
+    if (rowsDropped > 0 || spreadsheetRowExceedsCeiling(records.length, keptChars, recordText.length)) {
+      rowsDropped++;
+      continue;
+    }
+    records.push({ text: recordText, sheet: label, productId: (cells[keyCol] ?? "").trim(), rowNumber: row.line });
+    keptChars += recordText.length;
+  }
+  return { records, rowsTotal, rowsDropped };
+}
+
+function recordSections(records: SpreadsheetRecord[]): DocumentSection[] {
+  return records.map((r) => ({
+    text: r.text,
+    locator: { sheet: r.sheet, rowNumber: r.rowNumber, ...(r.productId ? { key: r.productId } : {}) },
+  }));
+}
+
+function rowCoverage(kept: number, dropped: number, charsKept: number, lastKept?: string): ExtractionCoverage {
+  const complete = dropped === 0;
+  return {
+    unit: "row",
+    unitsTotal: kept + dropped,
+    unitsKept: kept,
+    charsKept,
+    complete,
+    ...(complete ? {} : {
+      omitted: `${dropped} of ${kept + dropped} data rows${lastKept ? ` after ${lastKept}` : ""} were not read: the table is larger than the ` +
+        `${MAX_XLSX_DATA_ROWS.toLocaleString("en-US")}-row / ${MAX_XLSX_RECORD_CHARS.toLocaleString("en-US")}-character safety limit.`,
+    }),
+  };
+}
+
+/** Comma unless the header line plainly uses semicolons or tabs instead. */
+function sniffDelimiter(text: string): string {
+  const first = text.slice(0, Math.max(0, text.indexOf("\n")) || text.length);
+  const count = (ch: string) => first.split(ch).length - 1;
+  const comma = count(",");
+  if (count(";") > comma && count(";") >= count("\t")) return ";";
+  if (count("\t") > comma) return "\t";
+  return ",";
 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
@@ -499,38 +970,61 @@ export async function extractTextFromFile(
   }
 
   if (ext === "pdf" || mime === "application/pdf") {
-    const { text, truncated } = clamp(await extractPdf(buffer));
-    return { text, kind: "pdf", meta: { truncated, empty: !text.trim() } };
+    const pdf = await extractPdf(buffer);
+    const { kept, coverage } = keepSections(pdf.pages, "page");
+    const text = coverage.complete
+      ? pdf.text
+      : kept.map((p) => `${p.text}\n-- ${p.locator.page} of ${pdf.total} --`).join("\n") + truncationNotice(coverage);
+    return {
+      text,
+      kind: "pdf",
+      sections: kept,
+      meta: { pages: pdf.total, truncated: !coverage.complete, coverage, empty: kept.every((p) => !p.text.trim()) },
+    };
   }
 
   if (ext === "docx" || mime.includes("wordprocessingml")) {
-    const { text, truncated } = clamp(await extractDocx(buffer));
-    return { text, kind: "docx", meta: { truncated, empty: !text.trim() } };
+    const docx = await extractDocx(buffer);
+    const { kept, coverage } = keepSections(docx.sections, "section");
+    const text = coverage.complete ? docx.text : kept.map((s) => s.text).join("\n\n") + truncationNotice(coverage);
+    return { text, kind: "docx", sections: kept, meta: { truncated: !coverage.complete, coverage, empty: !text.trim() } };
   }
 
   if (ext === "xlsx" || ext === "xlsm" || mime.includes("spreadsheetml")) {
+    // Records are the indexed form, one per data row; `text` is the same rows
+    // rendered as tables for callers that want to read them. Both are marked
+    // truncated only when the safety ceiling dropped whole rows.
     const r = await extractXlsx(buffer);
-    const { text, truncated } = clamp(r.text);
-    // Either ceiling counts as truncation: the 500k character clamp, or a sheet
-    // that ran past the row cap. Reporting only the former would let a
-    // 10,000-row sheet look complete.
-    return { text, kind: "xlsx", meta: { sheets: r.sheets, truncated: truncated || r.truncated, empty: !text.trim() } };
+    const charsKept = r.records.reduce((n, rec) => n + rec.text.length, 0);
+    const last = r.records[r.records.length - 1];
+    return {
+      text: r.text,
+      kind: "xlsx",
+      records: r.records,
+      sections: recordSections(r.records),
+      meta: {
+        sheets: r.sheets,
+        truncated: r.truncated,
+        rowsDropped: r.rowsDropped,
+        coverage: rowCoverage(r.records.length, r.rowsDropped, charsKept, last ? `sheet ${last.sheet} row ${last.rowNumber}` : undefined),
+        empty: !r.text.trim() && r.records.length === 0,
+      },
+    };
   }
 
   if (ext === "pptx" || mime.includes("presentationml")) {
     const r = await extractPptx(buffer);
-    const { text, truncated } = clamp(r.text);
-    return { text, kind: "pptx", meta: { slides: r.slides, truncated, empty: !text.trim() } };
+    const { kept, coverage } = keepSections(r.sections, "slide");
+    const text = coverage.complete ? r.text : kept.map((s) => s.text).join("\n\n") + truncationNotice(coverage);
+    return { text, kind: "pptx", sections: kept, meta: { slides: r.slides, truncated: !coverage.complete, coverage, empty: !text.trim() } };
   }
 
   if (ext === "json" || mime === "application/json") {
     try {
-      const { text, truncated } = clamp(JSON.stringify(JSON.parse(buffer.toString("utf-8")), null, 2));
-      return { text, kind: "json", meta: { truncated } };
+      return textResult(JSON.stringify(JSON.parse(buffer.toString("utf-8")), null, 2), "json");
     } catch {
       // Malformed JSON is still readable text; fall through rather than fail.
-      const { text, truncated } = clamp(buffer.toString("utf-8"));
-      return { text, kind: "text", meta: { truncated } };
+      return textResult(buffer.toString("utf-8"), "text");
     }
   }
 
@@ -539,14 +1033,29 @@ export async function extractTextFromFile(
   // report every CSV as plain text.
   if (["csv", "tsv"].includes(ext) || mime === "text/csv" || mime === "text/tab-separated-values") {
     if (looksBinary(buffer)) throw new UnsupportedFileTypeError(filename);
-    const { text, truncated } = clamp(buffer.toString("utf-8"));
-    return { text, kind: "csv", meta: { truncated } };
+    const raw = buffer.toString("utf-8");
+    const delimiter = ext === "tsv" || mime === "text/tab-separated-values" ? "\t" : sniffDelimiter(raw);
+    const { records, rowsDropped } = csvRecords(raw, filename, delimiter);
+    if (records.length === 0) return textResult(raw, "csv");
+    const charsKept = records.reduce((n, rec) => n + rec.text.length, 0);
+    const coverage = rowCoverage(records.length, rowsDropped, charsKept, `line ${records[records.length - 1].rowNumber}`);
+    // The file as written; the rows are what get indexed. Past the ceiling the
+    // row records are already incomplete (they repeat the header, so they fill
+    // first), and the text is cut at a line break, never mid-row.
+    const cut = raw.length > MAX_DOCUMENT_CHARS ? raw.lastIndexOf("\n", MAX_DOCUMENT_CHARS) : -1;
+    const text = coverage.complete && cut <= 0 ? raw : (cut > 0 ? raw.slice(0, cut) : raw) + truncationNotice(coverage);
+    return {
+      text,
+      kind: "csv",
+      records,
+      sections: recordSections(records),
+      meta: { truncated: !coverage.complete, rowsDropped, coverage },
+    };
   }
 
   if (["txt", "md", "markdown", "log"].includes(ext) || mime.startsWith("text/")) {
     if (looksBinary(buffer)) throw new UnsupportedFileTypeError(filename);
-    const { text, truncated } = clamp(buffer.toString("utf-8"));
-    return { text, kind: "text", meta: { truncated } };
+    return textResult(buffer.toString("utf-8"), "text");
   }
 
   // No silent binary fallback -- see looksBinary().

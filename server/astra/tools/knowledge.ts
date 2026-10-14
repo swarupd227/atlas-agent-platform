@@ -162,6 +162,8 @@ export const addKnowledgeTool: AstraTool<AddInput> = {
       proof: {
         context: watched.status === "processed"
           ? { status: "measured", summary: `${watched.chunkCount} passages indexed` }
+          : watched.status === "partial"
+          ? { status: "measured", summary: `${watched.chunkCount} passages indexed, incompletely: ${watched.error ?? "see the source's status"}` }
           : { status: "not_measured", reason: watched.status === "error" ? `Ingestion failed: ${watched.error ?? "no reason recorded"}` : "Ingestion still running." },
       },
     };

@@ -99,11 +99,10 @@ describe("xlsx", () => {
     expect(r.text).toContain("(empty)");
   });
 
-  it("declares a sheet that ran past the row cap instead of silently halving it", async () => {
-    // 5,200 rows against a 5,000 cap. The dropped rows are unavoidable, but an
-    // agent told nothing would answer confidently from data it never saw --
-    // and a truncated sheet is exactly when a code-execution agent needs the
-    // real file rather than this extract.
+  it("keeps rows past the old 5000-row cap when the safety ceiling is not hit", async () => {
+    // This sheet used to stop at 5,000 non-empty rows and then tell the reader
+    // only those were shown. A later catalog row has to survive that cut.
+    // Truncation is reserved for the safety ceiling, which this sheet does not reach.
     const zip = new JSZip();
     zip.file("xl/workbook.xml", `<?xml version="1.0"?><workbook xmlns:r="http://x"><sheets><sheet name="Big" sheetId="1" r:id="rId1"/></sheets></workbook>`);
     zip.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`);
@@ -112,10 +111,9 @@ describe("xlsx", () => {
     zip.file("xl/worksheets/sheet1.xml", `<?xml version="1.0"?><worksheet><sheetData>${rows}</sheetData></worksheet>`);
 
     const r = await extractTextFromFile(await zip.generateAsync({ type: "nodebuffer" }), undefined, "big.xlsx");
-    expect(r.meta.truncated, "the row cap must set the truncated flag").toBe(true);
-    expect(r.text).toContain("only the first 5000 rows");
-    // The cap held: row 5,100 is past it and must not appear.
-    expect(r.text).not.toContain("| 5100 |");
+    expect(r.meta.truncated).toBe(false);
+    expect(r.text).toContain("| 5100 |");
+    expect(r.records?.some((row) => row.productId === "5100")).toBe(true);
   });
 
   it("does not claim truncation for a sheet that fits", async () => {

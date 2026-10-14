@@ -111,7 +111,7 @@ describe("what the model sees and what the conversation shows", () => {
   });
 
   it("reuses the platform's own extraction and framing", () => {
-    expect(server).toContain("buildAttachmentContext(kept, orgId)");
+    expect(server).toContain("buildAttachmentContext(kept, orgId, undefined, undefined, { query: question, toolsAvailable: true })");
     expect(server).not.toContain("extractTextFromFile");
   });
 });
@@ -120,7 +120,7 @@ describe("whose file it is", () => {
   it("is stamped onto the conversation when the message is sent", () => {
     // A file is attached before a new conversation exists.
     expect(server).toContain(".set({ threadId, context: \"cowork\" })");
-    expect(routes).toContain("const attached = await attachFilesToThread(parsed.data.fileIds ?? [], ctx.orgId, threadId);");
+    expect(routes).toContain("const attached = await attachFilesToThread(parsed.data.fileIds ?? [], ctx.orgId, threadId, parsed.data.text);");
   });
 
   it("can't be taken from another organization or another conversation", () => {

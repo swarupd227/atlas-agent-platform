@@ -114,12 +114,14 @@ async function watchKnowledgeSource(orgId: string, sourceId: string, onProgress:
   while (true) {
     const s = await storage.getKnowledgeSource(sourceId, orgId);
     if (!s) throw new Error("That source isn't in this organization.");
-    const label = s.status === "processed" ? `Processed: ${s.chunkCount ?? 0} passages` : s.status === "error" ? "Ingestion failed" : `Ingesting (${s.status})`;
+    const label = s.status === "processed" ? `Processed: ${s.chunkCount ?? 0} passages`
+      : s.status === "partial" ? `Partly processed: ${s.chunkCount ?? 0} passages`
+      : s.status === "error" ? "Ingestion failed" : `Ingesting (${s.status})`;
     if (label !== last) {
       onProgress(label);
       last = label;
     }
-    if (s.status === "processed" || s.status === "error") return { status: s.status, chunkCount: s.chunkCount ?? 0, error: s.errorMessage ?? null, finished: true };
+    if (s.status === "processed" || s.status === "partial" || s.status === "error") return { status: s.status, chunkCount: s.chunkCount ?? 0, error: s.errorMessage ?? null, finished: true };
     if (Date.now() >= until) return { status: s.status, chunkCount: s.chunkCount ?? 0, error: null, finished: false };
     await new Promise((r) => setTimeout(r, everyMs));
   }
@@ -132,8 +134,36 @@ async function searchKnowledge(orgId: string, kbId: string, query: string, role:
   return {
     knowledgeBase: kbView(kb),
     semantic: isPgvectorAvailable(),
-    passages: rows.map((r) => ({ id: r.id, content: String(r.content ?? "").slice(0, 800), similarity: r.similarity })),
+    passages: rows.map((r) => {
+      const content = String(r.content ?? "");
+      const loc = passageLocation(r.metadata);
+      return {
+        id: r.id,
+        content: content.length > PASSAGE_CHARS ? content.slice(0, PASSAGE_CHARS) : content,
+        ...(content.length > PASSAGE_CHARS ? { contentTruncated: true, contentChars: content.length } : {}),
+        similarity: r.similarity,
+        ...(r.source_name ? { source: r.source_name } : {}),
+        ...(loc ? { location: loc } : {}),
+      };
+    }),
   };
+}
+
+/** A chunk is at most a few thousand characters (a row is at most 8,000); this
+ *  only bounds a pathological one, and says so when it does. */
+const PASSAGE_CHARS = 4_000;
+
+function passageLocation(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const m = metadata as Record<string, unknown>;
+  const parts: string[] = [];
+  if (m.page !== undefined) parts.push(`page ${m.page}`);
+  if (m.slide !== undefined) parts.push(`slide ${m.slide}`);
+  if (m.sheet) parts.push(`sheet ${m.sheet}`);
+  if (m.rowNumber !== undefined) parts.push(`row ${m.rowNumber}`);
+  if (m.heading) parts.push(`"${m.heading}"`);
+  if (m.lineStart !== undefined) parts.push(`lines ${m.lineStart}-${m.lineEnd ?? m.lineStart}`);
+  return parts.length ? parts.join(", ") : null;
 }
 
 async function attachKnowledgeBaseAs(orgId: string, agentId: string, kbId: string, actor: string) {
