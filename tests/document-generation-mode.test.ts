@@ -47,12 +47,14 @@ describe("resolveDocumentMode", () => {
 describe("documentToolsForSkills mode gating", () => {
   it("auto (default) offers the portable tools, same as before this setting existed", () => {
     const tools = documentToolsForSkills([docSkill()]);
-    expect(tools.map(t => t.toolName)).toEqual([GENERATE_PPTX_TOOL, GENERATE_PDF_TOOL]);
+    // The generators, the template fill, the inspector and the reader: everything the skill grants outside a sandbox.
+    expect(tools.map(t => t.toolName)).toEqual([GENERATE_PPTX_TOOL, GENERATE_PDF_TOOL, "fill_document_template", "inspect_document", "read_document"]);
   });
 
   it("platform mode also offers the portable tools", () => {
     const tools = documentToolsForSkills([docSkill()], "platform");
-    expect(tools.map(t => t.toolName)).toEqual([GENERATE_PPTX_TOOL, GENERATE_PDF_TOOL]);
+    // The generators, the template fill, the inspector and the reader: everything the skill grants outside a sandbox.
+    expect(tools.map(t => t.toolName)).toEqual([GENERATE_PPTX_TOOL, GENERATE_PDF_TOOL, "fill_document_template", "inspect_document", "read_document"]);
   });
 
   it("sandbox mode withholds the portable tools even though the skill grants them", () => {
