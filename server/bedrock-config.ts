@@ -17,7 +17,7 @@ import { getLockdown, LockdownError } from "./lockdown";
 export const BEDROCK_SETTING_KEY = "bedrock_config";
 export const BEDROCK_KEY_ROW = "aws_bedrock";
 
-/** The jobs a Bedrock model can be given. Only `embedding` changes behaviour in this release; the others are stored and tested. */
+/** The jobs a Bedrock model can be given. `embedding` drives document search; `chat` and `fast` answer Claude calls once `useForChat` is on. */
 export const BEDROCK_PURPOSES = ["embedding", "chat", "fast"] as const;
 export type BedrockPurpose = (typeof BEDROCK_PURPOSES)[number];
 
@@ -43,8 +43,13 @@ export type BedrockModelRow = z.infer<typeof modelRow>;
 
 export const bedrockConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  /** When on, no call may go to OpenAI or Anthropic directly. Enforced in a later release; stored now. */
+  /**
+   * When on, a Claude call that fails on Bedrock is never retried on OpenAI. Calls that ask for an OpenAI model still go to
+   * OpenAI until the AWS-only guard of a later release; stored now.
+   */
   awsOnly: z.boolean().default(false),
+  /** Answer Claude calls (agents, chat, evaluations) from Bedrock instead of the Anthropic API. Needs a `chat` model. */
+  useForChat: z.boolean().default(false),
   /** Empty means "the region the server already runs in" (AWS_REGION). */
   region: z.string().trim().regex(REGION, "Not a region name, for example eu-central-1").or(z.literal("")).default(""),
   /** Optional private address for Bedrock (a VPC endpoint). Must be an https address under amazonaws.com. */
@@ -74,7 +79,18 @@ export const SUGGESTED_MODELS: Array<{ purpose: BedrockPurpose; label: string; r
   { purpose: "embedding", label: "Titan Embeddings G1 - Text (1,536 dimensions)", row: { modelId: "amazon.titan-embed-text-v1", family: "titan" }, note: "Older. Same vector size as OpenAI's text-embedding-3-small." },
   { purpose: "embedding", label: "Cohere Embed Multilingual v3 (1,024 dimensions)", row: { modelId: "cohere.embed-multilingual-v3", family: "cohere", dimensions: 1024 }, note: "For documents in several languages." },
   { purpose: "embedding", label: "Cohere Embed English v3 (1,024 dimensions)", row: { modelId: "cohere.embed-english-v3", family: "cohere", dimensions: 1024 }, note: "English only." },
+  { purpose: "chat", label: "Claude Sonnet 4.5 (US profile)", row: { modelId: "us.anthropic.claude-sonnet-4-5-20250929-v1:0" }, note: "Replace us. with eu. or apac. to match your region group. Copy the exact id from Bedrock, Cross-region inference." },
+  { purpose: "fast", label: "Claude Haiku 4.5 (US profile)", row: { modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0" }, note: "Replace us. with eu. or apac. to match your region group." },
 ];
+
+/**
+ * Whether an id names a Claude model. An ARN is taken on trust: an application inference profile's id is opaque, and the Test
+ * button is what proves it.
+ */
+export function isClaudeModelId(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return id.startsWith("arn:") || id.includes("anthropic.claude");
+}
 
 /** The family of an embedding model, from its id, unless the row says. */
 export function embeddingFamilyOf(row: Pick<BedrockModelRow, "modelId" | "family">): EmbeddingFamily | null {
@@ -108,6 +124,13 @@ export function parseBedrockConfig(raw: unknown): BedrockConfig {
   const problems: z.ZodIssue[] = [];
   const endpointProblem = validateBedrockEndpoint(config.endpoint);
   if (endpointProblem) problems.push({ code: "custom", path: ["endpoint"], message: endpointProblem });
+  if (config.useForChat) {
+    const chat = config.models.chat;
+    if (!chat) problems.push({ code: "custom", path: ["models", "chat"], message: "Choose the Claude model Bedrock should use for chat before switching chat to Bedrock" });
+    else if (!isClaudeModelId(chat.modelId)) problems.push({ code: "custom", path: ["models", "chat"], message: "Chat on Bedrock works with Claude models only: the id should contain anthropic.claude, for example us.anthropic.claude-sonnet-4-5-20250929-v1:0" });
+    const fast = config.models.fast;
+    if (fast && !isClaudeModelId(fast.modelId)) problems.push({ code: "custom", path: ["models", "fast"], message: "The fast model for chat on Bedrock must be a Claude model too" });
+  }
   const emb = config.models.embedding;
   if (emb) {
     const family = embeddingFamilyOf(emb);
@@ -135,6 +158,8 @@ export function isBedrockConfigured(config: BedrockConfig): boolean {
 export type BedrockConfigSource = "admin" | "environment" | "default";
 const CACHE_MS = 15_000;
 let cached: { at: number; value: { config: BedrockConfig; source: BedrockConfigSource } } | null = null;
+/** The settings as last read successfully (not a fallback to "off"), kept for a moment when the database cannot be reached. */
+let lastGood: { config: BedrockConfig; source: BedrockConfigSource } | null = null;
 
 export function invalidateBedrockConfig(): void { cached = null; }
 
@@ -152,12 +177,24 @@ export async function loadBedrockConfig(): Promise<{ config: BedrockConfig; sour
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
   let value: { config: BedrockConfig; source: BedrockConfigSource };
   try {
-    const row = await storage.getPlatformSetting(BEDROCK_SETTING_KEY);
+    let row;
+    try { row = await storage.getPlatformSetting(BEDROCK_SETTING_KEY); }
+    catch (err: any) {
+      // The database could not be reached just now. With chat on Bedrock, treating that as "Bedrock is off" would send the next
+      // Claude calls to the Anthropic API, outside the administrator's AWS account: keep the settings last read, and look again soon.
+      if (lastGood) {
+        console.error(`[bedrock] settings could not be read just now, keeping the last ones read: ${String(err?.message ?? err).slice(0, 200)}`);
+        cached = { at: Date.now() - CACHE_MS + 5_000, value: lastGood };
+        return lastGood;
+      }
+      throw err;
+    }
     if (row?.value) value = { config: parseBedrockConfig(JSON.parse(row.value)), source: "admin" };
     else {
       const env = fromEnvironment();
       value = env ? { config: env, source: "environment" } : { config: defaultBedrockConfig(), source: "default" };
     }
+    lastGood = value;
   } catch (err: any) {
     // A stored document that no longer parses must not take the platform down, and must not silently switch Bedrock on.
     console.error(`[bedrock] stored configuration could not be read, Bedrock is treated as off: ${String(err?.message ?? err).slice(0, 300)}`);
@@ -180,7 +217,7 @@ export async function saveBedrockConfig(config: BedrockConfig): Promise<void> {
 /** Names of the top-level and model settings that differ, for the audit trail. Values are not recorded. */
 export function changedBedrockFields(before: BedrockConfig, after: BedrockConfig): string[] {
   const out: string[] = [];
-  for (const k of ["enabled", "awsOnly", "region", "endpoint", "credentialMode"] as const) if (before[k] !== after[k]) out.push(k);
+  for (const k of ["enabled", "awsOnly", "useForChat", "region", "endpoint", "credentialMode"] as const) if (before[k] !== after[k]) out.push(k);
   for (const p of BEDROCK_PURPOSES) if (JSON.stringify(before.models[p] ?? null) !== JSON.stringify(after.models[p] ?? null)) out.push(`models.${p}`);
   if (JSON.stringify(before.limits) !== JSON.stringify(after.limits)) out.push("limits");
   return out;
