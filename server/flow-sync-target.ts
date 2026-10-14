@@ -29,7 +29,22 @@ export interface FlowSyncTeamAgent {
   id: string;
   name: string;
   blueprintId?: string | null;
-  industry?: string | null;
+  /**
+   * The agent's industry, and the journey's.
+   *
+   * This interface declared `industry`, which the agents table does not have --
+   * the columns are `industry_id` and `journey_industry_id`. Because load()
+   * below casts a raw agent row to this type, TypeScript accepted the mismatch
+   * and `teamAgent.industry` was undefined on every call, so every agent the
+   * flow sync has ever drafted was ranked against the "general" catalogue
+   * rather than its own vertical. Measured live: 63 of 241 team agents carry
+   * industryId, and all of them were ignored.
+   *
+   * Both are declared because they are both needed: the five Account journeys
+   * have industryId null and journeyIndustryId "insurance".
+   */
+  industryId?: string | null;
+  journeyIndustryId?: string | null;
   outcomeId?: string | null;
   organizationId?: string | null;
 }

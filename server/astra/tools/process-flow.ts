@@ -508,28 +508,46 @@ export const syncFlowToAutomationTool: AstraTool<SyncInput> = {
         // note as a problem trains people to ignore both.
         ...(s.invariants?.findings.some((f: any) => f.blocksRun) ? { problems: s.invariants.findings.filter((f: any) => f.blocksRun).map((f: any) => f.message) } : {}),
         ...(s.invariants?.findings.some((f: any) => !f.blocksRun) ? { worthKnowing: s.invariants.findings.filter((f: any) => !f.blocksRun).map((f: any) => f.message) } : {}),
+        // A dropped step does NOT make the built graph unrunnable, so
+        // `runnable` above stays true and used to carry the whole verdict.
+        // Live 2026-10-14: a step whose agent failed to draft was missing from
+        // the automation while this reported "0 blockers, 0 warnings, ready to
+        // run" -- counting what was built, not what was asked for. The
+        // automation does not match the flow when a step is missing, whatever
+        // the invariants say about what remains.
+        matchesFlow: s.draftFailures.length === 0,
         next: s.invariants?.runnable === false
           ? "This team cannot run in this state -- fix what is listed under problems first; nothing else will surface it until someone presses run."
-          : "Check the wiring with verify_wiring before the next run, and read the agents a model wrote.",
+          : s.draftFailures.length
+            ? `The automation is missing ${s.draftFailures.length} step(s) listed under couldNotDraft, so it does NOT match the flow. Sync again -- this is usually a transient drafting failure and a repeat succeeds.`
+            : "Check the wiring with verify_wiring before the next run, and read the agents a model wrote.",
       },
       artifact: {
         kind: "text",
         title: `${r.team.name} — synced`,
         props: {
           text: [
-            `**${r.team.name}** now matches **${r.flow.name}**.`,
+            // Not "now matches" when a step was dropped. That is the one claim
+            // this card must not make falsely, and it was making it.
+            s.draftFailures.length
+              ? `**${r.team.name}** does NOT yet match **${r.flow.name}** — ${s.draftFailures.length} step(s) could not be drafted.`
+              : `**${r.team.name}** now matches **${r.flow.name}**.`,
             "",
             ...(s.added.length ? [`- Added: ${s.added.join(", ")}`] : []),
             ...(s.changed.length ? [`- Changed: ${s.changed.join(", ")}`] : []),
             ...(s.superseded.length ? [`- Superseded: ${s.superseded.map((x: any) => x.label).join(", ")}`] : []),
             `- Untouched: ${s.unchanged}`,
-            ...(s.draftFailures.length ? ["", "Could not draft:", ...s.draftFailures.map((f: any) => `- ${f.label}: ${f.error}`)] : []),
+            ...(s.draftFailures.length
+              ? ["", "**Missing from the automation** (sync again; this is usually transient):", ...s.draftFailures.map((f: any) => `- ${f.label}: ${f.error}`)]
+              : []),
           ].join("\n"),
         },
         fullViewHref: `/agents/${r.team.id}`,
       },
       proof: {
-        context: { status: "measured", summary: `${s.added.length} added · ${s.changed.length} changed · ${s.superseded.length} superseded · ${s.unchanged} untouched` },
+        // A dropped step belongs in the one-line summary too, not only in the
+        // body: this is the line that gets read.
+        context: { status: "measured", summary: `${s.added.length} added · ${s.changed.length} changed · ${s.superseded.length} superseded · ${s.unchanged} untouched${s.draftFailures.length ? ` · ${s.draftFailures.length} MISSING` : ""}` },
       },
     };
   },
