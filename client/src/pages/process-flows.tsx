@@ -1263,10 +1263,18 @@ export default function ProcessFlows() {
                   <div className="flex flex-wrap gap-1">{syncResult.added.map((l: string) => <Badge key={l} variant="secondary" className="text-[10px]">{l}</Badge>)}</div>
                 </div>
               )}
-              {syncResult.superseded?.length > 0 && (
+              {syncResult.superseded?.some((s: any) => s.retired) && (
                 <div>
-                  <p className="font-medium text-xs mb-1">Superseded — retire manually when ready</p>
-                  <div className="flex flex-wrap gap-1">{syncResult.superseded.map((s: any) => <Badge key={s.agentId} variant="outline" className="text-[10px]">{s.label}</Badge>)}</div>
+                  <p className="font-medium text-xs mb-1">Superseded and retired — the agents these steps used before</p>
+                  <div className="flex flex-wrap gap-1">{syncResult.superseded.filter((s: any) => s.retired).map((s: any) => <Badge key={s.agentId} variant="outline" className="text-[10px]">{s.label}</Badge>)}</div>
+                </div>
+              )}
+              {syncResult.superseded?.some((s: any) => !s.retired) && (
+                <div>
+                  <p className="font-medium text-xs mb-1">Superseded but kept</p>
+                  <div className="flex flex-col gap-0.5">{syncResult.superseded.filter((s: any) => !s.retired).map((s: any) => (
+                    <p key={s.agentId} className="text-[11px] text-muted-foreground"><span className="font-medium text-foreground">{s.agentName ?? s.label}</span>{s.keptBecause ? ` — ${s.keptBecause}` : " — retire manually when ready"}</p>
+                  ))}</div>
                 </div>
               )}
               {syncResult.draftFailures?.length > 0 && (

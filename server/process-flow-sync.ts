@@ -33,6 +33,7 @@ import { rewriteStateKeyReferences } from "@shared/rule-fields";
 import { effectiveStateKey, stateKeyForLabel } from "@shared/state-key";
 import { isCurrentReworkRule, REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
+import { retireSupersededAgents, type SupersededAgentOutcome } from "./superseded-agents";
 import type { ProcessEdge, ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
 import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, withClassifier } from "@shared/flow-execution-kind";
 import { getDecisionSettings } from "./decision-settings";
@@ -535,7 +536,12 @@ export interface SyncSummary {
   unchanged: number;
   changed: string[];
   added: string[];
-  superseded: Array<{ label: string; agentId: string }>;
+  /**
+   * The agents the rebuilt steps used before, each retired by this sync unless
+   * another team still runs it or a deployment of it is still live -- then it is
+   * kept, and `keptBecause` says why. See server/superseded-agents.ts.
+   */
+  superseded: SupersededAgentOutcome[];
   draftFailures: Array<{ label: string; error: string }>;
   /**
    * What became of the flow's loops, by the step each one leaves. Reported
@@ -991,6 +997,10 @@ export async function applyFlowSync(
   // state no run can start from".
   const invariants = await checkBlueprintInvariants(blueprintId);
 
+  // The agents this sync orphaned. Retired here, after the blueprint is whole,
+  // rather than left for someone to notice on the Agents page.
+  const supersededOutcomes = await retireSupersededAgents(orgId, teamAgent.id, superseded, opts.via ?? "Studio");
+
   await storage.createAuditEvent({
     actorType: "system",
     actorId: "process_flow_sync",
@@ -1007,6 +1017,7 @@ export async function applyFlowSync(
       added: diff.added.map((n) => n.label),
       removed: diff.removedNodes.map(labelOf),
       rebuilt: forceFullRebuild,
+      superseded: supersededOutcomes,
       draftFailures,
       revisionLoops,
       stateKeyRenames,
@@ -1022,7 +1033,7 @@ export async function applyFlowSync(
       unchanged: diff.unchanged.length,
       changed: diff.changed.map((n) => n.label),
       added: diff.added.map((n) => n.label),
-      superseded,
+      superseded: supersededOutcomes,
       draftFailures,
       revisionLoops,
       stateKeyRenames,
