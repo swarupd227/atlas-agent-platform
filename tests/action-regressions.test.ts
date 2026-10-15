@@ -83,3 +83,52 @@ describe("runtime-run tenant and lifecycle safety", () => {
     expect(routes).toContain("creatingTeamTestAgentIds.delete(req.params.id)");
   });
 });
+
+describe("agent creation job status recovery", () => {
+  it("reconciles persisted status until completion when an SSE update is missed", async () => {
+    const modulePath = "../client/src/lib/job-status-watch";
+    const loaded = await import(modulePath).catch(() => ({ watchJobStatus: undefined }));
+    const watchJobStatus = loaded.watchJobStatus;
+
+    expect(watchJobStatus).toBeTypeOf("function");
+
+    const snapshots: Array<{ status: string; progress: number }> = [];
+    const scheduled: Array<() => void> = [];
+    const jobs = [
+      { id: "job-1", status: "queued", progress: 0 },
+      { id: "job-1", status: "completed", progress: 100 },
+    ];
+
+    const stop = watchJobStatus!(
+      {
+        jobId: "job-1",
+        pollIntervalMs: 25,
+        onSnapshot: (job) => snapshots.push({ status: job.status, progress: job.progress ?? 0 }),
+      },
+      {
+        fetchJob: async () => jobs.shift()!,
+        schedule: (run) => {
+          scheduled.push(run);
+          return scheduled.length;
+        },
+        cancel: () => undefined,
+      },
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(snapshots).toEqual([{ status: "queued", progress: 0 }]);
+    expect(scheduled).toHaveLength(1);
+
+    scheduled.shift()!();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(snapshots).toEqual([
+      { status: "queued", progress: 0 },
+      { status: "completed", progress: 100 },
+    ]);
+    expect(scheduled).toHaveLength(0);
+
+    stop();
+  });
+});

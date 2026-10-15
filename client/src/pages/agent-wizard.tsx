@@ -84,6 +84,7 @@ import type { LucideIcon } from "lucide-react";
 import { packWizardPresets, packWizardContexts } from "@shared/industry-packs";
 import { suitePassPercent } from "@shared/eval-threshold";
 import { NOT_MEASURED } from "@/lib/measured";
+import { watchJobStatus, type JobStatusSnapshot } from "@/lib/job-status-watch";
 
 const iconMap: Record<string, LucideIcon> = {
   headphones: Headphones,
@@ -779,10 +780,12 @@ export default function AgentWizard() {
     error?: string;
   } | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const stopJobStatusWatchRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     return () => {
       eventSourceRef.current?.close();
+      stopJobStatusWatchRef.current?.();
     };
   }, []);
 
@@ -874,10 +877,60 @@ export default function AgentWizard() {
   }, [wizardState.templateSkills.templateId]);
 
   function startJobTracking(agentId: string, jobId: string, suiteId: string, agentName: string) {
+    eventSourceRef.current?.close();
+    stopJobStatusWatchRef.current?.();
     setJobProgress({ agentId, jobId, suiteId, agentName, progress: 0, step: "queued", status: "running" });
 
+    let terminal = false;
     const es = new EventSource(`/api/events/stream?agentId=${agentId}`);
     eventSourceRef.current = es;
+
+    const stopTracking = () => {
+      es.close();
+      if (eventSourceRef.current === es) eventSourceRef.current = null;
+      stopJobStatusWatchRef.current?.();
+      stopJobStatusWatchRef.current = null;
+    };
+
+    const completeTracking = (result?: Record<string, unknown>) => {
+      if (terminal) return;
+      terminal = true;
+      stopTracking();
+      if (creationPath === "template") {
+        setJobProgress(null);
+        setPostCreationAgent({ id: agentId, name: agentName });
+      } else {
+        setJobProgress((prev) => prev ? { ...prev, progress: 100, step: "completed", status: "completed", result } : prev);
+      }
+    };
+
+    const failTracking = (error: string) => {
+      if (terminal) return;
+      terminal = true;
+      stopTracking();
+      setJobProgress((prev) => prev ? { ...prev, status: "failed", error, step: "failed" } : prev);
+    };
+
+    const applyPersistedStatus = (job: JobStatusSnapshot) => {
+      if (job.status === "completed") {
+        completeTracking(job.result ?? undefined);
+        return;
+      }
+      if (job.status === "failed" || job.status === "cancelled") {
+        failTracking(job.error || (job.status === "cancelled" ? "Evaluation was cancelled." : "Evaluation failed."));
+        return;
+      }
+      setJobProgress((prev) => prev ? {
+        ...prev,
+        progress: Math.max(prev.progress, job.progress ?? 0),
+        step: job.status === "queued" ? "queued" : prev.step === "queued" ? "processing" : prev.step,
+      } : prev);
+    };
+
+    stopJobStatusWatchRef.current = watchJobStatus({
+      jobId,
+      onSnapshot: applyPersistedStatus,
+    });
 
     let errorRetries = 0;
     const maxRetries = 3;
@@ -889,17 +942,9 @@ export default function AgentWizard() {
         if (data.type === "progress" && data.jobId === jobId) {
           setJobProgress((prev) => prev ? { ...prev, progress: data.progress, step: data.step } : prev);
         } else if (data.type === "completed" && data.jobId === jobId) {
-          if (creationPath === "template") {
-            es.close();
-            setJobProgress(null);
-            setPostCreationAgent({ id: agentId, name: agentName });
-          } else {
-            setJobProgress((prev) => prev ? { ...prev, progress: 100, step: "completed", status: "completed", result: data.result } : prev);
-            es.close();
-          }
+          completeTracking(data.result as Record<string, unknown> | undefined);
         } else if (data.type === "failed" && data.jobId === jobId) {
-          setJobProgress((prev) => prev ? { ...prev, status: "failed", error: data.error, step: "failed" } : prev);
-          es.close();
+          failTracking(data.error || "Evaluation failed.");
         }
       } catch {}
     };
@@ -908,8 +953,8 @@ export default function AgentWizard() {
       errorRetries++;
       if (errorRetries >= maxRetries) {
         es.close();
-        setJobProgress((prev) => prev ? { ...prev, status: "failed", error: "Lost connection to server. The evaluation may still be running in the background.", step: "connection_lost" } : prev);
-        toast({ title: "Connection lost", description: "Progress tracking disconnected. You can check the agent status from the agents list.", variant: "destructive" });
+        setJobProgress((prev) => prev ? { ...prev, step: "checking_saved_status" } : prev);
+        toast({ title: "Live progress disconnected", description: "Continuing to check the saved evaluation status." });
       }
     };
   }
@@ -1712,6 +1757,8 @@ export default function AgentWizard() {
 
   const stepLabels: Record<string, string> = {
     queued: "Waiting in queue...",
+    processing: "Processing baseline evaluation...",
+    checking_saved_status: "Checking saved evaluation status...",
     compiling_blueprint: "Compiling blueprint...",
     static_checks_complete: "Static checks passed",
     running_eval_cases: "Running evaluation cases...",
