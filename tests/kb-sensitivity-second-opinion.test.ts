@@ -91,7 +91,7 @@ describe("the scan that carries it", () => {
     expect(src).toContain('if (detected.some(d => d.sensitivityClass === "PII")) return "confidential";');
   });
   it("also scans a URL source once its text is fetched, and any source on reprocess", () => {
-    expect(src).toContain("async function processSourceInBackground(sourceId: string, kbId: string, rescan = false) {");
+    expect(src).toContain("async function processSourceInBackground(sourceId: string, kbId: string, rescan = false, extracted?: ExtractedFile) {");
     expect(src).toContain("if (rescan) {");
     expect(src).toContain("processSourceInBackground(source.id, input.kb.id, true);");
     expect(src).toContain("processSourceInBackground(req.params.sourceId as string, req.params.id as string, true);");

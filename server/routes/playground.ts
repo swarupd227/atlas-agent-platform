@@ -118,7 +118,10 @@ const router = Router();
       // the extracted text in chat_messages would make session history
       // unreadable and duplicate hundreds of KB already held in uploaded_files.
       const { context: attachmentContext, names: attachedNames } =
-        await buildAttachmentContext(ids, getOrgId(req));
+        // The playground turn has no attachment tools: a file too large to
+        // show whole is shown as its sections relevant to `typed`, and the
+        // model is told what it was not shown.
+        await buildAttachmentContext(ids, getOrgId(req), undefined, undefined, { query: typed });
       if (ids.length && !attachedNames.length) {
         return res.status(400).json({ error: "The attached file could not be read. Re-upload it and try again." });
       }

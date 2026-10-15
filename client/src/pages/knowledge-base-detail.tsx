@@ -40,6 +40,7 @@ function StatusBadge({ status }: { status: string }) {
     pending: { color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300", icon: Clock },
     processing: { color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300", icon: Loader2 },
     processed: { color: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300", icon: CheckCircle2 },
+    partial: { color: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300", icon: AlertTriangle },
     error: { color: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300", icon: XCircle },
   };
   const c = config[status] || config.pending;
@@ -868,11 +869,19 @@ export default function KnowledgeBaseDetail() {
                               })()}
                             </span>
                           )}
-                          {source.errorMessage && <span className="text-destructive">{source.errorMessage}</span>}
+                          {(() => {
+                            const report = (source.metadata as Record<string, any> | null)?.indexingReport;
+                            return typeof report?.summary === "string"
+                              ? <span data-testid={`text-index-summary-${source.id}`}>{report.summary}</span>
+                              : null;
+                          })()}
+                          {source.errorMessage && (
+                            <span className={source.status === "partial" ? "text-amber-700 dark:text-amber-300" : "text-destructive"}>{source.errorMessage}</span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        {(source.status === "error" || source.status === "processed") && (
+                        {(source.status === "error" || source.status === "processed" || source.status === "partial") && (
                           <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => reprocessMutation.mutate(source.id)} disabled={reprocessMutation.isPending} data-testid={`button-reprocess-${source.id}`}>
                             <RefreshCw className={`w-3.5 h-3.5 ${reprocessMutation.isPending ? "animate-spin" : ""}`} />
                           </Button>

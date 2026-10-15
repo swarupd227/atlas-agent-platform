@@ -98,10 +98,28 @@ describe("labelling retrieved passages", () => {
 describe("the query returns what a citation needs", () => {
   const embeddings = read("server", "embeddings.ts");
 
-  it("selects the source name and link on every path, not just the vector one", () => {
-    // The fallback path runs when pgvector is unavailable; the other two are the vector searches (another model's table, and the
-    // original column). If any path carried no provenance, citations would silently depend on infrastructure or on the model.
-    expect(embeddings.match(/s\.name as source_name, s\.url as source_url/g) ?? []).toHaveLength(3);
+  it("selects the source name and link on every retrieval path", () => {
+    const bodyOf = (name: string) => {
+      const start = embeddings.search(new RegExp(`(?:async )?function ${name}\\b`));
+      expect(start, name).toBeGreaterThanOrEqual(0);
+      const rest = embeddings.slice(start + 1);
+      const next = rest.search(/\n(?:export )?(?:async )?function /);
+      return next < 0 ? embeddings.slice(start) : embeddings.slice(start, start + 1 + next);
+    };
+    const chunkQueries = (body: string) => body.split(/\bSELECT\b/).slice(1).filter((part) => /\bFROM knowledge_chunks\b/.test(part));
+    const paths: Array<[string, number]> = [
+      ["lookupChunksByProductId", 2],
+      ["lexicalSearch", 1],
+      ["searchKnowledgeBaseChunks", 3],
+    ];
+    for (const [name, count] of paths) {
+      const queries = chunkQueries(bodyOf(name));
+      expect(queries, name).toHaveLength(count);
+      for (const query of queries) {
+        expect(query, name).toContain("s.name as source_name");
+        expect(query, name).toContain("s.url as source_url");
+      }
+    }
   });
 
   it("declares the provenance columns it has always returned", () => {

@@ -8,6 +8,7 @@ import { checkPermission } from "../permissions";
 import { storage } from "../storage";
 import {
   extractTextFromFile,
+  filenameForLog,
   isSupportedFile,
   isImageFile,
   isVideoFile,
@@ -98,6 +99,12 @@ router.post("/api/files/upload", checkPermission("view_agents"), (req: Request, 
           results.push({ filename: file.originalname, error: err.message });
           continue;
         }
+        const coverage = extracted.meta.coverage;
+        console.log(
+          `[file-extract] upload file="${filenameForLog(file.originalname)}" kind=${extracted.kind} bytes=${file.size} chars=${extracted.text.length} ` +
+          `sections=${extracted.sections?.length ?? 0}` +
+          (coverage ? ` ${coverage.unit}s=${coverage.unitsKept}/${coverage.unitsTotal} complete=${coverage.complete}` : ""),
+        );
 
         const [row] = await db.insert(uploadedFiles).values({
           organizationId: orgId ?? undefined,

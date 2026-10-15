@@ -347,6 +347,17 @@ export async function runStartupMigrations() {
       -- Which Cowork conversation a file was attached to, so deleting the
       -- conversation can take it too.
       ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS thread_id VARCHAR;
+      -- The file a knowledge-base document was uploaded as, so reprocessing
+      -- re-reads the document itself (shared/schema.ts knowledgeSourceFiles).
+      CREATE TABLE IF NOT EXISTS knowledge_source_files (
+        source_id VARCHAR PRIMARY KEY REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+        filename TEXT NOT NULL,
+        mime_type TEXT,
+        size_bytes INTEGER,
+        sha256 VARCHAR,
+        content BYTEA NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
       -- WHICH check produced a connector's health state: a tools/list handshake,
       -- a vendor credential test, a mock endpoint, or the service's own health
       -- path. Without it a stored state cannot say what it measured, which is how

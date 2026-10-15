@@ -35,7 +35,7 @@ describe("splitOversizedChunk", () => {
 describe("chunkText uses it, and embeddings cap their input", () => {
   const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
   it("applies the split to every chunk", () => {
-    expect(read("server", "kb-routes.ts")).toContain("return chunks.flatMap((c) => splitOversizedChunk(c, chunkSize));");
+    expect(read("server", "kb-indexing.ts")).toContain("return chunks.flatMap((c) => splitOversizedChunk(c, chunkSize));");
   });
   it("never sends the embedding model an input over the cap", () => {
     // The cap and the cut live in server/embedding-backend.ts, which every provider's request goes through (embedWith).

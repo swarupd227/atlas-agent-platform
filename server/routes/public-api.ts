@@ -138,12 +138,19 @@ router.post("/api/v1/knowledge-bases/:id/search", requireApiKey, async (req: Req
       }
     }
 
-    const { searchKnowledgeBaseChunks } = await import("../embeddings");
+    const { searchKnowledgeBaseChunks, normalizeRetrievalRequest, RetrievalQueryError } = await import("../embeddings");
+    let normalized;
+    try {
+      normalized = normalizeRetrievalRequest({ query, topK, scoreThreshold }, { topK: 5, scoreThreshold: 0.3 });
+    } catch (err) {
+      if (err instanceof RetrievalQueryError) return res.status(400).json({ error: err.message });
+      throw err;
+    }
     const results = await searchKnowledgeBaseChunks(
       kbId,
-      query,
-      Number.isFinite(Number(topK)) ? Number(topK) : 5,
-      Number.isFinite(Number(scoreThreshold)) ? Number(scoreThreshold) : 0.3,
+      normalized.query,
+      normalized.topK,
+      normalized.scoreThreshold,
       undefined, // no interactive role for an API-key caller — safe default applies
     );
     res.json({

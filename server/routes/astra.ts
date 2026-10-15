@@ -463,7 +463,7 @@ router.post("/api/astra/threads/:id/messages/stream", llmInvokeRateLimiter, chec
     await store.titleIfDefault(threadId, ctx.orgId, parsed.data.text).catch(() => {});
     // Attachments are uploaded before the conversation may exist, so they are
     // tied to it here, on the message that carries them.
-    const attached = await attachFilesToThread(parsed.data.fileIds ?? [], ctx.orgId, threadId);
+    const attached = await attachFilesToThread(parsed.data.fileIds ?? [], ctx.orgId, threadId, parsed.data.text);
     await runTurn(deps, ctx, threadId, parsed.data.text, send, attached);
   } catch (err) {
     if (err instanceof AstraBusyError || err instanceof AstraNotFoundError) streamError(send, err);

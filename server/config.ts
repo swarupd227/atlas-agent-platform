@@ -11,6 +11,74 @@ import { describeSecretStore, validateSecretStoreEnv } from "./secret-store";
 import { describeTrustProxy, validateTrustProxyEnv } from "./client-address";
 import { INTEGRATION_REGISTRY } from "./integrations/registry";
 
+const MiB = 1024 * 1024;
+const GiB = 1024 * MiB;
+
+/**
+ * Operational bounds for document extraction, attachment search, retrieval and
+ * original-file storage. Environment may lower a value; it cannot raise one
+ * past the ceiling, and a missing or rejected value stays at the default.
+ * Chunk size and retrieval preferences stay on the knowledge base row.
+ */
+const KNOWLEDGE_LIMIT_SPECS = {
+  attachmentBudgetChars: { env: "KNOWLEDGE_ATTACHMENT_BUDGET_CHARS", fallback: 120_000, floor: 1_000, ceiling: 500_000 },
+  attachmentReadChars: { env: "KNOWLEDGE_ATTACHMENT_READ_CHARS", fallback: 40_000, floor: 1_000, ceiling: 200_000 },
+  attachmentCacheChars: { env: "KNOWLEDGE_ATTACHMENT_CACHE_CHARS", fallback: 60_000_000, floor: 1_000, ceiling: 200_000_000 },
+  attachmentSearchResults: { env: "KNOWLEDGE_ATTACHMENT_SEARCH_RESULTS", fallback: 25, floor: 1, ceiling: 25 },
+  attachmentSearchSections: { env: "KNOWLEDGE_ATTACHMENT_SEARCH_SECTIONS", fallback: 100_000, floor: 1, ceiling: 200_000 },
+  zipMaxEntries: { env: "KNOWLEDGE_ZIP_MAX_ENTRIES", fallback: 4_096, floor: 1, ceiling: 10_000 },
+  zipMaxEntryBytes: { env: "KNOWLEDGE_ZIP_MAX_ENTRY_BYTES", fallback: 256 * MiB, floor: 1, ceiling: 256 * MiB },
+  zipMaxExpandedBytes: { env: "KNOWLEDGE_ZIP_MAX_EXPANDED_BYTES", fallback: 512 * MiB, floor: 1, ceiling: 512 * MiB },
+  retrievalMaxTopK: { env: "KNOWLEDGE_RETRIEVAL_MAX_TOP_K", fallback: 50, floor: 1, ceiling: 50 },
+  retrievalMaxQueryChars: { env: "KNOWLEDGE_RETRIEVAL_MAX_QUERY_CHARS", fallback: 8_000, floor: 1, ceiling: 8_000 },
+  orgStoredBytes: { env: "KNOWLEDGE_ORG_STORED_BYTES", fallback: GiB, floor: 1, ceiling: 10 * GiB },
+} as const;
+
+type KnowledgeLimitKey = keyof typeof KNOWLEDGE_LIMIT_SPECS;
+export type KnowledgeLimits = Record<KnowledgeLimitKey, number>;
+
+function boundedKnowledgeLimit(key: KnowledgeLimitKey): number {
+  const spec = KNOWLEDGE_LIMIT_SPECS[key];
+  const raw = process.env[spec.env];
+  if (raw === undefined || raw.trim() === "") return spec.fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n)) return spec.fallback;
+  return Math.min(spec.ceiling, Math.max(spec.floor, n));
+}
+
+function knowledgeLimitsFromEnv(): KnowledgeLimits {
+  return {
+    attachmentBudgetChars: boundedKnowledgeLimit("attachmentBudgetChars"),
+    attachmentReadChars: boundedKnowledgeLimit("attachmentReadChars"),
+    attachmentCacheChars: boundedKnowledgeLimit("attachmentCacheChars"),
+    attachmentSearchResults: boundedKnowledgeLimit("attachmentSearchResults"),
+    attachmentSearchSections: boundedKnowledgeLimit("attachmentSearchSections"),
+    zipMaxEntries: boundedKnowledgeLimit("zipMaxEntries"),
+    zipMaxEntryBytes: boundedKnowledgeLimit("zipMaxEntryBytes"),
+    zipMaxExpandedBytes: boundedKnowledgeLimit("zipMaxExpandedBytes"),
+    retrievalMaxTopK: boundedKnowledgeLimit("retrievalMaxTopK"),
+    retrievalMaxQueryChars: boundedKnowledgeLimit("retrievalMaxQueryChars"),
+    orgStoredBytes: boundedKnowledgeLimit("orgStoredBytes"),
+  };
+}
+
+/** Clamped even when startup validation did not run, so a limit cannot be lifted to unlimited. */
+export const knowledgeLimits: KnowledgeLimits = knowledgeLimitsFromEnv();
+
+/** Invalid or above-ceiling values refuse to start. The runtime object is already clamped. */
+export function validateKnowledgeLimitsEnv(): string[] {
+  const errors: string[] = [];
+  for (const spec of Object.values(KNOWLEDGE_LIMIT_SPECS)) {
+    const raw = process.env[spec.env];
+    if (raw === undefined || raw.trim() === "") continue;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < spec.floor || n > spec.ceiling) {
+      errors.push(`${spec.env} must be an integer from ${spec.floor} to ${spec.ceiling}.`);
+    }
+  }
+  return errors;
+}
+
 /** True when demo & mock surfaces (/demo-api, /api/mock, mock-MCP, demo seeders) should be active. */
 export function demosEnabled(): boolean {
   const v = process.env.ENABLE_DEMOS;
@@ -56,6 +124,8 @@ export function validateEnv(): void {
   errors.push(...validateSecretStoreEnv());
   // A wrong proxy count would count every client as one (or believe a forged address): stop here instead.
   errors.push(...validateTrustProxyEnv());
+  // A knowledge limit above its ceiling would let one upload or search grow without a bound.
+  errors.push(...validateKnowledgeLimitsEnv());
 
   if (errors.length > 0) {
     console.error(

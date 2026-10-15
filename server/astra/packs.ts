@@ -7,6 +7,9 @@
 
 export const LOAD_TOOLS = "load_tools";
 
+/** Loaded by the engine itself on a turn whose attached file was too large to show whole. */
+export const ATTACHMENTS_PACK = "attachments";
+
 export const PACKS = [
   { id: "governance", label: "Governance", description: "Which policies apply to an agent, installing and binding policies, governance readiness, verifying the audit chain, regulatory exam packages." },
   { id: "evaluation", label: "Evaluation", description: "Eval datasets and runs: run an agent's evaluation, follow it, compare with the previous run, explain failures." },
@@ -15,6 +18,7 @@ export const PACKS = [
   { id: "ontology", label: "Ontology & Graph", description: "The industry's vocabulary: what a concept means and what it links to, which agents carry it, how much of the vocabulary is used, an agent's tool alignment for production, and checking text against the vocabulary." },
   { id: "runs", label: "Runs", description: "What a run actually did rather than what its status word says: how much of it ran, why each step was skipped and whether that is a defect or a branch working as drawn, which runs need somebody, steps of a team that never run at all, and one run against another. Starting, following and cancelling runs needs no pack." },
   { id: "connectors", label: "Connectors", description: "Whether a connector is reachable and when that was last actually checked, probing one now, which connector offers a tool that does something, which agents use one, and what connecting a platform would need. Finding and attaching connectors needs no pack." },
+  { id: "attachments", label: "Attached files", description: "Search and read any part of a file attached to this conversation, including the parts of a large file that were not shown in the message. Loaded automatically when a file is too large to show whole." },
 ] as const;
 
 export type PackId = (typeof PACKS)[number]["id"];
