@@ -7,11 +7,47 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 
+const routeState = vi.hoisted(() => ({
+  execute: vi.fn(),
+  getKnowledgeBase: vi.fn(),
+  createKnowledgeSource: vi.fn(),
+  getKnowledgeSources: vi.fn(),
+  updateKnowledgeBase: vi.fn(),
+  updateKnowledgeSource: vi.fn(),
+  deleteKnowledgeSource: vi.fn(),
+}));
+
+vi.mock("../server/db", () => {
+  const executor: any = {
+    execute: routeState.execute,
+    select: () => ({ from: () => ({ where: async () => [] }) }),
+    insert: () => ({ values: () => ({ onConflictDoNothing: async () => {} }) }),
+  };
+  executor.transaction = async (run: (tx: typeof executor) => Promise<void>) => run(executor);
+  return { db: executor, pool: { on: () => {}, end: async () => {} } };
+});
+
+vi.mock("../server/storage", () => ({
+  storage: {
+    getKnowledgeBase: routeState.getKnowledgeBase,
+    createKnowledgeSource: routeState.createKnowledgeSource,
+    getKnowledgeSources: routeState.getKnowledgeSources,
+    updateKnowledgeBase: routeState.updateKnowledgeBase,
+    updateKnowledgeSource: routeState.updateKnowledgeSource,
+    deleteKnowledgeSource: routeState.deleteKnowledgeSource,
+  },
+}));
+
+vi.mock("../server/kb-sensitivity", () => ({
+  sensitivitySecondOpinion: vi.fn(async ({ keywordLevel }: { keywordLevel: string }) => ({ level: keywordLevel })),
+}));
+
 const ENV = [
   "KNOWLEDGE_ATTACHMENT_BUDGET_CHARS",
   "KNOWLEDGE_ZIP_MAX_ENTRIES",
   "KNOWLEDGE_ORG_STORED_BYTES",
   "KNOWLEDGE_RETRIEVAL_MAX_TOP_K",
+  "SECURITY_MODE",
 ] as const;
 
 const saved: Record<string, string | undefined> = {};
@@ -89,6 +125,48 @@ describe("original file quota", () => {
     expect(slice.indexOf("assertOrgFileQuota")).toBeGreaterThanOrEqual(0);
     expect(slice.indexOf("assertOrgFileQuota")).toBeLessThan(slice.indexOf("createKnowledgeSource"));
     expect(slice).toContain("status(413)");
+  });
+
+  it("does not publish a source count when the transactional quota check rejects the upload", async () => {
+    process.env.SECURITY_MODE = "demo";
+    routeState.execute
+      .mockResolvedValueOnce({ rows: [{ used: 0 }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ used: 1024 * 1024 * 1024 }] });
+    routeState.getKnowledgeBase.mockResolvedValue({ id: "kb-1", organizationId: "org-1", industry: "general" });
+    routeState.createKnowledgeSource.mockResolvedValue({ id: "source-1", knowledgeBaseId: "kb-1" });
+    routeState.getKnowledgeSources.mockResolvedValue([{ id: "source-1" }]);
+    routeState.updateKnowledgeSource.mockResolvedValue({ id: "source-1" });
+    routeState.deleteKnowledgeSource.mockResolvedValue(true);
+
+    let uploadHandler: ((req: any, res: any) => Promise<unknown>) | undefined;
+    const app = {
+      get: () => {},
+      patch: () => {},
+      delete: () => {},
+      post: (path: string, ...handlers: unknown[]) => {
+        if (path === "/api/knowledge-bases/:id/sources/upload") uploadHandler = handlers.at(-1) as typeof uploadHandler;
+      },
+    };
+    const { registerKnowledgeBaseRoutes } = await import("../server/kb-routes");
+    registerKnowledgeBaseRoutes(app as any);
+
+    let status = 200;
+    let body: any;
+    const response = {
+      status(code: number) { status = code; return this; },
+      json(value: unknown) { body = value; return this; },
+    };
+    await uploadHandler?.({
+      params: { id: "kb-1" },
+      headers: { "x-organization-id": "org-1" },
+      file: { originalname: "notes.txt", mimetype: "text/plain", size: 5, buffer: Buffer.from("hello") },
+    }, response);
+
+    expect(status).toBe(413);
+    expect(body.message).toContain("storage limit");
+    expect(routeState.deleteKnowledgeSource).toHaveBeenCalledWith("source-1", "org-1");
+    expect(routeState.updateKnowledgeBase).not.toHaveBeenCalled();
   });
 
   it("answers an over-large Office archive with 400 and the reader's own message", () => {

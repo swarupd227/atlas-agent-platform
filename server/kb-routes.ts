@@ -1060,9 +1060,6 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         mimeType: file.mimetype,
       });
 
-      const allSources = await storage.getKnowledgeSources(req.params.id as string);
-      await storage.updateKnowledgeBase(req.params.id as string, { totalSources: allSources.length });
-
       let sensitivityWarnings: SensitivityWarning[] = [];
       try {
         sensitivityWarnings = await performSensitivityScan(text, req.params.id as string, kb.industry, getOrgId(req), source.id);
@@ -1080,6 +1077,8 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         }
         throw err;
       }
+      const allSources = await storage.getKnowledgeSources(req.params.id as string);
+      await storage.updateKnowledgeBase(req.params.id as string, { totalSources: allSources.length });
       processSourceInBackground(source.id, req.params.id as string, false, extracted);
       res.status(201).json({
         ...sourceForList(source),

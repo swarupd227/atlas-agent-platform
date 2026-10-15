@@ -22,7 +22,7 @@ vi.mock("../server/db", () => ({
 
 import { extractTextFromFile } from "../server/file-extract";
 import { buildAttachmentContext } from "../server/attachment-context";
-import { clearSectionCache, readAttachmentSections, searchAttachments, selectSections, scoreSections } from "../server/attachment-sections";
+import { clearSectionCache, readAttachmentSections, resolveFile, searchAttachments, selectSections, scoreSections } from "../server/attachment-sections";
 import { attachmentToolsFor, executeBuiltinAttachmentTool, isBuiltinAttachmentTool } from "../server/builtin-attachment-tools";
 import { BUILTIN_ATTACHMENT_SERVER_ID } from "../server/attachment-tool-defs";
 import { largePdf, largeText, largeXlsx } from "./support/large-documents";
@@ -133,6 +133,21 @@ describe("search_attachment and read_attachment_section", () => {
     const b = { id: "b", filename: "b.txt", extractedText: "two", content: null };
     expect((await readAttachmentSections([a, b], {})).error).toContain('"a.txt"');
     expect((await searchAttachments([a, b], { query: "one", file: "c.txt" })).error).toContain("No attached file named");
+  });
+
+  it("keeps long filenames distinct and exposes a stable id when their display names collide", async () => {
+    const shared = "a".repeat(120);
+    const a = { id: "first", filename: `${shared}-first.txt`, extractedText: "first marker", content: null };
+    const b = { id: "second", filename: `${shared}-second.txt`, extractedText: "second marker", content: null };
+
+    expect(resolveFile([a, b], b.filename)).toBe(b);
+    expect(resolveFile([a, b], shared)).toMatchObject({ error: expect.stringContaining("more than one") });
+
+    const found = await searchAttachments([a, b], { query: "second marker" });
+    expect((found.results as any[])[0]).toMatchObject({ fileId: "second", file: shared });
+    const read = await readAttachmentSections([a, b], { file: (found.results as any[])[0].fileId });
+    expect(read).toMatchObject({ ok: true, fileId: "second" });
+    expect((read.sections as any[])[0].text).toContain("second marker");
   });
 
   it("score an exact identifier above common words", () => {

@@ -293,18 +293,33 @@ export { SEARCH_ATTACHMENT_TOOL, READ_ATTACHMENT_SECTION_TOOL, ATTACHMENT_TOOL_G
 /** Which attached file a tool call means: by id, exact name, or a name it starts with; the only one when there is one. */
 export function resolveFile<T extends { id: string; filename: string }>(files: T[], ref: unknown): T | { error: string } {
   const shown = (name: string) => filenameForLog(name);
-  const label = (name: string) => `"${shown(name)}"`;
+  const label = (file: T) => `"${shown(file.filename)}" (fileId: ${file.id})`;
   const raw = typeof ref === "string" ? ref.trim() : "";
   if (!raw) {
     if (files.length === 1) return files[0];
-    return { error: `Name the file: one of ${files.map((f) => label(f.filename)).join(", ")}.` };
+    return { error: `Name the file: one of ${files.map(label).join(", ")}.` };
   }
+  const byId = files.find((f) => f.id === raw);
+  if (byId) return byId;
+
   const want = shown(raw);
-  const lower = want.toLowerCase();
-  const found = files.find((f) => f.id === raw) ??
-    files.find((f) => shown(f.filename).toLowerCase() === lower) ??
-    files.find((f) => shown(f.filename).toLowerCase().startsWith(lower));
-  return found ?? { error: `No attached file named "${want}". Attached: ${files.map((f) => label(f.filename)).join(", ")}.` };
+  const rawLower = raw.toLowerCase();
+  const shownLower = want.toLowerCase();
+  const choose = (matches: T[]): T | { error: string } | undefined => {
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      return { error: `"${want}" matches more than one attached file. Use its fileId: ${matches.map((f) => f.id).join(", ")}.` };
+    }
+  };
+
+  const exact = choose(files.filter((f) => f.filename.toLowerCase() === rawLower));
+  if (exact) return exact;
+  const displayed = choose(files.filter((f) => shown(f.filename).toLowerCase() === shownLower));
+  if (displayed) return displayed;
+  const prefixed = choose(files.filter((f) =>
+    f.filename.toLowerCase().startsWith(rawLower) || shown(f.filename).toLowerCase().startsWith(shownLower),
+  ));
+  return prefixed ?? { error: `No attached file named "${want}". Attached: ${files.map(label).join(", ")}.` };
 }
 
 function excerpt(text: string, query: string, max = 1_200): string {
@@ -333,7 +348,7 @@ export async function searchAttachments(
   const resultCap = limits?.maxResults ?? knowledgeLimits.attachmentSearchResults;
   const limit = Math.min(Math.max(1, Number(args.limit) || 8), resultCap);
   const sectionBudget = limits?.maxSections ?? knowledgeLimits.attachmentSearchSections;
-  type Hit = { file: string; section: number; location: string; score: number; raw: number; text: string };
+  type Hit = { fileId: string; file: string; section: number; location: string; score: number; raw: number; text: string };
   const best: Hit[] = [];
   let matches = 0;
   let searched = 0;
@@ -367,6 +382,7 @@ export async function searchAttachments(
     for (let i = 0; i < scores.length; i++) {
       if (scores[i] <= 0) continue;
       consider({
+        fileId: f.id,
         file: fileName,
         section: i + 1,
         location: describeLocator(window[i].locator),
@@ -376,7 +392,7 @@ export async function searchAttachments(
     }
   }
   best.sort((a, b) => b.raw - a.raw || a.section - b.section);
-  const results = best.map((hit) => ({ file: hit.file, section: hit.section, location: hit.location, score: hit.score, text: hit.text }));
+  const results = best.map((hit) => ({ fileId: hit.fileId, file: hit.file, section: hit.section, location: hit.location, score: hit.score, text: hit.text }));
   return {
     ok: true,
     query,
@@ -428,6 +444,7 @@ export async function readAttachmentSections(
   const last = out[out.length - 1].section;
   return {
     ok: true,
+    fileId: target.id,
     file: filenameForLog(target.filename),
     totalSections: sections.length,
     sections: out,
