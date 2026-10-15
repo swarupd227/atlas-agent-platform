@@ -5,6 +5,7 @@ import { ANTHROPIC_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, awaitStreamWi
 import { currentLlmAbortSignal } from "./llm-abort-context";
 import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import { resolveProviderKey } from "./llm-provider-keys";
+import { bedrockChatBlocksFallback, getBedrockChatClient } from "./bedrock-anthropic";
 
 export interface LLMMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -1205,6 +1206,9 @@ class AnthropicProvider implements LLMProvider {
 
   // See OpenAIProvider.getClient() -- same lazy rebuild-on-key-change pattern.
   private async getClient(): Promise<Anthropic> {
+    // Chat switched to Amazon Bedrock on the Model Providers page: same calls, answered by Claude on Bedrock.
+    const bedrock = await getBedrockChatClient();
+    if (bedrock) return bedrock.client as Anthropic;
     const resolved = await resolveProviderKey("anthropic");
     const cacheKey = `${resolved.apiKey ?? ""}::${resolved.baseUrl ?? ""}`;
     if (!this.client || this.clientKey !== cacheKey) {
@@ -1687,11 +1691,12 @@ class AnthropicProvider implements LLMProvider {
   }
 
   async getInfo(): Promise<LLMProviderInfo> {
+    const bedrock = await getBedrockChatClient();
     const resolved = await resolveProviderKey("anthropic");
     return {
       name: "anthropic",
-      displayName: "Anthropic",
-      configured: !!resolved.apiKey,
+      displayName: bedrock ? "Anthropic Claude (on Amazon Bedrock)" : "Anthropic",
+      configured: !!bedrock || !!resolved.apiKey,
       models: ANTHROPIC_MODELS,
     };
   }
@@ -1880,7 +1885,7 @@ export function primaryProviderName(options?: Pick<LLMCompletionOptions, "reques
   );
 }
 
-function providerChain(providers: LLMProvider[] | undefined, options?: LLMCompletionOptions): LLMProvider[] {
+async function providerChain(providers: LLMProvider[] | undefined, options?: LLMCompletionOptions): Promise<LLMProvider[]> {
   let list: LLMProvider[];
   if (providers && providers.length > 0) {
     list = providers;
@@ -1889,7 +1894,10 @@ function providerChain(providers: LLMProvider[] | undefined, options?: LLMComple
     const fallbackName = primary.providerName === "openai" ? "anthropic" : "openai";
     list = [primary, getProvider(fallbackName)];
   }
-  return providerFallbackAllowed(options) ? list : list.slice(0, 1);
+  if (!providerFallbackAllowed(options)) return list.slice(0, 1);
+  // Chat on Bedrock with "AWS only" set: a call that fails there is never handed to OpenAI.
+  if (list.length > 1 && (await bedrockChatBlocksFallback())) return [list[0], ...list.slice(1).filter((p) => p.providerName !== "openai")];
+  return list;
 }
 
 /**
@@ -1929,7 +1937,7 @@ export async function completeWithFallback(
   options?: LLMCompletionOptions,
   providers?: LLMProvider[],
 ): Promise<LLMCompletionResult> {
-  const providerList = providerChain(providers, options);
+  const providerList = await providerChain(providers, options);
 
   const errors: string[] = [];
   let lastReason = "";
@@ -1980,7 +1988,7 @@ export async function streamCompleteWithFallback(
   onChunk: (chunk: string) => void,
   providers?: LLMProvider[],
 ): Promise<LLMCompletionResult> {
-  const providerList = providerChain(providers, options);
+  const providerList = await providerChain(providers, options);
 
   const errors: string[] = [];
   let lastReason = "";

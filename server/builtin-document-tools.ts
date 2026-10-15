@@ -39,12 +39,13 @@ export const GENERATE_PPTX_TOOL = "generate_pptx";
 export const GENERATE_PDF_TOOL = "generate_pdf";
 export const FILL_TEMPLATE_TOOL = "fill_document_template";
 export const INSPECT_DOCUMENT_TOOL = "inspect_document";
+export const READ_DOCUMENT_TOOL = "read_document";
 
 /**
  * The tools whose whole purpose is to produce a file. A call to one that ends
  * without a file is a deliverable that was attempted and not made -- which the
  * DAG engine tracks, so a run cannot finish "completed" on a missing file.
- * inspect_document reads files and is deliberately not here.
+ * inspect_document and read_document read files and are deliberately not here.
  */
 export const FILE_PRODUCING_TOOLS: ReadonlySet<string> = new Set([GENERATE_PPTX_TOOL, GENERATE_PDF_TOOL, FILL_TEMPLATE_TOOL]);
 
@@ -163,6 +164,49 @@ const INSPECT_JSON_SCHEMA = {
   },
 } as const;
 
+const READ_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    documentFileId: { type: "string", description: "Id of the document to read, e.g. as listed under UPSTREAM DELIVERABLES." },
+    documentFilename: {
+      type: "string",
+      description: "Filename of the document to read when its id is not known; the most recent file with that name is used.",
+    },
+    maxChars: { type: "number", description: "Optional cap on the text returned (default 60000, at most 200000). The result says when it was cut." },
+  },
+} as const;
+
+/** How much of a document read_document returns unless asked otherwise. */
+export const READ_DOCUMENT_DEFAULT_CHARS = 60_000;
+export const READ_DOCUMENT_MAX_CHARS = 200_000;
+
+/**
+ * read_document: the text of a file this run produced or was given, for an
+ * agent that has no container to open it in.
+ *
+ * Until this existed, a worker handed an upstream deliverable without a sandbox
+ * was told the file exists and that it could not inspect it. The notification
+ * steps of two journeys did exactly as told, live on 2026-10-12: each opened
+ * its notice with a disclosure that it could not read the summary PDF the step
+ * before had generated. Honest, and useless to the reader. inspect_document
+ * covers decks only; this reads the text of any format the upload reader
+ * handles (pdf, docx, xlsx, pptx, csv, text).
+ */
+export function readDocumentToolDef(): AvailableTool {
+  return {
+    serverId: BUILTIN_DOCUMENT_SERVER_ID,
+    serverName: BUILTIN_DOCUMENT_SERVER_NAME,
+    serverUrl: "",
+    toolName: READ_DOCUMENT_TOOL,
+    toolDescription:
+      "Read the text of a document produced earlier in this run or uploaded to it: a PDF, Word, Excel, PowerPoint, CSV or text file. " +
+      "Pass documentFileId (as listed under UPSTREAM DELIVERABLES) or documentFilename. Returns the file's text, how many characters it " +
+      "holds and whether the text was cut short. Use it before describing, summarising, checking or forwarding a file; never report on " +
+      "a file's contents from an earlier step's description of it. File ids are for this tool only: never show them to the user.",
+    toolInputSchema: READ_JSON_SCHEMA,
+  };
+}
+
 function toolDef(toolName: string, format: DocumentFormat, description: string): AvailableTool {
   return {
     serverId: BUILTIN_DOCUMENT_SERVER_ID,
@@ -248,6 +292,7 @@ export function documentToolsForSkills(skills: Skill[], mode: DocumentGeneration
         "slide's text shapes with their current text and maxChars, the text that fits there. Judge from these facts.",
       toolInputSchema: INSPECT_JSON_SCHEMA,
     },
+    readDocumentToolDef(),
   ];
 }
 
@@ -265,8 +310,9 @@ export async function executeBuiltinDocumentTool(
   ctx: { orgId?: string | null; agentId?: string; workspaceRunId?: string; traceId?: string },
 ): Promise<any> {
   if (!nativeToolAllowed("documents")) throw new LockdownError("Document generation");
-  // Inspection reads documents and produces none, so it needs no agent to attribute a file to.
+  // Inspection and reading consume documents and produce none, so they need no agent to attribute a file to.
   if (toolName === INSPECT_DOCUMENT_TOOL) return executeInspect(args, ctx);
+  if (toolName === READ_DOCUMENT_TOOL) return executeRead(args, ctx);
   if (!ctx.agentId) throw new Error(`No agent context to generate a document for "${toolName}"`);
   if (toolName === FILL_TEMPLATE_TOOL) return executeTemplateFill(args, ctx);
 
@@ -446,11 +492,11 @@ function overflowNote(overflow: TemplateFillReport["overflow"]): string {
 async function loadDocumentBytes(
   spec: { documentFileId?: string; documentFilename?: string },
   orgId?: string | null,
-): Promise<{ content: Buffer; filename: string } | { error: string }> {
+): Promise<{ content: Buffer; filename: string; mimeType: string | null } | { error: string }> {
   const generatedScope = (extra: any) => (orgId ? and(extra, eq(agentGeneratedFiles.organizationId, orgId)) : extra);
   const uploadedScope = (extra: any) => (orgId ? and(extra, eq(uploadedFiles.organizationId, orgId)) : extra);
 
-  let row: { filename: string | null; content: unknown } | undefined;
+  let row: { filename: string | null; content: unknown; mimeType?: string | null } | undefined;
   if (spec.documentFileId) {
     [row] = await db.select().from(agentGeneratedFiles).where(generatedScope(eq(agentGeneratedFiles.id, spec.documentFileId)));
     if (!row) [row] = await db.select().from(uploadedFiles).where(uploadedScope(eq(uploadedFiles.id, spec.documentFileId)));
@@ -476,7 +522,89 @@ async function loadDocumentBytes(
   if (!row.content) {
     return { error: `"${row.filename ?? ref}" was produced in a code-execution sandbox and its bytes are not stored here, so it cannot be inspected.` };
   }
-  return { content: Buffer.from(row.content as any), filename: row.filename ?? ref };
+  return { content: Buffer.from(row.content as any), filename: row.filename ?? ref, mimeType: row.mimeType ?? null };
+}
+
+/**
+ * read_document. A file produced in this run is read by id through storage
+ * (its bytes are inline for platform-rendered files); an uploaded file by id
+ * already carries the reader's text and is served from that; a file named by
+ * filename is looked up the way inspect_document looks decks up. The text comes
+ * from the same reader every upload goes through, so what an agent reads here
+ * is what a person attaching the file would have had read for them.
+ */
+async function executeRead(args: Record<string, any>, ctx: { orgId?: string | null }): Promise<any> {
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const documentFileId = str(args.documentFileId);
+  const documentFilename = str(args.documentFilename);
+  if (!documentFileId && !documentFilename) {
+    return { ok: false, error: "Name the document to read: documentFileId (as listed under UPSTREAM DELIVERABLES) or documentFilename." };
+  }
+  const requested = Number(args.maxChars);
+  const maxChars = Number.isFinite(requested) && requested > 0
+    ? Math.min(READ_DOCUMENT_MAX_CHARS, Math.max(1_000, Math.floor(requested)))
+    : READ_DOCUMENT_DEFAULT_CHARS;
+
+  let filename = documentFilename ?? documentFileId ?? "";
+  let kind: string | null = null;
+  let text = "";
+  let readerTruncated = false;
+  try {
+    let bytes: { content: Buffer; filename: string; mimeType: string | null } | null = null;
+    if (documentFileId) {
+      const generated = await storage.getAgentGeneratedFile(documentFileId, ctx.orgId ?? undefined);
+      if (generated?.content) {
+        bytes = { content: Buffer.from(generated.content as any), filename: generated.filename ?? documentFileId, mimeType: generated.mimeType ?? null };
+      } else if (generated) {
+        return { ok: false, error: `"${generated.filename ?? documentFileId}" was produced in a code-execution sandbox and its bytes are not stored here, so it cannot be read.` };
+      } else {
+        const { readAttachedFiles } = await import("./attachment-context");
+        const [uploaded] = await readAttachedFiles([documentFileId], ctx.orgId ?? undefined);
+        if (uploaded) {
+          filename = uploaded.filename;
+          kind = uploaded.kind ?? null;
+          text = (uploaded.extractedText ?? "").trim();
+          readerTruncated = ((uploaded.extractMeta as Record<string, unknown> | null) ?? {}).truncated === true;
+        } else {
+          return { ok: false, error: `No document found matching ${documentFileId}.` };
+        }
+      }
+    } else {
+      const loaded = await loadDocumentBytes({ documentFilename }, ctx.orgId);
+      if ("error" in loaded) return { ok: false, error: loaded.error };
+      bytes = loaded;
+    }
+    if (bytes) {
+      const { extractTextFromFile } = await import("./file-extract");
+      const extracted = await extractTextFromFile(bytes.content, bytes.mimeType ?? undefined, bytes.filename);
+      filename = bytes.filename;
+      kind = extracted.kind ?? null;
+      text = (extracted.text ?? "").trim();
+      readerTruncated = (extracted.meta as Record<string, unknown> | undefined)?.truncated === true;
+    }
+  } catch (err: any) {
+    // Returned, not thrown: an unreadable file is a finding the agent reports.
+    return { ok: false, error: `Could not read "${filename}": ${err?.message ?? err}` };
+  }
+
+  const chars = text.length;
+  if (chars === 0) {
+    return {
+      ok: true, filename, kind, chars: 0, truncated: readerTruncated, text: "",
+      note: "No text could be read from this file. It is most likely a scan or an image-only document. Do not treat it as an empty document, and do not describe its contents.",
+    };
+  }
+  const cut = chars > maxChars;
+  return {
+    ok: true,
+    filename,
+    kind,
+    chars,
+    truncated: cut || readerTruncated,
+    text: cut ? text.slice(0, maxChars) : text,
+    ...(cut ? { note: `Showing the first ${maxChars} of ${chars} characters. Ask again with a larger maxChars (up to ${READ_DOCUMENT_MAX_CHARS}) for the rest.` } : {}),
+    ...(!cut && readerTruncated ? { note: "The reader stopped early on this file; what is shown is a partial reading." } : {}),
+  };
 }
 
 /**

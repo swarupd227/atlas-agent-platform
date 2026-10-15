@@ -34,6 +34,7 @@ const state = {
   updatedNodes: [] as Array<{ id: string; patch: any }>,
   audits: [] as any[],
   members: [] as Array<{ id: string; teamAgentId: string; memberAgentId: string }>,
+  deployments: [] as any[],
 };
 
 vi.mock("../server/storage", () => ({
@@ -43,6 +44,11 @@ vi.mock("../server/storage", () => ({
     getTeamBlueprintNodes: vi.fn(async () => state.nodes),
     getTeamBlueprintEdges: vi.fn(async () => state.edges),
     getAgent: vi.fn(async (id: string) => state.agents.get(id)),
+    // What retiring a superseded agent touches: its status, who else runs it, and
+    // whether a deployment of it is still live.
+    updateAgent: vi.fn(async (id: string, patch: any) => { const a = state.agents.get(id); if (a) Object.assign(a, patch); return a; }),
+    getAgentTeamsByMember: vi.fn(async (memberAgentId: string) => state.members.filter((m) => m.memberAgentId === memberAgentId)),
+    getDeployments: vi.fn(async () => state.deployments),
     createAgent: vi.fn(async (a: any) => {
       const agent = { id: `agent-${state.agents.size + 1}`, ...a };
       state.agents.set(agent.id, agent);
@@ -141,6 +147,7 @@ beforeEach(() => {
   state.updatedNodes = [];
   state.audits = [];
   state.members = [];
+  state.deployments = [];
 });
 
 describe("the correlation itself", () => {
@@ -360,6 +367,55 @@ describe("applying it", () => {
     // Three agents, not four: the approval step is a gate and runs no agent, so
     // there is nothing to supersede for it.
     expect(summary.superseded.map((s: any) => s.label).sort()).toEqual(["Bind Agent", "Normalise COPE Agent", "Treaty check Agent"]);
+  });
+});
+
+/**
+ * A superseded agent used to be left exactly as it was -- active, on the Agents
+ * page, under a card that said "retire manually when ready". Nobody did:
+ * one journey rebuilt three times in a day left eleven behind (2026-10-12).
+ * The sync now retires the agents it orphans, under the team delete's rule.
+ */
+describe("a superseded agent", () => {
+  const supersedeTreatyCheck = () => applyFlowSync(ORG, target(graph({ checkExpression: "aggregate <= 50000000" })), { via: "Studio" });
+
+  it("is retired when no other team runs it and nothing of it is deployed, and the summary says so", async () => {
+    state.nodes = blueprintFromFlow(graph());
+    state.members = [{ id: "m-1", teamAgentId: "team-1", memberAgentId: "agent-s2" }];
+    const r = await supersedeTreatyCheck();
+    expect((r as any).summary.superseded).toEqual([{ label: "Treaty check", agentId: "agent-s2", agentName: "Treaty check Agent", retired: true }]);
+    expect(state.agents.get("agent-s2").status).toBe("retired");
+    const audit = state.audits.find((a) => a.action === "agent_retired");
+    expect(audit).toMatchObject({ objectType: "agent", objectId: "agent-s2", actorId: "process_flow_sync" });
+    expect(JSON.parse(audit.details)).toMatchObject({ step: "Treaty check", teamAgentId: "team-1", via: "Studio" });
+    // And the sync's own record carries the outcome.
+    expect(JSON.parse(state.audits.at(-1)!.details).superseded).toEqual([expect.objectContaining({ agentId: "agent-s2", retired: true })]);
+  });
+
+  it("is kept, and the summary names who still uses it, when another team does", async () => {
+    state.nodes = blueprintFromFlow(graph());
+    state.agents.set("team-2", { id: "team-2", name: "Renewal Desk" });
+    state.members = [
+      { id: "m-1", teamAgentId: "team-1", memberAgentId: "agent-s2" },
+      { id: "m-2", teamAgentId: "team-2", memberAgentId: "agent-s2" },
+    ];
+    const r = await supersedeTreatyCheck();
+    expect((r as any).summary.superseded).toEqual([{ label: "Treaty check", agentId: "agent-s2", agentName: "Treaty check Agent", retired: false, keptBecause: "still used by Renewal Desk" }]);
+    expect(state.agents.get("agent-s2").status).toBeUndefined();
+    expect(state.audits.some((a) => a.action === "agent_retired")).toBe(false);
+  });
+
+  it("is kept while a deployment of it is live; a finished deployment does not hold it", async () => {
+    state.nodes = blueprintFromFlow(graph());
+    state.deployments = [{ id: "d-1", agentId: "agent-s2", status: "deployed", environment: "production" }];
+    const held = await supersedeTreatyCheck();
+    expect((held as any).summary.superseded[0]).toMatchObject({ retired: false, keptBecause: "has a live deployment (production: deployed)" });
+    expect(state.agents.get("agent-s2").status).toBeUndefined();
+
+    state.nodes = blueprintFromFlow(graph());
+    state.deployments = [{ id: "d-1", agentId: "agent-s2", status: "retired", environment: "production" }];
+    const freed = await supersedeTreatyCheck();
+    expect((freed as any).summary.superseded[0]).toMatchObject({ retired: true });
   });
 });
 
@@ -750,8 +806,11 @@ describe("a loop in the flow", () => {
     const { draftSingleAgent } = await import("../server/routes/helpers");
     const before = loopGraph();
     state.nodes = blueprintFromFlow(before);
-    // The target step changed, so it is redrafted -- and the draft fails.
-    vi.mocked(draftSingleAgent).mockRejectedValueOnce(new Error("model unavailable"));
+    // The target step changed, so it is redrafted -- and the draft fails on
+    // every attempt. The sync retries a draft three times (62f000f9), so a
+    // single refusal is now recovered from, not reported.
+    const unavailable = new Error("model unavailable");
+    vi.mocked(draftSingleAgent).mockRejectedValueOnce(unavailable).mockRejectedValueOnce(unavailable).mockRejectedValueOnce(unavailable);
 
     const r = await applyFlowSync(ORG, target(loopGraph({ draftLabel: "Draft endorsement, citing the treaty" })));
     const summary = (r as any).summary;
@@ -760,7 +819,7 @@ describe("a loop in the flow", () => {
     // A pointer to a node that does not exist is worse than no loop: it reads as
     // configured and can never fire.
     expect(revisionOn("s2")).toBeUndefined();
-  });
+  }, 20_000);
 });
 
 /**

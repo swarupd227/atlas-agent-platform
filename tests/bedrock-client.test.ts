@@ -124,12 +124,13 @@ describe("the connection test", () => {
     expect(r.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
-  it("chat: asks for one word and reports the answer", async () => {
+  it("chat: asks for one word, the way real chat traffic does, and reports the answer", async () => {
     const sent: any[] = [];
-    const sender: BedrockSender = { async send(cmd: any) { sent.push(cmd); return { output: { message: { content: [{ text: "OK" }] } } }; } };
+    const sender: BedrockSender = { async send(cmd: any) { sent.push(cmd); return reply({ content: [{ type: "text", text: "OK" }] }); } };
     const r = await testBedrockModel(sender, config, "chat");
     expect(r).toMatchObject({ ok: true, reply: "OK" });
-    expect(sent[0].input).toMatchObject({ modelId: "us.anthropic.claude-sonnet-4-5-20250929-v1:0", inferenceConfig: { maxTokens: 16 } });
+    expect(sent[0].input).toMatchObject({ modelId: "us.anthropic.claude-sonnet-4-5-20250929-v1:0" });
+    expect(bodyOf(sent[0])).toMatchObject({ anthropic_version: "bedrock-2023-05-31", max_tokens: 16 });
   });
 
   it("never throws: a failure is a result with words an administrator can act on", async () => {

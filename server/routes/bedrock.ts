@@ -25,6 +25,7 @@ import {
   effectiveRegion, isBedrockConfigured, loadBedrockConfig, parseBedrockConfig, saveBedrockConfig, saveBedrockCredentials,
 } from "../bedrock-config";
 import { generateIamPolicy, runtimeFor, testBedrockModel, explainBedrockError, looksLikeAwsError, BedrockError } from "../bedrock-client";
+import { invalidateBedrockChatClient } from "../bedrock-anthropic";
 import {
   SearchSwitchError, bedrockTarget, configuredBedrockTarget, currentMigration, getActiveEmbedding, isOpenAiEmbeddingConfigured, openAiTarget,
   pgVectorStore, probeDimensions, realMigrationDeps, requestStop, startMigration, switchActive, type EmbeddingTarget,
@@ -76,7 +77,8 @@ router.put("/api/admin/bedrock", platformOnly(checkPermission("manage_security")
   try {
     const { config: before } = await loadBedrockConfig();
     await saveBedrockConfig(next);
-    audit(req, "bedrock_settings_changed", { changed: changedBedrockFields(before, next), enabled: next.enabled, awsOnly: next.awsOnly });
+    audit(req, "bedrock_settings_changed", { changed: changedBedrockFields(before, next), enabled: next.enabled, awsOnly: next.awsOnly, useForChat: next.useForChat });
+    invalidateBedrockChatClient();
     res.json({ config: next, configured: isBedrockConfigured(next), effectiveRegion: effectiveRegion(next) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -89,6 +91,7 @@ router.post("/api/admin/bedrock/credentials", platformOnly(checkPermission("mana
   try {
     await saveBedrockCredentials(parsed.data, (req as any).authUser?.username);
     audit(req, "bedrock_credentials_saved", { sessionToken: !!parsed.data.sessionToken });
+    invalidateBedrockChatClient();
     res.json(await bedrockCredentialStatus());
   } catch (err: any) {
     if (err instanceof LockdownError) return res.status(403).json({ error: err.message });
@@ -100,6 +103,7 @@ router.delete("/api/admin/bedrock/credentials", platformOnly(checkPermission("ma
   try {
     await clearBedrockCredentials();
     audit(req, "bedrock_credentials_cleared", {});
+    invalidateBedrockChatClient();
     res.json(await bedrockCredentialStatus());
   } catch (err: any) {
     res.status(500).json({ error: err.message });

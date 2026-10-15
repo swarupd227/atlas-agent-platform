@@ -28,6 +28,7 @@ interface ModelRow {
 interface BedrockConfig {
   enabled: boolean;
   awsOnly: boolean;
+  useForChat: boolean;
   region: string;
   endpoint: string;
   credentialMode: "role" | "keys";
@@ -61,8 +62,8 @@ const REGIONS = [
 
 const JOBS: Array<{ purpose: Purpose; title: string; help: string }> = [
   { purpose: "embedding", title: "Document search", help: "Turns documents and questions into numbers so the platform can find the right passage." },
-  { purpose: "chat", title: "Chat and agents", help: "The main model agents think with. Used from the next release." },
-  { purpose: "fast", title: "Quick tasks", help: "A smaller, cheaper model for light jobs. Used from the next release." },
+  { purpose: "chat", title: "Chat and agents", help: "The Claude model agents, chat and evaluations think with once you switch chat to Bedrock below. Use a Claude id from Bedrock, Cross-region inference." },
+  { purpose: "fast", title: "Quick tasks", help: "Optional. A smaller Claude model (Haiku) for light jobs; when empty the chat model answers those too." },
 ];
 
 /** The text of an error thrown by apiRequest ("400: {"error":"..."}"), without the plumbing. */
@@ -310,6 +311,34 @@ function BedrockDialog({ open, onOpenChange, state }: { open: boolean; onOpenCha
                 </div>
               );
             })}
+          </div>
+
+          <div className="space-y-3 rounded-lg border p-4" data-testid="bedrock-chat-panel">
+            <h4 className="font-medium text-sm">Chat and agents on Bedrock</h4>
+            <p className="text-xs text-muted-foreground">
+              When this is on, every request that would have gone to Claude on the Anthropic API is answered by the Claude model above instead, inside your AWS account.
+              Agents, the playground and evaluations keep working as they are. Requests for OpenAI models are not changed.
+            </p>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="bedrock-use-chat" className="font-normal">Answer Claude requests from Bedrock</Label>
+              <Switch id="bedrock-use-chat" checked={draft.useForChat} disabled={!draft.models.chat?.modelId}
+                onCheckedChange={(v) => setDraft({ ...draft, useForChat: v })} data-testid="switch-bedrock-use-chat" />
+            </div>
+            {!draft.models.chat?.modelId && <p className="text-xs text-muted-foreground">Choose a model for "Chat and agents" first, press Test, then switch this on.</p>}
+            <div className="flex items-center justify-between">
+              <Label htmlFor="bedrock-aws-only" className="font-normal">Never fall back to OpenAI</Label>
+              <Switch id="bedrock-aws-only" checked={draft.awsOnly} onCheckedChange={(v) => setDraft({ ...draft, awsOnly: v })} data-testid="switch-bedrock-aws-only" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Normally, if Claude cannot answer, the platform tries OpenAI so work continues. With this on, a request that fails on Bedrock stays failed instead of leaving AWS.
+            </p>
+            <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
+              <div className="font-medium">Not available through Bedrock</div>
+              <ul className="list-disc pl-4 text-muted-foreground">
+                <li>Anthropic's code-running sandbox. A step that needs it stops with a clear message.</li>
+                <li>Anthropic's web search tool.</li>
+              </ul>
+            </div>
           </div>
 
           <SearchPanel />

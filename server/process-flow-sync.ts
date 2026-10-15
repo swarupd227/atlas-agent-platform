@@ -33,6 +33,7 @@ import { rewriteStateKeyReferences } from "@shared/rule-fields";
 import { effectiveStateKey, stateKeyForLabel } from "@shared/state-key";
 import { isCurrentReworkRule, REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants, type BlueprintCheck } from "./blueprint-invariants";
+import { retireSupersededAgents, type SupersededAgentOutcome } from "./superseded-agents";
 import type { ProcessEdge, ProcessFlowGraph, ProcessNode } from "@shared/process-flow";
 import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, withClassifier } from "@shared/flow-execution-kind";
 import { getDecisionSettings } from "./decision-settings";
@@ -165,8 +166,17 @@ export interface SyncTarget {
   /** The flow as it is drawn now. */
   graph: ProcessFlowGraph;
   flowName: string;
-  /** The team agent the flow was built into. */
-  teamAgent: { id: string; name: string; blueprintId?: string | null; industry?: string | null; outcomeId?: string | null; organizationId?: string | null };
+  /**
+   * The team agent the flow was built into.
+   *
+   * `industryId` / `journeyIndustryId`, not `industry`: the agents table has no
+   * `industry` column, and this type (plus FlowSyncTeamAgent, which mirrors it)
+   * declared one. A raw agent row is cast to the type, so TypeScript accepted
+   * the mismatch and the drafter was handed undefined on every sync -- ranking
+   * every agent it created against the "general" catalogue instead of the
+   * team's own vertical.
+   */
+  teamAgent: { id: string; name: string; blueprintId?: string | null; industryId?: string | null; journeyIndustryId?: string | null; outcomeId?: string | null; organizationId?: string | null };
   /** Set when the flow belongs to an outcome, so agents created here join it too. */
   outcomeId?: string | null;
 }
@@ -526,7 +536,12 @@ export interface SyncSummary {
   unchanged: number;
   changed: string[];
   added: string[];
-  superseded: Array<{ label: string; agentId: string }>;
+  /**
+   * The agents the rebuilt steps used before, each retired by this sync unless
+   * another team still runs it or a deployment of it is still live -- then it is
+   * kept, and `keptBecause` says why. See server/superseded-agents.ts.
+   */
+  superseded: SupersededAgentOutcome[];
   draftFailures: Array<{ label: string; error: string }>;
   /**
    * What became of the flow's loops, by the step each one leaves. Reported
@@ -561,7 +576,23 @@ export async function applyFlowSync(
   const { blueprintId, blueprint, existingEdges, diff } = loaded as Required<Awaited<ReturnType<typeof load>>> & { blueprintId: string };
   const isDecision: (pn: ProcessNode) => boolean = (loaded as any).isDecision ?? (() => false);
   const { teamAgent, graph } = target;
-  const industryId = (teamAgent as any).industry || "general";
+  // The industry the drafter ranks skills, policies, templates and ontology
+  // concepts against. This read was `(teamAgent as any).industry`, and the
+  // column is `industryId` -- so it was ALWAYS undefined and every agent the
+  // sync has ever drafted was ranked against "general". The `as any` is why
+  // tsc never said so. Measured live: 63 of 241 team agents have industryId
+  // set, and all of them were being ignored.
+  //
+  // journeyIndustryId is the fallback because it is the field that actually
+  // carries the truth for a curated journey -- the five Account journeys have
+  // industryId null and journeyIndustryId "insurance".
+  //
+  // NOT the organization's industry, deliberately. This org's is
+  // "legal_services" while those journeys are insurance, so falling back to it
+  // would rank confidently irrelevant resources into the prompt. A wrong
+  // industry is worse than a generic one: "general" returns little, a wrong
+  // vertical returns plenty and all of it misleading.
+  const industryId = teamAgent.industryId || teamAgent.journeyIndustryId || "general";
   const outcomeId = target.outcomeId ?? teamAgent.outcomeId ?? null;
 
   const superseded: Array<{ label: string; agentId: string }> = [];
@@ -728,7 +759,31 @@ export async function applyFlowSync(
       }
 
       const description = `${pn.label}${pn.description ? ": " + pn.description : ""}${pn.actor ? ` (performed by ${pn.actor})` : ""}`;
-      const { draft } = await draftSingleAgent(description, industryId, orgId);
+      // Retried, because a single bad response permanently dropped the step.
+      // draftSingleAgent is one LLM call, one JSON.parse and a throw -- no
+      // repair. Live 2026-10-14: "Display Account Dashboard" was lost on two
+      // consecutive syncs and the card still said the team matched the flow;
+      // a third sync drafted it with no change to the step at all, and the
+      // same description then drafted five times out of five on demand. So
+      // the failure was transient and the absence of a retry was the defect.
+      //
+      // Sequential and small: this runs inside a Promise.all over every new
+      // step, so a rebuild of 12 steps is already 12 concurrent calls, and
+      // retrying them all at once is how a transient overload becomes a
+      // sustained one.
+      let draft: Awaited<ReturnType<typeof draftSingleAgent>>["draft"] | undefined;
+      let lastDraftError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          draft = (await draftSingleAgent(description, industryId, orgId)).draft;
+          break;
+        } catch (e) {
+          lastDraftError = e;
+          console.warn(`[process-flow-sync] draft attempt ${attempt}/3 failed for "${pn.label}": ${(e as any)?.message}`);
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 1_500 * attempt));
+        }
+      }
+      if (!draft) throw lastDraftError instanceof Error ? lastDraftError : new Error("draft failed after 3 attempts");
       const agent = await storage.createAgent({
         // The team's organization, not the default one createAgent falls back to.
         organizationId: teamAgent.organizationId ?? orgId ?? undefined,
@@ -942,6 +997,10 @@ export async function applyFlowSync(
   // state no run can start from".
   const invariants = await checkBlueprintInvariants(blueprintId);
 
+  // The agents this sync orphaned. Retired here, after the blueprint is whole,
+  // rather than left for someone to notice on the Agents page.
+  const supersededOutcomes = await retireSupersededAgents(orgId, teamAgent.id, superseded, opts.via ?? "Studio");
+
   await storage.createAuditEvent({
     actorType: "system",
     actorId: "process_flow_sync",
@@ -958,6 +1017,7 @@ export async function applyFlowSync(
       added: diff.added.map((n) => n.label),
       removed: diff.removedNodes.map(labelOf),
       rebuilt: forceFullRebuild,
+      superseded: supersededOutcomes,
       draftFailures,
       revisionLoops,
       stateKeyRenames,
@@ -973,7 +1033,7 @@ export async function applyFlowSync(
       unchanged: diff.unchanged.length,
       changed: diff.changed.map((n) => n.label),
       added: diff.added.map((n) => n.label),
-      superseded,
+      superseded: supersededOutcomes,
       draftFailures,
       revisionLoops,
       stateKeyRenames,

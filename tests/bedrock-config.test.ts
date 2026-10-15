@@ -7,9 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // An in-memory stand-in for the two tables the settings use.
 const settings = new Map<string, { key: string; value: string }>();
 const keyRows = new Map<string, any>();
+let dbDown = false;
 vi.mock("../server/storage", () => ({
   storage: {
-    getPlatformSetting: async (key: string) => settings.get(key),
+    getPlatformSetting: async (key: string) => { if (dbDown) throw new Error("Connection terminated unexpectedly"); return settings.get(key); },
     upsertPlatformSetting: async (s: { key: string; value: string }) => { settings.set(s.key, s); return s; },
     getLlmProviderKey: async (provider: string) => keyRows.get(provider) ?? null,
     upsertLlmProviderKey: async (d: any) => { keyRows.set(d.provider, { ...d, updatedAt: new Date() }); return keyRows.get(d.provider); },
@@ -160,6 +161,21 @@ describe("loading and saving", () => {
     settings.set(BEDROCK_SETTING_KEY, { key: BEDROCK_SETTING_KEY, value: JSON.stringify({ enabled: true, region: "nowhere" }) });
     const { config } = await loadBedrockConfig();
     expect(config.enabled).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("keeps the settings it last read when the database cannot be reached, so chat does not slip back to Anthropic's own servers", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const on = parseBedrockConfig({ enabled: true, useForChat: true, region: "eu-central-1", models: { chat: { modelId: "us.anthropic.claude-sonnet-4-5-20250929-v1:0" } } });
+    await saveBedrockConfig(on);
+    expect((await loadBedrockConfig()).config.useForChat).toBe(true);
+    invalidateBedrockConfig();
+    dbDown = true;
+    try {
+      const during = await loadBedrockConfig();
+      expect(during.config).toEqual(on);
+      expect(during.source).toBe("admin");
+    } finally { dbDown = false; }
     spy.mockRestore();
   });
 

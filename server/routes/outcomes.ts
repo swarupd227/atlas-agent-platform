@@ -1705,11 +1705,17 @@ async function createOutcomeVersion(
       const parsed = processFlowBodySchema.parse(req.body);
       const graph = normalizeToGraph(parsed, parsed.name);
       if (!graph) return res.status(400).json({ message: "Flow has no steps to save. Add at least one step first." });
+      // The caller's organization, as createOutcome passes it. Left out, the
+      // insert fell back to the default org set once at boot -- and when that
+      // boot lookup failed during a deploy (live 2026-10-14, the database was
+      // timing out), every flow save answered 500 for the next six hours while
+      // updates, which carry the org from the row, kept working.
       const created = await storage.createProcessFlow({
         name: parsed.name,
         description: parsed.description,
         teamAgentId: parsed.teamAgentId,
         graph: { ...graph, name: parsed.name },
+        organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined,
       } as any);
       await recordFlowVersion(created.id, parsed.name, { ...graph, name: parsed.name }, {
         via: "Studio",

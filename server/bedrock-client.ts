@@ -6,13 +6,13 @@
  * Nothing is read from the environment or the database here except through the arguments, so all of it is testable without AWS:
  * a function that talks to Bedrock takes a `sender` (anything with `send(command)`), which is the real client in production.
  */
-import { BedrockRuntimeClient, ConverseCommand, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
+import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 import {
-  BEDROCK_PURPOSES, effectiveRegion, embeddingFamilyOf, loadBedrockCredentials,
+  BEDROCK_PURPOSES, effectiveRegion, embeddingFamilyOf, isClaudeModelId, loadBedrockCredentials,
   type BedrockConfig, type BedrockCredentials, type BedrockModelRow, type BedrockPurpose,
 } from "./bedrock-config";
 
-export interface BedrockSender { send(command: any): Promise<any> }
+export interface BedrockSender { send(command: any, options?: { abortSignal?: AbortSignal }): Promise<any> }
 
 /** Something wrong that an administrator can fix, said in words they can act on. */
 export interface BedrockProblem { code: string; message: string; hint: string }
@@ -26,7 +26,14 @@ export class BedrockError extends Error {
 
 // ── the client ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-export function createBedrockRuntime(config: BedrockConfig, creds: BedrockCredentials | null): BedrockRuntimeClient {
+export interface RuntimeOptions {
+  /** How long a connection may sit silent. Defaults to the saved "Request timeout"; chat needs far longer (a long answer is silent while it is written). */
+  timeoutMs?: number;
+  /** How many times the AWS client itself tries. Chat sets 1: the platform's own retry loop is the one that logs and paces. */
+  maxAttempts?: number;
+}
+
+export function createBedrockRuntime(config: BedrockConfig, creds: BedrockCredentials | null, opts: RuntimeOptions = {}): BedrockRuntimeClient {
   const region = effectiveRegion(config);
   if (!region) {
     throw new BedrockError({ code: "no_region", message: "No region is set.", hint: "Choose the AWS region Bedrock runs in on this page, or run the server in an AWS region (AWS_REGION)." });
@@ -40,14 +47,14 @@ export function createBedrockRuntime(config: BedrockConfig, creds: BedrockCreden
     ...(config.credentialMode === "keys" && creds
       ? { credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, ...(creds.sessionToken ? { sessionToken: creds.sessionToken } : {}) } }
       : {}),
-    maxAttempts: 2,
-    requestHandler: { requestTimeout: config.limits.timeoutMs, connectionTimeout: 5_000 },
+    maxAttempts: opts.maxAttempts ?? 2,
+    requestHandler: { requestTimeout: opts.timeoutMs ?? config.limits.timeoutMs, connectionTimeout: 5_000 },
   });
 }
 
 /** The client for the saved settings. */
-export async function runtimeFor(config: BedrockConfig): Promise<BedrockRuntimeClient> {
-  return createBedrockRuntime(config, config.credentialMode === "keys" ? await loadBedrockCredentials() : null);
+export async function runtimeFor(config: BedrockConfig, opts: RuntimeOptions = {}): Promise<BedrockRuntimeClient> {
+  return createBedrockRuntime(config, config.credentialMode === "keys" ? await loadBedrockCredentials() : null, opts);
 }
 
 // ── embeddings ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -144,6 +151,41 @@ export async function embedTexts(
   return { vectors, dimensions };
 }
 
+// ── Claude on Bedrock ────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Something the platform asks of Claude that Bedrock cannot do. Not retried, not handed to another provider. */
+export class BedrockUnsupportedError extends Error {
+  readonly status = 400;
+  constructor(message: string) { super(message); this.name = "BedrockUnsupportedError"; }
+}
+
+export const ANTHROPIC_VERSION_ON_BEDROCK = "bedrock-2023-05-31";
+
+/** Request fields the Anthropic API accepts that the Bedrock copy of the same API does not: dropped, never sent. */
+const NOT_ON_BEDROCK = new Set(["model", "stream", "metadata", "container", "service_tier"]);
+
+/**
+ * The body of one Claude call on Bedrock: the same Messages request the Anthropic API takes, with the model moved out of the body
+ * and a version marker added. Anthropic's own server-side tools (code execution, web search) run on Anthropic's servers and are
+ * not on Bedrock, so a request that needs one is refused in words rather than sent to fail in AWS's.
+ */
+export function anthropicRequestBody(params: Record<string, any>): Record<string, unknown> {
+  if (params.container) {
+    throw new BedrockUnsupportedError("This step needs Anthropic's code-running sandbox, which Amazon Bedrock does not offer. Run it with Claude on the Anthropic API, or without the sandbox.");
+  }
+  for (const tool of Array.isArray(params.tools) ? params.tools : []) {
+    if (tool && typeof tool.type === "string" && tool.type !== "custom") {
+      const what = /code_execution/.test(tool.type) ? "code-running sandbox" : /web_search/.test(tool.type) ? "web search" : `"${tool.type}" tool`;
+      throw new BedrockUnsupportedError(`This step needs Anthropic's ${what}, which Amazon Bedrock does not offer. Run it with Claude on the Anthropic API, or without that tool.`);
+    }
+  }
+  const body: Record<string, unknown> = { anthropic_version: ANTHROPIC_VERSION_ON_BEDROCK };
+  for (const [key, value] of Object.entries(params)) {
+    if (!NOT_ON_BEDROCK.has(key) && value !== undefined) body[key] = value;
+  }
+  return body;
+}
+
 // ── the connection test ──────────────────────────────────────────────────────────────────────────────────────────
 
 export interface BedrockTestResult {
@@ -164,18 +206,23 @@ export async function testBedrockModel(sender: BedrockSender, config: BedrockCon
   if (!row) {
     return { ok: false, purpose, modelId: "", latencyMs: 0, problem: { code: "no_model", message: "No model is set for this job.", hint: "Enter a model id for it, save, then test again." } };
   }
+  if (purpose !== "embedding" && !isClaudeModelId(row.modelId)) {
+    return { ok: false, purpose, modelId: row.modelId, latencyMs: 0, problem: { code: "not_claude", message: "Chat on Bedrock works with Claude models only.", hint: "Use a model id that contains anthropic.claude, for example one from Bedrock, Cross-region inference." } };
+  }
   const started = Date.now();
   try {
     if (purpose === "embedding") {
       const { dimensions } = await embedTexts(sender, row, ["Connection test."], "document", config.limits);
       return { ok: true, purpose, modelId: row.modelId, latencyMs: Date.now() - started, dimensions };
     }
-    const out = await sender.send(new ConverseCommand({
+    // The same call real chat traffic makes (Claude's Messages request through InvokeModel), so a passing test means chat works.
+    const out = readBody(await sender.send(new InvokeModelCommand({
       modelId: row.modelId,
-      messages: [{ role: "user", content: [{ text: "Reply with the single word OK." }] }],
-      inferenceConfig: { maxTokens: 16, temperature: 0 },
-    }));
-    const reply = String(out?.output?.message?.content?.[0]?.text ?? "").trim().slice(0, 80);
+      contentType: "application/json",
+      accept: "application/json",
+      body: JSON.stringify(anthropicRequestBody({ max_tokens: 16, temperature: 0, messages: [{ role: "user", content: "Reply with the single word OK." }] })),
+    })));
+    const reply = String(out?.content?.find((b: any) => b?.type === "text")?.text ?? "").trim().slice(0, 80);
     return { ok: true, purpose, modelId: row.modelId, latencyMs: Date.now() - started, reply };
   } catch (err) {
     return { ok: false, purpose, modelId: row.modelId, latencyMs: Date.now() - started, problem: explainBedrockError(err, { modelId: row.modelId, region: effectiveRegion(config) }) };
