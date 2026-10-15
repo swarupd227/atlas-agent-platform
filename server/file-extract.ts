@@ -20,6 +20,7 @@
 
 import { Readable } from "stream";
 import { StringDecoder } from "string_decoder";
+import { knowledgeLimits } from "./config";
 
 export type ExtractedKind = "text" | "csv" | "json" | "pdf" | "docx" | "xlsx" | "pptx" | "image" | "video";
 
@@ -156,6 +157,34 @@ const EXT = (filename: string) => {
  * (re-save as .xlsx) is not obvious otherwise.
  */
 const LEGACY_OFFICE = new Set(["xls", "ppt", "doc"]);
+
+/** One line, no control characters, short enough for a log field or a model result. */
+export function filenameForLog(name: string): string {
+  const cleaned = name.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  return cleaned || "(unnamed)";
+}
+
+/** An Office archive that would expand past the configured entry or byte ceilings. */
+export class ZipLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZipLimitError";
+  }
+}
+
+export interface OfficeZipLimits {
+  maxEntries: number;
+  maxEntryBytes: number;
+  maxExpandedBytes: number;
+}
+
+export function officeZipLimits(over?: Partial<OfficeZipLimits>): OfficeZipLimits {
+  return {
+    maxEntries: over?.maxEntries ?? knowledgeLimits.zipMaxEntries,
+    maxEntryBytes: over?.maxEntryBytes ?? knowledgeLimits.zipMaxEntryBytes,
+    maxExpandedBytes: over?.maxExpandedBytes ?? knowledgeLimits.zipMaxExpandedBytes,
+  };
+}
 
 export class LegacyOfficeFormatError extends Error {
   constructor(filename: string, ext: string) {
@@ -403,11 +432,128 @@ function localName(tagName: string): string {
   return (i === -1 ? tagName : tagName.slice(i + 1)).toLowerCase();
 }
 
-async function loadXml(zip: any, path: string): Promise<any | null> {
+/** Bytes inflated so far for one archive, shared across its entries. */
+class ZipInflation {
+  inflated = 0;
+  constructor(readonly limits: OfficeZipLimits) {}
+
+  /** Count one chunk. Stops at the first entry or archive that crosses a ceiling. */
+  note(chunkBytes: number, entryBytes: number): void {
+    if (entryBytes > this.limits.maxEntryBytes) {
+      throw new ZipLimitError(`An entry in this Office file is larger than the ${this.limits.maxEntryBytes} byte limit.`);
+    }
+    this.inflated += chunkBytes;
+    if (this.inflated > this.limits.maxExpandedBytes) {
+      throw new ZipLimitError(`This Office file expands past the ${this.limits.maxExpandedBytes} byte limit.`);
+    }
+  }
+}
+
+function eocdEntryCount(buffer: Buffer): number {
+  const min = 22;
+  if (buffer.length < min) throw new ZipLimitError("This file is not a readable Office archive.");
+  const max = Math.min(buffer.length, min + 0xffff);
+  for (let i = buffer.length - min; i >= buffer.length - max; i--) {
+    if (buffer.readUInt32LE(i) !== 0x06054b50) continue;
+    const commentLen = buffer.readUInt16LE(i + 20);
+    if (i + min + commentLen !== buffer.length) continue;
+    return buffer.readUInt16LE(i + 10);
+  }
+  throw new ZipLimitError("This file is not a readable Office archive.");
+}
+
+function tooManyEntries(count: number, limits: OfficeZipLimits): ZipLimitError {
+  const shown = count === 0xffff ? "65535 or more" : String(count);
+  return new ZipLimitError(`This Office file has too many archive entries (${shown}; limit ${limits.maxEntries}).`);
+}
+
+/** Stream one entry, counting inflated bytes and discarding them. */
+async function countInflated(entry: any, budget: ZipInflation): Promise<void> {
+  const stream = new Readable().wrap(entry.nodeStream("nodebuffer"));
+  let entryBytes = 0;
+  let limited: ZipLimitError | null = null;
+  try {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      entryBytes += chunk.length;
+      try {
+        budget.note(chunk.length, entryBytes);
+      } catch (err) {
+        if (err instanceof ZipLimitError) limited = err;
+        stream.destroy();
+        break;
+      }
+    }
+  } catch (err) {
+    stream.destroy();
+    if (limited) throw limited;
+    throw err;
+  }
+  if (limited) throw limited;
+}
+
+/**
+ * Open a DOCX, XLSX or PPTX only when its central directory and its inflated
+ * bytes stay inside the ceilings. The inflated bytes are counted and dropped
+ * here; callers read the entries again, still counting, so a limit stops the
+ * read that crosses it.
+ */
+async function openOfficeZip(buffer: Buffer, limits: OfficeZipLimits): Promise<any> {
+  const declaredCount = eocdEntryCount(buffer);
+  if (declaredCount === 0xffff || declaredCount > limits.maxEntries) throw tooManyEntries(declaredCount, limits);
+
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(buffer);
+  const entries = Object.values(zip.files).filter((entry: any) => !entry.dir);
+  if (entries.length > limits.maxEntries) throw tooManyEntries(entries.length, limits);
+
+  let declared = 0;
+  for (const entry of entries as any[]) {
+    const size = typeof entry._data?.uncompressedSize === "number" ? entry._data.uncompressedSize : 0;
+    if (size > limits.maxEntryBytes) {
+      throw new ZipLimitError(`An entry in this Office file is larger than the ${limits.maxEntryBytes} byte limit.`);
+    }
+    declared += size;
+    if (declared > limits.maxExpandedBytes) {
+      throw new ZipLimitError(`This Office file expands past the ${limits.maxExpandedBytes} byte limit.`);
+    }
+  }
+
+  const budget = new ZipInflation(limits);
+  for (const entry of entries) await countInflated(entry, budget);
+  return zip;
+}
+
+async function readEntryText(entry: any, budget: ZipInflation): Promise<string> {
+  const stream = new Readable().wrap(entry.nodeStream("nodebuffer"));
+  const chunks: Buffer[] = [];
+  let entryBytes = 0;
+  let limited: ZipLimitError | null = null;
+  try {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      entryBytes += chunk.length;
+      try {
+        budget.note(chunk.length, entryBytes);
+      } catch (err) {
+        if (err instanceof ZipLimitError) limited = err;
+        stream.destroy();
+        break;
+      }
+      chunks.push(chunk);
+    }
+  } catch (err) {
+    stream.destroy();
+    if (limited) throw limited;
+    throw err;
+  }
+  if (limited) throw limited;
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function loadXml(zip: any, path: string, budget: ZipInflation): Promise<any | null> {
   const entry = zip.file(path);
   if (!entry) return null;
   const cheerio = await import("cheerio");
-  return cheerio.load(await entry.async("string"), { xmlMode: true });
+  return cheerio.load(await readEntryText(entry, budget), { xmlMode: true });
 }
 
 /** Text of every <t> descendant, in document order. Shared by xlsx and pptx,
@@ -440,17 +586,53 @@ async function extractPdf(buffer: Buffer): Promise<{ text: string; pages: Docume
  *  heading, so one long chapter can still be shown or skipped in parts. */
 const DOCX_SECTION_CHARS = 8_000;
 
+/** Embedded pictures, fonts and OLE objects are not the document's text. Mammoth
+ *  would inflate them again with no size check, so they are left out of the
+ *  copy it is given. */
+function isDocxTextPart(name: string): boolean {
+  const n = name.replace(/\\/g, "/").toLowerCase();
+  if (n.endsWith("/")) return false;
+  return !n.startsWith("word/media/") && !n.startsWith("word/embeddings/") && !n.startsWith("word/fonts/");
+}
+
+/**
+ * A DOCX containing only the parts already inflated under the ceiling, stored
+ * so Mammoth's own unzip is a copy of those parts and cannot grow past the
+ * ceiling that counted them.
+ */
+async function docxWithinLimits(zip: any, limits: OfficeZipLimits): Promise<Buffer> {
+  const JSZip = (await import("jszip")).default;
+  const out = new JSZip();
+  const budget = new ZipInflation(limits);
+  for (const name of Object.keys(zip.files)) {
+    const entry = zip.file(name);
+    if (!entry || entry.dir || !isDocxTextPart(name)) continue;
+    out.file(name, await readEntryText(entry, budget));
+  }
+  return out.generateAsync({ type: "nodebuffer", compression: "STORE" });
+}
+
+function assertWithinExpandedLimit(text: string, limits: OfficeZipLimits): void {
+  if (Buffer.byteLength(text) > limits.maxExpandedBytes) {
+    throw new ZipLimitError(`This Office file expands past the ${limits.maxExpandedBytes} byte limit.`);
+  }
+}
+
 /**
  * Word documents in reading order, one section per heading. Tables carry most
  * of the meaning in the documents users actually upload (rate cards,
  * matrices), so each becomes a markdown table instead of an unreadable run of
  * cell values; headings and paragraphs keep their own lines.
  */
-async function extractDocx(buffer: Buffer): Promise<{ text: string; sections: DocumentSection[] }> {
+async function extractDocx(buffer: Buffer, limits: OfficeZipLimits): Promise<{ text: string; sections: DocumentSection[] }> {
+  const zip = await openOfficeZip(buffer, limits);
+  const bounded = await docxWithinLimits(zip, limits);
   const mammoth = await import("mammoth");
-  const html = (await mammoth.convertToHtml({ buffer })).value ?? "";
+  const html = (await mammoth.convertToHtml({ buffer: bounded })).value ?? "";
+  assertWithinExpandedLimit(html, limits);
   if (!html.trim()) {
-    const raw = (await mammoth.extractRawText({ buffer })).value;
+    const raw = (await mammoth.extractRawText({ buffer: bounded })).value ?? "";
+    assertWithinExpandedLimit(raw, limits);
     return { text: raw, sections: splitTextSections(raw) };
   }
   const cheerio = await import("cheerio");
@@ -611,9 +793,10 @@ function runText(xml: string): string {
  * never held as one string or one DOM: complete elements are taken from the
  * front of a rolling buffer as the stream arrives.
  */
-async function* streamElements(entry: any, re: RegExp): AsyncGenerator<RegExpExecArray> {
+async function* streamElements(entry: any, re: RegExp, budget: ZipInflation): AsyncGenerator<RegExpExecArray> {
   const decoder = new StringDecoder("utf8");
   let buf = "";
+  let entryBytes = 0;
   const drain = function* (): Generator<RegExpExecArray> {
     re.lastIndex = 0;
     let consumed = 0;
@@ -626,9 +809,16 @@ async function* streamElements(entry: any, re: RegExp): AsyncGenerator<RegExpExe
   };
   // JSZip hands back an old-style stream; wrap() makes it async-iterable.
   const stream = new Readable().wrap(entry.nodeStream("nodebuffer"));
-  for await (const chunk of stream as AsyncIterable<Buffer>) {
-    buf += decoder.write(chunk);
-    yield* drain();
+  try {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      entryBytes += chunk.length;
+      budget.note(chunk.length, entryBytes);
+      buf += decoder.write(chunk);
+      yield* drain();
+    }
+  } catch (err) {
+    stream.destroy();
+    throw err;
   }
   buf += decoder.end();
   yield* drain();
@@ -639,21 +829,23 @@ const CELL_RE = () => /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
 const SI_RE = () => /<(?:\w+:)?si\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:\w+:)?si>)/g;
 const V_RE = /<(?:\w+:)?v(?:\s[^>]*)?>([\s\S]*?)<\/(?:\w+:)?v>/;
 
-async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: string[]; records: SpreadsheetRecord[]; truncated: boolean; rowsDropped: number }> {
-  const JSZip = (await import("jszip")).default;
-  const zip = await JSZip.loadAsync(buffer);
+async function extractXlsx(buffer: Buffer, limits: OfficeZipLimits): Promise<{ text: string; sheets: string[]; records: SpreadsheetRecord[]; truncated: boolean; rowsDropped: number }> {
+  const zip = await openOfficeZip(buffer, limits);
+  const budget = new ZipInflation(limits);
 
   // Shared strings are stored once and referenced by index from every cell.
   const shared: string[] = [];
   const ssEntry = zip.file("xl/sharedStrings.xml");
   if (ssEntry) {
-    for await (const m of streamElements(ssEntry, SI_RE())) shared.push(runText(m[1] ?? ""));
+    for await (const m of streamElements(ssEntry, SI_RE(), budget)) shared.push(runText(m[1] ?? ""));
   }
 
   // Sheet display names live in workbook.xml; the file each maps to comes from
   // the rels file. Without the mapping, sheet order and names can disagree.
-  const wbXml = (await zip.file("xl/workbook.xml")?.async("string")) ?? "";
-  const relsXml = (await zip.file("xl/_rels/workbook.xml.rels")?.async("string")) ?? "";
+  const wbEntry = zip.file("xl/workbook.xml");
+  const relsEntry = zip.file("xl/_rels/workbook.xml.rels");
+  const wbXml = wbEntry ? await readEntryText(wbEntry, budget) : "";
+  const relsXml = relsEntry ? await readEntryText(relsEntry, budget) : "";
   const relTarget = new Map<string, string>();
   for (const m of Array.from(relsXml.matchAll(/<(?:\w+:)?Relationship\b([^>]*?)\/?>/g))) {
     const a = xmlAttrs(m[1]);
@@ -689,7 +881,7 @@ async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: stri
     let header: string[] | null = null;
     let keyCol = 0;
     let ordinal = 0;
-    for await (const rowMatch of streamElements(entry, ROW_RE())) {
+    for await (const rowMatch of streamElements(entry, ROW_RE(), budget)) {
       ordinal++;
       const cells: string[] = [];
       const cellRe = CELL_RE();
@@ -758,9 +950,9 @@ async function extractXlsx(buffer: Buffer): Promise<{ text: string; sheets: stri
 }
 
 // ── PPTX ─────────────────────────────────────────────────────────────────────
-async function extractPptx(buffer: Buffer): Promise<{ text: string; slides: number; sections: DocumentSection[] }> {
-  const JSZip = (await import("jszip")).default;
-  const zip = await JSZip.loadAsync(buffer);
+async function extractPptx(buffer: Buffer, limits: OfficeZipLimits): Promise<{ text: string; slides: number; sections: DocumentSection[] }> {
+  const zip = await openOfficeZip(buffer, limits);
+  const budget = new ZipInflation(limits);
 
   // slide10 must not sort before slide2, so order numerically by slide index.
   const slidePaths = Object.keys(zip.files)
@@ -772,7 +964,7 @@ async function extractPptx(buffer: Buffer): Promise<{ text: string; slides: numb
 
   const parts: string[] = [];
   for (let i = 0; i < slidePaths.length; i++) {
-    const $s = await loadXml(zip, slidePaths[i]);
+    const $s = await loadXml(zip, slidePaths[i], budget);
     if (!$s) continue;
 
     // Group text by paragraph so bullets stay on separate lines instead of
@@ -786,7 +978,7 @@ async function extractPptx(buffer: Buffer): Promise<{ text: string; slides: numb
 
     // Speaker notes routinely hold the actual narrative of a deck, which is
     // often the part a user is asking about.
-    const $n = await loadXml(zip, `ppt/notesSlides/notesSlide${/slide(\d+)\.xml$/.exec(slidePaths[i])![1]}.xml`);
+    const $n = await loadXml(zip, `ppt/notesSlides/notesSlide${/slide(\d+)\.xml$/.exec(slidePaths[i])![1]}.xml`, budget);
     const notes: string[] = [];
     if ($n) {
       $n("*").each((_j: number, el: any) => {
@@ -920,9 +1112,10 @@ export async function extractTextFromFile(
   buffer: Buffer,
   mimeType: string | undefined,
   filename: string,
-  opts?: { acceptImages?: boolean; acceptVideos?: boolean },
+  opts?: { acceptImages?: boolean; acceptVideos?: boolean; zipLimits?: Partial<OfficeZipLimits> },
 ): Promise<ExtractedFile> {
   const ext = EXT(filename);
+  const zipLimits = officeZipLimits(opts?.zipLimits);
   const mime = (mimeType ?? "").toLowerCase();
 
   if (LEGACY_OFFICE.has(ext)) throw new LegacyOfficeFormatError(filename, ext);
@@ -984,7 +1177,7 @@ export async function extractTextFromFile(
   }
 
   if (ext === "docx" || mime.includes("wordprocessingml")) {
-    const docx = await extractDocx(buffer);
+    const docx = await extractDocx(buffer, zipLimits);
     const { kept, coverage } = keepSections(docx.sections, "section");
     const text = coverage.complete ? docx.text : kept.map((s) => s.text).join("\n\n") + truncationNotice(coverage);
     return { text, kind: "docx", sections: kept, meta: { truncated: !coverage.complete, coverage, empty: !text.trim() } };
@@ -994,7 +1187,7 @@ export async function extractTextFromFile(
     // Records are the indexed form, one per data row; `text` is the same rows
     // rendered as tables for callers that want to read them. Both are marked
     // truncated only when the safety ceiling dropped whole rows.
-    const r = await extractXlsx(buffer);
+    const r = await extractXlsx(buffer, zipLimits);
     const charsKept = r.records.reduce((n, rec) => n + rec.text.length, 0);
     const last = r.records[r.records.length - 1];
     return {
@@ -1013,7 +1206,7 @@ export async function extractTextFromFile(
   }
 
   if (ext === "pptx" || mime.includes("presentationml")) {
-    const r = await extractPptx(buffer);
+    const r = await extractPptx(buffer, zipLimits);
     const { kept, coverage } = keepSections(r.sections, "slide");
     const text = coverage.complete ? r.text : kept.map((s) => s.text).join("\n\n") + truncationNotice(coverage);
     return { text, kind: "pptx", sections: kept, meta: { slides: r.slides, truncated: !coverage.complete, coverage, empty: !text.trim() } };

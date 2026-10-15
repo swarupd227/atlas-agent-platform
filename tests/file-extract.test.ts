@@ -2,12 +2,15 @@ import { describe, it, expect } from "vitest";
 import JSZip from "jszip";
 import {
   extractTextFromFile,
+  filenameForLog,
   isSupportedFile,
   isImageFile,
   isVideoFile,
   UnsupportedFileTypeError,
   LegacyOfficeFormatError,
+  ZipLimitError,
 } from "../server/file-extract";
+import { deflateRawSync } from "zlib";
 
 // Real OOXML files, built in-memory. Fixtures on disk would be opaque binaries
 // nobody can review in a diff; this way the exact XML each assertion depends on
@@ -260,5 +263,95 @@ describe("text formats", () => {
     const r = await extractTextFromFile(Buffer.from("a,b\n1,2"), "text/csv", "d.csv");
     expect(r.kind).toBe("csv");
     expect(r.text).toBe("a,b\n1,2");
+  });
+});
+
+describe("uploaded names in logs", () => {
+  it("strips control characters and keeps one short line", () => {
+    expect(filenameForLog("report\r\nFAKE ERROR admin")).toBe("report FAKE ERROR admin");
+    expect(filenameForLog("a\u0000b\u007Fc")).toBe("a b c");
+    expect(filenameForLog("x".repeat(500))).toHaveLength(120);
+    expect(filenameForLog("\n\n")).toBe("(unnamed)");
+  });
+});
+
+function crc32(buf: Buffer): number {
+  let c = ~0;
+  for (const b of buf) {
+    c ^= b;
+    for (let i = 0; i < 8; i++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+
+function u16(n: number): Buffer {
+  const b = Buffer.alloc(2);
+  b.writeUInt16LE(n);
+  return b;
+}
+
+function u32(n: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32LE(n >>> 0);
+  return b;
+}
+
+/** One deflated entry whose central directory understates how large it inflates. */
+function lyingOfficeZip(actual: Buffer, declaredUncompressed: number): Buffer {
+  const name = Buffer.from("xl/sharedStrings.xml");
+  const compressed = deflateRawSync(actual);
+  const crc = crc32(actual);
+  const local = Buffer.concat([
+    u32(0x04034b50), u16(20), u16(0), u16(8), u16(0), u16(0),
+    u32(crc), u32(compressed.length), u32(declaredUncompressed),
+    u16(name.length), u16(0), name, compressed,
+  ]);
+  const central = Buffer.concat([
+    u32(0x02014b50), u16(20), u16(20), u16(0), u16(8), u16(0), u16(0),
+    u32(crc), u32(compressed.length), u32(declaredUncompressed),
+    u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(0),
+    name,
+  ]);
+  const eocd = Buffer.concat([
+    u32(0x06054b50), u16(0), u16(0), u16(1), u16(1),
+    u32(central.length), u32(local.length), u16(0),
+  ]);
+  return Buffer.concat([local, central, eocd]);
+}
+
+describe("Office archives cannot expand without a limit", () => {
+  const tight = { maxEntries: 100, maxEntryBytes: 10, maxExpandedBytes: 20 };
+
+  it("rejects an archive with too many entries before reading them", async () => {
+    await expect(extractTextFromFile(await buildXlsx(), undefined, "a.xlsx", { zipLimits: { maxEntries: 1, maxEntryBytes: 10_000_000, maxExpandedBytes: 10_000_000 } }))
+      .rejects.toBeInstanceOf(ZipLimitError);
+  });
+
+  it("rejects an entry whose declared size is over the per-entry limit", async () => {
+    await expect(extractTextFromFile(await buildXlsx(), undefined, "a.xlsx", { zipLimits: { ...tight, maxExpandedBytes: 10_000_000 } }))
+      .rejects.toThrow(/larger than the 10 byte limit/);
+  });
+
+  it("rejects an archive whose declared expansion is over the total", async () => {
+    await expect(extractTextFromFile(await buildXlsx(), undefined, "a.xlsx", { zipLimits: { maxEntries: 100, maxEntryBytes: 10_000_000, maxExpandedBytes: 20 } }))
+      .rejects.toThrow(/expands past the 20 byte limit/);
+  });
+
+  it("reads the document when an embedded part is also present", async () => {
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`);
+    zip.file("_rels/.rels", `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`);
+    zip.file("word/document.xml", `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello from the document</w:t></w:r></w:p></w:body></w:document>`);
+    zip.file("word/media/blob.bin", Buffer.alloc(8_000, 0x41));
+    const buf = await zip.generateAsync({ type: "nodebuffer" });
+    const extracted = await extractTextFromFile(buf, undefined, "note.docx");
+    expect(extracted.text).toContain("Hello from the document");
+  });
+
+  it.each(["bomb.xlsx", "bomb.pptx", "bomb.docx"])("stops inflating %s once a limit is crossed", async (name) => {
+    const bomb = lyingOfficeZip(Buffer.alloc(8_000, 0x41), 16);
+    await expect(extractTextFromFile(bomb, undefined, name, { zipLimits: { maxEntries: 10, maxEntryBytes: 100, maxExpandedBytes: 50_000 } }))
+      .rejects.toBeInstanceOf(ZipLimitError);
   });
 });

@@ -6,8 +6,9 @@ import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnow
 import { sql, eq, desc, and, inArray } from "drizzle-orm";
 import OpenAI from "openai";
 import { createHash } from "crypto";
-import { generateEmbeddings, storeChunkEmbedding, ensurePgVector } from "./embeddings";
-import { splitTextSections, type ExtractedFile } from "./file-extract";
+import { generateEmbeddings, storeChunkEmbedding, ensurePgVector, normalizeRetrievalRequest, RetrievalQueryError } from "./embeddings";
+import { splitTextSections, filenameForLog, ZipLimitError, type ExtractedFile } from "./file-extract";
+import { knowledgeLimits } from "./config";
 import { chunkSections, chunksForSourceContent, describeIndexing, embedBatchWithRetry, isPermanentEmbeddingError, legacyTruncationGap, settleAfterEmbedding, storeAndEmbedChunks, SPREADSHEET_INDEXING, type ChunkAudit, type PreparedChunk } from "./kb-indexing";
 import { getOrgId, getDefaultOrgId } from "./auth";
 import { checkPermission, getRequestRole } from "./permissions";
@@ -406,24 +407,96 @@ async function extractUploadedDocument(buffer: Buffer, mimeType: string, filenam
   return extract(buffer, mimeType, filename);
 }
 
+/** True when storing `incomingBytes` more would pass the organization's original-file quota. */
+export function orgStorageWouldExceed(usedBytes: number, incomingBytes: number, quota = knowledgeLimits.orgStoredBytes): boolean {
+  return usedBytes + incomingBytes > quota;
+}
+
+export class OrgStorageQuotaError extends Error {
+  constructor() {
+    super("This organization has reached its Knowledge Base file storage limit.");
+    this.name = "OrgStorageQuotaError";
+  }
+}
+
+type DbTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function organizationStoredBytes(organizationId: string | null, executor: Pick<DbTx, "execute"> = db): Promise<number> {
+  const result = organizationId
+    ? await executor.execute(sql`
+        SELECT COALESCE(SUM(f.size_bytes), 0) AS used
+        FROM knowledge_source_files f
+        JOIN knowledge_sources s ON s.id = f.source_id
+        JOIN knowledge_bases b ON b.id = s.knowledge_base_id
+        WHERE b.organization_id = ${organizationId}
+      `)
+    : await executor.execute(sql`
+        SELECT COALESCE(SUM(f.size_bytes), 0) AS used
+        FROM knowledge_source_files f
+        JOIN knowledge_sources s ON s.id = f.source_id
+        JOIN knowledge_bases b ON b.id = s.knowledge_base_id
+        WHERE b.organization_id IS NULL
+      `);
+  const used = Number((result.rows?.[0] as { used?: unknown } | undefined)?.used ?? 0);
+  return Number.isFinite(used) ? used : 0;
+}
+
+export async function assertOrgFileQuota(organizationId: string | null | undefined, incomingBytes: number): Promise<void> {
+  const used = await organizationStoredBytes(organizationId ?? null);
+  if (orgStorageWouldExceed(used, incomingBytes)) throw new OrgStorageQuotaError();
+}
+
+async function organizationIdForSource(sourceId: string): Promise<string | null> {
+  const result = await db.execute(sql`
+    SELECT b.organization_id AS organization_id
+    FROM knowledge_sources s
+    JOIN knowledge_bases b ON b.id = s.knowledge_base_id
+    WHERE s.id = ${sourceId}
+    LIMIT 1
+  `);
+  const id = (result.rows?.[0] as { organization_id?: string | null } | undefined)?.organization_id;
+  return id ?? null;
+}
+
 /**
  * The uploaded file behind a document source, kept so reprocessing re-reads
- * the document itself. Never fatal: a source whose file could not be kept is
- * still indexed now, and later reprocessing falls back to its stored text.
+ * the document itself. A source whose file could not be kept is still indexed
+ * now, and later reprocessing falls back to its stored text. Exceeding the
+ * organization's storage quota is not that case: it throws so the upload is refused.
  */
-export async function saveSourceFile(sourceId: string, file: { buffer: Buffer; originalname: string; mimetype?: string; size?: number }): Promise<boolean> {
+export async function saveSourceFile(
+  sourceId: string,
+  file: { buffer: Buffer; originalname: string; mimetype?: string; size?: number },
+  organizationId?: string | null,
+): Promise<boolean> {
   try {
+    const [existing] = await db.select({ sourceId: knowledgeSourceFiles.sourceId }).from(knowledgeSourceFiles).where(eq(knowledgeSourceFiles.sourceId, sourceId));
+    if (existing) return true;
+    const orgId = organizationId !== undefined ? organizationId : await organizationIdForSource(sourceId);
+    const incomingBytes = file.size ?? file.buffer.length;
     const sha256 = createHash("sha256").update(file.buffer).digest("hex");
-    await db.insert(knowledgeSourceFiles).values({
-      sourceId,
-      filename: file.originalname,
-      mimeType: file.mimetype ?? null,
-      sizeBytes: file.size ?? file.buffer.length,
-      sha256,
-      content: file.buffer,
-    }).onConflictDoNothing();
+    // The sum and the insert have to see each other. Two uploads that both
+    // read the total before either inserts would both pass. The lock is the
+    // same transaction-scoped advisory lock audit writes use, held only across
+    // this check and insert, and released when the transaction ends.
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`kb-org-files:${orgId ?? "__no_org__"}`}))`);
+      const [held] = await tx.select({ sourceId: knowledgeSourceFiles.sourceId }).from(knowledgeSourceFiles).where(eq(knowledgeSourceFiles.sourceId, sourceId));
+      if (held) return;
+      const used = await organizationStoredBytes(orgId, tx);
+      if (orgStorageWouldExceed(used, incomingBytes)) throw new OrgStorageQuotaError();
+      await tx.insert(knowledgeSourceFiles).values({
+        sourceId,
+        filename: file.originalname,
+        mimeType: file.mimetype ?? null,
+        sizeBytes: incomingBytes,
+        sha256,
+        content: file.buffer,
+      }).onConflictDoNothing();
+    });
     return true;
   } catch (err: any) {
+    if (err instanceof OrgStorageQuotaError) throw err;
     console.warn(`[kb] Could not keep the original file for source ${sourceId}; reprocessing will use its stored text:`, err?.message ?? err);
     return false;
   }
@@ -964,10 +1037,17 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const metadata: Record<string, unknown> = { originalName: file.originalname, extractedKind: extracted.kind };
       if (extracted.meta.coverage) metadata.extraction = extracted.meta.coverage;
       console.log(
-        `[file-extract] kb=${req.params.id} file="${file.originalname}" kind=${extracted.kind} bytes=${file.size} chars=${text.length} ` +
+        `[file-extract] kb=${req.params.id} file="${filenameForLog(file.originalname)}" kind=${extracted.kind} bytes=${file.size} chars=${text.length} ` +
         `sections=${extracted.sections?.length ?? 0}` +
         (extracted.meta.coverage ? ` ${extracted.meta.coverage.unit}s=${extracted.meta.coverage.unitsKept}/${extracted.meta.coverage.unitsTotal} complete=${extracted.meta.coverage.complete}` : ""),
       );
+
+      try {
+        await assertOrgFileQuota(kb.organizationId ?? null, file.size ?? file.buffer.length);
+      } catch (err) {
+        if (err instanceof OrgStorageQuotaError) return res.status(413).json({ message: err.message });
+        console.warn("[kb] Could not check the organization file quota; the upload continues:", err instanceof Error ? err.message : err);
+      }
 
       const source = await storage.createKnowledgeSource({
         knowledgeBaseId: req.params.id as string,
@@ -990,7 +1070,16 @@ export function registerKnowledgeBaseRoutes(app: Express) {
         console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
       }
 
-      const originalKept = await saveSourceFile(source.id, file);
+      let originalKept = false;
+      try {
+        originalKept = await saveSourceFile(source.id, file, kb.organizationId ?? null);
+      } catch (err) {
+        if (err instanceof OrgStorageQuotaError) {
+          await storage.deleteKnowledgeSource(source.id, kb.organizationId ?? undefined).catch(() => {});
+          return res.status(413).json({ message: err.message });
+        }
+        throw err;
+      }
       processSourceInBackground(source.id, req.params.id as string, false, extracted);
       res.status(201).json({
         ...sourceForList(source),
@@ -1002,7 +1091,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       // An unreadable file is the user's problem to fix (wrong format, a legacy
       // .xls), not a server fault -- 400 carrying the reader's own message,
       // which names the supported types or the re-save step.
-      if (error?.name === "UnsupportedFileTypeError" || error?.name === "LegacyOfficeFormatError") {
+      if (error instanceof ZipLimitError || error?.name === "UnsupportedFileTypeError" || error?.name === "LegacyOfficeFormatError") {
         return res.status(400).json({ message: error.message });
       }
       res.status(500).json({ message: error.message });
@@ -1340,11 +1429,18 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
-      const { query, topK = 5, scoreThreshold = 0.5 } = req.body;
-      if (!query) return res.status(400).json({ message: "Query is required" });
+      const { query, topK = 5, scoreThreshold = 0.5 } = req.body ?? {};
+      if (!query || typeof query !== "string") return res.status(400).json({ message: "Query is required" });
 
       const { searchKnowledgeBaseChunks } = await import("./embeddings");
-      const results = await searchKnowledgeBaseChunks(req.params.id as string, query, topK, scoreThreshold, getRequestRole(req));
+      let normalized;
+      try {
+        normalized = normalizeRetrievalRequest({ query, topK, scoreThreshold }, { topK: 5, scoreThreshold: 0.5 });
+      } catch (err) {
+        if (err instanceof RetrievalQueryError) return res.status(400).json({ message: err.message });
+        throw err;
+      }
+      const results = await searchKnowledgeBaseChunks(req.params.id as string, normalized.query, normalized.topK, normalized.scoreThreshold, getRequestRole(req));
       res.json(results);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1523,11 +1619,18 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
       if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
 
-      const { question, topK = 5 } = req.body;
-      if (!question) return res.status(400).json({ message: "Question is required" });
+      const { question, topK = 5 } = req.body ?? {};
+      if (!question || typeof question !== "string") return res.status(400).json({ message: "Question is required" });
 
       const { searchKnowledgeBaseChunks } = await import("./embeddings");
-      const searchResults = await searchKnowledgeBaseChunks(req.params.id as string, question, topK, 0.3, getRequestRole(req));
+      let normalized;
+      try {
+        normalized = normalizeRetrievalRequest({ query: question, topK, scoreThreshold: 0.3 }, { topK: 5, scoreThreshold: 0.3 });
+      } catch (err) {
+        if (err instanceof RetrievalQueryError) return res.status(400).json({ message: err.message });
+        throw err;
+      }
+      const searchResults = await searchKnowledgeBaseChunks(req.params.id as string, normalized.query, normalized.topK, normalized.scoreThreshold, getRequestRole(req));
 
       const context = searchResults.map((r: any) => r.content).join("\n\n");
 

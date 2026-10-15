@@ -16,12 +16,19 @@ vi.hoisted(() => {
   process.env.OPENAI_API_KEY = "test-key-not-used";
 });
 
+const embedControl = vi.hoisted(() => ({ fail: false, failLexical: false, embeddedChars: [] as number[] }));
 const execute = vi.hoisted(() => vi.fn());
 vi.mock("../server/db", () => ({ db: { execute }, pool: { on: () => {} } }));
 vi.mock("../server/permissions", () => ({ getAllowedKbSensitivityLevels: () => ["public", "internal"] }));
 vi.mock("openai", () => ({
   default: class OpenAI {
-    embeddings = { create: async ({ input }: { input: string[] }) => ({ data: input.map(() => ({ embedding: [0.1, 0.2, 0.3] })) }) };
+    embeddings = {
+      create: async ({ input }: { input: string[] }) => {
+        embedControl.embeddedChars.push(...input.map((s) => s.length));
+        if (embedControl.fail) throw new Error("provider down");
+        return { data: input.map(() => ({ embedding: [0.1, 0.2, 0.3] })) };
+      },
+    };
   },
 }));
 
@@ -51,6 +58,9 @@ let pgvector = true;
 const seen: string[] = [];
 
 beforeEach(() => {
+  embedControl.fail = false;
+  embedControl.failLexical = false;
+  embedControl.embeddedChars = [];
   seen.length = 0;
   execute.mockImplementation(async (query: unknown) => {
     const text = sqlText(query);
@@ -63,7 +73,10 @@ beforeEach(() => {
     if (text.includes("~*")) return { rows: text.includes("CN\\-2291\\-X") ? [pdfPage] : [] };
     if (/productId/.test(text)) return { rows: [] };
     if (text.includes("<=>")) return { rows: [] };
-    if (text.includes("to_tsquery")) return { rows: /escalation/.test(text) ? [unembedded] : [] };
+    if (text.includes("to_tsquery")) {
+      if (embedControl.failLexical) throw new Error("lexical down");
+      return { rows: /escalation/.test(text) ? [unembedded] : [] };
+    }
     if (/ORDER BY c\.created_at DESC/.test(text)) return { rows: [recent] };
     return { rows: [] };
   });
@@ -120,5 +133,63 @@ describe("without pgvector", () => {
     const { searchKnowledgeBaseChunks } = await import("../server/embeddings");
     const results = await searchKnowledgeBaseChunks("kb", "zebra", 5, 0.3);
     expect(results.map((r) => r.id)).toEqual(["recent"]);
+  });
+});
+
+describe("when the embedding provider fails", () => {
+  it("returns the unrestricted keyword matches", async () => {
+    pgvector = true;
+    embedControl.fail = true;
+    vi.resetModules();
+    const { searchKnowledgeBaseChunks } = await import("../server/embeddings");
+    const results = await searchKnowledgeBaseChunks("kb", "escalation matrix", 5, 0.3);
+    expect(results.map((r) => r.id)).toEqual(["no-vector"]);
+    const lexical = seen.filter((s) => s.includes("to_tsquery"));
+    expect(lexical.length).toBeGreaterThan(0);
+    expect(lexical.every((s) => !s.includes("embedding IS NULL"))).toBe(true);
+  });
+
+  it("still fails when keyword search fails too", async () => {
+    pgvector = true;
+    embedControl.fail = true;
+    embedControl.failLexical = true;
+    vi.resetModules();
+    const { searchKnowledgeBaseChunks } = await import("../server/embeddings");
+    await expect(searchKnowledgeBaseChunks("kb", "escalation matrix", 5, 0.3)).rejects.toThrow(/lexical down/);
+  });
+
+  it("trims a merged result to the safe topK even when the caller asks for more", async () => {
+    pgvector = true;
+    const many = (prefix: string) => Array.from({ length: 40 }, (_, i) => row(`${prefix}-${i}`, `${prefix} text ${i}`));
+    execute.mockImplementation(async (query: unknown) => {
+      const text = sqlText(query);
+      seen.push(text);
+      if (/CREATE EXTENSION/i.test(text)) return { rows: [] };
+      if (/information_schema/i.test(text)) return { rows: [{ column_name: "embedding" }] };
+      if (text.includes("~*") || /productId/.test(text)) return { rows: many("exact") };
+      if (text.includes("<=>")) return { rows: many("vector") };
+      if (text.includes("to_tsquery")) return { rows: many("word") };
+      return { rows: [] };
+    });
+    vi.resetModules();
+    const { searchKnowledgeBaseChunks, normalizeRetrievalRequest } = await import("../server/embeddings");
+    const { knowledgeLimits } = await import("../server/config");
+    const results = await searchKnowledgeBaseChunks("kb", "escalation matrix", 10_000, 0.3);
+    expect(results).toHaveLength(knowledgeLimits.retrievalMaxTopK);
+    expect(seen.some((s) => s.includes(`LIMIT ${knowledgeLimits.retrievalMaxTopK}`))).toBe(true);
+    expect(seen.some((s) => s.includes("LIMIT 10000"))).toBe(false);
+    expect(() => normalizeRetrievalRequest({ query: "hi", topK: 10_000 })).toThrow(/topK/);
+    expect(() => normalizeRetrievalRequest({ query: "x".repeat(knowledgeLimits.retrievalMaxQueryChars + 1) })).toThrow(/too long/);
+    expect(() => normalizeRetrievalRequest({ query: "hi", scoreThreshold: 1 })).toThrow(/scoreThreshold/);
+    expect(normalizeRetrievalRequest({ query: " hi ", topK: 4, scoreThreshold: 0 }).topK).toBe(4);
+  });
+
+  it("embeds only the leading characters when a non-HTTP caller passes a long prompt", async () => {
+    pgvector = true;
+    vi.resetModules();
+    const { searchKnowledgeBaseChunks } = await import("../server/embeddings");
+    const { knowledgeLimits } = await import("../server/config");
+    await searchKnowledgeBaseChunks("kb", `escalation ${"x".repeat(knowledgeLimits.retrievalMaxQueryChars)}`, 5, 0.3);
+    expect(embedControl.embeddedChars[0]).toBe(knowledgeLimits.retrievalMaxQueryChars);
   });
 });

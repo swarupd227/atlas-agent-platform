@@ -132,7 +132,6 @@ interface Checkpoint {
   /** The attached files shown only in part, which search_attachment and
    *  read_attachment_section are offered over (server/builtin-attachment-tools.ts). */
   attachmentToolFileIds?: string[];
-  attachmentToolNames?: string[];
   /** What the run put in front of the model, measured once at start. Absent
    *  on runs started before this was recorded. */
   contextUsage?: ContextUsage;
@@ -494,7 +493,7 @@ export async function startWorkspaceRun(params: {
     skillAllowlist,
     toolAllowlist: params.toolAllowlist ?? null,
     fileIds: allFileIds,
-    ...(partialAttachments.length ? { attachmentToolFileIds: fileIds, attachmentToolNames: attachedNames } : {}),
+    ...(partialAttachments.length ? { attachmentToolFileIds: fileIds } : {}),
     contextUsage: measureContextUsage({
       instructions: baseSystemMessage,
       knowledge: kbContext.section,
@@ -936,7 +935,7 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   availableTools.push(...skillToolsFor(await resolveReadableSkills(agentId, orgId).catch(() => [])));
   // After read_skill, for the same reason; fixed by the checkpoint, so a
   // resumed run is offered the same tools.
-  availableTools.push(...attachmentToolsFor(cp.attachmentToolFileIds ?? [], cp.attachmentToolNames ?? []));
+  availableTools.push(...attachmentToolsFor(cp.attachmentToolFileIds ?? []));
   const canonicalTools = buildCanonicalTools(availableTools);
   const codeExecAccess = await resolveCodeExecutionAccess(agentId, activeSkills);
   const codeExecConfig = codeExecAccess.enabled

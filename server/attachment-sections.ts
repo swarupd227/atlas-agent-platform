@@ -18,7 +18,8 @@
  *
  * No database access here: callers pass the file rows in.
  */
-import { extractTextFromFile, splitTextSections, type DocumentSection, type ExtractionCoverage, type SectionLocator } from "./file-extract";
+import { knowledgeLimits } from "./config";
+import { extractTextFromFile, filenameForLog, splitTextSections, type DocumentSection, type ExtractionCoverage, type SectionLocator } from "./file-extract";
 
 /** "page 12", "sheet Prices, row 4031", "lines 120–188, "Termination"" -- "" when the section has no position. */
 export function describeLocator(loc: SectionLocator): string {
@@ -47,11 +48,11 @@ export interface LoadedSections {
 }
 
 /** Characters inlined across all of a turn's attachments before selection begins (~30k tokens). */
-export const DEFAULT_ATTACHMENT_BUDGET_CHARS = 120_000;
+export const DEFAULT_ATTACHMENT_BUDGET_CHARS = knowledgeLimits.attachmentBudgetChars;
 /** Lines per section when a file's text is split without the reader's own structure. */
 const TEXT_SECTION_CHARS = 4_000;
 /** Most a single read_attachment_section call returns. */
-export const MAX_READ_CHARS = 40_000;
+export const MAX_READ_CHARS = knowledgeLimits.attachmentReadChars;
 /** Most sections one read returns. */
 const MAX_READ_SECTIONS = 200;
 
@@ -60,7 +61,7 @@ const MAX_READ_SECTIONS = 200;
 const cache = new Map<string, LoadedSections>();
 let cachedChars = 0;
 /** Bound on the cached sections' text, across files. */
-const CACHE_CHARS = 60_000_000;
+const CACHE_CHARS = knowledgeLimits.attachmentCacheChars;
 
 function sizeOf(loaded: LoadedSections): number {
   let n = 0;
@@ -272,7 +273,13 @@ export function selectSections(sections: DocumentSection[], query: string, budge
     let block = rendered(i);
     if (block.length > budgetChars) block = `${block.slice(0, budgetChars)}\n[… section ${i + 1} continues; read it with read_attachment_section …]`;
     blocks.push(block);
-    charsShown += sections[i].text.length;
+    const sectionText = sections[i].text.trim();
+    if (block.length > budgetChars) {
+      const headerLen = rendered(i).length - sectionText.length;
+      charsShown += Math.max(0, Math.min(sectionText.length, budgetChars - headerLen));
+    } else {
+      charsShown += sectionText.length;
+    }
     prev = i;
   }
   if (prev < sections.length - 1) blocks.push(`[… sections ${prev + 2}–${sections.length} not shown …]`);
@@ -285,16 +292,19 @@ export { SEARCH_ATTACHMENT_TOOL, READ_ATTACHMENT_SECTION_TOOL, ATTACHMENT_TOOL_G
 
 /** Which attached file a tool call means: by id, exact name, or a name it starts with; the only one when there is one. */
 export function resolveFile<T extends { id: string; filename: string }>(files: T[], ref: unknown): T | { error: string } {
-  const want = typeof ref === "string" ? ref.trim() : "";
-  if (!want) {
+  const shown = (name: string) => filenameForLog(name);
+  const label = (name: string) => `"${shown(name)}"`;
+  const raw = typeof ref === "string" ? ref.trim() : "";
+  if (!raw) {
     if (files.length === 1) return files[0];
-    return { error: `Name the file: one of ${files.map((f) => `"${f.filename}"`).join(", ")}.` };
+    return { error: `Name the file: one of ${files.map((f) => label(f.filename)).join(", ")}.` };
   }
+  const want = shown(raw);
   const lower = want.toLowerCase();
-  const found = files.find((f) => f.id === want) ??
-    files.find((f) => f.filename.toLowerCase() === lower) ??
-    files.find((f) => f.filename.toLowerCase().startsWith(lower));
-  return found ?? { error: `No attached file named "${want}". Attached: ${files.map((f) => `"${f.filename}"`).join(", ")}.` };
+  const found = files.find((f) => f.id === raw) ??
+    files.find((f) => shown(f.filename).toLowerCase() === lower) ??
+    files.find((f) => shown(f.filename).toLowerCase().startsWith(lower));
+  return found ?? { error: `No attached file named "${want}". Attached: ${files.map((f) => label(f.filename)).join(", ")}.` };
 }
 
 function excerpt(text: string, query: string, max = 1_200): string {
@@ -313,34 +323,69 @@ function excerpt(text: string, query: string, max = 1_200): string {
 export async function searchAttachments(
   files: AttachmentFile[],
   args: { file?: string; query?: string; limit?: number },
+  limits?: { maxResults?: number; maxSections?: number },
 ): Promise<Record<string, unknown>> {
   const query = String(args.query ?? "").trim();
   if (!query) return { ok: false, error: "Say what to look for (query)." };
   const scope = args.file ? resolveFile(files, args.file) : null;
   if (scope && "error" in scope) return { ok: false, error: scope.error };
   const targets = scope ? [scope as AttachmentFile] : files;
-  const limit = Math.min(Math.max(1, Number(args.limit) || 8), 25);
-  const hits: Array<{ file: string; section: number; location: string; score: number; text: string }> = [];
+  const resultCap = limits?.maxResults ?? knowledgeLimits.attachmentSearchResults;
+  const limit = Math.min(Math.max(1, Number(args.limit) || 8), resultCap);
+  const sectionBudget = limits?.maxSections ?? knowledgeLimits.attachmentSearchSections;
+  type Hit = { file: string; section: number; location: string; score: number; raw: number; text: string };
+  const best: Hit[] = [];
+  let matches = 0;
   let searched = 0;
+  let remaining = sectionBudget;
+  let stopped = false;
   const incomplete: string[] = [];
+  const consider = (hit: Omit<Hit, "text">, text: string) => {
+    matches++;
+    const worse = (a: Hit, b: Hit) => a.raw < b.raw || (a.raw === b.raw && a.section > b.section);
+    if (best.length < limit) {
+      best.push({ ...hit, text: excerpt(text, query) });
+      return;
+    }
+    let worst = 0;
+    for (let n = 1; n < best.length; n++) if (worse(best[n], best[worst])) worst = n;
+    if (hit.raw > best[worst].raw || (hit.raw === best[worst].raw && hit.section < best[worst].section)) {
+      best[worst] = { ...hit, text: excerpt(text, query) };
+    }
+  };
   for (const f of targets) {
+    if (remaining <= 0) { stopped = true; break; }
     const { sections, coverage } = await loadSections(f);
-    searched += sections.length;
-    if (coverage && !coverage.complete) incomplete.push(`${f.filename}: ${coverage.omitted ?? "part of the file could not be read"}`);
-    const scores = scoreSections(sections, query);
-    scores.forEach((score, i) => {
-      if (score > 0) hits.push({ file: f.filename, section: i + 1, location: describeLocator(sections[i].locator), score: Math.round(score * 100) / 100, text: excerpt(sections[i].text, query) });
-    });
+    const take = Math.min(remaining, sections.length);
+    if (take < sections.length) stopped = true;
+    const window = sections.slice(0, take);
+    searched += window.length;
+    remaining -= window.length;
+    if (coverage && !coverage.complete) incomplete.push(`${filenameForLog(f.filename)}: ${coverage.omitted ?? "part of the file could not be read"}`);
+    const scores = scoreSections(window, query);
+    const fileName = filenameForLog(f.filename);
+    for (let i = 0; i < scores.length; i++) {
+      if (scores[i] <= 0) continue;
+      consider({
+        file: fileName,
+        section: i + 1,
+        location: describeLocator(window[i].locator),
+        score: Math.round(scores[i] * 100) / 100,
+        raw: scores[i],
+      }, window[i].text);
+    }
   }
-  hits.sort((a, b) => b.score - a.score || a.section - b.section);
+  best.sort((a, b) => b.raw - a.raw || a.section - b.section);
+  const results = best.map((hit) => ({ file: hit.file, section: hit.section, location: hit.location, score: hit.score, text: hit.text }));
   return {
     ok: true,
     query,
     sectionsSearched: searched,
-    matches: hits.length,
-    results: hits.slice(0, limit),
-    ...(hits.length > limit ? { more: `${hits.length - limit} more sections match; narrow the query or raise limit (max 25).` } : {}),
-    ...(hits.length === 0 ? { note: "No section contains these words. Try other words, or read sections directly." } : {}),
+    matches,
+    results,
+    ...(matches > limit ? { more: `${matches - limit} more sections match; narrow the query or raise limit (max ${resultCap}).` } : {}),
+    ...(matches === 0 ? { note: "No section contains these words. Try other words, or read sections directly." } : {}),
+    ...(stopped ? { stoppedEarly: `Searched ${searched} sections and stopped at the ${sectionBudget}-section limit.` } : {}),
     ...(incomplete.length ? { notRead: incomplete } : {}),
   };
 }
@@ -352,7 +397,7 @@ export async function readAttachmentSections(
   const target = resolveFile(files, args.file);
   if ("error" in target) return { ok: false, error: target.error };
   const { sections, coverage } = await loadSections(target as AttachmentFile);
-  if (sections.length === 0) return { ok: false, error: `${target.filename} has no readable text.` };
+  if (sections.length === 0) return { ok: false, error: `${filenameForLog(target.filename)} has no readable text.` };
 
   let start = -1;
   if (Number.isFinite(Number(args.section)) && Number(args.section) >= 1) start = Math.floor(Number(args.section)) - 1;
@@ -363,7 +408,7 @@ export async function readAttachmentSections(
     start = sections.findIndex((s) => s.locator.rowNumber === Number(args.row) && (!sheet || String(s.locator.sheet ?? "").toLowerCase() === sheet));
   } else start = 0;
   if (start < 0 || start >= sections.length) {
-    return { ok: false, error: `No such section in ${target.filename}; it has sections 1–${sections.length}.`, documentMap: documentMap(sections) };
+    return { ok: false, error: `No such section in ${filenameForLog(target.filename)}; it has sections 1–${sections.length}.`, documentMap: documentMap(sections) };
   }
 
   const count = Math.min(Math.max(1, Math.floor(Number(args.count) || 1)), MAX_READ_SECTIONS);
@@ -383,7 +428,7 @@ export async function readAttachmentSections(
   const last = out[out.length - 1].section;
   return {
     ok: true,
-    file: target.filename,
+    file: filenameForLog(target.filename),
     totalSections: sections.length,
     sections: out,
     ...(cut ? { note: `Section ${start + 1} is longer than ${MAX_READ_CHARS} characters; only its start is shown.` } : {}),

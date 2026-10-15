@@ -2,6 +2,7 @@ import { db } from "./db";
 import { uploadedFiles } from "@shared/schema";
 import { inArray, and, eq } from "drizzle-orm";
 import { ATTACHMENT_TOOL_GUIDE, DEFAULT_ATTACHMENT_BUDGET_CHARS, documentMap, loadSections, selectSections } from "./attachment-sections";
+import { filenameForLog } from "./file-extract";
 
 /**
  * Turning uploaded_files rows into text an LLM can use. Every surface that
@@ -54,9 +55,9 @@ function describeFile(file: UploadedFileRow): string {
 function renderBlock(file: UploadedFileRow, text: string): string {
   const detail = describeFile(file);
   return [
-    `--- Attached file: ${file.filename}${detail ? ` (${detail})` : ""} ---`,
+    `--- Attached file: ${filenameForLog(file.filename)}${detail ? ` (${detail})` : ""} ---`,
     text.trim() || "(no readable text in this file)",
-    `--- end of ${file.filename} ---`,
+    `--- end of ${filenameForLog(file.filename)} ---`,
   ].join("\n");
 }
 
@@ -115,7 +116,7 @@ export async function buildAttachmentContext(
       "",
       ...ordered.map((f, i) => renderBlock(f, bodies[i])),
     ].join("\n"),
-    names: ordered.map((f) => f.filename),
+    names: ordered.map((f) => filenameForLog(f.filename)),
     partial,
   };
 }
@@ -157,12 +158,12 @@ async function budgetedBodies(files: UploadedFileRow[], options: AttachmentConte
     }
     const { sections } = await loadSections(f);
     const sel = selectSections(sections, options.query ?? "", Math.max(2_000, allowance[i]));
-    partial.push(f.filename);
+    partial.push(filenameForLog(f.filename));
     const reach = options.toolsAvailable
       ? `${ATTACHMENT_TOOL_GUIDE} Search the file before concluding that something is not in it.`
       : "The sections not shown were not given to you: if the answer may depend on them, say so rather than guessing.";
     console.log(
-      `[attachments] file=${f.id} name="${f.filename}" sections=${sel.total} shown=${sel.shown.length} ` +
+      `[attachments] file=${f.id} name="${filenameForLog(f.filename)}" sections=${sel.total} shown=${sel.shown.length} ` +
       `chars=${sel.charsShown}/${sel.charsTotal} budget=${allowance[i]} tools=${options.toolsAvailable === true}`,
     );
     out.push([
@@ -209,7 +210,7 @@ export async function buildSourceDocuments(
   const blocks = ordered.map((f) => {
     const full = (f.extractedText ?? "").trim();
     const cut = full.length > perFile;
-    if (cut) truncated.push(f.filename);
+    if (cut) truncated.push(filenameForLog(f.filename));
     const body = cut
       ? `${full.slice(0, perFile)}\n[… truncated at ${perFile} characters of ${full.length} …]`
       : full;
@@ -224,7 +225,7 @@ export async function buildSourceDocuments(
       "",
       ...blocks,
     ].join("\n"),
-    names: ordered.map((f) => f.filename),
+    names: ordered.map((f) => filenameForLog(f.filename)),
     truncated,
   };
 }

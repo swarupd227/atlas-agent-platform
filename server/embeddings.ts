@@ -2,6 +2,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { getAllowedKbSensitivityLevels, type RoleId } from "./permissions";
 import { createHash } from "crypto";
+import { knowledgeLimits } from "./config";
 import {
   MAX_EMBEDDING_INPUT_CHARS as BACKEND_MAX_INPUT_CHARS, OPENAI_EMBEDDING_MODEL, embedWith, embeddingAvailable, getActiveEmbedding, isOpenAiEmbeddingConfigured,
   pgVectorStore, vectorFacts, ensureVectorTable, type EmbeddingTarget,
@@ -211,13 +212,20 @@ type RetrievedChunk = {
   source_url: string | null;
 };
 
-function mergeChunkHits(exact: RetrievedChunk[], semantic: RetrievedChunk[]): RetrievedChunk[] {
+function clampTopK(topK: number): number {
+  if (!Number.isFinite(topK) || topK < 1) return 1;
+  return Math.min(knowledgeLimits.retrievalMaxTopK, Math.floor(topK));
+}
+
+function mergeChunkHits(exact: RetrievedChunk[], semantic: RetrievedChunk[], limit: number): RetrievedChunk[] {
   const seen = new Set<string>();
   const out: RetrievedChunk[] = [];
+  const cap = clampTopK(limit);
   for (const row of [...exact, ...semantic]) {
     if (!row?.id || seen.has(row.id)) continue;
     seen.add(row.id);
     out.push(row);
+    if (out.length >= cap) break;
   }
   return out;
 }
@@ -234,6 +242,7 @@ async function lookupChunksByProductId(
   allowedLevels: string[],
   topK: number = 5,
 ): Promise<RetrievedChunk[]> {
+  const cap = clampTopK(topK);
   const keys = productIdLookupKeys(query).map((key) => key.toLowerCase());
   if (keys.length === 0) return [];
   const keyList = sql.join(keys.map((key) => sql`${key}`), sql`, `);
@@ -245,7 +254,7 @@ async function lookupChunksByProductId(
     WHERE c.knowledge_base_id = ${knowledgeBaseId}
       AND (lower(c.metadata->>'productId') IN (${keyList}) OR lower(c.metadata->>'key') IN (${keyList}))
       AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
-    LIMIT ${Math.max(keys.length, 1)}
+    LIMIT ${cap}
   `);
   const byKey = (found.rows || []) as RetrievedChunk[];
 
@@ -262,9 +271,9 @@ async function lookupChunksByProductId(
       AND (${sql.join(patterns.map((p) => sql`c.content ~* ${p}`), sql` OR `)})
       AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
     ORDER BY c.source_id, c.chunk_index
-    LIMIT ${Math.max(topK, ids.length)}
+    LIMIT ${cap}
   `);
-  return mergeChunkHits(byKey, (inText.rows || []) as RetrievedChunk[]);
+  return mergeChunkHits(byKey, (inText.rows || []) as RetrievedChunk[], cap);
 }
 
 /**
@@ -280,6 +289,7 @@ async function lexicalSearch(
   topK: number,
   withoutVectorFor?: { store: "legacy" | "vectors"; modelKey: string },
 ): Promise<RetrievedChunk[]> {
+  const cap = clampTopK(topK);
   const terms = lexicalTerms(query);
   if (terms.length === 0) return [];
   const tsq = terms.join(" | ");
@@ -298,9 +308,51 @@ async function lexicalSearch(
       ${gap}
       AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
     ORDER BY ts_rank_cd(to_tsvector('simple', c.content), to_tsquery('simple', ${tsq})) DESC
-    LIMIT ${topK}
+    LIMIT ${cap}
   `);
   return (rows.rows || []) as RetrievedChunk[];
+}
+
+/** A search request the API should refuse before it reaches retrieval. */
+export class RetrievalQueryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RetrievalQueryError";
+  }
+}
+
+/**
+ * Query length, topK and scoreThreshold at an HTTP boundary. topK is clamped
+ * again inside searchKnowledgeBaseChunks for callers that do not come through here.
+ */
+export function normalizeRetrievalRequest(
+  input: { query: unknown; topK?: unknown; scoreThreshold?: unknown },
+  defaults: { topK?: number; scoreThreshold?: number } = {},
+): { query: string; topK: number; scoreThreshold: number } {
+  if (typeof input.query !== "string" || !input.query.trim()) {
+    throw new RetrievalQueryError("Query is required");
+  }
+  const query = input.query.trim();
+  if (query.length > knowledgeLimits.retrievalMaxQueryChars) {
+    throw new RetrievalQueryError(`Query is too long. The limit is ${knowledgeLimits.retrievalMaxQueryChars} characters.`);
+  }
+  let topK = defaults.topK ?? 5;
+  if (input.topK !== undefined && input.topK !== null && input.topK !== "") {
+    const n = Number(input.topK);
+    if (!Number.isInteger(n) || n < 1 || n > knowledgeLimits.retrievalMaxTopK) {
+      throw new RetrievalQueryError(`topK must be an integer from 1 to ${knowledgeLimits.retrievalMaxTopK}.`);
+    }
+    topK = n;
+  }
+  let scoreThreshold = defaults.scoreThreshold ?? 0.3;
+  if (input.scoreThreshold !== undefined && input.scoreThreshold !== null && input.scoreThreshold !== "") {
+    const n = Number(input.scoreThreshold);
+    if (!Number.isFinite(n) || n < 0 || n >= 1) {
+      throw new RetrievalQueryError("scoreThreshold must be a number from 0 up to, but not including, 1.");
+    }
+    scoreThreshold = n;
+  }
+  return { query, topK: clampTopK(topK), scoreThreshold };
 }
 
 /**
@@ -340,9 +392,14 @@ export async function searchKnowledgeBaseChunks(
   source_name: string | null;
   source_url: string | null;
 }>> {
+  const cap = clampTopK(topK);
+  // HTTP routes reject an over-long query. Agent, workspace, worker and DAG
+  // callers pass a prompt or a user message, which can be longer than a search
+  // box, so the service keeps the leading characters instead of failing the run.
+  const q = query.length > knowledgeLimits.retrievalMaxQueryChars ? query.slice(0, knowledgeLimits.retrievalMaxQueryChars) : query;
   const available = await ensurePgVector();
   const allowedLevels = getAllowedKbSensitivityLevels(callerRole);
-  const exact = await lookupChunksByProductId(knowledgeBaseId, query, allowedLevels, topK);
+  const exact = await lookupChunksByProductId(knowledgeBaseId, q, allowedLevels, cap);
 
   if (!available) {
     // pgvector is unavailable: keyword search instead of vector comparison.
@@ -350,11 +407,11 @@ export async function searchKnowledgeBaseChunks(
     // callers/UIs don't mistake a filler value for a real relevance score.
     let lexical: RetrievedChunk[] = [];
     try {
-      lexical = await lexicalSearch(knowledgeBaseId, query, allowedLevels, topK);
+      lexical = await lexicalSearch(knowledgeBaseId, q, allowedLevels, cap);
     } catch (err) {
       console.warn("[embeddings] keyword search failed:", err instanceof Error ? err.message : err);
     }
-    if (exact.length > 0 || lexical.length > 0) return mergeChunkHits(exact, lexical);
+    if (exact.length > 0 || lexical.length > 0) return mergeChunkHits(exact, lexical, cap);
     // Nothing matched any word: the most recent chunks, as before.
     const fallback = await db.execute(sql`
       SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id,
@@ -363,16 +420,16 @@ export async function searchKnowledgeBaseChunks(
       LEFT JOIN knowledge_sources s ON s.id = c.source_id
       WHERE c.knowledge_base_id = ${knowledgeBaseId}
         AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
-      ORDER BY c.created_at DESC LIMIT ${topK}
+      ORDER BY c.created_at DESC LIMIT ${cap}
     `);
-    return mergeChunkHits(exact, (fallback.rows || []) as RetrievedChunk[]);
+    return mergeChunkHits(exact, (fallback.rows || []) as RetrievedChunk[], cap);
   }
 
   let semantic: RetrievedChunk[] = [];
   let active: Awaited<ReturnType<typeof getActiveEmbedding>> | undefined;
   try {
     active = await getActiveEmbedding();
-    const embeddings = await embedWith(active, [query], "query");
+    const embeddings = await embedWith(active, [q], "query");
     const queryEmbedding = embeddings[0];
     const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
@@ -389,7 +446,7 @@ export async function searchKnowledgeBaseChunks(
           AND 1 - (v.embedding <=> ${embeddingStr}::vector) > ${scoreThreshold}
           AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
         ORDER BY v.embedding <=> ${embeddingStr}::vector
-        LIMIT ${topK}
+        LIMIT ${cap}
       `);
       semantic = (results.rows || []) as RetrievedChunk[];
     } else {
@@ -404,19 +461,27 @@ export async function searchKnowledgeBaseChunks(
           AND 1 - (c.embedding <=> ${embeddingStr}::vector) > ${scoreThreshold}
           AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
         ORDER BY c.embedding <=> ${embeddingStr}::vector
-        LIMIT ${topK}
+        LIMIT ${cap}
       `);
       semantic = (results.rows || []) as RetrievedChunk[];
     }
   } catch (err) {
-    // A descriptive question has nothing else to return. An exact identifier
-    // still answers when the embedding provider is down.
-    if (exact.length === 0) throw err;
+    // The embedding provider is down or misconfigured. Keyword search still
+    // answers; an error is returned only when that search fails too.
     console.warn(
-      "[embeddings] semantic search failed; returning exact matches only:",
+      "[embeddings] semantic search failed; trying keyword search:",
       err instanceof Error ? err.message : err,
     );
-    return exact;
+    try {
+      const lexical = await lexicalSearch(knowledgeBaseId, q, allowedLevels, cap);
+      return mergeChunkHits(exact, lexical, cap);
+    } catch (fallbackErr) {
+      console.warn(
+        "[embeddings] keyword search failed:",
+        fallbackErr instanceof Error ? fallbackErr.message : fallbackErr,
+      );
+      throw fallbackErr;
+    }
   }
 
   // Chunks a failed embedding batch left without a vector are invisible to
@@ -424,7 +489,7 @@ export async function searchKnowledgeBaseChunks(
   let unembedded: RetrievedChunk[] = [];
   if (active) {
     try {
-      unembedded = await lexicalSearch(knowledgeBaseId, query, allowedLevels, topK, {
+      unembedded = await lexicalSearch(knowledgeBaseId, q, allowedLevels, cap, {
         store: active.store === "vectors" ? "vectors" : "legacy",
         modelKey: active.modelKey,
       });
@@ -433,5 +498,5 @@ export async function searchKnowledgeBaseChunks(
     }
   }
 
-  return mergeChunkHits(exact, mergeChunkHits(semantic, unembedded));
+  return mergeChunkHits(exact, mergeChunkHits(semantic, unembedded, cap), cap);
 }
