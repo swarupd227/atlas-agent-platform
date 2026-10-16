@@ -3,6 +3,8 @@
  * a team-run approval gate outside the Approvals page.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 const db = vi.hoisted(() => ({
   approvals: new Map<string, any>(),
@@ -27,6 +29,12 @@ vi.mock("../server/storage", () => ({
       return a;
     }),
     createAuditEvent: vi.fn(async (e: any) => { db.audit.push(e); return e; }),
+    getApprovals: vi.fn(async () => [...db.approvals.values()].map((a: any) => ({ ...a }))),
+    getOpenGateApprovalsForRun: vi.fn(async (runId: string) =>
+      [...db.approvals.values()].filter((a: any) =>
+        a.objectType === "pipeline_gate" &&
+        ["pending", "changes_requested", "expired"].includes(a.status) &&
+        (a.evidenceJson || {}).runId === runId).map((a: any) => ({ ...a }))),
     getOutcome: vi.fn(async (id: string, orgId?: string) => {
       const o = db.outcomes.get(id);
       return o && (!orgId || o.organizationId === orgId) ? { ...o } : undefined;
@@ -49,7 +57,7 @@ vi.mock("../server/dag-execution-engine", () => ({
   resumeTeamAgentDagRun: vi.fn(async (id: string) => { db.resumed.push(id); }),
 }));
 
-import { decideApproval, ApprovalDecisionError } from "../server/approval-decision";
+import { decideApproval, ApprovalDecisionError, closeMootGatesForRun, sweepMootGates } from "../server/approval-decision";
 
 const base = { orgId: "org-a", userId: "user-1", decidedBy: "admin", via: "test" };
 
@@ -165,6 +173,129 @@ describe("decideApproval", () => {
       db.approvals.set("apr-gate", { ...db.approvals.get("apr-gate"), status: "expired" });
       expiredGateOn("run-never-stored");
       expect(await code(decideApproval({ ...base, role: "admin", approvalId: "apr-gate", decision: "approved" }))).toBe("ok");
+    });
+  });
+
+  /**
+   * The guard above refuses the click. That is correct but late: the gate was
+   * still sitting in "Needs a decision" days after its run died, so someone
+   * read the whole case before being told. Measured on Azure 2026-10-14:
+   * approval 5c7b2b72 pending on run 8b5ee6f3, which failed two days earlier.
+   * Cancelling a run already closed its gate; failing and completing did not.
+   */
+  describe("closing a gate whose run ended without it", () => {
+    const openGateOn = (runId: string, status = "pending") => {
+      db.approvals.set("apr-gate", { ...db.approvals.get("apr-gate"), status, evidenceJson: { runId } });
+    };
+
+    it("closes the gate as moot, with the reason and the run's status", async () => {
+      openGateOn("run-done");
+      const closed = await closeMootGatesForRun("run-done", "failed");
+      expect(closed).toHaveLength(1);
+      const a = db.approvals.get("apr-gate");
+      expect(a.status).toBe("moot");
+      // Not "rejected": nobody refused it, which is the false record the whole
+      // guard exists to prevent.
+      expect(a.status).not.toBe("rejected");
+      expect(a.decidedBy).toBe("system");
+      expect(String(a.evidenceJson.mootReason)).toContain('ended as "failed"');
+      expect(a.evidenceJson.mootRunStatus).toBe("failed");
+      // The runId it was found by must survive, or nothing can trace it back.
+      expect(a.evidenceJson.runId).toBe("run-done");
+    });
+
+    it("records one audit event naming what it closed", async () => {
+      openGateOn("run-done");
+      await closeMootGatesForRun("run-done", "failed");
+      const ev = db.audit.filter((e: any) => e.action === "approval_moot");
+      expect(ev).toHaveLength(1);
+      expect(ev[0].objectId).toBe("run-done");
+      expect(String(ev[0].details)).toContain("apr-gate");
+    });
+
+    it("leaves a decided gate alone", async () => {
+      // Only open gates are returned by the lookup; an approved one must not be
+      // rewritten to moot, which would erase a real decision.
+      openGateOn("run-done", "approved");
+      const closed = await closeMootGatesForRun("run-done", "failed");
+      expect(closed).toHaveLength(0);
+      expect(db.approvals.get("apr-gate").status).toBe("approved");
+    });
+
+    it("writes nothing when the run has no open gate", async () => {
+      const closed = await closeMootGatesForRun("run-with-no-gate", "completed");
+      expect(closed).toHaveLength(0);
+      expect(db.audit.filter((e: any) => e.action === "approval_moot")).toHaveLength(0);
+    });
+
+    it("the sweep closes a gate whose run finished, and spares one still waiting", async () => {
+      db.dagRuns.set("run-done", { id: "run-done", status: "failed" });
+      db.dagRuns.set("run-waiting", { id: "run-waiting", status: "waiting_approval" });
+      openGateOn("run-done");
+      expect((await sweepMootGates()).closed).toBe(1);
+      expect(db.approvals.get("apr-gate").status).toBe("moot");
+
+      db.approvals.set("apr-gate", { ...db.approvals.get("apr-gate"), status: "pending" });
+      openGateOn("run-waiting");
+      expect((await sweepMootGates()).closed).toBe(0);
+      expect(db.approvals.get("apr-gate").status).toBe("pending");
+    });
+
+    it("the sweep is idempotent, so running it on every boot is safe", async () => {
+      db.dagRuns.set("run-done", { id: "run-done", status: "failed" });
+      openGateOn("run-done");
+      expect((await sweepMootGates()).closed).toBe(1);
+      expect((await sweepMootGates()).closed).toBe(0);
+      expect(db.audit.filter((e: any) => e.action === "approval_moot")).toHaveLength(1);
+    });
+  });
+
+  /**
+   * The tests above mock storage, so they prove closeMootGatesForRun's logic
+   * but not the query it depends on. A mock that filtered differently from the
+   * real one would keep them green while production closed the wrong rows.
+   */
+  describe("the queries behind it", () => {
+    const storageSrc = readFileSync(join(__dirname, "..", "server", "storage.ts"), "utf8");
+
+    /**
+     * Declaration to next declaration, never a fixed character count: this tree
+     * stores LF and a clean Windows checkout materialises CRLF, which moved a
+     * slice window far enough to fail CI on the very commit that added it.
+     */
+    function methodBody(src: string, declaration: string): string {
+      const at = src.indexOf(declaration);
+      if (at < 0) return "";
+      const next = src.indexOf("\n  async ", at + declaration.length);
+      return next < 0 ? src.slice(at) : src.slice(at, next);
+    }
+
+    it("only ever returns OPEN gates, for THIS run", () => {
+      expect(storageSrc.indexOf("async getOpenGateApprovalsForRun"), "not found").toBeGreaterThan(-1);
+      const body = methodBody(storageSrc, "async getOpenGateApprovalsForRun");
+      expect(body).toContain('eq(approvals.objectType, "pipeline_gate")');
+      expect(body).toContain('inArray(approvals.status, ["pending", "changes_requested", "expired"])');
+      // By the run id on the approval, NOT the run's pendingApprovalId, which
+      // is cleared exactly when the run stops.
+      expect(body).toContain("evidence_json->>'runId'");
+      expect(body).not.toContain("pendingApprovalId");
+    });
+
+    it("fires the close only when a run reaches a terminal status", () => {
+      const body = methodBody(storageSrc, "async updateDagExecutionRun");
+      expect(body).toContain("FINISHED_DAG_RUN_STATUSES.has(String(data.status))");
+      expect(body).toContain("closeMootGatesForRun");
+      // Never fail the run's own write because a gate could not be closed.
+      expect(body).toMatch(/catch\s*\{/);
+    });
+
+    it("agrees with approval-decision.ts about which statuses are finished", () => {
+      const ad = readFileSync(join(__dirname, "..", "server", "approval-decision.ts"), "utf8");
+      const set = (src: string, name: string) => src.slice(src.indexOf(name), src.indexOf("]", src.indexOf(name)) + 1);
+      // Two copies of one rule drift. If they ever disagree, a run could finish
+      // by one definition and leave its gate open by the other.
+      expect(set(storageSrc, "FINISHED_DAG_RUN_STATUSES")).toContain('"completed", "completed_with_skips", "failed", "cancelled"');
+      expect(set(ad, "FINISHED_RUN_STATUSES")).toContain('"completed", "completed_with_skips", "failed", "cancelled"');
     });
   });
 

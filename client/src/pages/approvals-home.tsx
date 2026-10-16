@@ -91,6 +91,9 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   approved: { label: "Approved", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
   rejected: { label: "Rejected", cls: "bg-red-500/10 text-red-700 dark:text-red-300" },
   expired: { label: "Expired", cls: "bg-muted text-muted-foreground" },
+  // Nobody decided this one: its run ended without it, so the decision could no
+  // longer reach anything. Not "Rejected", which would claim a person refused it.
+  moot: { label: "No longer needed", cls: "bg-muted text-muted-foreground" },
 };
 
 function StatusPill({ status }: { status: string }) {

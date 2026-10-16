@@ -485,6 +485,83 @@ export async function gateDecisionMootReason(approval: Approval): Promise<string
   return `The run this gate belongs to (${runId.slice(0, 8)}) already finished as "${run.status}" without this decision, so approving or refusing it now would change nothing. Deciding it anyway would record an approval the run never acted on. Re-run the team if this still needs to happen.`;
 }
 
+/**
+ * The status a gate takes when its run ended without it.
+ *
+ * Deliberately outside OPEN_APPROVAL_STATUSES, so the queue stops counting it
+ * and the page stops offering Approve/Reject: isDecidable() on the client is
+ * pending/changes_requested/expired, and needsDecision is the first two. A
+ * fifth state is better than reusing `rejected`, which would assert a person
+ * refused this gate when nobody did -- the same false record the moot guard
+ * exists to prevent.
+ */
+export const MOOT_APPROVAL_STATUS = "moot";
+
+/**
+ * Close the gates a finished run can no longer act on.
+ *
+ * Cancelling already did this (cancelTeamAgentDagRun clears its
+ * pendingApprovalId gate). Failing and completing did not, so a gate stayed
+ * `pending` indefinitely: measured on Azure 2026-10-14, approval 5c7b2b72 was
+ * still asking for a decision on run 8b5ee6f3, which had failed two days
+ * earlier. gateDecisionMootReason then refused the click -- correct, but only
+ * after someone had read the case and pressed Approve.
+ *
+ * The reason is written onto the approval so the page can say what happened
+ * instead of showing a bare status.
+ */
+export async function closeMootGatesForRun(runId: string, runStatus: string): Promise<Approval[]> {
+  const open = await storage.getOpenGateApprovalsForRun(runId).catch(() => [] as Approval[]);
+  const closed: Approval[] = [];
+  for (const a of open) {
+    const evidence = (a.evidenceJson && typeof a.evidenceJson === "object" ? a.evidenceJson : {}) as Record<string, unknown>;
+    const updated = await storage.updateApproval(a.id, {
+      status: MOOT_APPROVAL_STATUS,
+      // Not decidedBy a person: nobody decided this, the run ended without it.
+      decidedBy: "system",
+      decidedAt: new Date(),
+      evidenceJson: { ...evidence, mootReason: `The run ended as "${runStatus}" without this decision, so approving or refusing it could no longer change anything.`, mootAt: new Date().toISOString(), mootRunStatus: runStatus },
+    } as Partial<Approval>).catch(() => undefined);
+    if (updated) closed.push(updated);
+  }
+  if (closed.length) {
+    await storage.createAuditEvent({
+      actorType: "system",
+      actorId: "system",
+      action: "approval_moot",
+      objectType: "dag_execution_run",
+      objectId: runId,
+      details: `${closed.length} open gate(s) closed as moot: the run ended as "${runStatus}" without them. ${closed.map((c) => c.id).join(", ")}`,
+    } as never).catch(() => {});
+  }
+  return closed;
+}
+
+/**
+ * Close gates whose run already finished before the hook above existed.
+ *
+ * The hook only fires on a terminal transition, and these runs made theirs
+ * days ago, so nothing will re-trigger for them. Idempotent -- it only matches
+ * gates that are still open -- so it is safe to run on every boot, which also
+ * covers a crash between a run finishing and its gate closing.
+ */
+export async function sweepMootGates(): Promise<{ scanned: number; closed: number }> {
+  const all = await storage.getApprovals().catch(() => [] as Approval[]);
+  const open = all.filter((a) => a.objectType === "pipeline_gate" && OPEN_APPROVAL_STATUSES.has(String(a.status)));
+  let closed = 0;
+  for (const a of open) {
+    // Reuses the single definition of "moot" rather than a second copy of the
+    // rule, so the sweep and the click can never disagree about a gate.
+    const reason = await gateDecisionMootReason(a).catch(() => null);
+    if (!reason) continue;
+    const runId = (a.evidenceJson as { runId?: string } | null)?.runId;
+    if (!runId) continue;
+    const run = await storage.getDagExecutionRun(runId).catch(() => undefined);
+    closed += (await closeMootGatesForRun(runId, String(run?.status ?? "finished"))).length;
+  }
+  return { scanned: open.length, closed };
+}
+
 export interface DecideApprovalInput {
   orgId: string;
   role: RoleId;

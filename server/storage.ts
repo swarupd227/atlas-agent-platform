@@ -1212,6 +1212,9 @@ function resolveOrgId(providedOrgId: string | null | undefined): string {
  * default org configured) — in that single-tenant-no-orgs shape there is
  * nothing to leak across, so returning unfiltered is correct.
  */
+/** A DAG run that has stopped. Mirrors FINISHED_RUN_STATUSES in approval-decision.ts. */
+const FINISHED_DAG_RUN_STATUSES = new Set(["completed", "completed_with_skips", "failed", "cancelled"]);
+
 function resolveOrgIdForRead(orgId?: string | null): string | undefined {
   return orgId || getDefaultOrgId();
 }
@@ -5552,8 +5555,38 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
+  /**
+   * Open pipeline-gate approvals raised by this run.
+   *
+   * Found by the run id recorded in evidence_json, not by the run's
+   * pendingApprovalId: that column is cleared the moment the run stops, which
+   * is precisely when this question needs answering.
+   */
+  async getOpenGateApprovalsForRun(runId: string): Promise<Approval[]> {
+    return db.select().from(approvals).where(
+      and(
+        eq(approvals.objectType, "pipeline_gate"),
+        inArray(approvals.status, ["pending", "changes_requested", "expired"]),
+        sql`evidence_json->>'runId' = ${runId}`,
+      ),
+    );
+  }
+
   async updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined> {
     const [row] = await db.update(dagExecutionRuns).set(data).where(eq(dagExecutionRuns.id, id)).returning();
+    // A run that has stopped can no longer act on a gate decision. Cancelling
+    // already closed its gate (cancelTeamAgentDagRun), but failing and
+    // completing did not, so a gate sat in "Needs a decision" for a run that
+    // ended days earlier -- and the decision was then refused at the click,
+    // after someone had read the whole case. Closed here rather than at the
+    // twelve call sites that set a terminal status, for the same reason
+    // createEvalSuite derives its org here: one place that cannot be forgotten.
+    if (row && data.status && FINISHED_DAG_RUN_STATUSES.has(String(data.status))) {
+      try {
+        const { closeMootGatesForRun } = await import("./approval-decision");
+        await closeMootGatesForRun(id, String(data.status));
+      } catch { /* closing a gate must never fail the run's own bookkeeping */ }
+    }
     return row;
   }
 

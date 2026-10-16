@@ -233,6 +233,22 @@ app.use((req, res, next) => {
   }
   await registerRoutes(httpServer, app);
 
+  // Gates whose run finished without them. The hook in updateDagExecutionRun
+  // only fires on a terminal transition, so a run that ended before it existed
+  // -- or one that died between finishing and closing its gate -- leaves a gate
+  // nobody can ever decide sitting in the queue. Idempotent and only touches
+  // still-open gates, so it is safe on every boot. Deliberately not awaited:
+  // a slow sweep must not hold up the port being opened.
+  void (async () => {
+    try {
+      const { sweepMootGates } = await import("./approval-decision");
+      const { scanned, closed } = await sweepMootGates();
+      if (closed) log(`[approvals] closed ${closed} of ${scanned} open gate(s) whose run had already finished`);
+    } catch (e: any) {
+      console.warn(`[approvals] moot-gate sweep failed (not fatal): ${e?.message ?? e}`);
+    }
+  })();
+
   // Anything left under /api or /demo-api is a 404, not the app shell. This
   // has to sit here: every API route is registered above, and below there is
   // nothing but the error handler and the SPA catch-all that was answering

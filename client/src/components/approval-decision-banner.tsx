@@ -16,6 +16,25 @@ export function isDecidable(status: string) {
  * Renders nothing for a still-decidable approval (pending, changes_requested, expired).
  */
 export function ApprovalDecisionBanner({ approval }: { approval: Approval }) {
+  // A gate whose run ended without it. Nobody decided it, so it gets its own
+  // wording rather than "Rejected by system": the point is that the question
+  // stopped mattering, not that someone refused it. Before this existed the
+  // row stayed in "Needs a decision" and the server refused the click.
+  if (approval.status === "moot") {
+    const reason = (approval.evidenceJson as any)?.mootReason;
+    return (
+      <div className="flex items-start gap-2.5 px-6 py-3 border-b bg-muted/40 text-muted-foreground" data-testid={`moot-note-${approval.id}`}>
+        <Lock className="w-4 h-4 mt-0.5 shrink-0 opacity-80" />
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-xs font-semibold">No longer needed — nobody decided this</span>
+          <span className="text-xs opacity-85">
+            {reason ? String(reason) : "The run this gate belongs to ended without this decision."}
+          </span>
+          <span className="text-[11px] opacity-70">Re-run the team if this still needs to happen.</span>
+        </div>
+      </div>
+    );
+  }
   if (approval.status !== "approved" && approval.status !== "rejected") return null;
 
   const note = (approval.constraintsJson as any)?.requestedChanges || (approval.constraintsJson as any)?.notes;
