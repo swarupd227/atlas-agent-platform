@@ -1019,12 +1019,15 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
         {
           name: "get_treaty_terms",
-          description: "Read the carrier treaty in force: delegated authority limits (single risk, Tier 1 coastal aggregate, permitted states), the clause text behind each limit, mandatory endorsements, occupancy exclusions and the referral path with its service level. Quote the clause number and limit in any referral rather than paraphrasing them.",
+          description: "Read the carrier treaty in force for a line of business: delegated authority limits, the clause text behind each limit, mandatory endorsements, occupancy or operation exclusions, and the referral path with its service level. Delegated authority is written PER LINE, so pass lineOfBusiness whenever you are deciding whether a particular line may be bound — the Commercial Property treaty says nothing about whether an auto risk is within authority. A line this MGA holds no treaty for is refused with the lines it does cover: that is a referral, not a pass. The response splits authorityScope into limits decidable from an account record and limits that need a submission; report the latter as outstanding rather than satisfied. Quote the clause number and limit in any referral rather than paraphrasing them.",
           endpoint: "/treaty",
           method: "GET",
           inputSchema: {
             type: "object",
-            properties: { treatyId: { type: "string", description: "Treaty id, e.g. CP-2026-17 (default)" } },
+            properties: {
+              lineOfBusiness: { type: "string", description: "The line being written, e.g. \"Commercial Auto\" or \"Commercial Property\". Pass this when deciding whether a line may be bound." },
+              treatyId: { type: "string", description: "Treaty id, e.g. CP-2026-17. Omit when asking by line of business." },
+            },
           },
         },
       ],

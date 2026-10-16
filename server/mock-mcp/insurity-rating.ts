@@ -19,7 +19,10 @@ import { createHash } from "crypto";
  *     cohort -- an input to judgement, never a limit.
  *   - get_treaty_terms: the carrier's delegated authority in force, so a
  *     referral can quote the clause and limit it breached rather than
- *     paraphrasing them.
+ *     paraphrasing them. Authority is PER LINE OF BUSINESS: ask for the line
+ *     being written, because the Commercial Property treaty says nothing about
+ *     whether an auto risk may be bound, and reading it as though it did is
+ *     how business gets bound outside authority.
  *
  * Refusals are the point: a discretionary credit outside the underwriter's
  * authority, an unknown construction class or a deductible outside the filed
@@ -80,7 +83,57 @@ const TREATIES: Record<string, Record<string, unknown>> = {
     referralPath: { queue: "Carrier A Property Referrals", slaHours: 24, requires: ["breach summary", "exposure detail", "loss history", "requested exception"] },
     occupancyExclusions: ["Marina", "Pier / Over-water structure", "Vacant > 60 days"],
   },
+  // A second line, because delegated authority is written per line and a
+  // cross-sell asks a question the property treaty cannot answer: may we bind
+  // THIS line for THIS account at all? Scope -- line, state, operation -- is
+  // answerable from an account record. Magnitude -- fleet size, radius,
+  // limits -- is not, because an account-level opportunity has no auto
+  // exposure data until a submission exists. The response separates the two
+  // rather than implying the whole check passed.
+  "CA-2026-08": {
+    treatyId: "CA-2026-08",
+    carrierCode: "CARRIER-B",
+    carrierName: "Carrier B Transportation Risk Company",
+    lineOfBusiness: "Commercial Auto (E&S)",
+    periodStart: "2026-01-01",
+    periodEnd: "2026-12-31",
+    delegatedAuthority: {
+      combinedSingleLimit: 2_000_000,
+      maxPowerUnits: 150,
+      maxRadiusOfOperationMiles: 500,
+      maxPolicyTermMonths: 12,
+      permittedStates: ["CA", "NV", "AZ", "OR", "WA", "TX"],
+    },
+    clauses: {
+      "3.1": "Permitted territory: the Managing General Agent shall not bind auto liability for any insured whose vehicles are garaged outside the permitted states without prior written referral.",
+      "3.4": "Combined single limit: the Managing General Agent shall not bind a combined single limit exceeding USD 2,000,000 without prior written referral.",
+      "3.5": "Fleet size: the Managing General Agent shall not bind a fleet exceeding 150 power units without prior written referral.",
+      "3.6": "Radius of operation: the Managing General Agent shall not bind an insured operating beyond a 500 mile radius without prior written referral.",
+      "7.2": "Excluded operations: the Managing General Agent shall not bind hazardous materials long-haul, passenger transport for hire, or emergency services operations under any circumstances.",
+    },
+    referralPath: { queue: "Carrier B Auto Referrals", slaHours: 48, requires: ["breach summary", "vehicle schedule", "driver list and MVRs", "loss runs", "requested exception"] },
+    operationExclusions: ["Hazardous materials long-haul", "Passenger transport for hire", "Emergency services"],
+  },
 };
+
+/**
+ * Which treaty governs a line, matched on the leading words so a caller may
+ * ask for "Commercial Auto" and reach "Commercial Auto (E&S)". Returns null
+ * rather than a fallback: a line with no treaty is a referral, and answering
+ * it with another line's authority is the error this exists to prevent.
+ */
+function treatyForLine(line: string): Record<string, unknown> | null {
+  const want = line.trim().toLowerCase().replace(/\s*\(e&s\)\s*$/, "");
+  if (!want) return null;
+  for (const treaty of Object.values(TREATIES)) {
+    const have = String(treaty.lineOfBusiness).toLowerCase().replace(/\s*\(e&s\)\s*$/, "");
+    if (have === want) return treaty;
+  }
+  return null;
+}
+
+/** The lines this MGA holds delegated authority for at all. */
+const coveredLines = () => Object.values(TREATIES).map((t) => String(t.lineOfBusiness));
 
 function now() { return new Date().toISOString(); }
 function idFrom(prefix: string, seed: string) {
@@ -89,16 +142,69 @@ function idFrom(prefix: string, seed: string) {
 const money = (n: number) => Math.round(n * 100) / 100;
 
 router.get("/treaty", (req: Request, res: Response) => {
-  const id = String(req.query.treatyId || "CP-2026-17").trim();
+  const askedId = String(req.query.treatyId || "").trim();
+  const askedLine = String(req.query.lineOfBusiness || "").trim();
+
+  // A line with no treaty is the honest answer to a cross-sell question, and
+  // it has to be a refusal: returning another line's authority would let the
+  // caller conclude the authority check passed.
+  if (askedLine) {
+    const byLine = treatyForLine(askedLine);
+    if (!byLine) {
+      res.status(404).json({
+        error: `This MGA holds no delegated authority for "${askedLine}".`,
+        lineOfBusinessRequested: askedLine,
+        coveredLines: coveredLines(),
+        guidance: "No treaty covers this line, so there is no authority to bind it and nothing to evaluate it against. This is a referral to the carrier, not a pass: do not substitute another line's treaty.",
+      });
+      return;
+    }
+    // Both given and disagreeing is a confusion worth refusing rather than
+    // silently resolving in favour of one of them.
+    if (askedId && String(byLine.treatyId) !== askedId) {
+      res.status(400).json({
+        error: `Treaty "${askedId}" does not govern "${askedLine}".`,
+        treatyIdRequested: askedId,
+        lineOfBusinessRequested: askedLine,
+        treatyGoverningThatLine: byLine.treatyId,
+        guidance: "Ask by line of business, or by treaty id, but do not ask for a treaty and a line that disagree.",
+      });
+      return;
+    }
+    res.json({
+      ...byLine,
+      lineOfBusinessRequested: askedLine,
+      retrievedAt: now(),
+      authorityScope: {
+        checkableFromAccountRecord: ["lineOfBusiness", "permittedStates", "operationExclusions", "occupancyExclusions"],
+        requiresSubmission: ["combinedSingleLimit", "singleRiskLimit", "coastalTier1AggregateLimit", "maxPowerUnits", "maxRadiusOfOperationMiles", "minWindstormDeductiblePct"].filter(
+          (k) => k in ((byLine.delegatedAuthority ?? {}) as Record<string, unknown>),
+        ),
+      },
+      guidance:
+        "These limits are the carrier's delegated authority for this line. Evaluate them deterministically: a breach is a referral, never an underwriting judgement call, and the clause number belongs in the referral packet. Scope limits under checkableFromAccountRecord can be decided now; those under requiresSubmission cannot be decided from an account alone, so report them as outstanding rather than as satisfied.",
+    });
+    return;
+  }
+
+  const id = askedId || "CP-2026-17";
   const treaty = TREATIES[id];
   if (!treaty) {
-    res.status(404).json({ error: `No treaty "${id}" found.`, availableTreaties: Object.keys(TREATIES) });
+    res.status(404).json({ error: `No treaty "${id}" found.`, availableTreaties: Object.keys(TREATIES), coveredLines: coveredLines() });
     return;
   }
   res.json({
     ...treaty,
     retrievedAt: now(),
-    guidance: "These limits are the carrier's delegated authority. Evaluate them deterministically: a breach is a referral, never an underwriting judgement call, and the clause number belongs in the referral packet.",
+    lineOfBusinessRequested: null,
+    ...(askedId
+      ? {}
+      : {
+          warning: `No lineOfBusiness was requested, so this is the default treaty and it governs ${treaty.lineOfBusiness} only. It is not authority for any other line.`,
+          coveredLines: coveredLines(),
+        }),
+    guidance:
+      "These limits are the carrier's delegated authority. Evaluate them deterministically: a breach is a referral, never an underwriting judgement call, and the clause number belongs in the referral packet. Delegated authority is written per line of business: to decide whether a particular line may be bound, ask for that line with lineOfBusiness.",
   });
 });
 
