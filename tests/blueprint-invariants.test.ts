@@ -538,3 +538,78 @@ describe("a key an expression builds but only sometimes reports", () => {
     expect(r.findings.filter((f) => f.kind === "conditional_output_field")).toHaveLength(0);
   });
 });
+
+/**
+ * The verdict that was computed and then not routed on.
+ *
+ * branch_judged_by_model catches an Expression whose OWN ways out are
+ * sentences. The commoner shape is one hop longer -- expression -> decision ->
+ * sentences -- and fell between two checks: the expression's own edge is
+ * unconditional, and no_fallback_branch skips a branch decision on purpose.
+ *
+ * Live on 2026-10-16: "Rating Floor Check" emitted evaluated: 0 with the
+ * verdict "UNDETERMINED: the ratings step did not report any carriers", the
+ * decision behind it was asked in prose whether the check reported
+ * exceptionRequired true, routed to "Exception required" anyway, and the run
+ * went on to ask a person to approve a placement where nothing was evaluated.
+ */
+describe("a decision routed on prose while the step feeding it emitted fields", () => {
+  const ratingFloorCheck = () => ({
+    ...node("n1", "Rating Floor Check"),
+    nodeType: "expression",
+    config: { expression: '{ "evaluated": $count(carriers), "exceptionRequired": false, "verdict": "x" }' },
+  });
+  const decision = () => ({ ...node("n2", "Floor met"), nodeType: "decision", config: { decision: { options: [{ label: "Floor met" }, { label: "Exception required" }] } } });
+
+  beforeEach(() => {
+    db.nodes = [ratingFloorCheck(), decision(), node("n3", "Compare quotes"), node("n4", "Draft exception memo")];
+    db.edges = [
+      edge("n1", "n2"),
+      edge("n2", "n3", { condition: "The Rating Floor Check reports allAtOrAboveFloor true and exceptionRequired false" }),
+      edge("n2", "n4", { condition: "The Rating Floor Check reports exceptionRequired true" }),
+    ];
+  });
+
+  it("is reported, naming the fields the answer is already in", async () => {
+    const check = await checkBlueprintInvariants("bp-1");
+    const found = check.findings.find((f) => f.kind === "verdict_not_routed_on")!;
+    expect(found, "no verdict_not_routed_on finding").toBeTruthy();
+    // The fields come from the expression's own output schema, which is what
+    // makes this decisive rather than a guess.
+    expect(found.message).toContain('"evaluated"');
+    expect(found.message).toContain('"exceptionRequired"');
+    // And it names the prose it is replacing, so the author can find it.
+    expect(found.message).toContain("exceptionRequired true");
+    expect(found.steps).toEqual(["Rating Floor Check", "Floor met", "Compare quotes", "Draft exception memo"]);
+    expect(found.blocksRun).toBe(false);
+  });
+
+  it("says nothing once the branches carry rules", async () => {
+    db.edges = [
+      edge("n1", "n2"),
+      edge("n2", "n3", { evaluationMode: "deterministic", rule: { all: [{ field: "exceptionRequired", op: "is_false" }] } }),
+      edge("n2", "n4", { condition: "The Rating Floor Check reports exceptionRequired true" }),
+    ];
+    const check = await checkBlueprintInvariants("bp-1");
+    expect(check.findings.map((f) => f.kind)).not.toContain("verdict_not_routed_on");
+  });
+
+  it("says nothing when the step feeding the decision emits no declared fields", async () => {
+    // An ordinary agent with no contract: there is no schema, so there are no
+    // field names to suggest, so suggesting any would be guessing.
+    db.nodes = [node("n1", "Some agent"), decision(), node("n3", "Compare quotes"), node("n4", "Draft exception memo")];
+    const check = await checkBlueprintInvariants("bp-1");
+    expect(check.findings.map((f) => f.kind)).not.toContain("verdict_not_routed_on");
+  });
+
+  it("reports a decision once, however many steps feed it", async () => {
+    db.nodes = [ratingFloorCheck(), { ...node("n5", "Coverage Check"), nodeType: "expression", config: { expression: '{ "covered": true }' } }, decision(), node("n3", "Compare quotes"), node("n4", "Draft exception memo")];
+    db.edges = [
+      edge("n1", "n2"), edge("n5", "n2"),
+      edge("n2", "n3", { condition: "floor met" }),
+      edge("n2", "n4", { condition: "exception required" }),
+    ];
+    const check = await checkBlueprintInvariants("bp-1");
+    expect(check.findings.filter((f) => f.kind === "verdict_not_routed_on")).toHaveLength(1);
+  });
+});

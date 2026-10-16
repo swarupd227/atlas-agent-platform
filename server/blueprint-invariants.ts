@@ -36,7 +36,9 @@ export interface BlueprintFinding {
     | "unsatisfiable_condition"
     /** A field an Expression step constructs but only reports in some runs. */
     | "conditional_output_field"
-    | "branch_judged_by_model";
+    | "branch_judged_by_model"
+    /** A decision routed on prose while the step feeding it emitted fields. */
+    | "verdict_not_routed_on";
   /** Sentence naming the steps involved and what to do, for a card or a route. */
   message: string;
   /** True when no run can start at all. */
@@ -223,6 +225,48 @@ export async function checkBlueprintInvariants(blueprintId: string | null | unde
     if (!schemaCache.has(node.id)) schemaCache.set(node.id, await stepOutputSchema(node).catch(() => undefined));
     return schemaCache.get(node.id);
   };
+
+  // --- a verdict that was computed and then not routed on ---
+  //
+  // branch_judged_by_model above catches an Expression whose OWN ways out are
+  // sentences. It misses the commoner shape, which is one hop longer: the
+  // expression hands its JSON to a decision step, and the decision's branches
+  // are the sentences. The expression's own edge is unconditional, so
+  // `outs.every(guarded)` is false there; and no_fallback_branch skips a branch
+  // decision on purpose, because a branch decision always takes exactly one way
+  // out and has no "none matched" to warn about. Nothing was left to notice
+  // that the fields were already there.
+  //
+  // Live on 2026-10-16: "Rating Floor Check" emitted
+  // {evaluated: 0, exceptionRequired: false, verdict: "UNDETERMINED: the
+  // ratings step did not report any carriers"}, and the decision behind it was
+  // asked, in prose, whether the check reported exceptionRequired true. It
+  // routed to "Exception required" anyway and the run carried on to ask a
+  // person to approve a placement where nothing had been evaluated. Both
+  // decisions on the fleet that had a verdict available were in this state.
+  //
+  // The source's schema is what makes this decisive rather than a guess: it
+  // names the fields a rule could read. Without one there is nothing to
+  // suggest, so nothing is said.
+  for (const node of nodes) {
+    if (node.nodeType !== "decision") continue;
+    const outs = outgoing.get(node.id) ?? [];
+    if (outs.length === 0 || !outs.every(guarded)) continue;
+    if (outs.some((e: any) => e.evaluationMode === "deterministic" && e.rule)) continue;
+    for (const inEdge of edges.filter((e) => e.targetNodeId === node.id)) {
+      const source = nodeById.get(inEdge.sourceNodeId);
+      const schema = await schemaOf(source);
+      const fields = Object.keys((schema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {});
+      if (fields.length === 0) continue;
+      findings.push({
+        kind: "verdict_not_routed_on",
+        blocksRun: false,
+        steps: [labelOf(inEdge.sourceNodeId), node.label, ...outs.map((e: any) => labelOf(e.targetNodeId))],
+        message: `"${labelOf(inEdge.sourceNodeId)}" emits ${fields.map((f) => `"${f}"`).join(", ")}, and "${node.label}" decides which way on by asking a model about a sentence instead (${outs.map((e: any) => `"${String(e.condition ?? e.label ?? "").trim()}"`).join(", ")}). The answer is already in those fields, so a model is asked to re-derive it once per run and can contradict it — and nothing notices when it does, because a branch decision always takes some branch. Writing these as rules on the fields the step emits settles it before the run.`,
+      });
+      break; // one finding per decision: the first source with a schema is enough
+    }
+  }
 
   for (const e of edges) {
     if (e.evaluationMode !== "deterministic" || !e.rule) continue;
