@@ -325,7 +325,14 @@ describe("DAGExecutionEngine — approval identity on the Approvals page", () =>
     expect(meta.evidenceJson.teamAgentName).toBe("Marcom Deck Team");
     expect(meta.evidenceJson.gateLabel).toBe("Manual Review");
     expect(meta.evidenceJson.upstreamSteps).toEqual([
-      { label: "Draft the slide outline", stateKey: "slide_outline", preview: "the outline" },
+      {
+        label: "Draft the slide outline",
+        stateKey: "slide_outline",
+        preview: "the outline",
+        // Whether the step's claims rested on a connector call, in front of the
+        // person deciding rather than only in the flattened text.
+        verified: { captured: false, why: expect.any(String) },
+      },
     ]);
   });
 
@@ -354,8 +361,92 @@ describe("DAGExecutionEngine — approval identity on the Approvals page", () =>
 
     const evidence = (waitForApproval as any).mock.calls.at(-1)[7].evidenceJson;
     expect(evidence.upstreamSteps).toEqual([
-      { label: "Deck Build QA", stateKey: "qa_result", preview: "## Deck Build QA: PASS\nEvery slide checked.", verdict: "## Deck Build QA: PASS" },
+      {
+        label: "Deck Build QA", stateKey: "qa_result",
+        preview: "## Deck Build QA: PASS\nEvery slide checked.", verdict: "## Deck Build QA: PASS",
+        verified: { captured: false, why: expect.any(String) },
+      },
     ]);
+  });
+
+  /**
+   * What the gate rests on, in front of the person deciding.
+   *
+   * Live 2026-10-16: a gate asked for approval of a placement where the step
+   * before it had emitted {evaluated: 0, verdict: "UNDETERMINED: the ratings
+   * step did not report any carriers"}. The card showed a 600-character prose
+   * preview and a green tick beside every step, including ones whose own
+   * record said no connector call had been made. The fields and the
+   * verification record were both already in state; neither reached the card.
+   */
+  it("puts an upstream step's own fields on the evidence, not just its prose", async () => {
+    const { waitForApproval, executeWorkerAgent } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    // An agent answers in text; the engine parses the JSON out of it. An
+    // Expression stores the object directly. Both reach the card the same way.
+    (executeWorkerAgent as any).mockResolvedValue({
+      success: true,
+      output: JSON.stringify({ evaluated: 0, exceptionRequired: false, verdict: "UNDETERMINED: the ratings step did not report any carriers" }),
+    });
+
+    // The shared mock returns null for every parse, which is right for the other
+    // tests here and would make this one assert nothing. Pointed at real parsing
+    // for this test, and put back afterwards so no later test inherits it.
+    const { extractStructuredOutput } = await import("../server/agent-runtime");
+    const parseReal = (t: unknown) => { try { return typeof t === "string" ? JSON.parse(t) : null; } catch { return null; } };
+    (extractStructuredOutput as any).mockImplementation(parseReal);
+
+    const check = node({ id: "chk", refAgentId: "agent-chk", label: "Rating Floor Check", stateKey: "rating_floor_check" });
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Placement Approval", stateKey: "gate_result" });
+    const edge = {
+      id: "e1", blueprintId: "bp1", sourceNodeId: "chk", targetNodeId: "gate-1", label: null, contentPartTypes: [],
+      allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge;
+
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves([check, gateNode], [edge]),
+      stateSchema: {},
+      initialState: {},
+      errorStrategy: "best_effort",
+      teamAgentId: "team-1",
+      teamAgentName: "Insurer Selection",
+      dagRunId: "run-3",
+    });
+
+    const [step] = (waitForApproval as any).mock.calls.at(-1)[7].evidenceJson.upstreamSteps;
+    // The number that decides whether this gate should have been raised at all.
+    expect(step.fields).toMatchObject({ evaluated: "0", exceptionRequired: "false" });
+    expect(String(step.fields.verdict)).toContain("UNDETERMINED");
+    // And the prose preview stays, so nothing an approver had before is lost.
+    expect(step.preview).toBeDefined();
+    (extractStructuredOutput as any).mockReturnValue(null);
+  });
+
+  it("does not claim a step was verified when nothing recorded a connector call", async () => {
+    const { waitForApproval, executeWorkerAgent } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "a conclusion resting on nothing recorded" });
+
+    const producer = node({ id: "p", refAgentId: "agent-p", label: "Analyst", stateKey: "analysis" });
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Sign-off", stateKey: "gate_result" });
+    const edge = {
+      id: "e1", blueprintId: "bp1", sourceNodeId: "p", targetNodeId: "gate-1", label: null, contentPartTypes: [],
+      allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge;
+
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves([producer, gateNode], [edge]),
+      stateSchema: {}, initialState: {}, errorStrategy: "best_effort",
+      teamAgentId: "team-1", teamAgentName: "Team", dagRunId: "run-4",
+    });
+
+    const [step] = (waitForApproval as any).mock.calls.at(-1)[7].evidenceJson.upstreamSteps;
+    expect(step.verified.captured).toBe(false);
+    // The reason travels with it: "not verified" without why is not actionable.
+    expect(typeof step.verified.why).toBe("string");
+    expect(step.verified.why.length).toBeGreaterThan(0);
   });
 
   it("falls back to the bare gate label when the caller supplies no run identity", async () => {

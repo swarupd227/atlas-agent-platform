@@ -3299,14 +3299,40 @@ export class DAGExecutionEngine {
       .map((e) => config.executionPlan.nodeConfig[e.sourceNodeId])
       .filter((nc): nc is NodePlanConfig => !!nc?.stateKey && currentState[nc.stateKey] !== undefined)
       .map((nc) => {
-        const text = asText(currentState[nc.stateKey]);
+        const raw = currentState[nc.stateKey];
+        const text = asText(raw);
         const verdictLine = text.match(VERDICT_RE)?.[0]?.trim();
         const files = collectRunFiles({ [`${nc.stateKey}_files`]: currentState[`${nc.stateKey}_files`] });
+        // A step that emits an object -- an Expression, or an agent under a
+        // contract -- had its answer in fields all along, and the card was
+        // showing `asText` of it. A reviewer reading "[object Object]", or a
+        // 600-character prose preview, cannot see `evaluated: 0`.
+        // An Expression stores an object; an agent stores its text and has its
+        // JSON parsed out elsewhere. Both are covered, or this would surface
+        // fields for the handful of expression steps and miss every agent that
+        // answers in JSON -- which is most of the ones a gate waits on.
+        const structured = raw && typeof raw === "object" && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>)
+          : (typeof raw === "string" ? extractStructuredOutput(raw) : null);
+        const fields = structured
+          ? Object.fromEntries(Object.entries(structured).slice(0, 12).map(([k, v]) => [k, asText(v).slice(0, 200)]))
+          : undefined;
+        // The engine already records whether a step's claims were backed by
+        // connector calls; nothing put it in front of the person deciding.
+        // "captured: false" is not a failure on its own -- plenty of steps
+        // legitimately call nothing -- but it is the approver's to weigh, and
+        // a run where every step says it is a run resting on nobody's check.
+        const v = currentState[`${nc.stateKey}${VERIFIED_FACTS_STATE_SUFFIX}`] as { captured?: unknown; why?: unknown } | undefined;
+        const verified = v && typeof v === "object"
+          ? { captured: v.captured === true, ...(typeof v.why === "string" ? { why: v.why.slice(0, 300) } : {}) }
+          : undefined;
         return {
           label: nc.label,
           stateKey: nc.stateKey,
           preview: text.slice(0, 600),
           ...(verdictLine ? { verdict: verdictLine } : {}),
+          ...(fields && Object.keys(fields).length ? { fields } : {}),
+          ...(verified ? { verified } : {}),
           ...(files.length ? { files } : {}),
         };
       });

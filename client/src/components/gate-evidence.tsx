@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { ArrowRight, CheckCircle2, FileText } from "lucide-react";
+import { ArrowRight, CheckCircle2, CircleDashed, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { RunFile } from "@shared/run-files";
 
@@ -12,7 +12,17 @@ export interface GateEvidence {
   teamAgentId?: string;
   teamAgentName?: string;
   gateLabel?: string;
-  upstreamSteps?: Array<{ label: string; stateKey: string; preview: string; verdict?: string; files?: RunFile[] }>;
+  upstreamSteps?: Array<{
+    label: string;
+    stateKey: string;
+    preview: string;
+    verdict?: string;
+    /** A step that emitted an object: its own fields, which is where the answer usually is. */
+    fields?: Record<string, string>;
+    /** Whether the step's claims were backed by connector calls, and why not when they were not. */
+    verified?: { captured: boolean; why?: string };
+    files?: RunFile[];
+  }>;
   files?: RunFile[];
 }
 
@@ -57,9 +67,28 @@ export function GateEvidenceCard({ evidence, testIdPrefix }: { evidence: GateEvi
         <ul className="flex flex-col gap-2">
           {evidence.upstreamSteps!.map((s) => (
             <li key={s.stateKey} className="flex items-start gap-2 text-xs" data-testid={`${testIdPrefix}-step-${s.stateKey}`}>
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+              {/* The tick used to be unconditional: every step rendered green, including
+                  one whose own record said no connector call was made. A tick is a claim
+                  about evidence, so it is now only drawn when there is some. */}
+              {s.verified && !s.verified.captured
+                ? <CircleDashed className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" data-testid={`${testIdPrefix}-unverified-${s.stateKey}`} />
+                : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />}
               <div className="flex flex-col gap-0.5 min-w-0">
                 <span className="font-medium">{s.label}</span>
+                {/* The fields the step actually emitted, ahead of its prose: this is
+                    where a verdict like `evaluated: 0` lives. */}
+                {s.fields && (
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
+                    {Object.entries(s.fields).map(([k, v]) => (
+                      <span key={k}><span className="text-foreground/70">{k}</span>: {v}</span>
+                    ))}
+                  </div>
+                )}
+                {s.verified && !s.verified.captured && (
+                  <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                    Not verified — {s.verified.why || "no connector calls were recorded for this step"}
+                  </span>
+                )}
                 {s.verdict && (
                   <span className={isFailingVerdict(s.verdict) ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
                     {s.verdict}
