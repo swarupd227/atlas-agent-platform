@@ -2346,7 +2346,7 @@ export class DAGExecutionEngine {
     // the text is appended here -- and only for a step the field is visible
     // to, which is the same scoping every other state key already gets. A step
     // the document was never routed to does not pay for it.
-    const visibleDocuments = runDocumentsInState(config.stateSchema, currentState, stateScope.visible);
+    const visibleDocuments = runDocumentsInState(config.stateSchema, currentState, stateScope);
     const documentContext = visibleDocuments.length
       ? await buildRunDocumentContext(visibleDocuments.map((d) => d.document), config.organizationId ?? undefined)
       : "";

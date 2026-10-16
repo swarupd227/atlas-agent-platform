@@ -174,10 +174,31 @@ describe("which steps see a document", () => {
     expect(fileInputFieldNames(schema)).toEqual(["sov_document", "loss_runs"]);
   });
 
-  it("is scoped to the keys a step can see", () => {
+  /**
+   * These mirror visibleStateKeys' return value, which is the whole point: the
+   * first version of this test invented a Set of visible keys by hand and so
+   * agreed with an implementation that could never work. In a real run
+   * `visible` holds node stateKeys ONLY, so a `file` input is never in it --
+   * and gating on `visible` alone meant no step ever received a document.
+   */
+  const scope = (visible: string[], owned: string[]) => ({ visible: new Set(visible), owned: new Set(owned) });
+
+  it("shows an input field no node owns, exactly as the state dump does", () => {
     const runState = { sov_document: descriptor, broker_name: "Bridge Specialty" };
-    expect(runDocumentsInState(schema, runState, new Set(["sov_document"])).map((d) => d.field)).toEqual(["sov_document"]);
-    expect(runDocumentsInState(schema, runState, new Set(["broker_name"]))).toEqual([]);
+    // What a real run looks like: the nodes own their own output keys, nothing more.
+    const real = scope(["triage_result"], ["triage_result"]);
+    expect(runDocumentsInState(schema, runState, real).map((d) => d.field)).toEqual(["sov_document"]);
+  });
+
+  it("hides a document a step cannot see, when a node owns that key", () => {
+    const runState = { sov_document: descriptor };
+    expect(runDocumentsInState(schema, runState, scope([], ["sov_document"]))).toEqual([]);
+    expect(runDocumentsInState(schema, runState, scope(["sov_document"], ["sov_document"])).map((d) => d.field))
+      .toEqual(["sov_document"]);
+  });
+
+  it("shows everything when no scope is given", () => {
+    const runState = { sov_document: descriptor, broker_name: "Bridge Specialty" };
     expect(runDocumentsInState(schema, runState).map((d) => d.field)).toEqual(["sov_document"]);
   });
 

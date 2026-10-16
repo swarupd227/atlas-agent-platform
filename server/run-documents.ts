@@ -118,19 +118,33 @@ export async function resolveRunDocuments(
 }
 
 /**
- * The descriptors sitting in a run's state, optionally narrowed to the keys one
- * node can see. Reads the schema rather than sniffing the value's shape, so a
- * step that happens to write an object with a `fileId` is not mistaken for a
- * document the run was given.
+ * The descriptors sitting in a run's state, narrowed to what one node may see.
+ * Reads the schema rather than sniffing the value's shape, so a step that
+ * happens to write an object with a `fileId` is not mistaken for a document
+ * the run was given.
+ *
+ * `scope` is visibleStateKeys' return value, and the rule here MUST be the one
+ * buildAgentInput applies to the state dump: a key is hidden only when some
+ * node OWNS it and this node cannot see it. An input field is owned by no node
+ * -- it is given to the run, not written by a step -- so it is visible
+ * everywhere, exactly as `request` is.
+ *
+ * Testing `scope.visible` alone was wrong and shipped that way: `visible` holds
+ * only node stateKeys, so a `file` input never appeared in it, and the document
+ * text reached no step at all. The descriptor still reached the prompt (the
+ * state dump shows unowned keys), which is what made it look like it worked --
+ * a step could name the file and say it was readable while never seeing a word
+ * of it. Proved on run ab3b1d4b against the deployed app: an echo step asked to
+ * repeat its headings returned "## STATE: sov_document" and no document block.
  */
 export function runDocumentsInState(
   stateSchema: Record<string, StateFieldDef> | null | undefined,
   state: Record<string, unknown>,
-  visibleKeys?: Set<string>,
+  scope?: { visible: Set<string>; owned: Set<string> },
 ): Array<{ field: string; document: RunDocument }> {
   const out: Array<{ field: string; document: RunDocument }> = [];
   for (const field of fileInputFieldNames(stateSchema)) {
-    if (visibleKeys && !visibleKeys.has(field)) continue;
+    if (scope && scope.owned.has(field) && !scope.visible.has(field)) continue;
     const value = state[field];
     if (isRunDocument(value)) out.push({ field, document: value });
   }
