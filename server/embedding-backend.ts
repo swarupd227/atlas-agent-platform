@@ -11,7 +11,7 @@
  *
  * The provider calls and the database are passed in where the logic is worth testing without them (see MigrationDeps).
  */
-import OpenAI from "openai";
+import { openAiClient } from "./ai-egress";
 import { sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { db } from "./db";
@@ -113,16 +113,15 @@ export async function setActiveEmbedding(target: EmbeddingTarget, by: string | u
 
 // ── making vectors ───────────────────────────────────────────────────────────────────────────────────────────────
 
-let openAiClient: OpenAI | null | undefined;
 export function isOpenAiEmbeddingConfigured(): boolean { return !!process.env.OPENAI_API_KEY; }
 
 async function openAiEmbed(texts: string[]): Promise<number[][]> {
-  if (openAiClient === undefined) openAiClient = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
-  if (!openAiClient) throw new Error("OPENAI_API_KEY not configured — embeddings unavailable. Set OPENAI_API_KEY to enable semantic search.");
+  // Refused when AWS only is on; built on first use otherwise.
+  const client = await openAiClient("Document search through OpenAI");
   const out: number[][] = [];
   const batchSize = 100;
   for (let i = 0; i < texts.length; i += batchSize) {
-    const response = await openAiClient.embeddings.create({ model: OPENAI_EMBEDDING_MODEL, input: texts.slice(i, i + batchSize) });
+    const response = await client.embeddings.create({ model: OPENAI_EMBEDDING_MODEL, input: texts.slice(i, i + batchSize) });
     out.push(...response.data.map((d) => d.embedding));
   }
   return out;

@@ -47,7 +47,7 @@ import {
   runAgentOnce,
   executePromptWithMcp,
 } from "../agent-runtime";
-import OpenAI, { toFile } from "openai";
+import { createGuardedOpenAi, toFile, awsOnlyActive, AwsOnlyBlockedError } from "../ai-egress";
 import multer from "multer";
 import path from "path";
 import os from "os";
@@ -60,12 +60,7 @@ import { buildClarifyPrompt, parseClarifyResponse, readClarifications, formatCla
 import { FlowDraftError, draftProcessFlow } from "../process-flow-draft";
 import { openSse } from "../sse";
 
-const openai = new OpenAI({
-  // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
-  // back to a direct OpenAI API key. baseURL undefined => api.openai.com.
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-});
+const openai = createGuardedOpenAi("Voice transcription");
 
 const router = Router();
 
@@ -1192,6 +1187,7 @@ Rules:
 
   router.post("/api/ai/transcribe-analyze", upload.single("audio"), async (req, res) => {
     try {
+      if (await awsOnlyActive()) return res.status(409).json({ error: new AwsOnlyBlockedError("Voice transcription").message });
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI transcription is not configured" });
       }
@@ -1329,6 +1325,10 @@ Return ONLY this exact JSON structure (no other text, no markdown fences):
   // doesn't block the request or hit proxy timeouts.
   router.post("/api/ai/transcribe-meeting", meetingUpload.single("audio"), async (req, res) => {
     try {
+      if (await awsOnlyActive()) {
+        if (req.file?.path) { try { fs.unlinkSync(req.file.path); } catch { /* ignore */ } }
+        return res.status(409).json({ error: new AwsOnlyBlockedError("Meeting transcription").message });
+      }
       if (!aiConfigured()) {
         if (req.file?.path) { try { fs.unlinkSync(req.file.path); } catch { /* ignore */ } }
         return res.status(503).json({ error: "AI transcription is not configured" });

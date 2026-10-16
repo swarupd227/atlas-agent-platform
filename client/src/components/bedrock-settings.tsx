@@ -317,26 +317,30 @@ function BedrockDialog({ open, onOpenChange, state }: { open: boolean; onOpenCha
             <h4 className="font-medium text-sm">Chat and agents on Bedrock</h4>
             <p className="text-xs text-muted-foreground">
               When this is on, every request that would have gone to Claude on the Anthropic API is answered by the Claude model above instead, inside your AWS account.
-              Agents, the playground and evaluations keep working as they are. Requests for OpenAI models are not changed.
+              Agents, the playground and evaluations keep working as they are. Requests for OpenAI models are not changed unless AWS only (below) is on.
             </p>
             <div className="flex items-center justify-between">
               <Label htmlFor="bedrock-use-chat" className="font-normal">Answer Claude requests from Bedrock</Label>
               <Switch id="bedrock-use-chat" checked={draft.useForChat} disabled={!draft.models.chat?.modelId}
-                onCheckedChange={(v) => setDraft({ ...draft, useForChat: v })} data-testid="switch-bedrock-use-chat" />
+                onCheckedChange={(v) => setDraft({ ...draft, useForChat: v, awsOnly: v ? draft.awsOnly : false })} data-testid="switch-bedrock-use-chat" />
             </div>
             {!draft.models.chat?.modelId && <p className="text-xs text-muted-foreground">Choose a model for "Chat and agents" first, press Test, then switch this on.</p>}
             <div className="flex items-center justify-between">
-              <Label htmlFor="bedrock-aws-only" className="font-normal">Never fall back to OpenAI</Label>
-              <Switch id="bedrock-aws-only" checked={draft.awsOnly} onCheckedChange={(v) => setDraft({ ...draft, awsOnly: v })} data-testid="switch-bedrock-aws-only" />
+              <Label htmlFor="bedrock-aws-only" className="font-normal">AWS only: nothing leaves your AWS account</Label>
+              <Switch id="bedrock-aws-only" checked={draft.awsOnly} disabled={!draft.useForChat}
+                onCheckedChange={(v) => setDraft({ ...draft, awsOnly: v })} data-testid="switch-bedrock-aws-only" />
             </div>
             <p className="text-xs text-muted-foreground">
-              Normally, if Claude cannot answer, the platform tries OpenAI so work continues. With this on, a request that fails on Bedrock stays failed instead of leaving AWS.
+              Normally, if Claude cannot answer, the platform tries OpenAI so work continues, and some features use OpenAI directly.
+              With this on, no request goes to OpenAI or to Anthropic's own service. A request for an OpenAI model is answered by your Claude model on Bedrock instead,
+              and a request that fails on Bedrock stays failed. Needs chat on Bedrock (above) and document search on a Bedrock model (below).
             </p>
             <div className="rounded-md bg-muted/40 p-3 text-xs space-y-1">
               <div className="font-medium">Not available through Bedrock</div>
               <ul className="list-disc pl-4 text-muted-foreground">
                 <li>Anthropic's code-running sandbox. A step that needs it stops with a clear message.</li>
                 <li>Anthropic's web search tool.</li>
+                <li>With AWS only on, also: OpenAI's web search, dictation and meeting transcription, voice and image features. They stop with a clear message.</li>
               </ul>
             </div>
           </div>

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { resolveProviderKey } from "./llm-provider-keys";
 import { priceTokens } from "./llm-provider";
 import { getBedrockChatClient } from "./bedrock-anthropic";
+import { AwsOnlyBlockedError, awsOnlyActive } from "./ai-egress";
 
 // Lazily rebuilds the SDK client only when the resolved key/baseURL actually
 // changes (vault-set key via Admin, env var, or a rotation between the two) --
@@ -18,6 +19,7 @@ export async function getAnthropicClient(): Promise<Anthropic> {
   // Chat switched to Amazon Bedrock on the Model Providers page: the same calls, answered by Claude on Bedrock.
   const bedrock = await getBedrockChatClient();
   if (bedrock) return bedrock.client as Anthropic;
+  if (await awsOnlyActive()) throw new AwsOnlyBlockedError("Claude on the Anthropic API");
   const resolved = await resolveProviderKey("anthropic");
   const cacheKey = `${resolved.apiKey ?? ""}::${resolved.baseUrl ?? ""}`;
   if (!cachedClient || cachedClientKey !== cacheKey) {

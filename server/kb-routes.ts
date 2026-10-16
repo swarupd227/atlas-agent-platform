@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnowledgeBaseSchema, knowledgeChunks, knowledgeSources, knowledgeSourceFiles, knowledgeBases, runTraces, contextEconomics, agentKnowledgeBases } from "@shared/schema";
 import { sql, eq, desc, and, inArray } from "drizzle-orm";
-import OpenAI from "openai";
+import { createGuardedOpenAi } from "./ai-egress";
 import { createHash } from "crypto";
 import { generateEmbeddings, storeChunkEmbedding, ensurePgVector, normalizeRetrievalRequest, RetrievalQueryError } from "./embeddings";
 import { splitTextSections, filenameForLog, ZipLimitError, type ExtractedFile } from "./file-extract";
@@ -1633,7 +1633,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       const context = searchResults.map((r: any) => r.content).join("\n\n");
 
-      const openai = new OpenAI();
+      const openai = createGuardedOpenAi("Answering from a knowledge base");
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [

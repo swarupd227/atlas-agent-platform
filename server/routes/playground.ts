@@ -14,12 +14,9 @@ import { buildAttachmentContext } from "../attachment-context";
 import { executePromptWithMcp, executeTeamPipeline, type RuntimeProgressEvent, type RuntimeAgent } from "../agent-runtime";
 import { callClaude, callClaudeWithUsage, stripJsonFences, getAnthropicClient } from "../claude";
 import { decideMany, knownIncumbent } from "../decision-provider";
-import OpenAI from "openai";
+import { createGuardedOpenAi, awsOnlyActive } from "../ai-egress";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-});
+const openai = createGuardedOpenAi("OpenAI's web search");
 
 // A successful Playground execution against an outcome-bound agent produced
 // real usage but never fed the metering pipeline -- Billing -> Invoices reads
@@ -174,7 +171,10 @@ const router = Router();
       const agentTools = Array.isArray(agent.toolsConfig)
         ? (agent.toolsConfig as Array<{ name?: string; type?: string }>)
         : [];
-      const webSearchEnabled = webSearchOffered(agentTools);
+      // OpenAI's web search is the one tool that has no Bedrock counterpart: with AWS only on the agent answers without it, and says so.
+      const webSearchWanted = webSearchOffered(agentTools);
+      const webSearchSkipped = webSearchWanted && (await awsOnlyActive());
+      const webSearchEnabled = webSearchWanted && !webSearchSkipped;
 
       const mcpLinks = await storage.getAgentMcpServers(agentId);
       const mcpServerIds = mcpLinks.map(l => l.serverId);
@@ -202,6 +202,11 @@ const router = Router();
       res.setHeader("Connection", "keep-alive");
 
       let fullResponse = "";
+      if (webSearchSkipped) {
+        const note = "(Web search is switched off while AWS-only mode is on, so this answer comes from the model and the agent's own knowledge only.)\n\n";
+        fullResponse += note;
+        res.write(`data: ${JSON.stringify({ content: note })}\n\n`);
+      }
       // Populated only by the MCP/KB branch below when the run actually
       // executed tools -- carried into the assistant's saved chatMessages
       // row so the NEXT turn's history can see the real query/parameters

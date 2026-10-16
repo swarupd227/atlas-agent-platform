@@ -44,8 +44,9 @@ export type BedrockModelRow = z.infer<typeof modelRow>;
 export const bedrockConfigSchema = z.object({
   enabled: z.boolean().default(false),
   /**
-   * When on, a Claude call that fails on Bedrock is never retried on OpenAI. Calls that ask for an OpenAI model still go to
-   * OpenAI until the AWS-only guard of a later release; stored now.
+   * When on, nothing leaves for OpenAI or for Anthropic's own API (server/ai-egress.ts): a chat request for an OpenAI model is
+   * answered by the Claude model on Bedrock, and what has no Bedrock equivalent (speech, images, OpenAI's web search) is refused.
+   * Needs chat on Bedrock, and document search on a Bedrock model, so there is something to answer with.
    */
   awsOnly: z.boolean().default(false),
   /** Answer Claude calls (agents, chat, evaluations) from Bedrock instead of the Anthropic API. Needs a `chat` model. */
@@ -124,6 +125,9 @@ export function parseBedrockConfig(raw: unknown): BedrockConfig {
   const problems: z.ZodIssue[] = [];
   const endpointProblem = validateBedrockEndpoint(config.endpoint);
   if (endpointProblem) problems.push({ code: "custom", path: ["endpoint"], message: endpointProblem });
+  if (config.awsOnly && !config.useForChat) {
+    problems.push({ code: "custom", path: ["awsOnly"], message: "AWS only needs chat switched to Bedrock first: with it on, Bedrock answers every request" });
+  }
   if (config.useForChat) {
     const chat = config.models.chat;
     if (!chat) problems.push({ code: "custom", path: ["models", "chat"], message: "Choose the Claude model Bedrock should use for chat before switching chat to Bedrock" });

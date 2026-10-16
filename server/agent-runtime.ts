@@ -2,7 +2,7 @@ import { storage } from "./storage";
 import { resolveAgentIndustry } from "./agent-industry";
 import { db } from "./db";
 import { EventEmitter } from "events";
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { compileRedactPatterns, redactStringLeaves, redactText } from "./output-redaction";
 import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
@@ -106,11 +106,6 @@ export async function executeKGQueryTemplate(
 
 export const runtimeEvents = new EventEmitter();
 runtimeEvents.setMaxListeners(50);
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-});
 
 export interface RuntimeAgent {
   deploymentId: string;

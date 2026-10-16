@@ -2,13 +2,10 @@
 // Used by the synchronous endpoint (short clips) and the async job worker
 // (long meetings, up to ~1 hour). Kept in one place so both paths behave
 // identically.
-import OpenAI, { toFile } from "openai";
+import { createGuardedOpenAi, toFile } from "./ai-egress";
 import { callClaude } from "./claude";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-});
+const openai = createGuardedOpenAi("Meeting transcription");
 
 export function aiConfigured(): boolean {
   return !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY);

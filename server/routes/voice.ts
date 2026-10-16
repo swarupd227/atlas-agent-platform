@@ -12,7 +12,7 @@
  */
 import { Router } from "express";
 import multer from "multer";
-import OpenAI, { toFile } from "openai";
+import { createGuardedOpenAi, toFile, awsOnlyActive, AwsOnlyBlockedError } from "../ai-egress";
 import { checkPermission } from "../permissions";
 
 const router = Router();
@@ -21,20 +21,14 @@ const router = Router();
 // three minutes. Held in memory, so the cap matters.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// Built on first use: the OpenAI SDK throws synchronously without a key, which
-// would take the server down at boot on a deployment that has none.
-let client: OpenAI | null = null;
-function openai(): OpenAI {
-  if (!client) {
-    client = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-    });
-  }
-  return client;
-}
+// Built on first use, so a deployment with no OpenAI key still starts.
+const openaiClient = createGuardedOpenAi("Dictation");
+const openai = () => openaiClient;
 
 router.post("/api/ai/transcribe", checkPermission("use_astra"), upload.single("audio"), async (req, res) => {
+  if (await awsOnlyActive()) {
+    return res.status(409).json({ error: new AwsOnlyBlockedError("Dictation").message });
+  }
   if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: "Dictation isn't configured on this deployment. You can type the message instead." });
   }

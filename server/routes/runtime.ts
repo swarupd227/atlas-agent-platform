@@ -116,11 +116,10 @@ import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, get
 import { seedPartnerPortalRegistry, PARTNER_PORTAL_REGISTRY_SERVER_NAME } from "../seed-blackrock2-partner-portal";
 import { seedHearstAgentRuns } from "../seed-hearst-runs";
 import { resetDemo, setSodPending, setPrivEscPending } from "../demo-store";
-import OpenAI, { toFile } from "openai";
+import { createGuardedOpenAi, toFile, aiAssistAvailable } from "../ai-egress";
 import type Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
 import { getAnthropicClient } from "../claude";
-import { createLazyClient } from "../lazy-client";
 import {
   MCP_OAUTH_PROVIDERS,
   findMcpOAuthProvider,
@@ -128,13 +127,9 @@ import {
   getMcpOAuthClientCredentials,
 } from "../mcp-oauth-providers";
 
-// Lazy: the OpenAI SDK throws synchronously if no apiKey resolves, which
-// would otherwise crash the whole server at boot on a self-host deployment
-// with no OpenAI key configured (see server/lazy-client.ts).
-const openai = createLazyClient(() => new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-}));
+// Built on first use (a deployment with no OpenAI key still starts); with AWS only on, chat requests are answered by Claude on
+// Bedrock and anything else is refused (see server/ai-egress.ts).
+const openai = createGuardedOpenAi();
 
 const router = Router();
 
@@ -1852,11 +1847,6 @@ function hashCode(str: string): number {
           totalTokens = { prompt_tokens: 500, completion_tokens: 300, total_tokens: 800 };
         }
       } else {
-        const openai = new (await import("openai")).default({
-          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-        });
-
         const systemPromptBase = richAgentPrompt;
 
         const chatResponse = await openai.chat.completions.create({
@@ -16266,7 +16256,7 @@ function cannedDemoCatalog(serverId: string): { tools: DiscoveredTool[]; resourc
   // AI: Generate regulatory policy code from regulation
   router.post("/api/ai/generate-regulatory-policy", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
+      if (!(await aiAssistAvailable())) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { regulationId, regulationName, regulationDescription, jurisdiction, industry, articleRef } = req.body;
@@ -16324,7 +16314,7 @@ You MUST return at least 8 policies. Return ONLY a valid JSON object with a "pol
   // AI: Generate compliance controls for a regulation
   router.post("/api/ai/generate-compliance-controls", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
+      if (!(await aiAssistAvailable())) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { regulationId, regulationName, regulationDescription, jurisdiction, industry, existingPolicies } = req.body;
@@ -16384,7 +16374,7 @@ Return ONLY a valid JSON object with a "controls" array.`
   // AI: Enhance existing regulatory policy code
   router.post("/api/ai/enhance-regulatory-policy", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
+      if (!(await aiAssistAvailable())) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { title, naturalLanguage, policyLanguage, policyCode, severity, regulationName } = req.body;
@@ -16445,7 +16435,7 @@ Return ONLY a valid JSON object.`
   // AI: Analyze compliance gaps and suggest remediation
   router.post("/api/ai/analyze-compliance-gaps", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
+      if (!(await aiAssistAvailable())) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { controls, regulationName } = req.body;
@@ -16515,7 +16505,7 @@ Return ONLY a valid JSON object.`
   // AI: Assess impact of regulatory changes
   router.post("/api/ai/assess-change-impact", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
+      if (!(await aiAssistAvailable())) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { changeTitle, changeDescription, changeType, regulationName, existingPolicies, existingControls } = req.body;

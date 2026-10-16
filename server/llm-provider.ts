@@ -6,6 +6,7 @@ import { currentLlmAbortSignal } from "./llm-abort-context";
 import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import { resolveProviderKey } from "./llm-provider-keys";
 import { bedrockChatBlocksFallback, getBedrockChatClient } from "./bedrock-anthropic";
+import { AwsOnlyBlockedError, awsOnlyActive } from "./ai-egress";
 
 export interface LLMMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -685,6 +686,24 @@ export interface LLMProvider {
 }
 
 // ---------------------------------------------------------------------------
+// AWS only: a request for an OpenAI model is answered by Claude on Bedrock
+// ---------------------------------------------------------------------------
+
+/**
+ * The options for the Claude call that stands in for an OpenAI one. The OpenAI model name means nothing to Claude, so it is dropped
+ * (the Bedrock chat model answers); a small model (mini, nano) is answered by the Bedrock "quick tasks" model.
+ */
+function awsOnlyOptions(options?: LLMCompletionOptions): LLMCompletionOptions {
+  const small = /mini|nano/i.test(options?.model ?? "");
+  return { ...(options ?? {}), model: small ? "claude-haiku-4-5" : undefined, requestedProvider: "openai" };
+}
+
+/** The stand-in's result, marked so a step answered by a different vendor's model never looks like an ordinary one. */
+function awsOnlyAnswer(result: LLMCompletionResult): LLMCompletionResult {
+  return { ...result, requestedProvider: "openai", providerFallback: true, fallbackReason: "aws_only" };
+}
+
+// ---------------------------------------------------------------------------
 // OpenAI provider
 // ---------------------------------------------------------------------------
 
@@ -744,6 +763,7 @@ class OpenAIProvider implements LLMProvider {
   // vault falling back to env, or vice versa) takes effect on the very next
   // completion, no restart, without reconstructing the client on every call.
   private async getClient(): Promise<OpenAI> {
+    if (await awsOnlyActive()) throw new AwsOnlyBlockedError("OpenAI");
     const resolved = await resolveProviderKey("openai");
     const cacheKey = `${resolved.apiKey ?? ""}::${resolved.baseUrl ?? ""}`;
     if (!this.client || this.clientKey !== cacheKey) {
@@ -754,6 +774,7 @@ class OpenAIProvider implements LLMProvider {
   }
 
   async complete(messages: LLMMessage[], options?: LLMCompletionOptions): Promise<LLMCompletionResult> {
+    if (await awsOnlyActive()) return awsOnlyAnswer(await getProvider("anthropic").complete(messages, awsOnlyOptions(options)));
     const model = options?.model || "gpt-4.1";
 
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = messages.map((m) => {
@@ -885,6 +906,7 @@ class OpenAIProvider implements LLMProvider {
     options: LLMCompletionOptions | undefined,
     onChunk: (chunk: string) => void,
   ): Promise<LLMCompletionResult> {
+    if (await awsOnlyActive()) return awsOnlyAnswer(await getProvider("anthropic").streamComplete!(messages, awsOnlyOptions(options), onChunk));
     const model = options?.model || "gpt-4.1";
 
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = messages.map((m) => {
@@ -1082,7 +1104,7 @@ class OpenAIProvider implements LLMProvider {
     return {
       name: "openai",
       displayName: "OpenAI",
-      configured: !!resolved.apiKey,
+      configured: !!resolved.apiKey && !(await awsOnlyActive()),
       models: OPENAI_MODELS,
       embeddingModels: OPENAI_EMBEDDING_MODELS,
     };
@@ -1209,6 +1231,7 @@ class AnthropicProvider implements LLMProvider {
     // Chat switched to Amazon Bedrock on the Model Providers page: same calls, answered by Claude on Bedrock.
     const bedrock = await getBedrockChatClient();
     if (bedrock) return bedrock.client as Anthropic;
+    if (await awsOnlyActive()) throw new AwsOnlyBlockedError("Claude on the Anthropic API");
     const resolved = await resolveProviderKey("anthropic");
     const cacheKey = `${resolved.apiKey ?? ""}::${resolved.baseUrl ?? ""}`;
     if (!this.client || this.clientKey !== cacheKey) {

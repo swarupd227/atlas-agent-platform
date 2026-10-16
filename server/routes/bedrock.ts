@@ -26,6 +26,7 @@ import {
 } from "../bedrock-config";
 import { generateIamPolicy, runtimeFor, testBedrockModel, explainBedrockError, looksLikeAwsError, BedrockError } from "../bedrock-client";
 import { invalidateBedrockChatClient } from "../bedrock-anthropic";
+import { awsOnlyActive } from "../ai-egress";
 import {
   SearchSwitchError, bedrockTarget, configuredBedrockTarget, currentMigration, getActiveEmbedding, isOpenAiEmbeddingConfigured, openAiTarget,
   pgVectorStore, probeDimensions, realMigrationDeps, requestStop, startMigration, switchActive, type EmbeddingTarget,
@@ -75,6 +76,10 @@ router.put("/api/admin/bedrock", platformOnly(checkPermission("manage_security")
     throw err;
   }
   try {
+    // AWS only refuses to call OpenAI, so document search must not depend on it.
+    if (next.enabled && next.awsOnly && (await getActiveEmbedding()).provider === "openai") {
+      return res.status(400).json({ error: "AWS only cannot be switched on while document search uses OpenAI. Move document search to a Bedrock model first (Document search, below), then switch AWS only on." });
+    }
     const { config: before } = await loadBedrockConfig();
     await saveBedrockConfig(next);
     audit(req, "bedrock_settings_changed", { changed: changedBedrockFields(before, next), enabled: next.enabled, awsOnly: next.awsOnly, useForChat: next.useForChat });
@@ -148,6 +153,7 @@ const toSchema = z.object({ to: z.enum(["bedrock", "openai"]) }).strict();
 /** The target a request names. Bedrock needs the saved settings to describe a model and, if the size is not set, one real call. */
 async function resolveTarget(to: "bedrock" | "openai"): Promise<EmbeddingTarget> {
   if (to === "openai") {
+    if (await awsOnlyActive()) throw new SearchSwitchError("AWS only is on, so document search cannot use OpenAI. Switch AWS only off first.", 400);
     if (!isOpenAiEmbeddingConfigured()) throw new SearchSwitchError("OpenAI is not set up on this server (no OPENAI_API_KEY), so document search cannot use it.", 400);
     return openAiTarget();
   }
