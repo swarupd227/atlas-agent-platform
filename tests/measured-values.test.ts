@@ -72,3 +72,65 @@ describe("the Monitor reads them through it", () => {
     expect(page).toContain("agent.healthScore != null && <Progress");
   });
 });
+
+/**
+ * The same shape in eval_runs: a status default that claims something nobody
+ * established.
+ *
+ * `status` defaulted to "running", but nothing consumes eval_runs -- the worker
+ * creates its own rows and updates them in process -- so a run created any
+ * other way (POST /api/evals/:id/runs passes whatever the body parses to) had
+ * no executor and said it was executing anyway. Measured on Azure 2026-10-12:
+ * 133 stuck in "running", 129 of them predating the duplicate-insert fix in
+ * ce3c12f, the oldest from 29 April, 131 triggeredBy "manual".
+ */
+describe("an eval run nobody is executing", () => {
+  const schema = read("shared", "schema.ts");
+  const storage = read("server", "storage.ts");
+  const db = read("server", "db.ts");
+
+  const evalRunsBlock = () => {
+    const at = schema.indexOf('export const evalRuns = pgTable("eval_runs"');
+    return schema.slice(at, schema.indexOf("});", at));
+  };
+
+  it("is born pending, not running", () => {
+    const block = evalRunsBlock();
+    expect(block).toContain('status: text("status").notNull().default("pending")');
+    expect(block).not.toContain('.default("running")');
+  });
+
+  it("has the database default changed too, or the one path that relies on it keeps getting running", () => {
+    // POST /api/evals/:id/runs never sets a status, so the DEFAULT in Postgres
+    // is what it actually gets. A Drizzle-only change would leave it untouched.
+    expect(db).toContain("ALTER TABLE eval_runs ALTER COLUMN status SET DEFAULT 'pending'");
+  });
+
+  it("does not rewrite existing rows in the migration", () => {
+    // A run genuinely in flight during the deploy would be mislabelled. Age is
+    // what distinguishes stale from live, and the migration cannot know it.
+    expect(db).not.toMatch(/UPDATE eval_runs SET status = 'pending'/);
+  });
+
+  it("is abandoned, never failed, and loses its default-zero pass rate", () => {
+    const at = storage.indexOf("async abandonStuckEvalRuns");
+    expect(at, "abandonStuckEvalRuns not found").toBeGreaterThan(-1);
+    const body = storage.slice(at, storage.indexOf("\n  async ", at + 30));
+    // "failed" would assert the eval ran and the agent did badly. None ran.
+    expect(body).toContain('status: "abandoned"');
+    expect(body).not.toContain('status: "failed"');
+    // pass_rate defaults to 0, so leaving it reads as a measured zero -- the
+    // exact confusion this file exists about.
+    expect(body).toContain("passRate: null");
+    expect(body).toContain("completedAt: new Date()");
+  });
+
+  it("only touches rows older than the threshold, and only non-terminal ones", () => {
+    const at = storage.indexOf("async abandonStuckEvalRuns");
+    const body = storage.slice(at, storage.indexOf("\n  async ", at + 30));
+    expect(body).toContain('inArray(evalRuns.status, ["running", "pending"])');
+    expect(body).toContain("lt(evalRuns.startedAt, cutoff)");
+    // A run in flight is protected by age alone, so the cutoff must be real.
+    expect(body).toMatch(/olderThanHours\s*=\s*24/);
+  });
+});

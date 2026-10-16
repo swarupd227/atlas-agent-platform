@@ -2310,6 +2310,18 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_eval_runs_org ON eval_runs (organization_id);
     `);
 
+    // A run is born "pending", not "running". Changing the Drizzle schema is not
+    // enough: the DEFAULT lives in the database, and the one path that creates a
+    // run without saying so -- POST /api/evals/:id/runs -- relies on it. Nothing
+    // consumes eval_runs, so a row created that way had no executor and said it
+    // was executing anyway. 133 such rows on Azure 2026-10-12, the oldest from
+    // 29 April.
+    //
+    // Existing rows are deliberately NOT rewritten here: a run genuinely in
+    // flight during the deploy would be mislabelled. The startup sweep closes
+    // the stale ones by age instead.
+    await client.query(`ALTER TABLE eval_runs ALTER COLUMN status SET DEFAULT 'pending';`);
+
     // One credential row per MCP server: remove duplicates that are provably the same credential, then make the
     // database refuse a second row (server/mcp-auth-uniqueness.ts). A protection, not a prerequisite: if it cannot
     // run, the server still starts, and saves are serialized per server regardless.

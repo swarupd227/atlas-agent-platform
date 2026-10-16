@@ -2138,6 +2138,36 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  /**
+   * Close out eval runs that have been going nowhere.
+   *
+   * Nothing consumes eval_runs -- the worker creates its own rows and updates
+   * them in process -- so a run created any other way never reaches a terminal
+   * status. Measured on Azure 2026-10-12: 133 stuck in "running", 129 of them
+   * predating the duplicate-insert fix in ce3c12f, the oldest from 29 April.
+   *
+   * They become "abandoned", not "failed". Failed asserts the eval ran and the
+   * agent did badly; none of these ran at all, and a false negative in a
+   * pass-rate aggregate is worse than a blank. passRate is cleared for the same
+   * reason: the column defaults to 0, so leaving it would read as a measured
+   * zero rather than nothing measured.
+   *
+   * `pending` is swept too: honest about never having started, but just as dead
+   * once nothing has picked it up. The age threshold is what protects a run
+   * that is genuinely in flight -- a real baseline finishes in minutes.
+   */
+  async abandonStuckEvalRuns(olderThanHours = 24): Promise<{ abandoned: number; ids: string[] }> {
+    const cutoff = new Date(Date.now() - Math.max(1, olderThanHours) * 3600_000);
+    const rows = await db.update(evalRuns)
+      .set({ status: "abandoned", completedAt: new Date(), passRate: null } as Partial<EvalRun>)
+      .where(and(
+        inArray(evalRuns.status, ["running", "pending"]),
+        lt(evalRuns.startedAt, cutoff),
+      ))
+      .returning({ id: evalRuns.id });
+    return { abandoned: rows.length, ids: rows.map((r) => r.id) };
+  }
+
   async getEvalSuite(id: string) {
     const [suite] = await db.select().from(evalSuites).where(eq(evalSuites.id, id));
     return suite;

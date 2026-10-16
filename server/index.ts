@@ -244,6 +244,11 @@ app.use((req, res, next) => {
       const { sweepMootGates } = await import("./approval-decision");
       const { scanned, closed } = await sweepMootGates();
       if (closed) log(`[approvals] closed ${closed} of ${scanned} open gate(s) whose run had already finished`);
+      // The same shape one table over: an eval run nothing is executing. Only
+      // rows older than a day, so a run genuinely in flight is never touched.
+      const { storage } = await import("./storage");
+      const { abandoned } = await storage.abandonStuckEvalRuns(24);
+      if (abandoned) log(`[evals] marked ${abandoned} eval run(s) abandoned: no executor had touched them in over a day`);
     } catch (e: any) {
       console.warn(`[approvals] moot-gate sweep failed (not fatal): ${e?.message ?? e}`);
     }

@@ -946,7 +946,18 @@ export const evalRuns = pgTable("eval_runs", {
   agentId: varchar("agent_id"),
   skillId: varchar("skill_id"),
   versionId: varchar("version_id"),
-  status: text("status").notNull().default("running"),
+  /**
+   * A row is born "pending", not "running".
+   *
+   * Nothing consumes eval_runs: the worker creates its own rows and updates
+   * them in process, so a run created any other way -- POST /api/evals/:id/runs
+   * passes whatever the body parses to -- had no executor and claimed to be
+   * executing anyway. Measured on Azure 2026-10-12: 133 runs stuck in
+   * "running", the oldest from 29 April, 131 of them triggeredBy "manual".
+   * The worker still passes "running" explicitly when it actually starts one,
+   * so its path is unchanged.
+   */
+  status: text("status").notNull().default("pending"),
   totalCases: integer("total_cases").default(0),
   passedCases: integer("passed_cases").default(0),
   failedCases: integer("failed_cases").default(0),
