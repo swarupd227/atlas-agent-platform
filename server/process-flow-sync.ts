@@ -592,7 +592,27 @@ export async function applyFlowSync(
   // would rank confidently irrelevant resources into the prompt. A wrong
   // industry is worse than a generic one: "general" returns little, a wrong
   // vertical returns plenty and all of it misleading.
-  const industryId = teamAgent.industryId || teamAgent.journeyIndustryId || "general";
+  // journeyIndustryId FIRST, and that order matters more than it looks.
+  //
+  // agents.industryId "defaults to its organization's when it is created", so
+  // a team built in this tenant arrives carrying "legal_services" whether or
+  // not anyone chose it. Measured on the Account-Policy Linkage Review team the
+  // moment it was built: its three drafted agents came back with ZERO ontology
+  // tags, because an insurance journey had been ranked against the
+  // legal-services catalogue.
+  //
+  // That is the same wrong-vertical failure the previous fix set out to avoid.
+  // An explicit fallback to the organization's industry was declined on exactly
+  // those grounds, and the org value reached the drafter anyway -- pre-baked
+  // into the agent row at creation.
+  //
+  // journeyIndustryId is only ever set deliberately, so when it is set it is
+  // the more specific answer. industryId stays as the fallback for teams that
+  // are not journeys, and "general" when neither is known -- still never a
+  // vertical nobody chose. Verified rather than reasoned: setting the team's
+  // industry to insurance and rebuilding took its worker from 0 ontology tags
+  // to 3, plus 2 skills.
+  const industryId = teamAgent.journeyIndustryId || teamAgent.industryId || "general";
   const outcomeId = target.outcomeId ?? teamAgent.outcomeId ?? null;
 
   const superseded: Array<{ label: string; agentId: string }> = [];
