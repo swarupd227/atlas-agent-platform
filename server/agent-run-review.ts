@@ -433,6 +433,23 @@ export async function runAgentRunReviewScan(deps: ReviewDeps): Promise<ScanResul
 
 const rowsOf = (r: any): any[] => (Array.isArray(r) ? r : r?.rows ?? []);
 
+/**
+ * A raw-SQL timestamp as an ISO string with its zone. db.execute hands back a
+ * `timestamp` column as text with no zone ("2026-10-16 11:58:41.58"), which a
+ * browser reads as local time, so the page showed every time off by the viewer's
+ * UTC offset. The columns hold UTC (NOW() on a UTC session), so say so.
+ */
+export function toIso(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString();
+  const s = String(v).trim().replace(" ", "T");
+  const hasZone = /T[\d:.]+(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(s);
+  // Postgres writes a zone as "+00" or "+0530"; Date wants "+00:00" and "+05:30".
+  const withZone = hasZone ? s.replace(/([+-]\d{2})(\d{2})$/, "$1:$2").replace(/([+-]\d{2})$/, "$1:00") : `${s}Z`;
+  const d = new Date(!s.includes("T") ? `${s}T00:00:00Z` : withZone);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 export const dbReviewStore: ReviewStore = {
   async claim(row) {
     const r = await db.execute(sql`
@@ -463,7 +480,7 @@ export const dbReviewStore: ReviewStore = {
         AND COALESCE(a.runtime_config -> 'agentRunReview' ->> 'enabled', 'false') = 'true'
         AND NOT EXISTS (SELECT 1 FROM agent_run_reviews r WHERE r.trace_id = t.id)
       ORDER BY COALESCE(t.ended_at, t.started_at) ASC LIMIT 200`);
-    return rowsOf(r).map((x) => ({ id: x.id, organizationId: x.organization_id ?? null, agentId: x.agent_id, endedAt: new Date(x.ended_at) }));
+    return rowsOf(r).map((x) => ({ id: x.id, organizationId: x.organization_id ?? null, agentId: x.agent_id, endedAt: new Date(toIso(x.ended_at) ?? Date.now()) }));
   },
   async loadTrace(id) {
     const r = await db.execute(sql`
@@ -576,7 +593,7 @@ export async function runReviewOverview(orgId: string | null | undefined, agentI
     SELECT id, trace_id, status, reason, proposals, model, provider, tokens_in, tokens_out, cost_usd, created_at, finished_at
     FROM agent_run_reviews WHERE agent_id = ${agentId} AND organization_id IS NOT DISTINCT FROM ${orgId ?? null}
     ORDER BY created_at DESC LIMIT 20`);
-  const recent = rowsOf(r).map((x): AgentRunReviewRow => ({ id: x.id, traceId: x.trace_id, status: x.status, reason: x.reason, proposals: x.proposals ?? [], model: x.model, provider: x.provider, tokensIn: x.tokens_in, tokensOut: x.tokens_out, costUsd: Number(x.cost_usd ?? 0), createdAt: x.created_at, finishedAt: x.finished_at }));
+  const recent = rowsOf(r).map((x): AgentRunReviewRow => ({ id: x.id, traceId: x.trace_id, status: x.status, reason: x.reason, proposals: x.proposals ?? [], model: x.model, provider: x.provider, tokensIn: x.tokens_in, tokensOut: x.tokens_out, costUsd: Number(x.cost_usd ?? 0), createdAt: toIso(x.created_at), finishedAt: toIso(x.finished_at) }));
   const week = await db.execute(sql`
     SELECT COALESCE(SUM(cost_usd), 0) AS spent, COUNT(*) FILTER (WHERE status IN ('done', 'failed')) AS n
     FROM agent_run_reviews WHERE agent_id = ${agentId} AND organization_id IS NOT DISTINCT FROM ${orgId ?? null} AND created_at >= NOW() - INTERVAL '7 days'`);
@@ -586,7 +603,7 @@ export async function runReviewOverview(orgId: string | null | undefined, agentI
 
 export interface AgentRunReviewRow {
   id: string; traceId: string; status: string; reason: string | null; proposals: Array<{ type: string; ok: boolean; id?: string; error?: string }>;
-  model: string | null; provider: string | null; tokensIn: number | null; tokensOut: number | null; costUsd: number; createdAt: string | Date | null; finishedAt: string | Date | null;
+  model: string | null; provider: string | null; tokensIn: number | null; tokensOut: number | null; costUsd: number; createdAt: string | null; finishedAt: string | null;
 }
 
 /** Erasure: an agent's review rows go with it. */

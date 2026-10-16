@@ -12,14 +12,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-vi.mock("../server/db", () => ({ db: {} }));
+const dbExecute = vi.hoisted(() => vi.fn());
+vi.mock("../server/db", () => ({ db: { execute: dbExecute } }));
 vi.mock("../server/storage", () => ({ storage: { getPlatformSetting: vi.fn() } }));
 vi.mock("../server/auth", () => ({ getDefaultOrgId: () => "org-default" }));
 
 import { storage } from "../server/storage";
 import {
   REVIEW_LIMITS, reviewability, buildRunDigest, buildReviewPrompt, parseReviewOutput, runReviewGate,
-  reviewTrace, runAgentRunReviewScan,
+  reviewTrace, runAgentRunReviewScan, toIso, runReviewOverview, dbReviewStore,
   type ReviewDeps, type ReviewStore, type ReviewTrace, type ReviewCandidate, type ReviewAgent,
 } from "../server/agent-run-review";
 
@@ -387,6 +388,52 @@ describe("runAgentRunReviewScan", () => {
   it("counts skips so a quiet tick can be told from a broken one", async () => {
     const env = makeEnv({ traces: [trace({ stepsJson: steps(1) })], candidates: [cand("trace-1", "agent-1", 0)] });
     expect(await runAgentRunReviewScan(env.deps)).toMatchObject({ reviewed: 0, skipped: 1 });
+  });
+});
+
+// ── Times ───────────────────────────────────────────────────────────────────
+// A raw-SQL timestamp comes back as text with no zone; a browser reads that as local time.
+
+describe("toIso", () => {
+  it("says UTC for a zoneless database timestamp, so every viewer sees the same instant", () => {
+    expect(toIso("2026-10-16 11:58:41.581637")).toBe("2026-10-16T11:58:41.581Z");
+    expect(toIso("2026-10-16T11:58:41")).toBe("2026-10-16T11:58:41.000Z");
+    expect(toIso("2026-10-16 11:58:41")).toBe("2026-10-16T11:58:41.000Z");
+  });
+
+  it("keeps a zone that is already there, whatever its form", () => {
+    expect(toIso("2026-10-16T11:58:41.000Z")).toBe("2026-10-16T11:58:41.000Z");
+    expect(toIso("2026-10-16 11:58:41+00")).toBe("2026-10-16T11:58:41.000Z");
+    expect(toIso("2026-10-16T17:28:41+05:30")).toBe("2026-10-16T11:58:41.000Z");
+    expect(toIso("2026-10-16T04:58:41-07:00")).toBe("2026-10-16T11:58:41.000Z");
+    expect(toIso("2026-10-16 17:28:41+0530")).toBe("2026-10-16T11:58:41.000Z");
+    expect(toIso("2026-10-16 04:58:41.25-07")).toBe("2026-10-16T11:58:41.250Z");
+  });
+
+  it("passes a Date through, takes a bare date as midnight UTC, and returns null for nothing or nonsense", () => {
+    expect(toIso(new Date("2026-10-16T11:58:41Z"))).toBe("2026-10-16T11:58:41.000Z");
+    expect(toIso("2026-10-16")).toBe("2026-10-16T00:00:00.000Z");
+    for (const bad of [null, undefined, "", "not a date", new Date("x")]) expect(toIso(bad), String(bad)).toBeNull();
+  });
+});
+
+describe("the agent page's data", () => {
+  beforeEach(() => { dbExecute.mockReset(); });
+
+  it("hands the page ISO times with a zone, never the database's zoneless text", async () => {
+    dbExecute
+      .mockResolvedValueOnce({ rows: [{ id: "r1", trace_id: "t1", status: "done", reason: null, proposals: [{ type: "memory_add", ok: true }], model: "m", provider: "p", tokens_in: 10, tokens_out: 5, cost_usd: "0.0055", created_at: "2026-10-16 11:58:41.581637", finished_at: "2026-10-16 11:58:44.2" }] })
+      .mockResolvedValueOnce({ rows: [{ spent: "0.0055", n: "1" }] });
+    const o = await runReviewOverview("org-a", "agent-1");
+    expect(o.recent[0]).toMatchObject({ createdAt: "2026-10-16T11:58:41.581Z", finishedAt: "2026-10-16T11:58:44.200Z", costUsd: 0.0055 });
+    expect(o).toMatchObject({ spent7dUsd: 0.0055, reviews7d: 1 });
+    expect(new Date(o.recent[0].createdAt as string).getTime()).toBe(Date.UTC(2026, 9, 16, 11, 58, 41, 581));
+  });
+
+  it("orders candidate runs by when they ended, read as UTC", async () => {
+    dbExecute.mockResolvedValueOnce({ rows: [{ id: "t1", organization_id: "org-a", agent_id: "agent-1", ended_at: "2026-10-16 11:54:01.5" }] });
+    const [c] = await dbReviewStore.candidates(new Date(0), new Date());
+    expect(c.endedAt.toISOString()).toBe("2026-10-16T11:54:01.500Z");
   });
 });
 
