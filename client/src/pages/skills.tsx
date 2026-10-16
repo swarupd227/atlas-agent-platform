@@ -92,6 +92,81 @@ const TRUST_TIER_STYLES: Record<string, string> = {
   "agent-proposed": "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
 };
 
+interface CuratorFinding { type: string; name: string; detail: string; filed?: boolean; skippedBecause?: string; error?: string }
+interface CuratorRunRow { id: string; mode: string; status: string; reason: string | null; summary: Record<string, number>; findings: CuratorFinding[]; createdAt: string | null }
+interface CuratorOverview { enabled: boolean; mode: "report" | "propose"; runs: CuratorRunRow[]; waiting: Array<{ id: string; name: string; approvalId: string | null; reason: string | null }> }
+
+/** One pass of the library curator in words. */
+export function curatorRunLine(run: Pick<CuratorRunRow, "mode" | "status" | "reason" | "summary">): string {
+  if (run.mode === "seed") return "Started watching the library";
+  if (run.status === "failed") return `Failed: ${run.reason ?? "unknown"}`;
+  const s = run.summary ?? {};
+  const parts = [
+    s.idle ? `${s.idle} idle skill${s.idle === 1 ? "" : "s"}` : null,
+    s.duplicateSkills ? `${s.duplicateSkills} duplicate skill${s.duplicateSkills === 1 ? "" : "s"}` : null,
+    s.duplicateNotes ? `${s.duplicateNotes} duplicate note${s.duplicateNotes === 1 ? "" : "s"}` : null,
+    s.weak ? `${s.weak} weak skill${s.weak === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+  if (parts.length === 0) return `Nothing to suggest (${s.skills ?? 0} skills and ${s.notes ?? 0} notes looked at)`;
+  return `${parts.join(", ")}${run.mode === "propose" ? `; ${s.filed ?? 0} suggested` : "; report only, nothing suggested"}`;
+}
+
+/**
+ * What the library curator found in this organization's agent-written skills and notes
+ * (server/agent-curator.ts), and the retirements waiting for a person. Shown only once
+ * the curator is on or has run; a library nobody curates has nothing to say.
+ */
+function LibraryHealth() {
+  const { data } = useQuery<CuratorOverview>({ queryKey: ["/api/curator/overview"] });
+  if (!data || (!data.enabled && data.runs.length === 0)) return null;
+  return (
+    <Card data-testid="card-library-health">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          Library health
+          <Badge variant="secondary" className="text-[10px]">{data.enabled ? (data.mode === "propose" ? "suggesting retirements" : "report only") : "off"}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <p className="text-xs text-muted-foreground">Once a week the curator looks at the skills and notes agents wrote, never at a skill a person wrote. It changes nothing itself: a retirement waits in Approvals.</p>
+        {data.runs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No pass yet.</p>
+        ) : (
+          <ul className="divide-y rounded border" data-testid="list-curator-runs">
+            {data.runs.slice(0, 3).map((r) => (
+              <li key={r.id} className="p-2.5">
+                <div>{curatorRunLine(r)}</div>
+                <div className="font-mono text-[10px] text-muted-foreground">{r.createdAt ? new Date(r.createdAt).toLocaleString() : ""}</div>
+                {r.findings.length > 0 && (
+                  <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                    {r.findings.slice(0, 6).map((f, i) => <li key={i}>{f.name}: {f.detail}{f.skippedBecause ? ` (not suggested: ${f.skippedBecause})` : ""}</li>)}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {data.waiting.length > 0 && (
+          <div data-testid="list-curator-waiting">
+            <div className="text-xs font-medium mb-1">Waiting for a decision</div>
+            <ul className="divide-y rounded border">
+              {data.waiting.map((w) => (
+                <li key={w.id} className="flex items-start gap-2 p-2.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="break-words">Retire {w.name}</div>
+                    {w.reason && <div className="text-xs text-muted-foreground">{w.reason}</div>}
+                  </div>
+                  {w.approvalId && <Link href={`/approvals/${w.approvalId}/classic`} className="shrink-0 text-xs text-muted-foreground hover:text-foreground">decide</Link>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /** The short word on a skill's trust badge. A skill an agent proposed says so, not "Market". */
 export function trustTierLabel(tier: string | null | undefined): string {
   return tier === "platform-provided" ? "Platform" : tier === "customer-created" ? "Custom" : tier === "agent-proposed" ? "Agent" : "Market";
@@ -388,6 +463,7 @@ export default function SkillCatalog() {
   return (
     <ScrollArea className="h-full">
       <div className="p-6 space-y-6">
+        <LibraryHealth />
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-bold" data-testid="text-skills-title">Agent Skills Library</h1>

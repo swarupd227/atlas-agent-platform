@@ -99,6 +99,7 @@ export interface SkillRow {
   version: string;
   status: string;
   organizationId?: string | null;
+  trustTier?: string | null;
   markdownBody?: string | null;
   yamlFrontmatter?: unknown;
 }
@@ -114,6 +115,8 @@ export interface SkillVersionRow {
 export interface SkillProposalStore {
   list(orgId: string, agentId: string, statuses: string[]): Promise<AgentSkillProposal[]>;
   get(orgId: string, id: string): Promise<AgentSkillProposal | undefined>;
+  /** Proposals about one skill, whoever made them. */
+  forSkill(orgId: string, skillId: string, statuses: string[]): Promise<AgentSkillProposal[]>;
   insert(row: Omit<AgentSkillProposal, "id" | "createdAt" | "updatedAt">): Promise<AgentSkillProposal>;
   update(orgId: string, id: string, patch: Partial<AgentSkillProposal>): Promise<void>;
   remove(orgId: string, id: string): Promise<void>;
@@ -156,6 +159,12 @@ export const dbSkillProposalStore: SkillProposalStore = {
   async get(orgId, id) {
     const [row] = await db.select().from(agentSkillProposals).where(and(eq(agentSkillProposals.id, id), eq(agentSkillProposals.organizationId, orgId))).limit(1);
     return row;
+  },
+  async forSkill(orgId, skillId, statuses) {
+    if (statuses.length === 0) return [];
+    return db.select().from(agentSkillProposals)
+      .where(and(eq(agentSkillProposals.organizationId, orgId), eq(agentSkillProposals.skillId, skillId), inArray(agentSkillProposals.status, statuses)))
+      .orderBy(asc(agentSkillProposals.createdAt));
   },
   async insert(row) {
     const [created] = await db.insert(agentSkillProposals).values(row as any).returning();
@@ -432,6 +441,89 @@ export async function proposeSkill(input: ProposeSkillInput, deps: SkillProposal
   return { ok: true, status: "pending_approval", proposalId: shortId(row.id), approvalId: approval.id, message: "Proposed. A person must approve it before the skill exists for any run; do not rely on it in this run." };
 }
 
+// ── Retiring (the library curator) ──────────────────────────────────────────
+
+/** Stands in for an agent on a retirement the curator files for a skill whose proposing agent is gone or unknown. */
+export const CURATOR_ACTOR = "system:curator";
+
+export interface RetireSkillInput {
+  orgId: string;
+  skillId: string;
+  /** Why, in a sentence a reviewer can weigh. Built from facts, not from the skill's text. */
+  reason: string;
+  /** When the retirement is for a duplicate: the skill that stays. */
+  keeps?: { id: string; name: string } | null;
+  idleDays?: number | null;
+  lastUsedAt?: string | null;
+}
+
+export type RetireSkillResult =
+  | { ok: true; proposalId: string; approvalId: string }
+  | { ok: false; error: string };
+
+/**
+ * Files a request to retire a skill an agent proposed and a person approved.
+ * Retiring sets status "deprecated", which no runtime reader loads; nothing is
+ * deleted, and setting the status back to active restores it. Only the library
+ * curator calls this. It touches only agent-proposed skills, never one a person
+ * wrote, and it is refused for a skill with a retirement already waiting.
+ */
+export async function proposeSkillRetirement(input: RetireSkillInput, deps: SkillProposalDeps = defaultSkillProposalDeps): Promise<RetireSkillResult> {
+  const skill = await deps.skills.get(input.orgId, input.skillId);
+  if (!skill) return { ok: false, error: "The skill no longer exists." };
+  if (skill.status !== "active") return { ok: false, error: `The skill is ${skill.status}, not active.` };
+  if (skill.trustTier !== "agent-proposed") return { ok: false, error: "Only a skill an agent proposed can be retired by the curator." };
+
+  const history = await deps.store.forSkill(input.orgId, skill.id, ["pending", "approved"]);
+  if (history.some((p) => p.status === "pending")) return { ok: false, error: "A change to that skill is already waiting for a person to decide." };
+  // The agent that proposed the skill, when we know it: the suggestion then shows on that agent's page too.
+  const origin = history.find((p) => p.kind === "new" && p.status === "approved");
+  const agentId = origin?.agentId ?? CURATOR_ACTOR;
+
+  const reason = normalizeLine(input.reason).slice(0, 300);
+  const hash = proposalHash(`retire:${skill.id}`, reason, skill.version);
+  const row = await deps.store.insert({
+    organizationId: input.orgId, agentId, kind: "retire", skillId: skill.id, versionId: null, baseVersion: skill.version,
+    name: skill.name, contentHash: hash, status: "pending", source: "curator", reason, runId: null, approvalId: null, decidedBy: null, decidedAt: null,
+  });
+
+  let approval: { id: string };
+  try {
+    approval = await deps.createApproval({
+      organizationId: input.orgId,
+      type: "skill_proposal",
+      objectType: "agent_skill_proposal",
+      objectId: row.id,
+      objectName: `Retire: ${skill.name}`.slice(0, 80),
+      status: "pending",
+      requestedBy: CURATOR_ACTOR,
+      requesterType: "system",
+      ...(agentId !== CURATOR_ACTOR ? { agentId } : {}),
+      riskScore: 0.1,
+      description: `The library curator suggests retiring the skill "${skill.name}": ${reason}`,
+      recommendedAction: "Approve if the skill is no longer needed. Retiring hides it from every run; it is kept, and setting it back to active restores it.",
+      evidenceJson: {
+        kind: "retire",
+        skillName: skill.name,
+        skillId: skill.id,
+        reason,
+        keeps: input.keeps ?? null,
+        idleDays: input.idleDays ?? null,
+        lastUsedAt: input.lastUsedAt ?? null,
+        baseVersion: skill.version,
+        proposedBy: "curator",
+        effect: "On approval the skill is retired: it is hidden from every agent's runs. It is kept, and can be restored by setting it back to active.",
+      },
+    });
+  } catch (err: any) {
+    await deps.store.remove(input.orgId, row.id).catch(() => {});
+    return { ok: false, error: `The request could not be filed: ${err?.message ?? "approval failed"}.` };
+  }
+  await deps.store.update(input.orgId, row.id, { approvalId: approval.id });
+  await deps.audit({ orgId: input.orgId, action: "agent_skill.retirement_proposed", objectId: row.id, actorType: "system", actorId: CURATOR_ACTOR, details: { skillId: skill.id, approvalId: approval.id, contentHash: hash, idleDays: input.idleDays ?? null, keeps: input.keeps?.id ?? null } }).catch(() => {});
+  return { ok: true, proposalId: shortId(row.id), approvalId: approval.id };
+}
+
 // ── Deciding ────────────────────────────────────────────────────────────────
 
 export type SkillDecisionResult = { applied: boolean; reason?: string };
@@ -471,6 +563,19 @@ export async function applySkillDecision(
     await deps.store.update(org, row.id, { status: "stale", ...decide });
     await audit("agent_skill.rejected", { why: "the skill no longer exists" });
     return { applied: false, reason: "the skill no longer exists" };
+  }
+
+  if (row.kind === "retire") {
+    // Refused if the skill is no longer what the curator looked at: a person has edited or re-activated it since.
+    if (skill.status !== "active" || skill.version !== row.baseVersion) {
+      await deps.store.update(org, row.id, { status: "stale", ...decide });
+      await audit("agent_skill.rejected", { why: "the skill changed since this was suggested" });
+      return { applied: false, reason: "the skill changed since this was suggested" };
+    }
+    await deps.skills.update(skill.id, { status: "deprecated" });
+    await deps.store.update(org, row.id, { status: "approved", ...decide });
+    await audit("agent_skill.approved", { retired: true });
+    return { applied: true };
   }
 
   if (row.kind === "new") {

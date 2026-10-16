@@ -123,7 +123,13 @@ export function describeApprovalEffect(
       : "The agent's notes stay as they are. The request is kept as a record.";
   }
   if (a.type === "skill_proposal") {
-    const revision = (a.evidenceJson as { kind?: string } | null)?.kind === "revision";
+    const kind = (a.evidenceJson as { kind?: string } | null)?.kind;
+    const revision = kind === "revision";
+    if (kind === "retire") {
+      return approve
+        ? "The skill is retired: no agent's run loads it any more. It is kept, and setting it back to active restores it."
+        : "The skill stays active. The suggestion is kept as a record, and the curator will not make it again for 60 days.";
+    }
     return approve
       ? (revision
         ? "The skill's instructions are replaced with the proposed text, for every agent that uses it. The previous version is kept."

@@ -2230,6 +2230,24 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_agent_run_reviews_day ON agent_run_reviews (organization_id, created_at);
     `);
 
+    // The library curator (see server/agent-curator.ts): when a skill was last used,
+    // and one row per pass over an organization. Additive.
+    await client.query(`
+      ALTER TABLE skills ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMP;
+      CREATE TABLE IF NOT EXISTS agent_curator_runs (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        mode VARCHAR NOT NULL,
+        status VARCHAR NOT NULL DEFAULT 'done',
+        reason TEXT,
+        summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+        findings JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMP DEFAULT NOW(),
+        finished_at TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_curator_runs_org ON agent_curator_runs (organization_id, created_at);
+    `);
+
     // What the gated dispatcher actually ran. Not audit_events: that write
     // takes a per-org advisory lock and appends to a hash chain, so one row
     // per tool call would serialise every dispatch in the org behind it.

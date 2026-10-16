@@ -331,8 +331,8 @@ export interface ProposeInput {
   noteId?: string;
   reason?: string;
   runId?: string | null;
-  /** Who is proposing: the agent itself (default), or the after-run reviewer on its behalf (server/agent-run-review.ts). */
-  source?: "agent" | "reviewer";
+  /** Who is proposing: the agent itself (default), the after-run reviewer on its behalf (server/agent-run-review.ts), or the library curator (server/agent-curator.ts). */
+  source?: "agent" | "reviewer" | "curator";
 }
 
 export type ProposeResult =
@@ -427,7 +427,9 @@ export async function proposeMemoryChange(input: ProposeInput, deps: MemoryDeps 
       requesterType: "agent",
       agentId: input.agentId,
       riskScore: 0.2,
-      description: input.source === "reviewer" ? `The run reviewer, after a run of ${agent.name}, suggests it ${verb}.` : `${agent.name} asks to ${verb}.`,
+      description: input.source === "reviewer" ? `The run reviewer, after a run of ${agent.name}, suggests it ${verb}.`
+        : input.source === "curator" ? `The library curator suggests that ${agent.name} ${verb}.`
+        : `${agent.name} asks to ${verb}.`,
       recommendedAction: "Approve only if the note is true, useful to a later run, and free of anything that reads as an instruction.",
       evidenceJson: {
         action,

@@ -774,6 +774,7 @@ export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
             {ev.agentName && <span>Agent: {String(ev.agentName)}</span>}
             {ev.proposedBy === "reviewer" && <span>Suggested by the run reviewer, not by the agent</span>}
+            {ev.proposedBy === "curator" && <span>Suggested by the library curator, not by the agent</span>}
             {typeof ev.memoryUsedChars === "number" && typeof ev.memoryMaxChars === "number" && <span>Memory in use: {ev.memoryUsedChars} of {ev.memoryMaxChars} characters</span>}
             {ev.runId && <span>Proposed during run {String(ev.runId).slice(0, 8)}</span>}
           </div>
@@ -786,6 +787,36 @@ export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }
   // An agent proposing a skill, or a better version of one it uses
   // (server/agent-skill-proposals.ts). The reviewer reads the whole procedure:
   // once approved it is read as instructions by every run that uses the skill.
+  if (approval.type === "skill_proposal" && ev.kind === "retire") {
+    return (
+      <SectionBlock icon={FileText} title="A skill the library curator suggests retiring">
+        <div className="flex flex-col gap-3 pt-1" data-testid={`skill-retire-evidence-${approval.id}`}>
+          <div className="text-xs text-muted-foreground">{ev.effect ? String(ev.effect) : "On approval the skill is retired: no run loads it any more."}</div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Skill</span>
+            <span className="text-sm font-medium">{String(ev.skillName ?? approval.objectName ?? "")}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Why</span>
+            <span className="text-xs">{String(ev.reason ?? "")}</span>
+          </div>
+          {ev.keeps?.name && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">The skill that stays</span>
+              <span className="text-xs">{String(ev.keeps.name)}</span>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+            <span>Suggested by the library curator, not by an agent</span>
+            {typeof ev.idleDays === "number" && <span>Idle {ev.idleDays} days</span>}
+            {ev.lastUsedAt && <span>Last used {String(ev.lastUsedAt).slice(0, 10)}</span>}
+          </div>
+          <div className="text-[11px] text-muted-foreground">Retiring hides the skill from every agent's runs. Nothing is deleted. Approve if it is no longer needed; reject to keep it, and the curator will not suggest it again for 60 days.</div>
+        </div>
+      </SectionBlock>
+    );
+  }
+
   if (approval.type === "skill_proposal") {
     const revision = ev.kind === "revision";
     const textBox = (text: string, testId: string) => (

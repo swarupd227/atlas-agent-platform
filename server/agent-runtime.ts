@@ -21,6 +21,7 @@ import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { isAgentMemoryEnabled, memoryPromptLayer, type MemoryLayerReport } from "./agent-memory";
 import { memoryToolsFor } from "./builtin-memory-tools";
 import { isSkillProposalEnabled } from "./agent-skill-proposals";
+import { touchSkillUse } from "./skill-usage";
 import { skillProposalToolsFor } from "./builtin-skill-proposal-tools";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
@@ -1592,6 +1593,8 @@ export async function executePromptWithMcp(
     const inlineBudget = options?.runtimeConfig?.skillInlineBudgetTokens;
     const { inline, onDemand } = planSkillContext(own, team, typeof inlineBudget === "number" ? inlineBudget : DEFAULT_SKILL_INLINE_BUDGET_TOKENS);
     skillProcedures = skillProceduresPrompt(inline);
+    // The inlined skills are in front of the model on every run: that is use (server/skill-usage.ts).
+    void touchSkillUse(inline.map((s) => s.id));
     if (skillProcedures) promptSectionMetrics.push({ category: "skill_procedures", tokenCount: estimateTokenCount(skillProcedures) });
     const skillTools = skillToolsFor(onDemand);
     if (skillTools.length > 0) {

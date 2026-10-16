@@ -1059,6 +1059,48 @@ export async function enqueueAgentRunReviewScan() {
   await resetScanChain("agent_run_review_scan", "agent run review scan", new Date(Date.now() + 60_000));
 }
 
+// ─── Library curator ──────────────────────────────────────────────────────────
+// Looks, per organization and at most weekly, at the skills and notes agents wrote
+// (server/agent-curator.ts). The job ticks every six hours; each pass checks for
+// itself whether an organization is due, so a restart that resets this chain
+// cannot make the curator run more often than weekly. A tick is two cheap queries
+// unless AGENT_CURATOR is on.
+
+const AGENT_CURATOR_SCAN_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+async function processAgentCuratorScan(job: Job): Promise<Record<string, unknown>> {
+  let scanResult: Record<string, unknown> | undefined;
+  let jobError: Error | undefined;
+
+  try {
+    const { runDefaultCuratorScan } = await import("./agent-curator");
+    scanResult = { ...(await runDefaultCuratorScan()) };
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] Library curator scan failed:", err.message);
+  } finally {
+    // Always re-enqueue so the curator keeps checking even after a transient failure.
+    const nextRunAt = new Date(Date.now() + AGENT_CURATOR_SCAN_INTERVAL_MS);
+    try {
+      await storage.createJob({
+        type: "agent_curator_scan",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: nextRunAt,
+      });
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue library curator scan:", enqueueErr.message);
+    }
+  }
+
+  if (jobError) throw jobError;
+  return { ...scanResult, completedAt: new Date().toISOString() };
+}
+
+export async function enqueueAgentCuratorScan() {
+  await resetScanChain("agent_curator_scan", "library curator scan", new Date(Date.now() + 10 * 60_000));
+}
+
 // ─── DAG Approval-Gate Resume Scan ────────────────────────────────────────────
 // Recovery scan for runs orphaned at "waiting_approval" by a server restart
 // (see dag-resume-poller.ts's module doc comment). This is what makes the
@@ -1948,6 +1990,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processScheduleTriggerScan(job);
           } else if (job.type === "agent_run_review_scan") {
             result = await processAgentRunReviewScan(job);
+          } else if (job.type === "agent_curator_scan") {
+            result = await processAgentCuratorScan(job);
           } else if (job.type === "dag_resume_scan") {
             result = await processDagResumeScan(job);
           } else if (job.type === "connector_health_scan") {

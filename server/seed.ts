@@ -1805,6 +1805,18 @@ export async function seedDatabase() {
         category: "decisions",
       },
       {
+        key: "AGENT_CURATOR",
+        value: "off",
+        description: "on = once a week the library curator looks, per organization, at the skills agents proposed (trust tier agent-proposed) and the notes they keep: skills unused for 30 days, near-duplicate skills, near-duplicate notes, and skills whose last eval pass rate is under 50%. It never touches a skill a person wrote. The first pass only records that it was switched on, so nothing is judged idle for a silence it could not have seen. What it does with findings is set by AGENT_CURATOR_MODE. off = the curator does nothing.",
+        category: "decisions",
+      },
+      {
+        key: "AGENT_CURATOR_MODE",
+        value: "report",
+        description: "report = the curator records its findings and files nothing. propose = it also files each retirement or note removal as an approval, which changes nothing until a person decides; a retirement a person refused is not suggested again for 60 days. Has no effect unless AGENT_CURATOR is on.",
+        category: "decisions",
+      },
+      {
         key: "AGENT_RUN_REVIEW_DAILY_BUDGET_USD",
         value: "2",
         description: "The most the after-run reviewer may spend per organization in a rolling day, in dollars. When it is reached, reviews are skipped and the skip is recorded.",

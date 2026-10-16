@@ -33,6 +33,7 @@
 import type { Skill } from "@shared/schema";
 import type { AvailableTool } from "./tool-dispatcher";
 import { storage } from "./storage";
+import { touchSkillUse } from "./skill-usage";
 
 /** Synthetic server identity; `serverId` is what executeTool routes on. */
 export const BUILTIN_SKILL_SERVER_ID = "builtin:skills";
@@ -261,6 +262,8 @@ export async function executeBuiltinSkillTool(
     for (const skill of found) {
       storage.updateSkill(skill.id, { activationCount: (skill.activationCount ?? 0) + 1 } as any).catch(() => {});
     }
+    // And when it was last used, for the library curator (server/skill-usage.ts).
+    void touchSkillUse(found.map((s) => s.id));
   }
 
   // A single-name call keeps the single shape; a call naming several skills

@@ -18,7 +18,7 @@ vi.mock("../server/auth", () => ({ getDefaultOrgId: () => "org-default" }));
 import { storage } from "../server/storage";
 import {
   scanSkillProposal, normalizeInstructions, proposalHash, nextPatchVersion, SKILL_PROPOSAL_LIMITS,
-  proposeSkill, applySkillDecision, deleteAgentSkillProposals, skillProposalOverview, skillProposalGate, isSkillProposalEnabled,
+  proposeSkill, proposeSkillRetirement, applySkillDecision, deleteAgentSkillProposals, skillProposalOverview, skillProposalGate, isSkillProposalEnabled,
   BUILTIN_SKILL_PROPOSAL_SERVER_ID, PROPOSE_SKILL_TOOL,
   type SkillProposalDeps, type SkillRow, type SkillVersionRow,
 } from "../server/agent-skill-proposals";
@@ -44,6 +44,7 @@ function makeEnv(opts: { agents?: Array<{ id: string; name: string; organization
     store: {
       async list(org, agentId, statuses) { return proposals.filter((p) => p.organizationId === org && p.agentId === agentId && statuses.includes(p.status)).map((p) => ({ ...p })); },
       async get(org, id) { const r = proposals.find((p) => p.id === id && p.organizationId === org); return r ? { ...r } : undefined; },
+      async forSkill(org, skillId, statuses) { return proposals.filter((p) => p.organizationId === org && p.skillId === skillId && statuses.includes(p.status)).map((p) => ({ ...p })); },
       // Ids differ within their first eight characters, like real uuids.
       async insert(row) { const created = { ...row, id: `${String(++n).padStart(8, "0")}-prop-aaaa`, createdAt: new Date(n * 1000), updatedAt: new Date() }; proposals.push(created); return { ...created } as any; },
       async update(org, id, patch) { const r = proposals.find((p) => p.id === id && p.organizationId === org); if (r) Object.assign(r, patch); },
@@ -386,6 +387,112 @@ describe("rejecting", () => {
     env.skills[0].status = "active";
     await decide(env, env.proposals[0], "rejected");
     expect(env.skills).toHaveLength(1);
+  });
+});
+
+// ── Retiring (the library curator) ──────────────────────────────────────────
+
+describe("retiring a skill an agent proposed", () => {
+  /** An agent-proposed skill that a person approved, so it is active and attached. */
+  async function approvedAgentSkill(env: ReturnType<typeof makeEnv>) {
+    await create(env);
+    await decide(env, env.proposals[0], "approved");
+    return env.skills[0];
+  }
+  const retire = (env: ReturnType<typeof makeEnv>, skillId: string, over: Record<string, unknown> = {}) =>
+    proposeSkillRetirement({ orgId: "org-a", skillId, reason: "no run has loaded it for 41 days", idleDays: 41, lastUsedAt: "2026-09-01T00:00:00.000Z", ...over } as any, env.deps);
+
+  it("files an approval from the curator, naming the agent that proposed the skill, and changes nothing yet", async () => {
+    const env = makeEnv();
+    const skill = await approvedAgentSkill(env);
+    const r = await retire(env, skill.id);
+    expect(r.ok).toBe(true);
+    const row = env.proposals.find((p) => p.kind === "retire")!;
+    expect(row).toMatchObject({ status: "pending", source: "curator", agentId: "agent-1", skillId: skill.id, baseVersion: "1.0.0", organizationId: "org-a" });
+    expect(env.approvals.at(-1)).toMatchObject({ type: "skill_proposal", requestedBy: "system:curator", requesterType: "system", organizationId: "org-a", agentId: "agent-1" });
+    expect(env.approvals.at(-1).objectName).toMatch(/^Retire: Loss Date Coverage/);
+    expect(env.approvals.at(-1).evidenceJson).toMatchObject({ kind: "retire", reason: "no run has loaded it for 41 days", idleDays: 41, proposedBy: "curator", skillId: skill.id });
+    expect(env.skills[0].status).toBe("active");
+  });
+
+  it("uses a stand-in actor when the skill's proposing agent is not known", async () => {
+    const env = makeEnv({ skills: [{ ...LIVE_SKILL, trustTier: "agent-proposed" }] });
+    expect((await retire(env, LIVE_SKILL.id)).ok).toBe(true);
+    expect(env.proposals[0].agentId).toBe("system:curator");
+    expect(env.approvals[0].agentId).toBeUndefined();
+  });
+
+  it("is only for a skill an agent proposed that is active: never a person's or the platform's, never one already retired", async () => {
+    const human = makeEnv({ skills: [{ ...LIVE_SKILL, trustTier: "customer-created" }] });
+    expect(await retire(human, LIVE_SKILL.id)).toMatchObject({ ok: false, error: expect.stringMatching(/Only a skill an agent proposed/) });
+    const platform = makeEnv({ skills: [{ ...LIVE_SKILL, trustTier: "platform-provided" }] });
+    expect((await retire(platform, LIVE_SKILL.id)).ok).toBe(false);
+    const retired = makeEnv({ skills: [{ ...LIVE_SKILL, trustTier: "agent-proposed", status: "deprecated" }] });
+    expect(await retire(retired, LIVE_SKILL.id)).toMatchObject({ ok: false, error: expect.stringMatching(/deprecated/) });
+    const gone = makeEnv();
+    expect(await retire(gone, "no-such-skill")).toMatchObject({ ok: false, error: expect.stringMatching(/no longer exists/) });
+    for (const e of [human, platform, retired, gone]) expect(e.approvals).toHaveLength(0);
+  });
+
+  it("does not file a second request while one is waiting, and does not touch another organization's skill", async () => {
+    const env = makeEnv();
+    const skill = await approvedAgentSkill(env);
+    expect((await retire(env, skill.id)).ok).toBe(true);
+    expect(await retire(env, skill.id)).toMatchObject({ ok: false, error: expect.stringMatching(/already waiting/) });
+    expect(await proposeSkillRetirement({ orgId: "org-b", skillId: skill.id, reason: "x" }, env.deps)).toMatchObject({ ok: false });
+  });
+
+  it("approving retires it: status deprecated, nothing deleted, the version and text intact", async () => {
+    const env = makeEnv();
+    const skill = await approvedAgentSkill(env);
+    await retire(env, skill.id);
+    const row = env.proposals.find((p) => p.kind === "retire")!;
+    expect(await decide(env, row, "approved")).toEqual({ applied: true });
+    expect(env.skills[0]).toMatchObject({ status: "deprecated", version: "1.0.0", name: "Loss Date Coverage" });
+    expect(env.skills[0].markdownBody).toBe(PROCEDURE);
+    expect(env.proposals.find((p) => p.id === row.id)).toMatchObject({ status: "approved", decidedBy: "reviewer" });
+    expect(env.audits.at(-1)).toMatchObject({ action: "agent_skill.approved", details: { retired: true } });
+  });
+
+  it("rejecting keeps the skill active and deletes nothing, and the refusal is on record for the cooldown", async () => {
+    const env = makeEnv();
+    const skill = await approvedAgentSkill(env);
+    await retire(env, skill.id);
+    const row = env.proposals.find((p) => p.kind === "retire")!;
+    expect(await decide(env, row, "rejected")).toEqual({ applied: true });
+    expect(env.skills).toHaveLength(1);
+    expect(env.skills[0].status).toBe("active");
+    expect(env.proposals.find((p) => p.id === row.id)).toMatchObject({ status: "rejected" });
+  });
+
+  it("refuses a retirement of a skill that changed since the curator looked, and leaves it alone", async () => {
+    const env = makeEnv();
+    const skill = await approvedAgentSkill(env);
+    await retire(env, skill.id);
+    env.skills[0].version = "1.0.1";
+    const row = env.proposals.find((p) => p.kind === "retire")!;
+    expect(await decide(env, row, "approved")).toMatchObject({ applied: false, reason: "the skill changed since this was suggested" });
+    expect(env.skills[0].status).toBe("active");
+    expect(env.proposals.find((p) => p.id === row.id)!.status).toBe("stale");
+  });
+
+  it("records ids and a hash in the audit trail, never the skill's text", async () => {
+    const env = makeEnv();
+    const skill = await approvedAgentSkill(env);
+    await retire(env, skill.id);
+    const a = env.audits.find((x) => x.action === "agent_skill.retirement_proposed")!;
+    expect(a).toMatchObject({ actorType: "system", actorId: "system:curator", orgId: "org-a" });
+    expect(JSON.stringify(a)).not.toContain("loss date");
+    expect(JSON.stringify(a)).not.toContain("Loss Date Coverage");
+    expect(a.details.contentHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("removes what it made when the approval cannot be filed", async () => {
+    const env = makeEnv();
+    const skill = await approvedAgentSkill(env);
+    env.deps.createApproval = async () => { throw new Error("approvals down"); };
+    expect(await retire(env, skill.id)).toMatchObject({ ok: false, error: expect.stringMatching(/approvals down/) });
+    expect(env.proposals.filter((p) => p.kind === "retire")).toHaveLength(0);
   });
 });
 

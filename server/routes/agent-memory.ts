@@ -9,6 +9,7 @@ import { checkPermission, getRequestActorLabel } from "../permissions";
 import { memoryOverview, removeNoteByPerson } from "../agent-memory";
 import { skillProposalOverview } from "../agent-skill-proposals";
 import { runReviewOverview } from "../agent-run-review";
+import { curatorOverview } from "../agent-curator";
 
 const router = Router();
 
@@ -60,6 +61,16 @@ router.get("/api/agents/:id/run-reviews", async (req, res) => {
     res.json(await runReviewOverview(agent.organizationId, agent.id));
   } catch (e: any) {
     res.status(500).json({ message: e?.message ?? "Could not read the agent's run reviews" });
+  }
+});
+
+// The library curator for the caller's organization: whether it is on, its recent passes
+// and what they found, and the retirements waiting for a person (server/agent-curator.ts).
+router.get("/api/curator/overview", async (req, res) => {
+  try {
+    res.json(await curatorOverview(getOrgId(req)));
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message ?? "Could not read the library curator" });
   }
 });
 

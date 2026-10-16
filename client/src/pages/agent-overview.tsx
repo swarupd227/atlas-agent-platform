@@ -176,7 +176,7 @@ export function runReviewSummary(r: Pick<RunReviewRow, "status" | "reason" | "pr
 
 /** What a proposal asks for, in words. */
 export function skillProposalLabel(p: Pick<SkillProposalRow, "kind">): string {
-  return p.kind === "revision" ? "Change a skill" : "Add a skill";
+  return p.kind === "revision" ? "Change a skill" : p.kind === "retire" ? "Retire a skill" : "Add a skill";
 }
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {

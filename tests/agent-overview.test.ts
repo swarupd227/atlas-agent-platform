@@ -102,6 +102,7 @@ describe("skill proposals", () => {
   it("says what a proposal asks for", () => {
     expect(skillProposalLabel({ kind: "new" })).toBe("Add a skill");
     expect(skillProposalLabel({ kind: "revision" })).toBe("Change a skill");
+    expect(skillProposalLabel({ kind: "retire" })).toBe("Retire a skill");
   });
 });
 

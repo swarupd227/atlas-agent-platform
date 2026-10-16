@@ -2367,6 +2367,13 @@ export const skills = pgTable("skills", {
   skillKind: text("skill_kind").notNull().default("prompt"),
   anthropicSkillIds: text("anthropic_skill_ids").array().default(sql`'{}'::text[]`),
   codeExecutionApproved: boolean("code_execution_approved").default(false),
+  /**
+   * When a run last put this skill in front of a model, inlined or loaded on
+   * demand (server/skill-usage.ts), at most once a day. activationCount cannot
+   * say this: it only counts on-demand loads. Null until the first use after the
+   * column was added. The library curator reads it (server/agent-curator.ts).
+   */
+  lastUsedAt: timestamp("last_used_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2735,6 +2742,32 @@ export const agentRunReviews = pgTable("agent_run_reviews", {
 export const insertAgentRunReviewSchema = createInsertSchema(agentRunReviews).omit({ id: true, createdAt: true });
 export type InsertAgentRunReview = z.infer<typeof insertAgentRunReviewSchema>;
 export type AgentRunReview = typeof agentRunReviews.$inferSelect;
+
+/**
+ * One row per pass of the library curator over an organization (server/agent-curator.ts).
+ * The first row for an organization is a "seed" pass that only records when the curator
+ * was switched on: idleness is counted from then, so a skill is never retired for a
+ * silence the curator could not have seen. After that, one row per week.
+ */
+export const agentCuratorRuns = pgTable("agent_curator_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  /** seed | report (findings only) | propose (findings filed as approvals) */
+  mode: varchar("mode").notNull(),
+  /** done | failed */
+  status: varchar("status").notNull().default("done"),
+  reason: text("reason"),
+  /** Counts: { skills, idle, duplicates, notes, weak, filed, refused }. */
+  summary: jsonb("summary").notNull().default(sql`'{}'::jsonb`),
+  /** What it found: [{ type, name, detail, filed?, error? }]. Names and ids, never skill text. */
+  findings: jsonb("findings").notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+  finishedAt: timestamp("finished_at"),
+});
+
+export const insertAgentCuratorRunSchema = createInsertSchema(agentCuratorRuns).omit({ id: true, createdAt: true });
+export type InsertAgentCuratorRun = z.infer<typeof insertAgentCuratorRunSchema>;
+export type AgentCuratorRun = typeof agentCuratorRuns.$inferSelect;
 
 export const ragPipelines = pgTable("rag_pipelines", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
