@@ -773,6 +773,7 @@ export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }
           )}
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
             {ev.agentName && <span>Agent: {String(ev.agentName)}</span>}
+            {ev.proposedBy === "reviewer" && <span>Suggested by the run reviewer, not by the agent</span>}
             {typeof ev.memoryUsedChars === "number" && typeof ev.memoryMaxChars === "number" && <span>Memory in use: {ev.memoryUsedChars} of {ev.memoryMaxChars} characters</span>}
             {ev.runId && <span>Proposed during run {String(ev.runId).slice(0, 8)}</span>}
           </div>
@@ -817,6 +818,7 @@ export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }
           )}
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
             {ev.agentName && <span>Agent: {String(ev.agentName)}</span>}
+            {ev.proposedBy === "reviewer" && <span>Suggested by the run reviewer, not by the agent</span>}
             {typeof ev.chars === "number" && <span>{ev.chars} characters</span>}
             {ev.promptOnly && <span>Prompt-only: grants no tools or access</span>}
             {ev.runId && <span>Proposed during run {String(ev.runId).slice(0, 8)}</span>}

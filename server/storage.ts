@@ -2272,6 +2272,7 @@ export class DatabaseStorage implements IStorage {
     await db.execute(sql`DELETE FROM skill_versions WHERE skill_id IN (SELECT skill_id FROM agent_skill_proposals WHERE agent_id = ${id} AND kind = 'new' AND status = 'pending')`);
     await db.execute(sql`DELETE FROM skills WHERE status = 'proposed' AND id IN (SELECT skill_id FROM agent_skill_proposals WHERE agent_id = ${id} AND kind = 'new' AND status = 'pending')`);
     await db.execute(sql`DELETE FROM agent_skill_proposals WHERE agent_id = ${id}`);
+    await db.execute(sql`DELETE FROM agent_run_reviews WHERE agent_id = ${id}`);
     // The mandate/warrant primitive tables hard-reference agents(id) and were
     // added after this cleanup was written, so any agent carrying a mandate
     // could never be deleted (FK violation -> 500) -- and every agent built by

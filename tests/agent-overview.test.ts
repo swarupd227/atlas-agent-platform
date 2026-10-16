@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { SECTIONS, memoryEnabledOf, memoryRequestLabel, policiesByScope, policyEffect, runOutcome, runStats, sectionFromSearch, skillProposalLabel, skillProposalsEnabledOf, withMemoryEnabled, withSkillProposalsEnabled } from "../client/src/pages/agent-overview";
+import { SECTIONS, memoryEnabledOf, memoryRequestLabel, policiesByScope, policyEffect, runOutcome, runStats, runReviewEnabledOf, runReviewSummary, sectionFromSearch, skillProposalLabel, skillProposalsEnabledOf, withMemoryEnabled, withRunReviewEnabled, withSkillProposalsEnabled } from "../client/src/pages/agent-overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "agent-overview.tsx");
@@ -102,6 +102,32 @@ describe("skill proposals", () => {
   it("says what a proposal asks for", () => {
     expect(skillProposalLabel({ kind: "new" })).toBe("Add a skill");
     expect(skillProposalLabel({ kind: "revision" })).toBe("Change a skill");
+  });
+});
+
+describe("run review", () => {
+  it("is on only when the agent has opted in, separately from memory and skill proposals", () => {
+    expect(runReviewEnabledOf({ runtimeConfig: { agentRunReview: { enabled: true } } } as any)).toBe(true);
+    expect(runReviewEnabledOf({ runtimeConfig: { agentRunReview: { enabled: false } } } as any)).toBe(false);
+    expect(runReviewEnabledOf({ runtimeConfig: { agentMemory: { enabled: true }, agentSkillProposals: { enabled: true } } } as any)).toBe(false);
+    expect(runReviewEnabledOf({ runtimeConfig: null } as any)).toBe(false);
+  });
+
+  it("switching it on or off leaves the rest of the runtime config alone", () => {
+    const rc = { maxCostPerRunUsd: 2, agentMemory: { enabled: true }, agentRunReview: { enabled: false, note: "kept" } };
+    expect(withRunReviewEnabled(rc, true)).toEqual({ maxCostPerRunUsd: 2, agentMemory: { enabled: true }, agentRunReview: { enabled: true, note: "kept" } });
+    expect(withRunReviewEnabled(undefined, true)).toEqual({ agentRunReview: { enabled: true } });
+    expect(rc.agentRunReview.enabled).toBe(false); // the original is not mutated
+  });
+
+  it("says what a review did, or why it did nothing", () => {
+    expect(runReviewSummary({ status: "done", reason: null, proposals: [{ type: "memory_add", ok: true }, { type: "skill_create", ok: true }] })).toBe("Suggested 2");
+    expect(runReviewSummary({ status: "done", reason: null, proposals: [{ type: "memory_add", ok: true }, { type: "skill_create", ok: false, error: "x" }] })).toBe("Suggested 1, 1 refused");
+    expect(runReviewSummary({ status: "done", reason: "nothing to propose", proposals: [] })).toBe("Nothing worth keeping");
+    expect(runReviewSummary({ status: "done", reason: null, proposals: [{ type: "memory_add", ok: false }] })).toBe("1 suggestion refused");
+    expect(runReviewSummary({ status: "skipped", reason: "only 2 steps", proposals: [] })).toBe("Skipped: only 2 steps");
+    expect(runReviewSummary({ status: "failed", reason: "the model call failed", proposals: [] })).toBe("Failed: the model call failed");
+    expect(runReviewSummary({ status: "running", reason: null, proposals: [] })).toBe("Reviewing");
   });
 });
 

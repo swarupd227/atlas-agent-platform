@@ -271,6 +271,8 @@ export interface ProposeSkillInput {
   instructions?: string;
   reason?: string;
   runId?: string | null;
+  /** Who is proposing: the agent itself (default), or the after-run reviewer on its behalf (server/agent-run-review.ts). */
+  source?: "agent" | "reviewer";
 }
 
 export type ProposeSkillResult =
@@ -377,6 +379,7 @@ export async function proposeSkill(input: ProposeSkillInput, deps: SkillProposal
     name: finalName,
     contentHash: hash,
     status: "pending",
+    source: input.source ?? "agent",
     reason: reason || null,
     runId: input.runId ?? null,
     approvalId: null,
@@ -397,7 +400,9 @@ export async function proposeSkill(input: ProposeSkillInput, deps: SkillProposal
       requesterType: "agent",
       agentId: agent.id,
       riskScore: 0.4,
-      description: `${agent.name} proposes ${create ? "a new skill" : "a change to a skill"}: ${finalName}.`,
+      description: input.source === "reviewer"
+        ? `The run reviewer, after a run of ${agent.name}, suggests ${create ? "a new skill" : "a change to a skill"}: ${finalName}.`
+        : `${agent.name} proposes ${create ? "a new skill" : "a change to a skill"}: ${finalName}.`,
       recommendedAction: "Approve only if the procedure is correct, worth reusing, and contains nothing that reads as an instruction to ignore rules or to move data somewhere.",
       evidenceJson: {
         kind: create ? "new" : "revision",
@@ -410,6 +415,7 @@ export async function proposeSkill(input: ProposeSkillInput, deps: SkillProposal
         baseVersion: target?.version ?? null,
         reason: reason || null,
         runId: input.runId ?? null,
+        proposedBy: input.source ?? "agent",
         chars: instructions.length,
         promptOnly: true,
         effect: create ? `On approval the skill becomes active and is attached to ${agent.name}.` : "On approval the revision replaces the skill's instructions for every agent that uses it.",

@@ -8,6 +8,7 @@ import { getOrgId } from "../auth";
 import { checkPermission, getRequestActorLabel } from "../permissions";
 import { memoryOverview, removeNoteByPerson } from "../agent-memory";
 import { skillProposalOverview } from "../agent-skill-proposals";
+import { runReviewOverview } from "../agent-run-review";
 
 const router = Router();
 
@@ -46,6 +47,19 @@ router.get("/api/agents/:id/skill-proposals", async (req, res) => {
     res.json(await skillProposalOverview(agent.organizationId, agent.id));
   } catch (e: any) {
     res.status(500).json({ message: e?.message ?? "Could not read the agent's skill proposals" });
+  }
+});
+
+// The after-run reviewer's ledger for an agent: what it looked at, what it filed or
+// why it did not, and what it cost (server/agent-run-review.ts). 404 for an agent
+// outside the caller's organization.
+router.get("/api/agents/:id/run-reviews", async (req, res) => {
+  try {
+    const agent = await storage.getAgent(String(req.params.id), getOrgId(req));
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    res.json(await runReviewOverview(agent.organizationId, agent.id));
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message ?? "Could not read the agent's run reviews" });
   }
 });
 

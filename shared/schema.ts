@@ -2680,6 +2680,8 @@ export const agentSkillProposals = pgTable("agent_skill_proposals", {
   contentHash: varchar("content_hash").notNull(),
   /** pending | approved | rejected | stale (a revision whose skill changed meanwhile). */
   status: varchar("status").notNull().default("pending"),
+  /** Who wrote it: "agent" (propose_skill) or "reviewer" (the after-run reviewer, server/agent-run-review.ts). */
+  source: varchar("source").notNull().default("agent"),
   reason: text("reason"),
   runId: varchar("run_id"),
   approvalId: varchar("approval_id"),
@@ -2692,6 +2694,36 @@ export const agentSkillProposals = pgTable("agent_skill_proposals", {
 export const insertAgentSkillProposalSchema = createInsertSchema(agentSkillProposals).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertAgentSkillProposal = z.infer<typeof insertAgentSkillProposalSchema>;
 export type AgentSkillProposal = typeof agentSkillProposals.$inferSelect;
+
+/**
+ * One row per run the after-run reviewer looked at, or declined to (server/agent-run-review.ts).
+ * It is the reviewer's cursor (traceId is unique, so a run is reviewed once), its report (what it
+ * proposed, or why it did not) and its cost ledger (the daily budget is the sum of today's rows).
+ * "Nothing proposed" and "never looked" are different facts and this table is what tells them apart.
+ */
+export const agentRunReviews = pgTable("agent_run_reviews", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  traceId: varchar("trace_id").notNull().unique(),
+  /** running | done | skipped | failed */
+  status: varchar("status").notNull().default("running"),
+  /** Why it was skipped or failed, or "nothing to propose" for a done review with no proposals. */
+  reason: text("reason"),
+  /** What it filed: [{ kind, ok, id?, error? }]. Ids only; the proposal text lives on the proposal. */
+  proposals: jsonb("proposals").notNull().default(sql`'[]'::jsonb`),
+  model: varchar("model"),
+  provider: varchar("provider"),
+  tokensIn: integer("tokens_in"),
+  tokensOut: integer("tokens_out"),
+  costUsd: real("cost_usd").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  finishedAt: timestamp("finished_at"),
+});
+
+export const insertAgentRunReviewSchema = createInsertSchema(agentRunReviews).omit({ id: true, createdAt: true });
+export type InsertAgentRunReview = z.infer<typeof insertAgentRunReviewSchema>;
+export type AgentRunReview = typeof agentRunReviews.$inferSelect;
 
 export const ragPipelines = pgTable("rag_pipelines", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

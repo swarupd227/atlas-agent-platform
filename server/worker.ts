@@ -841,7 +841,7 @@ async function processReportScheduleRun(job: Job): Promise<Record<string, unknow
           timeWindowDays: schedule.timeWindowDays ?? 30,
           format: "json",
           orgId: schedule.organizationId ?? undefined,
-        }) as Record<string, unknown>;
+        });
         await storage.createEvalReportArtifact({
           scheduleId: schedule.id,
           organizationId: schedule.organizationId ?? undefined,
@@ -857,8 +857,8 @@ async function processReportScheduleRun(job: Job): Promise<Record<string, unknow
         const recipients: string[] = (schedule.recipients as string[]) ?? [];
         if (recipients.length > 0) {
           const overallScore = typeof report.overallScore === "number" ? `${report.overallScore}%` : "N/A";
-          const totalRuns = (report as any).stats?.totalRuns ?? 0;
-          const reportName = (report.templateName as string) ?? schedule.templateType;
+          const totalRuns = report.stats?.totalRuns ?? 0;
+          const reportName = report.templateName ?? schedule.templateType;
           const generatedAt = new Date().toLocaleString();
           const html = `
 <html><body style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
@@ -1017,6 +1017,46 @@ async function processScheduleTriggerScan(job: Job): Promise<Record<string, unkn
 
 export async function enqueueScheduleTriggerScan() {
   await resetScanChain("schedule_trigger_scan", "schedule trigger scan", new Date());
+}
+
+// ─── After-run reviewer ───────────────────────────────────────────────────────
+// Reads finished runs of agents that opted in and files memory / skill
+// suggestions for a person to decide (server/agent-run-review.ts). Off unless the
+// AGENT_RUN_REVIEW platform flag is on, in which case a tick costs one query.
+
+const AGENT_RUN_REVIEW_SCAN_INTERVAL_MS = 5 * 60 * 1000;
+
+async function processAgentRunReviewScan(job: Job): Promise<Record<string, unknown>> {
+  let scanResult: Record<string, unknown> | undefined;
+  let jobError: Error | undefined;
+
+  try {
+    const { runDefaultReviewScan } = await import("./agent-run-review");
+    scanResult = { ...(await runDefaultReviewScan()) };
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] Agent run review scan failed:", err.message);
+  } finally {
+    // Always re-enqueue so reviewing continues even after a transient failure.
+    const nextRunAt = new Date(Date.now() + AGENT_RUN_REVIEW_SCAN_INTERVAL_MS);
+    try {
+      await storage.createJob({
+        type: "agent_run_review_scan",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: nextRunAt,
+      });
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue agent run review scan:", enqueueErr.message);
+    }
+  }
+
+  if (jobError) throw jobError;
+  return { ...scanResult, completedAt: new Date().toISOString() };
+}
+
+export async function enqueueAgentRunReviewScan() {
+  await resetScanChain("agent_run_review_scan", "agent run review scan", new Date(Date.now() + 60_000));
 }
 
 // ─── DAG Approval-Gate Resume Scan ────────────────────────────────────────────
@@ -1906,6 +1946,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processMcpResourceChangeScan(job);
           } else if (job.type === "schedule_trigger_scan") {
             result = await processScheduleTriggerScan(job);
+          } else if (job.type === "agent_run_review_scan") {
+            result = await processAgentRunReviewScan(job);
           } else if (job.type === "dag_resume_scan") {
             result = await processDagResumeScan(job);
           } else if (job.type === "connector_health_scan") {

@@ -2203,6 +2203,31 @@ export async function runStartupMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_agent_skill_proposals_agent ON agent_skill_proposals (organization_id, agent_id, status);
       CREATE INDEX IF NOT EXISTS idx_agent_skill_proposals_approval ON agent_skill_proposals (approval_id);
+      ALTER TABLE agent_skill_proposals ADD COLUMN IF NOT EXISTS source VARCHAR NOT NULL DEFAULT 'agent';
+    `);
+
+    // The after-run reviewer's ledger (see server/agent-run-review.ts): one row per
+    // run it looked at or declined to. trace_id is unique, so a run is reviewed
+    // once; the rows are also its report and its cost ledger. Additive.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agent_run_reviews (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        agent_id VARCHAR NOT NULL,
+        trace_id VARCHAR NOT NULL UNIQUE,
+        status VARCHAR NOT NULL DEFAULT 'running',
+        reason TEXT,
+        proposals JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model VARCHAR,
+        provider VARCHAR,
+        tokens_in INTEGER,
+        tokens_out INTEGER,
+        cost_usd REAL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        finished_at TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_run_reviews_agent ON agent_run_reviews (organization_id, agent_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_agent_run_reviews_day ON agent_run_reviews (organization_id, created_at);
     `);
 
     // What the gated dispatcher actually ran. Not audit_events: that write

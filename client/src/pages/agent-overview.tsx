@@ -149,6 +149,31 @@ export function withSkillProposalsEnabled(runtimeConfig: unknown, enabled: boole
 interface SkillProposalRow { id: string; kind: string; skillId: string; name: string; status: string; reason: string | null; approvalId: string | null; decidedBy: string | null; decidedAt: string | null; createdAt: string | null }
 interface SkillProposalOverview { pending: SkillProposalRow[]; recent: SkillProposalRow[]; limits: { maxInstructionChars: number; maxPending: number } }
 
+/** The agent is reviewed after its runs only when it has opted in (the AGENT_RUN_REVIEW flag is the other half; see server/agent-run-review.ts). */
+export function runReviewEnabledOf(agent: Pick<Agent, "runtimeConfig">): boolean {
+  return (agent.runtimeConfig as Record<string, any> | null | undefined)?.agentRunReview?.enabled === true;
+}
+
+/** The runtime config with the run reviewer switched on or off, leaving everything else in it alone. */
+export function withRunReviewEnabled(runtimeConfig: unknown, enabled: boolean): Record<string, unknown> {
+  const rc = (runtimeConfig && typeof runtimeConfig === "object" ? runtimeConfig : {}) as Record<string, any>;
+  return { ...rc, agentRunReview: { ...(rc.agentRunReview ?? {}), enabled } };
+}
+
+interface RunReviewRow { id: string; traceId: string; status: string; reason: string | null; proposals: Array<{ type: string; ok: boolean; id?: string; error?: string }>; costUsd: number; createdAt: string | null }
+interface RunReviewOverview { recent: RunReviewRow[]; spent7dUsd: number; reviews7d: number }
+
+/** One review in words: what it filed, or why it did not. */
+export function runReviewSummary(r: Pick<RunReviewRow, "status" | "reason" | "proposals">): string {
+  const filed = (r.proposals ?? []).filter((p) => p.ok).length;
+  const refused = (r.proposals ?? []).filter((p) => !p.ok).length;
+  if (r.status === "done" && filed > 0) return `Suggested ${filed}${refused ? `, ${refused} refused` : ""}`;
+  if (r.status === "done") return refused ? `${refused} suggestion${refused === 1 ? "" : "s"} refused` : "Nothing worth keeping";
+  if (r.status === "running") return "Reviewing";
+  if (r.status === "failed") return `Failed: ${r.reason ?? "unknown"}`;
+  return `Skipped: ${r.reason ?? "no reason recorded"}`;
+}
+
 /** What a proposal asks for, in words. */
 export function skillProposalLabel(p: Pick<SkillProposalRow, "kind">): string {
   return p.kind === "revision" ? "Change a skill" : "Add a skill";
@@ -563,6 +588,62 @@ function Memory({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toa
       )}
 
       <SkillProposals agent={agent} canEdit={canEdit} toast={toast} />
+      <RunReviews agent={agent} canEdit={canEdit} toast={toast} />
+    </div>
+  );
+}
+
+/**
+ * The after-run reviewer. After a finished run, a model with no tools reads a
+ * masked digest and may SUGGEST a memory note or a skill; the suggestion is an
+ * ordinary approval and changes nothing until a person decides. This lists what
+ * it looked at, what it filed, or why it did not.
+ */
+function RunReviews({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toast: ReturnType<typeof useToast>["toast"] }) {
+  const on = runReviewEnabledOf(agent);
+  const q = useQuery<RunReviewOverview>({ queryKey: [`/api/agents/${agent.id}/run-reviews`] });
+  const data = q.data;
+  const toggle = useMutation({
+    mutationFn: async () => (await apiRequest("PATCH", `/api/agents/${agent.id}`, { runtimeConfig: withRunReviewEnabled(agent.runtimeConfig, !on) })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      toast({ title: on ? "Run review turned off" : "Run review turned on", description: "The change is recorded in the audit trail." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't change it", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex flex-col gap-6" data-testid="run-reviews-section">
+      <section>
+        <SectionHeading>Learning from its runs</SectionHeading>
+        <div className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${on ? "bg-emerald-500" : "bg-muted-foreground/40"}`} aria-hidden />
+          <span className="min-w-0 flex-1">{on ? "On. After a finished run, a reviewer may suggest a note or a skill." : "Off. Its runs are not reviewed."}</span>
+          {canEdit && <Button size="sm" variant="outline" disabled={toggle.isPending} onClick={() => toggle.mutate()} data-testid="button-toggle-run-review">{on ? "Turn off" : "Turn on"}</Button>}
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">The reviewer reads a masked summary of a run with a model that has no tools. It can only suggest the kinds you have turned on above, and every suggestion waits in Approvals for a person. It also needs the AGENT_RUN_REVIEW flag on under Admin → Platform flags, and each review costs a model call.</p>
+      </section>
+
+      <section>
+        <SectionHeading>Recent reviews</SectionHeading>
+        {q.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (data?.recent ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">No run has been reviewed.</p>
+        ) : (
+          <ul className="flex flex-col divide-y rounded border" data-testid="run-reviews-recent">
+            {(data?.recent ?? []).map((r) => (
+              <li key={r.id} className="flex items-start gap-2 p-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="break-words">{runReviewSummary(r)}</div>
+                  <div className="font-mono text-[10px] text-muted-foreground">{[`run ${r.traceId.slice(0, 8)}`, r.createdAt ? formatDateTime(r.createdAt) : null, r.costUsd > 0 ? `$${r.costUsd.toFixed(4)}` : null].filter(Boolean).join(" · ")}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {data && <p className="mt-1 text-[11px] text-muted-foreground">{data.reviews7d} review{data.reviews7d === 1 ? "" : "s"} in the last 7 days, ${data.spent7dUsd.toFixed(4)} spent.</p>}
+      </section>
     </div>
   );
 }

@@ -331,6 +331,8 @@ export interface ProposeInput {
   noteId?: string;
   reason?: string;
   runId?: string | null;
+  /** Who is proposing: the agent itself (default), or the after-run reviewer on its behalf (server/agent-run-review.ts). */
+  source?: "agent" | "reviewer";
 }
 
 export type ProposeResult =
@@ -401,7 +403,7 @@ export async function proposeMemoryChange(input: ProposeInput, deps: MemoryDeps 
     content,
     contentHash: noteHash(content),
     status: "pending",
-    source: "agent",
+    source: input.source ?? "agent",
     proposedAction: action,
     targetNoteId: target?.id ?? null,
     runId: input.runId ?? null,
@@ -425,7 +427,7 @@ export async function proposeMemoryChange(input: ProposeInput, deps: MemoryDeps 
       requesterType: "agent",
       agentId: input.agentId,
       riskScore: 0.2,
-      description: `${agent.name} asks to ${verb}.`,
+      description: input.source === "reviewer" ? `The run reviewer, after a run of ${agent.name}, suggests it ${verb}.` : `${agent.name} asks to ${verb}.`,
       recommendedAction: "Approve only if the note is true, useful to a later run, and free of anything that reads as an instruction.",
       evidenceJson: {
         action,
@@ -434,6 +436,7 @@ export async function proposeMemoryChange(input: ProposeInput, deps: MemoryDeps 
         replaces: target ? { id: target.id, content: target.content } : null,
         reason: action === "remove" ? content : (input.reason ? normalizeNote(input.reason).slice(0, 300) : null),
         runId: input.runId ?? null,
+        proposedBy: input.source ?? "agent",
         memoryUsedChars: active.reduce((s, n) => s + n.content.length, 0),
         memoryMaxChars: MEMORY_LIMITS.maxTotalChars,
       },

@@ -1798,6 +1798,18 @@ export async function seedDatabase() {
         description: "on = an agent that has opted in (its Memory section) may PROPOSE a new skill, or a revision of a skill it uses, with the propose_skill tool. A proposal is filed as an approval and creates nothing any run can read until a person approves it; a proposed skill is prompt-only and cannot grant tools or access. off = no agent proposes skills, whatever its own setting.",
         category: "decisions",
       },
+      {
+        key: "AGENT_RUN_REVIEW",
+        value: "off",
+        description: "on = after a finished run of an agent that has opted in (its Memory section), a model with no tools reads a masked digest of the run and may SUGGEST a memory note or a skill. Suggestions are filed as approvals and change nothing until a person decides; only the kinds the agent has itself enabled are ever suggested. Each review costs a model call, bounded by AGENT_RUN_REVIEW_DAILY_BUDGET_USD. off = no run is reviewed.",
+        category: "decisions",
+      },
+      {
+        key: "AGENT_RUN_REVIEW_DAILY_BUDGET_USD",
+        value: "2",
+        description: "The most the after-run reviewer may spend per organization in a rolling day, in dollars. When it is reached, reviews are skipped and the skip is recorded.",
+        category: "decisions",
+      },
     ];
     const missingSettings = seedRowsMissing(existingSettings, defaultSettings, "key");
     if (missingSettings.length > 0) {

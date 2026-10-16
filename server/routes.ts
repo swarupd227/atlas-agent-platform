@@ -3,7 +3,7 @@ import { mcpServerScope, mcpServerChildScope, blueprintScope, teamGraphElementSc
 import { aiAssistRateLimiter } from "./rate-limits";
 import { checkPermission } from "./permissions";
 import { createServer, type Server } from "http";
-import { startWorker, enqueueAuditChainCheck, enqueueAuditChainCheckpoint, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan, enqueueScheduleTriggerScan, enqueueDagResumeScan, enqueueConnectorHealthScan } from "./worker";
+import { startWorker, enqueueAuditChainCheck, enqueueAuditChainCheckpoint, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan, enqueueScheduleTriggerScan, enqueueAgentRunReviewScan, enqueueDagResumeScan, enqueueConnectorHealthScan } from "./worker";
 import { runStartupMigrations } from "./db";
 import authRouter from "./routes/auth";
 import ssoRouter from "./routes/sso";
@@ -630,6 +630,9 @@ export async function registerRoutes(
 
   // Enqueue schedule (cron) trigger scan (runs every minute, idempotent).
   await enqueueScheduleTriggerScan();
+
+  // Enqueue the after-run reviewer scan (every 5 minutes; a no-op unless AGENT_RUN_REVIEW is on).
+  await enqueueAgentRunReviewScan();
 
   // Enqueue DAG approval-gate resume scan (runs every minute, idempotent).
   await enqueueDagResumeScan();
