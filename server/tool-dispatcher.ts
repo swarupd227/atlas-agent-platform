@@ -733,6 +733,14 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
     return executeBuiltinDocumentTool(tool.toolName, args, { orgId, agentId });
   }
 
+  // Built-in calculations (server/builtin-calculation-tools.ts): arithmetic
+  // done in-process, nothing leaves the server; same route in, so every gate
+  // above has run, and the result is recorded like any other tool call.
+  const { isBuiltinCalculationTool, executeBuiltinCalculationTool } = await import("./builtin-calculation-tools");
+  if (isBuiltinCalculationTool(tool)) {
+    return executeBuiltinCalculationTool(tool.toolName, args, { orgId, agentId });
+  }
+
   // Built-in skill reading (server/builtin-skill-tools.ts): returns a skill's
   // procedure, re-authorised against the agent's own assignments at call time.
   const { isBuiltinSkillTool, executeBuiltinSkillTool } = await import("./builtin-skill-tools");

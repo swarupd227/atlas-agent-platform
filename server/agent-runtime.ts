@@ -16,6 +16,7 @@ import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGen
 import { resolveRequiredToolCalls, nextForcedToolChoice, missingRequiredToolCalls, requiredToolCallsError } from "./required-tool-calls";
 import { currentLlmAbortSignal } from "./llm-abort-context";
 import { documentToolsForSkills, resolveDocumentMode, GENERATED_FILE_MARKER, stripGeneratedFileMarker, INSPECT_DOCUMENT_TOOL, READ_DOCUMENT_TOOL, readDocumentToolDef, FILE_PRODUCING_TOOLS } from "./builtin-document-tools";
+import { calculationToolsForSkills } from "./builtin-calculation-tools";
 import { resolveReadableSkillSets, planSkillContext, skillProceduresPrompt, skillToolsFor, skillCatalogPrompt, isBuiltinSkillTool, DEFAULT_SKILL_INLINE_BUDGET_TOKENS } from "./builtin-skill-tools";
 import { assembleAgentSystemMessage } from "./agent-prompt-assembly";
 import { isAgentMemoryEnabled, memoryPromptLayer, type MemoryLayerReport } from "./agent-memory";
@@ -147,7 +148,7 @@ export interface ContextSectionMetric {
 }
 
 export interface RuntimeProgressEvent {
-  type: "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "policy_compliance_validation" | "error" | "text_delta";
+  type: "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "policy_compliance_validation" | "contract_interrupt" | "error" | "text_delta";
   timestamp: string;
   data: Record<string, any>;
 }
@@ -1352,10 +1353,14 @@ export async function executePromptWithMcp(
     // generation is granting these tools, so it must not filter them back out.
     const docTools = documentToolsForSkills(resolvedActiveSkills, docGenerationMode);
     availableTools.push(...docTools);
+    // Built-in calculations (server/builtin-calculation-tools.ts): a skill whose
+    // procedure names loss_forecast grants it, on the same terms as above.
+    const calcTools = calculationToolsForSkills(resolvedActiveSkills);
+    availableTools.push(...calcTools);
     // ...and the dispatcher enforces the same allowlist independently, so grant
     // them there too or every call would be refused at dispatch.
     if (dispatchSkillAllowlist) {
-      for (const t of docTools) dispatchSkillAllowlist.add(t.toolName.toLowerCase());
+      for (const t of [...docTools, ...calcTools]) dispatchSkillAllowlist.add(t.toolName.toLowerCase());
     }
   } catch (sgErr: any) {
     // Skills grant capability; failure to resolve them degrades to the policy-
@@ -2176,7 +2181,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       try {
         const nudged = await completeWithFallback(
           nudgeMessages,
-          { model: modelName, tools: canonicalTools.length > 0 ? canonicalTools : undefined, maxTokens: continuationMaxTokens(resolveOutputMode(runtimeConfig)), ...(getServerToolConfig() ?? {}) },
+          { model: modelName, tools: canonicalTools.length > 0 ? canonicalTools : undefined, maxTokens: continuationMaxTokens(resolveOutputMode(runtimeConfig)), ...(getCodeExecConfig() ?? {}) },
           providerChain,
         );
         recordLlmCallProvider(nudged, "truncation_continuation");
@@ -2871,10 +2876,10 @@ After receiving tool results, provide a structured analysis with key findings, s
         const maskedRawContent = policyRedactText(maskPiiText(rawContent, runtimeConfig));
         lastStep.output = maskedAnalysis;
         if (contractInterrupted) {
-          lastStep.error = `Output contract validation failed (strict_with_interrupt): ${(analysis.contractValidationErrors ?? []).slice(0, 3).join("; ")}`;
+          lastStep.error = `Output contract validation failed (strict_with_interrupt): ${(analysis.contractValidationErrors as string[] | undefined ?? []).slice(0, 3).join("; ")}`;
           emitProgress("contract_interrupt", {
             validationStatus: "failed",
-            validationErrors: analysis.contractValidationErrors ?? [],
+            validationErrors: (analysis.contractValidationErrors as string[] | undefined) ?? [],
             repairAttempts: analysis.contractRepairAttempts ?? 0,
           });
         }
@@ -3203,7 +3208,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     }
   } catch {}
 
-  let policySnapshot: Array<{ policyId: string; policyName: string; domain: string; scope?: string; version?: number; enforcement?: string; status?: string }> = [];
+  let policySnapshot: Array<{ policyId: string; policyName: string; domain: string; scope?: string | null; version?: number; enforcement?: string; status?: string }> = [];
   try {
     if (policyBundle && policyBundle.appliedPolicies.length > 0) {
       policySnapshot = policyBundle.appliedPolicies.map(p => ({
@@ -4037,6 +4042,14 @@ export async function executeWorkerAgent(
    * guardrails per step instead of losing them at this boundary.
    */
   softPolicyViolations?: SoftPolicyComplianceResult[];
+  /** Every connector answer this step received, keyed by tool, for the engine's facts check. */
+  verifiedFacts?: Record<string, unknown> | null;
+  /** Why the step captured the facts it did, or none; always present on a step that ran. */
+  verifiedFactsNote?: string;
+  /** The figures this step asserted beyond the generic analysis keys. */
+  writtenFields?: Record<string, unknown> | null;
+  /** The index behind this step's passages, for a later step to cite. */
+  retrievedSources?: CitedSource[];
 }> {
   const startTime = Date.now();
   const workerAgent = await storage.getAgent(workerId);

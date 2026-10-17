@@ -37,6 +37,7 @@ import { CONTINUE_CUT_OFF_REPLY } from "@shared/cut-off-reply";
 import { canDecideApproval, type RoleId } from "./permissions";
 import { resolveCodeExecutionAccess, buildCodeExecutionRequestConfig, persistGeneratedFiles, describeCodeExecutionModelMismatch, ensureContainerFiles } from "./anthropic-code-execution";
 import { documentToolsForSkills, resolveDocumentMode, skillGrantsDocumentGeneration, GENERATED_FILE_MARKER, stripGeneratedFileMarker } from "./builtin-document-tools";
+import { calculationToolsForSkills } from "./builtin-calculation-tools";
 import { resolveReadableSkills, skillToolsFor, skillCatalogPrompt } from "./builtin-skill-tools";
 import { attachmentToolsFor } from "./builtin-attachment-tools";
 import type { Agent, OutputContract, Skill } from "@shared/schema";
@@ -930,6 +931,10 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
   const docMode = resolveDocumentMode((agentRow as any)?.documentGenerationMode);
   const documentTools = documentToolsForSkills(activeSkills, docMode);
   availableTools.push(...documentTools);
+  // Built-in calculations, granted by a skill that names loss_forecast; appended
+  // here, before read_skill, for the same positional-name reason as below.
+  const calculationTools = calculationToolsForSkills(activeSkills);
+  availableTools.push(...calculationTools);
   // read_skill is appended last so every earlier tool keeps its canonical
   // (positional) name across a resume, whatever the skill set.
   availableTools.push(...skillToolsFor(await resolveReadableSkills(agentId, orgId).catch(() => [])));
@@ -1265,7 +1270,7 @@ async function advance(runId: string, agentId: string, orgId: string | undefined
         // Document tools are granted BY a skill, so an allowlist that predates
         // them must not refuse them at dispatch.
         skillAllowlist: cp.skillAllowlist
-          ? new Set([...cp.skillAllowlist, ...documentTools.map(t => t.toolName.toLowerCase())])
+          ? new Set([...cp.skillAllowlist, ...documentTools.map(t => t.toolName.toLowerCase()), ...calculationTools.map(t => t.toolName.toLowerCase())])
           : null,
         idempotencyScope: runId,
         spanCollector: spans,
