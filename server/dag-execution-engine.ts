@@ -21,7 +21,7 @@ import { verdictFrom, VERDICT_WORDS } from "@shared/rework-rule";
 import { findRetrievalOverlaps, describeOverlap } from "@shared/retrieval-overlap";
 import type { DagExecutionPlan, DagExecutionRun, DagStateSchema, TeamBlueprintNode, TeamBlueprintEdge, RuleGroup } from "@shared/schema";
 import { routingFieldSpecsFor, laterStepIds, renderRoutingFields, renderLaterSteps, collectRuleLeaves, type GuidanceEdge, type RoutingFieldSpec } from "./pipeline-guidance";
-import { collectRunFiles } from "@shared/run-files";
+import { collectRunFiles, type RunFile } from "@shared/run-files";
 import { stateKeyForLabel } from "@shared/state-key";
 import { decisionAnswerType, decisionLevelsFor, type DecisionAnswerType } from "@shared/flow-execution-kind";
 import { gateEdgeSatisfied, gateEdgePolarity } from "@shared/gate-edge-polarity";
@@ -3295,11 +3295,17 @@ export class DAGExecutionEngine {
     // Structured version of the same "what's up for decision" material, for the Approvals UI to render as a real
     // run summary (steps, verdicts, files) instead of only the flattened text blob above. Best-effort: a step
     // whose output doesn't look like a verdict or doesn't carry files just omits those fields.
-    const upstreamSteps = (config.executionPlan.incomingEdges[nodeId] || [])
-      .map((e) => config.executionPlan.nodeConfig[e.sourceNodeId])
-      .filter((nc): nc is NodePlanConfig => !!nc?.stateKey && currentState[nc.stateKey] !== undefined)
-      .map((nc) => {
-        const raw = currentState[nc.stateKey];
+    type StepEvidence = {
+      label: string; stateKey: string; preview: string;
+      verdict?: string;
+      fields?: Record<string, string>;
+      verified?: { captured: boolean; why?: string };
+      files?: RunFile[];
+      /** Not a direct input to the gate: the nearest step behind one that computed fields. */
+      indirect?: boolean;
+    };
+    const stepEvidence = (nc: NodePlanConfig): StepEvidence => {
+        const raw = currentState[nc.stateKey as string];
         const text = asText(raw);
         const verdictLine = text.match(VERDICT_RE)?.[0]?.trim();
         const files = collectRunFiles({ [`${nc.stateKey}_files`]: currentState[`${nc.stateKey}_files`] });
@@ -3335,13 +3341,72 @@ export class DAGExecutionEngine {
           ...(verified ? { verified } : {}),
           ...(files.length ? { files } : {}),
         };
-      });
+    };
+    const hasFields = (nc: NodePlanConfig) => !!stepEvidence(nc).fields;
+
+    const directIds = (config.executionPlan.incomingEdges[nodeId] || []).map((e) => e.sourceNodeId);
+    const written = (id: string) => {
+      const c = config.executionPlan.nodeConfig[id];
+      return c?.stateKey && currentState[c.stateKey] !== undefined ? (c as NodePlanConfig) : null;
+    };
+    const upstreamSteps = directIds.map(written).filter((c): c is NodePlanConfig => !!c).map(stepEvidence);
+
+    // --- the verdict one hop further back ---
+    //
+    // Evidence was built from incomingEdges alone, so a gate fed by a prose
+    // summary showed the summary and nothing else. Live 2026-10-17: the card
+    // carried "Placement Analyst – Quote Comparison" (markdown, no fields)
+    // while the step behind IT had emitted {evaluated: 0, verdict:
+    // "UNDETERMINED: the ratings step did not report any carriers"}. The
+    // approver was asked to approve a placement where nothing was evaluated,
+    // and the number saying so was one step out of view.
+    //
+    // So each path is walked back until a step that emitted FIELDS is found,
+    // and that one is added. Bounded three ways: the first such ancestor on a
+    // path ends that path, a hop limit, and a cap on how many are added -- a
+    // card is for deciding, not for the whole run. `seen` also makes a loop
+    // in the graph terminate rather than walking it forever.
+    const MAX_HOPS = 4;
+    const MAX_INDIRECT = 4;
+    const seen = new Set<string>(directIds);
+    const indirectSteps: StepEvidence[] = [];
+    // Only the paths that need it. A direct step that already computed fields
+    // has nothing missing behind it, and walking past it would drag an earlier
+    // step onto a card that was already complete.
+    let frontier = directIds.filter((id) => {
+      const c = written(id);
+      return !c || !hasFields(c);
+    });
+    for (let hop = 0; hop < MAX_HOPS && indirectSteps.length < MAX_INDIRECT && frontier.length; hop++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const e of config.executionPlan.incomingEdges[id] || []) {
+          const srcId = e.sourceNodeId;
+          if (seen.has(srcId)) continue;
+          seen.add(srcId);
+          const c = written(srcId);
+          if (!c) { next.push(srcId); continue; }
+          if (hasFields(c) && indirectSteps.length < MAX_INDIRECT) {
+            // Marked, because a reviewer should be able to tell what fed this
+            // decision directly from what stands behind it.
+            indirectSteps.push({ ...stepEvidence(c), indirect: true });
+          } else {
+            next.push(srcId);
+          }
+        }
+      }
+      frontier = next;
+    }
+
     const gateEvidence = {
       runId: config.dagRunId,
       teamAgentId: config.teamAgentId,
       teamAgentName: config.teamAgentName,
       gateLabel: nc.label || "Approval Gate",
-      upstreamSteps,
+      // Direct inputs first, then the nearest step behind them that actually
+      // computed something. Same shape, so a reader of this evidence needs no
+      // second code path; `indirect` is what tells them apart.
+      upstreamSteps: [...upstreamSteps, ...indirectSteps],
       files: collectRunFiles(currentState),
     };
 

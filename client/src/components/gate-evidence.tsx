@@ -21,6 +21,8 @@ export interface GateEvidence {
     fields?: Record<string, string>;
     /** Whether the step's claims were backed by connector calls, and why not when they were not. */
     verified?: { captured: boolean; why?: string };
+    /** Not a direct input to the gate: the nearest step behind one that computed fields. */
+    indirect?: boolean;
     files?: RunFile[];
   }>;
   files?: RunFile[];
@@ -74,7 +76,17 @@ export function GateEvidenceCard({ evidence, testIdPrefix }: { evidence: GateEvi
                 ? <CircleDashed className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" data-testid={`${testIdPrefix}-unverified-${s.stateKey}`} />
                 : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />}
               <div className="flex flex-col gap-0.5 min-w-0">
-                <span className="font-medium">{s.label}</span>
+                <span className="font-medium">
+                  {s.label}
+                  {/* Said, not hidden: this did not feed the gate directly, it is the
+                      nearest step behind one that actually computed something. Without
+                      the distinction a reader would take it for a direct input. */}
+                  {s.indirect && (
+                    <span className="ml-1.5 font-normal text-[11px] text-muted-foreground" data-testid={`${testIdPrefix}-indirect-${s.stateKey}`}>
+                      · earlier step
+                    </span>
+                  )}
+                </span>
                 {/* The fields the step actually emitted, ahead of its prose: this is
                     where a verdict like `evaluated: 0` lives. */}
                 {s.fields && (

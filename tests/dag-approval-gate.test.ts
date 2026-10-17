@@ -557,3 +557,155 @@ describe("DAGExecutionEngine — approval resume ownership (double-fire guard)",
     expect(result.success).toBe(true);
   });
 });
+
+/**
+ * The verdict one hop further back.
+ *
+ * Gate evidence was built from incomingEdges alone, so a gate fed by a prose
+ * summary showed the summary and nothing else. Live 2026-10-17: the card
+ * carried "Placement Analyst - Quote Comparison" (markdown, no fields) while
+ * the step behind it had emitted {evaluated: 0, verdict: "UNDETERMINED: the
+ * ratings step did not report any carriers"}. A person was asked to approve a
+ * placement where nothing had been evaluated, and the number saying so was one
+ * step out of view.
+ */
+describe("a gate fed by prose, with the computed verdict behind it", () => {
+  const parseReal = (t: unknown) => { try { return typeof t === "string" ? JSON.parse(t) : null; } catch { return null; } };
+
+  const chain = () => {
+    // check -> analyst(prose) -> gate
+    const check = node({ id: "chk", refAgentId: "agent-chk", label: "Rating Floor Check", stateKey: "rating_floor_check" });
+    const analyst = node({ id: "an", refAgentId: "agent-an", label: "Placement Analyst", stateKey: "compare_quotes" });
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Placement Approval", stateKey: "gate_result" });
+    const e = (from: string, to: string) => ({
+      id: `${from}-${to}`, blueprintId: "bp1", sourceNodeId: from, targetNodeId: to, label: null, contentPartTypes: [],
+      allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge);
+    return { nodes: [check, analyst, gateNode], edges: [e("chk", "an"), e("an", "gate-1")] };
+  };
+
+  it("walks back past the prose step and puts the computed fields on the card", async () => {
+    const { waitForApproval, executeWorkerAgent, extractStructuredOutput } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (extractStructuredOutput as any).mockImplementation(parseReal);
+    // executeWorkerAgent(agentId, teamAgent, input, ...) -- the agent id is what
+    // distinguishes the two steps here.
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string) => {
+      return agentId === "agent-chk"
+        ? { success: true, output: JSON.stringify({ evaluated: 0, verdict: "UNDETERMINED: the ratings step did not report any carriers" }) }
+        : { success: true, output: "# PLACEMENT ANALYSIS\nProse, no fields." };
+    });
+
+    const { nodes, edges } = chain();
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves(nodes, edges), stateSchema: {}, initialState: {},
+      errorStrategy: "best_effort", teamAgentId: "team-1", teamAgentName: "Insurer Selection", dagRunId: "run-ind",
+    });
+
+    const steps = (waitForApproval as any).mock.calls.at(-1)[7].evidenceJson.upstreamSteps;
+    const direct = steps.find((x: any) => !x.indirect);
+    const behind = steps.find((x: any) => x.indirect);
+    // The direct input is still first and still shown: nothing is replaced.
+    expect(direct.stateKey).toBe("compare_quotes");
+    // And the verdict that decides whether this gate should exist is now there.
+    expect(behind, "no earlier step was carried forward").toBeTruthy();
+    expect(behind.stateKey).toBe("rating_floor_check");
+    expect(behind.fields).toMatchObject({ evaluated: "0" });
+    expect(String(behind.fields.verdict)).toContain("UNDETERMINED");
+    (extractStructuredOutput as any).mockReturnValue(null);
+  });
+
+  it("terminates on a graph that loops back, instead of walking it forever", async () => {
+    // A back edge has reached a real blueprint before and made the whole team
+    // unrunnable, so the walk cannot assume a DAG. What guarantees this
+    // terminates is the hop cap, not the revisit guard: removing `seen` and
+    // running this still passes, which was worth checking rather than assuming.
+    // The guard's own job is tested by the diamond below.
+    const { waitForApproval, executeWorkerAgent, extractStructuredOutput } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (extractStructuredOutput as any).mockReturnValue(null);
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: "prose, no fields anywhere" });
+
+    const a = node({ id: "a", refAgentId: "agent-a", label: "A", stateKey: "a_out" });
+    const b = node({ id: "b", refAgentId: "agent-b", label: "B", stateKey: "b_out" });
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Gate", stateKey: "gate_result" });
+    const e = (from: string, to: string) => ({
+      id: `${from}-${to}`, blueprintId: "bp1", sourceNodeId: from, targetNodeId: to, label: null, contentPartTypes: [],
+      allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge);
+
+    // The gate's own plan is computed from the acyclic part; the loop a <-> b
+    // is what the walk back has to survive.
+    const plan = computeWaves([a, b, gateNode], [e("a", "b"), e("b", "gate-1")]);
+    (plan as any).incomingEdges = { ...(plan as any).incomingEdges, a: [{ sourceNodeId: "b", targetNodeId: "a" }] };
+
+    const engine = new DAGExecutionEngine();
+    const run = engine.execute({
+      executionPlan: plan, stateSchema: {}, initialState: {},
+      errorStrategy: "best_effort", teamAgentId: "team-1", teamAgentName: "T", dagRunId: "run-loop",
+    });
+    // If the walk did not terminate this never settles and the suite times out.
+    await expect(run).resolves.toBeDefined();
+    const steps = (waitForApproval as any).mock.calls.at(-1)[7].evidenceJson.upstreamSteps;
+    // Nothing emitted fields, so nothing is carried forward -- the point is that
+    // it finished deciding that.
+    expect(steps.filter((x: any) => x.indirect)).toHaveLength(0);
+  });
+
+  it("carries a shared ancestor once, not once per path into the gate", async () => {
+    // Two direct steps, both prose, both fed by the same computed step. Without
+    // the revisit guard that ancestor is added twice and the card repeats
+    // itself. This is what `seen` is for -- the loop test above is about the
+    // hop cap.
+    const { waitForApproval, executeWorkerAgent, extractStructuredOutput } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (extractStructuredOutput as any).mockImplementation((t: unknown) => { try { return typeof t === "string" ? JSON.parse(t) : null; } catch { return null; } });
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string) =>
+      agentId === "agent-src"
+        ? { success: true, output: JSON.stringify({ evaluated: 0 }) }
+        : { success: true, output: "prose" });
+
+    const src = node({ id: "src", refAgentId: "agent-src", label: "Rating Floor Check", stateKey: "floor_check" });
+    const l = node({ id: "l", refAgentId: "agent-l", label: "Left", stateKey: "left_out" });
+    const r = node({ id: "r", refAgentId: "agent-r", label: "Right", stateKey: "right_out" });
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Gate", stateKey: "gate_result" });
+    const e = (from: string, to: string) => ({
+      id: `${from}-${to}`, blueprintId: "bp1", sourceNodeId: from, targetNodeId: to, label: null, contentPartTypes: [],
+      allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge);
+
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves([src, l, r, gateNode], [e("src", "l"), e("src", "r"), e("l", "gate-1"), e("r", "gate-1")]),
+      stateSchema: {}, initialState: {}, errorStrategy: "best_effort",
+      teamAgentId: "team-1", teamAgentName: "T", dagRunId: "run-diamond",
+    });
+
+    const steps = (waitForApproval as any).mock.calls.at(-1)[7].evidenceJson.upstreamSteps;
+    const behind = steps.filter((x: any) => x.indirect);
+    expect(behind).toHaveLength(1);
+    expect(behind[0].stateKey).toBe("floor_check");
+    (extractStructuredOutput as any).mockReturnValue(null);
+  });
+
+  it("adds nothing when the direct step already computed fields", async () => {
+    const { waitForApproval, executeWorkerAgent, extractStructuredOutput } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (extractStructuredOutput as any).mockImplementation(parseReal);
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output: JSON.stringify({ evaluated: 4 }) });
+
+    const { nodes, edges } = chain();
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves(nodes, edges), stateSchema: {}, initialState: {},
+      errorStrategy: "best_effort", teamAgentId: "team-1", teamAgentName: "T", dagRunId: "run-ind2",
+    });
+
+    const steps = (waitForApproval as any).mock.calls.at(-1)[7].evidenceJson.upstreamSteps;
+    // The walk stops at the first step with fields, and the direct one has them,
+    // so nothing further back is dragged onto the card.
+    expect(steps.filter((x: any) => x.indirect)).toHaveLength(0);
+    (extractStructuredOutput as any).mockReturnValue(null);
+  });
+});
