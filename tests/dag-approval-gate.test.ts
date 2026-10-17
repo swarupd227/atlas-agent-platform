@@ -709,3 +709,83 @@ describe("a gate fed by prose, with the computed verdict behind it", () => {
     (extractStructuredOutput as any).mockReturnValue(null);
   });
 });
+
+/**
+ * What must hold before a person is asked at all.
+ *
+ * Live, three runs in a row: a gate asked for approval of a placement where
+ * the upstream check had emitted {evaluated: 0, verdict: "UNDETERMINED: the
+ * ratings step did not report any carriers"}. Showing that on the card tells
+ * the approver; it does not stop the asking. A precondition does.
+ *
+ * Opt-in: a gate without one behaves exactly as before, which is why every
+ * other test in this file is untouched.
+ */
+describe("a gate's precondition", () => {
+  const gateWith = (precondition: unknown) => ({
+    ...node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Placement Approval", stateKey: "gate_result" }),
+    config: precondition ? { precondition } : {},
+  });
+  const producer = () => node({ id: "p", refAgentId: "agent-p", label: "Rating Floor Check", stateKey: "floor_check" });
+  const link = {
+    id: "e1", blueprintId: "bp1", sourceNodeId: "p", targetNodeId: "gate-1", label: null, contentPartTypes: [],
+    allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+  } as unknown as TeamBlueprintEdge;
+  const EVALUATED_AT_LEAST_ONE = { combinator: "and", conditions: [{ field: "evaluated", operator: ">=", value: 1 }] } as any;
+
+  const runWith = async (precondition: unknown, output: string, dagRunId: string) => {
+    const { waitForApproval, executeWorkerAgent, extractStructuredOutput } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (extractStructuredOutput as any).mockImplementation((t: unknown) => { try { return typeof t === "string" ? JSON.parse(t) : null; } catch { return null; } });
+    (executeWorkerAgent as any).mockResolvedValue({ success: true, output });
+    // Mocks are not cleared between tests in this file, so the only honest
+    // measure is how many calls THIS run adds.
+    const before = (waitForApproval as any).mock.calls.length;
+    const engine = new DAGExecutionEngine();
+    const res = await engine.execute({
+      executionPlan: computeWaves([producer(), gateWith(precondition)], [link]),
+      stateSchema: {}, initialState: {}, errorStrategy: "best_effort",
+      teamAgentId: "team-1", teamAgentName: "Insurer Selection", dagRunId,
+    });
+    (extractStructuredOutput as any).mockReturnValue(null);
+    const raised = (waitForApproval as any).mock.calls.length - before;
+    return { res, waitForApproval, raised };
+  };
+
+  it("does not ask anyone when it is not met, and says what was missing", async () => {
+    const { res, raised } = await runWith(
+      EVALUATED_AT_LEAST_ONE,
+      JSON.stringify({ evaluated: 0, verdict: "UNDETERMINED: the ratings step did not report any carriers" }),
+      "run-pre-1",
+    );
+    // The point of the whole thing: no approval was raised by this run.
+    expect(raised).toBe(0);
+    // And the run says why, naming the gate and what the rule read, so this is
+    // distinguishable from "somebody refused it".
+    const gateStep = (res as any).nodeResults?.["gate-1"] ?? (res as any).results?.["gate-1"];
+    const text = JSON.stringify(res);
+    expect(text).toContain("precondition is not met");
+    expect(text).toContain("evaluated");
+    void gateStep;
+  });
+
+  it("asks as normal when it is met", async () => {
+    const { raised } = await runWith(
+      EVALUATED_AT_LEAST_ONE,
+      JSON.stringify({ evaluated: 4, verdict: "Exception required" }),
+      "run-pre-2",
+    );
+    expect(raised).toBe(1);
+  });
+
+  it("asks as normal when the gate has no precondition at all", async () => {
+    const { raised } = await runWith(
+      null,
+      JSON.stringify({ evaluated: 0, verdict: "UNDETERMINED" }),
+      "run-pre-3",
+    );
+    // Opt-in: the same state that fails the rule above must still raise a gate
+    // on a gate that never declared one, or this would change every team.
+    expect(raised).toBe(1);
+  });
+});

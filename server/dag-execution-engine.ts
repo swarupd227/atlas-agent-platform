@@ -268,6 +268,8 @@ export interface NodePlanConfig {
   revision: RevisionPolicy | null;
   /** decision: the question and branches one decision-model call chooses between. */
   decision: DecisionStepConfig | null;
+  /** edge_gate: what must hold in state before a person is asked at all. Opt-in; null leaves the gate exactly as it was. */
+  precondition: RuleGroup | null;
   /** What a step does when its verdict disagrees with the run's verified facts:
    *  flag it on the output and go on (the default), or fail the step so the
    *  run's error strategy applies. */
@@ -624,6 +626,7 @@ export function computeWaves(
       label: node.label,
       gateType: node.gateType || null,
       decision: node.nodeType === "decision" ? parseDecisionConfig((node.config as any)?.decision) : null,
+      precondition: node.nodeType === "edge_gate" ? (((node.config as any)?.precondition as RuleGroup | undefined) ?? null) : null,
       factsCheck: (node.config as any)?.factsCheck === "fail" ? "fail" : "flag",
       refToolIds: (node.refToolIds as string[] | null) || null,
       revision: parseRevisionPolicy((node.config as any)?.revision, node.id, nodes),
@@ -3433,6 +3436,67 @@ export class DAGExecutionEngine {
       subject || `What it has done so far:\n${context.slice(0, 4000)}`,
       otherContext ? `\n--- Everything else from this run ---\n${otherContext}` : undefined,
     ].filter((p) => p !== undefined).join("\n");
+
+    // --- what must hold before a person is asked at all ---
+    //
+    // A gate with no precondition behaves exactly as before: this is opt-in,
+    // and every gate on the fleet has none until an author writes one.
+    //
+    // The case it exists for: a run reached this gate three times running with
+    // {evaluated: 0, verdict: "UNDETERMINED: the ratings step did not report
+    // any carriers"} and asked a person to approve a placement where nothing
+    // had been evaluated. Making that visible on the card (the fields and the
+    // verification record) tells the approver; it does not stop the asking.
+    //
+    // Deliberately NOT a decline. A decline is a business decision somebody
+    // made -- an MGA declines risks every day -- and routing an unmet
+    // precondition down that branch would record a decision nobody took. This
+    // halts with its own reason, whether or not a decline path exists.
+    const precondition = nc.precondition;
+    if (precondition) {
+      // The same evaluator the edges use, against the same SHAPE of state.
+      // currentState keeps a step's answer as the raw text it returned, so
+      // neither "evaluated" nor "floor_check.evaluated" resolves against it --
+      // an edge rule never sees that, because edges are given a state whose
+      // JSON has been parsed out (buildPipelineState). Passing currentState
+      // straight in made every precondition fail, including ones that should
+      // have passed, which is the worst possible direction for a check that
+      // decides whether to ask a person.
+      const ruleState: Record<string, unknown> = { ...currentState };
+      for (const [k, v] of Object.entries(currentState)) {
+        const parsed = typeof v === "string" ? extractStructuredOutput(v) : (v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null);
+        if (!parsed) continue;
+        ruleState[k] = parsed;                       // so "<step>.<field>" resolves
+        for (const [pk, pv] of Object.entries(parsed)) {
+          if (!(pk in ruleState)) ruleState[pk] = pv; // so a bare field resolves, without clobbering a step's own key
+        }
+      }
+      const trace = evaluateRule(precondition, ruleState);
+      if (!trace.result) {
+        const why = `"${nc.label || "Approval Gate"}" was not raised: its precondition is not met. ${trace.reason}`;
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "system",
+          action: "approval_gate_precondition_unmet",
+          objectType: "dag_execution_run",
+          objectId: config.dagRunId ?? nodeId,
+          details: JSON.stringify({ gate: nc.label, nodeId, reason: trace.reason, inputs: trace.inputs }),
+        } as never).catch(() => {});
+        return {
+          nodeId,
+          agentId: "",
+          status: "failed" as const,
+          output: {},
+          // Named so a reader can tell "nobody approved it" from "nobody was
+          // asked, and here is what was missing".
+          error: why,
+          traceId: "",
+          durationMs: Date.now() - start,
+          promptTokens: 0,
+          completionTokens: 0,
+        };
+      }
+    }
 
     let approvalId = "";
     const result = await waitForApproval(
