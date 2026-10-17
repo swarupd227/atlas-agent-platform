@@ -8,6 +8,9 @@ import { decideMany, type DecisionQuestion } from "../decision-provider";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Skill, Agent, EvalSuite, EvalTestCase, GoldenDataset, GoldenTestCase } from "@shared/schema";
 import { resolveReadableSkills, skillCatalogPrompt, skillToolsFor, executeBuiltinSkillTool, READ_SKILL_TOOL } from "../builtin-skill-tools";
+import { documentToolsForSkills, resolveDocumentMode, isBuiltinDocumentTool, executeBuiltinDocumentTool } from "../builtin-document-tools";
+import { calculationToolsForSkills, isBuiltinCalculationTool, executeBuiltinCalculationTool } from "../builtin-calculation-tools";
+import type { AvailableTool } from "../tool-dispatcher";
 import { priorDecisionsForPrompt } from "../intelligence-context";
 import { resolveRepeats, summarizeRun, type CaseStability } from "@shared/eval-stability";
 import { runAttempts, foldAttempts, meanLatencyMs, repeatedRowNotes, describeUnstableFields, EVAL_REPEAT_JOB } from "../eval-repeat";
@@ -27,9 +30,11 @@ const router = Router();
  * this is a PROMPT-LEVEL evaluation. Each case is run against the agent's real
  * assembled system prompt -- its ontology glossary and its bound policies with
  * their directives -- plus the same on-demand skills the runtime offers: the
- * skill catalog in the prompt and read_skill as the ONLY tool, so a case shows
- * whether the agent loads the procedure it needs (skillsLoaded is recorded per
- * case). The response is then judged against the case's expectedBehavior and
+ * skill catalog in the prompt, read_skill, and the built-in tools a skill grants
+ * (document and calculation tools, run in-process exactly as the runtime runs
+ * them), so a case shows whether the agent loads the procedure it needs and
+ * calls the tool it names (skillsLoaded and toolsUsed are recorded per case).
+ * The response is then judged against the case's expectedBehavior and
  * evaluationCriteria. It does NOT dispatch MCP tools or execute a team graph,
  * so it verifies conduct, reasoning, policy adherence and skill use, not tool
  * wiring or end-to-end orchestration. Every run records mode: "prompt_level"
@@ -47,6 +52,8 @@ interface JudgedCase {
   actualOutput: string;
   /** Skills the agent loaded with read_skill while answering. */
   skillsLoaded: string[];
+  /** Built-in tools the agent called while answering: the document and calculation tools its skills grant. */
+  toolsUsed?: string[];
   latencyMs: number;
   /** Set when the case ran more than once (repeats > 1). */
   stability?: CaseStability;
@@ -56,23 +63,33 @@ interface JudgedCase {
 const MAX_SKILL_TURNS = 4;
 
 /**
- * The agent answers under its own system prompt with read_skill as its only
- * tool, exactly as the runtime offers it. The final turn forbids tool use so a
- * model that keeps loading skills still has to produce an answer to judge.
+ * The agent answers under its own system prompt with read_skill and the
+ * built-in tools its skills grant, exactly as the runtime offers them. Before
+ * builtinTools existed a skill that said "call loss_forecast" was judged on an
+ * answer the agent had to compute in prose, because the only tool here was
+ * read_skill; the suite then scored the model's arithmetic, not the agent's
+ * conduct. The final turn forbids tool use so a model that keeps loading
+ * skills or calling tools still has to produce an answer to judge.
  */
-async function answerCase(p: {
+export async function answerCase(p: {
   systemPrompt: string;
   scenario: string;
   agentId: string;
   orgId?: string | null;
   readableSkills: Skill[];
-}): Promise<{ text: string; skillsLoaded: string[] }> {
+  /** Built-in tools to offer and run in-process (builtinToolsForEval); none when absent. */
+  builtinTools?: AvailableTool[];
+}): Promise<{ text: string; skillsLoaded: string[]; toolsUsed: string[] }> {
   const offered = skillToolsFor(p.readableSkills)[0];
-  const tools: Anthropic.Tool[] | undefined = offered
-    ? [{ name: READ_SKILL_TOOL, description: offered.toolDescription, input_schema: offered.toolInputSchema }]
-    : undefined;
+  const builtin = p.builtinTools ?? [];
+  const toolDefs: Anthropic.Tool[] = [
+    ...(offered ? [{ name: READ_SKILL_TOOL, description: offered.toolDescription, input_schema: offered.toolInputSchema }] : []),
+    ...builtin.map(t => ({ name: t.toolName, description: t.toolDescription, input_schema: t.toolInputSchema as Anthropic.Tool["input_schema"] })),
+  ];
+  const tools: Anthropic.Tool[] | undefined = toolDefs.length > 0 ? toolDefs : undefined;
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: p.scenario }];
   const skillsLoaded: string[] = [];
+  const toolsUsed: string[] = [];
 
   for (let turn = 0; turn <= MAX_SKILL_TURNS; turn++) {
     const lastTurn = turn === MAX_SKILL_TURNS;
@@ -93,21 +110,63 @@ async function answerCase(p: {
         .map(b => b.text)
         .join("\n")
         .trim();
-      return { text, skillsLoaded };
+      return { text, skillsLoaded, toolsUsed };
     }
 
     messages.push({ role: "assistant", content: response.content });
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const use of toolUses) {
+      const input = (use.input ?? {}) as Record<string, any>;
+      const granted = builtin.find(t => t.toolName === use.name);
       const out = use.name === READ_SKILL_TOOL
-        ? await executeBuiltinSkillTool(use.name, (use.input ?? {}) as Record<string, any>, { orgId: p.orgId, agentId: p.agentId, countActivation: false })
-        : { ok: false, error: `Tool "${use.name}" is not available in this evaluation.` };
+        ? await executeBuiltinSkillTool(use.name, input, { orgId: p.orgId, agentId: p.agentId, countActivation: false })
+        : granted
+          ? await runBuiltinTool(granted, input, { orgId: p.orgId, agentId: p.agentId })
+          : { ok: false, error: `Tool "${use.name}" is not available in this evaluation.` };
+      if (granted && !toolsUsed.includes(use.name)) toolsUsed.push(use.name);
       if (out?.ok && typeof out.skill === "string" && !skillsLoaded.includes(out.skill)) skillsLoaded.push(out.skill);
       results.push({ type: "tool_result", tool_use_id: use.id, content: JSON.stringify(out) });
     }
     messages.push({ role: "user", content: results });
   }
-  return { text: "", skillsLoaded };
+  return { text: "", skillsLoaded, toolsUsed };
+}
+
+/**
+ * Runs a built-in tool the way tool-dispatcher.ts does, in-process. A failure
+ * comes back as a result the model can read and correct, not as a thrown
+ * error that would fail the case for a reason the judge never sees.
+ */
+async function runBuiltinTool(tool: AvailableTool, input: Record<string, any>, ctx: { orgId?: string | null; agentId: string }): Promise<any> {
+  try {
+    if (isBuiltinCalculationTool(tool)) return await executeBuiltinCalculationTool(tool.toolName, input, ctx);
+    if (isBuiltinDocumentTool(tool)) return await executeBuiltinDocumentTool(tool.toolName, input, ctx);
+    return { ok: false, error: `Tool "${tool.toolName}" is not available in this evaluation.` };
+  } catch (err: any) {
+    return { ok: false, error: `Tool "${tool.toolName}" failed: ${err?.message ?? String(err)}` };
+  }
+}
+
+/**
+ * The agent's OWN active skills: the set the runtime grants tools on
+ * (agent-runtime.ts reads the agent's preloadedSkills, not its team members').
+ * Readable skills include a team's, which read_skill may load but which grant
+ * nothing, so a grant is decided on this narrower set.
+ */
+export function grantedSkillsForEval(agent: { preloadedSkills?: unknown }, readableSkills: Skill[]): Skill[] {
+  const raw = agent.preloadedSkills;
+  const own = new Set<string>(Array.isArray(raw) ? raw.map((p: any) => p?.skillId).filter(Boolean) : []);
+  return readableSkills.filter(s => own.has(s.id) && s.status === "active");
+}
+
+/**
+ * The built-in tools a case may call: what the runtime would offer this agent
+ * and nothing more. A document tool called here produces a real file,
+ * attributed to the agent like one from a run; a calculation tool is pure.
+ */
+export function builtinToolsForEval(agent: { preloadedSkills?: unknown; documentGenerationMode?: string | null }, readableSkills: Skill[]): AvailableTool[] {
+  const own = grantedSkillsForEval(agent, readableSkills);
+  return [...documentToolsForSkills(own, resolveDocumentMode(agent.documentGenerationMode)), ...calculationToolsForSkills(own)];
 }
 
 /**
@@ -316,15 +375,17 @@ export async function judgeCase(params: {
   agentId: string;
   orgId?: string | null;
   readableSkills: Skill[];
+  builtinTools?: AvailableTool[];
 }): Promise<Omit<JudgedCase, "caseId" | "name" | "latencyMs">> {
   // Step 1: the agent answers, under its own real system prompt, able to load
   // its skills on demand.
-  const { text: actualOutput, skillsLoaded } = await answerCase({
+  const { text: actualOutput, skillsLoaded, toolsUsed } = await answerCase({
     systemPrompt: params.systemPrompt,
     scenario: params.scenario,
     agentId: params.agentId,
     orgId: params.orgId,
     readableSkills: params.readableSkills,
+    builtinTools: params.builtinTools,
   });
 
   // Step 2: each criterion is judged through the decision seam on the site
@@ -410,6 +471,7 @@ ${actualOutput}`,
       reasoning: `Judge response could not be parsed (${err?.message}); scored as failed rather than assumed passing.`,
       actualOutput,
       skillsLoaded,
+      toolsUsed,
     };
   }
 
@@ -433,6 +495,7 @@ ${actualOutput}`,
     reasoning,
     actualOutput,
     skillsLoaded,
+    toolsUsed,
   };
 }
 
@@ -445,6 +508,8 @@ interface RunInput {
   repeats: number;
   evalSystemPrompt: string;
   readableSkills: Skill[];
+  /** The built-in tools the agent's own skills grant, offered and run in-process (builtinToolsForEval). */
+  builtinTools?: AvailableTool[];
   /** Called as each case starts, with how many are done so far. */
   onProgress?: (done: number, total: number) => Promise<void> | void;
 }
@@ -483,13 +548,14 @@ async function prepareEvalPrompt(agent: Agent, orgId: ReturnType<typeof getOrgId
   // Offer the same on-demand skills the runtime does: the catalog in the
   // prompt and read_skill as the only tool (server/builtin-skill-tools.ts).
   const readableSkills = await resolveReadableSkills(agent.id, orgId).catch(() => [] as Skill[]);
+  const builtinTools = builtinToolsForEval(agent as { preloadedSkills?: unknown; documentGenerationMode?: string | null }, readableSkills);
   const skillCatalog = skillCatalogPrompt(readableSkills);
   const evalSystemPrompt = composeEvalSystemPrompt({
     agentBrief: (agent as { systemPrompt?: string | null }).systemPrompt,
     governancePrompt: systemPrompt,
     skillCatalog,
   });
-  return { evalSystemPrompt, readableSkills };
+  return { evalSystemPrompt, readableSkills, builtinTools };
 }
 
 /** What a queued repeated run carries: enough to rebuild the run without the request. */
@@ -548,7 +614,7 @@ async function queueRepeatRun(payload: RepeatRunPayload, totalCases: number) {
 
 /** Runs a golden dataset's cases for an existing run row and returns the response body. */
 export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; cases: GoldenTestCase[] }) {
-  const { orgId, run, suite, agent, dataset, cases, repeats, evalSystemPrompt, readableSkills, onProgress } = c;
+  const { orgId, run, suite, agent, dataset, cases, repeats, evalSystemPrompt, readableSkills, builtinTools = [], onProgress } = c;
   const judged: JudgedCase[] = [];
   for (const tc of cases) {
     await onProgress?.(judged.length, cases.length);
@@ -566,6 +632,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
           agentId: agent.id,
           orgId,
           readableSkills,
+          builtinTools,
           scenario: tc.inputScenario,
           expectedBehavior: tc.expectedBehavior,
           criteria,
@@ -591,7 +658,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
       runId: run.id,
       caseId: tc.id,
       passed: stability.passed,
-      actualOutput: { response: result.actualOutput, skillsLoaded: result.skillsLoaded, scenarioCategory: tc.scenarioCategory, difficultyTier: tc.difficultyTier } as any,
+      actualOutput: { response: result.actualOutput, skillsLoaded: result.skillsLoaded, toolsUsed: result.toolsUsed ?? [], scenarioCategory: tc.scenarioCategory, difficultyTier: tc.difficultyTier } as any,
       scorerOutputs: {
         score,
         passingScore,
@@ -629,10 +696,14 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
     completedAt: new Date(),
     resultsJson: {
       mode: "prompt_level",
-      note: "Scored against the agent's assembled system prompt (ontology, bound policies with directives) plus its on-demand skills: the skill catalog and read_skill as the only tool. MCP tools were not dispatched and no team graph was executed.",
+      note: "Scored against the agent's assembled system prompt (ontology, bound policies with directives) plus its on-demand skills: the skill catalog, read_skill, and the built-in document and calculation tools its skills grant, run in-process. MCP tools were not dispatched and no team graph was executed.",
       skills: {
         offered: readableSkills.map(s => s.name),
         casesThatLoadedASkill: judged.filter(c => c.skillsLoaded.length > 0).length,
+      },
+      builtinTools: {
+        offered: builtinTools.map(t => t.toolName),
+        casesThatCalledATool: judged.filter(c => (c.toolsUsed ?? []).length > 0).length,
       },
       goldenDatasetId: dataset.id,
       goldenDatasetName: dataset.name,
@@ -662,7 +733,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
     ...stabilitySummary,
     results: judged.map(c => ({
       name: c.name, passed: c.passed, score: c.score,
-      criteriaMissed: c.criteriaMissed, reasoning: c.reasoning, skillsLoaded: c.skillsLoaded,
+      criteriaMissed: c.criteriaMissed, reasoning: c.reasoning, skillsLoaded: c.skillsLoaded, toolsUsed: c.toolsUsed ?? [],
       ...(c.stability ? {
         attempts: c.stability.attempts, passedAttempts: c.stability.passedAttempts,
         outcome: c.stability.outcome, consistency: c.stability.consistency,
@@ -673,7 +744,7 @@ export async function executeGoldenRun(c: RunInput & { dataset: GoldenDataset; c
 
 /** Runs a suite's own test cases for an existing run row and returns the response body. */
 export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
-  const { orgId, run, suite, agent, cases, repeats, evalSystemPrompt, readableSkills, onProgress } = c;
+  const { orgId, run, suite, agent, cases, repeats, evalSystemPrompt, readableSkills, builtinTools = [], onProgress } = c;
   const judged: JudgedCase[] = [];
   let unjudgeable = 0;
   // Reported per run, so a reader can see which cases were compared and
@@ -744,6 +815,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
         const attemptStarted = Date.now();
         let answerText = "";
         let skillsLoaded: string[] = [];
+        let toolsUsed: string[] = [];
         let scored: ReturnType<typeof scoreStructuredCase>;
         try {
           const answer = await answerCase({
@@ -751,10 +823,12 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
             agentId: agent.id,
             orgId,
             readableSkills,
+            builtinTools,
             scenario: `${scenario}\n\nReturn ONLY a JSON object with exactly these keys: ${instrument.keys.join(", ")}. Do not wrap it in prose.`,
           });
           answerText = answer.text;
           skillsLoaded = answer.skillsLoaded;
+          toolsUsed = answer.toolsUsed;
           scored = scoreStructuredCase(instrument.expected, instrument.keys, answerText);
         } catch (err: any) {
           scored = {
@@ -763,7 +837,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
           };
         }
         return {
-          scored, answerText, skillsLoaded,
+          scored, answerText, skillsLoaded, toolsUsed,
           passed: scored.passed, score: scored.score,
           verdict: extractJsonObject(answerText),
           latencyMs: Date.now() - attemptStarted,
@@ -773,13 +847,13 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
       // are checked for a value that changed between attempts. With one
       // attempt this is the attempt's own result, as before.
       const { representative, representativeIndex, score, stability } = foldAttempts(attempts, { keys: instrument.keys, verdict: a => a.verdict });
-      const { scored, answerText, skillsLoaded } = representative;
+      const { scored, answerText, skillsLoaded, toolsUsed } = representative;
       const latencyMs = meanLatencyMs(attempts);
       judged.push({
         caseId: tc.id, name: tc.name, latencyMs,
         passed: stability.passed, score,
         criteriaMet: scored.met, criteriaMissed: scored.missed,
-        reasoning: scored.reasoning, actualOutput: answerText, skillsLoaded,
+        reasoning: scored.reasoning, actualOutput: answerText, skillsLoaded, toolsUsed,
         ...(repeats > 1 ? { stability } : {}),
       });
       const changed = describeUnstableFields(stability.unstableFields);
@@ -787,7 +861,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
         runId: run.id,
         caseId: tc.id,
         passed: stability.passed,
-        actualOutput: { response: answerText, skillsLoaded } as any,
+        actualOutput: { response: answerText, skillsLoaded, toolsUsed } as any,
         scorerOutputs: {
           score,
           passingScore: 1,
@@ -824,6 +898,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
           agentId: agent.id,
           orgId,
           readableSkills,
+          builtinTools,
           scenario,
           expectedBehavior: instrument.criterion,
           criteria: [instrument.criterion],
@@ -847,7 +922,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
       runId: run.id,
       caseId: tc.id,
       passed: stability.passed,
-      actualOutput: { response: result.actualOutput, skillsLoaded: result.skillsLoaded } as any,
+      actualOutput: { response: result.actualOutput, skillsLoaded: result.skillsLoaded, toolsUsed: result.toolsUsed ?? [] } as any,
       scorerOutputs: {
         score,
         passingScore: 1,
@@ -888,7 +963,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
     completedAt: new Date(),
     resultsJson: {
       mode: "prompt_level",
-      note: "Scored against the agent's assembled system prompt (ontology, bound policies with directives) plus its on-demand skills. MCP tools were not dispatched and no team graph was executed.",
+      note: "Scored against the agent's assembled system prompt (ontology, bound policies with directives) plus its on-demand skills and the built-in document and calculation tools its skills grant, run in-process. MCP tools were not dispatched and no team graph was executed.",
       source: "eval_test_cases",
       criteriaSource: "expectedOutput (these cases carry no explicit evaluationCriteria), routed per case to a deterministic field comparison or the prose examiner",
       instruments: byInstrument,
@@ -898,6 +973,10 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
       skills: {
         offered: readableSkills.map(s => s.name),
         casesThatLoadedASkill: judged.filter(c => c.skillsLoaded.length > 0).length,
+      },
+      builtinTools: {
+        offered: builtinTools.map(t => t.toolName),
+        casesThatCalledATool: judged.filter(c => (c.toolsUsed ?? []).length > 0).length,
       },
     } as any,
   });
@@ -920,7 +999,7 @@ export async function executeSuiteRun(c: RunInput & { cases: EvalTestCase[] }) {
     ...stabilitySummary,
     cases: judged.map(c => ({
       caseId: c.caseId, name: c.name, passed: c.passed, score: c.score,
-      reasoning: c.reasoning, skillsLoaded: c.skillsLoaded, latencyMs: c.latencyMs,
+      reasoning: c.reasoning, skillsLoaded: c.skillsLoaded, toolsUsed: c.toolsUsed ?? [], latencyMs: c.latencyMs,
       ...(c.stability ? {
         attempts: c.stability.attempts, passedAttempts: c.stability.passedAttempts,
         outcome: c.stability.outcome, consistency: c.stability.consistency,
