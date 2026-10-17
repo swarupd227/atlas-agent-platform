@@ -135,35 +135,15 @@ export function splitConfiguredSteps<T extends { name?: string; description?: st
  * conditions on the edges out of the step before it, which is where the engine
  * evaluates them anyway.
  */
-/** Steps that route or mark structure rather than doing work of their own. */
-const ROUTING_STEP_TYPES = new Set(["trigger", "end", "parallel", "make_decision"]);
-
 /**
- * The steps that do real work and that no agent said it covers.
- *
- * A routing step nobody claims is fine -- deriveEdgesFromFlow walks through it.
- * A step that DOES something and that nobody claims is not built at all, and
- * its connections disappear with it. That is silent today, and it is how a
- * close shipped without four of its six approval gates.
+ * Both now live in shared/flow-step-coverage.ts, because the BUILD has to ask
+ * the same question before it writes anything and importing this module to ask
+ * it widened the build's module graph as far as the optional AWS runtime
+ * packages -- enough that a fresh checkout could not load the build's own tests.
+ * Re-exported here so existing importers are unaffected.
  */
-export function unclaimedWorkSteps(
-  agents: Array<{ flowStepLabels?: unknown }>,
-  steps: Array<{ label?: string; type?: string }>,
-): string[] {
-  const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
-  const claimed = new Set<string>();
-  for (const a of agents) {
-    if (!Array.isArray(a?.flowStepLabels)) continue;
-    for (const l of a.flowStepLabels) claimed.add(norm(l));
-  }
-  const out: string[] = [];
-  for (const s of steps) {
-    if (!s?.label) continue;
-    if (ROUTING_STEP_TYPES.has(norm(s.type))) continue;
-    if (!claimed.has(norm(s.label))) out.push(s.label);
-  }
-  return out;
-}
+import { ROUTING_STEP_TYPES, unclaimedWorkSteps } from "@shared/flow-step-coverage";
+export { unclaimedWorkSteps };
 
 export function deriveEdgesFromFlow(
   agents: Array<{ name?: string; flowStepLabels?: unknown }>,

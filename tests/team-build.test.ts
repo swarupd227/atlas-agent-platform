@@ -90,7 +90,7 @@ vi.mock("../server/routes/helpers", () => ({
 
 vi.mock("../server/auth", () => ({ getDefaultOrgId: () => "default-org" }));
 
-import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError } from "../server/team-build";
+import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError, IncompletePlanError } from "../server/team-build";
 import { computeWaves } from "../server/dag-execution-engine";
 
 const worker = (name: string, extra: Record<string, unknown> = {}) => ({ name, description: `${name} does its step`, ...extra });
@@ -518,5 +518,135 @@ describe("a decision drawn with labelled branches", () => {
     const router = state.nodes.find((n) => n.label === "Endorsement Decision Router");
     expect(router.nodeType).toBe("internal_agent");
     expect(state.edges.filter((e) => e.sourceNodeId === router.id).map((e) => e.evaluationMode)).toEqual(["ai", "ai"]);
+  });
+});
+
+/**
+ * A plan that does not cover its flow is refused.
+ *
+ * A step no agent claims is not built at all and its edges go with it. The
+ * proposer has detected this since 2026-09-29 and nothing refused on it, so the
+ * build returned 201 and the team deployed clean with steps missing -- including,
+ * on a 40-step close, four of the six human approval gates. Every later check
+ * reports success, because it reports on the steps that WERE built.
+ */
+describe("an incomplete plan", () => {
+  const steps = [
+    { id: "n0", type: "trigger", label: "A request arrives" },
+    { id: "n1", type: "get_info", label: "Fetch the record" },
+    { id: "n2", type: "expert_approval", label: "Approve the change" },
+    { id: "n3", type: "end", label: "Done" },
+  ];
+  // Names deliberately unlike the step labels, so inferStepClaims cannot rescue
+  // them and the gate is what is being tested.
+  const twoWorkers = [worker("Alpha", { flowStepLabels: ["Fetch the record"] }), worker("Bravo")];
+
+  it("refuses, naming the step nobody claimed", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Zulu Orchestrator", description: "coordinates" },
+      workers: twoWorkers,
+      processFlowSteps: steps,
+    });
+    await expect(buildTeamFromProposal(body, { orgId: "org-a" })).rejects.toThrow(IncompletePlanError);
+    await expect(buildTeamFromProposal(body, { orgId: "org-a" })).rejects.toThrow(/Approve the change/);
+  });
+
+  it("creates nothing when it refuses", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Zulu Orchestrator", description: "coordinates" },
+      workers: twoWorkers,
+      processFlowSteps: steps,
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" }).catch(() => {});
+    // A refusal that had already written half a team would be worse than the
+    // silent build it replaces.
+    expect(state.agents).toHaveLength(0);
+    expect(state.blueprints).toHaveLength(0);
+  });
+
+  it("does not refuse over a routing step: deriveEdgesFromFlow walks through those", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Zulu Orchestrator", description: "coordinates" },
+      workers: [worker("Alpha", { flowStepLabels: ["Fetch the record"] }), worker("Bravo", { flowStepLabels: ["Approve the change"] })],
+      processFlowSteps: steps,
+    });
+    await expect(buildTeamFromProposal(body, { orgId: "org-a" })).resolves.toBeTruthy();
+  });
+
+  it("runs after claim inference, so a claim the proposer only implied is not refused", async () => {
+    // "Fetch The Record Agent" says which step it covers in its name alone.
+    // Refusing this would make the gate fire on plans the builder repairs itself.
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Zulu Orchestrator", description: "coordinates" },
+      workers: [worker("Fetch The Record Agent"), worker("Approve The Change Agent")],
+      processFlowSteps: steps,
+    });
+    await expect(buildTeamFromProposal(body, { orgId: "org-a" })).resolves.toBeTruthy();
+  });
+
+  it("builds on an explicit acknowledgement, and records the gap on the blueprint", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Zulu Orchestrator", description: "coordinates" },
+      workers: twoWorkers,
+      processFlowSteps: steps,
+      acknowledgeIncomplete: true,
+    });
+    await expect(buildTeamFromProposal(body, { orgId: "org-a" })).resolves.toBeTruthy();
+    const bp = state.blueprints.find((b) => String(b.name).includes("Team Blueprint"));
+    expect(bp.validationResults.incompletePlan.unclaimedSteps).toEqual(["Approve the change"]);
+    expect(typeof bp.validationResults.incompletePlan.acknowledgedAt).toBe("string");
+  });
+
+  it("leaves a build with no authored steps alone", async () => {
+    // A team proposed in conversation has no flow to be incomplete against.
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Zulu Orchestrator", description: "coordinates" },
+      workers: [worker("Alpha")],
+    });
+    await expect(buildTeamFromProposal(body, { orgId: "org-a" })).resolves.toBeTruthy();
+  });
+});
+
+/**
+ * The authored step's description is the agent's instruction.
+ *
+ * The proposer writes its own systemPrompt and it is a stub: 66, 65, 80 and 64
+ * characters across four agents built in October 2026. The author's paragraph
+ * reached the node description, the correlation and the state key -- never the
+ * agent -- so every journey needed a PATCH after build to be usable.
+ */
+describe("the agent's prompt", () => {
+  const AUTHORED = "Name the one entitlement rule that covers this request and the outcome it requires. Granted only where a rule says so; everything else is referred, with the reason. You may not deny.";
+  const steps = [{ id: "n1", type: "ai_reasoning", label: "Apply rules", description: AUTHORED }];
+
+  const buildWith = async (workerExtra: Record<string, unknown>) => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Rules Orchestrator", description: "coordinates" },
+      workers: [worker("Apply rules", { flowStepLabels: ["Apply rules"], ...workerExtra })],
+      processFlowSteps: steps,
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    return state.agents.find((a) => a.name === "Apply rules");
+  };
+
+  it("takes the authored description over the proposer's stub", async () => {
+    const agent = await buildWith({ systemPrompt: "Applies the entitlement rules to the request." });
+    expect(agent.systemPrompt).toBe(AUTHORED);
+  });
+
+  it("keeps a proposer prompt that genuinely says more than the step did", async () => {
+    const longer = `${AUTHORED} In addition, when two rules appear to apply, prefer the more specific one, and treat an elevation request as always the most specific.`;
+    const agent = await buildWith({ systemPrompt: longer });
+    expect(agent.systemPrompt).toBe(longer);
+  });
+
+  it("falls back to the proposer's prompt when the step carries no description", async () => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Rules Orchestrator", description: "coordinates" },
+      workers: [worker("Apply rules", { flowStepLabels: ["Apply rules"], systemPrompt: "Applies the rules." })],
+      processFlowSteps: [{ id: "n1", type: "ai_reasoning", label: "Apply rules" }],
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(state.agents.find((a) => a.name === "Apply rules").systemPrompt).toBe("Applies the rules.");
   });
 });

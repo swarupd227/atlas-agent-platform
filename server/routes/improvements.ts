@@ -54,7 +54,7 @@ import os from "os";
 import fs from "fs";
 import { getAnthropicClient, callClaude, stripJsonFences } from "../claude";
 import { runMeetingTranscription, aiConfigured } from "../meeting-transcription";
-import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError } from "../team-build";
+import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError, IncompletePlanError } from "../team-build";
 import { proposeTeam } from "../team-proposal";
 import { buildClarifyPrompt, parseClarifyResponse, readClarifications, formatClarifications } from "../process-flow-clarify";
 import { FlowDraftError, draftProcessFlow } from "../process-flow-draft";
@@ -795,6 +795,17 @@ const router = Router();
       res.status(201).json(await buildTeamFromProposal(body, { orgId }));
     } catch (error) {
       if (error instanceof TeamBuildNotFoundError) return res.status(404).json({ error: error.message });
+      // A plan that does not cover its flow is refused, not built. 422 rather
+      // than 400: the request is well-formed, the plan is not.
+      if (error instanceof IncompletePlanError) {
+        return res.status(422).json({
+          error: error.message,
+          unclaimedSteps: error.unclaimedSteps,
+          covered: error.coveredCount,
+          total: error.totalCount,
+          guidance: "Draft again, or set flowStepLabels on the agent that covers each step. To build anyway and accept that these steps will be missing, resend with acknowledgeIncomplete: true -- it is recorded on the blueprint.",
+        });
+      }
       if (error instanceof ZodError) return res.status(400).json({ error: error.errors });
       console.error("Team creation error:", error);
       res.status(500).json({ error: "Failed to create team from proposals" });

@@ -20,6 +20,7 @@ import { stateKeyForLabel } from "@shared/state-key";
 import { getDecisionSettings } from "./decision-settings";
 import { stepCorrelation } from "@shared/process-flow-correlation";
 import { inferStepClaims } from "./flow-step-claims";
+import { unclaimedWorkSteps } from "@shared/flow-step-coverage";
 import { backEdgeKeys, edgeKey } from "@shared/graph-cycles";
 import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants } from "./blueprint-invariants";
@@ -30,6 +31,36 @@ export class TeamBuildNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "TeamBuildNotFoundError";
+  }
+}
+
+/**
+ * A plan that does not cover every working step of its flow.
+ *
+ * A step no agent claims is not built at all, and its edges go with it. The
+ * proposer already detects this and sets structureWarning; nothing refused on
+ * it, so the team built, returned 201 and deployed clean while quietly missing
+ * steps. Live on 2026-09-29: a 40-step close proposed 28 agents, and four of the
+ * six human approval gates were among the twelve nobody claimed. The run skipped
+ * them and reported success.
+ *
+ * Thrown from the build rather than checked in the route, so every caller gets
+ * it -- the HTTP route, Astra's build_team, and anything added later.
+ */
+export class IncompletePlanError extends Error {
+  readonly unclaimedSteps: string[];
+  readonly coveredCount: number;
+  readonly totalCount: number;
+  constructor(unclaimedSteps: string[], coveredCount: number, totalCount: number) {
+    super(
+      `The agents cover ${coveredCount} of this flow's ${totalCount} steps. ` +
+      `These would not be built at all, and anything they connect to would lose those connections: ${unclaimedSteps.join(", ")}. ` +
+      `Draft again, or claim the missing steps before creating the team.`,
+    );
+    this.name = "IncompletePlanError";
+    this.unclaimedSteps = unclaimedSteps;
+    this.coveredCount = coveredCount;
+    this.totalCount = totalCount;
   }
 }
 
@@ -601,6 +632,10 @@ export const teamBuildBodySchema = z.object({
     edgesDerivedFromFlow: z.boolean().optional(),
   }).nullable().optional(),
   processFlowSteps: z.array(z.any()).optional(),
+  // Build anyway, knowing steps will be missing. The only way past the
+  // incomplete-plan refusal, and it is recorded on the blueprint so the gap is
+  // answerable afterwards rather than being a thing somebody once clicked.
+  acknowledgeIncomplete: z.boolean().optional(),
 });
 
 export type TeamAgentProposal = z.infer<typeof teamAgentProposalSchema>;
@@ -816,9 +851,29 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     return lines.join("\n");
   }
 
-  const composeSystemPrompt = function(agent: TeamAgentProposal, isOrchestrator: boolean): string {
-    if (agent.systemPrompt && agent.systemPrompt.trim().length > 0) {
-      return agent.systemPrompt;
+  /**
+   * The authored step's description is the agent's instruction, when there is one.
+   *
+   * The proposer writes its own `systemPrompt` and it is a stub: measured across
+   * four agents built in October 2026, 66, 65, 80 and 64 characters. Meanwhile
+   * the author had written a careful paragraph on the flow node saying exactly
+   * what the step must do -- and that paragraph reached the node's `description`,
+   * the correlation and the state key, but never the agent, so every journey
+   * needed a PATCH after build to be usable and anyone who did not know that
+   * shipped a team whose agents were never told what to do.
+   *
+   * Longer wins rather than authored-always: a planner that genuinely elaborated
+   * on the step should not be thrown away, and length is the only signal
+   * available here that distinguishes elaboration from a stub.
+   */
+  const composeSystemPrompt = function(agent: TeamAgentProposal, isOrchestrator: boolean, authoredStep?: any): string {
+    const authored = typeof authoredStep?.description === "string" ? authoredStep.description.trim() : "";
+    const proposed = agent.systemPrompt?.trim() ?? "";
+    if (authored && authored.length > proposed.length) {
+      return authored;
+    }
+    if (proposed.length > 0) {
+      return proposed;
     }
     const industry = reqIndustry || "general";
     const lines: string[] = [];
@@ -840,6 +895,80 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     lines.push(`Always follow compliance requirements and escalate when operating outside your autonomy boundaries.`);
     return lines.join("\n");
   }
+
+  // The steps as the business user drew them, by label, so a worker that covers
+  // exactly one of them can be built as the node that step described rather than
+  // as an agent that re-describes it.
+  //
+  // A caller that names the flow does not also have to send its steps. The
+  // Process Flow Studio sends processFlowId only -- it sends the steps to the
+  // DRAFTING call, not to this one -- so this map was always empty on the one
+  // path that has authored steps at all, and every deterministic node was built
+  // from whatever the model invented instead. The nodes still appeared, which
+  // is why this read as working: a treaty comparison authored against a
+  // connector's own schedule summary ran, live 2026-09-25, as the model's
+  // arithmetic over three field names that exist in no system.
+  let authoredSteps: any[] = Array.isArray(processFlowSteps) ? processFlowSteps : [];
+  // The flow's own connections, when the flow was read: a second source for the
+  // step a worker covers (server/flow-step-claims.ts).
+  let authoredEdges: any[] = [];
+  if (authoredSteps.length === 0 && body.processFlowId) {
+    try {
+      const flow = await storage.getProcessFlow(body.processFlowId, orgId);
+      const nodes = (flow?.graph as any)?.nodes;
+      if (Array.isArray(nodes)) authoredSteps = nodes;
+      const edges = (flow?.graph as any)?.edges;
+      if (Array.isArray(edges)) authoredEdges = edges;
+    } catch (err: any) {
+      // Not fatal: without the steps every worker is built as an agent, which
+      // is the behaviour this had before. Say so, because the difference is
+      // otherwise invisible -- a working team that quietly costs a model call
+      // per step the author had already made deterministic.
+      console.warn(`[create-team] could not read process flow ${body.processFlowId} for its authored steps, so every worker will be built as an agent: ${err?.message}`);
+    }
+  }
+  const authoredStepsByLabel = new Map<string, any>(
+    authoredSteps
+      .filter((step: any) => step && typeof step.label === "string")
+      .map((step: any) => [String(step.label).trim().toLowerCase(), step]),
+  );
+  // A proposal whose workers did not say which step they cover, or said so in
+  // words naming no step, is read from their names here as well as at drafting
+  // (server/flow-step-claims.ts): a proposal drafted before that, or edited in
+  // between, otherwise reaches this point with nothing to correlate on, and
+  // every authored step is built as an agent that re-describes it.
+  if (authoredSteps.length > 0) {
+    const claimed = inferStepClaims(workers, authoredSteps, { flowEdges: authoredEdges, proposalEdges: pipeline?.edges ?? undefined });
+    if (claimed.inferred.length) {
+      console.info(`[create-team] inferred the step ${claimed.inferred.length} worker(s) cover from their names: ${claimed.inferred.map((x) => `"${x.agent}" -> "${x.step}"`).join(", ")}`);
+      claimed.agents.forEach((w, i) => { workers[i] = w; });
+    }
+  }
+  // REFUSE A PLAN THAT DOES NOT COVER THE FLOW.
+  //
+  // After inference, so a plan the builder can repair itself is not refused for
+  // a claim the proposer merely forgot to write down. Before the first
+  // createAgent, so a refusal leaves nothing behind.
+  //
+  // The proposer has set structureWarning for this since 2026-09-29 and nothing
+  // ever refused on it: the build returned 201 and the team deployed clean with
+  // steps missing. A silent partial build is the single worst failure this
+  // builder has, because every later check -- deploy, run, the run's own status
+  // -- reports success on the steps that WERE built.
+  let acknowledgedGap: { unclaimedSteps: string[]; acknowledgedAt: string } | null = null;
+  if (authoredSteps.length > 0) {
+    const unclaimed = unclaimedWorkSteps([orchestrator, ...workers], authoredSteps);
+    if (unclaimed.length > 0) {
+      const workSteps = authoredSteps.filter((s: any) => typeof s?.label === "string").length;
+      if (!body.acknowledgeIncomplete) {
+        throw new IncompletePlanError(unclaimed, workSteps - unclaimed.length, workSteps);
+      }
+      acknowledgedGap = { unclaimedSteps: unclaimed, acknowledgedAt: new Date().toISOString() };
+      console.warn(`[create-team] building an incomplete plan on request: ${unclaimed.length} step(s) will not be built: ${unclaimed.join(", ")}`);
+    }
+  }
+  // Whether a make_decision step with labelled branches becomes a decision node
+  // (server/decision-settings.ts); a step's own config.decisionKind overrides it.
 
   // The industry the plan was built for, when it's a real one; otherwise the organization's (storage default).
   const planIndustryId = reqIndustry && isKnownIndustry(reqIndustry) ? reqIndustry : undefined;
@@ -951,56 +1080,6 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
 
   storage.upsertAgentMandate(teamAgent.id, buildMandate(orchestrator, true), orgId).catch(() => {});
 
-  // The steps as the business user drew them, by label, so a worker that covers
-  // exactly one of them can be built as the node that step described rather than
-  // as an agent that re-describes it.
-  //
-  // A caller that names the flow does not also have to send its steps. The
-  // Process Flow Studio sends processFlowId only -- it sends the steps to the
-  // DRAFTING call, not to this one -- so this map was always empty on the one
-  // path that has authored steps at all, and every deterministic node was built
-  // from whatever the model invented instead. The nodes still appeared, which
-  // is why this read as working: a treaty comparison authored against a
-  // connector's own schedule summary ran, live 2026-09-25, as the model's
-  // arithmetic over three field names that exist in no system.
-  let authoredSteps: any[] = Array.isArray(processFlowSteps) ? processFlowSteps : [];
-  // The flow's own connections, when the flow was read: a second source for the
-  // step a worker covers (server/flow-step-claims.ts).
-  let authoredEdges: any[] = [];
-  if (authoredSteps.length === 0 && body.processFlowId) {
-    try {
-      const flow = await storage.getProcessFlow(body.processFlowId, orgId);
-      const nodes = (flow?.graph as any)?.nodes;
-      if (Array.isArray(nodes)) authoredSteps = nodes;
-      const edges = (flow?.graph as any)?.edges;
-      if (Array.isArray(edges)) authoredEdges = edges;
-    } catch (err: any) {
-      // Not fatal: without the steps every worker is built as an agent, which
-      // is the behaviour this had before. Say so, because the difference is
-      // otherwise invisible -- a working team that quietly costs a model call
-      // per step the author had already made deterministic.
-      console.warn(`[create-team] could not read process flow ${body.processFlowId} for its authored steps, so every worker will be built as an agent: ${err?.message}`);
-    }
-  }
-  const authoredStepsByLabel = new Map<string, any>(
-    authoredSteps
-      .filter((step: any) => step && typeof step.label === "string")
-      .map((step: any) => [String(step.label).trim().toLowerCase(), step]),
-  );
-  // A proposal whose workers did not say which step they cover, or said so in
-  // words naming no step, is read from their names here as well as at drafting
-  // (server/flow-step-claims.ts): a proposal drafted before that, or edited in
-  // between, otherwise reaches this point with nothing to correlate on, and
-  // every authored step is built as an agent that re-describes it.
-  if (authoredSteps.length > 0) {
-    const claimed = inferStepClaims(workers, authoredSteps, { flowEdges: authoredEdges, proposalEdges: pipeline?.edges ?? undefined });
-    if (claimed.inferred.length) {
-      console.info(`[create-team] inferred the step ${claimed.inferred.length} worker(s) cover from their names: ${claimed.inferred.map((x) => `"${x.agent}" -> "${x.step}"`).join(", ")}`);
-      claimed.agents.forEach((w, i) => { workers[i] = w; });
-    }
-  }
-  // Whether a make_decision step with labelled branches becomes a decision node
-  // (server/decision-settings.ts); a step's own config.decisionKind overrides it.
   const decisionKind = (await getDecisionSettings().catch(() => null))?.stepKind ?? false;
   // Named classifiers the flow's steps may be bound to (Phase 3): a bound step
   // takes the classifier's question, options or levels and threshold at build.
@@ -1023,7 +1102,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       modelName: worker.modelName || "gpt-4.1-mini",
       outcomeId,
       toolsConfig: worker.tools || [],
-      systemPrompt: composeSystemPrompt(worker, false),
+      systemPrompt: composeSystemPrompt(worker, false, soleAuthoredStep(worker, authoredStepsByLabel)),
       complianceTags: worker.complianceTags || [],
       ontologyTags: resolveOntologyTags(worker.matchedOntologyConcepts),
       policyBindings: resolvePolicyBindings(worker.policyConstraints),
@@ -1128,6 +1207,11 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       handoffRules: pipeline?.handoffRules || "pass output as input",
       processFlowSteps: authoredSteps,
     },
+    // Only set when someone chose to build a plan that does not cover its flow.
+    // Kept on the blueprint rather than only in the build's response, so "why
+    // does this team not do X" is answerable months later by looking at the
+    // team instead of by diffing it against the flow.
+    ...(acknowledgedGap ? { validationResults: { incompletePlan: acknowledgedGap } } : {}),
   });
 
   const orchestratorNode = await storage.createTeamBlueprintNode({
