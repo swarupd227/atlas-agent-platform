@@ -20,7 +20,7 @@ import { stateKeyForLabel } from "@shared/state-key";
 import { getDecisionSettings } from "./decision-settings";
 import { stepCorrelation } from "@shared/process-flow-correlation";
 import { inferStepClaims } from "./flow-step-claims";
-import { unclaimedWorkSteps, connectedStepPairs } from "@shared/flow-step-coverage";
+import { unclaimedWorkSteps, connectedStepPairs, implausibleClaims } from "@shared/flow-step-coverage";
 import { backEdgeKeys, edgeKey } from "@shared/graph-cycles";
 import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants } from "./blueprint-invariants";
@@ -47,6 +47,27 @@ export class TeamBuildNotFoundError extends Error {
  * Thrown from the build rather than checked in the route, so every caller gets
  * it -- the HTTP route, Astra's build_team, and anything added later.
  */
+/**
+ * A plan whose claims name something they should not.
+ *
+ * Coverage counted claims and nothing checked one was plausible, so an agent
+ * could claim the trigger and the step it was drafted for would go unbuilt
+ * while the coverage check passed. Separate from IncompletePlanError because
+ * the remedy differs: that one says a step has nobody, this one says somebody
+ * is pointed at the wrong thing.
+ */
+export class ImplausibleClaimError extends Error {
+  readonly claimProblems: Array<{ agent: string; claim: string; problem: string }>;
+  constructor(problems: Array<{ agent: string; claim: string; problem: string }>) {
+    super(
+      `${problems.length === 1 ? "An agent claims a step it should not" : "Agents claim steps they should not"}: ` +
+      problems.map((p) => `"${p.agent}" claims "${p.claim}", which ${p.problem}`).join("; ") + ".",
+    );
+    this.name = "ImplausibleClaimError";
+    this.claimProblems = problems;
+  }
+}
+
 export class IncompletePlanError extends Error {
   readonly unclaimedSteps: string[];
   readonly coveredCount: number;
@@ -969,6 +990,20 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // steps missing. A silent partial build is the single worst failure this
   // builder has, because every later check -- deploy, run, the run's own status
   // -- reports success on the steps that WERE built.
+  // A CLAIM MUST BE CORRECT, NOT MERELY PRESENT.
+  //
+  // Checked before the coverage count, because a claim on the trigger makes a
+  // step look covered: the licence journey's record agent claimed "A licence
+  // request arrives", coverage passed, and the agent that was supposed to write
+  // the decision was attached to a marker. Measured across 133 live teams before
+  // this was made a refusal: one worker built on a routing step, no step claimed
+  // twice -- so nothing that exists today is rebuilt into a refusal by it.
+  if (authoredSteps.length > 0) {
+    const problems = implausibleClaims([orchestrator, ...workers], authoredSteps);
+    if (problems.length > 0 && !body.acknowledgeIncomplete) throw new ImplausibleClaimError(problems);
+    if (problems.length > 0) console.warn(`[create-team] building despite ${problems.length} implausible claim(s): ${problems.map((p) => `${p.agent} -> ${p.claim}`).join(", ")}`);
+  }
+
   let acknowledgedGap: { unclaimedSteps: string[]; acknowledgedAt: string } | null = null;
   if (authoredSteps.length > 0) {
     const unclaimed = unclaimedWorkSteps([orchestrator, ...workers], authoredSteps);
@@ -1656,11 +1691,21 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // edge and a real predecessor waits for both, which is what is wanted.
   let flowEdgesRestored = 0;
   if (authoredEdges.length > 0 && workerNodes.length > 0) {
+    // EVERY step a worker claims, not just a sole one.
+    //
+    // soleAuthoredStep returns null for a worker covering two steps, so such a
+    // worker was invisible here: connectedStepPairs then saw no node for either
+    // of its steps and walked straight THROUGH it, wiring its predecessor to its
+    // successor and leaving the worker on the orchestrator edge alone -- back in
+    // wave one, which is the whole defect this block exists to fix.
     const nodeByStepId = new Map<string, any>();
     for (let i = 0; i < workerNodes.length; i++) {
-      const step = soleAuthoredStep(workers[i], authoredStepsByLabel);
-      const stepId = step?.id ? String(step.id) : "";
-      if (stepId) nodeByStepId.set(stepId, workerNodes[i]);
+      const labels = Array.isArray((workers[i] as any)?.flowStepLabels) ? (workers[i] as any).flowStepLabels : [];
+      for (const label of labels) {
+        if (typeof label !== "string") continue;
+        const step = authoredStepsByLabel.get(label.trim().toLowerCase());
+        if (step?.id) nodeByStepId.set(String(step.id), workerNodes[i]);
+      }
     }
     const existing = new Set<string>();
     for (const e of await storage.getTeamBlueprintEdges(blueprint.id).catch(() => [] as any[])) {

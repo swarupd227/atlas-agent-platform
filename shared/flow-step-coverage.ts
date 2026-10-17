@@ -24,6 +24,63 @@ export const ROUTING_STEP_TYPES = new Set(["trigger", "end", "parallel", "make_d
  * refusing on it, and it is how a close shipped without four of its six
  * approval gates.
  */
+/** One thing wrong with what an agent says it covers. */
+export interface ClaimProblem { agent: string; claim: string; problem: string }
+
+/**
+ * Claims that name something they should not.
+ *
+ * Coverage counts claims; nothing checked a claim was plausible. Three ways it
+ * goes wrong, all silent today:
+ *
+ * - A claim on a trigger or an end step. Those are markers: a worker attached
+ *   to one is attached to a step that does nothing, and whatever it was drafted
+ *   to do is not being done by anybody. Measured on the licence journey, where
+ *   the agent that writes the decision claimed "A licence request arrives".
+ * - Two agents on one step. The build takes the last and drops the first
+ *   without saying so.
+ * - A claim naming no step in the flow at all — a near-miss or a typo, which
+ *   today reads exactly like a worker that claimed nothing.
+ *
+ * Reported, never corrected. Choosing which step a mis-claimed agent really
+ * meant is a judgement, and a builder that guesses hides the defect instead of
+ * the author fixing it.
+ */
+export function implausibleClaims(
+  agents: Array<{ name?: string; flowStepLabels?: unknown }>,
+  steps: Array<{ label?: string; type?: string }>,
+): ClaimProblem[] {
+  const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+  const typeByLabel = new Map<string, string>();
+  for (const s of steps) if (s?.label) typeByLabel.set(norm(s.label), norm(s.type));
+
+  const out: ClaimProblem[] = [];
+  const claimedBy = new Map<string, string[]>();
+  for (const a of agents) {
+    const name = String(a?.name ?? "an agent");
+    const labels = Array.isArray(a?.flowStepLabels) ? a.flowStepLabels.filter((l): l is string => typeof l === "string") : [];
+    for (const label of labels) {
+      const key = norm(label);
+      if (!typeByLabel.has(key)) {
+        out.push({ agent: name, claim: label, problem: `names no step in this flow` });
+        continue;
+      }
+      const type = typeByLabel.get(key)!;
+      if (type === "trigger" || type === "end") {
+        out.push({ agent: name, claim: label, problem: `is a ${type}, which is a marker rather than a step that does anything` });
+        continue;
+      }
+      claimedBy.set(key, [...(claimedBy.get(key) ?? []), name]);
+    }
+  }
+  for (const [key, names] of Array.from(claimedBy.entries())) {
+    if (names.length < 2) continue;
+    const label = steps.find((s) => norm(s.label) === key)?.label ?? key;
+    out.push({ agent: names.join(" and "), claim: label, problem: `is claimed by ${names.length} agents, and only the last would be built` });
+  }
+  return out;
+}
+
 /** An authored connection, in either of the two shapes a flow graph uses. */
 export interface FlowEdgeLike { from?: string; to?: string; source?: string; target?: string }
 const edgeEnds = (e: FlowEdgeLike): [string, string] => [String(e.from ?? e.source ?? ""), String(e.to ?? e.target ?? "")];

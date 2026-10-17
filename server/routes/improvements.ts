@@ -54,7 +54,7 @@ import os from "os";
 import fs from "fs";
 import { getAnthropicClient, callClaude, stripJsonFences } from "../claude";
 import { runMeetingTranscription, aiConfigured } from "../meeting-transcription";
-import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError, IncompletePlanError } from "../team-build";
+import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError, IncompletePlanError, ImplausibleClaimError } from "../team-build";
 import { proposeTeam } from "../team-proposal";
 import { buildClarifyPrompt, parseClarifyResponse, readClarifications, formatClarifications } from "../process-flow-clarify";
 import { FlowDraftError, draftProcessFlow } from "../process-flow-draft";
@@ -797,6 +797,16 @@ const router = Router();
       if (error instanceof TeamBuildNotFoundError) return res.status(404).json({ error: error.message });
       // A plan that does not cover its flow is refused, not built. 422 rather
       // than 400: the request is well-formed, the plan is not.
+      // An agent pointed at the wrong step. Same 422 as an incomplete plan --
+      // the request is well-formed, the plan is not -- but a different remedy,
+      // so it is said differently.
+      if (error instanceof ImplausibleClaimError) {
+        return res.status(422).json({
+          error: error.message,
+          claimProblems: error.claimProblems,
+          guidance: "Point each agent at the step it actually covers. A trigger and an end are markers, not steps an agent can do; two agents cannot cover the same step, because only the last would be built. To build anyway, resend with acknowledgeIncomplete: true.",
+        });
+      }
       if (error instanceof IncompletePlanError) {
         return res.status(422).json({
           error: error.message,

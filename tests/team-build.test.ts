@@ -90,7 +90,7 @@ vi.mock("../server/routes/helpers", () => ({
 
 vi.mock("../server/auth", () => ({ getDefaultOrgId: () => "default-org" }));
 
-import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError, IncompletePlanError } from "../server/team-build";
+import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError, IncompletePlanError, ImplausibleClaimError } from "../server/team-build";
 import { computeWaves } from "../server/dag-execution-engine";
 
 const worker = (name: string, extra: Record<string, unknown> = {}) => ({ name, description: `${name} does its step`, ...extra });
@@ -604,6 +604,145 @@ describe("an incomplete plan", () => {
       workers: [worker("Alpha")],
     });
     await expect(buildTeamFromProposal(body, { orgId: "org-a" })).resolves.toBeTruthy();
+  });
+});
+
+/**
+ * A claim must be correct, not merely present.
+ *
+ * Coverage counted claims; nothing checked one was plausible. On the licence
+ * journey the agent that writes the decision claimed "A licence request
+ * arrives" — the trigger. Coverage passed, the step looked covered, and the
+ * agent that should have done the writing was attached to a marker.
+ *
+ * Measured over 133 live teams before this became a refusal: one worker built
+ * on a routing step, no step claimed twice.
+ */
+describe("a claim that names the wrong thing", () => {
+  const steps = [
+    { id: "s0", type: "trigger", label: "A request arrives" },
+    { id: "s1", type: "get_info", label: "Fetch the record" },
+    { id: "s2", type: "ai_reasoning", label: "Read the record" },
+    { id: "s3", type: "end", label: "Done" },
+  ];
+  const build = (workers: any[], extra: Record<string, unknown> = {}) =>
+    buildTeamFromProposal(
+      teamBuildBodySchema.parse({
+        orchestrator: { name: "Record Orchestrator", description: "coordinates" },
+        workers,
+        processFlowSteps: steps,
+        ...extra,
+      }),
+      { orgId: "org-a" },
+    );
+
+  it("refuses an agent that claims the trigger, and says it is a marker", async () => {
+    const workers = [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+      worker("Writer", { flowStepLabels: ["A request arrives"] }),
+    ];
+    await expect(build(workers)).rejects.toThrow(ImplausibleClaimError);
+    await expect(build(workers)).rejects.toThrow(/is a trigger, which is a marker/);
+  });
+
+  it("refuses an agent that claims the end step too", async () => {
+    const workers = [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+      worker("Monitor", { flowStepLabels: ["Done"] }),
+    ];
+    await expect(build(workers)).rejects.toThrow(/is a end, which is a marker|is an end, which is a marker/);
+  });
+
+  it("refuses two agents on one step, because only the last would be built", async () => {
+    const workers = [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+      worker("Fetch it again", { flowStepLabels: ["Fetch the record"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+    ];
+    await expect(build(workers)).rejects.toThrow(/claimed by 2 agents/);
+  });
+
+  it("lets claim inference repair a near-miss before judging it", async () => {
+    // "Fetch the recrod" names no step, but the agent's own name does, and
+    // inferStepClaims repairs that. Refusing here would fire on plans the
+    // builder fixes itself -- the same ordering BR-1's coverage check needs.
+    const workers = [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the recrod"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+    ];
+    await expect(build(workers)).resolves.toBeTruthy();
+  });
+
+  it("refuses a claim that names no step and that inference cannot place", async () => {
+    // Every real step is claimed by somebody else, so there is nothing for
+    // inference to give this one, and a claim naming no step would otherwise
+    // read exactly like an agent that claimed nothing at all.
+    const workers = [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+      worker("Zephyr", { flowStepLabels: ["Polish the brasswork"] }),
+    ];
+    await expect(build(workers)).rejects.toThrow(/names no step in this flow/);
+  });
+
+  it("creates nothing when it refuses, and is checked before the coverage count", async () => {
+    // A claim on the trigger makes a step look covered, so this has to run
+    // first or the coverage check passes on a plan that is wrong.
+    const workers = [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+      worker("Writer", { flowStepLabels: ["A request arrives"] }),
+    ];
+    await build(workers).catch(() => {});
+    expect(state.agents).toHaveLength(0);
+  });
+
+  it("builds on an acknowledgement, like an incomplete plan", async () => {
+    const workers = [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+      worker("Writer", { flowStepLabels: ["A request arrives"] }),
+    ];
+    await expect(build(workers, { acknowledgeIncomplete: true })).resolves.toBeTruthy();
+  });
+
+  it("leaves a plain, correct plan alone", async () => {
+    const workers = [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+    ];
+    await expect(build(workers)).resolves.toBeTruthy();
+  });
+
+  it("sequences a worker that covers two steps instead of walking through it", async () => {
+    // soleAuthoredStep returns null for a worker claiming two steps, so it was
+    // invisible to the edge restoration: connectedStepPairs saw no node for
+    // either step and wired this worker's predecessor straight to its
+    // successor, leaving it alone on the orchestrator edge back in wave one.
+    const fourSteps = [
+      ...steps.slice(0, 3),
+      { id: "s4", type: "take_action", label: "Write it back" },
+      steps[3],
+    ];
+    const edges = [
+      { id: "e0", from: "s0", to: "s1" },
+      { id: "e1", from: "s1", to: "s2" },
+      { id: "e2", from: "s2", to: "s4" },
+      { id: "e3", from: "s4", to: "s3" },
+    ];
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Record Orchestrator", description: "coordinates" },
+      workers: [
+        worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+        worker("Reader and writer", { flowStepLabels: ["Read the record", "Write it back"] }),
+      ],
+      processFlowSteps: fourSteps,
+      processFlowEdges: edges,
+    });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(edgePairs()).toContain("Fetch the record -> Reader and writer");
   });
 });
 
