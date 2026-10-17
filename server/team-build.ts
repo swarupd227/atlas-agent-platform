@@ -1595,6 +1595,51 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     }
   }
 
+  // WHAT A STEP WAS DRAWN AS IS WHAT IT MUST BE BUILT AS.
+  //
+  // classifyStep decides a step's kind from its type and config, and the build
+  // records that decision on the node as config.sourceType. Nothing then checked
+  // that the node actually came out that way, so a step could be recorded as one
+  // kind and built as another -- a retrieval step arriving as an internal_agent
+  // carrying sourceType "knowledge_base", reasoning without the knowledge base
+  // it was drawn to search, with no refKnowledgeBaseId and no query.
+  //
+  // Reported rather than refused. Every mismatch found so far has had a cause
+  // upstream of the build (an unknown step type, a binding the proposer invented),
+  // and refusing here would stop a team over a defect whose fix is elsewhere.
+  // What was missing was anyone saying it out loud.
+  const filled = (v: unknown) => (typeof v === "string" ? v.trim().length > 0 : false);
+  for (let i = 0; i < workerNodes.length; i++) {
+    const node = workerNodes[i];
+    const cfg = (node.config ?? {}) as Record<string, unknown>;
+    const sourceType = typeof cfg.sourceType === "string" ? cfg.sourceType : "";
+    const missing: string[] = [];
+    if (node.nodeType === "knowledge_base") {
+      if (!node.refKnowledgeBaseId) missing.push("the knowledge base to search");
+      if (!filled(cfg.kbQuery)) missing.push("what to search it for");
+    }
+    if (node.nodeType === "edge_gate" && !node.gateType) missing.push("what kind of decision the person makes");
+    if (node.nodeType === "tool_call") {
+      if (!filled(cfg.toolName)) missing.push("the tool to call");
+      if (!filled(cfg.toolServerId)) missing.push("the system to call it on");
+    }
+    if (node.nodeType === "decision" && (((cfg.decision as any)?.options?.length ?? 0) < 2)) {
+      missing.push("at least two answers to choose between");
+    }
+    if (missing.length) {
+      structureWarnings.push(`"${node.label}" was built without ${missing.join(" and ")}, so it will not do what the step was drawn to do.`);
+      console.warn(`[team-build] "${node.label}" (${node.nodeType}${sourceType ? `, drawn as ${sourceType}` : ""}) is missing: ${missing.join("; ")}`);
+    }
+    // A step drawn to search a knowledge base and built as an agent is the
+    // specific flattening that cost the licence journey its rules: it reads as
+    // a working step and quietly answers from the model instead.
+    const authored = soleAuthoredStep(workers[i], authoredStepsByLabel);
+    if (node.nodeType === "internal_agent" && filled(((authored?.config ?? {}) as Record<string, unknown>).kbId)) {
+      structureWarnings.push(`"${node.label}" is drawn to search a knowledge base but was built as an agent, so it will answer from the model rather than from the base.`);
+      console.warn(`[team-build] "${node.label}" carries a kbId but was built as internal_agent`);
+    }
+  }
+
   // THE FLOW IS THE AUTHORITY ON WHAT CONNECTS TO WHAT.
   //
   // Everything above sequences from pipeline.edges, which the proposal computed

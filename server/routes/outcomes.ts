@@ -5,7 +5,7 @@ import { db } from "../db";
 import { desc, eq, and } from "drizzle-orm";
 import { outcomeContracts, kpiDefinitions, approvals, agents, type OutcomeContract } from "@shared/schema";
 import { z, ZodError } from "zod";
-import { normalizeToGraph, starterFlow } from "@shared/process-flow";
+import { normalizeToGraph, starterFlow, unknownStepTypes, PROCESS_NODE_TYPES } from "@shared/process-flow";
 import { compileProcessFlow } from "../process-flow-compile";
 import {
   insertOutcomeContractSchema,
@@ -1705,6 +1705,23 @@ async function createOutcomeVersion(
       const parsed = processFlowBodySchema.parse(req.body);
       const graph = normalizeToGraph(parsed, parsed.name);
       if (!graph) return res.status(400).json({ message: "Flow has no steps to save. Add at least one step first." });
+      // A step type the platform does not know is accepted by the schema above
+      // (nodes is z.array(z.any())) and then silently becomes an agent: nothing
+      // downstream has a case for it, so the step costs a model call and does
+      // none of what it was drawn to do. Refused here, where the author can
+      // still see which step they mean. Retrieval -- the one people reach for --
+      // is get_info with a kbId; "knowledge_base" is what a step is classified
+      // AS, not a type it can be drawn with.
+      {
+        const unknown = unknownStepTypes((graph.nodes ?? []) as Array<{ type?: unknown }>);
+        if (unknown.length) {
+          return res.status(422).json({
+            message: `This flow uses ${unknown.length === 1 ? "a step type" : "step types"} the platform does not know: ${unknown.join(", ")}.`,
+            unknownStepTypes: unknown,
+            allowed: [...PROCESS_NODE_TYPES],
+          });
+        }
+      }
       // The caller's organization, as createOutcome passes it. Left out, the
       // insert fell back to the default org set once at boot -- and when that
       // boot lookup failed during a deploy (live 2026-10-14, the database was
@@ -1734,6 +1751,23 @@ async function createOutcomeVersion(
       const parsed = processFlowBodySchema.parse(req.body);
       const graph = normalizeToGraph(parsed, parsed.name);
       if (!graph) return res.status(400).json({ message: "Flow has no steps to save." });
+      // A step type the platform does not know is accepted by the schema above
+      // (nodes is z.array(z.any())) and then silently becomes an agent: nothing
+      // downstream has a case for it, so the step costs a model call and does
+      // none of what it was drawn to do. Refused here, where the author can
+      // still see which step they mean. Retrieval -- the one people reach for --
+      // is get_info with a kbId; "knowledge_base" is what a step is classified
+      // AS, not a type it can be drawn with.
+      {
+        const unknown = unknownStepTypes((graph.nodes ?? []) as Array<{ type?: unknown }>);
+        if (unknown.length) {
+          return res.status(422).json({
+            message: `This flow uses ${unknown.length === 1 ? "a step type" : "step types"} the platform does not know: ${unknown.join(", ")}.`,
+            unknownStepTypes: unknown,
+            allowed: [...PROCESS_NODE_TYPES],
+          });
+        }
+      }
       const updated = await storage.updateProcessFlow(String(req.params.id), {
         name: parsed.name,
         description: parsed.description,

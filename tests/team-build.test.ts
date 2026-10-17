@@ -608,6 +608,54 @@ describe("an incomplete plan", () => {
 });
 
 /**
+ * A step must be built as what it was drawn as.
+ *
+ * classifyStep decides a step's kind and the build records it as
+ * config.sourceType, but nothing checked the node came out that way. A
+ * retrieval step arrived as an internal_agent carrying sourceType
+ * "knowledge_base", with no knowledge base and no query, and reasoned without
+ * the rules it was drawn to read. Reported rather than refused: every cause
+ * found so far is upstream of the build.
+ */
+describe("a step built as something other than what it was drawn as", () => {
+  const buildWithStep = async (step: Record<string, unknown>, workerExtra: Record<string, unknown> = {}) => {
+    const body = teamBuildBodySchema.parse({
+      orchestrator: { name: "Rules Orchestrator", description: "coordinates" },
+      workers: [worker(String(step.label), { flowStepLabels: [String(step.label)], ...workerExtra })],
+      processFlowSteps: [step],
+    });
+    return buildTeamFromProposal(body, { orgId: "org-a" });
+  };
+
+  it("says so when a step drawn to search a knowledge base is built as an agent", async () => {
+    // get_info + kbId is retrieval. If it lands as an agent it answers from the
+    // model, which reads as a working step.
+    const result = await buildWithStep({ id: "n1", type: "get_info", label: "Read rules", config: { kbId: "kb-1", skillId: "skill-1" } });
+    expect(result.structureWarnings.join(" ")).toMatch(/drawn to search a knowledge base but was built as an agent/);
+  });
+
+  it("stays quiet when the step really is an agent", async () => {
+    const result = await buildWithStep({ id: "n1", type: "ai_reasoning", label: "Apply rules", description: "Weigh it up." });
+    expect(result.structureWarnings.join(" ")).not.toMatch(/drawn to search a knowledge base/);
+    expect(result.structureWarnings.join(" ")).not.toMatch(/was built without/);
+  });
+
+  it("names what a built knowledge step is missing", async () => {
+    state.servers.push({ id: "srv-1", name: "Rules Base", integrationId: null });
+    // Retrieval with a base but no query: buildable, and useless without one.
+    const result = await buildWithStep({ id: "n1", type: "get_info", label: "Read rules", config: { kbId: "kb-1" } });
+    const node = state.nodes.find((n) => n.label === "Read rules");
+    if (node?.nodeType === "knowledge_base" && !node.config?.kbQuery) {
+      expect(result.structureWarnings.join(" ")).toMatch(/what to search it for/);
+    } else {
+      // The builder gave it a query from the step's own description, which is
+      // the documented default. Then there is nothing to warn about.
+      expect(node?.config?.kbQuery ?? "").not.toBe("");
+    }
+  });
+});
+
+/**
  * The flow is the authority on what connects to what.
  *
  * Everything else sequences from pipeline.edges, computed at proposal time and

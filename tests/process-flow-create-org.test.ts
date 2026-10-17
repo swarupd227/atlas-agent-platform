@@ -15,6 +15,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { unknownStepTypes, PROCESS_NODE_TYPES } from "@shared/process-flow";
 
 const source = readFileSync(join(__dirname, "..", "server", "routes", "outcomes.ts"), "utf8").replace(/\r\n/g, "\n");
 
@@ -40,5 +41,57 @@ describe("POST /api/process-flows", () => {
     const update = route("put", "/api/process-flows/:id");
     expect(update).toContain("storage.updateProcessFlow(String(req.params.id)");
     expect(update).toContain("getOrgId(req))");
+  });
+});
+
+/**
+ * A flow may only be drawn with step types the platform knows.
+ *
+ * `nodes` is validated as z.array(z.any()), so a type nothing downstream has a
+ * case for saved cleanly and then became an agent step everywhere: classifyStep
+ * falls through to "agent", the build records the unknown type as
+ * config.sourceType and builds an internal_agent, and the result is
+ * indistinguishable from a step genuinely drawn as an agent -- it costs a model
+ * call and does none of what it was drawn to do.
+ *
+ * Found by drawing retrieval as "knowledge_base", which is an ExecutionKind
+ * (what a step is classified AS) and not a step type. A census of all 66 flows
+ * in the org found exactly one carrying an unknown type: that step.
+ */
+describe("step types a flow may be saved with", () => {
+  it("refuses an unknown type on create and on update, naming it and the legal set", () => {
+    for (const [method, path] of [["post", "/api/process-flows"], ["put", "/api/process-flows/:id"]] as const) {
+      const handler = route(method, path);
+      expect(handler, `${method} ${path} checks the step types`).toContain("unknownStepTypes(");
+      expect(handler).toContain("status(422)");
+      // The author has to be told WHICH step type, and what they could have
+      // used instead -- a refusal that says only "invalid" sends them reading
+      // source.
+      expect(handler).toContain("unknownStepTypes: unknown");
+      expect(handler).toContain("allowed: [...PROCESS_NODE_TYPES]");
+    }
+  });
+
+  it("checks the normalized graph, not the raw request body", () => {
+    // normalizeToGraph accepts both the graph shape and the older flat step
+    // array, so checking req.body would miss one of the two ways to save.
+    const create = route("post", "/api/process-flows");
+    const at = create.indexOf("unknownStepTypes(");
+    expect(at).toBeGreaterThan(create.indexOf("normalizeToGraph("));
+    expect(create.slice(at, at + 120)).toContain("graph.nodes");
+  });
+});
+
+describe("unknownStepTypes", () => {
+  it("names each unknown type once and passes every legal one", () => {
+    expect(unknownStepTypes([{ type: "get_info" }, { type: "expert_approval" }, { type: "end" }])).toEqual([]);
+    expect(unknownStepTypes([{ type: "knowledge_base" }, { type: "knowledge_base" }])).toEqual(["knowledge_base"]);
+    expect(unknownStepTypes(PROCESS_NODE_TYPES.map((t) => ({ type: t })))).toEqual([]);
+  });
+
+  it("ignores a step with no type rather than calling it unknown", () => {
+    // A step mid-draw has no type yet. Refusing to save that would make the
+    // Studio unusable, and it is not the defect this guards.
+    expect(unknownStepTypes([{}, { type: "" }, { type: "   " }])).toEqual([]);
   });
 });

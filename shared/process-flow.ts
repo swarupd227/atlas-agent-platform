@@ -5,20 +5,54 @@
 // stays backward compatible: a linear flow is just a graph whose edges form a
 // single chain. Stored as JSON in outcome_contracts.process_flow (no migration).
 
-export type ProcessNodeType =
-  | "trigger"
-  | "get_info"
-  | "ai_reasoning"
-  | "make_decision"
-  | "expert_approval"
-  | "take_action"
-  | "send_notification"
-  | "parallel"
-  | "loop"
-  | "n8n"
-  | "sub_flow"
-  | "expression"
-  | "end";
+/**
+ * The step types a flow may be drawn with, at runtime as well as in the type
+ * system, so a saved flow can be checked against them.
+ *
+ * Nothing used to check. `nodes` is validated as z.array(z.any()), so a flow
+ * saved with a type the platform does not know was accepted, and every step of
+ * the way after that treated it as an ordinary agent step: classifyStep has no
+ * case for it and falls through to "agent", the build records the unknown type
+ * as config.sourceType and builds an internal_agent, and the result -- a step
+ * that silently costs a model call and does none of what it was drawn to do --
+ * is indistinguishable from a step genuinely drawn as an agent.
+ *
+ * Found by drawing a retrieval step as "knowledge_base", which is an
+ * ExecutionKind (what a step is classified AS) and not a step type at all. The
+ * flow saved, the team built, the step reasoned without its knowledge base, and
+ * the only sign was that the node came out as internal_agent with
+ * config.sourceType "knowledge_base". Retrieval is drawn as `get_info` with a
+ * kbId in its config.
+ */
+export const PROCESS_NODE_TYPES = [
+  "trigger",
+  "get_info",
+  "ai_reasoning",
+  "make_decision",
+  "expert_approval",
+  "take_action",
+  "send_notification",
+  "parallel",
+  "loop",
+  "n8n",
+  "sub_flow",
+  "expression",
+  "end",
+] as const;
+
+export type ProcessNodeType = (typeof PROCESS_NODE_TYPES)[number];
+
+/** Step types in this graph that the platform does not know, each listed once. */
+export function unknownStepTypes(nodes: Array<{ type?: unknown }>): string[] {
+  const legal = new Set<string>(PROCESS_NODE_TYPES);
+  const seen = new Set<string>();
+  for (const n of nodes ?? []) {
+    const t = String((n as { type?: unknown })?.type ?? "").trim();
+    if (!t || legal.has(t)) continue;
+    seen.add(t);
+  }
+  return Array.from(seen);
+}
 
 export interface ProcessNode {
   id: string;
@@ -352,7 +386,9 @@ export function layoutGraph(
   // Alternating barycentre sweeps. The previous pass only ever read parents, so
   // a child could never pull its parent's row; sweeping both ways and keeping
   // the arrangement that actually measures fewest crossings does.
-  const snapshot = () => new Map(Array.from(order, ([d, ids]) => [d, [...ids]] as const));
+  // Typed rather than `as const`: that made each copied row readonly string[],
+  // which the write-back below cannot assign into Map<number, string[]>.
+  const snapshot = () => new Map<number, string[]>(Array.from(order, ([d, ids]): [number, string[]] => [d, [...ids]]));
   let best = snapshot();
   let bestCrossings = crossings();
   const sweep = (down: boolean) => {
