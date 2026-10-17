@@ -24,6 +24,48 @@ export const ROUTING_STEP_TYPES = new Set(["trigger", "end", "parallel", "make_d
  * refusing on it, and it is how a close shipped without four of its six
  * approval gates.
  */
+/** An authored connection, in either of the two shapes a flow graph uses. */
+export interface FlowEdgeLike { from?: string; to?: string; source?: string; target?: string }
+const edgeEnds = (e: FlowEdgeLike): [string, string] => [String(e.from ?? e.source ?? ""), String(e.to ?? e.target ?? "")];
+
+/**
+ * The pairs of steps that must end up connected in a built team.
+ *
+ * Not simply the flow's edges: a routing step becomes no node of its own, so an
+ * edge that lands on one has to be followed through to the next step that does
+ * have a node. A flow drawn trigger -> fetch -> decide -> end should connect
+ * fetch to decide and nothing else.
+ *
+ * `hasNode` answers whether a step id was built as a node. Steps it rejects are
+ * walked through, and a cycle among them cannot hang this: each is visited once.
+ */
+export function connectedStepPairs(
+  edges: FlowEdgeLike[],
+  hasNode: (stepId: string) => boolean,
+): Array<[string, string]> {
+  const out = new Map<string, [string, string]>();
+  const next = new Map<string, string[]>();
+  for (const e of edges) {
+    const [from, to] = edgeEnds(e);
+    if (!from || !to) continue;
+    next.set(from, [...(next.get(from) ?? []), to]);
+  }
+  for (const from of Array.from(next.keys())) {
+    if (!hasNode(from)) continue;
+    const seen = new Set<string>([from]);
+    const queue = [...(next.get(from) ?? [])];
+    while (queue.length) {
+      const step = queue.shift()!;
+      if (seen.has(step)) continue;
+      seen.add(step);
+      if (hasNode(step)) { out.set(`${from}->${step}`, [from, step]); continue; }
+      // No node of its own: the connection carries on through it.
+      queue.push(...(next.get(step) ?? []));
+    }
+  }
+  return Array.from(out.values());
+}
+
 export function unclaimedWorkSteps(
   agents: Array<{ flowStepLabels?: unknown }>,
   steps: Array<{ label?: string; type?: string }>,

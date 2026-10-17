@@ -608,6 +608,92 @@ describe("an incomplete plan", () => {
 });
 
 /**
+ * The flow is the authority on what connects to what.
+ *
+ * Everything else sequences from pipeline.edges, computed at proposal time and
+ * often a fan-out. Measured on the licence journey: eight blueprint edges, seven
+ * of them orchestrator-to-worker. Every step therefore sat in one wave and the
+ * fetch ran before the step producing its input had run, so the connector was
+ * called with an empty record number and correctly refused. The team built
+ * clean, deployed clean, and ran.
+ */
+describe("the connections the author drew", () => {
+  const steps = [
+    { id: "s0", type: "trigger", label: "A request arrives" },
+    { id: "s1", type: "get_info", label: "Fetch the record" },
+    { id: "s2", type: "ai_reasoning", label: "Read the record" },
+    { id: "s3", type: "end", label: "Done" },
+  ];
+  const flowEdges = [
+    { id: "e0", from: "s0", to: "s1" },
+    { id: "e1", from: "s1", to: "s2" },
+    { id: "e2", from: "s2", to: "s3" },
+  ];
+  const plan = {
+    orchestrator: { name: "Record Orchestrator", description: "coordinates" },
+    workers: [
+      worker("Fetch the record", { flowStepLabels: ["Fetch the record"] }),
+      worker("Read the record", { flowStepLabels: ["Read the record"] }),
+    ],
+    processFlowSteps: steps,
+  };
+
+  it("restores a connection the plan lost, so the steps run in the order drawn", async () => {
+    // No pipeline edges at all: the shape that produced the star.
+    const body = teamBuildBodySchema.parse({ ...plan, processFlowEdges: flowEdges });
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(edgePairs()).toContain("Fetch the record -> Read the record");
+    expect(result.structureWarnings.join(" ")).toMatch(/restored from it/);
+  });
+
+  it("walks through a step that became no node, rather than dropping the connection", async () => {
+    // trigger -> s1 -> parallel -> s2 -> end. The parallel is a routing step and
+    // becomes no node; s1 still has to reach s2.
+    const withRouting = [
+      ...steps.slice(0, 3),
+      { id: "sp", type: "parallel", label: "Fan out" },
+      steps[3],
+    ];
+    const edges = [
+      { id: "e0", from: "s0", to: "s1" },
+      { id: "e1", from: "s1", to: "sp" },
+      { id: "e2", from: "sp", to: "s2" },
+      { id: "e3", from: "s2", to: "s3" },
+    ];
+    const body = teamBuildBodySchema.parse({ ...plan, processFlowSteps: withRouting, processFlowEdges: edges });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(edgePairs()).toContain("Fetch the record -> Read the record");
+  });
+
+  it("adds nothing when the plan already carried the connection", async () => {
+    const body = teamBuildBodySchema.parse({
+      ...plan,
+      processFlowEdges: flowEdges,
+      pipeline: { pattern: "sequential", edges: [{ from: "Fetch the record", to: "Read the record" }] },
+    });
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    const made = edgePairs().filter((p) => p === "Fetch the record -> Read the record");
+    expect(made).toHaveLength(1);
+    expect(result.structureWarnings.join(" ")).not.toMatch(/restored from it/);
+  });
+
+  it("does nothing at all when no flow connections were given", async () => {
+    const body = teamBuildBodySchema.parse(plan);
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(result.structureWarnings.join(" ")).not.toMatch(/restored from it/);
+  });
+
+  it("reads the flow's connections even when the caller sent the steps inline", async () => {
+    // The old condition read the flow only when no steps were sent, so the one
+    // caller that has steps -- the Studio -- never had its connections read.
+    state.flows.push({ id: "flow-9", organizationId: "org-a", graph: { nodes: steps, edges: flowEdges } });
+    const body = teamBuildBodySchema.parse({ ...plan, processFlowId: "flow-9" });
+    await buildTeamFromProposal(body, { orgId: "org-a" });
+    expect(edgePairs()).toContain("Fetch the record -> Read the record");
+  });
+});
+
+/**
  * The authored step's description is the agent's instruction.
  *
  * The proposer writes its own systemPrompt and it is a stub: 66, 65, 80 and 64

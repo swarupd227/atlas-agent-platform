@@ -83,9 +83,14 @@ describe("the node a step becomes", () => {
     // steps was always empty on the one path that has any -- and every
     // deterministic node was built from what the model invented instead. The
     // nodes appeared either way, which is exactly why it read as working.
-    expect(source).toContain("if (authoredSteps.length === 0 && body.processFlowId)");
+    //
+    // The flow is now read whenever one is NAMED, not only when the caller sent
+    // no steps: the same caller that sends steps inline also needs the flow's
+    // connections, and gating the read on the steps being absent meant those
+    // connections were never read at all. The steps the caller sent still win.
+    expect(source).toContain("if (body.processFlowId)");
     expect(source).toContain("const nodes = (flow?.graph as any)?.nodes;");
-    expect(source).toContain("if (Array.isArray(nodes)) authoredSteps = nodes;");
+    expect(source).toContain("if (Array.isArray(nodes) && authoredSteps.length === 0) authoredSteps = nodes;");
     // The map is built from the resolved steps, not from the request field.
     expect(source).toMatch(/authoredStepsByLabel = new Map<string, any>\(\s*authoredSteps/);
     // A caller that sends the steps outright is still honoured.

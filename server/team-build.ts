@@ -20,7 +20,7 @@ import { stateKeyForLabel } from "@shared/state-key";
 import { getDecisionSettings } from "./decision-settings";
 import { stepCorrelation } from "@shared/process-flow-correlation";
 import { inferStepClaims } from "./flow-step-claims";
-import { unclaimedWorkSteps } from "@shared/flow-step-coverage";
+import { unclaimedWorkSteps, connectedStepPairs } from "@shared/flow-step-coverage";
 import { backEdgeKeys, edgeKey } from "@shared/graph-cycles";
 import { REWORK_REQUESTED_RULE } from "@shared/rework-rule";
 import { checkBlueprintInvariants } from "./blueprint-invariants";
@@ -632,6 +632,11 @@ export const teamBuildBodySchema = z.object({
     edgesDerivedFromFlow: z.boolean().optional(),
   }).nullable().optional(),
   processFlowSteps: z.array(z.any()).optional(),
+  // The flow's own connections. A caller that sends its steps inline can send
+  // these too rather than relying on the build to re-read the saved flow, and
+  // a caller sequencing a flow it has not saved yet has no other way to say
+  // what connects to what.
+  processFlowEdges: z.array(z.any()).optional(),
   // Build anyway, knowing steps will be missing. The only way past the
   // incomplete-plan refusal, and it is recorded on the blueprint so the gap is
   // answerable afterwards rather than being a thing somebody once clicked.
@@ -911,14 +916,23 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   let authoredSteps: any[] = Array.isArray(processFlowSteps) ? processFlowSteps : [];
   // The flow's own connections, when the flow was read: a second source for the
   // step a worker covers (server/flow-step-claims.ts).
-  let authoredEdges: any[] = [];
-  if (authoredSteps.length === 0 && body.processFlowId) {
+  let authoredEdges: any[] = Array.isArray(body.processFlowEdges) ? body.processFlowEdges : [];
+  // Read the flow whenever one is named, not only when the caller sent no steps.
+  //
+  // The old condition meant a caller that sent processFlowSteps inline -- which
+  // the Studio does -- never had the flow's CONNECTIONS read at all, so the team
+  // could only be sequenced from pipeline.edges, computed at proposal time and
+  // often a fan-out. That is how the licence journey was built with seven
+  // orchestrator edges and one worker-to-worker edge: every step landed in the
+  // same wave, and the fetch ran before the step that produces its input had
+  // produced it. The steps the caller sent still win; only the edges are new.
+  if (body.processFlowId) {
     try {
       const flow = await storage.getProcessFlow(body.processFlowId, orgId);
       const nodes = (flow?.graph as any)?.nodes;
-      if (Array.isArray(nodes)) authoredSteps = nodes;
+      if (Array.isArray(nodes) && authoredSteps.length === 0) authoredSteps = nodes;
       const edges = (flow?.graph as any)?.edges;
-      if (Array.isArray(edges)) authoredEdges = edges;
+      if (Array.isArray(edges) && authoredEdges.length === 0) authoredEdges = edges;
     } catch (err: any) {
       // Not fatal: without the steps every worker is built as an agent, which
       // is the behaviour this had before. Say so, because the difference is
@@ -1581,12 +1595,63 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     }
   }
 
+  // THE FLOW IS THE AUTHORITY ON WHAT CONNECTS TO WHAT.
+  //
+  // Everything above sequences from pipeline.edges, which the proposal computed
+  // and which can be a fan-out. The author's own connections are the thing they
+  // drew, so any of them missing from the built team is restored here.
+  //
+  // Measured on the licence journey: eight blueprint edges, seven of them
+  // orchestrator-to-worker, one real. Every step therefore sat in one wave and
+  // the fetch ran before the step producing its input had run, so the connector
+  // was called with an empty record number and correctly refused. The team built
+  // clean, deployed clean, and ran.
+  //
+  // Orchestrator fan-out edges are left alone: a node with both an orchestrator
+  // edge and a real predecessor waits for both, which is what is wanted.
+  let flowEdgesRestored = 0;
+  if (authoredEdges.length > 0 && workerNodes.length > 0) {
+    const nodeByStepId = new Map<string, any>();
+    for (let i = 0; i < workerNodes.length; i++) {
+      const step = soleAuthoredStep(workers[i], authoredStepsByLabel);
+      const stepId = step?.id ? String(step.id) : "";
+      if (stepId) nodeByStepId.set(stepId, workerNodes[i]);
+    }
+    const existing = new Set<string>();
+    for (const e of await storage.getTeamBlueprintEdges(blueprint.id).catch(() => [] as any[])) {
+      existing.add(`${(e as any).sourceNodeId}->${(e as any).targetNodeId}`);
+    }
+    for (const [fromStep, toStep] of connectedStepPairs(authoredEdges, (id) => nodeByStepId.has(id))) {
+      const from = nodeByStepId.get(fromStep);
+      const to = nodeByStepId.get(toStep);
+      if (!from || !to || from.id === to.id) continue;
+      if (existing.has(`${from.id}->${to.id}`)) continue;
+      await storage.createTeamBlueprintEdge({
+        blueprintId: blueprint.id,
+        sourceNodeId: from.id,
+        targetNodeId: to.id,
+        label: "step order",
+        failureMode: "escalate",
+      });
+      existing.add(`${from.id}->${to.id}`);
+      flowEdgesRestored++;
+    }
+    if (flowEdgesRestored > 0) {
+      // Not absorbed quietly: every one of these is a connection the author drew
+      // and the plan lost, and the count is how anyone would notice it recurring.
+      structureWarnings.push(
+        `${flowEdgesRestored} connection${flowEdgesRestored === 1 ? "" : "s"} the flow draws ${flowEdgesRestored === 1 ? "was" : "were"} missing from the plan and ${flowEdgesRestored === 1 ? "has" : "have"} been restored from it, so the steps run in the order they were drawn.`,
+      );
+      console.warn(`[team-build] restored ${flowEdgesRestored} edge(s) from the flow that the plan did not carry`);
+    }
+  }
+
   // A team of more than a couple of workers with no worker-to-worker edge is a
   // star: every agent runs in one wave, so nothing gates anything. That is
   // occasionally what was asked for, but far more often it means the proposal
   // arrived without sequencing -- and the built team looks complete either way,
   // which is how a 22-step flow shipped as 17 agents running at once.
-  if (builtAsFanOut && createdWorkers.length > 2) {
+  if (builtAsFanOut && flowEdgesRestored === 0 && createdWorkers.length > 2) {
     structureWarnings.push(
       `This team has no order: all ${createdWorkers.length} agents run at once, because the plan carried no connections between them. Any decision, approval gate or rework loop in the original process is not enforced.`,
     );

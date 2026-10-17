@@ -189,7 +189,11 @@ describe("where it is applied", () => {
   it("the build infers them too, so a proposal saved without them still reaches its steps", () => {
     const src = read("server", "team-build.ts");
     const at = src.indexOf("const claimed = inferStepClaims(workers, authoredSteps, { flowEdges: authoredEdges, proposalEdges: pipeline?.edges ?? undefined });");
-    expect(src).toContain("if (Array.isArray(edges)) authoredEdges = edges;");
+    // The flow's edges reach authoredEdges. Matched rather than quoted: the
+    // assignment gained a guard when the build began reading the flow even for
+    // a caller that sent its steps inline, and pinning the old spelling would
+    // fail on a change that keeps the property this test is about.
+    expect(src).toMatch(/if \(Array\.isArray\(edges\).*\) authoredEdges = edges;/);
     expect(at).toBeGreaterThan(0);
     expect(at).toBeGreaterThan(src.indexOf("const authoredStepsByLabel = new Map<string, any>("));
     expect(at).toBeLessThan(src.indexOf("for (const worker of workers) {"));
