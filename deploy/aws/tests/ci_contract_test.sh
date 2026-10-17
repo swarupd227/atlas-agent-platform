@@ -70,7 +70,8 @@ if jq -e '
   ([.Statement[].Action] | flatten | all(startswith("ecr:"))) and
   any(.Statement[]; .Action == "ecr:GetAuthorizationToken" and .Resource == "*") and
   any(.Statement[]; (.Action | type) == "array" and
-    (.Action | index("ecr:DescribeRepositories")) != null) and
+    (.Action | index("ecr:DescribeRepositories")) != null and
+    (.Action | index("ecr:DescribeImageScanFindings")) != null) and
   any(.Statement[]; .Resource as $resource |
     ($resource | type == "string") and
     ($resource | endswith(":repository/astra-agents-*-app")))
@@ -118,13 +119,28 @@ if (!dispatch?.inputs?.source_ref?.required || !dispatch?.inputs?.deployment_id?
 if (workflow.on?.push) process.exit(1);
 if (workflow.permissions?.contents !== 'read' || workflow.permissions?.['id-token'] !== 'write') process.exit(1);
 const text = JSON.stringify(workflow);
+const scanPolicy = workflow.jobs?.build?.steps?.find((step) => step.id === 'scan-policy')?.run || '';
 if (!text.includes('docker build') || !text.includes('docker push')) process.exit(1);
+if (!text.includes('--pull')) process.exit(1);
+if (!text.includes('npm audit --omit=dev --audit-level=critical')) process.exit(1);
+if (!text.includes('deploy/aws/verify-image-scan.sh')) process.exit(1);
+if (!scanPolicy.includes('git show "${GITHUB_SHA}:deploy/aws/verify-image-scan.sh"')) process.exit(1);
+if (!text.includes('SCAN_POLICY_DIR')) process.exit(1);
 if (/ssm:|secretsmanager:|aws ssm|aws secretsmanager/.test(text)) process.exit(1);
 NODE
 then
   pass 'workflow is manual, OIDC-enabled, builds and pushes without deployment access'
 else
   fail 'workflow is manual, OIDC-enabled, builds and pushes without deployment access'
+fi
+
+dockerfile="$REPO_ROOT/Dockerfile"
+if grep -Fq 'apt-get update' "$dockerfile" &&
+   grep -Fq 'apt-get upgrade -y' "$dockerfile" &&
+   grep -Fq 'rm -rf /var/lib/apt/lists/*' "$dockerfile"; then
+  pass 'runtime image installs current Debian security updates'
+else
+  fail 'runtime image installs current Debian security updates'
 fi
 
 if (( failures != 0 )); then

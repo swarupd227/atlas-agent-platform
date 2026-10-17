@@ -202,7 +202,8 @@ bootstrap_ci() {
             "ecr:UploadLayerPart",
             "ecr:BatchGetImage",
             "ecr:DescribeRepositories",
-            "ecr:DescribeImages"
+            "ecr:DescribeImages",
+            "ecr:DescribeImageScanFindings"
           ],
           Resource: $repositories
         }
@@ -399,6 +400,9 @@ fi
 if ! docker run -d \
   --name "\$CONTAINER_NAME" \
   --restart unless-stopped \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --tmpfs /tmp:rw,noexec,nosuid,size=128m \
   --env-file "\$ENV_FILE" \
   --env NODE_EXTRA_CA_CERTS=/etc/ssl/certs/aws-rds-global-bundle.pem \
   -p 5000:5000 \
