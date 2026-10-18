@@ -3840,6 +3840,16 @@ export function verifiedToolFacts(steps: any[]): Record<string, unknown> | null 
   if (calls.length === 0) return null;
   const facts: Record<string, unknown> = {};
   let budget = VERIFIED_FACTS_MAX_CHARS;
+  // One key per distinct question. A tool asked the same thing twice keeps the
+  // later answer under the same key: a step that re-read after acting is judged
+  // on what it saw last. A tool asked different things keeps every answer, as
+  // <tool>, <tool>#2, <tool>#3 in call order: live 2026-10-18 the J1 forecast
+  // step made five loss_forecast calls with five inputs and the facts held one,
+  // so four of the figures the retention step relied on were unverifiable.
+  // Separate keys, not an array: the drift check reads numeric leaves of
+  // objects and deliberately skips arrays (rows are not headline figures).
+  const inputOfKey = new Map<string, string>();
+  const callsOfTool = new Map<string, number>();
   for (const call of calls) {
     const tool = String(call.mcpTool || call.name || "").trim();
     if (!tool) continue;
@@ -3852,9 +3862,18 @@ export function verifiedToolFacts(steps: any[]): Record<string, unknown> | null 
     try { encoded = JSON.stringify(data); } catch { continue; }
     if (encoded.length > VERIFIED_FACT_MAX_CHARS || encoded.length > budget) continue;
     budget -= encoded.length;
-    // Later calls to the same tool win: a step that re-read after acting
-    // should be judged on what it saw last.
-    facts[tool] = data;
+    let input: string;
+    try { input = JSON.stringify(call.input ?? null); } catch { input = String(call.input); }
+    const sameQuestion = [...inputOfKey.entries()].find(([k, v]) => v === input && (k === tool || k.startsWith(`${tool}#`)));
+    let key: string;
+    if (sameQuestion) key = sameQuestion[0];
+    else {
+      const n = (callsOfTool.get(tool) ?? 0) + 1;
+      callsOfTool.set(tool, n);
+      key = n === 1 ? tool : `${tool}#${n}`;
+      inputOfKey.set(key, input);
+    }
+    facts[key] = data;
   }
   return Object.keys(facts).length > 0 ? facts : null;
 }
@@ -4052,8 +4071,7 @@ export async function executeWorkerAgent(
    * checks every run); returning it is what lets a team run carry its
    * guardrails per step instead of losing them at this boundary.
    */
-  softPolicyViolations?: SoftPolicyComplianceResult[];
-  /** Every connector answer this step received, keyed by tool, for the engine's facts check. */
+  /** Every connector answer this step received, keyed by tool and question, for the engine's facts check. */
   verifiedFacts?: Record<string, unknown> | null;
   /** Why the step captured the facts it did, or none; always present on a step that ran. */
   verifiedFactsNote?: string;
@@ -4061,6 +4079,8 @@ export async function executeWorkerAgent(
   writtenFields?: Record<string, unknown> | null;
   /** The index behind this step's passages, for a later step to cite. */
   retrievedSources?: CitedSource[];
+  // Last on purpose: tests/guardrail-passthrough.test.ts reads this type from source and expects it to end here.
+  softPolicyViolations?: SoftPolicyComplianceResult[];
 }> {
   const startTime = Date.now();
   const workerAgent = await storage.getAgent(workerId);

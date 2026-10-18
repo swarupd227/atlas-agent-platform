@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { verifiedToolFacts, describeFactCapture } from "../server/agent-runtime";
+import { verifiedToolFacts, describeFactCapture, detectTranscriptionDrift } from "../server/agent-runtime";
 
 /**
  * The connectors' own answers, kept verbatim beside a step's narrative.
@@ -40,6 +40,27 @@ describe("verifiedToolFacts", () => {
       call("get_policy", { status: "bound_active" }),
     ])!;
     expect((facts.get_policy as any).status).toBe("bound_active");
+  });
+
+  it("keeps every answer when a tool was asked different things, in call order, and still lets a repeated question replace its own", () => {
+    // Live 2026-10-18: a forecast step called loss_forecast five times with five
+    // inputs and the facts held only the last, so the figures the next step
+    // relied on were unverifiable. Each distinct question keeps its answer.
+    const ask = (tool: string, input: unknown, data: unknown) => ({ type: "api_call", mcpTool: tool, status: "completed", input, output: { data } });
+    const facts = verifiedToolFacts([
+      ask("loss_forecast", { method: "probability", events: 9, exposureUnits: 35 }, { probability: 0.257 }),
+      ask("loss_forecast", { method: "distribution", mean: 9, standardDeviation: 3 }, { lower: 3.12, upper: 14.88 }),
+      ask("loss_forecast", { method: "distribution", mean: 0.4, standardDeviation: 0.55 }, { lower: -0.678, upper: 1.478, expectedLoss: 84000 }),
+      ask("get_policy", { id: "P-1" }, { status: "bound_active" }),
+      // the first question asked again: the later answer replaces the earlier one under its own key
+      ask("loss_forecast", { method: "probability", events: 9, exposureUnits: 35 }, { probability: 0.2571 }),
+    ])!;
+    expect(Object.keys(facts)).toEqual(["loss_forecast", "loss_forecast#2", "loss_forecast#3", "get_policy"]);
+    expect(facts.loss_forecast).toEqual({ probability: 0.2571 });
+    expect((facts["loss_forecast#3"] as any).expectedLoss).toBe(84000);
+    // The drift check reads every answer, so a figure copied from the third call is verified by it.
+    expect(detectTranscriptionDrift({ expectedLoss: 84000 }, facts)).toEqual([]);
+    expect(detectTranscriptionDrift({ expectedLoss: 48000 }, facts)).toMatchObject([{ field: "expectedLoss", wrote: 48000, source: 84000 }]);
   });
 
   it("drops an oversized result rather than truncating it", () => {
