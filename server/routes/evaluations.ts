@@ -571,7 +571,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
 
       const concepts: Array<{ id: string; label: string; category: string; properties: any }> = [];
       for (const cid of Array.from(conceptIds)) {
-        const concept = await storage.getOntologyConcept(cid);
+        const concept = await storage.getOntologyConcept(cid, getOrgId(req));
         if (concept) {
           concepts.push({
             id: concept.id,
@@ -587,7 +587,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
         if (agent?.ontologyTags && Array.isArray(agent.ontologyTags)) {
           for (const tag of agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) {
             if (tag.conceptId) {
-              const concept = await storage.getOntologyConcept(tag.conceptId);
+              const concept = await storage.getOntologyConcept(tag.conceptId, getOrgId(req));
               if (concept) {
                 concepts.push({
                   id: concept.id,

@@ -388,7 +388,7 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
         ? actualOutput
         : JSON.stringify(actualOutput);
       try {
-        const compliance = await checkOntologyCompliance(outputText, ontologyTags);
+        const compliance = await checkOntologyCompliance(outputText, ontologyTags, agent.organizationId);
         scorerOutputs = {
           ...(scorerOutputs || {}),
           ontologyCompliance: {

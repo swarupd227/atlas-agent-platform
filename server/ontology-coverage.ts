@@ -37,7 +37,8 @@ export interface OntologyCoverage {
 }
 
 export async function ontologyCoverage(orgId: string | undefined, industryId: string, subVertical?: string): Promise<OntologyCoverage> {
-  const concepts = await storage.getOntologyConcepts(industryId, subVertical);
+  // The organization's own concepts are part of its coverage (default-deny: no other organization's).
+  const concepts = await storage.getOntologyConcepts(industryId, subVertical, orgId);
   const allAgents = await storage.getAgents(orgId);
 
   const usedConceptIds = new Set<string>();

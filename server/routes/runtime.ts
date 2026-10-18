@@ -17555,7 +17555,7 @@ Return ONLY a valid JSON object.`
         }
         const conceptDetails: any[] = [];
         for (const tag of ontologyTags.slice(0, 10)) {
-          const concept = await storage.getOntologyConcept(tag.conceptId);
+          const concept = await storage.getOntologyConcept(tag.conceptId, agent.organizationId);
           if (concept) {
             conceptDetails.push({
               id: concept.id,
@@ -20154,7 +20154,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         });
       }
 
-      const result = await checkOntologyCompliance(text, ontologyTags);
+      const result = await checkOntologyCompliance(text, ontologyTags, agent.organizationId);
 
       const deprecatedTermsFound = result.deprecatedTermsUsed.map((d) => ({
         term: d.term,
@@ -20195,7 +20195,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         });
       }
 
-      const result = await checkOntologyCompliance(text, tags);
+      const result = await checkOntologyCompliance(text, tags, getOrgId(req));
 
       const deprecatedTermsFound = result.deprecatedTermsUsed.map((d) => ({
         term: d.term,

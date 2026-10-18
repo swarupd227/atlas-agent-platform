@@ -171,7 +171,7 @@ async function generateKpiAlignedEvalSuite(
   const ontologyTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string; category?: string }>) : [];
   for (const tag of ontologyTags) {
     try {
-      const concept = await storage.getOntologyConcept(tag.conceptId);
+      const concept = await storage.getOntologyConcept(tag.conceptId, orgId);
       if (!concept) continue;
       const regs = Array.isArray(concept.linkedRegulations) ? (concept.linkedRegulations as Array<{ id?: string; ref?: string; name?: string; section?: string; description?: string }>) : [];
       for (const reg of regs) {
@@ -1290,7 +1290,7 @@ export async function resolveAgentIndustry(agent: any): Promise<string | null> {
     // a stray cross-industry tag should not flip an otherwise clear agent.
     const counts = new Map<string, number>();
     for (const cid of conceptIds.slice(0, 12)) {
-      const concept = await storage.getOntologyConcept(cid);
+      const concept = await storage.getOntologyConcept(cid, agent.organizationId);
       const ind = (concept as any)?.industryId;
       if (typeof ind === "string" && ind) counts.set(ind, (counts.get(ind) || 0) + 1);
     }
@@ -1681,7 +1681,7 @@ export async function generateOntologyEvalCases(
   const conceptIds = ontologyTags.map(t => t.conceptId);
   const [enhancements, rawConcepts] = await Promise.all([
     storage.getOntologyEnhancements(conceptIds),
-    Promise.all(conceptIds.map(id => storage.getOntologyConcept(id).catch(() => null))),
+    Promise.all(conceptIds.map(id => storage.getOntologyConcept(id, orgId).catch(() => null))),
   ]);
   const validConcepts = rawConcepts.filter(Boolean) as any[];
   if (validConcepts.length === 0) return { count: 0, cases: [] };

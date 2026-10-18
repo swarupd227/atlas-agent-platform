@@ -1411,7 +1411,7 @@ const router = Router();
       const deprecatedTerms: Array<{ deprecated: string; useInstead: string }> = [];
       for (const tag of ontologyTags.slice(0, 15)) {
         try {
-          const concept = await storage.getOntologyConcept(tag.conceptId);
+          const concept = await storage.getOntologyConcept(tag.conceptId, agent.organizationId);
           if (concept) {
             requiredTerms.push(concept.label);
             if (concept.synonyms && concept.synonyms.length > 0) {

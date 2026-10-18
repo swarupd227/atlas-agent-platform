@@ -216,7 +216,8 @@ const router = Router();
 
   router.put("/api/ontology/concepts/:id", async (req, res) => {
     try {
-      const existing = await storage.getOntologyConcept(req.params.id as string);
+      // The caller's own organization's concepts are theirs to edit; another organization's are not found.
+      const existing = await storage.getOntologyConcept(req.params.id as string, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Concept not found" });
 
       const previousSnapshot = {
@@ -234,8 +235,11 @@ const router = Router();
       const newVersion = (existing.version || 1) + 1;
 
       const body = { ...(req.body || {}) } as Record<string, unknown>;
+      // Which organization a concept belongs to is not an edit: the body must not move it, nor publish it platform-wide.
+      delete body.organizationId;
       if ("relationships" in body) {
-        const peers = await storage.getOntologyConcepts(existing.industryId);
+        // A private concept may link to its own organization's concepts as well; a platform-wide one only to platform-wide ones.
+        const peers = await storage.getOntologyConcepts(existing.industryId, undefined, existing.organizationId);
         const rv = validateRelationships(body.relationships, { ids: peers.map((c) => c.id), labels: new Map(peers.map((c) => [c.label.toLowerCase(), c.id])) });
         if (rv.errors.length) return res.status(400).json({ message: "Relationship validation failed", errors: rv.errors, warnings: rv.warnings });
         body.relationships = rv.normalized;
@@ -248,7 +252,7 @@ const router = Router();
         versionHistory: [...currentHistory, previousSnapshot],
       };
 
-      const updated = await storage.updateOntologyConcept(req.params.id as string, updateData);
+      const updated = await storage.updateOntologyConcept(req.params.id as string, updateData, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Concept not found" });
 
       const oldRegs = Array.isArray(existing.linkedRegulations) ? existing.linkedRegulations : [];
@@ -442,7 +446,7 @@ const router = Router();
 
   router.get("/api/ontology/concepts/:id/versions", async (req, res) => {
     try {
-      const concept = await storage.getOntologyConcept(req.params.id as string);
+      const concept = await storage.getOntologyConcept(req.params.id as string, getOrgId(req));
       if (!concept) return res.status(404).json({ message: "Concept not found" });
       const history = Array.isArray(concept.versionHistory) ? concept.versionHistory : [];
       res.json({
@@ -456,7 +460,7 @@ const router = Router();
 
   router.get("/api/ontology/concepts/:id/linked-agents", async (req, res) => {
     try {
-      const concept = await storage.getOntologyConcept(req.params.id as string);
+      const concept = await storage.getOntologyConcept(req.params.id as string, getOrgId(req));
       if (!concept) return res.status(404).json({ message: "Concept not found" });
       const linked = await storage.getAgentsByOntologyConcept(req.params.id as string, getOrgId(req));
       res.json(linked.map(a => ({
@@ -587,7 +591,7 @@ const router = Router();
 
   router.delete("/api/ontology/concepts/:id", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      const concept = await storage.getOntologyConcept(req.params.id as string);
+      const concept = await storage.getOntologyConcept(req.params.id as string, getOrgId(req));
       if (!concept) return res.status(404).json({ message: "Concept not found" });
 
       // Unlike the update route just above, deletion previously had zero propagation --
@@ -597,7 +601,7 @@ const router = Router();
       // resolve), strip the now-dead tag entry, and flag for revalidation same as an edit.
       const affectedAgents = await storage.getAgentsByOntologyConcept(req.params.id as string, getOrgId(req));
 
-      const deleted = await storage.deleteOntologyConcept(req.params.id as string);
+      const deleted = await storage.deleteOntologyConcept(req.params.id as string, getOrgId(req));
       if (!deleted) return res.status(404).json({ message: "Concept not found" });
 
       if (affectedAgents.length > 0) {

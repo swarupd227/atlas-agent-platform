@@ -123,4 +123,40 @@ describe("no other reader bypasses the scope", () => {
     expect(read("server/routes/ontology-graph.ts")).toContain("getOntologyConcept(req.params.id as string, orgId)");
     expect(read("server/routes/runtime.ts")).toContain("storage.getAllOntologyConcepts(getOrgId(req))");
   });
+
+  it("the sites that resolve an agent's own concept tags pass the agent's organization", () => {
+    const count = (src: string, needle: string) => src.split(needle).length - 1;
+    const helpers = read("server/routes/helpers.ts");
+    expect(count(helpers, "getOntologyConcept(tag.conceptId, orgId)")).toBe(1);
+    expect(count(helpers, "getOntologyConcept(cid, agent.organizationId)")).toBe(1);
+    expect(count(helpers, "getOntologyConcept(id, orgId)")).toBe(1);
+    const ev = read("server/routes/evaluations.ts");
+    expect(count(ev, "getOntologyConcept(cid, getOrgId(req))")).toBe(1);
+    expect(count(ev, "getOntologyConcept(tag.conceptId, getOrgId(req))")).toBe(1);
+    expect(read("server/routes/agents.ts")).toContain("getOntologyConcept(tag.conceptId, agent.organizationId)");
+    const rt = read("server/routes/runtime.ts");
+    expect(rt).toContain("getOntologyConcept(tag.conceptId, agent.organizationId)");
+    expect(rt).toContain("checkOntologyCompliance(text, ontologyTags, agent.organizationId)");
+    expect(rt).toContain("checkOntologyCompliance(text, tags, getOrgId(req))");
+    expect(read("server/worker.ts")).toContain("checkOntologyCompliance(outputText, ontologyTags, agent.organizationId)");
+    const ar = read("server/agent-runtime.ts");
+    expect(ar).toContain("getOntologyConcept(tag.conceptId, orgId)");
+    expect(count(ar, "getOntologyConcept(tag.conceptId, orgId)")).toBe(2);
+    expect(ar).toContain("checkOntologyCompliance(allOutputText, ontologyTags, agentRecord?.organizationId)");
+    expect(read("server/ontology-coverage.ts")).toContain("getOntologyConcepts(industryId, subVertical, orgId)");
+  });
+
+  it("the Ontology page's routes pass the caller's organization, and the edit route never takes the organization from the body", () => {
+    const sk = read("server/routes/skills.ts");
+    const at = sk.indexOf('router.put("/api/ontology/concepts/:id"');
+    const end = sk.indexOf("router.get", at);
+    const put = sk.slice(at, end);
+    expect(put).toContain("getOntologyConcept(req.params.id as string, getOrgId(req))");
+    expect(put).toContain("delete body.organizationId;");
+    expect(put.indexOf("delete body.organizationId;")).toBeLessThan(put.indexOf("const updateData"));
+    expect(put).toContain("updateOntologyConcept(req.params.id as string, updateData, getOrgId(req))");
+    expect(put).toContain("getOntologyConcepts(existing.industryId, undefined, existing.organizationId)");
+    expect((sk.match(/getOntologyConcept\(req\.params\.id as string, getOrgId\(req\)\)/g) ?? []).length).toBe(5);
+    expect(sk).toContain("deleteOntologyConcept(req.params.id as string, getOrgId(req))");
+  });
 });

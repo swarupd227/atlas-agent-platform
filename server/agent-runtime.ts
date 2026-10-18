@@ -765,7 +765,9 @@ function _cosineSimilarity(a: number[], b: number[]): number {
 
 export async function checkOntologyCompliance(
   text: string,
-  ontologyTags: Array<{ conceptId: string; conceptLabel: string }>
+  ontologyTags: Array<{ conceptId: string; conceptLabel: string }>,
+  // The organization the tags belong to, so a concept it added itself can be read (default-deny: no other organization's).
+  orgId?: string | null
 ): Promise<OntologyComplianceResult> {
   // Semantic mode: use embeddings when pgvector and OpenAI are both available
   // "Available" means the model document search uses can be called: OpenAI with its key, or Amazon Bedrock once it is the active model.
@@ -775,7 +777,7 @@ export async function checkOntologyCompliance(
     try {
       const concepts = await Promise.all(
         ontologyTags.slice(0, 15).map(tag =>
-          storage.getOntologyConcept(tag.conceptId).catch(() => null)
+          storage.getOntologyConcept(tag.conceptId, orgId).catch(() => null)
         )
       );
       const validConcepts = concepts.filter(Boolean) as any[];
@@ -833,7 +835,7 @@ export async function checkOntologyCompliance(
 
   for (const tag of ontologyTags.slice(0, 15)) {
     try {
-      const concept = await storage.getOntologyConcept(tag.conceptId);
+      const concept = await storage.getOntologyConcept(tag.conceptId, orgId);
       if (!concept) continue;
 
       const labelLower = concept.label.toLowerCase();
@@ -3016,7 +3018,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         })
         .join(" ");
 
-      ontologyComplianceResult = await checkOntologyCompliance(allOutputText, ontologyTags);
+      ontologyComplianceResult = await checkOntologyCompliance(allOutputText, ontologyTags, agentRecord?.organizationId);
 
       const vocabStatus = ontologyComplianceResult.score >= 80 ? "pass" : ontologyComplianceResult.score >= 50 ? "warn" : "fail";
       const vocabDetail = ontologyComplianceResult.totalDomainMentions > 0
