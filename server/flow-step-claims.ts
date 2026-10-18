@@ -56,8 +56,41 @@ export interface ClaimSources {
   proposalEdges?: ClaimEdge[];
 }
 
-/** How much of a step's name an agent's name has to cover to be taken as covering the step. */
-export const CLAIM_COVERAGE = 0.6;
+/**
+ * How alike an agent's name and a step's label have to be for the agent to be
+ * taken as covering the step.
+ *
+ * This was CLAIM_COVERAGE = 0.6 against nameCoverage, which is
+ * overlap / STEP words. The denominator is the author's label, so the more
+ * carefully someone names a step the harder it became for any agent to clear
+ * the bar — and a good agent name is a noun phrase while a good step label is
+ * a verb phrase, so the better the model names its agents the worse the
+ * overlap reads. Measured on five real misses from a live nine-step flow:
+ * "Release Approver Agent" against "Release approver accepts the canary
+ * deployment" scored 0.40 on the step side and 1.00 on the agent side. Every
+ * meaningful word of the agent's name was in the label. They were not near
+ * misses; they were exact subsets scored against the wrong denominator.
+ *
+ * Dice counts the overlap against BOTH names, so neither side's verbosity
+ * decides it alone. Measured over 438 agent-to-step pairs from 40 built teams,
+ * with the 39 steps no agent covers left in the pool as distractors:
+ *
+ *   step-side >= 0.60 (what this was)   371 right, 10 WRONG, 57 unplaced
+ *   dice      >= 0.50 (what this is)    397 right,  8 WRONG, 33 unplaced
+ *
+ * Better on both axes, which is why it is worth changing: 26 more placed and
+ * two fewer placed wrongly. It also recovers four of the five live misses
+ * above.
+ *
+ * Two things that measurement does not settle. The ground truth is what was
+ * built, and some of those pairs were themselves produced by the old bar, so
+ * the comparison is biased towards it — dice wins anyway, so the real gap is
+ * likely wider, not narrower. And the 8 remaining wrong assignments are a
+ * genuine ambiguity no threshold fixes: "Broker Decline Notice Drafter" fits
+ * both "Prepare Broker Notice" and "Notify Broker", and the words cannot tell
+ * them apart.
+ */
+export const CLAIM_SIMILARITY = 0.5;
 
 const STOP = new Set(["agent", "the", "a", "an", "and", "of", "for", "to", "in", "on", "at", "by", "with", "step"]);
 const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -77,14 +110,39 @@ function sameWord(a: string, b: string): boolean {
   return p >= 4 && (p === shorter || (a.length >= 5 && b.length >= 5));
 }
 
-/** The share of the step's words the agent's name carries, 0 to 1. */
-export function nameCoverage(agentName: unknown, stepLabel: unknown): number {
+/** Step words the agent's name carries, with both lengths, counted once. */
+function overlap(agentName: unknown, stepLabel: unknown): { hit: number; stepLen: number; agentLen: number } {
   const step = words(stepLabel);
   const agent = words(agentName);
-  if (step.length === 0 || agent.length === 0) return 0;
   let hit = 0;
   for (const w of step) if (agent.some((v) => sameWord(v, w))) hit++;
-  return hit / step.length;
+  return { hit, stepLen: step.length, agentLen: agent.length };
+}
+
+/**
+ * The share of the step's words the agent's name carries, 0 to 1.
+ *
+ * No longer the decision — see CLAIM_SIMILARITY — but still the honest answer
+ * to "how much of this step's name does this agent repeat", and the building
+ * block the similarity is computed from.
+ */
+export function nameCoverage(agentName: unknown, stepLabel: unknown): number {
+  const { hit, stepLen, agentLen } = overlap(agentName, stepLabel);
+  if (stepLen === 0 || agentLen === 0) return 0;
+  return hit / stepLen;
+}
+
+/**
+ * How alike the two names are, 0 to 1, counting the overlap against both.
+ *
+ * Symmetric on purpose: a long step label can no longer sink a short agent
+ * name that sits entirely inside it, and a long agent name cannot claim a
+ * two-word step on one shared word.
+ */
+export function nameSimilarity(agentName: unknown, stepLabel: unknown): number {
+  const { hit, stepLen, agentLen } = overlap(agentName, stepLabel);
+  if (stepLen === 0 || agentLen === 0) return 0;
+  return (2 * hit) / (stepLen + agentLen);
 }
 
 /**
@@ -117,7 +175,16 @@ export function inferStepClaims<T extends StepClaimer>(
   const labelOfStepId = new Map<string, string>();
   for (const s of steps) {
     if (!s?.label) continue;
-    labels.set(norm(s.label), String(s.label));
+    // A trigger and an end are markers. An agent attached to one is attached to
+    // a step that does nothing, and whatever it was drafted for is then being
+    // done by nobody -- which is why the build refuses such a claim outright
+    // (ImplausibleClaimError). Inference must not propose what the build will
+    // refuse: it did, and "Claim Routing Agent" -> "Claim Routed" was the
+    // expected behaviour of this function until now. They are still kept in
+    // labelOfStepId, because an edge THROUGH a marker is how the edge pass
+    // reaches the step on the other side of it.
+    const type = norm(s.type);
+    if (type !== "trigger" && type !== "end") labels.set(norm(s.label), String(s.label));
     if (s.id !== undefined && s.id !== null) labelOfStepId.set(String(s.id), norm(s.label));
   }
   const explicit = agents.map((a) =>
@@ -138,8 +205,8 @@ export function inferStepClaims<T extends StepClaimer>(
     if (!open(i)) return;
     for (const key of Array.from(labels.keys())) {
       if (taken.has(key)) continue;
-      const score = nameCoverage(a.name, key);
-      if (score >= CLAIM_COVERAGE) pairs.push({ i, key, score });
+      const score = nameSimilarity(a.name, key);
+      if (score >= CLAIM_SIMILARITY) pairs.push({ i, key, score });
     }
   });
   pairs.sort((x, y) => y.score - x.score);

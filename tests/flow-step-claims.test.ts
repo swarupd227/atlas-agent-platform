@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { inferStepClaims, nameCoverage, conditionKey, CLAIM_COVERAGE } from "../server/flow-step-claims";
+import { inferStepClaims, nameCoverage, nameSimilarity, conditionKey, CLAIM_SIMILARITY } from "../server/flow-step-claims";
 import { deriveEdgesFromFlow, unclaimedWorkSteps } from "../server/team-proposal";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
@@ -52,7 +52,50 @@ describe("how much of a step's name an agent's name carries", () => {
     expect(nameCoverage("Data Export Agent", "Date Check")).toBe(0);
     expect(nameCoverage("SIU Referral Agent", "Refer to Special Investigations")).toBeCloseTo(1 / 3);
     expect(nameCoverage("FNOL Intake Agent", "FNOL Received")).toBe(0.5);
-    expect(CLAIM_COVERAGE).toBe(0.6);
+  });
+});
+
+/**
+ * What decides a claim is nameSimilarity, not nameCoverage.
+ *
+ * nameCoverage divides by the STEP's words, so the more carefully an author
+ * names a step the harder it became for any agent to clear the bar — and a
+ * good agent name is a noun phrase while a good step label is a verb phrase.
+ * Measured over 438 agent-to-step pairs from 40 built teams, with the steps no
+ * agent covers left in as distractors: the old bar placed 371 correctly and 10
+ * wrongly; dice at 0.5 places 397 correctly and 8 wrongly. Better on both.
+ */
+describe("how alike an agent's name and a step's label are", () => {
+  it("counts the overlap against both names, so neither one's length decides alone", () => {
+    // Identical sets score 1 either way.
+    expect(nameSimilarity("Classify Claim Type", "Classify Claim Type")).toBe(1);
+    // Two words of a five-word label: 0.40 on the step side, 1.00 on the agent
+    // side, 0.57 between them. This is the live miss the change was made for.
+    expect(nameCoverage("Release Approver Agent", "Release approver accepts the canary deployment")).toBeCloseTo(0.4);
+    expect(nameSimilarity("Release Approver Agent", "Release approver accepts the canary deployment")).toBeCloseTo(4 / 7);
+  });
+
+  it("is symmetric, unlike the coverage it is built from", () => {
+    const a = "Canary Deployment Agent", s = "Deploy to the canary host only";
+    expect(nameSimilarity(a, s)).toBeCloseTo(nameSimilarity(s, a));
+    expect(nameCoverage(a, s)).not.toBeCloseTo(nameCoverage(s, a));
+  });
+
+  it("places four of the five misses measured on a live flow, and still refuses the fifth", () => {
+    // The fifth shares one word in five and should not be placed on it: a
+    // wrong assignment is silent, where a refusal is loud and recoverable.
+    const placed = (agent: string, step: string) => nameSimilarity(agent, step) >= CLAIM_SIMILARITY;
+    expect(placed("Release Approver Agent", "Release approver accepts the canary deployment")).toBe(true);
+    expect(placed("Version Diff Reader Agent", "Read the diff between the healthy and failing versions")).toBe(true);
+    expect(placed("Canary Deployment Agent", "Deploy to the canary host only")).toBe(true);
+    expect(placed("Local Build and Test Agent", "Run build, lint, tests and coverage locally")).toBe(true);
+    expect(placed("Regression Test Authoring Agent", "Add a regression test that fails without the fix")).toBe(false);
+  });
+
+  it("still refuses names that merely share a word", () => {
+    expect(nameSimilarity("Data Export Agent", "Date Check")).toBe(0);
+    expect(nameSimilarity("SIU Referral Agent", "Refer to Special Investigations")).toBeLessThan(CLAIM_SIMILARITY);
+    expect(CLAIM_SIMILARITY).toBe(0.5);
   });
 });
 
@@ -67,9 +110,12 @@ describe("inferring the claims the model left out", () => {
       "SIU Referral Agent": null,
       "Senior Adjuster Assignment Agent": ["Assign Senior Adjuster"],
       "Fast-Track Settlement Agent": ["Fast-track Settlement"],
-      "Claim Routing Agent": ["Claim Routed"],
+      // "Claim Routed" is the end step. An agent on a marker is an agent on
+      // a step that does nothing, and the build refuses such a claim
+      // outright, so inference no longer proposes one.
+      "Claim Routing Agent": null,
     });
-    expect(r.inferred).toHaveLength(6);
+    expect(r.inferred).toHaveLength(5);
     // What is still unclaimed is reported as before, instead of being built flat in silence.
     expect(unclaimedWorkSteps(r.agents, steps)).toEqual(["Refer to Special Investigations"]);
   });
@@ -77,7 +123,9 @@ describe("inferring the claims the model left out", () => {
   it("claims every step when the model named each agent after its step", () => {
     const named = steps.map((s) => ({ name: `${s.label} Agent` }));
     const r = inferStepClaims(named, steps);
-    expect(r.inferred).toHaveLength(steps.length);
+    // Every step that is not a marker: the trigger and the end are excluded,
+    // which is why this is two fewer than the flow has steps.
+    expect(r.inferred).toHaveLength(steps.length - 2);
     expect(unclaimedWorkSteps(r.agents, steps)).toEqual([]);
     // With the claims in place the flow's own connections become the team's edges.
     const edges = [
@@ -87,7 +135,9 @@ describe("inferring the claims the model left out", () => {
     ];
     const derived = deriveEdgesFromFlow(r.agents, steps, edges);
     expect(derived.map((e) => `${e.from} -> ${e.to}${e.condition ? ` [${e.condition}]` : ""}`)).toEqual([
-      "FNOL Received Agent -> Summarise the Loss Agent",
+      // No edge out of the trigger: nothing is built for a marker, so the chain
+      // starts at the first step that does something and the orchestrator
+      // dispatches to it.
       "Summarise the Loss Agent -> Classify Claim Type Agent",
       "Classify Claim Type Agent -> Score Severity Agent",
       'Classify Claim Type Agent -> Refer to Special Investigations Agent [classify_claim_type == "Fraud suspicion"]',
