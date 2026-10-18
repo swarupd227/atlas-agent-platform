@@ -133,8 +133,11 @@ describe("the node a step becomes", () => {
     // both rating steps of a journey whose other tool calls worked.
     expect(source).toContain("if (!UUID.test(serverId))");
     expect(source).toContain("resolveBindingServer(serverId, servers)");
-    // The same matcher the worker-binding path uses, not a second one.
-    expect(source).toContain('import { resolveBindingServer } from "./team-bindings"');
+    // The same matcher the worker-binding path uses, not a second one. Matched
+    // as a named import among others rather than as one exact line: pinning the
+    // whole statement made this fail the moment team-bindings exported a second
+    // thing worth importing, which is not what the test is about.
+    expect(source).toMatch(/import \{[^}]*\bresolveBindingServer\b[^}]*\} from "\.\/team-bindings"/);
     // No match is an agent, not a node whose call can never dispatch.
     expect(source).toMatch(/if \(!matched\) \{[\s\S]{0,500}?return null;/);
     expect(source).toContain("and no connector of that name is available to this organization");

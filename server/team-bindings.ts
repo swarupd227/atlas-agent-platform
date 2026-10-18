@@ -66,6 +66,69 @@ export function resolveBindingServer<T extends { name: string }>(serverName: str
     ?? servers.find((s) => want.includes(s.name.toLowerCase().split(" ")[0]));
 }
 
+/** How a declared tool name had to be fixed up before it resolved. */
+export type DeclaredToolRepair = "normalised" | "composite";
+
+export interface ResolvedDeclaredTool {
+  /** The resolving name, in the casing the dispatchable set uses. */
+  name: string;
+  /** null when the declared name was already exactly a dispatchable one. */
+  repaired: DeclaredToolRepair | null;
+}
+
+/**
+ * The dispatchable tool a declared name means, if any.
+ *
+ * MEASURED, 2026-10-18, over 882 tool names declared by 451 agents: 199 of them
+ * resolved to nothing. Counting stops there and supports exactly one fix --
+ * drop them -- and that fix is wrong, because reading the 199 splits them:
+ *
+ *   "generate_pptx "                                        a real built-in, one trailing space
+ *   "advantive one -- support triage engine: execute_query"  a real tool, with its connector
+ *                                                           glued on; execute_query IS on
+ *                                                           "Advantive ONE -- Support Triage Engine"
+ *   "excel workbook generator"                              prose; a name with a space can
+ *                                                           never be dispatched
+ *   "policy_coverage_checker"                               invented, 9 agents
+ *
+ * 25 of the 199 named something that exists. Dropping an unresolvable name
+ * would have deleted real capability from a quarter of the ones it touched, so
+ * the order matters: normalise, re-resolve, and only judge what is left.
+ *
+ * Both composite separators were in the data -- "<connector>: <tool>" and
+ * "<tool> - <connector>". A hyphen must have whitespace around it to count, so
+ * an ordinary hyphenated tool name (`snow-search-incidents`) is not split apart.
+ *
+ * Ambiguity returns null rather than guessing. If two different parts of a
+ * composite each resolve there is no way to tell which was meant, and a name
+ * reported as unresolvable is recoverable by a person; a name silently bound to
+ * the wrong tool is not.
+ */
+export function resolveDeclaredToolName(declared: string, dispatchable: Iterable<string>): ResolvedDeclaredTool | null {
+  const canonical = new Map<string, string>();
+  for (const name of dispatchable) {
+    const key = String(name).trim().toLowerCase();
+    if (key && !canonical.has(key)) canonical.set(key, String(name));
+  }
+
+  const trimmed = declared.trim();
+  const direct = canonical.get(trimmed.toLowerCase());
+  if (direct) return { name: direct, repaired: direct === declared ? null : "normalised" };
+
+  // Only a separator with whitespace (or a colon/dash pair) splits, so a tool
+  // name that merely contains a hyphen stays whole.
+  const parts = trimmed.split(/\s*[:–—]\s*|\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+
+  const hits = new Set<string>();
+  for (const part of parts) {
+    const hit = canonical.get(part.toLowerCase());
+    if (hit) hits.add(hit);
+  }
+  if (hits.size !== 1) return null;
+  return { name: Array.from(hits)[0], repaired: "composite" };
+}
+
 export type BindingIssueCode = "server_unresolved" | "server_not_connected" | "tool_not_on_server" | "server_no_tools_discovered";
 
 export interface BindingIssue {

@@ -2,7 +2,8 @@
  * Connector binding checks for a proposed team (server/team-bindings.ts).
  */
 import { describe, it, expect } from "vitest";
-import { assessProposalBindings, resolveBindingServer } from "../server/team-bindings";
+import { assessProposalBindings, resolveBindingServer, resolveDeclaredToolName } from "../server/team-bindings";
+import { BUILTIN_TOOL_NAMES } from "../server/builtin-tool-names";
 
 const connectors = [
   { id: "c-dealer", name: "Dealer Operations", connected: true },
@@ -81,5 +82,92 @@ describe("assessProposalBindings", () => {
     ]);
     expect(r.issues.find((i) => i.code === "tool_not_on_server")).toMatchObject({ tool: "get_credit_limit", message: expect.stringContaining("get_credit_limit") });
     expect(r.issues).toHaveLength(4);
+  });
+});
+
+/**
+ * resolveDeclaredToolName. Every case below is a real declaration read off a
+ * live agent on 2026-10-18, not an invented example -- the point of the
+ * function is that the four kinds are indistinguishable by count and only the
+ * first three are repairable.
+ */
+describe("resolveDeclaredToolName", () => {
+  // The dispatchable set this agent would really have: one connector's tools.
+  const dispatchable = ["execute_query", "search", "get_payment_batch", "check_posting_period", "generate_pptx", "snow-search-incidents"];
+
+  it("passes a name that is already exactly right, and says it was not repaired", () => {
+    expect(resolveDeclaredToolName("execute_query", dispatchable)).toEqual({ name: "execute_query", repaired: null });
+  });
+
+  it("repairs a trailing space -- a real built-in was reported as invented over one character", () => {
+    expect(resolveDeclaredToolName("generate_pptx ", dispatchable)).toEqual({ name: "generate_pptx", repaired: "normalised" });
+  });
+
+  it("repairs a name with its connector glued on, either way round", () => {
+    // Both separators were in the live data.
+    expect(resolveDeclaredToolName("advantive one \u2014 support triage engine: execute_query", dispatchable))
+      .toEqual({ name: "execute_query", repaired: "composite" });
+    expect(resolveDeclaredToolName("get_payment_batch - dealer operations (vitaledge)", dispatchable))
+      .toEqual({ name: "get_payment_batch", repaired: "composite" });
+  });
+
+  it("does NOT split an ordinary hyphenated tool name apart", () => {
+    // The hyphen rule requires whitespace around it, or this name is destroyed.
+    expect(resolveDeclaredToolName("snow-search-incidents", dispatchable))
+      .toEqual({ name: "snow-search-incidents", repaired: null });
+  });
+
+  it("refuses prose, which can never be dispatched whatever it means", () => {
+    expect(resolveDeclaredToolName("excel workbook generator", dispatchable)).toBeNull();
+    expect(resolveDeclaredToolName("xlsx code-execution skill", dispatchable)).toBeNull();
+  });
+
+  it("refuses an invented name", () => {
+    expect(resolveDeclaredToolName("policy_coverage_checker", dispatchable)).toBeNull();
+  });
+
+  it("refuses rather than guesses when two parts of a composite both resolve", () => {
+    // An unresolvable name is reported and a person can fix it; a name bound to
+    // the wrong tool is silent.
+    expect(resolveDeclaredToolName("search: execute_query", dispatchable)).toBeNull();
+  });
+
+  it("resolves against what it is given, so an unbound connector's tool does not resolve", () => {
+    // The same name, with and without that connector in the set: this is what
+    // separates "declares a real tool it is not bound to" from "invented".
+    expect(resolveDeclaredToolName("get_open_ar", dispatchable)).toBeNull();
+    expect(resolveDeclaredToolName("get_open_ar", [...dispatchable, "get_open_ar"]))
+      .toEqual({ name: "get_open_ar", repaired: null });
+  });
+
+  it("returns the dispatchable set's own casing, not the declaration's", () => {
+    expect(resolveDeclaredToolName("Execute_Query", dispatchable)).toEqual({ name: "execute_query", repaired: "normalised" });
+  });
+
+  it("ignores an empty or whitespace-only declaration", () => {
+    expect(resolveDeclaredToolName("   ", dispatchable)).toBeNull();
+  });
+});
+
+describe("BUILTIN_TOOL_NAMES", () => {
+  it("includes web_search, the one a hand-assembled list missed", () => {
+    // Omitting it reported two agents as declaring an invented tool. The list is
+    // built from the modules' own constants so this cannot drift again.
+    expect(BUILTIN_TOOL_NAMES).toContain("web_search");
+  });
+
+  it("names every in-process tool server's tools and nothing twice", () => {
+    expect(new Set(BUILTIN_TOOL_NAMES).size).toBe(BUILTIN_TOOL_NAMES.length);
+    for (const name of ["memory", "search_attachment", "read_attachment_section", "loss_forecast",
+      "generate_pptx", "generate_pdf", "fill_document_template", "inspect_document", "read_document",
+      "read_skill", "propose_ontology_concept", "propose_skill", "web_search"]) {
+      expect(BUILTIN_TOOL_NAMES).toContain(name);
+    }
+  });
+
+  it("does not contain search_knowledge_base, which looks like a built-in and is not", () => {
+    // 7 agents declare it. It exists only in the agent wizard's demo palette and
+    // in seeded run_traces; knowledge retrieval is a node type, never a tool.
+    expect(BUILTIN_TOOL_NAMES).not.toContain("search_knowledge_base");
   });
 });

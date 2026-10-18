@@ -18,6 +18,8 @@ const state = vi.hoisted(() => ({
   policies: [] as any[],
   outcomePolicies: [] as any[],
   servers: [] as any[],
+  // An array, not a map keyed by id, so reset() clears it with everything else.
+  serverTools: [] as Array<{ serverId: string; tools: Array<{ name: string }> }>,
   connections: [] as any[],
   agentUpdates: [] as any[],
   flows: [] as any[],
@@ -32,6 +34,7 @@ vi.mock("../server/storage", () => {
       getOutcome: vi.fn(async (outcomeId: string, orgId?: string) =>
         state.outcomes.find((o) => o.id === outcomeId && (!orgId || o.organizationId === orgId))),
       getMcpServers: vi.fn(async () => state.servers),
+      getMcpServerTools: vi.fn(async (serverId: string) => state.serverTools.find((s) => s.serverId === serverId)?.tools ?? []),
       getProcessFlow: vi.fn(async (flowId: string, orgId?: string) =>
         state.flows.find((f) => f.id === flowId && (!orgId || f.organizationId === orgId))),
       updateProcessFlow: vi.fn(async (flowId: string, data: any, orgId?: string) => {
@@ -331,6 +334,87 @@ describe("buildTeamFromProposal", () => {
     expect(result.unconnectedBindings).toEqual(["SAP S/4HANA"]);
     expect(result.unresolvedBindings).toEqual(["Oracle Fusion"]);
     expect(state.links.map((l) => l.serverId).sort()).toEqual(["srv-dealer", "srv-sap"]);
+  });
+
+  /**
+   * A declared tool name is the only one of the three "which tools has this
+   * agent" fields that becomes a sentence in the agent's own system prompt, and
+   * it was the only one nothing checked. Measured across the org on 2026-10-18:
+   * 199 of 882 declared names resolved to nothing.
+   *
+   * The four kinds below are all real declarations read off live agents, and
+   * they are why this repairs rather than filters -- 25 of those 199 named
+   * something that exists.
+   */
+  it("repairs a declared tool name that resolves once normalised, and reports every one that does not", async () => {
+    state.servers.push(
+      { id: "srv-dealer", name: "Dealer Operations", integrationId: "dealer-operations" },
+      { id: "srv-hub", name: "Receivables Hub", integrationId: "receivables-hub" },
+    );
+    state.serverTools.push(
+      { serverId: "srv-dealer", tools: [{ name: "get_payment_batch" }, { name: "check_posting_period" }] },
+      { serverId: "srv-hub", tools: [{ name: "get_open_ar" }] },
+    );
+    state.connections.push({ integrationId: "dealer-operations", status: "connected" }, { integrationId: "receivables-hub", status: "connected" });
+
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("AR Team", { mcpToolBindings: [{ server: "Receivables Hub", tool: "get_open_ar" }] }),
+      workers: [worker("Cash Application", {
+        mcpToolBindings: [{ server: "Dealer Operations", tool: "get_payment_batch" }],
+        tools: [
+          // Real, with its connector glued on -- the live form, both separators.
+          { name: "get_payment_batch - dealer operations (vitaledge)", description: "reads the batch" },
+          { name: "dealer operations: check_posting_period", description: "checks the period" },
+          // A real built-in, defeated by one trailing space.
+          { name: "generate_pptx ", description: "makes a deck" },
+          // Real, but on a connector THIS agent is not bound to.
+          { name: "get_open_ar", description: "reads open AR" },
+          // Invented: nine live agents declare exactly this one.
+          { name: "policy_coverage_checker", description: "checks coverage" },
+        ],
+      })],
+    });
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    const built = state.agents.find((a) => a.name === "Cash Application")!;
+
+    // The repair reaches the persisted declaration...
+    expect((built.toolsConfig as Array<{ name: string }>).map((t) => t.name)).toEqual([
+      "get_payment_batch", "check_posting_period", "generate_pptx", "get_open_ar", "policy_coverage_checker",
+    ]);
+    // ...and the prompt, which is the whole point: one declaration, read by both.
+    expect(built.systemPrompt).toContain("get_payment_batch (reads the batch)");
+    expect(built.systemPrompt).not.toContain("dealer operations (vitaledge)");
+
+    const said = result.structureWarnings.join(" ");
+    expect(said).toMatch(/corrected to the real one/);
+    expect(said).toContain('"get_payment_batch - dealer operations (vitaledge)" -> get_payment_batch');
+    expect(said).toContain('"generate_pptx " -> generate_pptx');
+    // The three outcomes are reported as three different things, because they
+    // need three different answers: fixed, link the connector, and invented.
+    expect(said).toMatch(/"get_open_ar", which is a real tool on a connector it is not bound to/);
+    expect(said).toMatch(/"policy_coverage_checker", which matches no tool on any connector in this plan/);
+    // Nothing was dropped: an unresolvable name stays in the record.
+    expect(said).not.toMatch(/removed|dropped|stripped/);
+  });
+
+  it("leaves declared tool names alone when no tool list can be read, rather than failing the build", async () => {
+    // A connector with no discovered tools contributes no names, so every
+    // declaration is simply unrepaired and reported -- the same distinction
+    // assessProposalBindings draws with server_no_tools_discovered. The build
+    // must not fall over, and must not call a name invented on that evidence.
+    state.servers.push({ id: "srv-dealer", name: "Dealer Operations", integrationId: "dealer-operations" });
+    state.connections.push({ integrationId: "dealer-operations", status: "connected" });
+    const body = teamBuildBodySchema.parse({
+      orchestrator: worker("AR Team"),
+      workers: [worker("Cash Application", {
+        mcpToolBindings: [{ server: "Dealer Operations", tool: "get_payment_batch" }],
+        tools: [{ name: "get_payment_batch - dealer operations", description: "reads the batch" }],
+      })],
+    });
+    const result = await buildTeamFromProposal(body, { orgId: "org-a" });
+    const built = state.agents.find((a) => a.name === "Cash Application")!;
+    expect((built.toolsConfig as Array<{ name: string }>)[0].name).toBe("get_payment_batch - dealer operations");
+    expect(result.structureWarnings.join(" ")).toMatch(/matches no tool on any connector in this plan/);
   });
 
   it("throws not found for an outcome the organization can't see", async () => {

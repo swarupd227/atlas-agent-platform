@@ -12,7 +12,8 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { isKnownIndustry } from "@shared/industry-filter";
 import { generateOntologyEvalCases } from "./routes/helpers";
-import { resolveBindingServer } from "./team-bindings";
+import { resolveBindingServer, resolveDeclaredToolName } from "./team-bindings";
+import { BUILTIN_TOOL_NAMES } from "./builtin-tool-names";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
 import { edgeRuleForCondition, parseConditionToRule } from "@shared/condition-to-rule";
 import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, withClassifier, type ClassifierBinding, type DecisionBranch } from "@shared/flow-execution-kind";
@@ -685,6 +686,98 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // must never see another tenant's connectors.
   const allMcpServers = await storage.getMcpServers(orgId);
 
+  // ── WHAT A DECLARED TOOL NAME MEANS ────────────────────────────────────────
+  //
+  // `tools` on a proposal is an array of {name, description} that becomes the
+  // agent's `toolsConfig` AND a sentence in its own system prompt (see
+  // composeSystemPrompt below: "You have access to these tools: ..."). Three
+  // fields carry a version of "which tools does this agent have" and the
+  // platform already checks the other two -- assessProposalBindings reports
+  // tool_not_on_server, verify_wiring reports binding_tool_missing -- but
+  // nothing had ever looked at this one, which is the only one the model reads.
+  //
+  // MEASURED over the whole org, 2026-10-18: 882 declared names across 451
+  // agents, 199 of which resolve to nothing. The harm is not a failed call --
+  // an unresolvable name is not in the dispatchable set, so the model cannot
+  // call it and nothing errors. It is told it has a `policy_coverage_checker`
+  // (9 agents declare exactly that) and writes as though it used one.
+  //
+  // Two things happen here, and deliberately not a third. Names that resolve
+  // once normalised are repaired. Names that do not are REPORTED and left
+  // exactly as written -- following linkMcpBindings' precedent directly above:
+  // the plan is a record of intent, and dropping part of it silently is how a
+  // build comes to look cleaner than it is. The measurement is why: a quarter
+  // of what a drop would have removed named something real.
+  //
+  // Cost is bounded by the plan, not by the org. Resolving against all 150
+  // connectors' tool lists took over four minutes read serially today; this
+  // reads only the connectors the plan itself names.
+  const planAgents = [orchestrator, ...workers];
+  const toolNamesByConnectorId = new Map<string, string[]>();
+  for (const serverName of Array.from(new Set(planAgents.flatMap((a) => (a.mcpToolBindings ?? []).map((b) => b.server))))) {
+    const connector = resolveBindingServer(serverName, allMcpServers);
+    if (!connector || toolNamesByConnectorId.has(connector.id)) continue;
+    // `storage.getMcpServerTools(...).catch()` would throw on `undefined(...)`
+    // before the catch exists -- the trap tool-dispatcher.ts calls out by name.
+    // Nothing here is worth failing a build for: with no tool list, every
+    // declared name simply stays unrepaired and is reported.
+    const discovered = typeof storage.getMcpServerTools === "function"
+      ? await storage.getMcpServerTools(connector.id).catch(() => [])
+      : [];
+    toolNamesByConnectorId.set(connector.id, discovered.map((t) => t.name));
+  }
+  // Every tool any connector in this plan offers. Used only to tell "declared a
+  // real tool on a connector this agent is not linked to" -- which is a
+  // different, actionable finding -- apart from "invented a name".
+  const planWideToolNames = new Set(Array.from(toolNamesByConnectorId.values()).flat().map((n) => n.toLowerCase()));
+
+  /** The tools this agent will actually be able to dispatch: its own connectors, plus the built-ins. */
+  const dispatchableFor = function(agent: TeamAgentProposal): string[] {
+    const names = [...BUILTIN_TOOL_NAMES];
+    for (const serverName of Array.from(new Set((agent.mcpToolBindings ?? []).map((b) => b.server)))) {
+      const connector = resolveBindingServer(serverName, allMcpServers);
+      if (connector) names.push(...(toolNamesByConnectorId.get(connector.id) ?? []));
+    }
+    return names;
+  };
+
+  // Collected here, pushed into structureWarnings once that exists (it is
+  // declared after the agents are created, and the repair has to happen before
+  // toolsConfig is persisted and before any prompt is composed).
+  const toolNameFindings: string[] = [];
+  for (const agent of planAgents) {
+    if (!agent.tools?.length) continue;
+    const dispatchable = dispatchableFor(agent);
+    const repaired: string[] = [];
+    const elsewhere: string[] = [];
+    const unresolved: string[] = [];
+    for (const tool of agent.tools) {
+      const declared = String(tool.name ?? "");
+      if (!declared.trim()) continue;
+      const hit = resolveDeclaredToolName(declared, dispatchable);
+      if (hit?.repaired) {
+        // Repaired in place, so the one declaration feeds toolsConfig and both
+        // prompt builders without any of them needing to know.
+        tool.name = hit.name;
+        repaired.push(`"${declared}" -> ${hit.name}`);
+      } else if (!hit) {
+        (planWideToolNames.has(declared.trim().toLowerCase()) ? elsewhere : unresolved).push(declared);
+      }
+    }
+    if (repaired.length) {
+      toolNameFindings.push(`${agent.name}'s declared tool ${repaired.length === 1 ? "name was" : "names were"} corrected to the real one: ${repaired.join("; ")}.`);
+      console.warn(`[team-build] repaired declared tool names for ${agent.name}: ${repaired.join("; ")}`);
+    }
+    if (elsewhere.length) {
+      toolNameFindings.push(`${agent.name} declares ${elsewhere.map((n) => `"${n}"`).join(", ")}, which ${elsewhere.length === 1 ? "is a real tool" : "are real tools"} on a connector it is not bound to, so it cannot call ${elsewhere.length === 1 ? "it" : "them"} until that connector is added to its bindings.`);
+      console.warn(`[team-build] ${agent.name} declares tools on unbound connectors: ${elsewhere.join("; ")}`);
+    }
+    if (unresolved.length) {
+      toolNameFindings.push(`${agent.name} declares ${unresolved.map((n) => `"${n}"`).join(", ")}, which ${unresolved.length === 1 ? "matches no tool" : "match no tools"} on any connector in this plan and ${unresolved.length === 1 ? "is not a built-in" : "are not built-ins"}, so ${unresolved.length === 1 ? "it" : "they"} cannot be called -- but the agent is told in its own prompt that it has ${unresolved.length === 1 ? "it" : "them"}.`);
+      console.warn(`[team-build] ${agent.name} declares unresolvable tools: ${unresolved.join("; ")}`);
+    }
+  }
+
   // The AI proposal only names skills ("matchedSkills": exact skill names, per the
   // prompt schema above) -- resolve those against the real catalog so the created
   // agent's preloadedSkills (what agent-runtime.ts actually reads at prompt-assembly
@@ -1320,6 +1413,9 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // Problems worth telling the caller about rather than shipping quietly, the
   // same way unconnectedBindings is returned instead of swallowed.
   const structureWarnings: string[] = [];
+  // Found before the agents were created (the repair has to precede both
+  // toolsConfig and the prompts); reported on the same channel as everything else.
+  structureWarnings.push(...toolNameFindings);
   // Set where the orchestrator is wired to every worker and to nothing else.
   let builtAsFanOut = false;
 

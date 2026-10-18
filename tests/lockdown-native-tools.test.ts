@@ -165,7 +165,11 @@ describe("every runtime asks the lockdown", () => {
   const files = walk(SERVER_DIR);
 
   it("no file reads the web_search toolsConfig convention itself: it goes through webSearchOffered", () => {
-    const own = files.filter((f) => /name\s*===\s*"web_search"\s*&&\s*\w+\??\.type\s*===\s*"builtin"/.test(src(f)));
+    // Matches the convention however it is spelled -- the literal "web_search"
+    // or the WEB_SEARCH_TOOL constant native-tools.ts now exports. Pinning the
+    // literal alone would have let this ratchet go quietly blind the moment the
+    // one legitimate reader started using its own constant.
+    const own = files.filter((f) => /name\s*===\s*(?:"web_search"|WEB_SEARCH_TOOL)\s*&&\s*\w+\??\.type\s*===\s*"builtin"/.test(src(f)));
     expect(own.map((f) => path.relative(SERVER_DIR, f))).toEqual(["native-tools.ts"]);
   });
 
