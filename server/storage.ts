@@ -5654,20 +5654,35 @@ export class DatabaseStorage implements IStorage {
 
   async updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined> {
     const [row] = await db.update(dagExecutionRuns).set(data).where(eq(dagExecutionRuns.id, id)).returning();
-    // A run that has stopped can no longer act on a gate decision. Cancelling
-    // already closed its gate (cancelTeamAgentDagRun), but failing and
-    // completing did not, so a gate sat in "Needs a decision" for a run that
-    // ended days earlier -- and the decision was then refused at the click,
-    // after someone had read the whole case. Closed here rather than at the
-    // twelve call sites that set a terminal status, for the same reason
-    // createEvalSuite derives its org here: one place that cannot be forgotten.
-    if (row && data.status && FINISHED_DAG_RUN_STATUSES.has(String(data.status))) {
-      try {
-        const { closeMootGatesForRun } = await import("./approval-decision");
-        await closeMootGatesForRun(id, String(data.status));
-      } catch { /* closing a gate must never fail the run's own bookkeeping */ }
-    }
+    if (row) await this.closeGatesIfRunFinished(id, data.status);
     return row;
+  }
+
+  /**
+   * A run that has stopped can no longer act on a gate decision, so its open
+   * gates are closed as moot here rather than at the call sites that set a
+   * terminal status -- the same reason createEvalSuite derives its org here:
+   * one place that cannot be forgotten.
+   *
+   * It WAS forgotten. This lived inline in updateDagExecutionRun, and every
+   * terminal status for a team DAG run is written by updateActiveDagExecutionRun
+   * or cancelActiveDagExecutionRun instead (dag-execution-engine.ts:4172 for the
+   * normal end, :4229 for the error path), neither of which called it. So gates
+   * were not closed when a run ended at all; sweepMootGates() closed them at the
+   * next boot, which is why the queue looked right -- the feature worked one
+   * restart late, and the window it was built to remove is exactly the window it
+   * left open. Live 2026-10-18: runs 3fad879c and dd5d9917 ended as failed with
+   * their gates still open at "expired", mootReason absent, half an hour later.
+   *
+   * Idempotent (closeMootGatesForRun only matches gates that are still open), so
+   * a writer that calls it twice, or after the boot sweep already ran, is fine.
+   */
+  private async closeGatesIfRunFinished(runId: string, status: unknown): Promise<void> {
+    if (!status || !FINISHED_DAG_RUN_STATUSES.has(String(status))) return;
+    try {
+      const { closeMootGatesForRun } = await import("./approval-decision");
+      await closeMootGatesForRun(runId, String(status));
+    } catch { /* closing a gate must never fail the run's own bookkeeping */ }
   }
 
   async claimDagExecutionRunForResume(id: string): Promise<boolean> {
@@ -5705,6 +5720,11 @@ export class DatabaseStorage implements IStorage {
       .set({ status: "cancelled", error: reason, completedAt: new Date() })
       .where(and(eq(dagExecutionRuns.id, id), inArray(dagExecutionRuns.status, ["running", "waiting_approval"])))
       .returning();
+    // cancelTeamAgentDagRun rejects the run's pendingApprovalId, but that column
+    // holds one gate and is cleared the moment a run stops, so a cancel could
+    // still leave an earlier gate open. Rejection stands either way: a gate a
+    // person decided is no longer open, so this does not touch it.
+    if (row) await this.closeGatesIfRunFinished(id, row.status);
     return row;
   }
 
@@ -5714,6 +5734,9 @@ export class DatabaseStorage implements IStorage {
       .set(data)
       .where(and(eq(dagExecutionRuns.id, id), inArray(dagExecutionRuns.status, ["running", "waiting_approval"])))
       .returning();
+    // This is the writer the execution engine finishes a run with, so this is
+    // the call that actually closes a gate when a run ends.
+    if (row) await this.closeGatesIfRunFinished(id, data.status);
     return row;
   }
 

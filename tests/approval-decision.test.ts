@@ -266,8 +266,9 @@ describe("decideApproval", () => {
     function methodBody(src: string, declaration: string): string {
       const at = src.indexOf(declaration);
       if (at < 0) return "";
-      const next = src.indexOf("\n  async ", at + declaration.length);
-      return next < 0 ? src.slice(at) : src.slice(at, next);
+      const rest = src.slice(at + declaration.length);
+      const next = rest.search(/\n {2}(?:private |public |protected )?(?:async )?[A-Za-z_]\w*\(/);
+      return next < 0 ? src.slice(at) : src.slice(at, at + declaration.length + next);
     }
 
     it("only ever returns OPEN gates, for THIS run", () => {
@@ -282,11 +283,48 @@ describe("decideApproval", () => {
     });
 
     it("fires the close only when a run reaches a terminal status", () => {
-      const body = methodBody(storageSrc, "async updateDagExecutionRun");
-      expect(body).toContain("FINISHED_DAG_RUN_STATUSES.has(String(data.status))");
+      const body = methodBody(storageSrc, "async closeGatesIfRunFinished");
+      expect(body).toContain("FINISHED_DAG_RUN_STATUSES.has(String(status))");
       expect(body).toContain("closeMootGatesForRun");
       // Never fail the run's own write because a gate could not be closed.
       expect(body).toMatch(/catch\s*\{/);
+    });
+
+    /**
+     * The defect was never in the close -- it was that the close sat on a
+     * writer the execution engine does not call. updateDagExecutionRun had it
+     * and was asserted here; every terminal status for a team DAG run is
+     * written by updateActiveDagExecutionRun or cancelActiveDagExecutionRun
+     * (dag-execution-engine.ts:4172 and :4229), and neither closed anything.
+     * The test passed for two weeks while gates stayed open until the next
+     * boot sweep. A test aimed at one writer cannot see that, so the writers
+     * are DERIVED from storage.ts here: a fourth one added later is covered
+     * without anyone remembering this test exists.
+     */
+    it("every writer that can set a terminal run status closes the run's gates", () => {
+      const FINISHED = ["completed", "completed_with_skips", "failed", "cancelled"];
+      const names = [...storageSrc.matchAll(/\n {2}(?:private |public )?async (\w*DagExecutionRun\w*)\(/g)].map((m) => m[1]);
+      expect(names.length, "found no dag-run methods at all -- the scan is broken, not the code").toBeGreaterThan(3);
+      const terminal: string[] = [];
+      const offenders: string[] = [];
+      for (const name of names) {
+        const body = methodBody(storageSrc, `async ${name}(`);
+        if (!body.includes("update(dagExecutionRuns)")) continue;
+        // A status written from a variable can be terminal; one written as a
+        // literal is terminal only if the literal says so (the resume claim
+        // sets "running", and closing gates there would be wrong).
+        const literals = [...body.matchAll(/status:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+        const dynamic = /\.set\(data\)/.test(body) || /status:\s*data\.status/.test(body);
+        if (!dynamic && !literals.some((l) => FINISHED.includes(l))) continue;
+        terminal.push(name);
+        if (!/closeGatesIfRunFinished|closeMootGatesForRun/.test(body)) offenders.push(name);
+      }
+      // Guard the scan itself: if the regex stops matching, every list above
+      // goes empty and the assertion below passes while checking nothing.
+      expect(terminal, "the scan did not even find the engine's own writer").toContain("updateActiveDagExecutionRun");
+      expect(terminal).toContain("cancelActiveDagExecutionRun");
+      expect(terminal).toContain("updateDagExecutionRun");
+      expect(offenders, `these set a terminal run status without closing its gates: ${offenders.join(", ")}`).toEqual([]);
     });
 
     it("agrees with approval-decision.ts about which statuses are finished", () => {
