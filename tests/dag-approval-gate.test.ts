@@ -10,6 +10,13 @@ import { describe, it, expect, vi } from "vitest";
 import { computeWaves, DAGExecutionEngine, DagRunSupersededError } from "../server/dag-execution-engine";
 import type { TeamBlueprintNode, TeamBlueprintEdge } from "@shared/schema";
 
+// A branch decision calls the decision provider. Mocked so the walk-back test
+// below can put a real decision step in the chain, which is the shape every
+// live journey has and the shape no fixture had until 2026-10-17.
+vi.mock("../server/decision-provider", () => ({
+  decide: async () => ({ answer: "Exception required", probabilities: null, confidence: 0.9, engine: "llm", model: "claude-sonnet-4-5", inputTokens: 0, costUsd: 0 }),
+}));
+
 vi.mock("../server/agent-runtime", () => ({
   detectTranscriptionDrift: () => [],
   executeWorkerAgent: vi.fn(),
@@ -686,6 +693,51 @@ describe("a gate fed by prose, with the computed verdict behind it", () => {
     const behind = steps.filter((x: any) => x.indirect);
     expect(behind).toHaveLength(1);
     expect(behind[0].stateKey).toBe("floor_check");
+    (extractStructuredOutput as any).mockReturnValue(null);
+  });
+
+  it("walks past a branch decision, which records how it chose rather than what about", async () => {
+    // Live 2026-10-17: the walk stopped at "Floor Met?" and put
+    // model: "claude-sonnet-4-5" and the prompt on the card, while the step one
+    // hop further back held {evaluated: 0, verdict: "UNDETERMINED..."}. A branch
+    // decision's output always parses, so "has fields" was true for the wrong
+    // reason. Process metadata that looks substantive is worse than none.
+    const { waitForApproval, executeWorkerAgent, extractStructuredOutput } = await import("../server/agent-runtime");
+    (waitForApproval as any).mockResolvedValue({ approved: true, decidedBy: "user-1" });
+    (extractStructuredOutput as any).mockImplementation((t: unknown) => { try { return typeof t === "string" ? JSON.parse(t) : null; } catch { return null; } });
+    (executeWorkerAgent as any).mockImplementation(async (agentId: string) =>
+      agentId === "agent-chk"
+        ? { success: true, output: JSON.stringify({ evaluated: 0, verdict: "UNDETERMINED: the ratings step did not report any carriers" }) }
+        : { success: true, output: "# PLACEMENT ANALYSIS\nProse, no fields." });
+
+    const check = node({ id: "chk", refAgentId: "agent-chk", label: "Rating Floor Check", stateKey: "rating_floor_check" });
+    const decide = { ...node({ id: "dec", refAgentId: null, label: "Floor Met?", stateKey: "floor_met" }), nodeType: "decision", config: { decision: { question: "Did the rating floor check clear?", options: [{ label: "Floor met" }, { label: "Exception required" }] } } } as any;
+    const analyst = node({ id: "an", refAgentId: "agent-an", label: "Placement Analyst", stateKey: "compare_quotes" });
+    const gateNode = node({ id: "gate-1", nodeType: "edge_gate", gateType: "approval", label: "Placement Approval", stateKey: "gate_result" });
+    const e = (from: string, to: string) => ({
+      id: `${from}-${to}`, blueprintId: "bp1", sourceNodeId: from, targetNodeId: to, label: null, contentPartTypes: [],
+      allowedMetadata: null, slaTimeoutMs: null, failureMode: null, retryPolicy: null, condition: null, evaluationMode: null, rule: null, config: null,
+    } as unknown as TeamBlueprintEdge);
+
+    const callsBefore = (waitForApproval as any).mock.calls.length;
+    const engine = new DAGExecutionEngine();
+    await engine.execute({
+      executionPlan: computeWaves([check, decide, analyst, gateNode], [e("chk", "dec"), e("dec", "an"), e("an", "gate-1")]),
+      stateSchema: {}, initialState: {}, errorStrategy: "best_effort",
+      teamAgentId: "team-1", teamAgentName: "Insurer Selection", dagRunId: "run-dec-chain",
+    });
+
+    const calls = (waitForApproval as any).mock.calls;
+    // Mocks are not cleared in this file: without this the assertions below
+    // would read the previous test's gate and pass or fail for its reasons.
+    expect(calls.length, "the gate in THIS run never asked for approval").toBe(callsBefore + 1);
+    const steps = calls.at(-1)[7].evidenceJson.upstreamSteps;
+    const behind = steps.filter((x: any) => x.indirect);
+    expect(behind, "nothing was carried forward").toHaveLength(1);
+    // The business verdict, not the decision's own record of how it chose.
+    expect(behind[0].stateKey).toBe("rating_floor_check");
+    expect(behind[0].fields).toMatchObject({ evaluated: "0" });
+    expect(JSON.stringify(behind[0].fields)).not.toContain("claude-sonnet");
     (extractStructuredOutput as any).mockReturnValue(null);
   });
 

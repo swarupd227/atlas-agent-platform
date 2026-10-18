@@ -3347,6 +3347,24 @@ export class DAGExecutionEngine {
     };
     const hasFields = (nc: NodePlanConfig) => !!stepEvidence(nc).fields;
 
+    /**
+     * A branch decision's output is a record of HOW it decided, not what was
+     * decided about: {model, engine, question, options, choice}. It always
+     * parses, so the walk below stopped at the first one it met and put the
+     * model's name on the card where the business verdict should be -- live
+     * 2026-10-17, "Floor Met?" was carried forward reading
+     * model: "claude-sonnet-4-5" while the step one hop further back held
+     * {evaluated: 0, verdict: "UNDETERMINED..."}. Process metadata that looks
+     * substantive is worse than nothing, because a reviewer reads it as
+     * evidence.
+     *
+     * Only a BRANCH decision: a classify or score decision writes a real value
+     * -- the engine's own rules read it like any producer's output -- so that
+     * one belongs on the card and the walk stops there as before.
+     */
+    const carriesOnlyItsOwnDecision = (c: NodePlanConfig) =>
+      c.nodeType === "decision" && decisionAnswerType(c.decision) === "branch";
+
     const directIds = (config.executionPlan.incomingEdges[nodeId] || []).map((e) => e.sourceNodeId);
     const written = (id: string) => {
       const c = config.executionPlan.nodeConfig[id];
@@ -3389,6 +3407,7 @@ export class DAGExecutionEngine {
           seen.add(srcId);
           const c = written(srcId);
           if (!c) { next.push(srcId); continue; }
+          if (carriesOnlyItsOwnDecision(c)) { next.push(srcId); continue; }
           if (hasFields(c) && indirectSteps.length < MAX_INDIRECT) {
             // Marked, because a reviewer should be able to tell what fed this
             // decision directly from what stands behind it.
