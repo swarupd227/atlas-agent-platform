@@ -43,6 +43,13 @@ export interface RunDocument {
   readable: boolean;
   /** True when the reader stopped early: what the steps see is a partial document. */
   truncated: boolean;
+  /**
+   * Pages, for a format that has them. A count only -- the reader knows which
+   * page each passage came from (file-extract.ts builds `sections` with a
+   * per-page locator) but nothing persists them, so a step can be told a
+   * schedule runs to 18 pages and still cannot cite which one a figure is on.
+   */
+  pages?: number;
   /** Present only when something is wrong, and written for a human to act on. */
   note?: string;
 }
@@ -98,6 +105,12 @@ export async function resolveRunDocuments(
     const text = (row.extractedText ?? "").trim();
     const meta = (row.extractMeta as Record<string, unknown> | null) ?? {};
     const truncated = meta.truncated === true;
+    const pages = typeof meta.pages === "number" ? meta.pages : undefined;
+    // The extractor already says what it left out and in what unit -- "6 of 18
+    // pages, from page 7 on" -- so quote that rather than the vaguer sentence
+    // this used to carry. A step told which pages are missing can say so; one
+    // told only that something is missing cannot.
+    const coverage = (meta.coverage ?? null) as { omitted?: string; unitsKept?: number; unitsTotal?: number } | null;
     documents.push({
       fileId: row.id,
       filename: row.filename,
@@ -106,10 +119,11 @@ export async function resolveRunDocuments(
       chars: text.length,
       readable: text.length > 0,
       truncated,
+      ...(pages ? { pages } : {}),
       ...(text.length === 0
         ? { note: UNREADABLE_NOTE }
         : truncated
-          ? { note: "Only part of this file could be read; what the steps are given is incomplete." }
+          ? { note: coverage?.omitted ?? "Only part of this file could be read; what the steps are given is incomplete." }
           : {}),
     });
   }
@@ -171,12 +185,27 @@ export async function buildRunDocumentContext(
   const sections: string[] = [];
 
   if (readable.length) {
+    // What each document is, before its contents: a step that knows a schedule
+    // runs to 18 pages and that it was given 6 of them can qualify its answer.
+    // The same step given only the text cannot tell a short document from a
+    // truncated one.
+    const inventory = readable.map((d) => {
+      const extent = [
+        d.pages ? `${d.pages} page${d.pages === 1 ? "" : "s"}` : null,
+        `${d.chars.toLocaleString("en-US")} characters read`,
+        d.truncated ? "PARTIAL" : null,
+      ].filter(Boolean).join(", ");
+      return `- ${d.filename} (${extent})${d.truncated && d.note ? `: ${d.note}` : ""}`;
+    });
+
     const { context } = await buildAttachmentContext(
       readable.map((d) => d.fileId),
       orgId,
       [
         "This run was given the following document(s). Their contents are reproduced below.",
-        "Work from them. If a document is marked as partial, say so in your output rather than treating what you were given as the whole document.",
+        ...inventory,
+        "",
+        "Work from them. Where a document is marked PARTIAL, say so in your output rather than treating what you were given as the whole document.",
       ],
       RUN_DOCUMENT_PREVIEW_CHARS,
     );

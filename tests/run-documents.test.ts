@@ -165,6 +165,45 @@ describe("resolving an id into what the steps read", () => {
     expect(documents[0].readable).toBe(true);
     expect(documents[0].note).toMatch(/incomplete/);
   });
+
+  /**
+   * These mirror what server/file-extract.ts actually writes. An earlier
+   * version of this feature read `meta.pages` as an array of page spans; the
+   * extractor sets it to a NUMBER, so that branch could never fire and the
+   * tests agreed with it because they invented the shape themselves.
+   */
+  it("carries the page count the extractor recorded", async () => {
+    state.files.set("f-pdf", file({ id: "f-pdf", filename: "GCHG_SOV.pdf", kind: "pdf", extractMeta: { pages: 18 } }));
+    const { documents } = await resolveRunDocuments(["f-pdf"], "org-1");
+    expect(documents[0].pages).toBe(18);
+  });
+
+  it("has no page count for a format without pages", async () => {
+    const { documents } = await resolveRunDocuments(["f-sov"], "org-1");
+    expect(documents[0].pages).toBeUndefined();
+  });
+
+  it("quotes the extractor's own statement of what was left out", async () => {
+    state.files.set("f-cut", file({
+      id: "f-cut",
+      filename: "long_schedule.pdf",
+      kind: "pdf",
+      extractMeta: {
+        pages: 18,
+        truncated: true,
+        coverage: {
+          unit: "page", unitsTotal: 18, unitsKept: 6, charsKept: 120000, complete: false,
+          omitted: "12 pages of 18, from page 7 on, were not read: the document is larger than the 120,000-character safety limit.",
+        },
+      },
+    }));
+    const { documents } = await resolveRunDocuments(["f-cut"], "org-1");
+    expect(documents[0].pages).toBe(18);
+    expect(documents[0].truncated).toBe(true);
+    // the extractor's words, naming WHICH pages are missing -- not a generic note
+    expect(documents[0].note).toContain("from page 7 on");
+    expect(documents[0].note).not.toMatch(/what the steps are given is incomplete/);
+  });
 });
 
 describe("which steps see a document", () => {
@@ -215,6 +254,9 @@ describe("what a step is shown", () => {
     const context = await buildRunDocumentContext(documents, "org-1");
     expect(context).toContain("Gulfport");
     expect(context).toContain("This run was given the following document(s)");
+    // the inventory names the file and its extent before the contents
+    expect(context).toContain("- GCHG_SOV_2026.xlsx (");
+    expect(context).toContain("characters read");
     expect(state.attachmentCalls[0].cap).toBe(120_000);
     expect(state.attachmentCalls[0].orgId).toBe("org-1");
   });
@@ -279,5 +321,38 @@ describe("starting a run with a document", () => {
   it("starts a run with no documents exactly as before", async () => {
     await startTeamAgentDagRun("team-1", "bp1", "Triage", { input: { broker_name: "Bridge Specialty" } });
     expect(state.created[0].initialState).toEqual({ broker_name: "Bridge Specialty", request: "Triage" });
+  });
+});
+
+describe("what a step is told about extent", () => {
+  it("marks a partial document PARTIAL and says which pages are missing", async () => {
+    state.files.set("f-cut", file({
+      id: "f-cut",
+      filename: "long_schedule.pdf",
+      kind: "pdf",
+      extractedText: "page one of a long schedule",
+      extractMeta: {
+        pages: 18,
+        truncated: true,
+        coverage: { unit: "page", unitsTotal: 18, unitsKept: 6, charsKept: 120000, complete: false,
+          omitted: "12 pages of 18, from page 7 on, were not read." },
+      },
+    }));
+    const { documents } = await resolveRunDocuments(["f-cut"], "org-1");
+    const context = await buildRunDocumentContext(documents, "org-1");
+    expect(context).toContain("long_schedule.pdf (18 pages");
+    expect(context).toContain("PARTIAL");
+    expect(context).toContain("from page 7 on");
+    expect(context).toContain("say so in your output");
+  });
+
+  it("does not call a whole document partial", async () => {
+    const { documents } = await resolveRunDocuments(["f-sov"], "org-1");
+    const context = await buildRunDocumentContext(documents, "org-1");
+    // "PARTIAL" also appears in the standing instruction, so check the file's
+    // OWN inventory line rather than the whole block.
+    const line = context.split("\n").find((l) => l.startsWith("- GCHG_SOV_2026.xlsx"));
+    expect(line).toBeDefined();
+    expect(line).not.toContain("PARTIAL");
   });
 });
