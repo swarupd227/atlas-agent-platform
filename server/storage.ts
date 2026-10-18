@@ -260,6 +260,8 @@ export interface IStorage {
   /** Agents with only what a list shows: the row itself carries ~80 columns and 12 JSON blobs. */
   getAgentSummaries(orgId?: string): Promise<Agent[]>;
   getAgent(id: string, orgId?: string): Promise<Agent | undefined>;
+  /** Many agents by id in one query, under the same organization scope as getAgent. */
+  getAgentsByIds(ids: string[], orgId?: string): Promise<Agent[]>;
   getAgentOrgMap(): Promise<Map<string, string | null>>;
   getAgentsByOntologyConcept(conceptId: string, orgId?: string): Promise<Agent[]>;
   listAgentsByBlueprintId(blueprintId: string): Promise<Agent[]>;
@@ -571,6 +573,8 @@ export interface IStorage {
   deleteRemoteAgent(id: string): Promise<boolean>;
 
   getAgentTeamMembers(teamAgentId: string): Promise<AgentTeam[]>;
+  /** The memberships of many teams in one query, for callers that would otherwise ask per team. */
+  getAgentTeamMembersForTeams(teamAgentIds: string[]): Promise<AgentTeam[]>;
   createAgentTeamMember(member: InsertAgentTeam): Promise<AgentTeam>;
   deleteAgentTeamMember(id: string): Promise<boolean>;
   getAgentTeamsByMember(memberAgentId: string): Promise<AgentTeam[]>;
@@ -1307,6 +1311,23 @@ export class DatabaseStorage implements IStorage {
     const clause = orgId ? and(eq(agents.id, id), eq(agents.organizationId, orgId)) : eq(agents.id, id);
     const [agent] = await db.select().from(agents).where(clause);
     return agent;
+  }
+
+  /**
+   * Many agents by id, in one query, under the same organization scope getAgent applies.
+   *
+   * The scope is the point: a caller replacing a loop of getAgent(id, orgId) must not quietly
+   * widen it, or a team whose member belongs to another organization starts resolving. An id that
+   * does not match, or is not visible to this organization, is simply absent from the result --
+   * the same thing the loop produced when getAgent returned undefined.
+   */
+  async getAgentsByIds(ids: string[], orgId?: string) {
+    if (!ids.length) return [];
+    const unique = Array.from(new Set(ids));
+    const clause = orgId
+      ? and(inArray(agents.id, unique), eq(agents.organizationId, orgId))
+      : inArray(agents.id, unique);
+    return db.select().from(agents).where(clause);
   }
 
   /**
@@ -3471,6 +3492,23 @@ export class DatabaseStorage implements IStorage {
   }
   async getAgentTeamMembers(teamAgentId: string) {
     return db.select().from(agentTeams).where(eq(agentTeams.teamAgentId, teamAgentId));
+  }
+  /**
+   * The memberships of many teams at once.
+   *
+   * Asking per team is what made the Journey Library cost 542 round trips for 68 journeys, every
+   * one of them holding a connection from a pool of twelve (server/db.ts explains why twelve is
+   * the ceiling). Ordered explicitly because a suite journey shows its members AS its stages, in
+   * member order -- which until now was whatever order the rows came back in, and happened to be
+   * insertion order.
+   */
+  async getAgentTeamMembersForTeams(teamAgentIds: string[]) {
+    if (!teamAgentIds.length) return [];
+    return db
+      .select()
+      .from(agentTeams)
+      .where(inArray(agentTeams.teamAgentId, teamAgentIds))
+      .orderBy(agentTeams.addedAt, agentTeams.id);
   }
   async createAgentTeamMember(member: InsertAgentTeam) {
     const [created] = await db.insert(agentTeams).values(member).returning();

@@ -65,13 +65,28 @@ router.get("/api/journeys", async (req, res) => {
     // Process flows are org-wide: fetch once, not once per journey.
     const flows = await storage.getProcessFlows(getOrgId(req));
 
+    // Memberships and the agents they name, in two queries rather than two per journey.
+    //
+    // This was `getAgentTeamMembers` per journey and `getAgent` per worker, inside nested
+    // Promise.all: 542 round trips for 68 journeys, issued concurrently against a connection pool
+    // of twelve (server/db.ts explains why twelve is the ceiling). One Journey Library load could
+    // starve every other request on the instance for its duration, which is what the 500s carrying
+    // "timeout exceeded when trying to connect" and the gateway's 502s were.
+    const allMembers = await storage.getAgentTeamMembersForTeams(orchestrators.map((o) => o.id));
+    const memberIdsByTeam = new Map<string, string[]>();
+    for (const m of allMembers) {
+      memberIdsByTeam.set(m.teamAgentId, [...(memberIdsByTeam.get(m.teamAgentId) ?? []), m.memberAgentId]);
+    }
+    // Same organization scope the per-worker getAgent applied; an id this organization cannot see
+    // is absent here exactly as it was absent there.
+    const workerRows = await storage.getAgentsByIds(allMembers.map((m) => m.memberAgentId), getOrgId(req));
+    const workerById = new Map(workerRows.map((a) => [a.id, a]));
+
     const journeys = await Promise.all(
       orchestrators.map(async (orchestrator) => {
-        const members = await storage.getAgentTeamMembers(orchestrator.id);
-        const workerIds = members.map((m) => m.memberAgentId);
-        const workers = (
-          await Promise.all(workerIds.map((id) => storage.getAgent(id, getOrgId(req))))
-        ).filter((a): a is NonNullable<typeof a> => !!a);
+        const workers = (memberIdsByTeam.get(orchestrator.id) ?? [])
+          .map((id) => workerById.get(id))
+          .filter((a): a is NonNullable<typeof a> => !!a);
 
         const allTags = [orchestrator, ...workers].flatMap((a) =>
           Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [],
