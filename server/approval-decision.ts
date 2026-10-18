@@ -16,6 +16,7 @@ import { canDecideApproval, type RoleId } from "./permissions";
 import { workspaceRuns, type Approval } from "@shared/schema";
 import { applyMemoryDecision } from "./agent-memory";
 import { applySkillDecision } from "./agent-skill-proposals";
+import { applyOntologyDecision } from "./agent-ontology-proposals";
 
 export type ApprovalDecision = "approved" | "rejected";
 
@@ -122,6 +123,14 @@ export function describeApprovalEffect(
       ? "The change is made to the agent's notes. Its later runs will be shown the note and may rely on it; a person can remove it at any time."
       : "The agent's notes stay as they are. The request is kept as a record.";
   }
+  if (a.type === "ontology_proposal") {
+    const revision = (a.evidenceJson as { kind?: string } | null)?.kind === "revise";
+    return approve
+      ? (revision
+        ? "The concept your organization added is changed. The previous version is kept in its history."
+        : "The concept is added to your organization's ontology only: your agents and screens see it, no other organization does.")
+      : "The proposed concept is discarded. The request is kept as a record.";
+  }
   if (a.type === "skill_proposal") {
     const kind = (a.evidenceJson as { kind?: string } | null)?.kind;
     const revision = kind === "revision";
@@ -194,6 +203,12 @@ export async function applyApprovalEffects(approval: Approval, status: string | 
   // exists for any run (server/agent-skill-proposals.ts).
   if (approval.type === "skill_proposal" && approval.objectId && (status === "approved" || status === "rejected")) {
     await applySkillDecision({ orgId: approval.organizationId ?? ctx.orgId, proposalId: approval.objectId, decision: status, decidedBy });
+  }
+
+  // An ontology_proposal approval is a person deciding whether a concept an agent wrote
+  // joins THEIR organization's ontology (server/agent-ontology-proposals.ts).
+  if (approval.type === "ontology_proposal" && approval.objectId && (status === "approved" || status === "rejected")) {
+    await applyOntologyDecision({ orgId: approval.organizationId ?? ctx.orgId, proposalId: approval.objectId, decision: status, decidedBy });
   }
 
   // Fast path for a DAG approval-gate decision: resume the paused run right

@@ -24,6 +24,8 @@ import { memoryToolsFor } from "./builtin-memory-tools";
 import { isSkillProposalEnabled } from "./agent-skill-proposals";
 import { touchSkillUse } from "./skill-usage";
 import { skillProposalToolsFor } from "./builtin-skill-proposal-tools";
+import { isOntologyProposalEnabled } from "./agent-ontology-proposals";
+import { ontologyProposalToolsFor } from "./builtin-ontology-proposal-tools";
 import { outputContractEnforcer, StructuredOutputValidationError, buildStrictJsonSchemaOption } from "./services/output-contract-enforcer";
 import { resolvePolicyBundle, resolveGovernancePromptEntries, renderGovernanceBlock } from "./routes/helpers";
 import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
@@ -458,7 +460,8 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
       const requiredVocab: string[] = [];
       const deprecatedTerms: Array<{ deprecated: string; useInstead: string }> = [];
       for (const tag of agent.ontologyTags.slice(0, 10)) {
-        const concept = await storage.getOntologyConcept(tag.conceptId);
+        // The agent's own organization's concepts count too (default-deny: no other organization's).
+        const concept = await storage.getOntologyConcept(tag.conceptId, agent.orgId);
         if (concept) {
           let detail = `- ${concept.label} (${concept.category}): ${concept.description}`;
           const rels = concept.relationships as Array<{ target: string; type: string }> | null;
@@ -507,7 +510,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     try {
       const sensitivityConstraints: string[] = [];
       for (const tag of agent.ontologyTags.slice(0, 15)) {
-        const concept = await storage.getOntologyConcept(tag.conceptId);
+        const concept = await storage.getOntologyConcept(tag.conceptId, agent.orgId);
         if (!concept) continue;
         const sc = concept.sensitivityClassification as any;
         if (!sc || !sc.level) continue;
@@ -1685,6 +1688,14 @@ export async function executePromptWithMcp(
     if (await isSkillProposalEnabled(options?.runtimeConfig)) availableTools.push(...skillProposalToolsFor());
   } catch (spErr: any) {
     console.warn(`[skill-proposals] propose_skill unavailable (non-fatal): ${spErr.message}`);
+  }
+
+  // The ontology-proposal tool (server/builtin-ontology-proposal-tools.ts): proposes a
+  // concept for the organization's own ontology, which a person must approve. Same gating.
+  try {
+    if (await isOntologyProposalEnabled(options?.runtimeConfig)) availableTools.push(...ontologyProposalToolsFor());
+  } catch (opErr: any) {
+    console.warn(`[ontology-proposals] propose_ontology_concept unavailable (non-fatal): ${opErr.message}`);
   }
 
   const canonicalTools = buildCanonicalTools(availableTools);

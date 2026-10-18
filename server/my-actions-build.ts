@@ -108,6 +108,13 @@ function translateApprovalType(
       context: "Your Digital Worker spotted an issue and prepared a fix. Approve it to apply automatically.",
     };
   }
+  if (t === "ontology_proposal") {
+    return {
+      category: "approval",
+      title: `A Digital Worker proposes a concept: "${name}"`,
+      context: "It found a term your organization's ontology does not have, or defines badly. Approve only if the definition is accurate and the name is the one you use. It joins your organization's vocabulary alone.",
+    };
+  }
   if (t === "skill_proposal") {
     return {
       category: "approval",

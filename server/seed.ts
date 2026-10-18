@@ -1799,6 +1799,12 @@ export async function seedDatabase() {
         category: "decisions",
       },
       {
+        key: "AGENT_ONTOLOGY_PROPOSALS",
+        value: "off",
+        description: "on = an agent that has opted in (its Memory section) may PROPOSE a concept for its own organization's ontology, or a change to a concept its organization added, with the propose_ontology_concept tool. A proposal is filed as an approval and adds nothing until a person approves it; an approved concept is visible to that organization only and never to another. It cannot change a platform concept. off = no agent proposes concepts, whatever its own setting.",
+        category: "decisions",
+      },
+      {
         key: "AGENT_RUN_REVIEW",
         value: "off",
         description: "on = after a finished run of an agent that has opted in (its Memory section), a model with no tools reads a masked digest of the run and may SUGGEST a memory note or a skill. Suggestions are filed as approvals and change nothing until a person decides; only the kinds the agent has itself enabled are ever suggested. Each review costs a model call, bounded by AGENT_RUN_REVIEW_DAILY_BUDGET_USD. off = no run is reviewed.",

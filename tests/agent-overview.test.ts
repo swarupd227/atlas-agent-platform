@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { SECTIONS, memoryEnabledOf, memoryRequestLabel, policiesByScope, policyEffect, runOutcome, runStats, runReviewEnabledOf, runReviewSummary, sectionFromSearch, skillProposalLabel, skillProposalsEnabledOf, withMemoryEnabled, withRunReviewEnabled, withSkillProposalsEnabled } from "../client/src/pages/agent-overview";
+import { SECTIONS, memoryEnabledOf, memoryRequestLabel, ontologyProposalLabel, ontologyProposalsEnabledOf, withOntologyProposalsEnabled, policiesByScope, policyEffect, runOutcome, runStats, runReviewEnabledOf, runReviewSummary, sectionFromSearch, skillProposalLabel, skillProposalsEnabledOf, withMemoryEnabled, withRunReviewEnabled, withSkillProposalsEnabled } from "../client/src/pages/agent-overview";
 
 const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n");
 const page = read("client", "src", "pages", "agent-overview.tsx");
@@ -103,6 +103,27 @@ describe("skill proposals", () => {
     expect(skillProposalLabel({ kind: "new" })).toBe("Add a skill");
     expect(skillProposalLabel({ kind: "revision" })).toBe("Change a skill");
     expect(skillProposalLabel({ kind: "retire" })).toBe("Retire a skill");
+  });
+});
+
+describe("ontology proposals", () => {
+  it("are on only when the agent has opted in, separately from memory and skill proposals", () => {
+    expect(ontologyProposalsEnabledOf({ runtimeConfig: { agentOntologyProposals: { enabled: true } } } as any)).toBe(true);
+    expect(ontologyProposalsEnabledOf({ runtimeConfig: { agentOntologyProposals: { enabled: false } } } as any)).toBe(false);
+    expect(ontologyProposalsEnabledOf({ runtimeConfig: { agentMemory: { enabled: true }, agentSkillProposals: { enabled: true } } } as any)).toBe(false);
+    expect(ontologyProposalsEnabledOf({ runtimeConfig: null } as any)).toBe(false);
+  });
+
+  it("switching them on or off leaves the rest of the runtime config alone", () => {
+    const rc = { maxCostPerRunUsd: 2, agentSkillProposals: { enabled: true }, agentOntologyProposals: { enabled: false, note: "kept" } };
+    expect(withOntologyProposalsEnabled(rc, true)).toEqual({ maxCostPerRunUsd: 2, agentSkillProposals: { enabled: true }, agentOntologyProposals: { enabled: true, note: "kept" } });
+    expect(withOntologyProposalsEnabled(null, true)).toEqual({ agentOntologyProposals: { enabled: true } });
+    expect(rc.agentOntologyProposals.enabled).toBe(false); // the original is not mutated
+  });
+
+  it("says what a proposal asks for", () => {
+    expect(ontologyProposalLabel({ kind: "add" })).toBe("Add a concept");
+    expect(ontologyProposalLabel({ kind: "revise" })).toBe("Change a concept");
   });
 });
 

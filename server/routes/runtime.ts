@@ -19905,9 +19905,8 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const ontologyGuardrails: Array<{ text: string; type: "stopCondition" | "escalationTrigger" | "forbiddenOutput"; source: "ontology"; conceptLabel: string; regulation: string }> = [];
 
       if (tagIds.length > 0) {
-        const allConcepts = await db.select().from(
-          (await import("@shared/schema")).ontologyConcepts
-        );
+        // Platform-wide concepts plus this organization's own: never another organization's.
+        const allConcepts = await storage.getAllOntologyConcepts(getOrgId(req));
         const matchedConcepts = allConcepts.filter((c) =>
           tagIds.includes(c.id) || tagIds.includes(c.label)
         );

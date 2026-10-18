@@ -37,6 +37,7 @@ import { storage } from "./storage";
 import { proposeSkillRetirement } from "./agent-skill-proposals";
 import { proposeMemoryChange, normalizeNote } from "./agent-memory";
 import { toIso } from "./agent-run-review";
+import { wordSet, similarity } from "./text-similarity";
 
 /** Platform flag. Off unless "on"; a failed read is off. */
 export const CURATOR_SETTING = "AGENT_CURATOR";
@@ -102,19 +103,8 @@ export interface Finding {
   error?: string;
 }
 
-/** The set of lower-cased words of at least two characters. */
-export function wordSet(text: string): Set<string> {
-  return new Set(String(text ?? "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2));
-}
-
-/** Jaccard overlap of the two word sets: 1 for the same words, 0 for none shared. */
-export function similarity(a: string, b: string): number {
-  const A = wordSet(a), B = wordSet(b);
-  if (A.size === 0 && B.size === 0) return 0;
-  let both = 0;
-  for (const w of A) if (B.has(w)) both++;
-  return both / (A.size + B.size - both);
-}
+// The overlap measure lives in server/text-similarity.ts; the curator's tests and callers read it from here.
+export { wordSet, similarity };
 
 const time = (d: Date | null): number => (d ? d.getTime() : Number.POSITIVE_INFINITY);
 

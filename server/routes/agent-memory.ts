@@ -10,6 +10,7 @@ import { memoryOverview, removeNoteByPerson } from "../agent-memory";
 import { skillProposalOverview } from "../agent-skill-proposals";
 import { runReviewOverview } from "../agent-run-review";
 import { curatorOverview } from "../agent-curator";
+import { ontologyProposalOverview } from "../agent-ontology-proposals";
 
 const router = Router();
 
@@ -71,6 +72,19 @@ router.get("/api/curator/overview", async (req, res) => {
     res.json(await curatorOverview(getOrgId(req)));
   } catch (e: any) {
     res.status(500).json({ message: e?.message ?? "Could not read the library curator" });
+  }
+});
+
+// The ontology concepts an agent has proposed: waiting for a person, and the recently
+// decided. Deciding one is the ordinary approval route (type "ontology_proposal"). 404 for
+// an agent outside the caller's organization.
+router.get("/api/agents/:id/ontology-proposals", async (req, res) => {
+  try {
+    const agent = await storage.getAgent(String(req.params.id), getOrgId(req));
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    res.json(await ontologyProposalOverview(agent.organizationId, agent.id));
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message ?? "Could not read the agent's ontology proposals" });
   }
 });
 

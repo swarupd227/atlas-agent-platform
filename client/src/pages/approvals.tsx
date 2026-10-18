@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { QueryBoundary } from "@/components/ui-vocab";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   CheckCircle,
   XCircle,
@@ -70,6 +70,7 @@ const TYPE_META: Record<string, { label: string; icon: any; color: string }> = {
   code_execution_enablement: { label: "Code Execution",     icon: Shield, color: "text-amber-500" },
   memory_write:          { label: "Agent Memory",           icon: FileText, color: "text-teal-500" },
   skill_proposal:        { label: "Agent Skill",            icon: FileText, color: "text-teal-500" },
+  ontology_proposal:     { label: "Agent Ontology",         icon: FileText, color: "text-teal-500" },
   follow_up_task:        { label: "Follow-up",              icon: MessageSquare, color: "text-slate-500" },
   export_package:        { label: "Export Package",         icon: FileText, color: "text-violet-500" },
 };
@@ -787,6 +788,44 @@ export function EvidenceSection({ approval, agentSuites, agentDrift, critDrift }
   // An agent proposing a skill, or a better version of one it uses
   // (server/agent-skill-proposals.ts). The reviewer reads the whole procedure:
   // once approved it is read as instructions by every run that uses the skill.
+  // An agent proposing a concept for ITS ORGANIZATION's ontology, or a change to one its
+  // organization added (server/agent-ontology-proposals.ts). The reviewer reads the whole
+  // definition and sees which existing concepts it resembles.
+  if (approval.type === "ontology_proposal") {
+    const revise = ev.kind === "revise";
+    const field = (label: string, node: ReactNode) => (
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
+        {node}
+      </div>
+    );
+    const props: Array<{ name: string; type: string; description?: string }> = Array.isArray(ev.properties) ? ev.properties : [];
+    const rels: Array<{ reads: string; targetLabel: string; cardinality?: string }> = Array.isArray(ev.relationships) ? ev.relationships : [];
+    const similar: Array<{ id: string; label: string; scope: string; similarity: number }> = Array.isArray(ev.similar) ? ev.similar : [];
+    return (
+      <SectionBlock icon={FileText} title={revise ? "A change an agent proposes to a concept of your organization" : "A concept an agent proposes for your organization"}>
+        <div className="flex flex-col gap-3 pt-1" data-testid={`ontology-evidence-${approval.id}`}>
+          <div className="text-xs text-muted-foreground">{ev.effect ? String(ev.effect) : "On approval the concept is added to your organization's ontology only."}</div>
+          {field("Concept", <span className="text-sm font-medium">{String(ev.label ?? approval.objectName ?? "")}{ev.category ? <span className="ml-2 text-xs font-normal text-muted-foreground">{String(ev.category)}</span> : null}</span>)}
+          {ev.description && field(revise ? "Proposed definition" : "Definition", <div className="rounded-md bg-muted/20 p-2.5 text-sm whitespace-pre-wrap break-words" data-testid={`ontology-description-${approval.id}`}>{String(ev.description)}</div>)}
+          {revise && ev.current?.description && field("Current definition", <div className="rounded-md bg-muted/20 p-2.5 text-sm whitespace-pre-wrap break-words">{String(ev.current.description)}</div>)}
+          {Array.isArray(ev.synonyms) && ev.synonyms.length > 0 && field("Also known as", <span className="text-xs">{ev.synonyms.join(", ")}</span>)}
+          {props.length > 0 && field("Properties", <ul className="text-xs space-y-0.5">{props.map((p, i) => <li key={i}><span className="font-mono">{p.name}</span> ({p.type}){p.description ? `: ${p.description}` : ""}</li>)}</ul>)}
+          {rels.length > 0 && field("Relationships", <ul className="text-xs space-y-0.5">{rels.map((r, i) => <li key={i}>{r.reads} <span className="font-medium">{r.targetLabel}</span>{r.cardinality ? ` (${r.cardinality})` : ""}</li>)}</ul>)}
+          {Array.isArray(ev.tags) && ev.tags.length > 0 && field("Tags", <span className="text-xs">{ev.tags.join(", ")}</span>)}
+          {similar.length > 0 && field("Resembles existing concepts", <ul className="text-xs space-y-0.5" data-testid={`ontology-similar-${approval.id}`}>{similar.map((s) => <li key={s.id}>{s.label} <span className="text-muted-foreground">({s.scope}, {Math.round(s.similarity * 100)}% alike)</span></li>)}</ul>)}
+          {ev.reason && field("Why the agent says it is needed", <span className="text-xs">{String(ev.reason)}</span>)}
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+            {ev.agentName && <span>Agent: {String(ev.agentName)}</span>}
+            {ev.industryId && <span>Industry: {String(ev.industryId)}</span>}
+            {ev.runId && <span>Proposed during run {String(ev.runId).slice(0, 8)}</span>}
+          </div>
+          <div className="text-[11px] text-muted-foreground">Approve only if the definition is accurate and the name is the one your organization uses. It becomes part of the vocabulary your agents work from, and is visible to your organization alone. A definition that tells an agent what to do, or holds a secret or personal data, should be rejected.</div>
+        </div>
+      </SectionBlock>
+    );
+  }
+
   if (approval.type === "skill_proposal" && ev.kind === "retire") {
     return (
       <SectionBlock icon={FileText} title="A skill the library curator suggests retiring">

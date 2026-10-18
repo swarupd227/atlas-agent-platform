@@ -149,6 +149,25 @@ export function withSkillProposalsEnabled(runtimeConfig: unknown, enabled: boole
 interface SkillProposalRow { id: string; kind: string; skillId: string; name: string; status: string; reason: string | null; approvalId: string | null; decidedBy: string | null; decidedAt: string | null; createdAt: string | null }
 interface SkillProposalOverview { pending: SkillProposalRow[]; recent: SkillProposalRow[]; limits: { maxInstructionChars: number; maxPending: number } }
 
+/** An agent may propose ontology concepts only when it has opted in (the AGENT_ONTOLOGY_PROPOSALS flag is the other half; see server/agent-ontology-proposals.ts). */
+export function ontologyProposalsEnabledOf(agent: Pick<Agent, "runtimeConfig">): boolean {
+  return (agent.runtimeConfig as Record<string, any> | null | undefined)?.agentOntologyProposals?.enabled === true;
+}
+
+/** The runtime config with ontology proposals switched on or off, leaving everything else in it alone. */
+export function withOntologyProposalsEnabled(runtimeConfig: unknown, enabled: boolean): Record<string, unknown> {
+  const rc = (runtimeConfig && typeof runtimeConfig === "object" ? runtimeConfig : {}) as Record<string, any>;
+  return { ...rc, agentOntologyProposals: { ...(rc.agentOntologyProposals ?? {}), enabled } };
+}
+
+interface OntologyProposalRow { id: string; kind: string; label: string; industryId: string; status: string; reason: string | null; approvalId: string | null }
+interface OntologyProposalOverview { pending: OntologyProposalRow[]; recent: OntologyProposalRow[] }
+
+/** What an ontology proposal asks for, in words. */
+export function ontologyProposalLabel(p: Pick<OntologyProposalRow, "kind">): string {
+  return p.kind === "revise" ? "Change a concept" : "Add a concept";
+}
+
 /** The agent is reviewed after its runs only when it has opted in (the AGENT_RUN_REVIEW flag is the other half; see server/agent-run-review.ts). */
 export function runReviewEnabledOf(agent: Pick<Agent, "runtimeConfig">): boolean {
   return (agent.runtimeConfig as Record<string, any> | null | undefined)?.agentRunReview?.enabled === true;
@@ -588,7 +607,77 @@ function Memory({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toa
       )}
 
       <SkillProposals agent={agent} canEdit={canEdit} toast={toast} />
+      <OntologyProposals agent={agent} canEdit={canEdit} toast={toast} />
       <RunReviews agent={agent} canEdit={canEdit} toast={toast} />
+    </div>
+  );
+}
+
+/**
+ * The concepts the agent proposes for its organization's ontology. It never edits the
+ * ontology: it asks, and a person approves in Approvals. An approved concept is visible
+ * to this organization alone, and it cannot change a platform concept.
+ */
+function OntologyProposals({ agent, canEdit, toast }: { agent: Agent; canEdit: boolean; toast: ReturnType<typeof useToast>["toast"] }) {
+  const on = ontologyProposalsEnabledOf(agent);
+  const q = useQuery<OntologyProposalOverview>({ queryKey: [`/api/agents/${agent.id}/ontology-proposals`] });
+  const data = q.data;
+  const toggle = useMutation({
+    mutationFn: async () => (await apiRequest("PATCH", `/api/agents/${agent.id}`, { runtimeConfig: withOntologyProposalsEnabled(agent.runtimeConfig, !on) })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agent.id] });
+      toast({ title: on ? "Ontology proposals turned off" : "Ontology proposals turned on", description: "The change is recorded in the audit trail." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't change it", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex flex-col gap-6" data-testid="ontology-proposals-section">
+      <section>
+        <SectionHeading>Concepts it proposes</SectionHeading>
+        <div className="flex flex-wrap items-center gap-3 rounded border p-3 text-sm">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${on ? "bg-emerald-500" : "bg-muted-foreground/40"}`} aria-hidden />
+          <span className="min-w-0 flex-1">{on ? "On. It can propose a concept for your organization's ontology." : "Off. It proposes no concepts."}</span>
+          {canEdit && <Button size="sm" variant="outline" disabled={toggle.isPending} onClick={() => toggle.mutate()} data-testid="button-toggle-ontology-proposals">{on ? "Turn off" : "Turn on"}</Button>}
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">It never edits the ontology. It asks, and a person reads the definition and approves it in Approvals. An approved concept is visible to your organization alone, and an agent cannot change a platform concept. This also needs the AGENT_ONTOLOGY_PROPOSALS flag on under Admin → Platform flags.</p>
+      </section>
+
+      <section>
+        <SectionHeading>Waiting for a decision</SectionHeading>
+        {q.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (data?.pending ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing is waiting.</p>
+        ) : (
+          <ul className="flex flex-col divide-y rounded border" data-testid="ontology-proposals-pending">
+            {(data?.pending ?? []).map((p) => (
+              <li key={p.id} className="flex items-start gap-2 p-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{ontologyProposalLabel(p)}</div>
+                  <div className="break-words">{p.label}</div>
+                  {p.reason && <div className="text-xs text-muted-foreground">{p.reason}</div>}
+                </div>
+                {p.approvalId && <Link href={`/approvals/${p.approvalId}/classic`} className="shrink-0 text-xs text-muted-foreground hover:text-foreground">decide</Link>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {(data?.recent ?? []).length > 0 && (
+        <section>
+          <SectionHeading>Recently decided</SectionHeading>
+          <ul className="flex flex-col divide-y rounded border" data-testid="ontology-proposals-recent">
+            {(data?.recent ?? []).map((p) => (
+              <li key={p.id} className="flex items-start gap-2 p-2.5 text-sm">
+                <div className="min-w-0 flex-1 truncate">{p.label}</div>
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{p.status}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

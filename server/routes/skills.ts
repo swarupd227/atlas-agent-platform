@@ -40,7 +40,8 @@ const router = Router();
       if (!industry) {
         return res.status(400).json({ message: "industry query parameter is required" });
       }
-      const concepts = await storage.getOntologyConcepts(industry);
+      // Platform-wide concepts plus the caller's own organization's, never another's.
+      const concepts = await storage.getOntologyConcepts(industry, undefined, getOrgId(req));
       const filtered = prefix.length >= 1
         ? concepts.filter(c =>
             c.label.toLowerCase().includes(prefix) ||
@@ -69,7 +70,7 @@ const router = Router();
         return res.status(400).json({ message: "industryId query parameter is required" });
       }
       const subVertical = (req.query.subVertical as string) || undefined;
-      const concepts = await storage.getOntologyConcepts(industryId, subVertical);
+      const concepts = await storage.getOntologyConcepts(industryId, subVertical, getOrgId(req));
       res.json(concepts);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -78,7 +79,7 @@ const router = Router();
 
   router.get("/api/ontology/concepts/:id", async (req, res) => {
     try {
-      const concept = await storage.getOntologyConcept(req.params.id as string);
+      const concept = await storage.getOntologyConcept(req.params.id as string, getOrgId(req));
       if (!concept) return res.status(404).json({ message: "Concept not found" });
       res.json(concept);
     } catch (err: any) {

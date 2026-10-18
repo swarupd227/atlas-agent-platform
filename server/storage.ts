@@ -695,12 +695,16 @@ export interface IStorage {
   createRegulatoryChange(change: InsertRegulatoryChange): Promise<RegulatoryChange>;
   updateRegulatoryChange(id: string, data: Partial<RegulatoryChange>): Promise<RegulatoryChange | undefined>;
 
-  getAllOntologyConcepts(): Promise<OntologyConcept[]>;
-  getOntologyConcepts(industryId: string): Promise<OntologyConcept[]>;
-  getOntologyConcept(id: string): Promise<OntologyConcept | undefined>;
+  // The optional orgId widens a read to that organization's own concepts. Without it a read
+  // returns platform-wide concepts only, so a caller that does not say who it is can never
+  // be handed another organization's concept; a write reaches a private concept only with
+  // its own organization's id.
+  getAllOntologyConcepts(orgId?: string | null): Promise<OntologyConcept[]>;
+  getOntologyConcepts(industryId: string, subVertical?: string, orgId?: string | null): Promise<OntologyConcept[]>;
+  getOntologyConcept(id: string, orgId?: string | null): Promise<OntologyConcept | undefined>;
   createOntologyConcept(concept: InsertOntologyConcept): Promise<OntologyConcept>;
-  updateOntologyConcept(id: string, data: Partial<OntologyConcept>): Promise<OntologyConcept | undefined>;
-  deleteOntologyConcept(id: string): Promise<boolean>;
+  updateOntologyConcept(id: string, data: Partial<OntologyConcept>, orgId?: string | null): Promise<OntologyConcept | undefined>;
+  deleteOntologyConcept(id: string, orgId?: string | null): Promise<boolean>;
 
   getOntologyEnhancement(conceptId: string): Promise<OntologyEnhancement | undefined>;
   getOntologyEnhancements(conceptIds: string[]): Promise<OntologyEnhancement[]>;
@@ -2303,6 +2307,8 @@ export class DatabaseStorage implements IStorage {
     await db.execute(sql`DELETE FROM skills WHERE status = 'proposed' AND id IN (SELECT skill_id FROM agent_skill_proposals WHERE agent_id = ${id} AND kind = 'new' AND status = 'pending')`);
     await db.execute(sql`DELETE FROM agent_skill_proposals WHERE agent_id = ${id}`);
     await db.execute(sql`DELETE FROM agent_run_reviews WHERE agent_id = ${id}`);
+    // Ontology proposals nobody decided go with it. A concept a person approved is the organization's now and stays.
+    await db.execute(sql`DELETE FROM ontology_proposals WHERE agent_id = ${id}`);
     // The mandate/warrant primitive tables hard-reference agents(id) and were
     // added after this cleanup was written, so any agent carrying a mandate
     // could never be deleted (FK violation -> 500) -- and every agent built by
@@ -3909,10 +3915,14 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getAllOntologyConcepts() {
-    return db.select().from(ontologyConcepts);
+  /** Which concepts a caller may see: platform-wide ones, plus its own organization's when it names one. */
+  private ontologyScope(orgId?: string | null) {
+    return orgId ? or(isNull(ontologyConcepts.organizationId), eq(ontologyConcepts.organizationId, orgId)) : isNull(ontologyConcepts.organizationId);
   }
-  async getOntologyConcepts(industryId: string, subVertical?: string) {
+  async getAllOntologyConcepts(orgId?: string | null) {
+    return db.select().from(ontologyConcepts).where(this.ontologyScope(orgId));
+  }
+  async getOntologyConcepts(industryId: string, subVertical?: string, orgId?: string | null) {
     if (subVertical) {
       // Sub-vertical-specific concepts (subVerticals array contains this one)
       // plus industry-wide ones (subVerticals null/empty), so e.g. a Workers
@@ -3928,24 +3938,25 @@ export class DatabaseStorage implements IStorage {
           sql`cardinality(${ontologyConcepts.subVerticals}) = 0`,
           sql`${subVertical} = ANY(${ontologyConcepts.subVerticals})`,
         ),
+        this.ontologyScope(orgId),
       ));
     }
-    return db.select().from(ontologyConcepts).where(eq(ontologyConcepts.industryId, industryId));
+    return db.select().from(ontologyConcepts).where(and(eq(ontologyConcepts.industryId, industryId), this.ontologyScope(orgId)));
   }
-  async getOntologyConcept(id: string) {
-    const [concept] = await db.select().from(ontologyConcepts).where(eq(ontologyConcepts.id, id));
+  async getOntologyConcept(id: string, orgId?: string | null) {
+    const [concept] = await db.select().from(ontologyConcepts).where(and(eq(ontologyConcepts.id, id), this.ontologyScope(orgId)));
     return concept;
   }
   async createOntologyConcept(concept: InsertOntologyConcept) {
     const [created] = await db.insert(ontologyConcepts).values(concept).returning();
     return created;
   }
-  async updateOntologyConcept(id: string, data: Partial<OntologyConcept>) {
-    const [updated] = await db.update(ontologyConcepts).set(data).where(eq(ontologyConcepts.id, id)).returning();
+  async updateOntologyConcept(id: string, data: Partial<OntologyConcept>, orgId?: string | null) {
+    const [updated] = await db.update(ontologyConcepts).set(data).where(and(eq(ontologyConcepts.id, id), this.ontologyScope(orgId))).returning();
     return updated;
   }
-  async deleteOntologyConcept(id: string) {
-    const result = await db.delete(ontologyConcepts).where(eq(ontologyConcepts.id, id)).returning();
+  async deleteOntologyConcept(id: string, orgId?: string | null) {
+    const result = await db.delete(ontologyConcepts).where(and(eq(ontologyConcepts.id, id), this.ontologyScope(orgId))).returning();
     return result.length > 0;
   }
 
@@ -3973,7 +3984,7 @@ export class DatabaseStorage implements IStorage {
       .select({ e: getTableColumns(ontologyEnhancements) })
       .from(ontologyEnhancements)
       .innerJoin(ontologyConcepts, eq(ontologyEnhancements.conceptId, ontologyConcepts.id))
-      .where(eq(ontologyConcepts.industryId, industryId));
+      .where(and(eq(ontologyConcepts.industryId, industryId), isNull(ontologyConcepts.organizationId)));
     return rows.map((r) => r.e);
   }
   async createOntologyEnhancement(enhancement: InsertOntologyEnhancement) {

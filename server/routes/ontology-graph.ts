@@ -8,6 +8,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
+import { getOrgId } from "../auth";
 import { checkPermission } from "../permissions";
 import {
   PREDICATES, PREDICATE_GROUPS, groupOf, inverseOf, readsAs, normalizeRelationship, systemsOfRecordFromTags, normalizeSystemsOfRecord,
@@ -34,10 +35,12 @@ interface GraphEdge { from: string; to: string; predicate: string; group: string
  */
 router.get("/api/ontology/concepts/:id/graph", async (req, res) => {
   try {
-    const root = await storage.getOntologyConcept(req.params.id as string);
+    // The caller's own organization's concepts are part of the graph; another organization's never are.
+    const orgId = getOrgId(req);
+    const root = await storage.getOntologyConcept(req.params.id as string, orgId);
     if (!root) return res.status(404).json({ message: "Concept not found" });
     const depth = Math.max(1, Math.min(3, Number(req.query.depth) || 1));
-    const all = await storage.getOntologyConcepts(root.industryId);
+    const all = await storage.getOntologyConcepts(root.industryId, undefined, orgId);
     const byId = new Map(all.map((c) => [c.id, c]));
 
     // Every edge in the industry, read in both directions, keyed by source.

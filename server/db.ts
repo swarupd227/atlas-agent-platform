@@ -2248,6 +2248,36 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_agent_curator_runs_org ON agent_curator_runs (organization_id, created_at);
     `);
 
+    // Ontology concepts an agent proposed (see server/agent-ontology-proposals.ts), and the
+    // organization a concept belongs to. A null organization_id is a platform-wide concept,
+    // which is what every existing row is. Additive.
+    await client.query(`
+      ALTER TABLE ontology_concepts ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
+      CREATE INDEX IF NOT EXISTS idx_ontology_concepts_org ON ontology_concepts (organization_id) WHERE organization_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS ontology_proposals (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        agent_id VARCHAR NOT NULL,
+        kind VARCHAR NOT NULL DEFAULT 'add',
+        concept_id VARCHAR NOT NULL,
+        base_version INTEGER,
+        label TEXT NOT NULL,
+        industry_id VARCHAR NOT NULL,
+        payload JSONB NOT NULL,
+        content_hash VARCHAR NOT NULL,
+        status VARCHAR NOT NULL DEFAULT 'pending',
+        reason TEXT,
+        run_id VARCHAR,
+        approval_id VARCHAR,
+        decided_by VARCHAR,
+        decided_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_ontology_proposals_agent ON ontology_proposals (organization_id, agent_id, status);
+      CREATE INDEX IF NOT EXISTS idx_ontology_proposals_approval ON ontology_proposals (approval_id);
+    `);
+
     // What the gated dispatcher actually ran. Not audit_events: that write
     // takes a per-org advisory lock and appends to a hash chain, so one row
     // per tool call would serialise every dispatch in the org behind it.

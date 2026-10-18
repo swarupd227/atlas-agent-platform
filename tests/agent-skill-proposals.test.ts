@@ -585,7 +585,7 @@ describe("wiring", () => {
 
   it("the dispatcher exempts the tool from the allow-lists but not from the shadow gate", () => {
     const src = read("server/tool-dispatcher.ts");
-    expect(src).toMatch(/const exemptFromAllowLists = skillRead \|\| memoryPropose \|\| skillPropose;/);
+    expect(src).toMatch(/const exemptFromAllowLists = skillRead \|\| memoryPropose \|\| skillPropose \|\| ontologyPropose;/);
     expect(src).toMatch(/const skillPropose = tool\.serverId === BUILTIN_SKILL_PROPOSAL_SERVER_ID;/);
   });
 

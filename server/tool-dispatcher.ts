@@ -39,6 +39,7 @@ import { BUILTIN_SKILL_SERVER_ID } from "./builtin-skill-tools";
 import { BUILTIN_ATTACHMENT_SERVER_ID } from "./attachment-tool-defs";
 import { BUILTIN_MEMORY_SERVER_ID } from "./builtin-memory-tools";
 import { BUILTIN_SKILL_PROPOSAL_SERVER_ID } from "./skill-proposal-constants";
+import { BUILTIN_ONTOLOGY_PROPOSAL_SERVER_ID } from "./ontology-proposal-constants";
 import { compareAgainstBaseline, exceedsThreshold, parseJourneyStepFromFilename, baselineFilename, DEFAULT_DIFF_THRESHOLD_PERCENT } from "./services/screenshot-baseline";
 
 export type PolicyBundle = Awaited<ReturnType<typeof resolvePolicyBundle>>;
@@ -769,6 +770,13 @@ async function executeToolUnwrapped(tool: AvailableTool, args: Record<string, an
     return executeBuiltinSkillProposalTool(tool.toolName, args, { orgId, agentId, runId });
   }
 
+  // Built-in ontology proposals (server/builtin-ontology-proposal-tools.ts): files a
+  // request a person must approve; adds no concept any run or screen can read.
+  const { isBuiltinOntologyProposalTool, executeBuiltinOntologyProposalTool } = await import("./builtin-ontology-proposal-tools");
+  if (isBuiltinOntologyProposalTool(tool)) {
+    return executeBuiltinOntologyProposalTool(tool.toolName, args, { orgId, agentId, runId });
+  }
+
   // Enterprise connectors (GitHub, Slack, Salesforce, the SQL family, …) are
   // OUR OWN code and must be dispatched in-process, so the agent's org context
   // and its connection pin select the right encrypted credentials.
@@ -1045,7 +1053,9 @@ export async function dispatchToolCall(req: DispatchRequest): Promise<DispatchRe
   const memoryPropose = tool.serverId === BUILTIN_MEMORY_SERVER_ID;
   // Likewise the skill-proposal tool: it files a request, and a person decides.
   const skillPropose = tool.serverId === BUILTIN_SKILL_PROPOSAL_SERVER_ID;
-  const exemptFromAllowLists = skillRead || memoryPropose || skillPropose;
+  // And the ontology-proposal tool, for the same reason.
+  const ontologyPropose = tool.serverId === BUILTIN_ONTOLOGY_PROPOSAL_SERVER_ID;
+  const exemptFromAllowLists = skillRead || memoryPropose || skillPropose || ontologyPropose;
 
   const finish = (partial: Omit<DispatchResult, "redactedArgs" | "startedAt" | "completedAt" | "durationMs">): DispatchResult => {
     const durationMs = Date.now() - startMs;

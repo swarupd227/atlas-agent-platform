@@ -2263,6 +2263,14 @@ export type RegulatoryChange = typeof regulatoryChanges.$inferSelect;
 
 export const ontologyConcepts = pgTable("ontology_concepts", {
   id: varchar("id").primaryKey(),
+  /**
+   * Null: a platform-wide concept, shared by every organization in the industry (all of
+   * them were, before this column). Set: a concept of ONE organization, visible to it
+   * alone (see the org-aware reads in server/storage.ts, which show a caller without an
+   * organization platform-wide concepts only). Concepts agents propose land here, on
+   * approval (server/agent-ontology-proposals.ts).
+   */
+  organizationId: varchar("organization_id"),
   industryId: text("industry_id").notNull(),
   // Optional finer scoping within an industry (e.g. insurance's "Property &
   // Casualty" / "Workers Compensation" / "Life & Annuities"). An array, not a
@@ -2764,6 +2772,45 @@ export const agentCuratorRuns = pgTable("agent_curator_runs", {
   createdAt: timestamp("created_at").defaultNow(),
   finishedAt: timestamp("finished_at"),
 });
+
+/**
+ * An ontology concept an agent proposed, waiting for (or past) a person's decision.
+ *
+ * ontology_concepts has no status column and every reader would show a pending row, so
+ * nothing is stored there until a person approves: the proposed concept lives here, in
+ * `payload`, and the concept row is created (kind "add") or changed (kind "revise") only
+ * on approval, and only in the proposing agent's organization. For "revise", conceptId
+ * is that organization's own concept and baseVersion its version when the agent
+ * proposed, so an approval can refuse a revision of a concept that changed since.
+ */
+export const ontologyProposals = pgTable("ontology_proposals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  /** add | revise */
+  kind: varchar("kind").notNull().default("add"),
+  /** The concept a revision changes; for "add", the id the concept will have once approved. */
+  conceptId: varchar("concept_id").notNull(),
+  baseVersion: integer("base_version"),
+  label: text("label").notNull(),
+  industryId: varchar("industry_id").notNull(),
+  /** The proposed concept's fields: { category, description, properties, relationships, synonyms, tags }. */
+  payload: jsonb("payload").notNull(),
+  contentHash: varchar("content_hash").notNull(),
+  /** pending | approved | rejected | stale */
+  status: varchar("status").notNull().default("pending"),
+  reason: text("reason"),
+  runId: varchar("run_id"),
+  approvalId: varchar("approval_id"),
+  decidedBy: varchar("decided_by"),
+  decidedAt: timestamp("decided_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOntologyProposalSchema = createInsertSchema(ontologyProposals).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertOntologyProposal = z.infer<typeof insertOntologyProposalSchema>;
+export type OntologyProposal = typeof ontologyProposals.$inferSelect;
 
 export const insertAgentCuratorRunSchema = createInsertSchema(agentCuratorRuns).omit({ id: true, createdAt: true });
 export type InsertAgentCuratorRun = z.infer<typeof insertAgentCuratorRunSchema>;

@@ -139,8 +139,9 @@ ${JSON.stringify(existingRules, null, 2)}`,
     }
   });
 
-  router.get("/api/ontology-concepts/all", async (_req, res) => {
-    const concepts = await storage.getAllOntologyConcepts();
+  router.get("/api/ontology-concepts/all", async (req, res) => {
+    // Platform-wide concepts plus the caller's own organization's, never another's.
+    const concepts = await storage.getAllOntologyConcepts(getOrgId(req));
     res.json(concepts);
   });
 
