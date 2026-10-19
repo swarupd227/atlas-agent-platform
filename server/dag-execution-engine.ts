@@ -274,6 +274,8 @@ export interface NodePlanConfig {
    *  flag it on the output and go on (the default), or fail the step so the
    *  run's error strategy applies. */
   factsCheck?: "flag" | "fail";
+  /** The team's orchestrator node. It frames and delegates; its own answer is not the run's answer, so its fields are not promoted into shared state. */
+  isOrchestrator?: boolean;
 }
 
 export interface StateFieldDef {
@@ -628,6 +630,7 @@ export function computeWaves(
       decision: node.nodeType === "decision" ? parseDecisionConfig((node.config as any)?.decision) : null,
       precondition: node.nodeType === "edge_gate" ? (((node.config as any)?.precondition as RuleGroup | undefined) ?? null) : null,
       factsCheck: (node.config as any)?.factsCheck === "fail" ? "fail" : "flag",
+      isOrchestrator: (node.config as any)?.role === "orchestrator",
       refToolIds: (node.refToolIds as string[] | null) || null,
       revision: parseRevisionPolicy((node.config as any)?.revision, node.id, nodes),
     };
@@ -1148,7 +1151,7 @@ function getHandoffTargetLabels(nodeId: string, plan: ComputedWavePlan): string[
  * Build the structured text input for an agent node.
  * The agent receives the full accumulated state so it can read prior wave outputs.
  */
-function buildAgentInput(
+export function buildAgentInput(
   nodeId: string,
   currentState: Record<string, any>,
   nodeConfig: NodePlanConfig,
@@ -1168,6 +1171,16 @@ function buildAgentInput(
   sections.push(`Role: ${nodeConfig.label}`);
   sections.push(`Output Key: ${nodeConfig.stateKey}`);
   sections.push(``);
+
+  // The orchestrator runs first and used to answer the whole task: live
+  // 2026-10-19 it pre-decided a carrier before the comparison step ran, and
+  // the steps after the approval gate delivered its pick rather than the one a
+  // person had approved. Its part is to frame the work, not to settle it.
+  if (nodeConfig.isOrchestrator) {
+    sections.push(`## YOUR PART: FRAME AND DELEGATE`);
+    sections.push(`You are the orchestrator. The steps after you do the work, and a person may approve their result. Restate the request, say what each later step needs from it and what is missing, and stop there. Do not produce the recommendation, verdict, ranking or figures those steps exist to produce: nothing you conclude here is the decision.`);
+    sections.push(``);
+  }
 
   if (handoffTargets && handoffTargets.length > 0) {
     sections.push(`## HANDOFF ROUTING`);
@@ -1216,6 +1229,14 @@ function buildAgentInput(
     if (key === "request" && userInput) continue;
     // Another node's output reaches this node only along edges (see visibleStateKeys).
     if (stateScope && stateScope.owned.has(key) && !stateScope.visible.has(key)) continue;
+    // A field promoted out of another step's JSON travels with that step's
+    // provenance (mergeWaveOutputs) and reaches this node only when that
+    // step's own output does. Promoted fields used to reach every later
+    // node with no scoping and no attribution: live 2026-10-19 a run carried
+    // forty of them, two of which named different recommended carriers, and
+    // the notice drafter picked the orchestrator's.
+    const promotedBy = (currentState[PROMOTED_FIELDS_STATE_KEY] as Record<string, string> | undefined)?.[key];
+    if (stateScope && promotedBy && !stateScope.visible.has(promotedBy)) continue;
     sections.push(`## STATE: ${key}`);
     sections.push(typeof value === "object" ? JSON.stringify(value, null, 2) : String(value));
     sections.push(``);
@@ -1429,15 +1450,33 @@ export function applyReducer(
 }
 
 /**
+ * Which step each promoted field came from: field name -> the state key of
+ * the step whose JSON it was parsed out of. A `__` key, so it reaches the run
+ * record and the re-run replay but no agent prompt (buildAgentInput skips the
+ * prefix); buildAgentInput reads it to show a promoted field only where its
+ * step's own output is visible.
+ */
+export const PROMOTED_FIELDS_STATE_KEY = "__promoted";
+
+/** The state keys of the plan's orchestrator nodes, whose fields are never promoted. */
+export function orchestratorStateKeys(plan: ComputedWavePlan): Set<string> {
+  return new Set(Object.values(plan.nodeConfig).filter((nc) => nc.isOrchestrator && nc.stateKey).map((nc) => nc.stateKey));
+}
+
+/**
  * Merge all node outputs from a wave into the current shared state. Exported
  * for the re-run of a finished run, which replays the kept waves through it.
+ * `noPromotion` names the steps whose JSON fields stay under their own key:
+ * the orchestrator's, whose first-wave answer is a framing, not a result.
  */
 export function mergeWaveOutputs(
   currentState: Record<string, any>,
   nodeResults: NodeExecutionResult[],
   stateSchema: Record<string, StateFieldDef>,
+  noPromotion?: Set<string>,
 ): Record<string, any> {
   const merged = { ...currentState };
+  const provenance: Record<string, string> = { ...((merged[PROMOTED_FIELDS_STATE_KEY] as Record<string, string> | undefined) ?? {}) };
 
   for (const result of nodeResults) {
     for (const [key, value] of Object.entries(result.output)) {
@@ -1466,7 +1505,7 @@ export function mergeWaveOutputs(
       // since only finalState gets passed up (see executeTeamReferenceNode).
       // Promoting them here means they survive into finalState and keep
       // working once nested one or more levels deep.
-      if (typeof value === "string") {
+      if (typeof value === "string" && !noPromotion?.has(key)) {
         const extracted = extractStructuredOutput(value);
         if (extracted) {
           for (const [extractedKey, extractedValue] of Object.entries(extracted)) {
@@ -1478,11 +1517,13 @@ export function mergeWaveOutputs(
             }
             const extractedReducer: StateFieldDef["reducer"] = extractedFieldDef?.reducer || "last_wins";
             merged[extractedKey] = applyReducer(merged[extractedKey], extractedValue, extractedReducer);
+            provenance[extractedKey] = key;
           }
         }
       }
     }
   }
+  if (Object.keys(provenance).length > 0) merged[PROMOTED_FIELDS_STATE_KEY] = provenance;
 
   return merged;
 }
@@ -1659,7 +1700,7 @@ export class DAGExecutionEngine {
       // and nodeOutcomes the moment its upstream settles, so a missing
       // deliverable or a withdrawn stale file must already be recorded. The
       // outcome delete above must come first -- a missing file is set after it.
-      liveState = recordFileOutcome(nr, mergeWaveOutputs(liveState, [nr], config.stateSchema));
+      liveState = recordFileOutcome(nr, mergeWaveOutputs(liveState, [nr], config.stateSchema, orchestratorStateKeys(config.executionPlan)));
     };
 
     // Starts a node (or records its skip) and, once it settles, admits
@@ -1779,7 +1820,7 @@ export class DAGExecutionEngine {
       // Per-node bookkeeping happened when each node settled (recordSettled).
       for (const id of runNodes) inFlight.delete(id);
 
-      currentState = mergeWaveOutputs(currentState, nodeResults, config.stateSchema);
+      currentState = mergeWaveOutputs(currentState, nodeResults, config.stateSchema, orchestratorStateKeys(config.executionPlan));
       // Each node's file pass was counted when it settled; only the withdrawal
       // of a stale file is applied to this state (see withdrawStaleFile).
       for (const nr of nodeResults) currentState = withdrawStaleFile(nr.nodeId, currentState);
@@ -3556,6 +3597,26 @@ export class DAGExecutionEngine {
     // told the broker, and recorded a legitimate decision as a failed run.
     const declineRoute = !result.approved && this.gateHasDeclinePath(nodeId, config);
 
+    // What was approved, named and copied onto the gate's own output, so a
+    // later step acts on the decision a person made rather than on an earlier
+    // step's draft of it. Live 2026-10-19 the steps after an approved
+    // placement delivered the carrier the orchestrator had pre-decided in its
+    // first wave, not the one the approver had just confirmed; the gate's
+    // output said only that something was approved.
+    const approvedDecision = result.approved
+      ? {
+          decidedOn: upstreamKeys,
+          approvedOutput: Object.fromEntries(upstreamKeys.map((k) => {
+            const raw = currentState[k];
+            const structured = raw && typeof raw === "object" && !Array.isArray(raw)
+              ? (raw as Record<string, unknown>)
+              : (typeof raw === "string" ? extractStructuredOutput(raw) : null);
+            return [k, structured ?? asText(raw).slice(0, 2000)];
+          })),
+          standing: "This is the decision that stands. Later steps act on it, not on any earlier step's draft, verdict or recommendation.",
+        }
+      : {};
+
     return {
       nodeId,
       agentId: "",
@@ -3577,7 +3638,7 @@ export class DAGExecutionEngine {
       // and the run recorded a decision no reviewer had made. An author can now
       // write a condition on it and give expiry its own path.
       output: result.approved || declineRoute
-        ? { [nc.stateKey]: { approved: !!result.approved, decidedBy: result.decidedBy, approvalId: result.approvalId || approvalId || undefined, ...(result.expired ? { expired: true } : {}), ...(result.approved ? {} : { reason: result.reason || undefined }) } }
+        ? { [nc.stateKey]: { approved: !!result.approved, decidedBy: result.decidedBy, approvalId: result.approvalId || approvalId || undefined, ...(result.expired ? { expired: true } : {}), ...(result.approved ? approvedDecision : { reason: result.reason || undefined }) } }
         : {},
       // Only an error when there is nowhere to go. A decline that follows its
       // own branch is not an error, and reporting one would put every declined
@@ -4350,7 +4411,7 @@ export async function rerunTeamAgentDagRunFrom(
   // kept wave merged in the engine's own way, so a field that appended or
   // summed in the parent has appended or summed here.
   let initialState: Record<string, any> = { ...((parent.initialState as Record<string, any>) || {}) };
-  for (const wr of prior) initialState = mergeWaveOutputs(initialState, wr.nodes, stateSchema);
+  for (const wr of prior) initialState = mergeWaveOutputs(initialState, wr.nodes, stateSchema, orchestratorStateKeys(wavePlan));
 
   const dagRun = await storage.createDagExecutionRun({
     teamAgentId,

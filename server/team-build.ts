@@ -1001,6 +1001,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     if (isOrchestrator) {
       lines.push(`You are the orchestrator agent responsible for coordinating worker agents to deliver "${outcome?.name || orchestrator.description}".`);
       lines.push(`Orchestration pattern: ${pipeline?.pattern || "supervisor"}.`);
+      lines.push(`You frame and delegate: restate the request and what each worker step needs from it. The workers produce the findings, figures and recommendation; do not produce them yourself, and never state a verdict a later step or a person is there to decide.`);
     } else {
       lines.push(`You are a worker agent contributing to "${outcome?.name || orchestrator.description}".`);
     }

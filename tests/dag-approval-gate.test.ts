@@ -135,7 +135,8 @@ describe("DAGExecutionEngine — approval gate execution", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.finalState.gate_result).toEqual({ approved: true, decidedBy: "user-1" });
+    // toMatchObject: an approved gate also writes decidedOn, approvedOutput and a standing sentence saying what was approved.
+    expect(result.finalState.gate_result).toMatchObject({ approved: true, decidedBy: "user-1" });
   });
 
   it("carries the approval's own id into state, so a later write can cite it", async () => {
@@ -157,7 +158,7 @@ describe("DAGExecutionEngine — approval gate execution", () => {
       teamAgentId: "team-1",
     });
 
-    expect(result.finalState.gate_result).toEqual({ approved: true, decidedBy: "user-1", approvalId: "apr-77" });
+    expect(result.finalState.gate_result).toMatchObject({ approved: true, decidedBy: "user-1", approvalId: "apr-77" });
   });
 
   it("falls back to the id the gate was created with when the wait doesn't report one", async () => {
@@ -177,7 +178,7 @@ describe("DAGExecutionEngine — approval gate execution", () => {
       teamAgentId: "team-1",
     });
 
-    expect(result.finalState.gate_result).toEqual({ approved: true, decidedBy: "user-1", approvalId: "approval-123" });
+    expect(result.finalState.gate_result).toMatchObject({ approved: true, decidedBy: "user-1", approvalId: "approval-123" });
   });
 
   it("fires onApprovalPending with the node id and created approval id before the wait resolves", async () => {
