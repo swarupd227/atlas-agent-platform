@@ -1805,6 +1805,12 @@ export async function seedDatabase() {
         category: "decisions",
       },
       {
+        key: "ANTHROPIC_PROMPT_CACHING",
+        value: "off",
+        description: "on = requests to Claude on the Anthropic API ask Anthropic to keep the long, repeated start of the prompt (the tool list, the system prompt, and the conversation inside a tool loop) for five minutes, so the next call reads it back at a tenth of the input price. The first call that writes it costs 25% more on that part, so it pays when a prefix is reused within five minutes. Cached tokens are counted and priced at their own rates. Not used when Claude is answered by Amazon Bedrock. A change takes effect within about thirty seconds. off = requests are sent as before.",
+        category: "decisions",
+      },
+      {
         key: "AGENT_RUN_REVIEW",
         value: "off",
         description: "on = after a finished run of an agent that has opted in (its Memory section), a model with no tools reads a masked digest of the run and may SUGGEST a memory note or a skill. Suggestions are filed as approvals and change nothing until a person decides; only the kinds the agent has itself enabled are ever suggested. Each review costs a model call, bounded by AGENT_RUN_REVIEW_DAILY_BUDGET_USD. off = no run is reviewed.",

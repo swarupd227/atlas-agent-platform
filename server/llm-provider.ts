@@ -5,6 +5,7 @@ import { ANTHROPIC_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, awaitStreamWi
 import { currentLlmAbortSignal } from "./llm-abort-context";
 import type { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import { resolveProviderKey } from "./llm-provider-keys";
+import { applyPromptCaching, promptCachingActive, readAnthropicUsage, recordCacheUsage, cacheResultFields, CACHE_READ_MULTIPLIER, CACHE_WRITE_MULTIPLIER } from "./anthropic-prompt-cache";
 import { bedrockChatBlocksFallback, getBedrockChatClient } from "./bedrock-anthropic";
 import { AwsOnlyBlockedError, awsOnlyActive } from "./ai-egress";
 
@@ -170,6 +171,13 @@ export interface LLMCompletionResult {
    * generation_metadata_records.
    */
   decodePath?: "strict_native" | "legacy_prompted";
+  /**
+   * Anthropic prompt caching (server/anthropic-prompt-cache.ts): input tokens this call read from the
+   * cache, and wrote to it. Only present when the call touched the cache. `tokensUsed.prompt` already
+   * counts them, and `costUsd` prices them at their own rates.
+   */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
 }
 
 export interface LLMEmbeddingResult {
@@ -206,7 +214,7 @@ export interface LLMProviderInfo {
 // version is recorded in run provenance and exposed at
 // GET /api/llm-providers/pricing. Rates are provider list prices per 1k tokens.
 // ---------------------------------------------------------------------------
-export const PRICE_TABLE_VERSION = "2026-09-29";
+export const PRICE_TABLE_VERSION = "2026-10-19";
 
 // Conservative fallback when a model id is missing from the table — better to
 // overestimate spend than silently record $0 (rates ~ Claude Sonnet tier).
@@ -266,6 +274,8 @@ export function getPriceTable() {
     version: PRICE_TABLE_VERSION,
     unit: "USD per 1k tokens",
     fallbackRates: FALLBACK_RATES,
+    // Anthropic prompt caching: input read from the cache is billed at the first rate, input written to it at the second, both as multiples of the model's input price.
+    anthropicCacheMultipliers: { read: CACHE_READ_MULTIPLIER, write5m: CACHE_WRITE_MULTIPLIER },
     providers: {
       openai: { models: OPENAI_MODELS, embeddingModels: OPENAI_EMBEDDING_MODELS },
       anthropic: { models: ANTHROPIC_MODELS },
@@ -1368,6 +1378,10 @@ class AnthropicProvider implements LLMProvider {
     let completionTokens = 0;
     let costUsd = 0;
     let containerId: string | undefined = options?.anthropicContainer?.id;
+    let cacheReadTokens = 0;
+    let cacheCreationTokens = 0;
+    // Prompt caching (server/anthropic-prompt-cache.ts): off unless the platform setting is on and Claude is not answered by Bedrock.
+    const cacheOn = await promptCachingActive();
     let stopReason: string | undefined;
     // Sandbox output echoed back across continuations so far (see boundPausedTurnContent).
     let echoedCodeExecChars = 0;
@@ -1379,6 +1393,8 @@ class AnthropicProvider implements LLMProvider {
         ? { ...(options?.anthropicContainer ?? {}), id: containerId }
         : options?.anthropicContainer;
 
+      // Rebuilt every leg: a continuation grows the conversation, and the end-of-conversation breakpoint moves with it.
+      const cachedReq = cacheOn ? applyPromptCaching({ system: systemPrompt, tools: anthropicTools as any, messages: anthropicMessages as any }) : undefined;
       let response: Anthropic.Message;
       try {
         // Streamed and watched for silence, not awaited whole: a stalled
@@ -1391,9 +1407,9 @@ class AnthropicProvider implements LLMProvider {
               {
                 model,
                 max_tokens: options?.maxTokens || 4096,
-                ...(systemPrompt ? { system: systemPrompt } : {}),
-                messages: anthropicMessages,
-                ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
+                ...(systemPrompt ? { system: (cachedReq?.system ?? systemPrompt) as any } : {}),
+                messages: (cachedReq?.messages ?? anthropicMessages) as Anthropic.MessageParam[],
+                ...(anthropicTools ? { tools: (cachedReq?.tools ?? anthropicTools) as Anthropic.Tool[] } : {}),
                 ...(forcedSchemaTool
                   ? { tool_choice: { type: "tool" as const, name: forcedSchemaTool.name } }
                   : anthropicToolChoice(options, anthropicTools)),
@@ -1434,11 +1450,16 @@ class AnthropicProvider implements LLMProvider {
       generatedFiles.push(...extracted.generatedFiles);
       codeExecutionTrace.push(...extracted.codeExecutionTrace);
 
-      const legPrompt = response.usage?.input_tokens || 0;
-      const legCompletion = response.usage?.output_tokens || 0;
+      // Cached input is reported apart from input_tokens and billed at its own rates (server/anthropic-prompt-cache.ts).
+      const legUsage = readAnthropicUsage(response.usage);
+      const legPrompt = legUsage.promptTokens;
+      const legCompletion = legUsage.completionTokens;
       promptTokens += legPrompt;
       completionTokens += legCompletion;
-      costUsd += estimateCost(legPrompt, legCompletion, ANTHROPIC_MODELS, model);
+      cacheReadTokens += legUsage.cacheReadTokens;
+      cacheCreationTokens += legUsage.cacheCreationTokens;
+      recordCacheUsage(legUsage);
+      costUsd += estimateCost(legUsage.billedPromptTokens, legCompletion, ANTHROPIC_MODELS, model);
       if ((response as any).container?.id) containerId = (response as any).container.id;
       stopReason = response.stop_reason ?? undefined;
 
@@ -1468,6 +1489,7 @@ class AnthropicProvider implements LLMProvider {
       toolCalls,
       tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
       costUsd,
+      ...cacheResultFields(cacheReadTokens, cacheCreationTokens),
       rawAssistantMessage: {
         content: textContent,
         tool_calls: toolCalls.map((tc) => ({
@@ -1586,6 +1608,10 @@ class AnthropicProvider implements LLMProvider {
     let completionTokens = 0;
     let costUsd = 0;
     let containerId: string | undefined = options?.anthropicContainer?.id;
+    let cacheReadTokens = 0;
+    let cacheCreationTokens = 0;
+    // Prompt caching (server/anthropic-prompt-cache.ts): see complete().
+    const cacheOn = await promptCachingActive();
     let stopReason: string | undefined;
     let echoedCodeExecChars = 0;
 
@@ -1600,15 +1626,16 @@ class AnthropicProvider implements LLMProvider {
         // MessageStream withRetry's generic expects -- this is the same runtime
         // call shape the Anthropic SDK documents for header overrides, just not
         // the specific overload this pinned SDK version's .d.ts picks by default.
+        const cachedReq = cacheOn ? applyPromptCaching({ system: systemPrompt, tools: anthropicTools as any, messages: anthropicMessages as any }) : undefined;
         const stream: MessageStream = await withRetry(
           () =>
             (client.messages.stream as any)(
               {
                 model,
                 max_tokens: options?.maxTokens || 4096,
-                ...(systemPrompt ? { system: systemPrompt } : {}),
-                messages: anthropicMessages,
-                ...(anthropicTools ? { tools: anthropicTools as Anthropic.Tool[] } : {}),
+                ...(systemPrompt ? { system: (cachedReq?.system ?? systemPrompt) as any } : {}),
+                messages: (cachedReq?.messages ?? anthropicMessages) as Anthropic.MessageParam[],
+                ...(anthropicTools ? { tools: (cachedReq?.tools ?? anthropicTools) as Anthropic.Tool[] } : {}),
                 ...(forcedSchemaTool
                   ? { tool_choice: { type: "tool" as const, name: forcedSchemaTool.name } }
                   : anthropicToolChoice(options, anthropicTools)),
@@ -1642,11 +1669,15 @@ class AnthropicProvider implements LLMProvider {
         generatedFiles.push(...extracted.generatedFiles);
         codeExecutionTrace.push(...extracted.codeExecutionTrace);
 
-        const legPrompt = finalMsg.usage.input_tokens || 0;
-        const legCompletion = finalMsg.usage.output_tokens || 0;
+        const legUsage = readAnthropicUsage(finalMsg.usage);
+        const legPrompt = legUsage.promptTokens;
+        const legCompletion = legUsage.completionTokens;
         promptTokens += legPrompt;
         completionTokens += legCompletion;
-        costUsd += estimateCost(legPrompt, legCompletion, ANTHROPIC_MODELS, model);
+        cacheReadTokens += legUsage.cacheReadTokens;
+        cacheCreationTokens += legUsage.cacheCreationTokens;
+        recordCacheUsage(legUsage);
+        costUsd += estimateCost(legUsage.billedPromptTokens, legCompletion, ANTHROPIC_MODELS, model);
         if ((finalMsg as any).container?.id) containerId = (finalMsg as any).container.id;
         stopReason = finalMsg.stop_reason ?? undefined;
 
@@ -1676,6 +1707,7 @@ class AnthropicProvider implements LLMProvider {
         toolCalls,
         tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
         costUsd,
+        ...cacheResultFields(cacheReadTokens, cacheCreationTokens),
         rawAssistantMessage: {
           content: fullContent,
           tool_calls: toolCalls.map((tc) => ({

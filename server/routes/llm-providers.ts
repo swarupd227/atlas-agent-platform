@@ -2,6 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { z, ZodError } from "zod";
 import { getProvider, getAvailableProviders, getPriceTable } from "../llm-provider";
+import { cacheStats } from "../anthropic-prompt-cache";
 import { getOrgId } from "../auth";
 import { checkPermission, platformOnly } from "../permissions";
 import { insertAgentTriggerSchema } from "@shared/schema";
@@ -30,6 +31,13 @@ const NOT_YET_WIRED_PROVIDERS = new Set<LlmProviderName>(["google", "azure_opena
   // traces are auditable against the version in effect.
   router.get("/api/llm-providers/pricing", async (_req, res) => {
     res.json(getPriceTable());
+  });
+
+  // Prompt caching counters (server/anthropic-prompt-cache.ts): how many Claude calls read from or wrote to the
+  // cache, and what share of input came from it. In memory for this process; platform-wide, so the platform's own
+  // administrators only.
+  router.get("/api/llm-providers/cache-stats", platformOnly(checkPermission("manage_security")), async (_req, res) => {
+    res.json(cacheStats());
   });
 
   router.get("/api/llm-providers/health", async (req, res) => {
