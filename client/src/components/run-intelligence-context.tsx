@@ -20,6 +20,13 @@ import { History, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 
 export interface PriorContext {
+  /**
+   * Whether the step looked for prior decisions. Absent on runs from before the
+   * engine recorded a skip (870a17bf): then the record existed only when the
+   * step had found subjects, so a missing field means it DID look.
+   */
+  looked?: boolean;
+  skipReason?: "layer_off" | "no_subject";
   text: string;
   subjects: string[];
   items: Array<{ subject: string; subjects: string[]; tier: string; matchAxis?: string; runId: string; decidedAt: string | null }>;
@@ -54,8 +61,14 @@ const shortRun = (id: string) => id.slice(0, 8);
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "date not recorded");
 
 export function RunIntelligenceContext({ runId, steps, runIsTerminal }: { runId: string; steps: ContextStep[]; runIsTerminal: boolean }) {
-  const looked = steps.filter((s) => s.priorContext);
-  const subjects = Array.from(new Set(looked.flatMap((s) => s.priorContext!.subjects))).sort();
+  const looked = steps.filter((s) => s.priorContext && s.priorContext.looked !== false);
+  const noSubject = steps.filter((s) => s.priorContext?.skipReason === "no_subject").length;
+  const layerOff = steps.filter((s) => s.priorContext?.skipReason === "layer_off").length;
+  const skippedLine = [
+    noSubject ? `${noSubject} step${noSubject !== 1 ? "s" : ""} named no business object` : "",
+    layerOff ? `the context layer was off for ${layerOff} step${layerOff !== 1 ? "s" : ""}` : "",
+  ].filter(Boolean).join("; ");
+  const subjects = Array.from(new Set(looked.flatMap((s) => s.priorContext!.subjects ?? []))).sort();
 
   // Records are written when the run finishes (un-awaited), so a just-finished
   // run may need a moment; poll briefly rather than report "none" too early.
@@ -78,8 +91,11 @@ export function RunIntelligenceContext({ runId, steps, runIsTerminal }: { runId:
       <div className="rounded-xl border bg-card p-4 flex flex-col gap-1.5" data-testid="card-intelligence-context">
         <h2 className="text-base font-semibold flex items-center gap-2" style={DISPLAY}><History className="w-4 h-4" /> Intelligence Context</h2>
         <p className="text-sm text-muted-foreground" data-testid="text-intelligence-context-none">
-          No step of this run reached a business object the context layer recognises (a submission, policy, binder, account, broker or agency id), so no prior decisions were looked up.
+          {layerOff && !noSubject
+            ? "The context layer was off for this run, so no prior decisions were looked up."
+            : "No step of this run reached a business object the context layer recognises (a submission, policy, binder, account, broker or agency id), so no prior decisions were looked up."}
         </p>
+        {skippedLine && <p className="text-xs text-muted-foreground" data-testid="text-intelligence-skipped">{skippedLine}.</p>}
       </div>
     );
   }
@@ -94,6 +110,8 @@ export function RunIntelligenceContext({ runId, steps, runIsTerminal }: { runId:
           {looked.length} step{looked.length !== 1 ? "s" : ""} looked · {shownCount} prior decision{shownCount !== 1 ? "s" : ""} shown
         </span>
       </div>
+
+      {skippedLine && <p className="text-xs text-muted-foreground" data-testid="text-intelligence-skipped">Not looked up: {skippedLine}.</p>}
 
       <div className="flex flex-wrap gap-1.5" data-testid="list-intelligence-subjects">
         {subjects.map((s) => (
