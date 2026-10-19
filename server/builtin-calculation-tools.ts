@@ -45,9 +45,12 @@ const LOSS_FORECAST_SCHEMA = {
     rule: { type: "string", enum: ["independent_product", "conditional_product", "exclusive_sum", "union"], description: "probability: how to combine the probabilities given. independent_product = P(A)xP(B); conditional_product = P(A)xP(B given A); exclusive_sum = P(A)+P(B) for mutually exclusive events; union = P(A)+P(B)-P(A)xP(B) for independent events that can both occur." },
     probabilities: { type: "array", items: { type: "number" }, description: "probability: the probabilities to combine, as fractions (0.05) or percents (5); two or more." },
     conditionalProbability: { type: "number", description: "probability, conditional_product: P(B given A), fraction or percent." },
-    x: { type: "array", items: { type: "number" }, description: "regression: the independent variable, one per period (payroll, fleet size, miles)." },
+    x: { type: "array", items: { type: "number" }, description: "regression: the independent variable, one per period (payroll, fleet size, miles). Omit x and y when the line is already fitted and give slope and intercept instead." },
     y: { type: "array", items: { type: "number" }, description: "regression: the dependent variable, one per period (claims)." },
-    predictAt: { type: "array", items: { type: "number" }, description: "regression: the x values to forecast for (next year's payroll)." },
+    predictAt: { type: "array", items: { type: "number" }, description: "regression: the x values to forecast for (next year's payroll), in the SAME unit as x or as the fitted line's X." },
+    slope: { type: "number", description: "regression with a line already fitted: B1 (e.g. 0.022 derailments per thousand miles). With intercept, replaces x and y." },
+    intercept: { type: "number", description: "regression with a line already fitted: B0 (e.g. 2.31)." },
+    xUnit: { type: "string", description: "regression: the unit X is measured in (e.g. 'thousands of miles'); echoed so the forecast states it and the input is converted to it first." },
     mean: { type: "number", description: "distribution: the mean of the loss count or severity." },
     standardDeviation: { type: "number", description: "distribution: its standard deviation." },
     confidence: { type: "number", enum: [90, 95, 99], description: "distribution or regression: the confidence level for the interval; default 95." },
@@ -60,7 +63,13 @@ const LOSS_FORECAST_SCHEMA = {
 const FINANCIAL_ANALYSIS_SCHEMA = {
   type: "object",
   properties: {
-    method: { type: "string", enum: ["present_value", "future_value", "npv", "irr", "bid_comparison"], description: "Which calculation to run." },
+    method: { type: "string", enum: ["present_value", "future_value", "npv", "irr", "bid_comparison", "value_at_risk"], description: "Which calculation to run." },
+    mean: { type: "number", description: "value_at_risk, parametric: the mean change in value per period (0 when unknown), as an amount or as a fraction of the portfolio." },
+    standardDeviation: { type: "number", description: "value_at_risk, parametric: the standard deviation of the change in value per period, amount or fraction." },
+    series: { type: "array", items: { type: "number" }, description: "value_at_risk, historical: the observed changes in value per period (gains positive, losses negative), amounts or fractions; replaces mean and standardDeviation." },
+    confidence: { type: "number", enum: [90, 95, 99], description: "value_at_risk: the confidence level; default 95 (a 5 percent chance the loss is worse)." },
+    horizonPeriods: { type: "number", description: "value_at_risk, parametric: the holding period in the series' periods; default 1. The standard deviation scales by its square root." },
+    portfolioValue: { type: "number", description: "value_at_risk, optional: the portfolio's value, to turn a fractional VaR into an amount." },
     amount: { type: "number", description: "present_value: the future amount to discount. future_value: the present amount to compound." },
     rate: { type: "number", description: "The interest or discount rate per period, as a fraction (0.05) or a percent (5). present_value, future_value, npv and bid_comparison need it; irr compares against it when given." },
     periods: { type: "number", description: "present_value / future_value: the number of periods (years); default 1. bid_comparison: when deductibles and losses are paid, in periods from the start; default 1 (end of the year)." },
@@ -80,7 +89,7 @@ const TOOL_DEFS: Record<string, AvailableTool> = {
     toolName: LOSS_FORECAST_TOOL,
     toolDescription:
       "Compute a loss forecast deterministically and get the arithmetic back. method=probability: chance of loss from events and exposure units (P = X/N) and the combination of two or more probabilities by rule (independent product, conditional product, mutually exclusive sum, or the at-least-one union that subtracts the overlap). " +
-      "method=regression: least-squares fit of y on x with slope, intercept, R-square and a prediction with its interval at the x values asked for. method=distribution: a normal-distribution interval around a mean with a standard deviation at 90, 95 or 99 percent, and the loss interval when a severity is given. " +
+      "method=regression: least-squares fit of y on x with slope, intercept, R-square and a prediction with its interval at the x values asked for; or, with slope and intercept already known, the line applied at predictAt (state xUnit and convert the input to it first). method=distribution: a normal-distribution interval around a mean with a standard deviation at 90, 95 or 99 percent, and the loss interval when a severity is given. " +
       "Use it for every probability, forecast or expected-loss figure instead of computing in prose; report the arithmetic lines it returns.",
     toolInputSchema: LOSS_FORECAST_SCHEMA,
   },
@@ -93,6 +102,7 @@ const TOOL_DEFS: Record<string, AvailableTool> = {
       "Time-value-of-money arithmetic for a decision, computed deterministically with the working returned. method=present_value discounts an amount n periods at a rate; method=future_value compounds one. " +
       "method=npv: the net present value of a project from its cost and the net cash flow of each future period, with each period's present value shown; method=irr: the internal rate of return of the same cash flows, compared with the required rate when one is given. " +
       "method=bid_comparison: for coverage bids that differ in premium and per-claim deductible, the present value of expected outflows under each (premium at the start, deductibles on the forecast losses by size band at the end) and the lowest. " +
+      "method=value_at_risk: the worst probable loss over a holding period at 90, 95 or 99 percent confidence, parametric from a mean and standard deviation or historical from a series of observed changes, as an amount when a portfolio value is given. " +
       "Use it for every present value, NPV, IRR or bid figure instead of computing in prose; quote the arithmetic lines it returns, and list benefits that cannot be quantified beside the result, never inside it.",
     toolInputSchema: FINANCIAL_ANALYSIS_SCHEMA,
   },
@@ -299,6 +309,67 @@ export function compareCoverageBids(rate: number, bids: CoverageBid[], lossBands
   return { rate, periods, expectedLosses, bids: results.map(({ parts: _p, ...rest }) => rest), recommended: best.name, arithmetic } as const;
 }
 
+/**
+ * Applies a line somebody already fitted: Y = intercept + slope x X at each x
+ * asked for. The unit of X is echoed because that is where the mistake lives:
+ * a line fitted on thousands of miles, fed 640,000 miles, forecasts 14,000
+ * derailments instead of 16.
+ */
+export function applyRegressionLine(slope: number, intercept: number, predictAt: number[], xUnit?: string) {
+  if (!Number.isFinite(slope) || !Number.isFinite(intercept)) return { error: "slope and intercept must be numbers." } as const;
+  if (!Array.isArray(predictAt) || predictAt.length === 0 || !predictAt.every((v) => Number.isFinite(v))) return { error: "predictAt must list the x values to forecast for, in the unit the line was fitted on." } as const;
+  const predictions = predictAt.map((x0) => ({ x: x0, forecast: round(intercept + slope * x0, 3) }));
+  const unit = xUnit ? ` (x in ${xUnit})` : "";
+  return {
+    slope, intercept, xUnit: xUnit ?? null, predictions,
+    arithmetic: [
+      `Y = ${intercept} + ${slope} x X${unit}`,
+      ...predictions.map((p) => `at X = ${p.x}${unit}: ${intercept} + ${slope} x ${p.x} = ${p.forecast}`),
+      xUnit ? `X is measured in ${xUnit}; an input in other units must be converted to ${xUnit} before it is substituted.` : "State the unit X is measured in and convert the input to it before substituting.",
+      "Assumes the fitted relationship holds at the new X; an X outside the fitted range is an extrapolation.",
+    ],
+  } as const;
+}
+
+/** One-tailed z for the worst-probable-loss reading: 5 percent of outcomes are worse than the 95 percent VaR. */
+const Z_ONE_TAILED: Record<number, number> = { 90: 1.282, 95: 1.645, 99: 2.326 };
+
+/**
+ * Value at risk: the worst probable loss over a holding period at a stated
+ * confidence, under ordinary conditions. Parametric from a mean and standard
+ * deviation of the change in value (normal, scaled by the square root of the
+ * horizon), or historical from the observed changes (the loss at the
+ * (1 - confidence) quantile, nearest rank). Fractions become amounts when a
+ * portfolio value is given.
+ */
+export function valueAtRisk(p: { mean?: number; standardDeviation?: number; series?: number[]; confidence?: 90 | 95 | 99; horizonPeriods?: number; portfolioValue?: number }) {
+  const confidence = p.confidence ?? 95; const z = Z_ONE_TAILED[confidence] ?? 1.645; const tail = round(100 - confidence, 4);
+  const h = p.horizonPeriods === undefined ? 1 : Number(p.horizonPeriods);
+  if (!Number.isFinite(h) || h <= 0) return { error: "horizonPeriods must be a positive number of periods." } as const;
+  const scale = (v: number, fraction: boolean) => (fraction && p.portfolioValue !== undefined && Number.isFinite(p.portfolioValue) ? v * p.portfolioValue : v);
+  const reading = (amount: number, horizon: string) => `Worst probable loss: there is a ${tail} percent probability that the loss over ${horizon} exceeds ${round(amount, 2)}; at ${confidence} percent confidence the loss is not expected to exceed it.`;
+  if (Array.isArray(p.series) && p.series.length > 0) {
+    if (!p.series.every((v) => Number.isFinite(v))) return { error: "series must hold numbers only (gains positive, losses negative)." } as const;
+    if (p.series.length < 10) return { error: `historical VaR needs at least 10 observations; got ${p.series.length}.` } as const;
+    const sorted = [...p.series].sort((a, b) => a - b); const n = sorted.length;
+    // Integer arithmetic: (1 - 0.95) * 20 is 1.0000000000000009 in floating point and would round up to 2.
+    const k = Math.max(1, Math.ceil(((100 - confidence) * n) / 100 - 1e-9)); const quantile = sorted[k - 1];
+    const fraction = sorted.every((v) => Math.abs(v) < 1); const varValue = Math.max(0, -quantile); const amount = scale(varValue, fraction);
+    return { method: "historical", confidence, periods: n, rank: k, quantileChange: quantile, valueAtRisk: round(amount, 2), ...(fraction && p.portfolioValue !== undefined ? { valueAtRiskFraction: round(varValue, 6) } : {}), arithmetic: [
+      `${n} observed changes sorted worst first; the ${tail} percent tail is the worst ${k} observation(s); the ${k}${k === 1 ? "st" : k === 2 ? "nd" : k === 3 ? "rd" : "th"} worst change is ${quantile}`,
+      `VaR at ${confidence} percent = ${round(varValue, 6)}${fraction && p.portfolioValue !== undefined ? ` x portfolio ${p.portfolioValue} = ${round(amount, 2)}` : ""}`,
+      reading(amount, "one period"), "Historical VaR assumes the observed period is representative; it says nothing about the size of losses beyond the tail.",
+    ] } as const;
+  }
+  const mean = p.mean === undefined ? 0 : Number(p.mean); const sd = Number(p.standardDeviation);
+  if (!Number.isFinite(mean) || !Number.isFinite(sd) || sd < 0) return { error: "parametric VaR needs standardDeviation (0 or more) and, optionally, mean; or give a series for historical VaR." } as const;
+  const fraction = Math.abs(sd) < 1 && Math.abs(mean) < 1; const varValue = Math.max(0, z * sd * Math.sqrt(h) - mean * h); const amount = scale(varValue, fraction);
+  return { method: "parametric", confidence, z, horizonPeriods: h, mean, standardDeviation: sd, valueAtRisk: round(amount, 2), ...(fraction && p.portfolioValue !== undefined ? { valueAtRiskFraction: round(varValue, 6) } : {}), arithmetic: [
+    `VaR = z x standard deviation x sqrt(horizon) - mean x horizon = ${z} x ${sd} x sqrt(${h}) - ${mean} x ${h} = ${round(varValue, 6)}${fraction && p.portfolioValue !== undefined ? ` of the portfolio; x ${p.portfolioValue} = ${round(amount, 2)}` : ""}`,
+    reading(amount, `${h} period(s)`), "Parametric VaR assumes normally distributed changes under regular market conditions; it understates fat tails and says nothing about losses beyond the threshold.",
+  ] } as const;
+}
+
 // ---- the tools --------------------------------------------------------------
 
 async function executeFinancialAnalysis(args: Record<string, any>): Promise<any> {
@@ -313,7 +384,12 @@ async function executeFinancialAnalysis(args: Record<string, any>): Promise<any>
   if (method === "npv") { const r = netPresentValue(rate!, Number(args.cost), (args.cashFlows ?? []).map(Number)); return "error" in r ? { ok: false, error: r.error } : withNotes(r); }
   if (method === "irr") { const r = internalRateOfReturn(Number(args.cost), (args.cashFlows ?? []).map(Number), rate); return "error" in r ? { ok: false, error: r.error } : withNotes(r); }
   if (method === "bid_comparison") { const r = compareCoverageBids(rate!, args.bids ?? [], args.lossBands ?? [], periods); return "error" in r ? { ok: false, error: r.error } : withNotes(r); }
-  return { ok: false, error: `method must be present_value, future_value, npv, irr or bid_comparison; got "${method}".` };
+  if (method === "value_at_risk") {
+    const confidence = ([90, 95, 99] as const).includes(Number(args.confidence) as 90 | 95 | 99) ? (Number(args.confidence) as 90 | 95 | 99) : 95;
+    const r = valueAtRisk({ mean: args.mean !== undefined ? Number(args.mean) : undefined, standardDeviation: args.standardDeviation !== undefined ? Number(args.standardDeviation) : undefined, series: Array.isArray(args.series) ? args.series.map(Number) : undefined, confidence, horizonPeriods: args.horizonPeriods !== undefined ? Number(args.horizonPeriods) : undefined, portfolioValue: args.portfolioValue !== undefined ? Number(args.portfolioValue) : undefined });
+    return "error" in r ? { ok: false, error: r.error } : withNotes(r);
+  }
+  return { ok: false, error: `method must be present_value, future_value, npv, irr, bid_comparison or value_at_risk; got "${method}".` };
 }
 
 export async function executeBuiltinCalculationTool(toolName: string, args: Record<string, any>, _ctx: { orgId?: string | null; agentId?: string }): Promise<any> {
@@ -341,6 +417,12 @@ export async function executeBuiltinCalculationTool(toolName: string, args: Reco
       out.arithmetic = lines; return out;
     }
     if (method === "regression") {
+      // A line already fitted (slope and intercept given, no data): apply it.
+      if (args.slope !== undefined && args.intercept !== undefined && !Array.isArray(args.x) && !Array.isArray(args.y)) {
+        const r = applyRegressionLine(Number(args.slope), Number(args.intercept), (args.predictAt ?? []).map(Number), args.xUnit ? String(args.xUnit) : undefined);
+        if ("error" in r) return { ok: false, error: r.error };
+        return { ok: true, method, ...r };
+      }
       const r = linearRegression((args.x ?? []).map(Number), (args.y ?? []).map(Number), (args.predictAt ?? []).map(Number), confidence);
       if ("error" in r) return { ok: false, error: r.error };
       return { ok: true, method, ...r };
