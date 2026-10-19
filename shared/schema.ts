@@ -4062,9 +4062,19 @@ export const evalTestRuns = pgTable("eval_test_runs", {
   runningCount: integer("running_count").default(0),
   passedCount: integer("passed_count").default(0),
   failedCount: integer("failed_count").default(0),
+  /**
+   * Cases the runtime refused to run at all (a dataset on a team orchestrator,
+   * an agent that is gone). Not failures: they were never evaluated, and they
+   * are kept out of passRate's denominator. Before this column they were
+   * counted as failures, so a suite that could not run reported 0% passed --
+   * the same number as a suite that ran and failed everything.
+   */
+  couldNotRunCount: integer("could_not_run_count").default(0),
   passRate: real("pass_rate"),
-  costUsd: real("cost_usd").default(0),
-  totalTokens: integer("total_tokens").default(0),
+  /** What the judges reported spending. Null means NOT MEASURED, never free. */
+  costUsd: real("cost_usd"),
+  /** Tokens the judges reported. Null means NOT MEASURED, never zero. */
+  totalTokens: integer("total_tokens"),
   avgLatencyMs: integer("avg_latency_ms"),
   isBaseline: boolean("is_baseline").default(false),
   triggeredBy: text("triggered_by"),
@@ -4098,8 +4108,10 @@ export const evalTraces = pgTable("eval_traces", {
   passFail: boolean("pass_fail"),
   agentFailed: boolean("agent_failed").default(false),
   agentFailureReason: text("agent_failure_reason"),
-  costUsd: real("cost_usd").default(0),
-  totalTokens: integer("total_tokens").default(0),
+  /** What the judges reported spending. Null means NOT MEASURED, never free. */
+  costUsd: real("cost_usd"),
+  /** Tokens the judges reported. Null means NOT MEASURED, never zero. */
+  totalTokens: integer("total_tokens"),
   latencyMs: integer("latency_ms"),
   isPinned: boolean("is_pinned").default(false),
   pinnedBy: text("pinned_by"),

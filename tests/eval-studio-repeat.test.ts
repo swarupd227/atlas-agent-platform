@@ -14,12 +14,16 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildAttemptTasks,
   settleGolden,
   runGoldenAttempts,
+  runTotals,
   type AttemptOutcome,
+  type SettledGolden,
 } from "../server/eval-studio-repeat";
+import { sumUsage } from "../server/eval-judge";
 import { pickRegressionBaseline } from "../server/eval-regression";
 
 const ok = (overall = 0.9, extra: Record<string, number> = {}): AttemptOutcome => ({
@@ -250,5 +254,93 @@ describe("the worker", () => {
   it("no longer answers goldens one by one outside the scheduler", () => {
     expect(body).not.toContain("processGolden");
     expect(body).not.toMatch(/while \(cursor < goldens\.length\)/);
+  });
+});
+
+/**
+ * A case the runtime REFUSED to run was counted as a failed case, so a suite
+ * that could not run at all reported passRate 0 -- the same number as a suite
+ * that ran and failed everything. Live 2026-10-19: five suites whose dataset
+ * was attached to a team orchestrator, every case refused, every suite showing
+ * 0%, noticed only because five cases "completed" in 11 seconds against a team
+ * that takes 91 seconds to answer once.
+ *
+ * And the numbers beside it were invented: the writer recorded
+ * `0.003 * metrics` dollars and `300 * metrics` tokens per case unconditionally,
+ * including refused cases, where the judge loop never runs. A fabricated
+ * measurement is worse than a missing one, because nothing marks it as absent.
+ */
+describe("a run reports what it evaluated, not what it was asked to", () => {
+  const outcome = (over: Partial<AttemptOutcome> = {}): AttemptOutcome =>
+    ({ passed: false, scores: {}, thresholds: {}, ran: true, ...over });
+
+  it("leaves a case that never ran out of the pass rate", () => {
+    // 2 passed, 1 genuinely failed, 2 refused: 2/3, not 2/5.
+    const t = runTotals({ passed: 2, failed: 1, couldNotRun: 2 });
+    expect(t.evaluated).toBe(3);
+    expect(t.passRate).toBeCloseTo(2 / 3, 10);
+  });
+
+  it("has NO pass rate when nothing ran, rather than a pass rate of zero", () => {
+    const t = runTotals({ passed: 0, failed: 0, couldNotRun: 5 });
+    expect(t.passRate).toBeNull();
+    expect(t.evaluated).toBe(0);
+    // The distinction the old arithmetic could not make: five judged failures.
+    expect(runTotals({ passed: 0, failed: 5, couldNotRun: 0 }).passRate).toBe(0);
+  });
+
+  it("counts a golden as run when any attempt ran", () => {
+    expect(settleGolden([outcome({ ran: false }), outcome({ ran: true })]).ran).toBe(true);
+    expect(settleGolden([outcome({ ran: false }), outcome({ ran: false })]).ran).toBe(false);
+  });
+
+  it("treats an attempt that threw as having RUN", async () => {
+    // Excluding a case can only raise the pass rate, so "unsure" must never
+    // exclude. A thrown attempt is unsure, and stays in the denominator.
+    const settled: SettledGolden[] = [];
+    await runGoldenAttempts({
+      goldens: [{ id: "g1" }],
+      repeats: 1,
+      concurrency: 1,
+      runAttempt: async () => { throw new Error("storage blew up"); },
+      onGolden: (_g, st) => { settled.push(st); },
+    });
+    expect(settled).toHaveLength(1);
+    expect(settled[0].ran, "a thrown attempt must not be read as never-ran").toBe(true);
+    expect(settled[0].passed).toBe(false);
+  });
+
+  it("adds up only the usage judges actually reported", () => {
+    // Two judges reported, one never reached a provider.
+    expect(sumUsage([{ costUsd: 0.004, inputTokens: 900 }, undefined, { costUsd: 0.002, outputTokens: 120 }]))
+      .toEqual({ costUsd: 0.006, tokens: 1020 });
+  });
+
+  it("reports nothing measured as null, and a real zero as zero", () => {
+    expect(sumUsage([undefined, undefined])).toEqual({ costUsd: null, tokens: null });
+    expect(sumUsage([{}])).toEqual({ costUsd: null, tokens: null });
+    // A provider that really billed nothing is a measurement and is kept.
+    expect(sumUsage([{ costUsd: 0, inputTokens: 0 }])).toEqual({ costUsd: 0, tokens: 0 });
+  });
+
+  it("no longer invents a cost or a token count per metric", () => {
+    const worker = readFileSync(join(__dirname, "..", "server", "worker.ts"), "utf8");
+    expect(worker, "the per-metric cost constant is back").not.toMatch(/const estimatedCostUsd\s*=\s*0\.003/);
+    expect(worker, "the per-metric token constant is back").not.toMatch(/const tokenEstimate\s*=\s*300/);
+    // and nothing else assigns a cost or a token count from a literal
+    expect(worker).not.toMatch(/costUsd:\s*0\.\d+\s*\*/);
+    // and writes the absence through rather than a stand-in zero
+    expect(worker).toContain("costUsd: anyUsageMeasured ? Math.round(totalCostUsd * 10000) / 10000 : null");
+    expect(worker).toContain("totalTokens: anyUsageMeasured ? totalTokens : null");
+  });
+
+  it("marks a refusal as a refusal, not merely as an error", () => {
+    const src = readFileSync(join(__dirname, "..", "server", "eval-agent-run.ts"), "utf8");
+    // Both early returns happen before any model call.
+    expect(src).toContain('error: "Agent not found", refused: true');
+    expect(src).toContain('not the team itself.", refused: true');
+    // An agent that ran and produced nothing is NOT a refusal.
+    const worker = readFileSync(join(__dirname, "..", "server", "worker.ts"), "utf8");
+    expect(worker).toContain("agentRefused = rt.refused === true;");
   });
 });

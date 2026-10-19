@@ -11,7 +11,7 @@ import { checkOntologyCompliance, executeScheduledAgentCycle, runAgentOnce } fro
 import { describeEvalRunShape, runAgentForEval } from "./eval-agent-run";
 import { evalRunMode } from "./eval-run-mode";
 import { industryEvalFrameworks } from "./routes";
-import { runLlmJudge, runAgentOnInput, buildAgentContext, routeMetricMeasurement } from "./eval-judge";
+import { runLlmJudge, runAgentOnInput, buildAgentContext, routeMetricMeasurement, sumUsage, type JudgeUsage } from "./eval-judge";
 import { getDefaultProvider, getProvider, completeWithFallback } from "./llm-provider";
 import { runAlertCheck } from "./routes/observability";
 import { searchKnowledgeBaseChunks } from "./embeddings";
@@ -27,7 +27,7 @@ import { pollDueScheduleTriggers } from "./schedule-trigger-poller";
 import { runTeamAgentDag, extractFinalOutputText, startTeamAgentDagRun } from "./dag-execution-engine";
 import { pollWaitingApprovalDagRuns, pollInterruptedDagRuns } from "./dag-resume-poller";
 import { processEvalRepeatRun, recoverOrphanedEvalRepeatJobs } from "./eval-repeat-job";
-import { runGoldenAttempts, type AttemptOutcome } from "./eval-studio-repeat";
+import { runGoldenAttempts, runTotals, type AttemptOutcome } from "./eval-studio-repeat";
 import { summarizeRun, MAX_STUDIO_ATTEMPTS, type CaseStability } from "@shared/eval-stability";
 
 // ── Meeting transcription (async long-meeting path) ─────────────────────────────
@@ -1562,9 +1562,15 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
 
   let passedCount = 0;
   let failedCount = 0;
+  // Cases the runtime refused to run at all. Reported separately from failures
+  // so a suite that could not run does not read as one that failed everything.
+  let couldNotRunCount = 0;
   let totalLatencyMs = 0;
   let totalCostUsd = 0;
   let totalTokens = 0;
+  // Whether ANY case reported real usage. Without it, "nothing was measured"
+  // and "everything was free" are both a running total of 0.
+  let anyUsageMeasured = false;
 
   // Accumulate per-metric pass rates for gate enforcement (JS single-threaded, safe across async)
   const perMetricAgg = new Map<string, { total: number; passed: number }>();
@@ -1583,6 +1589,12 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     let actualOutput = "";
     let agentFailed = false;
     let agentFailureReason: string | undefined;
+    // Set only by a runtime refusal (see runAgentForEval): the case could not be
+    // run at all, as against having run and failed.
+    let agentRefused = false;
+    // Every judge's reported usage for this case; sumUsage keeps "nothing
+    // reported" apart from "reported zero" (server/eval-judge.ts).
+    const caseUsage: Array<JudgeUsage | undefined> = [];
 
     try {
       // An agent whose answer depends on tools, skills, knowledge or a deployment is run through the
@@ -1594,6 +1606,10 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
         const rt = await runAgentForEval(agent, golden.input, runShape.mcpServerIds);
         if (rt.error || rt.output.trim() === "") {
           agentFailed = true;
+          // A refusal means no model was called, so there is no answer to judge
+          // and this case was not evaluated. An agent that ran and returned
+          // nothing DID run: that is a failure and stays counted as one.
+          agentRefused = rt.refused === true;
           agentFailureReason = rt.error ? `Agent run failed: ${rt.error}` : "Agent produced empty output";
           actualOutput = "";
         } else {
@@ -1665,6 +1681,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
           });
           const metricDurationMs = Date.now() - metricT0;
           metricDurations.set(metric.name, metricDurationMs);
+          caseUsage.push((metricResult as { usage?: JudgeUsage }).usage);
           const score = metricResult.isPassed
             ? metricResult.confidence
             : (1 - metricResult.confidence) * (metric.threshold || 0.5);
@@ -1690,6 +1707,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
           agentCtx,
           actualOutput,
         );
+        caseUsage.push(judgeResult.usage);
         overallPass = judgeResult.isPassed;
         scores["overall"] = judgeResult.isPassed ? judgeResult.confidence : 1 - judgeResult.confidence;
         metricReasonings["overall"] = {
@@ -1703,11 +1721,16 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
 
     const latencyMs = Date.now() - t0;
     totalLatencyMs += latencyMs;
-    const activeMetricCount = Math.max(1, metrics.filter(Boolean).length);
-    const estimatedCostUsd = 0.003 * activeMetricCount;
-    totalCostUsd += estimatedCostUsd;
-    const tokenEstimate = 300 * activeMetricCount;
-    totalTokens += tokenEstimate;
+    // WAS: `0.003 * activeMetricCount` dollars and `300 * activeMetricCount`
+    // tokens, unconditionally -- recorded even for a case where no model was
+    // called, because a refused case skips the judge loop entirely. Five
+    // refused cases billed $0.015 that nothing ever spent (live 2026-10-19).
+    // Now: what the judges reported, and null when nobody reported anything.
+    // A real zero from a provider is kept; it is the MISSING case that stays
+    // missing, so a reader can tell "free" from "never measured".
+    const { costUsd: caseCostUsd, tokens: caseTokens } = sumUsage(caseUsage);
+    if (caseCostUsd !== null) { totalCostUsd += caseCostUsd; anyUsageMeasured = true; }
+    if (caseTokens !== null) { totalTokens += caseTokens; anyUsageMeasured = true; }
 
     const trace = await storage.createEvalTrace({
       runId,
@@ -1718,8 +1741,8 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       passFail: agentFailed ? false : overallPass,
       agentFailed,
       agentFailureReason: agentFailureReason || null,
-      costUsd: estimatedCostUsd,
-      totalTokens: tokenEstimate,
+      costUsd: caseCostUsd,
+      totalTokens: caseTokens,
       latencyMs,
     });
 
@@ -1800,7 +1823,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
 
     const thresholds: Record<string, number> = {};
     metricThresholdByName.forEach((threshold, name) => { thresholds[name] = threshold; });
-    return { passed: !agentFailed && overallPass, scores, thresholds };
+    return { passed: !agentFailed && overallPass, scores, thresholds, ran: !agentRefused };
   };
 
   // Every golden-and-attempt pair goes through the same batches, so the
@@ -1817,7 +1840,12 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     },
     onGolden: async (golden, settled) => {
       // A golden passes only if every attempt did; with one attempt, that attempt.
-      if (settled.passed) passedCount++; else failedCount++;
+      // One that never ran is neither: counting it as failed is what reported an
+      // unrunnable suite as 0% passed, indistinguishable from a suite that ran
+      // and failed every case.
+      if (!settled.ran) couldNotRunCount++;
+      else if (settled.passed) passedCount++;
+      else failedCount++;
       if (repeats > 1) settledStability.push({ caseId: golden.id, stability: settled.stability });
       // Per-metric rates for gate enforcement: a metric holds for a golden only
       // if it held on every attempt that scored it.
@@ -1845,7 +1873,9 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     },
   });
 
-  const passRate = goldens.length > 0 ? passedCount / goldens.length : null;
+  // Over the cases that actually ran. Null when none did -- a suite that could
+  // not run has no pass rate, and 0 would read as "ran and failed everything".
+  const { evaluated: evaluatedCount, passRate } = runTotals({ passed: passedCount, failed: failedCount, couldNotRun: couldNotRunCount });
   // The mean time of one answer, so a repeated run stays comparable with one that was not repeated.
   const avgLatencyMs = goldens.length > 0 ? Math.round(totalLatencyMs / (goldens.length * repeats)) : null;
   const repeated = repeats > 1 ? summarizeRun(settledStability) : null;
@@ -1902,11 +1932,15 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     totalGoldens: goldens.length,
     passedCount,
     failedCount,
+    couldNotRunCount,
     passRate,
     pendingCount: 0,
     runningCount: 0,
-    costUsd: Math.round(totalCostUsd * 10000) / 10000,
-    totalTokens,
+    // Null, not 0, when no judge reported usage: a run whose spend is unknown
+    // must not read as a run that spent nothing. `anyUsageMeasured` is the only
+    // thing that can tell those apart once the numbers are in a column.
+    costUsd: anyUsageMeasured ? Math.round(totalCostUsd * 10000) / 10000 : null,
+    totalTokens: anyUsageMeasured ? totalTokens : null,
     avgLatencyMs,
     completedAt: new Date(),
     ...(repeated ? { flakyCount: repeated.flakyCases, consistency: repeated.consistency } : {}),
@@ -1917,16 +1951,20 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   await storage.updateJob(job.id, { progress: 100 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 100, step: "complete" });
 
-  console.log(`[eval-test-run] Run ${runId} complete: ${passedCount}/${goldens.length} passed (${Math.round((passRate || 0) * 100)}%) gate=${gateTag ?? "n/a"}`);
+  // Says what it measured. A run with nothing evaluated says so rather than
+  // printing "0/5 passed (0%)", which reads as five judged failures.
+  const rateText = passRate === null ? "no pass rate -- nothing was evaluated" : `${Math.round(passRate * 100)}%`;
+  console.log(`[eval-test-run] Run ${runId} complete: ${passedCount}/${evaluatedCount} evaluated passed (${rateText})${couldNotRunCount > 0 ? `, ${couldNotRunCount} could not run` : ""} gate=${gateTag ?? "n/a"}`);
 
   return {
     runId,
     total: goldens.length,
     passed: passedCount,
     failed: failedCount,
+    ...(couldNotRunCount > 0 ? { couldNotRun: couldNotRunCount } : {}),
     passRate: passRate !== null ? Math.round((passRate) * 100) : null,
     avgLatencyMs,
-    costUsd: totalCostUsd,
+    costUsd: anyUsageMeasured ? totalCostUsd : null,
     gateStatus: gateTag,
     ...(repeated ? { repeats, flaky: repeated.flakyCases, consistency: repeated.consistency } : {}),
   };

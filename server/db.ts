@@ -947,6 +947,18 @@ export async function runStartupMigrations() {
       ALTER TABLE eval_test_runs  ADD COLUMN IF NOT EXISTS repeats INTEGER DEFAULT 1;
       ALTER TABLE eval_test_runs  ADD COLUMN IF NOT EXISTS flaky_count INTEGER DEFAULT 0;
       ALTER TABLE eval_test_runs  ADD COLUMN IF NOT EXISTS consistency REAL;
+      -- Cases the runtime refused to run (team orchestrator, missing agent).
+      -- Not failures: they are kept out of pass_rate, which previously counted
+      -- them as failed and reported an unrunnable suite as 0% passed.
+      ALTER TABLE eval_test_runs  ADD COLUMN IF NOT EXISTS could_not_run_count INTEGER DEFAULT 0;
+      -- Cost and tokens are MEASURED or NULL. The DEFAULT 0 made an unmeasured
+      -- run indistinguishable from a free one, and the writer was filling both
+      -- columns with 0.003 * metrics and 300 * metrics regardless of what
+      -- ran, so a refused case that called no model billed like a real one.
+      ALTER TABLE eval_traces     ALTER COLUMN cost_usd     DROP DEFAULT;
+      ALTER TABLE eval_traces     ALTER COLUMN total_tokens DROP DEFAULT;
+      ALTER TABLE eval_test_runs  ALTER COLUMN cost_usd     DROP DEFAULT;
+      ALTER TABLE eval_test_runs  ALTER COLUMN total_tokens DROP DEFAULT;
       ALTER TABLE eval_spans      ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
       ALTER TABLE eval_annotations ADD COLUMN IF NOT EXISTS organization_id VARCHAR;
 

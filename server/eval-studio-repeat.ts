@@ -22,6 +22,13 @@ export interface AttemptOutcome {
   scores: Record<string, number>;
   /** The bar each scored metric had to reach. A metric without one is held to 0.5. */
   thresholds: Record<string, number>;
+  /**
+   * Whether the agent was actually run. False only when the runtime REFUSED to
+   * run it (a team orchestrator, or an agent that no longer exists), so nothing
+   * was asked and nothing could be judged. An agent that ran and returned
+   * nothing, or threw, ran: that is a real failure and stays one.
+   */
+  ran: boolean;
 }
 
 export interface SettledGolden {
@@ -33,6 +40,32 @@ export interface SettledGolden {
   /** Mean "overall" score across attempts; an attempt without one counts as 0. */
   meanOverall: number;
   attempts: number;
+  /**
+   * The agent ran at least once. A golden where it never ran was not evaluated,
+   * so it belongs in neither the passed nor the failed count -- counting it as
+   * failed is what made an unrunnable suite read as 0% passed, identical to a
+   * suite that ran and failed everything (live 2026-10-19: five suites on team
+   * orchestrators, all refused, all reported 0%, noticed only because five
+   * cases "completed" in 11 seconds against a team that takes 91s to run once).
+   */
+  ran: boolean;
+}
+
+/**
+ * What a finished run can honestly say about itself.
+ *
+ * The rule the run used to break: a case the runtime refused to run was counted
+ * as failed, so `passed / total` reported an unrunnable suite as 0% -- the same
+ * figure as a suite that ran and failed every case. The denominator is the cases
+ * that were EVALUATED, and a run that evaluated none has no pass rate at all
+ * rather than a pass rate of zero.
+ */
+export function runTotals(counts: { passed: number; failed: number; couldNotRun: number }): {
+  evaluated: number;
+  passRate: number | null;
+} {
+  const evaluated = counts.passed + counts.failed;
+  return { evaluated, passRate: evaluated > 0 ? counts.passed / evaluated : null };
 }
 
 export function buildAttemptTasks<G>(goldens: G[], repeats: number): Array<{ golden: G; attempt: number }> {
@@ -61,6 +94,8 @@ export function settleGolden(outcomes: AttemptOutcome[]): SettledGolden {
     metricPasses,
     meanOverall: overall.reduce((s, x) => s + x, 0) / overall.length,
     attempts: outcomes.length,
+    // One attempt that ran is enough for the golden to have been evaluated.
+    ran: outcomes.some(o => o.ran),
   };
 }
 
@@ -102,7 +137,11 @@ export async function runGoldenAttempts<G extends { id: string }>(opts: {
         outcome = result.value;
       } else {
         opts.onError?.(golden, attempt, result.reason);
-        outcome = { passed: false, scores: {}, thresholds: {} };
+        // A thrown attempt counts as RUN: we cannot tell from here whether the
+        // agent answered before something else failed, and the conservative
+        // reading keeps it in the denominator. Excluding a case can only raise
+        // the pass rate, so "unsure" must never exclude.
+        outcome = { passed: false, scores: {}, thresholds: {}, ran: true };
       }
       const list = pending.get(golden.id) ?? [];
       list.push(outcome);

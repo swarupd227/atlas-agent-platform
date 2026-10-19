@@ -39,6 +39,13 @@ export async function describeEvalRunShape(agent: { id: string; preloadedSkills?
 export interface EvalAgentRunResult {
   output: string;
   error: string | null;
+  /**
+   * The runtime declined to run the agent at all, so no model was called and
+   * there is no answer to judge. Distinct from `error` alone, which also covers
+   * an agent that ran and failed -- those are real failures and must keep
+   * counting as such.
+   */
+  refused?: boolean;
   toolCalls: number;
   /** Write tools the agent has but that were withheld for this eval. */
   withheldTools: string[];
@@ -52,13 +59,16 @@ export async function runAgentForEval(
   const orgId = agent.organizationId ?? undefined;
 
   const fullAgent = await storage.getAgent(agent.id, orgId);
-  if (!fullAgent) return { output: "", error: "Agent not found", toolCalls: 0, withheldTools: [] };
+  if (!fullAgent) return { output: "", error: "Agent not found", refused: true, toolCalls: 0, withheldTools: [] };
   if (fullAgent.agentType === "team") {
     // A team orchestrator's real work is its blueprint DAG (runTeamWorkspaceRun), a different
     // execution path that this file's toolAllowlist restriction does not reach -- running one through
     // here would offer every tool, including writes, unrestricted. Refuse rather than do that silently;
     // evaluate the team's individual worker agents instead.
-    return { output: "", error: "This agent is a team orchestrator; evals run against its individual worker agents, not the team itself.", toolCalls: 0, withheldTools: [] };
+    // `refused`, not merely `error`: nothing was asked of a model, so the case
+    // was not evaluated. A reader that counts this as a failed case reports an
+    // unrunnable suite as one that failed everything.
+    return { output: "", error: "This agent is a team orchestrator; evals run against its individual worker agents, not the team itself.", refused: true, toolCalls: 0, withheldTools: [] };
   }
 
   // Offer only read-only tools. buildContext's `if (toolAllowlist)` treats an empty array as a real,

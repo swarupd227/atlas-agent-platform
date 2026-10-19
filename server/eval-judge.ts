@@ -13,11 +13,29 @@ export interface DimensionJudgeResult {
   criteriaResults: CriterionResult[];
 }
 
+/**
+ * What one model call cost, as the provider reported it.
+ *
+ * Absent means NOT MEASURED -- a judge that never reached a provider, or one
+ * whose backend reports no usage (the DeepEval bridge). A reader must carry
+ * that absence through rather than substituting a number: eval runs recorded
+ * `0.003 * metrics` dollars and `300 * metrics` tokens for every case,
+ * including cases where no model was called at all, which is a fabricated
+ * measurement rather than a missing one.
+ */
+export interface JudgeUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
 export interface LlmJudgeResult {
   isPassed: boolean;
   confidence: number;
   reason: string;
   latencyMs: number;
+  /** Absent when nothing was measured. Never defaulted to zero. */
+  usage?: JudgeUsage;
   dimensionResults?: DimensionJudgeResult[];
   /** Criteria the decision model decided with confidence, when the site routes on it. */
   criteriaDecidedByModel?: number;
@@ -153,6 +171,45 @@ export async function runAgentOnInput(
     console.error("[eval-judge] Agent execution failed:", err.message);
     return { output: "", latencyMs: Date.now() - start };
   }
+}
+
+/**
+ * Adds up what a case's judges reported, keeping "nothing reported" distinct
+ * from "reported zero".
+ *
+ * A judge that never reached a provider contributes nothing, not a zero, so a
+ * case where no model ran comes back {costUsd: null, tokens: null} and a case
+ * a provider really billed at 0 comes back 0. The writer this replaced could
+ * not express the difference: it recorded 0.003 * metrics for every case,
+ * including refused ones.
+ */
+export function sumUsage(items: Array<JudgeUsage | undefined>): { costUsd: number | null; tokens: number | null } {
+  let costUsd: number | null = null;
+  let tokens: number | null = null;
+  for (const u of items) {
+    if (!u) continue;
+    if (typeof u.costUsd === "number") costUsd = (costUsd ?? 0) + u.costUsd;
+    if (typeof u.inputTokens === "number" || typeof u.outputTokens === "number") {
+      tokens = (tokens ?? 0) + (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
+    }
+  }
+  return { costUsd, tokens };
+}
+
+/**
+ * The usage a completion reported, with absent fields left absent.
+ *
+ * `tokensUsed.prompt` and `costUsd` were already on the result and were thrown
+ * away at every call site; this is only the lifting. A zero cost that the
+ * provider really reported is kept, since that is a measurement -- it is the
+ * MISSING case that must stay missing.
+ */
+function usageOf(r: { tokensUsed?: { prompt?: number; completion?: number } | null; costUsd?: number | null }): JudgeUsage {
+  const u: JudgeUsage = {};
+  if (typeof r.tokensUsed?.prompt === "number") u.inputTokens = r.tokensUsed.prompt;
+  if (typeof r.tokensUsed?.completion === "number") u.outputTokens = r.tokensUsed.completion;
+  if (typeof r.costUsd === "number") u.costUsd = r.costUsd;
+  return u;
 }
 
 /** Bounds for what the decision model is shown of a case; its state cap is 32k tokens. */
@@ -332,7 +389,7 @@ ${agentContext || "(no additional context)"}${criteriaBlock}`;
       }
     }
 
-    return { isPassed, confidence, reason, latencyMs, dimensionResults, ...(criteriaDecidedByModel ? { criteriaDecidedByModel } : {}) };
+    return { isPassed, confidence, reason, latencyMs, dimensionResults, usage: usageOf(result), ...(criteriaDecidedByModel ? { criteriaDecidedByModel } : {}) };
   } catch (err: any) {
     const latencyMs = Date.now() - start;
     console.error("[eval-judge] LLM judge call failed:", err.message);
