@@ -2572,11 +2572,18 @@ export class DAGExecutionEngine {
       ...(workerResult.failedFileAttempts?.length ? { failedFileAttempts: workerResult.failedFileAttempts } : {}),
       ...(judgments.length ? { judgments } : {}),
       // What prior decisions this step was shown, kept with the step that was
-      // shown them. Recorded whenever subjects were found, even if nothing
-      // matched -- "we looked and found nothing on this binder" is a different
-      // fact from "we never looked", and an explanation needs to tell them
-      // apart.
-      ...(priorDecisions.subjects.length ? { priorContext: priorDecisions } : {}),
+      // shown them -- ALWAYS, including when there was nothing to show.
+      //
+      // This used to be written only when subjects were found, which made the
+      // two most common outcomes invisible: a step that named no business
+      // object and a run with the layer off both recorded nothing, exactly
+      // like a step that was never prompted. "We looked and found nothing on
+      // this binder", "this step named nothing to look up" and "we never
+      // looked" are three different facts and a reader needs to tell them
+      // apart; `looked` and `skipReason` carry which. The skip record is four
+      // small fields, so recording it on every step costs nothing worth
+      // weighing against being able to measure coverage at all.
+      priorContext: priorDecisions,
     };
   }
 
