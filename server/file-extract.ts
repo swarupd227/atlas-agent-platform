@@ -93,6 +93,14 @@ export interface ExtractedFile {
     coverage?: ExtractionCoverage;
     /** Set when a format was read but genuinely contained no text. */
     empty?: boolean;
+    /**
+     * A PDF whose pages carry no text at all -- a scan, or a page exported as
+     * an image. `empty` says there was nothing to read; this says the reason
+     * is that the text is in the pixels, so rendering the pages and showing
+     * them to a model can still recover the content. An empty .txt has no
+     * such second chance, which is why this is not simply `empty` restated.
+     */
+    needsVision?: boolean;
     /** Image/video pixel dimensions, when the header could be read. */
     width?: number;
     height?: number;
@@ -1168,11 +1176,22 @@ export async function extractTextFromFile(
     const text = coverage.complete
       ? pdf.text
       : kept.map((p) => `${p.text}\n-- ${p.locator.page} of ${pdf.total} --`).join("\n") + truncationNotice(coverage);
+    // Every page silent means the text is in the pixels. Recorded here, where
+    // the reader already knows, rather than inferred later from an empty
+    // string -- a caller seeing "" cannot tell a scan from a blank file, and
+    // only one of those is worth rendering.
+    const noTextAnywhere = kept.every((p) => !p.text.trim());
     return {
       text,
       kind: "pdf",
       sections: kept,
-      meta: { pages: pdf.total, truncated: !coverage.complete, coverage, empty: kept.every((p) => !p.text.trim()) },
+      meta: {
+        pages: pdf.total,
+        truncated: !coverage.complete,
+        coverage,
+        empty: noTextAnywhere,
+        ...(noTextAnywhere && pdf.total > 0 ? { needsVision: true } : {}),
+      },
     };
   }
 

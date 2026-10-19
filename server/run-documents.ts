@@ -22,6 +22,7 @@
  * invoice".
  */
 import { readAttachedFiles, buildAttachmentContext } from "./attachment-context";
+import { visionPagesFor, visionNote } from "./document-vision";
 import { FILE_INPUT_TYPE } from "@shared/run-input";
 import type { StateFieldDef } from "./dag-execution-engine";
 
@@ -52,6 +53,16 @@ export interface RunDocument {
   /** Characters actually given to the step, present only when fewer than `chars`. */
   charsShown?: number;
   /**
+   * How the step received this document. "text" is the extractor's output;
+   * "vision" means the file had no text layer and its pages were rendered and
+   * attached as images instead. A step that must distinguish a figure it read
+   * from one a model read off a scan can test this, and a reviewer can tell
+   * which documents in a run were never machine-readable at all.
+   */
+  readBy?: "text" | "vision";
+  /** Pages rendered and attached, when readBy is "vision". */
+  pagesShown?: number;
+  /**
    * Pages, for a format that has them. A count only -- the reader knows which
    * page each passage came from (file-extract.ts builds `sections` with a
    * per-page locator) but nothing persists them, so a step can be told a
@@ -60,6 +71,17 @@ export interface RunDocument {
   pages?: number;
   /** Present only when something is wrong, and written for a human to act on. */
   note?: string;
+}
+
+/**
+ * What a step is given for its documents: prose for the prompt, and the page
+ * images a scan was rendered to. The images cannot travel inside the prose --
+ * they reach the model as content blocks on the message -- so they come back
+ * separately for the engine to pass down.
+ */
+export interface RunDocumentContext {
+  text: string;
+  imageFileIds: string[];
 }
 
 /** How much of one document to inline per node. Generous -- the document IS
@@ -131,6 +153,19 @@ export async function resolveRunDocuments(
     const stepCut = text.length > RUN_DOCUMENT_PREVIEW_CHARS;
     const truncated = extractorCut || stepCut;
     const charsShown = Math.min(text.length, RUN_DOCUMENT_PREVIEW_CHARS);
+
+    // A PDF with no text layer: render its pages and show them to the model
+    // instead. Done HERE, at run setup, rather than when a step's prompt is
+    // built, because the descriptor goes into state now and a step routing on
+    // `readable` deserves an answer that is already true. Rendering is cached
+    // on the file's bytes, so the prompt path re-derives the same ids free.
+    //
+    // A failure returns null and the document stays honestly unreadable --
+    // which is what this platform did before vision existed, so nothing that
+    // worked stops working.
+    const vision = meta.needsVision === true && !text
+      ? await visionPagesFor((row as { content?: Buffer | null }).content ?? null, row.filename)
+      : null;
     // The extractor already says what it left out and in what unit -- "6 of 18
     // pages, from page 7 on" -- so quote that rather than the vaguer sentence
     // this used to carry. A step told which pages are missing can say so; one
@@ -142,11 +177,17 @@ export async function resolveRunDocuments(
       kind: row.kind ?? null,
       sizeBytes: row.sizeBytes ?? null,
       chars: text.length,
-      readable: text.length > 0,
+      // Vision makes an unreadable document readable: the step really can work
+      // from it, and a rule testing `readable == false` to mean "I cannot use
+      // this" would be wrong to still fire.
+      readable: text.length > 0 || !!vision,
       truncated,
       ...(charsShown < text.length ? { charsShown } : {}),
       ...(pages ? { pages } : {}),
-      ...(text.length === 0
+      ...(vision ? { readBy: "vision" as const, pagesShown: vision.shown } : text.length > 0 ? { readBy: "text" as const } : {}),
+      ...(vision
+        ? { note: visionNote(vision) }
+        : text.length === 0
         ? { note: UNREADABLE_NOTE }
         : stepCut
           ? {
@@ -208,13 +249,19 @@ export function runDocumentsInState(
 export async function buildRunDocumentContext(
   documents: RunDocument[],
   orgId?: string,
-): Promise<string> {
-  if (!documents.length) return "";
+): Promise<RunDocumentContext> {
+  if (!documents.length) return { text: "", imageFileIds: [] };
 
-  const readable = documents.filter((d) => d.readable);
+  // Three kinds, and they cannot share a path: text goes in the prompt, a scan
+  // goes in as images, and an unreadable file goes in as a statement that it
+  // could not be read. Putting a scan through the text path would inline its
+  // empty extraction and tell the step the document was blank.
+  const scanned = documents.filter((d) => d.readBy === "vision");
+  const readable = documents.filter((d) => d.readable && d.readBy !== "vision");
   const unreadable = documents.filter((d) => !d.readable);
 
   const sections: string[] = [];
+  const imageFileIds: string[] = [];
 
   if (readable.length) {
     // What each document is, before its contents: a step that knows a schedule
@@ -249,10 +296,38 @@ export async function buildRunDocumentContext(
     if (context) sections.push(context);
   }
 
+  // A scan: its pages ride as image blocks, so the prompt's job is to say
+  // which attached images are which document. Without that a step holding
+  // three scans and 30 images cannot tell them apart.
+  if (scanned.length) {
+    const rows = await readAttachedFiles(scanned.map((d) => d.fileId), orgId);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const lines: string[] = [];
+    for (const d of scanned) {
+      const row = byId.get(d.fileId);
+      // The render is cached on the file's bytes, so this is the same work
+      // resolveRunDocuments already did at setup: a cache hit, not a re-render.
+      const v = await visionPagesFor((row as { content?: Buffer | null } | undefined)?.content ?? null, d.filename);
+      if (!v) continue;
+      imageFileIds.push(...v.fileIds);
+      lines.push(`- ${d.filename}: ${visionNote(v)}`);
+    }
+    if (lines.length) {
+      sections.push([
+        scanned.length === documents.length
+          ? "This run was given the following document(s) as images, because they have no text layer. The pages are attached to this message in order."
+          : "The run was also given the following document(s) as images, because they have no text layer. The pages are attached to this message in order.",
+        ...lines,
+        "",
+        "Read them from the attached page images. Anything you cannot make out, say so rather than guessing at it.",
+      ].join("\n"));
+    }
+  }
+
   if (unreadable.length) {
     sections.push(
       [
-        readable.length
+        readable.length || scanned.length
           ? "The run was also given the following document(s), which could NOT be read:"
           : "This run was given the following document(s), which could NOT be read:",
         ...unreadable.map((d) => `- ${d.filename}${d.kind ? ` (${d.kind})` : ""}: ${d.note ?? UNREADABLE_NOTE}`),
@@ -262,5 +337,5 @@ export async function buildRunDocumentContext(
     );
   }
 
-  return sections.join("\n\n");
+  return { text: sections.join("\n\n"), imageFileIds };
 }

@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   attachmentCalls: [] as Array<{ ids: string[]; orgId?: string; framing?: string[]; cap?: number }>,
   created: [] as any[],
   schema: null as any,
+  visionCalls: [] as Array<{ filename: string; bytes: number }>,
+  visionResult: null as null | { fileIds: string[]; shown: number; total: number; skipped?: number },
 }));
 
 vi.mock("../server/agent-runtime", () => ({
@@ -44,6 +46,23 @@ vi.mock("../server/storage", () => {
   };
   const storage = new Proxy(base, { get: (t, k: string) => (k in t ? t[k] : vi.fn(async () => undefined)) });
   return { storage };
+});
+
+/**
+ * The renderer and the Files API are mocked: this suite is about what the
+ * descriptor claims, not about pdf-parse. That rasterisation works is proven
+ * separately and on the platform that matters -- node:22-slim, linux/x64,
+ * fresh install, 612x792 PNGs at ~646 vision tokens a page.
+ */
+vi.mock("../server/document-vision", async (orig) => {
+  const actual = await orig<typeof import("../server/document-vision")>();
+  return {
+    ...actual,
+    visionPagesFor: vi.fn(async (bytes: Buffer | null, filename: string) => {
+      state.visionCalls.push({ filename, bytes: bytes?.length ?? 0 });
+      return state.visionResult;
+    }),
+  };
 });
 
 vi.mock("../server/attachment-context", () => ({
@@ -92,6 +111,8 @@ beforeEach(() => {
   state.files.clear();
   state.attachmentCalls.length = 0;
   state.created.length = 0;
+  state.visionCalls.length = 0;
+  state.visionResult = null;
   state.schema = { id: "schema-1", teamAgentId: "team-1", fields: schema, reducers: {} };
   state.files.set("f-sov", file());
 });
@@ -138,6 +159,7 @@ describe("resolving an id into what the steps read", () => {
       chars: file().extractedText.length,
       readable: true,
       truncated: false,
+      readBy: "text",
     });
     expect(JSON.stringify(documents[0])).not.toContain("Gulfport");
   });
@@ -251,7 +273,7 @@ describe("which steps see a document", () => {
 describe("what a step is shown", () => {
   it("inlines the text of a readable document, capped", async () => {
     const { documents } = await resolveRunDocuments(["f-sov"], "org-1");
-    const context = await buildRunDocumentContext(documents, "org-1");
+    const { text: context } = await buildRunDocumentContext(documents, "org-1");
     expect(context).toContain("Gulfport");
     expect(context).toContain("This run was given the following document(s)");
     // the inventory names the file and its extent before the contents
@@ -264,7 +286,7 @@ describe("what a step is shown", () => {
   it("states an unreadable document instead of leaving it out", async () => {
     state.files.set("f-scan", file({ id: "f-scan", filename: "BeaconStreet_SOV_scan.pdf", kind: "pdf", extractedText: "" }));
     const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
-    const context = await buildRunDocumentContext(documents, "org-1");
+    const { text: context } = await buildRunDocumentContext(documents, "org-1");
     expect(context).toContain("could NOT be read");
     expect(context).toContain("BeaconStreet_SOV_scan.pdf");
     expect(context).toContain("Do not infer their contents");
@@ -274,14 +296,14 @@ describe("what a step is shown", () => {
   it("shows both when one document reads and another does not", async () => {
     state.files.set("f-scan", file({ id: "f-scan", filename: "BeaconStreet_SOV_scan.pdf", extractedText: "" }));
     const { documents } = await resolveRunDocuments(["f-sov", "f-scan"], "org-1");
-    const context = await buildRunDocumentContext(documents, "org-1");
+    const { text: context } = await buildRunDocumentContext(documents, "org-1");
     expect(context).toContain("Gulfport");
     expect(context).toContain("also given the following document(s), which could NOT be read");
     expect(context).toContain("BeaconStreet_SOV_scan.pdf");
   });
 
   it("is empty when the step was given no documents", async () => {
-    expect(await buildRunDocumentContext([], "org-1")).toBe("");
+    expect((await buildRunDocumentContext([], "org-1")).text).toBe("");
   });
 });
 
@@ -339,7 +361,7 @@ describe("what a step is told about extent", () => {
       },
     }));
     const { documents } = await resolveRunDocuments(["f-cut"], "org-1");
-    const context = await buildRunDocumentContext(documents, "org-1");
+    const { text: context } = await buildRunDocumentContext(documents, "org-1");
     expect(context).toContain("long_schedule.pdf (18 pages");
     expect(context).toContain("PARTIAL");
     expect(context).toContain("from page 7 on");
@@ -348,7 +370,7 @@ describe("what a step is told about extent", () => {
 
   it("does not call a whole document partial", async () => {
     const { documents } = await resolveRunDocuments(["f-sov"], "org-1");
-    const context = await buildRunDocumentContext(documents, "org-1");
+    const { text: context } = await buildRunDocumentContext(documents, "org-1");
     // "PARTIAL" also appears in the standing instruction, so check the file's
     // OWN inventory line rather than the whole block.
     const line = context.split("\n").find((l) => l.startsWith("- GCHG_SOV_2026.xlsx"));
@@ -404,10 +426,127 @@ describe("truncation the step actually experiences", () => {
   it("tells the step what arrived against what exists", async () => {
     state.files.set("f-long", long(359_214));
     const { documents } = await resolveRunDocuments(["f-long"], "org-1");
-    const context = await buildRunDocumentContext(documents, "org-1");
+    const { text: context } = await buildRunDocumentContext(documents, "org-1");
     expect(context).toContain("120,000 of 359,214 characters shown");
     expect(context).toContain("PARTIAL");
     // and never the old line that contradicted the prompt
     expect(context).not.toContain("359,214 characters read");
+  });
+});
+
+/**
+ * A PDF with no text layer is a scan. Before vision it was honestly
+ * unreadable, which was correct and useless -- the content is in the pixels.
+ * What matters here is that the descriptor never overstates: it claims
+ * readable only when pages were actually attached, and says how many.
+ */
+describe("a scanned document, read by vision", () => {
+  const scan = (over: Record<string, unknown> = {}) => file({
+    id: "f-scan",
+    filename: "BeaconStreet_SOV_scan.pdf",
+    kind: "pdf",
+    extractedText: "",
+    extractMeta: { pages: 8, empty: true, needsVision: true },
+    content: Buffer.from("%PDF-1.4 fake bytes"),
+    ...over,
+  });
+
+  it("renders the pages and says it read them by vision", async () => {
+    state.files.set("f-scan", scan());
+    state.visionResult = { fileIds: ["fa-1", "fa-2", "fa-3"], shown: 3, total: 3 };
+    const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
+    const d = documents[0];
+    expect(d.readable).toBe(true);        // vision makes it usable
+    expect(d.readBy).toBe("vision");
+    expect(d.pagesShown).toBe(3);
+    expect(d.chars).toBe(0);              // still no text, and it does not pretend
+    expect(d.note).toContain("no text layer");
+    expect(state.visionCalls).toHaveLength(1);
+  });
+
+  it("names the pages nobody saw when the cap bit", async () => {
+    state.files.set("f-scan", scan());
+    state.visionResult = { fileIds: ["fa-1"], shown: 20, total: 200, skipped: 180 };
+    const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
+    expect(documents[0].note).toContain("20 of its 200 pages");
+    expect(documents[0].note).toContain("remaining 180 pages were not shown");
+    expect(documents[0].note).toContain("do not conclude anything");
+  });
+
+  it("stays honestly unreadable when rendering fails", async () => {
+    state.files.set("f-scan", scan());
+    state.visionResult = null;            // render or upload failed
+    const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
+    expect(documents[0].readable).toBe(false);
+    expect(documents[0].readBy).toBeUndefined();
+    expect(documents[0].note).toMatch(/scan or an image-only PDF/);
+  });
+
+  it("does not render a document that already has text", async () => {
+    const { documents } = await resolveRunDocuments(["f-sov"], "org-1");
+    expect(documents[0].readBy).toBe("text");
+    expect(state.visionCalls).toHaveLength(0);
+  });
+
+  it("does not render an empty file that is not a scan", async () => {
+    state.files.set("f-empty", file({ id: "f-empty", filename: "notes.txt", kind: "text", extractedText: "", extractMeta: { empty: true } }));
+    const { documents } = await resolveRunDocuments(["f-empty"], "org-1");
+    expect(documents[0].readable).toBe(false);
+    expect(state.visionCalls).toHaveLength(0);  // no needsVision, no render
+  });
+});
+
+/**
+ * The half capability 1 shipped without: a descriptor claiming the document
+ * was read, while nothing carried it to the model. The ids must come back
+ * from the context builder, because a prompt string cannot hold an image.
+ */
+describe("page images reach the caller, not just the descriptor", () => {
+  const scan = () => file({
+    id: "f-scan",
+    filename: "BeaconStreet_SOV_scan.pdf",
+    kind: "pdf",
+    extractedText: "",
+    extractMeta: { pages: 3, empty: true, needsVision: true },
+    content: Buffer.from("%PDF-1.4 fake"),
+  });
+
+  it("returns the page image ids beside the prose", async () => {
+    state.files.set("f-scan", scan());
+    state.visionResult = { fileIds: ["fa-1", "fa-2", "fa-3"], shown: 3, total: 3 };
+    const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
+    const ctx = await buildRunDocumentContext(documents, "org-1");
+    expect(ctx.imageFileIds).toEqual(["fa-1", "fa-2", "fa-3"]);
+    expect(ctx.text).toContain("as images, because they have no text layer");
+    expect(ctx.text).toContain("BeaconStreet_SOV_scan.pdf");
+    expect(ctx.text).toContain("Read them from the attached page images");
+  });
+
+  it("does not put a scan through the text path, where its empty extraction would read as a blank document", async () => {
+    state.files.set("f-scan", scan());
+    state.visionResult = { fileIds: ["fa-1"], shown: 1, total: 1 };
+    const { documents } = await resolveRunDocuments(["f-scan"], "org-1");
+    state.attachmentCalls.length = 0;
+    const ctx = await buildRunDocumentContext(documents, "org-1");
+    // read once to fetch the bytes for the cached render, and never inlined as text
+    expect(ctx.text).not.toContain("(no readable text in this file)");
+    expect(ctx.imageFileIds).toHaveLength(1);
+  });
+
+  it("carries no images for a text document", async () => {
+    const { documents } = await resolveRunDocuments(["f-sov"], "org-1");
+    const ctx = await buildRunDocumentContext(documents, "org-1");
+    expect(ctx.imageFileIds).toEqual([]);
+    expect(ctx.text).toContain("Gulfport");
+  });
+
+  it("keeps a scan and a text document apart in the same run", async () => {
+    state.files.set("f-scan", scan());
+    state.visionResult = { fileIds: ["fa-1", "fa-2"], shown: 2, total: 2 };
+    const { documents } = await resolveRunDocuments(["f-sov", "f-scan"], "org-1");
+    const ctx = await buildRunDocumentContext(documents, "org-1");
+    expect(ctx.imageFileIds).toEqual(["fa-1", "fa-2"]);
+    expect(ctx.text).toContain("Gulfport");                        // the text one, inlined
+    expect(ctx.text).toContain("The run was also given the following document(s) as images");
   });
 });

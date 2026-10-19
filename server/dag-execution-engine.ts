@@ -2391,11 +2391,11 @@ export class DAGExecutionEngine {
     // to, which is the same scoping every other state key already gets. A step
     // the document was never routed to does not pay for it.
     const visibleDocuments = runDocumentsInState(config.stateSchema, currentState, stateScope);
-    const documentContext = visibleDocuments.length
+    const documents = visibleDocuments.length
       ? await buildRunDocumentContext(visibleDocuments.map((d) => d.document), config.organizationId ?? undefined)
-      : "";
-    const agentInputWithDocuments = documentContext
-      ? `${agentInput}\n\n## DOCUMENTS THIS RUN WAS GIVEN\n${documentContext}\n`
+      : { text: "", imageFileIds: [] };
+    const agentInputWithDocuments = documents.text
+      ? `${agentInput}\n\n## DOCUMENTS THIS RUN WAS GIVEN\n${documents.text}\n`
       : agentInput;
 
     // A Tool Set node directly upstream of this agent node scopes which MCP
@@ -2427,7 +2427,7 @@ export class DAGExecutionEngine {
     });
     const agentInputWithPrior = priorDecisions.text ? `${agentInputWithDocuments}\n\n${priorDecisions.text}` : agentInputWithDocuments;
 
-    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInputWithPrior, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds);
+    const workerResult = await this.invokeAgentWithTimeout(nc.agentId, agentInputWithPrior, config, agentNodeTimeoutMs(nc.timeoutMs), toolAllowlist, upstreamGeneratedFileIds, documents.imageFileIds);
 
     const durationMs = Date.now() - start;
 
@@ -3834,6 +3834,10 @@ export class DAGExecutionEngine {
     timeoutMs: number,
     toolAllowlist?: string[],
     upstreamGeneratedFileIds?: string[],
+    /** Rendered pages of a scanned document, to ride as image blocks on the
+     *  worker's message. A string cannot carry an image, so these travel
+     *  beside contextInput rather than inside it. */
+    documentImageFileIds?: string[],
   // This return type is a CONTRACT, not a summary: the body below rebuilds the
   // worker's result field by field, so anything missing from this list is
   // silently dropped on the way up -- produced by the worker, read for by the
@@ -3888,7 +3892,7 @@ export class DAGExecutionEngine {
     );
 
     const workerPromise = runWithLlmAbortSignal(workerAbort.signal, () =>
-      executeWorkerAgent(agentId, mockTeamAgent as any, contextInput, 0, toolAllowlist, upstreamGeneratedFileIds),
+      executeWorkerAgent(agentId, mockTeamAgent as any, contextInput, 0, toolAllowlist, upstreamGeneratedFileIds, documentImageFileIds),
     );
 
     try {
