@@ -12,7 +12,7 @@
  * deterministic, and been wrong.
  */
 import { describe, it, expect } from "vitest";
-import { splitConfiguredSteps, deriveEdgesFromFlow } from "../server/team-proposal";
+import { splitConfiguredSteps, deriveEdgesFromFlow, addAuthoredStepAgents } from "../server/team-proposal";
 
 const STEPS = [
   { id: "n2", label: "Read Submission & Normalize COPE", type: "get_info", description: "Read the submission." },
@@ -123,5 +123,38 @@ describe("the split agents, once the flow's connections are derived", () => {
       [{ from: "n6a", to: "n6b" }, { from: "n6b", to: "n6" }, { from: "n6", to: "n7", condition: "x == true" }],
     );
     expect(edges.map((e) => `${e.from} -> ${e.to}`)).toEqual(["Treaty Evaluation Agent -> Carrier Underwriter Approval Checkpoint"]);
+  });
+});
+
+describe("addAuthoredStepAgents -- steps that need nothing drafted are never left unclaimed", () => {
+  const steps = [
+    { id: "t", type: "trigger", label: "Arrives" },
+    { id: "r", type: "get_info", label: "Read Record", config: { toolName: "get_record", toolServerId: "srv-1" } },
+    { id: "x", type: "expression", label: "Total It", config: { expression: "$sum(items.amount)" } },
+    { id: "j", type: "ai_reasoning", label: "Judge It" },
+    { id: "u", type: "take_action", label: "Unconfigured Action" },
+    { id: "g", type: "expert_approval", label: "Manager Approves" },
+    { id: "d", type: "make_decision", label: "Over Limit?" },
+    { id: "e", type: "end", label: "Done" },
+  ];
+  it("adds one single-step agent per unclaimed configured step and gate, and nothing for judgement", () => {
+    const out = addAuthoredStepAgents([{ name: "Judge", flowStepLabels: ["Judge It"] }], steps) as any[];
+    expect(out.map((a) => a.name)).toEqual(["Judge", "Read Record", "Total It", "Manager Approves"]);
+    expect(out.find((a) => a.name === "Manager Approves").isHumanCheckpoint).toBe(true);
+    expect(out.find((a) => a.name === "Read Record").isHumanCheckpoint).toBe(false);
+    expect(out.every((a) => Array.isArray(a.flowStepLabels))).toBe(true);
+  });
+  it("leaves an unconfigured step and an unclaimed reasoning step to the model", () => {
+    const out = addAuthoredStepAgents([], steps) as any[];
+    expect(out.map((a) => a.name)).not.toContain("Judge It");
+    expect(out.map((a) => a.name)).not.toContain("Unconfigured Action");
+  });
+  it("adds nothing for a step already claimed, and keeps a clashing name distinct", () => {
+    const out = addAuthoredStepAgents([
+      { name: "Read Record", flowStepLabels: ["Judge It"] },
+      { name: "Totaller", flowStepLabels: ["Total It"] },
+    ], steps) as any[];
+    expect(out.filter((a) => a.flowStepLabels?.includes("Total It"))).toHaveLength(1);
+    expect(out.find((a) => a.flowStepLabels?.[0] === "Read Record").name).toBe("Read Record (step)");
   });
 });

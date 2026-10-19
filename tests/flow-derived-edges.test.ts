@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { deriveEdgesFromFlow, unclaimedWorkSteps } from "../server/team-proposal";
+import { connectedStepPairs } from "../shared/flow-step-coverage";
 
 /**
  * A business flow's connections becoming the team's execution order.
@@ -307,5 +308,33 @@ describe("deriveEdgesFromFlow", () => {
       { from: "n1", to: "n2" },
     ]);
     expect(derived).toHaveLength(1);
+  });
+});
+
+describe("connectedStepPairs -- the branch travels with the connection", () => {
+  const edges = [
+    { from: "fetch", to: "dec" },
+    { from: "dec", to: "read", condition: "fetch.found == true", label: "Found" },
+    { from: "dec", to: "ask", condition: "fetch.found == false" },
+    { from: "read", to: "done", label: "Next" },
+  ];
+  const hasNode = (id: string) => ["fetch", "read", "ask", "done"].includes(id);
+  it("carries a decision's own condition and label onto the pair it walks through to", () => {
+    const pairs = connectedStepPairs(edges, hasNode);
+    expect(pairs).toContainEqual(["fetch", "read", { condition: "fetch.found == true", label: "Found" }]);
+    // A branch with only a condition is named by it, as deriveEdgesFromFlow does.
+    expect(pairs).toContainEqual(["fetch", "ask", { condition: "fetch.found == false", label: "fetch.found == false" }]);
+  });
+  it("lets the branch's own condition replace the one on the way in", () => {
+    const pairs = connectedStepPairs([
+      { from: "a", to: "dec", condition: "a.x == 1" },
+      { from: "dec", to: "b", condition: "a.ok == true" },
+    ], (id) => id !== "dec");
+    expect(pairs).toEqual([["a", "b", { condition: "a.ok == true", label: "a.ok == true" }]]);
+  });
+  it("gives an unconditional pair an empty branch, and the pairs themselves do not change", () => {
+    const pairs = connectedStepPairs(edges, hasNode);
+    expect(pairs).toContainEqual(["read", "done", { label: "Next" }]);
+    expect(pairs.map(([f, t]) => `${f}->${t}`).sort()).toEqual(["fetch->ask", "fetch->read", "read->done"]);
   });
 });

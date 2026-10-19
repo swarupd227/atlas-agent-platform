@@ -104,6 +104,49 @@ export function splitConfiguredSteps<T extends { name?: string; description?: st
 }
 
 /**
+ * An agent for every unclaimed step that needs nothing drafted: a step the
+ * author already made deterministic (a tool binding, an expression, a knowledge
+ * base) and a human approval gate.
+ *
+ * The builder takes a configured step's node from the authored config and every
+ * step's instructions from its own description, and a gate is a pause for a
+ * person, so the model adds nothing to these -- yet each still costs it a whole
+ * agent object to claim, and on a large flow it stops claiming them. Live
+ * 2026-10-19: a 60-step Workers' Comp flow with 34 configured steps and 6 gates
+ * came back as 8 agents, one per reasoning step, while the 10-step front half of
+ * the same flow came back fully claimed. The build then refuses the plan
+ * (IncompletePlanError), correctly, since a step nobody claims is not built.
+ *
+ * A step that needs judgement is still the model's to draft, and is still
+ * reported by name when it misses one.
+ */
+export function addAuthoredStepAgents<T extends { name?: string; flowStepLabels?: unknown }>(
+  agents: T[],
+  steps: Array<{ label?: string; type?: string; description?: string; config?: Record<string, any> }>,
+): Array<T | { name: string; description: string; role: string; flowStepLabels: string[]; isHumanCheckpoint: boolean }> {
+  const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+  const unclaimed = new Set(unclaimedWorkSteps(agents, steps).map(norm));
+  const taken = new Set(agents.map((a) => norm(a?.name)));
+  const out: Array<T | { name: string; description: string; role: string; flowStepLabels: string[]; isHumanCheckpoint: boolean }> = [...agents];
+  for (const step of steps) {
+    if (!step?.label || !unclaimed.has(norm(step.label))) continue;
+    const kind = classifyStep({ type: step.type, config: step.config ?? {} } as any);
+    if (kind === "agent") continue;
+    let name = String(step.label).trim();
+    if (taken.has(norm(name))) name = `${name} (step)`;
+    taken.add(norm(name));
+    out.push({
+      name,
+      description: step.description || step.label,
+      role: kind === "gate" ? "Human approval checkpoint" : "Deterministic step",
+      flowStepLabels: [step.label],
+      isHumanCheckpoint: kind === "gate",
+    });
+  }
+  return out;
+}
+
+/**
  * Turn the business flow's own connections into the team's execution edges.
  *
  * The drafting model is asked to rebuild the graph, and when it doesn't, the
@@ -1386,6 +1429,13 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           console.info(`[propose-agents] split ${(result.agents || []).length} drafted agents into ${splitAgents.length}: a step configured with a tool or an expression gets its own node, or its configuration is lost`);
           result.agents = splitAgents;
         }
+        // Before the edges too: a configured step or a gate between two
+        // reasoning steps is what connects them, so without it no edge derives.
+        const withAuthored = addAuthoredStepAgents(result.agents || [], processFlowSteps);
+        if (withAuthored.length !== (result.agents || []).length) {
+          console.info(`[propose-agents] added ${withAuthored.length - (result.agents || []).length} agent(s) for configured steps and gates the draft left unclaimed`);
+          result.agents = withAuthored.map(normalizeAgent);
+        }
         const flowEdges = deriveEdgesFromFlow(
           [result.orchestrator, ...(result.agents || [])].filter(Boolean),
           processFlowSteps,
@@ -1394,30 +1444,37 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         if (flowEdges.length > 0) {
           result.pipeline = { ...(result.pipeline || {}), edges: flowEdges, edgesDerivedFromFlow: true };
           console.info(`[propose-agents] sequenced the team from the flow's own connections: ${flowEdges.length} edges from ${processFlowEdges.length} flow connections`);
-          // Claiming SOME steps was silent, and that is the dangerous case.
-          // Live 2026-09-29: a 40-step close proposed 28 agents claiming 28
-          // steps, and the twelve nobody claimed simply were not built --
-          // including four of the six human approval gates. The team deployed
-          // clean, ran, and skipped the approvals, because a step no agent
-          // claims has no node and its edges go with it. The flow is the
-          // authority on what steps exist; a plan that covers only part of it
-          // is an incomplete plan, and the author has to be told which part.
-          const unclaimed = unclaimedWorkSteps(
-            [result.orchestrator, ...(result.agents || [])].filter(Boolean),
-            processFlowSteps,
-          );
-          if (unclaimed.length) {
-            result.structureWarning =
-              `The drafted agents cover ${processFlowSteps.length - unclaimed.length} of your flow's ${processFlowSteps.length} steps. ` +
-              `These would not be built at all, and anything they connect to would lose those connections: ${unclaimed.join(", ")}. ` +
-              `Draft again, or add the missing steps to the team yourself before creating it.`;
-            console.warn(`[propose-agents] ${unclaimed.length} authored step(s) claimed by no agent: ${unclaimed.join(", ")}`);
-          }
-        } else {
+        }
+        // Claiming SOME steps was silent, and that is the dangerous case.
+        // Live 2026-09-29: a 40-step close proposed 28 agents claiming 28
+        // steps, and the twelve nobody claimed simply were not built --
+        // including four of the six human approval gates. The team deployed
+        // clean, ran, and skipped the approvals, because a step no agent
+        // claims has no node and its edges go with it. The flow is the
+        // authority on what steps exist; a plan that covers only part of it
+        // is an incomplete plan, and the author has to be told which part.
+        //
+        // Asked whether or not any edge derived: claims that touch no other
+        // claim derive none, and that case used to be reported as "did not
+        // say which steps they cover" (live 2026-10-19, 7 claims, 41 steps
+        // unclaimed and never named).
+        const unclaimed = unclaimedWorkSteps(
+          [result.orchestrator, ...(result.agents || [])].filter(Boolean),
+          processFlowSteps,
+        );
+        const claimedAny = [result.orchestrator, ...(result.agents || [])]
+          .some((a: any) => Array.isArray(a?.flowStepLabels) && a.flowStepLabels.length > 0);
+        if (!claimedAny) {
           // Nothing claimed a step, so the team cannot be sequenced. Say so
           // rather than letting a silent fan-out look like a working team.
           result.structureWarning = `The drafted agents did not say which process-flow steps they cover, so this team could not be sequenced from your flow's ${processFlowEdges.length} connections. Every agent would run at once. Try drafting again.`;
           console.warn(`[propose-agents] no agent declared flowStepLabels; team cannot be sequenced from ${processFlowEdges.length} flow connections`);
+        } else if (unclaimed.length) {
+          result.structureWarning =
+            `The drafted agents cover ${processFlowSteps.length - unclaimed.length} of your flow's ${processFlowSteps.length} steps. ` +
+            `These would not be built at all, and anything they connect to would lose those connections: ${unclaimed.join(", ")}. ` +
+            `Draft again, or add the missing steps to the team yourself before creating it.`;
+          console.warn(`[propose-agents] ${unclaimed.length} authored step(s) claimed by no agent: ${unclaimed.join(", ")}`);
         }
       }
 
