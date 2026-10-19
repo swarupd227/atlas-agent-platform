@@ -12,17 +12,54 @@
  * authenticated product API so tenant checks, validation, and audit events run.
  */
 import pg from "pg";
+import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { canonicalModelId } from "../server/llm-provider";
+import { canonicalModelId, providerForModel } from "../server/llm-provider";
 
-const TEAM_NAME = "Hilti Campaign Planning Orchestrator";
-const EXPECTED_NODES = 6;
-const EXPECTED_EDGES = 6;
-const EXPECTED_KNOWLEDGE_BASES = 7;
-const EXPECTED_KNOWLEDGE_SOURCES = 25;
+const TEAM_NAME = (process.env.SOURCE_TEAM_NAME || "Hilti Campaign Planning Orchestrator").trim();
+const EXPECTED_NODES = Number(process.env.EXPECTED_NODES || 10);
+const EXPECTED_EDGES = Number(process.env.EXPECTED_EDGES || 10);
+const EXPECTED_KNOWLEDGE_BASES = Number(process.env.EXPECTED_KNOWLEDGE_BASES || 7);
+const EXPECTED_KNOWLEDGE_SOURCES = Number(process.env.EXPECTED_KNOWLEDGE_SOURCES || 25);
 
 type Named = { id: string; name: string };
 type JsonRow = Record<string, any>;
+
+async function curlRequest(
+  baseUrl: string,
+  method: string,
+  path: string,
+  cookie: string,
+  body?: unknown,
+  includeHeaders = false,
+): Promise<{ status: number; text: string; headers: string }> {
+  const args = ["-sS", "--max-time", "90", "-X", method];
+  if (cookie) args.push("-H", `Cookie: ${cookie}`);
+  if (body !== undefined) args.push("-H", "Content-Type: application/json", "--data-binary", "@-");
+  if (includeHeaders) args.push("-D", "-");
+  args.push("-w", "\n__ASTRA_STATUS__:%{http_code}", `${baseUrl}${path}`);
+
+  return await new Promise((resolve, reject) => {
+    const child = spawn("curl", args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) return reject(new Error(`curl ${method} ${path} failed: ${stderr.trim().slice(0, 240)}`));
+      const marker = stdout.lastIndexOf("\n__ASTRA_STATUS__:");
+      if (marker < 0) return reject(new Error(`curl ${method} ${path} returned no status marker`));
+      const status = Number(stdout.slice(marker + "\n__ASTRA_STATUS__:".length).trim());
+      const payload = stdout.slice(0, marker);
+      if (!includeHeaders) return resolve({ status, text: payload, headers: "" });
+      const separator = Math.max(payload.lastIndexOf("\r\n\r\n"), payload.lastIndexOf("\n\n"));
+      const width = payload.slice(separator, separator + 4).startsWith("\r\n\r\n") ? 4 : 2;
+      resolve({ status, headers: separator >= 0 ? payload.slice(0, separator) : payload, text: separator >= 0 ? payload.slice(separator + width) : "" });
+    });
+    child.stdin.end(body === undefined ? undefined : JSON.stringify(body));
+  });
+}
 
 export function normalizeResourceName(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
@@ -121,14 +158,28 @@ export function remapTeamGraph(
 
 class TargetApi {
   private cookie = "";
+  private readonly useCurl = process.env.HTTP_TRANSPORT === "curl";
   constructor(private readonly baseUrl: string, private readonly username: string, private readonly password: string) {}
 
   async ready(): Promise<void> {
+    if (this.useCurl) {
+      const response = await curlRequest(this.baseUrl, "GET", "/ready", "");
+      if (response.status < 200 || response.status >= 300) throw new Error(`Target readiness check failed (${response.status})`);
+      return;
+    }
     const response = await fetch(`${this.baseUrl}/ready`, { signal: AbortSignal.timeout(30_000) });
     if (!response.ok) throw new Error(`Target readiness check failed (${response.status})`);
   }
 
   async login(): Promise<void> {
+    if (this.useCurl) {
+      const response = await curlRequest(this.baseUrl, "POST", "/api/auth/login", "", { username: this.username, password: this.password }, true);
+      if (response.status < 200 || response.status >= 300) throw new Error(`Target login failed (${response.status}): ${response.text.slice(0, 160)}`);
+      const auth = /set-cookie:\s*auth_token=([^;]+)/i.exec(response.headers)?.[1];
+      if (!auth) throw new Error("Target login returned no auth cookie");
+      this.cookie = `auth_token=${auth}`;
+      return;
+    }
     const response = await fetch(`${this.baseUrl}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -144,6 +195,11 @@ class TargetApi {
   }
 
   async call(method: string, path: string, body?: unknown): Promise<any> {
+    if (this.useCurl) {
+      const response = await curlRequest(this.baseUrl, method, path, this.cookie, body);
+      if (response.status < 200 || response.status >= 300) throw new Error(`${method} ${path} failed (${response.status}): ${response.text.slice(0, 240)}`);
+      return response.text ? JSON.parse(response.text) : null;
+    }
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: { Cookie: this.cookie, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
@@ -203,14 +259,15 @@ async function readSourceSnapshot(connectionString: string): Promise<Snapshot> {
     if (nodes.length !== EXPECTED_NODES || edges.length !== EXPECTED_EDGES) {
       throw new Error(`Approved source topology changed: expected ${EXPECTED_NODES} nodes/${EXPECTED_EDGES} edges, found ${nodes.length}/${edges.length}`);
     }
-    if (nodes.some((node) => !node.ref_agent_id || node.ref_policy_id || node.ref_skill_id || node.ref_knowledge_base_id || node.ref_team_agent_id)) {
-      throw new Error("Approved source topology changed: the six executable nodes must all be worker-agent nodes");
+    if (nodes.some((node) => node.ref_agent_id
+      ? node.ref_policy_id || node.ref_skill_id || node.ref_knowledge_base_id || node.ref_team_agent_id
+      : node.node_type !== "edge_gate")) {
+      throw new Error("Approved source topology changed: expected worker-agent nodes plus explicit edge gates only");
     }
 
     const workerIds = [...new Set(nodes.map((node) => node.ref_agent_id).filter(Boolean))];
-    if (workerIds.length !== EXPECTED_NODES) throw new Error(`Expected ${EXPECTED_NODES} distinct source workers, found ${workerIds.length}`);
     const agents = (await client.query("select to_jsonb(a) as row from agents a where a.id = any($1::varchar[])", [[team.id, ...workerIds]])).rows.map((item) => item.row);
-    if (agents.length !== EXPECTED_NODES + 1) throw new Error(`Expected the team plus ${EXPECTED_NODES} workers, found ${agents.length} agents`);
+    if (agents.length !== workerIds.length + 1) throw new Error(`Expected the team plus ${workerIds.length} workers, found ${agents.length} agents`);
 
     const agentIds = agents.map((agent) => agent.id);
     const links = (await client.query("select to_jsonb(l) as row from agent_knowledge_bases l where l.agent_id = any($1::varchar[])", [agentIds])).rows.map((item) => item.row);
@@ -281,11 +338,25 @@ function trimToolNames(value: unknown): unknown {
     : tool);
 }
 
+export function canonicalModelSelection(provider: string | undefined, model: string): { modelProvider: string | undefined; modelName: string } {
+  const modelName = canonicalModelId(undefined, model);
+  return { modelProvider: providerForModel(modelName) ?? provider, modelName };
+}
+
+export function modelSelectionMatches(
+  actual: { modelProvider?: string; modelName?: string },
+  sourceProvider: string | undefined,
+  sourceModel: string,
+): boolean {
+  const expected = canonicalModelSelection(sourceProvider, sourceModel);
+  return actual.modelProvider === expected.modelProvider && actual.modelName === expected.modelName;
+}
+
 function agentBody(agent: JsonRow, skillIds: Map<string, string>, policyIds: Map<string, string>): JsonRow {
   const body: JsonRow = {};
   for (const [source, target] of AGENT_FIELD_MAP) if (agent[source] !== undefined) body[target] = agent[source];
   body.name = String(body.name).trim();
-  body.modelName = canonicalModelId(body.modelProvider, String(body.modelName || ""));
+  Object.assign(body, canonicalModelSelection(body.modelProvider, String(body.modelName || "")));
   body.toolsConfig = trimToolNames(body.toolsConfig);
   body.preloadedSkills = remapBindings(body.preloadedSkills, skillIds, "skillId");
   body.policyBindings = remapBindings(body.policyBindings, policyIds, "policyId");
@@ -307,6 +378,23 @@ function wantedRows<T extends Named>(all: T[], names: string[]): T[] {
   return all.filter((row) => wanted.has(normalizeResourceName(row.name)));
 }
 
+function matchSourceRows<T extends Named>(sourceRows: T[], targetRows: T[], kind: string): Map<string, T> {
+  const result = new Map<string, T>();
+  for (const source of sourceRows) {
+    const sameId = targetRows.find((target) => target.id === source.id);
+    if (sameId) {
+      result.set(source.id, sameId);
+      continue;
+    }
+    const matches = targetRows.filter((target) => normalizeResourceName(target.name) === normalizeResourceName(source.name));
+    if (matches.length > 1) {
+      throw new Error(`Ambiguous ${kind} name "${source.name}" matches ${matches.map((match) => match.id).join(", ")}`);
+    }
+    if (matches[0]) result.set(source.id, matches[0]);
+  }
+  return result;
+}
+
 async function dependencyMap(sourceRows: JsonRow[], targetRows: JsonRow[], kind: string): Promise<Map<string, string>> {
   const targetByName = indexUniqueByNormalizedName(wantedRows(targetRows, sourceRows.map((row) => row.name)), kind);
   const result = new Map<string, string>();
@@ -323,9 +411,8 @@ async function reconcile(snapshot: Snapshot, api: TargetApi, write: boolean): Pr
     api.call("GET", "/api/agents"), api.call("GET", "/api/knowledge-bases"),
     api.call("GET", "/api/skills"), api.call("GET", "/api/policies"),
   ]);
-  const sourceNames = snapshot.agents.map((agent) => String(agent.name));
-  const targetAgentByName = indexUniqueByNormalizedName(wantedRows(targetAgents, sourceNames), "agent");
-  const targetKbByName = indexUniqueByNormalizedName(wantedRows(targetKbs, snapshot.knowledgeBases.map((kb) => kb.name)), "knowledge base");
+  const targetAgentMatches = matchSourceRows(snapshot.agents, targetAgents, "agent");
+  const targetKbMatches = matchSourceRows(snapshot.knowledgeBases, targetKbs, "knowledge base");
   const skillIds = await dependencyMap(snapshot.skills, targetSkills, "skill");
   const policyIds = await dependencyMap(snapshot.policies, targetPolicies, "policy");
 
@@ -339,11 +426,11 @@ async function reconcile(snapshot: Snapshot, api: TargetApi, write: boolean): Pr
     bindings: snapshot.links.length,
     dependencies: { skills: skillIds.size, policies: policyIds.size },
   };
-  for (const source of snapshot.agents) targetAgentByName.has(normalizeResourceName(source.name)) ? plan.agents.update++ : plan.agents.create++;
-  for (const source of snapshot.knowledgeBases) targetKbByName.has(normalizeResourceName(source.name)) ? plan.knowledgeBases.update++ : plan.knowledgeBases.create++;
+  for (const source of snapshot.agents) targetAgentMatches.has(source.id) ? plan.agents.update++ : plan.agents.create++;
+  for (const source of snapshot.knowledgeBases) targetKbMatches.has(source.id) ? plan.knowledgeBases.update++ : plan.knowledgeBases.create++;
   for (const source of snapshot.sources) {
     const kb = snapshot.knowledgeBases.find((item) => item.id === source.knowledge_base_id);
-    const targetKb = kb ? targetKbByName.get(normalizeResourceName(kb.name)) : undefined;
+    const targetKb = kb ? targetKbMatches.get(kb.id) : undefined;
     if (!targetKb) plan.knowledgeBases.addSources++;
     else {
       const listed: JsonRow[] = await api.call("GET", `/api/knowledge-bases/${targetKb.id}/sources`);
@@ -355,7 +442,7 @@ async function reconcile(snapshot: Snapshot, api: TargetApi, write: boolean): Pr
 
   const kbIds = new Map<string, string>();
   for (const source of snapshot.knowledgeBases) {
-    const existing = targetKbByName.get(normalizeResourceName(source.name));
+    const existing = targetKbMatches.get(source.id);
     const target = existing
       ? await api.call("PATCH", `/api/knowledge-bases/${existing.id}`, kbBody(source))
       : await api.call("POST", "/api/knowledge-bases", kbBody(source));
@@ -380,7 +467,7 @@ async function reconcile(snapshot: Snapshot, api: TargetApi, write: boolean): Pr
   const agentIds = new Map<string, string>();
   for (const source of snapshot.agents) {
     const body = agentBody(source, skillIds, policyIds);
-    const existing = targetAgentByName.get(normalizeResourceName(source.name));
+    const existing = targetAgentMatches.get(source.id);
     const target = existing
       ? await api.call("PATCH", `/api/agents/${existing.id}`, body)
       : await api.call("POST", "/api/agents", body);
@@ -470,8 +557,13 @@ async function reconcile(snapshot: Snapshot, api: TargetApi, write: boolean): Pr
   for (const source of snapshot.agents) {
     const id = agentIds.get(source.id)!;
     const target = await api.call("GET", `/api/agents/${id}`);
-    const expectedModel = canonicalModelId(source.model_provider, String(source.model_name || ""));
-    if (target.modelName !== expectedModel) throw new Error(`Model verification failed for ${source.name}: ${target.modelName}`);
+    const sourceModel = String(source.model_name || "");
+    const expected = canonicalModelSelection(source.model_provider, sourceModel);
+    if (!modelSelectionMatches(target, source.model_provider, sourceModel)) {
+      throw new Error(
+        `Model verification failed for ${source.name}: expected ${expected.modelProvider}/${expected.modelName}, found ${target.modelProvider}/${target.modelName}`,
+      );
+    }
   }
   for (const sourceKb of snapshot.knowledgeBases) {
     const targetKbId = kbIds.get(sourceKb.id)!;

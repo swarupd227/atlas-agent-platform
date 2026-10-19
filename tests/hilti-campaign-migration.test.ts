@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   assertProductionWriteAllowed,
+  canonicalModelSelection,
   indexUniqueByNormalizedName,
+  modelSelectionMatches,
   normalizeResourceName,
   remapTeamGraph,
 } from "../scripts/hilti-campaign-migration";
@@ -23,6 +25,27 @@ describe("Hilti campaign migration safeguards", () => {
     expect(() => assertProductionWriteAllowed(false, undefined)).not.toThrow();
     expect(() => assertProductionWriteAllowed(true, "AWS_PROD")).toThrow(/AWS_PROD_MONOREPO/);
     expect(() => assertProductionWriteAllowed(true, "AWS_PROD_MONOREPO")).not.toThrow();
+  });
+
+  it("repairs a display-label/provider mismatch while copying an agent", () => {
+    expect(canonicalModelSelection("openai", "Claude Sonnet 5.5")).toEqual({
+      modelProvider: "anthropic",
+      modelName: "claude-sonnet-5-5",
+    });
+    expect(canonicalModelSelection("custom", "some-self-hosted-llama")).toEqual({
+      modelProvider: "custom",
+      modelName: "some-self-hosted-llama",
+    });
+    expect(modelSelectionMatches(
+      { modelProvider: "anthropic", modelName: "claude-sonnet-5-5" },
+      "openai",
+      "Claude Sonnet 5.5",
+    )).toBe(true);
+    expect(modelSelectionMatches(
+      { modelProvider: "openai", modelName: "claude-sonnet-5-5" },
+      "openai",
+      "Claude Sonnet 5.5",
+    )).toBe(false);
   });
 
   it("remaps agent references and edge node ids without changing graph topology", () => {

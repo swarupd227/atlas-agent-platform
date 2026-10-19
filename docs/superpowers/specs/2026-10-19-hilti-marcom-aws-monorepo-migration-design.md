@@ -12,7 +12,7 @@ Canonicalize the model at the shared provider boundary. Known picker labels reso
 
 The migration is explicit, dry-run by default, and restricted to the source team named `Hilti Campaign Planning Orchestrator`. It reconciles resources by normalized natural keys, reports conflicts instead of overwriting ambiguous matches, and writes to the target only through authenticated HTTP APIs. Source database access is read-only and supplies content that list APIs intentionally omit.
 
-The executable graph is the six-worker, six-edge Azure blueprint. Inactive descriptive runtime metadata is not converted into extra nodes. Existing AWS campaign teams are outside scope.
+The executable graph is read from the validated Azure blueprint and checked against configurable expected counts before any target write. The current approved graph contains nine workers, one human edge gate, and ten edges. Existing AWS campaign teams are outside scope.
 
 ## Safety and verification
 
@@ -20,5 +20,5 @@ The executable graph is the six-worker, six-edge Azure blueprint. Inactive descr
 - Require an explicit AWS Production confirmation before writes.
 - Reuse exact-name skills, policies, and knowledge bases; refuse ambiguous normalized-name matches.
 - Canonicalize all migrated model identifiers and trim tool names.
-- Re-read the target and verify worker count, edge topology, bindings, source counts, and model identifiers.
+- Re-read the target and verify node/edge counts, bindings, source counts, model identifiers, and provider ownership.
 - Never print credentials, cookies, document bodies, or database connection strings.
