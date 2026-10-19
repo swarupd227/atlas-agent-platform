@@ -36,13 +36,21 @@ const memberships = workers.map((w, i) => ({
   id: `m-${i}`, teamAgentId: w.id.slice(0, w.id.indexOf("-w")), memberAgentId: w.id, role: "member",
 }));
 
-const calls = { perTeam: 0, perWorker: 0, bulkMembers: 0, bulkAgents: 0 };
+const calls = { perTeam: 0, perWorker: 0, perTeamRuns: 0, bulkMembers: 0, bulkAgents: 0, bulkRuns: 0 };
 
 vi.mock("../server/storage", () => ({
   storage: {
     getCuratedJourneys: vi.fn(async () => orchestrators),
     getProcessFlows: vi.fn(async () => []),
-    summarizeDagExecutionRunsByTeamAgent: vi.fn(async () => ({ total: 0, completed: 0, failed: 0, latest: null })),
+    // Per team: a grouped count AND a latest-run lookup each, so this was the second fan-out.
+    summarizeDagExecutionRunsByTeamAgent: vi.fn(async () => {
+      calls.perTeamRuns++;
+      return { total: 0, completed: 0, failed: 0, latest: null };
+    }),
+    summarizeDagExecutionRunsByTeamAgents: vi.fn(async (ids: string[]) => {
+      calls.bulkRuns++;
+      return new Map(ids.map((id) => [id, { total: 2, completed: 1, failed: 1, latest: null }]));
+    }),
     // The two the route must NOT use per row any more.
     getAgentTeamMembers: vi.fn(async (teamAgentId: string) => {
       calls.perTeam++;
@@ -87,7 +95,7 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
-beforeEach(() => { calls.perTeam = 0; calls.perWorker = 0; calls.bulkMembers = 0; calls.bulkAgents = 0; });
+beforeEach(() => { for (const k of Object.keys(calls) as Array<keyof typeof calls>) calls[k] = 0; });
 
 describe("GET /api/journeys query count", () => {
   it("asks for memberships and workers once each, whatever the number of journeys", async () => {
@@ -98,9 +106,19 @@ describe("GET /api/journeys query count", () => {
 
     expect(calls.bulkMembers).toBe(1);
     expect(calls.bulkAgents).toBe(1);
-    // Three journeys and twelve memberships: the old shape would be 3 and 12.
+    expect(calls.bulkRuns).toBe(1);
+    // Three journeys and twelve memberships: the old shape would be 3, 12 and 3.
     expect(calls.perTeam).toBe(0);
     expect(calls.perWorker).toBe(0);
+    expect(calls.perTeamRuns).toBe(0);
+  });
+
+  it("carries each journey's own run summary through the bulk read", async () => {
+    const res = await fetch(`${base}/api/journeys`);
+    const body = (await res.json()) as Array<{ runs: { total: number; completed: number; failed: number } }>;
+    // Not just "a summary": the one this bulk read returned, so a map keyed wrongly is caught.
+    expect(body.map((j) => j.runs.total)).toEqual([2, 2, 2]);
+    expect(body[0].runs).toEqual({ total: 2, completed: 1, failed: 1, latest: null });
   });
 
   it("still returns each journey's own workers", async () => {
@@ -128,5 +146,6 @@ describe("GET /api/journeys query count", () => {
     expect(await res.json()).toEqual([]);
     expect(calls.perTeam).toBe(0);
     expect(calls.perWorker).toBe(0);
+    expect(calls.perTeamRuns).toBe(0);
   });
 });

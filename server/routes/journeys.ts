@@ -81,6 +81,9 @@ router.get("/api/journeys", async (req, res) => {
     // is absent here exactly as it was absent there.
     const workerRows = await storage.getAgentsByIds(allMembers.map((m) => m.memberAgentId), getOrgId(req));
     const workerById = new Map(workerRows.map((a) => [a.id, a]));
+    // Run counts the same way, for the same reason: this was a grouped count AND a latest-run
+    // lookup per journey, so 68 journeys cost 136 round trips here on their own.
+    const runsByTeam = await storage.summarizeDagExecutionRunsByTeamAgents(orchestrators.map((o) => o.id));
 
     const journeys = await Promise.all(
       orchestrators.map(async (orchestrator) => {
@@ -119,7 +122,7 @@ router.get("/api/journeys", async (req, res) => {
             : null,
           // The team's own runs (the run monitor's dag_execution_runs), so the
           // library says what actually happened when this journey ran.
-          runs: await storage.summarizeDagExecutionRunsByTeamAgent(orchestrator.id),
+          runs: runsByTeam.get(orchestrator.id) ?? { total: 0, completed: 0, failed: 0, latest: null },
           createdAt: orchestrator.createdAt,
         };
       }),

@@ -1009,6 +1009,8 @@ export interface IStorage {
   listDagExecutionRunsByTeamAgent(teamAgentId: string, limit?: number): Promise<DagExecutionRun[]>;
   /** Run counts by outcome plus the latest run, for one team -- without loading full run rows (their wave results are large). */
   summarizeDagExecutionRunsByTeamAgent(teamAgentId: string): Promise<DagRunSummary>;
+  /** The same summary for many teams at once, for callers that would otherwise ask per team. */
+  summarizeDagExecutionRunsByTeamAgents(teamAgentIds: string[]): Promise<Map<string, DagRunSummary>>;
   listDagExecutionRunsByStatus(status: string): Promise<DagExecutionRun[]>;
   listDagExecutionRunsByOrg(orgId?: string, limit?: number): Promise<DagExecutionRun[]>;
   createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun>;
@@ -5602,6 +5604,52 @@ export class DatabaseStorage implements IStorage {
       failed: count((s) => s === "failed"),
       latest: latest ?? null,
     };
+  }
+
+  /**
+   * The same summary for many teams, in two queries rather than two per team.
+   *
+   * The per-team version costs a grouped count and a latest-run lookup each, so a page that
+   * summarises 68 journeys spent 136 round trips here alone -- on top of the memberships and
+   * workers, and all of it inside the same concurrent fan-out against a pool of twelve.
+   *
+   * DISTINCT ON gives the latest run per team in one pass. The id list is built with sql.join
+   * rather than passed as an array parameter, because drizzle renders a JS array as a row and
+   * Postgres rejects it (see server/skill-usage.ts, where a test caught exactly that).
+   */
+  async summarizeDagExecutionRunsByTeamAgents(teamAgentIds: string[]): Promise<Map<string, DagRunSummary>> {
+    const out = new Map<string, DagRunSummary>();
+    const unique = Array.from(new Set(teamAgentIds));
+    // A team with no runs still gets a summary, as the per-team version returned one.
+    for (const id of unique) out.set(id, { total: 0, completed: 0, failed: 0, latest: null });
+    if (!unique.length) return out;
+
+    const counts = await db
+      .select({ teamAgentId: dagExecutionRuns.teamAgentId, status: dagExecutionRuns.status, n: sql<number>`count(*)::int` })
+      .from(dagExecutionRuns)
+      .where(inArray(dagExecutionRuns.teamAgentId, unique))
+      .groupBy(dagExecutionRuns.teamAgentId, dagExecutionRuns.status);
+    for (const c of counts) {
+      const row = out.get(String(c.teamAgentId));
+      if (!row) continue;
+      const n = Number(c.n);
+      row.total += n;
+      if (c.status === "completed" || c.status === "completed_with_skips") row.completed += n;
+      if (c.status === "failed") row.failed += n;
+    }
+
+    const list = sql.join(unique.map((id) => sql`${id}`), sql`, `);
+    const latest = await db.execute(sql`
+      SELECT DISTINCT ON (team_agent_id) team_agent_id, id, status, started_at, completed_at
+      FROM dag_execution_runs
+      WHERE team_agent_id IN (${list})
+      ORDER BY team_agent_id, created_at DESC`);
+    for (const r of ((latest as any).rows ?? []) as any[]) {
+      const row = out.get(String(r.team_agent_id));
+      if (!row) continue;
+      row.latest = { id: r.id, status: r.status, startedAt: r.started_at, completedAt: r.completed_at };
+    }
+    return out;
   }
 
   async listDagExecutionRunsByStatus(status: string): Promise<DagExecutionRun[]> {
