@@ -14,6 +14,7 @@ import { isKnownIndustry } from "@shared/industry-filter";
 import { generateOntologyEvalCases } from "./routes/helpers";
 import { resolveBindingServer, resolveDeclaredToolName } from "./team-bindings";
 import { BUILTIN_TOOL_NAMES } from "./builtin-tool-names";
+import { assessConnectorLinkWarnings, connectorLinkAuditEvent } from "./connector-link";
 import { ruleLeafSchema, ruleGroupSchema, type RuleGroup } from "@shared/schema";
 import { edgeRuleForCondition, parseConditionToRule } from "@shared/condition-to-rule";
 import { classifyStep, decisionAnswerType, decisionLevelsFor, decisionOptionsFor, withClassifier, type ClassifierBinding, type DecisionBranch } from "@shared/flow-execution-kind";
@@ -714,6 +715,10 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // reads only the connectors the plan itself names.
   const planAgents = [orchestrator, ...workers];
   const toolNamesByConnectorId = new Map<string, string[]>();
+  // The same rows, kept rather than reduced to names, so the connector-grant
+  // policy check below reads riskClassification and annotations off them
+  // without a second read of the same connector.
+  const toolRowsByConnectorId = new Map<string, Array<{ id: string; name: string; description?: string | null; riskClassification?: string | null; annotations?: unknown }>>();
   for (const serverName of Array.from(new Set(planAgents.flatMap((a) => (a.mcpToolBindings ?? []).map((b) => b.server))))) {
     const connector = resolveBindingServer(serverName, allMcpServers);
     if (!connector || toolNamesByConnectorId.has(connector.id)) continue;
@@ -725,6 +730,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       ? await storage.getMcpServerTools(connector.id).catch(() => [])
       : [];
     toolNamesByConnectorId.set(connector.id, discovered.map((t) => t.name));
+    toolRowsByConnectorId.set(connector.id, discovered as Array<{ id: string; name: string; description?: string | null; riskClassification?: string | null; annotations?: unknown }>);
   }
   // Every tool any connector in this plan offers. Used only to tell "declared a
   // real tool on a connector this agent is not linked to" -- which is a
@@ -894,11 +900,12 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   // server for an integration nobody has connected (a known, pre-existing
   // behaviour), and linking to one regardless produced an MCP Servers tab
   // that looked populated while the node would fail at run time.
-  const linkMcpBindings = async function(agentId: string, bindings?: Array<{ server: string; tool: string }>) {
+  const linkMcpBindings = async function(agent: { id: string; organizationId?: string | null; policyBindings?: unknown }, bindings?: Array<{ server: string; tool: string }>) {
     const linked: string[] = [];
     const unresolved: string[] = [];
     const unconnected: string[] = [];
-    if (!bindings?.length) return { linked, unresolved, unconnected };
+    const policyMismatches: string[] = [];
+    if (!bindings?.length) return { linked, unresolved, unconnected, policyMismatches };
     const serverNames = Array.from(new Set(bindings.map(b => b.server)));
     for (const serverName of serverNames) {
       const matched = resolveBindingServer(serverName, allMcpServers);
@@ -909,15 +916,42 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
       if (matched.integrationId && !connectedIntegrationIds.has(matched.integrationId)) {
         unconnected.push(matched.name);
       }
+      // The same rule the route uses, from the one place it lives, so the two
+      // paths cannot drift. Tool rows come from the read the declared-tool-name
+      // repair already did for this connector.
+      const warnings = assessConnectorLinkWarnings(agent, toolRowsByConnectorId.get(matched.id) ?? [], orgPolicies);
+      for (const w of warnings) {
+        policyMismatches.push(`${w.toolName} (${w.riskClassification}, needs ${w.requiredPolicyDomain})`);
+        // Never let an audit write stop the build; a lost link is worse than a
+        // lost event, and the warning still reaches structureWarnings below.
+        // typeof first: `storage.x(...).catch()` throws on `undefined(...)`
+        // before the catch exists, which is how the declared-tool-name read
+        // broke 8 tests. A build must not die for want of an audit row.
+        if (typeof storage.createAuditEvent !== "function") continue;
+        await storage.createAuditEvent(connectorLinkAuditEvent(agent, "agent.mcp_policy_mismatch", {
+          serverId: matched.id,
+          serverName: matched.name,
+          toolName: w.toolName,
+          toolId: w.toolId,
+          riskClassification: w.riskClassification,
+          requiredPolicyDomain: w.requiredPolicyDomain,
+          issue: w.issue,
+          acknowledged: false,
+          via: "team_build",
+        }, orgId)).catch(() => {});
+      }
+      if (warnings.length) {
+        console.warn(`[team-build] ${matched.name} -> agent ${agent.id}: ${warnings.length} policy mismatch(es), granted and recorded`);
+      }
       try {
-        const existing = await storage.getAgentMcpServerByIds(agentId, matched.id);
+        const existing = await storage.getAgentMcpServerByIds(agent.id, matched.id);
         if (!existing) {
-          await storage.createAgentMcpServer({ agentId, serverId: matched.id });
+          await storage.createAgentMcpServer({ agentId: agent.id, serverId: matched.id, assignedBy: "team build" });
         }
         linked.push(matched.name);
       } catch {}
     }
-    return { linked, unresolved, unconnected };
+    return { linked, unresolved, unconnected, policyMismatches };
   }
 
   const composeTaskPrompt = function(agent: TeamAgentProposal, isOrchestrator: boolean): string {
@@ -1185,8 +1219,8 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     ? Array.from(new Set((orchestrator.mcpToolBindings ?? []).map((b) => b.server)))
     : [];
   const orchestratorLinkResult = builtFromFlow
-    ? { linked: [], unresolved: [], unconnected: [] }
-    : await linkMcpBindings(teamAgent.id, orchestrator.mcpToolBindings);
+    ? { linked: [], unresolved: [], unconnected: [], policyMismatches: [] }
+    : await linkMcpBindings(teamAgent, orchestrator.mcpToolBindings);
   if (withheldFromOrchestrator.length) {
     console.info(`[team-build] orchestrator drawn from a flow: withheld ${withheldFromOrchestrator.length} connector binding(s) so every system call stays a drawn step — ${withheldFromOrchestrator.join(", ")}`);
   }
@@ -1230,7 +1264,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
   try { for (const c of await storage.getDecisionClassifiers(orgId)) classifiers.set(c.id, c as ClassifierBinding); } catch { /* an older storage: steps keep the copy they carry */ }
 
   const createdWorkers: any[] = [];
-  const workerLinkResults: Array<{ linked: string[]; unresolved: string[]; unconnected: string[] }> = [];
+  const workerLinkResults: Array<{ linked: string[]; unresolved: string[]; unconnected: string[]; policyMismatches: string[] }> = [];
   for (const worker of workers) {
     const workerAgent = await storage.createAgent({
       organizationId: orgId,
@@ -1266,7 +1300,7 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
 
     storage.upsertAgentMandate(workerAgent.id, buildMandate(worker, false), orgId).catch(() => {});
 
-    workerLinkResults.push(await linkMcpBindings(workerAgent.id, worker.mcpToolBindings));
+    workerLinkResults.push(await linkMcpBindings(workerAgent, worker.mcpToolBindings));
 
     await storage.createAgentTeamMember({
       teamAgentId: teamAgent.id,
@@ -1974,6 +2008,19 @@ export async function buildTeamFromProposal(body: TeamBuildBody, opts: { orgId: 
     ...orchestratorLinkResult.unresolved,
     ...workerLinkResults.flatMap(r => r.unresolved),
   ]));
+  // Granted, recorded in the audit trail, and said out loud here. A person
+  // granting the same connector through POST /api/agents/:id/mcp-servers would
+  // have been stopped until they acknowledged this; a build cannot stop, so the
+  // least it can do is not be silent about it.
+  const policyMismatchBindings = Array.from(new Set([
+    ...orchestratorLinkResult.policyMismatches,
+    ...workerLinkResults.flatMap(r => r.policyMismatches),
+  ]));
+  if (policyMismatchBindings.length) {
+    structureWarnings.push(
+      `${policyMismatchBindings.length === 1 ? "A connector tool was" : `${policyMismatchBindings.length} connector tools were`} granted to this team without a policy governing ${policyMismatchBindings.length === 1 ? "it" : "them"}: ${policyMismatchBindings.join("; ")}. Each is recorded as an agent.mcp_policy_mismatch audit event.`,
+    );
+  }
 
   // Read the graph back before calling this a success. A build that leaves a
   // loop as an edge produces a team whose every run dies at wave computation,

@@ -34,6 +34,7 @@ import {
 import { RemovalPlanError, planAgentRemoval } from "../removal-plans";
 import { TeamRemovalError, deleteEvalSuitesFor, deleteTeam, retireDeploymentsFor } from "../team-removal";
 import { getOrgId, getDefaultOrgId } from "../auth";
+import { assessConnectorLinkWarnings, connectorLinkAuditEvent } from "../connector-link";
 import { resolveRequestOrgId, filterEvalSuitesForOrg, filterEvalRunsForOrg } from "../tenant-scope";
 import { buildBlastRadius } from "../blast-radius";
 import {
@@ -159,9 +160,35 @@ const router = Router();
         try {
           // Names resolve only among this tenant's connectors, never to another org's row.
           const allServers = mcpServerNames.length > 0 ? await storage.getMcpServers(getOrgId(req) ?? getDefaultOrgId()) : [];
+          // THE POLICY CHECK THE DEDICATED ROUTE APPLIES, on the path that
+          // actually creates most grants. POST /api/agents/:id/mcp-servers
+          // evaluates the agent's bindings against the connector's high-risk and
+          // write tools, records agent.mcp_policy_mismatch, and creates nothing
+          // until the caller acknowledges. Measured 2026-10-19: 27 call sites
+          // create a grant and exactly that one was behind the check.
+          //
+          // Recorded, not refused, here: this block is inside a catch-all and
+          // the route's contract is to return the agent, so failing the create
+          // over a policy warning would break agent creation outright. The
+          // event is what makes the grant answerable afterwards.
+          const orgPolicies = await storage.getPolicies(getOrgId(req) ?? getDefaultOrgId()).catch(() => []);
+          const recordMismatches = async (serverId: string, serverName: string) => {
+            if (typeof storage.getMcpServerTools !== "function" || typeof storage.createAuditEvent !== "function") return;
+            const tools = await storage.getMcpServerTools(serverId).catch(() => []);
+            for (const w of assessConnectorLinkWarnings(agent, tools, orgPolicies)) {
+              await storage.createAuditEvent(connectorLinkAuditEvent(agent, "agent.mcp_policy_mismatch", {
+                serverId, serverName, toolName: w.toolName, toolId: w.toolId,
+                riskClassification: w.riskClassification, requiredPolicyDomain: w.requiredPolicyDomain,
+                issue: w.issue, acknowledged: false, via: "agent_write",
+              }, getOrgId(req))).catch(() => {});
+            }
+          };
           for (const serverId of mcpServerIds) {
             const existing = await storage.getAgentMcpServerByIds(agent.id, serverId);
-            if (!existing) await storage.createAgentMcpServer({ agentId: agent.id, serverId });
+            if (!existing) {
+              await recordMismatches(serverId, String(serverId));
+              await storage.createAgentMcpServer({ agentId: agent.id, serverId });
+            }
           }
           for (const name of mcpServerNames) {
             const matched = allServers.find(s =>
@@ -169,7 +196,10 @@ const router = Router();
             );
             if (matched) {
               const existing = await storage.getAgentMcpServerByIds(agent.id, matched.id);
-              if (!existing) await storage.createAgentMcpServer({ agentId: agent.id, serverId: matched.id });
+              if (!existing) {
+                await recordMismatches(matched.id, matched.name);
+                await storage.createAgentMcpServer({ agentId: agent.id, serverId: matched.id });
+              }
             }
           }
         } catch (_) {}

@@ -19,7 +19,8 @@ const state = vi.hoisted(() => ({
   outcomePolicies: [] as any[],
   servers: [] as any[],
   // An array, not a map keyed by id, so reset() clears it with everything else.
-  serverTools: [] as Array<{ serverId: string; tools: Array<{ name: string }> }>,
+  serverTools: [] as Array<{ serverId: string; tools: Array<{ id?: string; name: string; description?: string; riskClassification?: string; annotations?: unknown }> }>,
+  auditEvents: [] as any[],
   connections: [] as any[],
   agentUpdates: [] as any[],
   flows: [] as any[],
@@ -35,6 +36,7 @@ vi.mock("../server/storage", () => {
         state.outcomes.find((o) => o.id === outcomeId && (!orgId || o.organizationId === orgId))),
       getMcpServers: vi.fn(async () => state.servers),
       getMcpServerTools: vi.fn(async (serverId: string) => state.serverTools.find((s) => s.serverId === serverId)?.tools ?? []),
+      createAuditEvent: vi.fn(async (e: any) => { state.auditEvents.push(e); return e; }),
       getProcessFlow: vi.fn(async (flowId: string, orgId?: string) =>
         state.flows.find((f) => f.id === flowId && (!orgId || f.organizationId === orgId))),
       updateProcessFlow: vi.fn(async (flowId: string, data: any, orgId?: string) => {
@@ -94,6 +96,7 @@ vi.mock("../server/routes/helpers", () => ({
 vi.mock("../server/auth", () => ({ getDefaultOrgId: () => "default-org" }));
 
 import { buildTeamFromProposal, teamBuildBodySchema, TeamBuildNotFoundError, IncompletePlanError, ImplausibleClaimError } from "../server/team-build";
+import { storage } from "../server/storage";
 import { computeWaves } from "../server/dag-execution-engine";
 
 const worker = (name: string, extra: Record<string, unknown> = {}) => ({ name, description: `${name} does its step`, ...extra });
@@ -415,6 +418,86 @@ describe("buildTeamFromProposal", () => {
     const built = state.agents.find((a) => a.name === "Cash Application")!;
     expect((built.toolsConfig as Array<{ name: string }>)[0].name).toBe("get_payment_batch - dealer operations");
     expect(result.structureWarnings.join(" ")).toMatch(/matches no tool on any connector in this plan/);
+  });
+
+  /**
+   * The policy check a person granting the same connector would have hit.
+   *
+   * Measured 2026-10-19: storage.createAgentMcpServer has 27 call sites and
+   * exactly one -- POST /api/agents/:id/mcp-servers -- sat behind the policy
+   * evaluation. So a binding made through the gated route was not durable: six
+   * agents were granted a connector there with a data_handling policy bound
+   * first, and rebuilding those teams regranted here with nothing re-checking.
+   *
+   * Granted and reported rather than refused, which is this file's existing
+   * precedent for an unconnected connector. The pair below is what makes that
+   * meaningful: the same build, warned when no policy governs the tool and
+   * silent when one does.
+   */
+  const riskyConnector = () => {
+    state.servers.push({ id: "srv-risky", name: "Core Banking", integrationId: "core-banking" });
+    state.connections.push({ integrationId: "core-banking", status: "connected" });
+    state.serverTools.push({ serverId: "srv-risky", tools: [
+      { id: "t-post", name: "post_allocation", description: "Post an allocation to the ledger", riskClassification: "high" },
+    ] });
+  };
+  const riskyPlan = (policyConstraints?: string[]) => teamBuildBodySchema.parse({
+    orchestrator: worker("Ledger Team"),
+    workers: [worker("Allocation Poster", {
+      mcpToolBindings: [{ server: "Core Banking", tool: "post_allocation" }],
+      ...(policyConstraints ? { policyConstraints } : {}),
+    })],
+  });
+
+  it("grants a high-risk connector with no governing policy, records the mismatch, and says so", async () => {
+    riskyConnector();
+    const result = await buildTeamFromProposal(riskyPlan(), { orgId: "org-a" });
+
+    // Granted -- a build does not stop over a defect whose fix is elsewhere.
+    expect(state.links.map((l) => l.serverId)).toContain("srv-risky");
+    // Recorded, which is the whole point: the mismatch is answerable afterwards.
+    const mismatches = state.auditEvents.filter((e) => e.action === "agent.mcp_policy_mismatch");
+    expect(mismatches).toHaveLength(1);
+    const details = JSON.parse(mismatches[0].details);
+    expect(details).toMatchObject({
+      serverName: "Core Banking",
+      toolName: "post_allocation",
+      riskClassification: "high",
+      requiredPolicyDomain: "tool_permissions",
+      acknowledged: false,
+      via: "team_build",
+    });
+    // And said out loud, not only written to a table nobody reads.
+    expect(result.structureWarnings.join(" ")).toMatch(/post_allocation \(high, needs tool_permissions\)/);
+    expect(result.structureWarnings.join(" ")).toMatch(/agent\.mcp_policy_mismatch/);
+  });
+
+  it("stays silent when a bound policy governs the tool", async () => {
+    // The negative half. Without it the assertion above passes for a build that
+    // warns about everything, which is the same as warning about nothing.
+    riskyConnector();
+    state.policies.push({ id: "pol-tools", name: "Tool permissions", domain: "tool_permissions", status: "active" });
+    const result = await buildTeamFromProposal(riskyPlan(["Tool permissions"]), { orgId: "org-a" });
+
+    expect(state.links.map((l) => l.serverId)).toContain("srv-risky");
+    expect(state.auditEvents.filter((e) => e.action === "agent.mcp_policy_mismatch")).toEqual([]);
+    expect(result.structureWarnings.join(" ")).not.toMatch(/without a policy governing/);
+  });
+
+  it("does not fall over when the store has no audit writer", async () => {
+    // `storage.x(...).catch()` throws on `undefined(...)` before the catch
+    // exists. The mismatch must still reach the report when the event cannot
+    // be written, or a build on a store without auditing dies for want of a row.
+    riskyConnector();
+    const audit = (storage as any).createAuditEvent;
+    (storage as any).createAuditEvent = undefined;
+    try {
+      const result = await buildTeamFromProposal(riskyPlan(), { orgId: "org-a" });
+      expect(state.links.map((l) => l.serverId)).toContain("srv-risky");
+      expect(result.structureWarnings.join(" ")).toMatch(/post_allocation \(high, needs tool_permissions\)/);
+    } finally {
+      (storage as any).createAuditEvent = audit;
+    }
   });
 
   it("throws not found for an outcome the organization can't see", async () => {
