@@ -10,6 +10,7 @@ import {
 } from "@shared/run-words";
 import type { AstraTool, ProofEnvelope } from "../types";
 import { resolveTeam } from "./team-ref";
+import { HISTORY_TOOLS } from "./history";
 
 /** Loaded on demand: run_team, get_team_run and the watches stay core. */
 const PACK = "runs";
@@ -440,4 +441,5 @@ export const RUNS_TOOLS: AstraTool[] = [
   runsNeedingAttentionTool,
   stepsNeverRunTool,
   compareRunsTool,
+  ...HISTORY_TOOLS,
 ];

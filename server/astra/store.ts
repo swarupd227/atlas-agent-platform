@@ -6,7 +6,8 @@
  * a thread started by one user is only listed for and opened by that user
  * (canAccessThread), even within the same organization.
  */
-import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
+import { MESSAGE_TSV_EXPR, qualifyTsv } from "../history-search-constants";
 import { db } from "../db";
 import { astraMessages, astraThreads, type AstraMessage, type AstraThread } from "@shared/schema";
 import type {
@@ -100,6 +101,13 @@ export interface MessageHit {
 const SNIPPET_PAD = 60;
 
 /** The matching phrase with context, on one line. */
+/** What to centre a snippet on: the whole query if the text has it, else the first word of it that the text has. */
+export function centreOn(markdown: string, query: string): string {
+  const text = markdown.toLowerCase();
+  if (text.includes(query.toLowerCase())) return query;
+  return query.split(/\s+/).find((w) => w.replace(/["'()-]/g, "").length >= 2 && text.includes(w.replace(/["'()-]/g, "").toLowerCase()))?.replace(/["'()-]/g, "") ?? query;
+}
+
 export function snippetAround(markdown: string, needle: string, pad = SNIPPET_PAD): string {
   const text = markdown.replace(/\s+/g, " ").trim();
   const at = text.toLowerCase().indexOf(needle.toLowerCase());
@@ -257,7 +265,7 @@ export class DbThreadStore implements ThreadStore {
     const mine = userId
       ? or(isNull(astraThreads.actorUserId), eq(astraThreads.actorUserId, userId))
       : undefined;
-    const rows = await db
+    const find = (cond: SQL | undefined, order: SQL[]) => db
       .select({
         threadId: astraMessages.threadId,
         title: astraThreads.title,
@@ -267,9 +275,25 @@ export class DbThreadStore implements ThreadStore {
       })
       .from(astraMessages)
       .innerJoin(astraThreads, eq(astraThreads.id, astraMessages.threadId))
-      .where(and(eq(astraMessages.organizationId, orgId), ilike(astraMessages.markdown, `%${needle}%`), ...(mine ? [mine] : [])))
-      .orderBy(desc(astraMessages.createdAt))
+      .where(cond)
+      .orderBy(...order)
       .limit(limit * 3);
+
+    // Ranked full-text match first (server/history-search.ts holds the index it runs on): the messages whose
+    // words match, best first. A part of a word, or a symbol-only query, matches no word, so the phrase match
+    // the palette always used is the fallback and nothing it found before is lost.
+    const tsv = sql.raw(qualifyTsv(MESSAGE_TSV_EXPR, "astra_messages"));
+    const tsq = sql`websearch_to_tsquery('simple', ${needle})`;
+    let rows = await find(
+      and(eq(astraMessages.organizationId, orgId), sql`${tsv} @@ ${tsq}`, ...(mine ? [mine] : [])),
+      [sql`ts_rank_cd(${tsv}, ${tsq}) desc`, desc(astraMessages.createdAt)],
+    );
+    if (rows.length === 0) {
+      rows = await find(
+        and(eq(astraMessages.organizationId, orgId), ilike(astraMessages.markdown, `%${needle}%`), ...(mine ? [mine] : [])),
+        [desc(astraMessages.createdAt)],
+      );
+    }
 
     // One hit per conversation: ten lines from the same long answer are one
     // result to a person looking for the conversation.
@@ -282,7 +306,8 @@ export class DbThreadStore implements ThreadStore {
         threadId: row.threadId,
         title: row.title,
         role: row.role,
-        snippet: snippetAround(row.markdown ?? "", needle),
+        // A full-text match need not contain the phrase whole; centre on it if it does, else on the first query word that is there.
+        snippet: snippetAround(row.markdown ?? "", centreOn(row.markdown ?? "", needle)),
         at: iso(row.createdAt),
       });
       if (hits.length >= limit) break;

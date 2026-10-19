@@ -53,7 +53,7 @@ export const noteHash = (text: string): string =>
 
 export const shortId = (id: string): string => String(id).slice(0, 8);
 
-type Rule = { re: RegExp; reason: string; /** A rule about links only: text that may legitimately carry a URL skips it. */ link?: true };
+type Rule = { re: RegExp; reason: string; /** A rule about links only: text that may legitimately carry a URL skips it. */ link?: true; /** A rule about text that reads as an instruction to the model (see readsAsInstruction). */ instruction?: true };
 
 // Text that reads like an instruction aimed at the model, or tries to move data
 // out, or is a credential or personal data. Each is something a note should
@@ -61,11 +61,11 @@ type Rule = { re: RegExp; reason: string; /** A rule about links only: text that
 const REJECT_RULES: Rule[] = [
   { re: /[​-‏‪-‮⁠-⁤﻿]/, reason: "it contains invisible characters" },
   { re: /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/, reason: "it contains control characters" },
-  { re: /\b(ignore|disregard|forget|override|bypass)\b[^.]{0,60}\b(instruction|rule|prompt|polic(y|ies)|guardrail|constraint|safeguard)/i, reason: "it reads as an instruction to ignore the agent's rules" },
-  { re: /\b(you are now|from now on you|act as (if|though)|pretend (to be|you)|new instructions?|system prompt|developer (message|prompt))\b/i, reason: "it reads as an attempt to change the agent's role or instructions" },
-  { re: /<\s*\/?\s*(system|assistant|developer|tool|instructions?)\s*>|\[\s*(system|inst)\s*\]|^\s*#{2,}\s*(system|instructions?)\b/im, reason: "it contains prompt-structure markers" },
-  { re: /\b(send|post|upload|forward|email|exfiltrate|leak|transmit)\b[^.]{0,80}(https?:\/\/|\bto\b[^.]{0,30}@)/i, reason: "it asks for data to be sent somewhere" },
-  { re: /\b(curl|wget)\b[^|]{0,160}\|\s*(sh|bash)\b/i, reason: "it contains a download-and-run command" },
+  { re: /\b(ignore|disregard|forget|override|bypass)\b[^.]{0,60}\b(instruction|rule|prompt|polic(y|ies)|guardrail|constraint|safeguard)/i, reason: "it reads as an instruction to ignore the agent's rules", instruction: true },
+  { re: /\b(you are now|from now on you|act as (if|though)|pretend (to be|you)|new instructions?|system prompt|developer (message|prompt))\b/i, reason: "it reads as an attempt to change the agent's role or instructions", instruction: true },
+  { re: /<\s*\/?\s*(system|assistant|developer|tool|instructions?)\s*>|\[\s*(system|inst)\s*\]|^\s*#{2,}\s*(system|instructions?)\b/im, reason: "it contains prompt-structure markers", instruction: true },
+  { re: /\b(send|post|upload|forward|email|exfiltrate|leak|transmit)\b[^.]{0,80}(https?:\/\/|\bto\b[^.]{0,30}@)/i, reason: "it asks for data to be sent somewhere", instruction: true },
+  { re: /\b(curl|wget)\b[^|]{0,160}\|\s*(sh|bash)\b/i, reason: "it contains a download-and-run command", instruction: true },
   { re: /https?:\/\//i, reason: "it contains a link; links are not stored in memory", link: true },
   { re: /\b[A-Za-z0-9+/]{60,}={0,2}/, reason: "it contains a long encoded blob" },
   { re: /\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\./, reason: "it looks like a credential" },
@@ -102,6 +102,16 @@ export function scanUntrustedText(text: string, opts: { allowLinks?: boolean } =
     if (r.re.test(raw)) return { ok: false, reason: r.reason };
   }
   return { ok: true };
+}
+
+/**
+ * Whether text reads as an instruction aimed at a model (override the rules, change the role, prompt
+ * markers, send data out, download and run). For text that is shown as DATA, such as a passage found in
+ * history, where links, emails and numbers are ordinary and only this class is a reason to withhold it.
+ */
+export function readsAsInstruction(text: string): boolean {
+  const raw = String(text ?? "");
+  return REJECT_RULES.some((r) => r.instruction && r.re.test(raw));
 }
 
 export const isLive = (n: Pick<AgentMemoryNote, "status" | "expiresAt" | "proposedAction">, now: number = Date.now()): boolean =>

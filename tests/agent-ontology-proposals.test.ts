@@ -507,7 +507,7 @@ describe("wiring", () => {
 
   it("the dispatcher exempts the tool from the allow-lists but not from the shadow gate, and reads its id from an import-free module", () => {
     const src = read("server/tool-dispatcher.ts");
-    expect(src).toMatch(/const exemptFromAllowLists = skillRead \|\| memoryPropose \|\| skillPropose \|\| ontologyPropose;/);
+    expect(src).toMatch(/const exemptFromAllowLists = skillRead \|\| memoryPropose \|\| skillPropose \|\| ontologyPropose( \|\| historyRead)?;/);
     expect(src).toMatch(/const ontologyPropose = tool\.serverId === BUILTIN_ONTOLOGY_PROPOSAL_SERVER_ID;/);
     expect(src).toContain('from "./ontology-proposal-constants"');
     expect(read("server/ontology-proposal-constants.ts")).not.toMatch(/^import /m);
