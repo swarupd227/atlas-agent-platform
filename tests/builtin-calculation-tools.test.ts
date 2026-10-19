@@ -11,6 +11,14 @@ import {
   linearRegression,
   normalInterval,
   asFraction,
+  FINANCIAL_ANALYSIS_TOOL,
+  calculationToolsGrantedBy,
+  asRate,
+  presentValue,
+  futureValue,
+  netPresentValue,
+  internalRateOfReturn,
+  compareCoverageBids,
 } from "../server/builtin-calculation-tools";
 
 const skill = (markdownBody: string, status = "active") => ({ id: "s1", name: "Loss Forecasting", status, markdownBody } as any);
@@ -28,6 +36,80 @@ describe("granting: a skill grants loss_forecast by naming it", () => {
     expect(tools[0].serverId).toBe(BUILTIN_CALCULATION_SERVER_ID);
     expect(isBuiltinCalculationTool(tools[0])).toBe(true);
     expect(isBuiltinCalculationTool({ ...tools[0], serverId: "builtin:document" })).toBe(false);
+  });
+
+  it("grants each tool by its own name, in a fixed order", () => {
+    expect(calculationToolsGrantedBy(skill("call financial_analysis with method=npv"))).toEqual([FINANCIAL_ANALYSIS_TOOL]);
+    expect(calculationToolsGrantedBy(skill("loss_forecast first, then financial_analysis"))).toEqual([LOSS_FORECAST_TOOL, FINANCIAL_ANALYSIS_TOOL]);
+    expect(calculationToolsGrantedBy(skill("financial_analysis_report is a document"))).toEqual([]);
+    expect(calculationToolsForSkills([skill("use financial_analysis")]).map((t) => t.toolName)).toEqual([FINANCIAL_ANALYSIS_TOOL]);
+    expect(calculationToolsForSkills([skill("use financial_analysis"), skill("use loss_forecast")]).map((t) => t.toolName)).toEqual([LOSS_FORECAST_TOOL, FINANCIAL_ANALYSIS_TOOL]);
+  });
+});
+
+describe("time value of money (the chapter's figures)", () => {
+  it("reads a rate as a fraction or a percent", () => {
+    expect(asRate(0.05)).toEqual({ value: 0.05 });
+    expect(asRate(5)).toEqual({ value: 0.05, note: "rate 5 read as 5 percent (0.05)." });
+    expect("error" in asRate(150)).toBe(true);
+    expect("error" in asRate("x")).toBe(true);
+  });
+  it("discounts and compounds a single amount: $100 at 4 percent is $104, and $100,000 a year out at 5 percent is $95,238", () => {
+    const fv = futureValue(100, 0.04, 1); expect(!("error" in fv) && fv.futureValue).toBe(104);
+    const fv2 = futureValue(100, 0.04, 2); expect(!("error" in fv2) && fv2.futureValue).toBe(108.16);
+    const pv = presentValue(100000, 0.05, 1); expect(!("error" in pv) && pv.presentValue).toBe(95238.1);
+    expect(!("error" in pv) && pv.arithmetic[0]).toContain("100000 / (1 + 0.05)^1");
+    expect("error" in presentValue(100, 0.05, -1)).toBe(true);
+  });
+  it("NPV of the surveillance system: $40,000 for three years at 8 percent is $103,084 against $85,000, NPV $18,084, accept", () => {
+    const r = netPresentValue(0.08, 85000, [40000, 40000, 40000]);
+    if ("error" in r) throw new Error(r.error);
+    expect(r.presentValueOfCashFlows).toBeCloseTo(103083.88, 1);
+    expect(r.npv).toBeCloseTo(18083.88, 1);
+    expect(r.accept).toBe(true);
+    expect(r.periods.map((p) => p.presentValue)).toEqual([37037.04, 34293.55, 31753.29]);
+    const bad = netPresentValue(0.25, 85000, [40000, 40000, 40000]);
+    expect(!("error" in bad) && bad.accept).toBe(false);
+    expect("error" in netPresentValue(0.08, 85000, [])).toBe(true);
+  });
+  it("IRR of the same project is 19.44 percent, above the 8 percent required rate; a project that never repays has none", () => {
+    const r = internalRateOfReturn(85000, [40000, 40000, 40000], 0.08);
+    if ("error" in r) throw new Error(r.error);
+    expect(r.irrPercent).toBe(19.44);
+    expect(r.accept).toBe(true);
+    expect(r.arithmetic.join("\n")).toContain("exceeds the required rate of 8 percent");
+    const high = internalRateOfReturn(85000, [40000, 40000, 40000], 0.25);
+    expect(!("error" in high) && high.accept).toBe(false);
+    const none = internalRateOfReturn(85000, [20000, 20000, 20000]);
+    expect(!("error" in none) && none.irr).toBeNull();
+  });
+  it("compares the two coverage bids: A $185,238 against B $168,333, so B", () => {
+    const r = compareCoverageBids(0.05, [{ name: "Insurer A", premium: 90000, deductible: 5000 }, { name: "Insurer B", premium: 35000, deductible: 10000 }], [{ count: 12, size: 5000 }, { count: 6, size: 10000 }, { count: 2 }]);
+    if ("error" in r) throw new Error(r.error);
+    expect(r.expectedLosses).toBe(20);
+    expect(r.bids.map((b) => [b.name, b.deductibleOutflow, b.presentValueOfDeductibles, b.presentValueOfExpectedOutflows])).toEqual([["Insurer A", 100000, 95238.1, 185238.1], ["Insurer B", 140000, 133333.33, 168333.33]]);
+    expect(r.recommended).toBe("Insurer B");
+    expect(r.arithmetic.some((l) => l.includes("Insurer B: deductibles = 12 x 5000 + 6 x 10000 + 2 x 10000 = 140000"))).toBe(true);
+    expect("error" in compareCoverageBids(0.05, [{ name: "only", premium: 1, deductible: 1 }], [{ count: 1 }])).toBe(true);
+    expect("error" in compareCoverageBids(0.05, [{ name: "a", premium: 1, deductible: 1 }, { name: "b", premium: 1, deductible: 1 }], [])).toBe(true);
+  });
+  it("routes financial_analysis methods and returns, not throws, on a bad input", async () => {
+    const bid = await executeBuiltinCalculationTool(FINANCIAL_ANALYSIS_TOOL, { method: "bid_comparison", rate: 5, bids: [{ name: "A", premium: 90000, deductible: 5000 }, { name: "B", premium: 35000, deductible: 10000 }], lossBands: [{ count: 12, size: 5000 }, { count: 6, size: 10000 }, { count: 2 }] }, ctx);
+    expect(bid.ok).toBe(true);
+    expect(bid.recommended).toBe("B");
+    expect(bid.arithmetic[0]).toBe("rate 5 read as 5 percent (0.05).");
+    const npv = await executeBuiltinCalculationTool(FINANCIAL_ANALYSIS_TOOL, { method: "npv", rate: 0.08, cost: 85000, cashFlows: ["40000", "40000", "40000"] }, ctx);
+    expect(npv.ok).toBe(true);
+    expect(npv.npv).toBeCloseTo(18083.88, 1);
+    const irr = await executeBuiltinCalculationTool(FINANCIAL_ANALYSIS_TOOL, { method: "irr", cost: 85000, cashFlows: [40000, 40000, 40000] }, ctx);
+    expect(irr.ok).toBe(true);
+    expect(irr.irrPercent).toBe(19.44);
+    expect(irr.accept).toBeUndefined();
+    const noRate = await executeBuiltinCalculationTool(FINANCIAL_ANALYSIS_TOOL, { method: "npv", cost: 1, cashFlows: [1] }, ctx);
+    expect(noRate.ok).toBe(false);
+    const unknown = await executeBuiltinCalculationTool(FINANCIAL_ANALYSIS_TOOL, { method: "payback" }, ctx);
+    expect(unknown.ok).toBe(false);
+    expect(unknown.error).toMatch(/method must be/);
   });
 });
 

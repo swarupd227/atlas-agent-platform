@@ -21,11 +21,19 @@ import type { Skill } from "@shared/schema";
 export const BUILTIN_CALCULATION_SERVER_ID = "builtin:calculations";
 const BUILTIN_CALCULATION_SERVER_NAME = "Calculations";
 export const LOSS_FORECAST_TOOL = "loss_forecast";
+export const FINANCIAL_ANALYSIS_TOOL = "financial_analysis";
+const CALCULATION_TOOL_NAMES = [LOSS_FORECAST_TOOL, FINANCIAL_ANALYSIS_TOOL] as const;
 
-/** A skill grants the calculation tools by naming one in its procedure. */
+/** The calculation tools an active skill grants: each one by naming it in its procedure. */
+export function calculationToolsGrantedBy(skill: Skill): string[] {
+  if (skill.status !== "active") return [];
+  const body = String(skill.markdownBody ?? "");
+  return CALCULATION_TOOL_NAMES.filter((t) => new RegExp(`\\b${t}\\b`).test(body));
+}
+
+/** A skill grants a calculation tool by naming it in its procedure. */
 export function skillGrantsCalculationTools(skill: Skill): boolean {
-  if (skill.status !== "active") return false;
-  return new RegExp(`\\b${LOSS_FORECAST_TOOL}\\b`).test(String(skill.markdownBody ?? ""));
+  return calculationToolsGrantedBy(skill).length > 0;
 }
 
 const LOSS_FORECAST_SCHEMA = {
@@ -49,9 +57,23 @@ const LOSS_FORECAST_SCHEMA = {
   required: ["method"],
 } as const;
 
-export function calculationToolsForSkills(skills: Skill[]): AvailableTool[] {
-  if (!skills.some(skillGrantsCalculationTools)) return [];
-  return [{
+const FINANCIAL_ANALYSIS_SCHEMA = {
+  type: "object",
+  properties: {
+    method: { type: "string", enum: ["present_value", "future_value", "npv", "irr", "bid_comparison"], description: "Which calculation to run." },
+    amount: { type: "number", description: "present_value: the future amount to discount. future_value: the present amount to compound." },
+    rate: { type: "number", description: "The interest or discount rate per period, as a fraction (0.05) or a percent (5). present_value, future_value, npv and bid_comparison need it; irr compares against it when given." },
+    periods: { type: "number", description: "present_value / future_value: the number of periods (years); default 1. bid_comparison: when deductibles and losses are paid, in periods from the start; default 1 (end of the year)." },
+    cost: { type: "number", description: "npv / irr: the project's cost at time zero (a positive number)." },
+    cashFlows: { type: "array", items: { type: "number" }, description: "npv / irr: the net cash flow of each future period in order (increased revenue plus reduced expenses, after tax)." },
+    bids: { type: "array", items: { type: "object", properties: { name: { type: "string" }, premium: { type: "number", description: "Annual premium, paid at the start of the period." }, deductible: { type: "number", description: "Per-claim deductible." } }, required: ["name", "premium", "deductible"] }, description: "bid_comparison: the coverage bids to compare; identical cover, limits and insurer quality assumed." },
+    lossBands: { type: "array", items: { type: "object", properties: { count: { type: "number", description: "Expected number of losses in the band." }, size: { type: "number", description: "Expected size of each loss in the band; omit for 'above every deductible'." } }, required: ["count"] }, description: "bid_comparison: the forecast losses by size band, from loss_forecast or the loss run." },
+  },
+  required: ["method"],
+} as const;
+
+const TOOL_DEFS: Record<string, AvailableTool> = {
+  [LOSS_FORECAST_TOOL]: {
     serverId: BUILTIN_CALCULATION_SERVER_ID,
     serverName: BUILTIN_CALCULATION_SERVER_NAME,
     serverUrl: "",
@@ -61,7 +83,25 @@ export function calculationToolsForSkills(skills: Skill[]): AvailableTool[] {
       "method=regression: least-squares fit of y on x with slope, intercept, R-square and a prediction with its interval at the x values asked for. method=distribution: a normal-distribution interval around a mean with a standard deviation at 90, 95 or 99 percent, and the loss interval when a severity is given. " +
       "Use it for every probability, forecast or expected-loss figure instead of computing in prose; report the arithmetic lines it returns.",
     toolInputSchema: LOSS_FORECAST_SCHEMA,
-  }];
+  },
+  [FINANCIAL_ANALYSIS_TOOL]: {
+    serverId: BUILTIN_CALCULATION_SERVER_ID,
+    serverName: BUILTIN_CALCULATION_SERVER_NAME,
+    serverUrl: "",
+    toolName: FINANCIAL_ANALYSIS_TOOL,
+    toolDescription:
+      "Time-value-of-money arithmetic for a decision, computed deterministically with the working returned. method=present_value discounts an amount n periods at a rate; method=future_value compounds one. " +
+      "method=npv: the net present value of a project from its cost and the net cash flow of each future period, with each period's present value shown; method=irr: the internal rate of return of the same cash flows, compared with the required rate when one is given. " +
+      "method=bid_comparison: for coverage bids that differ in premium and per-claim deductible, the present value of expected outflows under each (premium at the start, deductibles on the forecast losses by size band at the end) and the lowest. " +
+      "Use it for every present value, NPV, IRR or bid figure instead of computing in prose; quote the arithmetic lines it returns, and list benefits that cannot be quantified beside the result, never inside it.",
+    toolInputSchema: FINANCIAL_ANALYSIS_SCHEMA,
+  },
+};
+
+/** The calculation tools the agent's skills grant, each by name, in a fixed order. */
+export function calculationToolsForSkills(skills: Skill[]): AvailableTool[] {
+  const granted = new Set(skills.flatMap(calculationToolsGrantedBy));
+  return CALCULATION_TOOL_NAMES.filter((t) => granted.has(t)).map((t) => TOOL_DEFS[t]);
 }
 
 export function isBuiltinCalculationTool(tool: AvailableTool): boolean {
@@ -175,9 +215,111 @@ export function normalInterval(mean: number, standardDeviation: number, confiden
   return { confidence, z, mean, standardDeviation, lower, upper, ...(severity !== undefined && Number.isFinite(severity) ? { expectedLoss: round(mean * severity, 2), lossInterval: { lower: round(Math.max(0, lower) * severity, 2), upper: round(upper * severity, 2) } } : {}), sampleSize: sampleSize ?? null, arithmetic } as const;
 }
 
-// ---- the tool -------------------------------------------------------------
+// ---- time value of money ----------------------------------------------------
+
+/** A rate given as 0.05 or as 5 (read as a percent), returned as a fraction. */
+export function asRate(value: unknown, label = "rate"): { value: number; note?: string } | { error: string } {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= -1) return { error: `${label} must be a number such as 0.05 or 5 (percent); got ${String(value)}.` };
+  if (Math.abs(n) < 1) return { value: n };
+  if (Math.abs(n) <= 100) return { value: n / 100, note: `${label} ${n} read as ${n} percent (${n / 100}).` };
+  return { error: `${label} is ${n}; a rate above 100 percent is not accepted.` };
+}
+
+export function presentValue(amount: number, rate: number, periods = 1) {
+  if (!Number.isFinite(amount) || !Number.isFinite(periods) || periods < 0) return { error: "amount must be a number and periods 0 or more." } as const;
+  const factor = Math.pow(1 + rate, periods); const pv = amount / factor;
+  return { presentValue: round(pv, 2), futureAmount: amount, rate, periods, discountFactor: round(1 / factor, 6), arithmetic: [`PV = FV / (1 + i)^n = ${amount} / (1 + ${rate})^${periods} = ${amount} / ${round(factor, 6)} = ${round(pv, 2)}`] } as const;
+}
+
+export function futureValue(amount: number, rate: number, periods = 1) {
+  if (!Number.isFinite(amount) || !Number.isFinite(periods) || periods < 0) return { error: "amount must be a number and periods 0 or more." } as const;
+  const factor = Math.pow(1 + rate, periods); const fv = amount * factor;
+  return { futureValue: round(fv, 2), presentAmount: amount, rate, periods, compoundFactor: round(factor, 6), arithmetic: [`FV = PV x (1 + i)^n = ${amount} x (1 + ${rate})^${periods} = ${amount} x ${round(factor, 6)} = ${round(fv, 2)}`, ...(periods > 1 ? ["Compound interest: each period earns interest on the interest of the periods before it."] : [])] } as const;
+}
+
+export function netPresentValue(rate: number, cost: number, cashFlows: number[]) {
+  if (!Number.isFinite(cost) || cost < 0) return { error: "cost must be a number, 0 or more, paid at time zero." } as const;
+  if (!Array.isArray(cashFlows) || cashFlows.length === 0 || !cashFlows.every((c) => Number.isFinite(c))) return { error: "cashFlows must list the net cash flow of each future period." } as const;
+  const periods = cashFlows.map((cf, i) => { const pv = cf / Math.pow(1 + rate, i + 1); return { period: i + 1, cashFlow: cf, presentValue: round(pv, 2) }; });
+  const pvTotal = periods.reduce((a, p) => a + p.cashFlow / Math.pow(1 + rate, p.period), 0); const npv = pvTotal - cost;
+  return {
+    rate, cost, presentValueOfCashFlows: round(pvTotal, 2), npv: round(npv, 2), accept: npv > 0, periods,
+    arithmetic: [
+      ...periods.map((p) => `PV of period ${p.period}: ${p.cashFlow} / (1 + ${rate})^${p.period} = ${p.presentValue}`),
+      `PV of future cash flows = ${round(pvTotal, 2)}`,
+      `NPV = PV of future cash flows - cost = ${round(pvTotal, 2)} - ${cost} = ${round(npv, 2)}`,
+      npv > 0 ? "NPV is positive: the project adds value at this rate." : npv < 0 ? "NPV is negative: the project would reduce value at this rate." : "NPV is zero: the project earns exactly the required rate.",
+    ],
+  } as const;
+}
+
+/** The rate at which the NPV is zero, by bisection; null when the cash flows never repay the cost. */
+export function internalRateOfReturn(cost: number, cashFlows: number[], requiredRate?: number) {
+  if (!Number.isFinite(cost) || cost <= 0) return { error: "cost must be a positive number paid at time zero." } as const;
+  if (!Array.isArray(cashFlows) || cashFlows.length === 0 || !cashFlows.every((c) => Number.isFinite(c))) return { error: "cashFlows must list the net cash flow of each future period." } as const;
+  const npvAt = (r: number) => cashFlows.reduce((a, cf, i) => a + cf / Math.pow(1 + r, i + 1), 0) - cost;
+  const total = cashFlows.reduce((a, b) => a + b, 0);
+  if (total <= cost) return { irr: null, cost, cashFlows, arithmetic: [`The undiscounted cash flows (${round(total, 2)}) do not exceed the cost (${cost}); no positive rate of return exists.`], ...(requiredRate !== undefined ? { requiredRate, accept: false } : {}) } as const;
+  let lo = 0, hi = 1; while (npvAt(hi) > 0 && hi < 1000) hi *= 2;
+  for (let i = 0; i < 200; i++) { const mid = (lo + hi) / 2; if (npvAt(mid) > 0) lo = mid; else hi = mid; }
+  const irr = (lo + hi) / 2; const pctIrr = round(irr * 100, 2);
+  const lines = [`IRR is the rate at which NPV = 0: ${cashFlows.map((cf, i) => `${cf}/(1+r)^${i + 1}`).join(" + ")} - ${cost} = 0`, `r = ${pctIrr} percent (NPV at that rate: ${round(npvAt(irr), 2)})`];
+  if (requiredRate !== undefined) lines.push(irr > requiredRate ? `${pctIrr} percent exceeds the required rate of ${round(requiredRate * 100, 2)} percent: acceptable.` : `${pctIrr} percent does not exceed the required rate of ${round(requiredRate * 100, 2)} percent: not acceptable.`);
+  return { irr: round(irr, 6), irrPercent: pctIrr, cost, cashFlows, ...(requiredRate !== undefined ? { requiredRate, accept: irr > requiredRate } : {}), arithmetic: lines } as const;
+}
+
+export interface CoverageBid { name: string; premium: number; deductible: number }
+export interface LossBand { count: number; size?: number | null }
+
+/**
+ * Present value of expected outflows under each bid: the premium at the start
+ * of the period, and on each forecast loss the smaller of its size and the
+ * deductible, paid `periods` later. A band with no size is "above every
+ * deductible", so the whole deductible applies.
+ */
+export function compareCoverageBids(rate: number, bids: CoverageBid[], lossBands: LossBand[], periods = 1) {
+  if (!Array.isArray(bids) || bids.length < 2) return { error: "bid_comparison needs two or more bids, each with name, premium and deductible." } as const;
+  if (!bids.every((b) => b && typeof b.name === "string" && Number.isFinite(Number(b.premium)) && Number.isFinite(Number(b.deductible)) && Number(b.deductible) >= 0)) return { error: "every bid needs a name, a numeric premium and a numeric deductible (0 or more)." } as const;
+  if (!Array.isArray(lossBands) || lossBands.length === 0 || !lossBands.every((l) => l && Number.isFinite(Number(l.count)) && Number(l.count) >= 0 && (l.size == null || Number.isFinite(Number(l.size))))) return { error: "lossBands must list {count, size} bands; omit size for losses above every deductible." } as const;
+  const factor = Math.pow(1 + rate, periods);
+  const expectedLosses = lossBands.reduce((a, l) => a + Number(l.count), 0);
+  const results = bids.map((b) => {
+    const deductible = Number(b.deductible), premium = Number(b.premium);
+    const parts = lossBands.map((l) => { const per = l.size == null ? deductible : Math.min(Number(l.size), deductible); return { count: Number(l.count), perLoss: per, outflow: Number(l.count) * per, band: l.size == null ? `over ${deductible}` : String(l.size) }; });
+    const deductibleOutflow = parts.reduce((a, p) => a + p.outflow, 0); const pvDeductibles = deductibleOutflow / factor; const pvTotal = premium + pvDeductibles;
+    return { name: b.name, premium, deductible, deductibleOutflow: round(deductibleOutflow, 2), presentValueOfDeductibles: round(pvDeductibles, 2), presentValueOfExpectedOutflows: round(pvTotal, 2), parts };
+  });
+  const best = results.reduce((a, b) => (b.presentValueOfExpectedOutflows < a.presentValueOfExpectedOutflows ? b : a));
+  const arithmetic: string[] = [`${expectedLosses} expected losses; premiums at the start of the period, deductibles ${periods} period(s) later, discount rate ${rate}`];
+  for (const r of results) {
+    arithmetic.push(`${r.name}: deductibles = ${r.parts.map((p) => `${p.count} x ${p.perLoss}`).join(" + ")} = ${r.deductibleOutflow}; PV = ${r.deductibleOutflow} / (1 + ${rate})^${periods} = ${r.presentValueOfDeductibles}; total PV = ${r.premium} + ${r.presentValueOfDeductibles} = ${r.presentValueOfExpectedOutflows}`);
+  }
+  arithmetic.push(`Lowest present value of expected outflows: ${best.name} (${best.presentValueOfExpectedOutflows}).`, "Assumes identical cover, limits and insurer quality; the forecast losses are expected values, not a guarantee.");
+  return { rate, periods, expectedLosses, bids: results.map(({ parts: _p, ...rest }) => rest), recommended: best.name, arithmetic } as const;
+}
+
+// ---- the tools --------------------------------------------------------------
+
+async function executeFinancialAnalysis(args: Record<string, any>): Promise<any> {
+  const method = String(args?.method ?? "");
+  const needsRate = ["present_value", "future_value", "npv", "bid_comparison"].includes(method) || (method === "irr" && args?.rate !== undefined);
+  let rate: number | undefined; const notes: string[] = [];
+  if (needsRate) { const r = asRate(args?.rate); if ("error" in r) return { ok: false, error: r.error }; rate = r.value; if (r.note) notes.push(r.note); }
+  const periods = args?.periods === undefined ? 1 : Number(args.periods);
+  const withNotes = (r: any) => ({ ok: true, method, ...r, arithmetic: [...notes, ...(r.arithmetic ?? [])] });
+  if (method === "present_value") { const r = presentValue(Number(args.amount), rate!, periods); return "error" in r ? { ok: false, error: r.error } : withNotes(r); }
+  if (method === "future_value") { const r = futureValue(Number(args.amount), rate!, periods); return "error" in r ? { ok: false, error: r.error } : withNotes(r); }
+  if (method === "npv") { const r = netPresentValue(rate!, Number(args.cost), (args.cashFlows ?? []).map(Number)); return "error" in r ? { ok: false, error: r.error } : withNotes(r); }
+  if (method === "irr") { const r = internalRateOfReturn(Number(args.cost), (args.cashFlows ?? []).map(Number), rate); return "error" in r ? { ok: false, error: r.error } : withNotes(r); }
+  if (method === "bid_comparison") { const r = compareCoverageBids(rate!, args.bids ?? [], args.lossBands ?? [], periods); return "error" in r ? { ok: false, error: r.error } : withNotes(r); }
+  return { ok: false, error: `method must be present_value, future_value, npv, irr or bid_comparison; got "${method}".` };
+}
 
 export async function executeBuiltinCalculationTool(toolName: string, args: Record<string, any>, _ctx: { orgId?: string | null; agentId?: string }): Promise<any> {
+  if (toolName === FINANCIAL_ANALYSIS_TOOL) {
+    try { return await executeFinancialAnalysis(args ?? {}); } catch (err: any) { return { ok: false, error: `Could not compute: ${err?.message ?? err}` }; }
+  }
   if (toolName !== LOSS_FORECAST_TOOL) throw new Error(`Unknown calculation tool "${toolName}"`);
   const method = String(args?.method ?? "");
   const confidence = ([90, 95, 99] as const).includes(Number(args?.confidence) as 90 | 95 | 99) ? (Number(args.confidence) as 90 | 95 | 99) : 95;
