@@ -68,6 +68,11 @@ import retail365KycRouter, { teamsRouter as retail365TeamsRouter } from "./mock-
 import mgaOversightDataRouter from "./mock-mcp/mga-oversight-data";
 import mgaOversightActionsRouter from "./mock-mcp/mga-oversight-actions";
 import surplusLinesComplianceRouter from "./mock-mcp/surplus-lines-compliance";
+import wcWorkbenchRouter from "./mock-mcp/wc-workbench";
+import wcClassBureauRouter from "./mock-mcp/wc-class-bureau";
+import insurityWcRatingRouter from "./mock-mcp/insurity-wc-rating";
+import insurityWcPasRouter from "./mock-mcp/insurity-wc-pas";
+import wcBordereauRouter from "./mock-mcp/wc-bordereau";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
 import salesforceRouter from "./mock-mcp/salesforce";
@@ -378,6 +383,12 @@ export async function registerRoutes(
   app.use("/api/mock/mga-oversight-data", mgaOversightDataRouter);
   app.use("/api/mock/mga-oversight-actions", mgaOversightActionsRouter);
   app.use("/api/mock/surplus-lines-compliance", surplusLinesComplianceRouter);
+  // Workers' Compensation underwriting (fixture mode): one seed, five systems.
+  app.use("/api/mock/wc-workbench", wcWorkbenchRouter);
+  app.use("/api/mock/wc-class-bureau", wcClassBureauRouter);
+  app.use("/api/mock/insurity-wc-rating", insurityWcRatingRouter);
+  app.use("/api/mock/insurity-wc-pas", insurityWcPasRouter);
+  app.use("/api/mock/wc-bordereau", wcBordereauRouter);
   app.use("/api/mock/adobe", adobeAnalyticsRouter);
   app.use("/api/mock/marketo", marketoRouter);
   app.use("/api/mock/salesforce", salesforceRouter);
